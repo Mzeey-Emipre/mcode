@@ -2599,8 +2599,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           isAgentRunning={isAgentRunning}
           provider={provider}
           isEditing={!!editingFromQueue}
+          isPaused={planPending}
           onLoadIntoComposer={loadIntoComposer}
           onResume={async () => {
+            if (planPending) return;
             const next = useQueueStore.getState().dequeueNext(threadId);
             if (!next) return;
             try {
@@ -2634,6 +2636,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             }
           }}
           onSendNow={async (msg) => {
+            if (planPending) return;
             if (useThreadStore.getState().runningThreadIds.has(threadId)) {
               useQueueStore.getState().moveMessage(threadId, msg.id, 0);
               return;

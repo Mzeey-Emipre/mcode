@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   mockWebSocketServer,
   interceptZustandStores,
+  dispatchAgentEvent,
 } from "./helpers/e2e-helpers";
 
 /**
@@ -69,6 +70,15 @@ const MOCK_QUESTIONS = [
   },
 ];
 
+type AgentCall = {
+  method: string;
+  params?: Record<string, unknown>;
+};
+
+type AgentTraceWindow = Window & {
+  __agentCalls?: AgentCall[];
+};
+
 /** Set up workspace + thread in the workspace store so ChatView renders. */
 async function setupWorkspace(page: Page): Promise<void> {
   await page.evaluate(
@@ -114,6 +124,80 @@ async function injectPlanQuestions(
   );
 }
 
+async function seedQueue(
+  page: Page,
+  threadId: string,
+  contents: string[],
+): Promise<void> {
+  await page.evaluate(
+    ({ tid, items }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stores: any[] = (window as any).__mcodeStores ?? [];
+      const queueStore = stores.find((s) => {
+        const st = s.getState();
+        return "queues" in st && "enqueue" in st;
+      });
+      if (!queueStore) throw new Error("[E2E] queue store not found");
+      const now = Date.now();
+      queueStore.setState({
+        queues: {
+          [tid]: items.map((content, i) => ({
+            id: `q-plan-${i}-${now}`,
+            content,
+            displayContent: content,
+            attachments: [],
+            model: "claude-sonnet-4-20250514",
+            permissionMode: "FULL",
+            provider: "claude",
+            queuedAt: now + i,
+          })),
+        },
+        toast: null,
+      });
+    },
+    { tid: threadId, items: contents },
+  );
+}
+
+async function traceAgentCalls(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as AgentTraceWindow;
+    w.__agentCalls = [];
+    const origSend = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (
+      this: WebSocket,
+      data: string | ArrayBufferLike | Blob | ArrayBufferView,
+    ) {
+      if (typeof data === "string") {
+        try {
+          const parsed = JSON.parse(data) as {
+            method?: unknown;
+            params?: Record<string, unknown>;
+          };
+          if (
+            parsed.method === "agent.answerQuestions" ||
+            parsed.method === "agent.send"
+          ) {
+            w.__agentCalls?.push({
+              method: parsed.method,
+              params: parsed.params,
+            });
+          }
+        } catch {
+          // Ignore non-JSON frames from the runtime.
+        }
+      }
+      return origSend.call(this, data);
+    };
+  });
+}
+
+async function readAgentCalls(page: Page): Promise<AgentCall[]> {
+  return page.evaluate(
+    () => (window as AgentTraceWindow).__agentCalls ?? [],
+  );
+}
+
 /** Mark a thread as running so the submit gate engages. */
 async function setThreadRunning(
   page: Page,
@@ -142,7 +226,10 @@ async function setThreadRunning(
 
 test.describe("Plan Question Wizard", () => {
   test.beforeEach(async ({ page }) => {
-    await mockWebSocketServer(page);
+    await mockWebSocketServer(page, {
+      "agent.answerQuestions": undefined,
+      "agent.send": undefined,
+    });
     await interceptZustandStores(page);
     await page.goto("/");
     await page.waitForLoadState("networkidle");
@@ -347,6 +434,83 @@ test.describe("Plan Question Wizard", () => {
     await expect(wizard.getByText(/model is still working/)).not.toBeVisible();
     await expect(submit).toBeEnabled();
     await expect(accept).toBeEnabled();
+  });
+
+  test("cancel keeps queued follow-up waiting", async ({ page }) => {
+    await traceAgentCalls(page);
+    await injectPlanQuestions(page, THREAD.id, [MOCK_QUESTIONS[0]]);
+    await seedQueue(page, THREAD.id, ["Hold after cancel"]);
+
+    const wizard = page.locator("[role='form'][aria-label='Plan questions']");
+    await expect(wizard).toBeVisible({ timeout: 3000 });
+
+    await dispatchAgentEvent(page, THREAD.id, {
+      method: "session.turnComplete",
+      params: {},
+    });
+    await wizard.locator("button", { hasText: "cancel" }).first().click();
+
+    await page.waitForTimeout(600);
+
+    const queue = page.getByRole("region", { name: "Queued messages" });
+    await expect(queue.getByText("Hold after cancel")).toBeVisible();
+    expect(
+      (await readAgentCalls(page)).filter((c) => c.method === "agent.send"),
+    ).toHaveLength(0);
+  });
+
+  test("queued follow-up waits for answered plan questions before sending", async ({ page }) => {
+    await traceAgentCalls(page);
+    await injectPlanQuestions(page, THREAD.id, [MOCK_QUESTIONS[0]]);
+    await seedQueue(page, THREAD.id, ["Run queued after answers"]);
+
+    const wizard = page.locator("[role='form'][aria-label='Plan questions']");
+    await expect(wizard).toBeVisible({ timeout: 3000 });
+
+    const queue = page.getByRole("region", { name: "Queued messages" });
+    await expect(queue.getByText("Run queued after answers")).toBeVisible();
+    await expect(
+      queue.getByRole("button", { name: "Send next queued message" }),
+    ).toHaveCount(0);
+
+    await dispatchAgentEvent(page, THREAD.id, {
+      method: "session.turnComplete",
+      params: {},
+    });
+    await page.waitForTimeout(600);
+    expect(
+      (await readAgentCalls(page)).filter((c) => c.method === "agent.send"),
+    ).toHaveLength(0);
+    await expect(queue.getByText("Run queued after answers")).toBeVisible();
+
+    await wizard.locator("[role='radio']").first().click();
+    await wizard.getByRole("button", { name: /submit/ }).click();
+
+    await expect.poll(async () => {
+      const calls = await readAgentCalls(page);
+      return calls.filter((c) => c.method === "agent.answerQuestions").length;
+    }).toBe(1);
+    expect(
+      (await readAgentCalls(page)).filter((c) => c.method === "agent.send"),
+    ).toHaveLength(0);
+
+    await dispatchAgentEvent(page, THREAD.id, {
+      method: "session.turnComplete",
+      params: {},
+    });
+
+    await expect.poll(async () => {
+      const send = (await readAgentCalls(page)).find(
+        (c) => c.method === "agent.send",
+      );
+      return send?.params?.content ?? null;
+    }).toBe("Run queued after answers");
+
+    const orderedMethods = (await readAgentCalls(page)).map((c) => c.method);
+    expect(orderedMethods).toEqual([
+      "agent.answerQuestions",
+      "agent.send",
+    ]);
   });
 
   test("pressing ? toggles a keyboard legend overlay", async ({ page }) => {
