@@ -14,7 +14,6 @@ import { SiteFavicon } from "@/components/ui/favicon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { resolveCodeBlockLanguage } from "@/lib/resolve-code-block-language";
 import { isMac } from "@/lib/platform";
-import { cn } from "@/lib/utils";
 import {
   isModifierClick,
   isPreviewableUrl,
@@ -36,7 +35,7 @@ interface MarkdownContentProps {
   /** When true, code blocks skip syntax highlighting. Defaults to false. */
   isStreaming?: boolean;
   /**
-   * Controls prose styling. 'user' adapts colors for the primary-colored user bubble.
+   * Controls prose styling. 'user' adapts colors for the accent-surfaced user bubble.
    * Defaults to 'assistant'.
    */
   variant?: "assistant" | "user";
@@ -213,17 +212,14 @@ function getMarkdownFileIconPath(args: {
 interface MarkdownLinkProps {
   href?: string;
   children?: React.ReactNode;
-  variant: "assistant" | "user";
   workspacePath: string | null;
 }
 
 function MarkdownLink({
   href,
   children,
-  variant,
   workspacePath,
 }: MarkdownLinkProps) {
-  const isUser = variant === "user";
   const safeHref = resolveMarkdownHref(href, workspacePath);
   const isPreviewable = !!safeHref && isPreviewableUrl(safeHref);
   const showHint = isPreviewable && hasPreview();
@@ -236,10 +232,7 @@ function MarkdownLink({
   const anchor = (
     <a
       href={safeHref}
-      className={cn(
-        "inline-flex max-w-full items-center gap-1 align-baseline no-underline transition-colors hover:underline",
-        isUser ? "text-primary-foreground" : "text-primary",
-      )}
+      className="inline-flex max-w-full items-center gap-1 align-baseline text-link no-underline transition-colors hover:underline"
       target="_blank"
       rel="noopener noreferrer"
       data-testid="markdown-link"
@@ -272,10 +265,7 @@ function MarkdownLink({
         <ExternalLink
           size={12}
           aria-hidden
-          className={cn(
-            "shrink-0",
-            isUser ? "text-primary-foreground/75" : "text-muted-foreground",
-          )}
+          className="shrink-0 text-muted-foreground"
         />
       ) : null}
     </a>
@@ -308,43 +298,27 @@ function makeStaticComponents(variant: "assistant" | "user", workspacePath: stri
     strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold">{children}</strong>,
     em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
     a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-      <MarkdownLink href={href} variant={variant} workspacePath={workspacePath}>
+      <MarkdownLink href={href} workspacePath={workspacePath}>
         {children}
       </MarkdownLink>
     ),
     blockquote: ({ children }: { children?: React.ReactNode }) => (
-      <blockquote
-        className={
-          isUser
-            ? "border-l-2 pl-3 my-2 italic border-primary-foreground/40 text-primary-foreground/80"
-            : "border-l-2 border-border pl-3 my-2 text-muted-foreground italic"
-        }
-      >
+      <blockquote className="border-l-2 border-border pl-3 my-2 text-muted-foreground italic">
         {children}
       </blockquote>
     ),
     pre: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    hr: () => (
-      <hr className={isUser ? "my-4 border-primary-foreground/20" : "my-4 border-border"} />
-    ),
+    hr: () => <hr className="my-4 border-border" />,
     table: ({ children }: { children?: React.ReactNode }) => (
       <div className="overflow-x-auto my-2">
-        <table
-          className={
-            isUser
-              ? "min-w-full border rounded border-primary-foreground/20"
-              : "min-w-full border border-border rounded"
-          }
-        >
-          {children}
-        </table>
+        <table className="min-w-full border border-border rounded">{children}</table>
       </div>
     ),
     th: ({ children }: { children?: React.ReactNode }) => (
       <th
         className={
           isUser
-            ? "border border-primary-foreground/20 bg-primary-foreground/10 px-3 py-1.5 text-left text-sm font-semibold"
+            ? "border border-border bg-foreground/10 px-3 py-1.5 text-left text-sm font-semibold"
             : "border border-border bg-muted/50 px-3 py-1.5 text-left text-sm font-semibold"
         }
       >
@@ -352,15 +326,7 @@ function makeStaticComponents(variant: "assistant" | "user", workspacePath: stri
       </th>
     ),
     td: ({ children }: { children?: React.ReactNode }) => (
-      <td
-        className={
-          isUser
-            ? "border border-primary-foreground/20 px-3 py-1.5 text-sm"
-            : "border border-border px-3 py-1.5 text-sm"
-        }
-      >
-        {children}
-      </td>
+      <td className="border border-border px-3 py-1.5 text-sm">{children}</td>
     ),
   };
 }
@@ -386,16 +352,16 @@ function makeComponents(
       const isInline = !className && !rawContent.includes("\n");
 
       if (isInline) {
+        // Inside the user bubble the surface is already `accent`, so `bg-muted`
+        // would vanish against it; a foreground tint stays visible on both themes.
         const codeClass = isUser
-          ? "bg-primary-foreground/15 rounded px-1.5 py-0.5 text-sm font-mono"
+          ? "bg-foreground/10 rounded px-1.5 py-0.5 text-sm font-mono"
           : "bg-muted rounded px-1.5 py-0.5 text-sm font-mono";
 
         // Detect URLs inside inline code and make them clickable
         const text = rawContent.trim();
         if (HTTP_URL_RE.test(text)) {
-          const linkClass = isUser
-            ? "text-primary-foreground underline decoration-dotted hover:opacity-80 cursor-pointer"
-            : "text-primary underline decoration-dotted hover:text-primary cursor-pointer";
+          const linkClass = "text-link underline decoration-dotted hover:opacity-80 cursor-pointer";
           const codeEl = (
             <code
               role="link"
@@ -418,9 +384,7 @@ function makeComponents(
 
         if (workspacePath && looksLikeWorkspaceRelativeFileRef(text)) {
           const previewUrl = mcodeWorkspacePreviewHref(text);
-          const linkClass = isUser
-            ? "text-primary-foreground underline decoration-dotted hover:opacity-80 cursor-pointer"
-            : "text-primary underline decoration-dotted hover:text-primary cursor-pointer";
+          const linkClass = "text-link underline decoration-dotted hover:opacity-80 cursor-pointer";
           const codeEl = (
             <code
               role="link"

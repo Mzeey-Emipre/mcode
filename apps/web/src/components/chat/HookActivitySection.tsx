@@ -149,7 +149,7 @@ const HookRow = memo(function HookRow({ hook }: { hook: HookExecution }) {
               <button
                 type="button"
                 onClick={() => setShowAll((v) => !v)}
-                className="text-xs text-primary hover:underline mt-0.5 cursor-pointer"
+                className="text-xs text-link hover:underline mt-0.5 cursor-pointer"
               >
                 {showAll ? `Show preview (${OUTPUT_LINE_CAP} lines)` : `Show all (${hook.fullOutput.length} lines)`}
               </button>

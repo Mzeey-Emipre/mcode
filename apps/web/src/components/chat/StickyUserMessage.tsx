@@ -122,7 +122,7 @@ export function StickyUserMessage({
       data-testid="sticky-user-message"
     >
       <div className="mx-auto w-full min-w-0 max-w-4xl">
-        <div className="pointer-events-auto flex items-start gap-0.5 overflow-hidden rounded-lg bg-primary text-sm text-primary-foreground shadow-sm shadow-primary/15">
+        <div className="pointer-events-auto flex items-start gap-0.5 overflow-hidden rounded-lg border border-border/60 bg-accent text-sm text-accent-foreground shadow-sm">
           <Button
             type="button"
             variant="ghost"
@@ -131,7 +131,7 @@ export function StickyUserMessage({
             aria-expanded={expandable ? expanded : undefined}
             aria-describedby={expandable ? STICKY_PREVIEW_HINT_ID : undefined}
             aria-label={previewAriaLabel}
-            className="h-auto min-w-0 flex-1 cursor-pointer justify-start px-3 py-1.5 text-left font-normal text-primary-foreground transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground"
+            className="h-auto min-w-0 flex-1 cursor-pointer justify-start px-3 py-1.5 text-left font-normal text-accent-foreground transition-colors hover:bg-foreground/5 hover:text-accent-foreground"
           >
             <p
               className={cn(
@@ -151,7 +151,7 @@ export function StickyUserMessage({
                 </span>
                 <span
                   aria-hidden
-                  className="mt-1 inline-flex items-center gap-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-primary-foreground/65"
+                  className="mt-1 inline-flex items-center gap-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
                 >
                   <ChevronDown
                     size={11}
@@ -160,7 +160,7 @@ export function StickyUserMessage({
                   />
                   {expanded ? "Collapse" : "Expand"}
                   {!expanded && (
-                    <span className="normal-case tracking-normal text-primary-foreground/50">
+                    <span className="normal-case tracking-normal text-muted-foreground/70">
                       · Double-click to jump
                     </span>
                   )}
@@ -177,7 +177,7 @@ export function StickyUserMessage({
                   variant="ghost"
                   size="icon-sm"
                   onClick={onJumpToMessage}
-                  className="mt-0.5 mr-0.5 size-11 shrink-0 text-primary-foreground/80 hover:bg-primary-foreground/10 hover:text-primary-foreground"
+                  className="mt-0.5 mr-0.5 size-11 shrink-0 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
                   aria-label="Jump to your last message"
                 >
                   <ArrowUp size={15} aria-hidden />
