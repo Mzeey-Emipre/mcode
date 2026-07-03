@@ -105,7 +105,7 @@
     "shadows": [
       { "name": "focus-ring", "value": "0 0 0 3px oklch(0.62 0.19 264 / 0.2)", "purpose": "Cool-ring focus affordance on inputs and buttons." },
       { "name": "focus-ring-offset", "value": "0 0 0 2px var(--background), 0 0 0 4px var(--ring)", "purpose": "Keyboard focus on dense adjacent controls where a flat ring would bleed into the neighbor." },
-      { "name": "lamp-edge-glow", "value": "-2px 0 8px -1px color-mix(in oklch, var(--primary), transparent 65%)", "purpose": "Single deliberate lamp edge cue at a panel boundary. Not a card style." }
+      { "name": "lamp-edge-glow", "value": "-2px 0 8px -1px oklch(0.72 0.17 75 / 0.35)", "purpose": "Single deliberate lamp edge cue at a panel boundary. Not a card style." }
     ],
     "motion": [
       { "name": "ease-out-quart", "value": "cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Primary UI easing: wizard reveals, tile and nav entrances, question transitions." },
