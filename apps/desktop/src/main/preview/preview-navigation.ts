@@ -146,8 +146,18 @@ export function registerNavigationHandlers(): void {
       const tid = payload.threadId ?? null;
       const switchedThread = tid != null && tid !== s.lastPreviewThreadId;
       const prevBounds = s.lastBounds;
+      // The renderer measures in CSS pixels but setBounds expects DIPs; they
+      // only match at zoom factor 1. Chromium persists per-origin zoom, so an
+      // accidental Ctrl+-/Ctrl+= would otherwise skew the view permanently.
+      const rawZoom = _event.sender.getZoomFactor();
+      const zoom = Number.isFinite(rawZoom) && rawZoom > 0 ? rawZoom : 1;
       const incomingBounds = hasValidBounds
-        ? { x: b.x, y: b.y, width: b.width, height: b.height }
+        ? {
+            x: Math.round(b.x * zoom),
+            y: Math.round(b.y * zoom),
+            width: Math.round(b.width * zoom),
+            height: Math.round(b.height * zoom),
+          }
         : null;
       if (hasValidBounds) {
         s.lastBounds = incomingBounds;

@@ -101,6 +101,7 @@ function makeWindow() {
       send: vi.fn(),
       on: vi.fn(),
       setWindowOpenHandler: vi.fn(),
+      getZoomFactor: vi.fn().mockReturnValue(1),
     },
   };
 }
@@ -277,6 +278,33 @@ describe("preview-browser", () => {
       expect(statusCalls.length).toBeGreaterThan(0);
       const last = statusCalls[statusCalls.length - 1]![1] as { phase: string };
       expect(last.phase).not.toBe("loading");
+    });
+  });
+
+  describe("bounds zoom scaling", () => {
+    it("converts renderer CSS-pixel bounds to DIPs using the host zoom factor", async () => {
+      const win = createWindow();
+      win.webContents.getZoomFactor.mockReturnValue(0.8);
+
+      await showPreview(win);
+
+      const view = createdViews[0]!;
+      expect(view.setBounds).toHaveBeenCalledWith({
+        x: 80,
+        y: 80,
+        width: 640,
+        height: 480,
+      });
+    });
+
+    it("falls back to zoom 1 when the sender reports a non-finite factor", async () => {
+      const win = createWindow();
+      win.webContents.getZoomFactor.mockReturnValue(Number.NaN);
+
+      await showPreview(win);
+
+      const view = createdViews[0]!;
+      expect(view.setBounds).toHaveBeenCalledWith(VALID_BOUNDS);
     });
   });
 
