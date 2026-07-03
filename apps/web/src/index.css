@@ -519,7 +519,7 @@
 }
 
 .glow-primary {
-  box-shadow: -2px 0 8px -1px color-mix(in oklch, var(--primary), transparent 65%);
+  box-shadow: -2px 0 8px -1px oklch(0.72 0.17 75 / 0.35);
 }
 
 .animate-shimmer-text {
