@@ -127,8 +127,8 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
               )}
             </div>
             {usageInfo?.usageStatus === "stale" ? (
-              <div className="text-right font-mono text-xs text-muted-foreground">
-                Stale
+              <div className="text-right font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
+                STALE
               </div>
             ) : null}
           </div>

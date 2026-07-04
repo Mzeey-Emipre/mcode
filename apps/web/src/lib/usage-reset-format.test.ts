@@ -6,14 +6,14 @@ describe("formatUsageResetText", () => {
 
   it("formats relative and compact exact reset text", () => {
     expect(formatUsageResetText("2026-07-03T14:14:00.000Z", now)).toContain(
-      "Resets in 2h 14m -",
+      "Resets in 2h 14m ·",
     );
     expect(formatUsageResetText("2026-07-03T14:14:00.000Z", now)).toContain("Jul 3");
   });
 
   it("formats day and hour resets", () => {
     expect(formatUsageResetText("2026-07-05T15:00:00.000Z", now)).toContain(
-      "Resets in 2d 3h -",
+      "Resets in 2d 3h ·",
     );
   });
 

@@ -397,8 +397,8 @@ function ThreadOverviewUsageBars({
             );
           })}
           {usageStatus === "stale" ? (
-            <div className="font-mono text-xs text-muted-foreground/70">
-              Stale usage
+            <div className="font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
+              STALE
             </div>
           ) : null}
           {sessionCostSummary ? (

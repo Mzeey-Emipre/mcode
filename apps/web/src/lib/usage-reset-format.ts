@@ -27,5 +27,5 @@ export function formatUsageResetText(
     hour12: false,
   }).format(reset);
 
-  return `Resets in ${relative} - ${exact}`;
+  return `Resets in ${relative} · ${exact}`;
 }

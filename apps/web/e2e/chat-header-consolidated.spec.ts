@@ -668,14 +668,14 @@ test.describe("Consolidated chat header usage states", () => {
     await page.waitForSelector("[data-testid='chat-header-title']");
     await ensureOverviewOpen(page);
     await expect(page.getByTestId("thread-overview-usage")).toBeVisible();
-    await expect(page.getByText("Stale usage")).toHaveCount(0);
+    await expect(page.getByText("STALE")).toHaveCount(0);
     await page.screenshot({ path: "e2e/screenshots/thread-overview-usage-ready-desktop.png", fullPage: true });
 
     await page.getByTestId("header-workspace-menu").click();
     await expect(overviewContent(page)).toBeHidden();
     await page.getByTestId("header-workspace-menu").click();
     await expect(page.getByTestId("thread-overview-usage")).toBeVisible();
-    await expect(page.getByText("Stale usage")).toBeVisible();
+    await expect(page.getByText("STALE")).toBeVisible();
     await expect(page.getByRole("progressbar", { name: /5-hour usage 12 percent\. Resets in/ })).toBeVisible();
     await page.screenshot({ path: "e2e/screenshots/thread-overview-usage-stale-desktop.png", fullPage: true });
 
@@ -684,7 +684,7 @@ test.describe("Consolidated chat header usage states", () => {
       await page.getByTestId("header-workspace-menu").click();
     }
     await expect(page.getByTestId("thread-overview-usage")).toBeVisible();
-    await expect(page.getByText("Stale usage")).toBeVisible();
+    await expect(page.getByText("STALE")).toBeVisible();
     await expect(page.getByTestId("thread-overview-body")).toHaveJSProperty("scrollWidth", await page.getByTestId("thread-overview-body").evaluate((node) => node.clientWidth));
     await page.screenshot({ path: "e2e/screenshots/thread-overview-usage-stale-narrow.png", fullPage: true });
     expect(consoleErrors).toEqual([]);
