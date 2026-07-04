@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, GoalLookupResult, GoalState } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES, isGoalOpen } from "@mcode/contracts";
@@ -181,6 +181,114 @@ const dequeueTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * without triggering re-renders for the inflight bookkeeping.
  */
 const narrativeInflight = new Map<string, Promise<void>>();
+const USAGE_STALE_TTL_MS = 24 * 60 * 60 * 1000;
+const providerUsageSnapshots = new Map<string, ProviderUsageInfo>();
+
+function hasProviderUsageData(usage: ProviderUsageInfo | undefined): boolean {
+  return (
+    (usage?.quotaCategories.length ?? 0) > 0 ||
+    usage?.sessionCostUsd !== undefined ||
+    usage?.serviceTier !== undefined ||
+    usage?.numTurns !== undefined ||
+    usage?.durationMs !== undefined
+  );
+}
+
+function isFreshUsageSnapshot(usage: ProviderUsageInfo | undefined, now = Date.now()): boolean {
+  if (!usage?.fetchedAt) return hasProviderUsageData(usage);
+  const fetchedAt = Date.parse(usage.fetchedAt);
+  return Number.isFinite(fetchedAt) && now - fetchedAt <= USAGE_STALE_TTL_MS;
+}
+
+function providerQuotaSnapshot(usage: ProviderUsageInfo): ProviderUsageInfo {
+  return {
+    providerId: usage.providerId,
+    quotaCategories: usage.quotaCategories,
+    billingMode: usage.billingMode,
+    usageStatus: usage.usageStatus,
+    fetchedAt: usage.fetchedAt,
+    failedAt: usage.failedAt,
+    diagnostic: usage.diagnostic,
+  };
+}
+
+function mergeThreadUsageSnapshot(
+  existing: ProviderUsageInfo | undefined,
+  providerSnapshot: ProviderUsageInfo | undefined,
+  incoming: ProviderUsageInfo,
+  now = Date.now(),
+): ProviderUsageInfo {
+  const existingThreadMetrics = existing
+    ? {
+        sessionCostUsd: existing.sessionCostUsd,
+        serviceTier: existing.serviceTier,
+        numTurns: existing.numTurns,
+        durationMs: existing.durationMs,
+      }
+    : {};
+  const baseProviderSnapshot = providerSnapshot && hasProviderUsageData(providerSnapshot)
+    ? providerSnapshot
+    : existing;
+  return {
+    ...mergeProviderUsageSnapshot(baseProviderSnapshot, providerQuotaSnapshot(incoming), now),
+    ...existingThreadMetrics,
+    sessionCostUsd: incoming.sessionCostUsd ?? existing?.sessionCostUsd,
+    serviceTier: incoming.serviceTier ?? existing?.serviceTier,
+    numTurns: incoming.numTurns ?? existing?.numTurns,
+    durationMs: incoming.durationMs ?? existing?.durationMs,
+  };
+}
+
+/**
+ * Merges incoming provider quota data with a prior last-known-good snapshot.
+ */
+export function mergeProviderUsageSnapshot(
+  existing: ProviderUsageInfo | undefined,
+  incoming: ProviderUsageInfo,
+  now = Date.now(),
+): ProviderUsageInfo {
+  const status = incoming.usageStatus
+    ?? (incoming.quotaCategories.length === 0 ? "unavailable" : "ready");
+  if (status === "unavailable" || status === "unsupported") {
+    if (existing && hasProviderUsageData(existing) && isFreshUsageSnapshot(existing, now)) {
+      return {
+        ...existing,
+        providerId: existing.providerId,
+        quotaCategories: existing.quotaCategories,
+        usageStatus: "stale",
+        failedAt: incoming.failedAt ?? new Date(now).toISOString(),
+        diagnostic: incoming.diagnostic,
+      };
+    }
+    return { ...incoming, usageStatus: status };
+  }
+
+  if (status === "ready-empty") {
+    return {
+      providerId: incoming.providerId,
+      quotaCategories: [],
+      billingMode: incoming.billingMode,
+      sessionCostUsd: incoming.sessionCostUsd,
+      serviceTier: incoming.serviceTier,
+      numTurns: incoming.numTurns,
+      durationMs: incoming.durationMs,
+      usageStatus: "ready-empty",
+      fetchedAt: incoming.fetchedAt ?? new Date(now).toISOString(),
+    };
+  }
+
+  return {
+    ...existing,
+    ...incoming,
+    quotaCategories: incoming.quotaCategories.length > 0
+      ? incoming.quotaCategories
+      : (existing?.quotaCategories ?? []),
+    usageStatus: incoming.quotaCategories.length > 0 ? "ready" : (incoming.usageStatus ?? "ready-empty"),
+    fetchedAt: incoming.fetchedAt ?? new Date(now).toISOString(),
+    failedAt: undefined,
+    diagnostic: undefined,
+  };
+}
 
 function clearDequeueTimer(threadId: string) {
   const timer = dequeueTimers.get(threadId);
@@ -2673,6 +2781,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const numTurns = params.numTurns as number | undefined;
       const durationMs = params.durationMs as number | undefined;
       if (providerId) {
+        const incoming: ProviderUsageInfo = {
+          providerId,
+          quotaCategories: categories,
+          billingMode,
+          sessionCostUsd,
+          serviceTier,
+          numTurns,
+          durationMs,
+          usageStatus: categories.length > 0 ? "ready" : "ready-empty",
+          fetchedAt: new Date().toISOString(),
+        };
+        const providerSnapshot = mergeProviderUsageSnapshot(
+          providerUsageSnapshots.get(providerId),
+          providerQuotaSnapshot(incoming),
+        );
+        providerUsageSnapshots.set(providerId, providerSnapshot);
         set((state) => {
           const rec = getThreadRecord(state.records, threadId);
           const existing = rec.usageByProvider[providerId];
@@ -2680,15 +2804,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             records: patchThreadRecord(state.records, threadId, {
               usageByProvider: {
                 ...rec.usageByProvider,
-                [providerId]: {
-                  providerId,
-                  quotaCategories: categories.length > 0 ? categories : (existing?.quotaCategories ?? []),
-                  billingMode: billingMode ?? existing?.billingMode,
-                  sessionCostUsd: sessionCostUsd ?? existing?.sessionCostUsd,
-                  serviceTier: serviceTier ?? existing?.serviceTier,
-                  numTurns: numTurns ?? existing?.numTurns,
-                  durationMs: durationMs ?? existing?.durationMs,
-                },
+                [providerId]: mergeThreadUsageSnapshot(existing, providerSnapshot, incoming),
               },
             }),
           };
@@ -2885,14 +3001,38 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   fetchProviderUsage: async (threadId, providerId) => {
     try {
       const usage = await getTransport().getProviderUsage(providerId);
+      const providerSnapshot = mergeProviderUsageSnapshot(
+        providerUsageSnapshots.get(providerId),
+        providerQuotaSnapshot(usage),
+      );
+      providerUsageSnapshots.set(providerId, providerSnapshot);
       patchRec(threadId, (rec) => ({
         usageByProvider: {
           ...rec.usageByProvider,
-          [providerId]: { ...rec.usageByProvider[providerId], ...usage },
+          [providerId]: mergeThreadUsageSnapshot(rec.usageByProvider[providerId], providerSnapshot, usage),
         },
       }));
     } catch {
-      // Silently fail — popover shows stale or empty state
+      const usage: ProviderUsageInfo = {
+        providerId,
+        quotaCategories: [],
+        usageStatus: "unavailable",
+        failedAt: new Date().toISOString(),
+        diagnostic: "Usage refresh failed",
+      };
+      const previousProviderSnapshot = providerUsageSnapshots.get(providerId);
+      const providerSnapshot = mergeProviderUsageSnapshot(
+        previousProviderSnapshot,
+        usage,
+      );
+      providerUsageSnapshots.set(providerId, providerSnapshot);
+      if (!hasProviderUsageData(providerSnapshot)) return;
+      patchRec(threadId, (rec) => ({
+        usageByProvider: {
+          ...rec.usageByProvider,
+          [providerId]: mergeThreadUsageSnapshot(rec.usageByProvider[providerId], providerSnapshot, usage),
+        },
+      }));
     }
   },
 

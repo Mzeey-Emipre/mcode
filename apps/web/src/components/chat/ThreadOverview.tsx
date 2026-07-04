@@ -62,6 +62,7 @@ import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { cn } from "@/lib/utils";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
+import { formatUsageResetText } from "@/lib/usage-reset-format";
 import {
   getTransport,
   type GitBranch as GitBranchRecord,
@@ -227,8 +228,9 @@ export function formatThreadOverviewSessionCost(
  */
 export function getThreadOverviewUsageCategories(
   usageInfo: ProviderUsageInfo | undefined,
-  _providerId = usageInfo?.providerId,
+  providerId = usageInfo?.providerId,
 ): QuotaCategory[] {
+  if (providerId === "cursor") return [];
   return (
     usageInfo?.quotaCategories
       .filter((category) => !category.isUnlimited)
@@ -246,6 +248,7 @@ export function formatThreadOverviewUsage(
   usageInfo: ProviderUsageInfo | undefined,
   providerId = usageInfo?.providerId,
 ): string | null {
+  if (providerId === "cursor") return null;
   const categories = getThreadOverviewUsageCategories(usageInfo, providerId);
   const costSummary = formatThreadOverviewSessionCost(usageInfo);
 
@@ -259,13 +262,22 @@ export function formatThreadOverviewUsage(
       .join(", ")
     : null;
 
-  return [quotaSummary, costSummary].filter(Boolean).join(", ") || null;
+  const statusSummary = (() => {
+    if (quotaSummary || costSummary) return null;
+    if (usageInfo?.usageStatus === "ready-empty") return "No capped quota";
+    if (usageInfo?.usageStatus === "unsupported") return "Usage not supported";
+    if (usageInfo?.usageStatus === "unavailable") return "Usage unavailable";
+    return null;
+  })();
+
+  return [quotaSummary, costSummary, statusSummary].filter(Boolean).join(", ") || null;
 }
 
 interface ThreadOverviewUsageBarsProps {
   categories: QuotaCategory[];
   summary: string;
   sessionCostSummary: string | null;
+  usageStatus?: ProviderUsageInfo["usageStatus"];
 }
 
 const THREAD_OVERVIEW_USAGE_DETAILS_ID = "thread-overview-usage-details-panel";
@@ -275,6 +287,7 @@ function ThreadOverviewUsageBars({
   categories,
   summary,
   sessionCostSummary,
+  usageStatus,
 }: ThreadOverviewUsageBarsProps) {
   const [open, setOpen] = useState(true);
 
@@ -346,6 +359,10 @@ function ThreadOverviewUsageBars({
             const rounded = Math.round(percent);
             const shortLabel = usageCategoryShortLabel(category.label);
             const displayLabel = category.label.trim();
+            const resetText = formatUsageResetText(category.resetDate);
+            const progressDescription = resetText
+              ? `${shortLabel} usage ${rounded} percent. ${resetText}`
+              : `${shortLabel} usage ${rounded} percent`;
             return (
               <div key={category.label} className="space-y-1">
                 <div className="flex items-baseline justify-between gap-3">
@@ -356,7 +373,7 @@ function ThreadOverviewUsageBars({
                 </div>
                 <div
                   role="progressbar"
-                  aria-label={`${shortLabel} usage`}
+                  aria-label={progressDescription}
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-valuenow={rounded}
@@ -371,9 +388,19 @@ function ThreadOverviewUsageBars({
                     style={{ width: `${percent}%` }}
                   />
                 </div>
+                {resetText ? (
+                  <div className="font-mono text-xs tabular-nums text-muted-foreground/70">
+                    {resetText}
+                  </div>
+                ) : null}
               </div>
             );
           })}
+          {usageStatus === "stale" ? (
+            <div className="font-mono text-xs text-muted-foreground/70">
+              Stale usage
+            </div>
+          ) : null}
           {sessionCostSummary ? (
             <div className="flex items-baseline justify-between gap-3 pt-0.5">
               <span className="min-w-0 truncate text-xs text-foreground/80">Session cost</span>
@@ -1966,6 +1993,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 categories={usageCategories}
                 summary={usageSummary}
                 sessionCostSummary={sessionCostSummary}
+                usageStatus={usageInfo?.usageStatus}
               />
             )}
 

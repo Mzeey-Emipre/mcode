@@ -8,6 +8,8 @@ import { getDefaultSettings } from "@mcode/contracts";
 
 const MOCK_SETTINGS = getDefaultSettings();
 const now = new Date().toISOString();
+const fiveHourReset = new Date(Date.now() + 2 * 60 * 60_000 + 14 * 60_000).toISOString();
+const weeklyReset = new Date(Date.now() + 4 * 24 * 60 * 60_000 + 6 * 60 * 60_000).toISOString();
 const WS_ID = "ws-1";
 
 const workspace = {
@@ -66,12 +68,15 @@ const openPr = {
 
 const usage = {
   providerId: "claude",
+  usageStatus: "ready",
+  fetchedAt: now,
   quotaCategories: [
     {
       label: "5-hour limit",
       used: 12,
       total: 100,
       remainingPercent: 0.88,
+      resetDate: fiveHourReset,
       isUnlimited: false,
     },
     {
@@ -79,6 +84,7 @@ const usage = {
       used: 47,
       total: 100,
       remainingPercent: 0.53,
+      resetDate: weeklyReset,
       isUnlimited: false,
     },
   ],
@@ -355,20 +361,22 @@ test.describe("Consolidated chat header", () => {
     );
     await expect(page.getByTestId("thread-overview-usage")).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByTestId("thread-overview-usage")).not.toContainText("5-hour 12%, weekly 47%");
-    await expect(page.getByRole("progressbar", { name: "5-hour usage" })).toHaveAttribute(
+    await expect(page.getByRole("progressbar", { name: /5-hour usage 12 percent\. Resets in/ })).toHaveAttribute(
       "aria-valuenow",
       "12",
     );
-    await expect(page.getByRole("progressbar", { name: "weekly usage" })).toHaveAttribute(
+    await expect(page.getByRole("progressbar", { name: /weekly usage 47 percent\. Resets in/ })).toHaveAttribute(
       "aria-valuenow",
       "47",
     );
+    await expect(page.getByText(/Resets in/)).toHaveCount(2);
     await expect(page.getByText("usage unavailable")).toHaveCount(0);
     await expect(page.getByTestId("thread-overview-usage-popover")).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-create-pr")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-commit")).toHaveCount(0);
     await expect(page.getByTestId("thread-overview-sources")).toHaveCount(0);
     await expect(page.locator(".animate-overview-enter").first()).toBeVisible();
+    await page.screenshot({ path: "e2e/screenshots/thread-overview-usage-ready-1440.png", fullPage: true });
 
     await expect(page.getByTestId("thread-overview-local")).toContainText("Worktree");
     await expect(page.getByTestId("thread-overview-repository")).toContainText(
@@ -484,6 +492,243 @@ test.describe("Consolidated chat header", () => {
       .evaluate((node) => getComputedStyle(node).paddingRight);
 
     expect(messageAreaPaddingRight).toBe("0px");
+  });
+});
+
+test.describe("Consolidated chat header usage states", () => {
+  for (const providerId of ["claude", "codex", "copilot"] as const) {
+    test(`renders ${providerId} current-user usage limits with reset text`, async ({ page }) => {
+      const providerThread = {
+        ...thread,
+        id: `thread-${providerId}`,
+        provider: providerId,
+        model: `${providerId}-test-model`,
+      };
+      const providerUsage = {
+        ...usage,
+        providerId,
+      };
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.addInitScript((wsId: string) => {
+        localStorage.setItem(
+          "mcode-expanded-projects",
+          JSON.stringify({ [wsId]: true }),
+        );
+      }, WS_ID);
+      await mockWebSocketServer(page, {
+        "workspace.list": [workspace],
+        "workspace.enrich": { items: [] },
+        "workspace.touchLastOpened": null,
+        "thread.list": [providerThread],
+        "settings.get": MOCK_SETTINGS,
+        "provider.getUsage": providerUsage,
+        "github.branchPr": null,
+        "git.log": [gitCommit],
+        "snapshot.listByThread": [{ ...snapshot, thread_id: providerThread.id }],
+        "snapshot.getDiffStats": [],
+        "git.listBranches": branches,
+        "git.getRemoteUrl": {
+          label: "Mzeey-Empire/mcode",
+          webUrl: "https://github.com/Mzeey-Empire/mcode",
+        },
+        "git.workingTreeFiles": [],
+      });
+
+      await page.goto("/");
+      await page.waitForSelector("[data-testid='thread-item']");
+      await page.locator("[data-testid='thread-item']").first().click();
+      await page.waitForSelector("[data-testid='chat-header-title']");
+      await ensureOverviewOpen(page);
+
+      await expect(page.getByTestId("thread-overview-usage")).toHaveAttribute(
+        "aria-label",
+        "Usage, 5-hour 12%, weekly 47%",
+      );
+      await expect(page.getByRole("progressbar", { name: /5-hour usage 12 percent\. Resets in/ })).toBeVisible();
+      await expect(page.getByRole("progressbar", { name: /weekly usage 47 percent\. Resets in/ })).toBeVisible();
+      await expect(page.getByText(/Resets in/)).toHaveCount(2);
+      await page.screenshot({
+        path: `e2e/screenshots/thread-overview-usage-${providerId}-ready.png`,
+        fullPage: true,
+      });
+    });
+  }
+
+  test("excludes Cursor admin usage from current-user Overview limits", async ({ page }) => {
+    const cursorThread = {
+      ...thread,
+      id: "thread-cursor",
+      provider: "cursor",
+      model: "cursor-test-model",
+    };
+    const cursorUsage = {
+      providerId: "cursor",
+      usageStatus: "ready",
+      fetchedAt: now,
+      quotaCategories: [
+        {
+          label: "API usage",
+          used: 63,
+          total: 100,
+          remainingPercent: 0.37,
+          resetDate: fiveHourReset,
+          isUnlimited: false,
+        },
+        {
+          label: "Auto and Composer",
+          used: 21,
+          total: 100,
+          remainingPercent: 0.79,
+          resetDate: weeklyReset,
+          isUnlimited: false,
+        },
+      ],
+    };
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript((wsId: string) => {
+      localStorage.setItem(
+        "mcode-expanded-projects",
+        JSON.stringify({ [wsId]: true }),
+      );
+    }, WS_ID);
+    await mockWebSocketServer(page, {
+      "workspace.list": [workspace],
+      "workspace.enrich": { items: [] },
+      "workspace.touchLastOpened": null,
+      "thread.list": [cursorThread],
+      "settings.get": MOCK_SETTINGS,
+      "provider.getUsage": cursorUsage,
+      "github.branchPr": null,
+      "git.log": [gitCommit],
+      "snapshot.listByThread": [{ ...snapshot, thread_id: cursorThread.id }],
+      "snapshot.getDiffStats": [],
+      "git.listBranches": branches,
+      "git.getRemoteUrl": {
+        label: "Mzeey-Empire/mcode",
+        webUrl: "https://github.com/Mzeey-Empire/mcode",
+      },
+      "git.workingTreeFiles": [],
+    });
+
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='thread-item']");
+    await page.locator("[data-testid='thread-item']").first().click();
+    await page.waitForSelector("[data-testid='chat-header-title']");
+    await ensureOverviewOpen(page);
+
+    await expect(page.getByTestId("thread-overview-usage")).toHaveCount(0);
+    await expect(page.getByText("API usage")).toHaveCount(0);
+    await expect(page.getByText("Auto and Composer")).toHaveCount(0);
+    await page.screenshot({
+      path: "e2e/screenshots/thread-overview-usage-cursor-excluded.png",
+      fullPage: true,
+    });
+  });
+
+  test("keeps stale provider usage visible across desktop and narrow layouts", async ({ page }) => {
+    const consoleErrors: string[] = [];
+    let usageCalls = 0;
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript((wsId: string) => {
+      localStorage.setItem(
+        "mcode-expanded-projects",
+        JSON.stringify({ [wsId]: true }),
+      );
+    }, WS_ID);
+    await mockWebSocketServer(page, {
+      "workspace.list": [workspace],
+      "workspace.enrich": { items: [] },
+      "workspace.touchLastOpened": null,
+      "thread.list": [thread],
+      "settings.get": MOCK_SETTINGS,
+      "provider.getUsage": () => {
+        usageCalls += 1;
+        if (usageCalls === 1) return usage;
+        throw new Error("usage provider unavailable");
+      },
+      "github.branchPr": null,
+      "git.log": [gitCommit],
+      "snapshot.listByThread": [snapshot],
+      "snapshot.getDiffStats": [],
+      "git.listBranches": branches,
+      "git.getRemoteUrl": {
+        label: "Mzeey-Empire/mcode",
+        webUrl: "https://github.com/Mzeey-Empire/mcode",
+      },
+      "git.workingTreeFiles": [],
+    });
+
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='thread-item']");
+    await page.locator("[data-testid='thread-item']").first().click();
+    await page.waitForSelector("[data-testid='chat-header-title']");
+    await ensureOverviewOpen(page);
+    await expect(page.getByTestId("thread-overview-usage")).toBeVisible();
+    await expect(page.getByText("Stale usage")).toHaveCount(0);
+    await page.screenshot({ path: "e2e/screenshots/thread-overview-usage-ready-desktop.png", fullPage: true });
+
+    await page.getByTestId("header-workspace-menu").click();
+    await expect(overviewContent(page)).toBeHidden();
+    await page.getByTestId("header-workspace-menu").click();
+    await expect(page.getByTestId("thread-overview-usage")).toBeVisible();
+    await expect(page.getByText("Stale usage")).toBeVisible();
+    await expect(page.getByRole("progressbar", { name: /5-hour usage 12 percent\. Resets in/ })).toBeVisible();
+    await page.screenshot({ path: "e2e/screenshots/thread-overview-usage-stale-desktop.png", fullPage: true });
+
+    await page.setViewportSize({ width: 420, height: 900 });
+    if (!(await overviewContent(page).isVisible().catch(() => false))) {
+      await page.getByTestId("header-workspace-menu").click();
+    }
+    await expect(page.getByTestId("thread-overview-usage")).toBeVisible();
+    await expect(page.getByText("Stale usage")).toBeVisible();
+    await expect(page.getByTestId("thread-overview-body")).toHaveJSProperty("scrollWidth", await page.getByTestId("thread-overview-body").evaluate((node) => node.clientWidth));
+    await page.screenshot({ path: "e2e/screenshots/thread-overview-usage-stale-narrow.png", fullPage: true });
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("hides the Overview usage row on first-refresh unavailable state in a narrow layout", async ({ page }) => {
+    let usageCalls = 0;
+    await page.setViewportSize({ width: 420, height: 900 });
+    await page.addInitScript((wsId: string) => {
+      localStorage.setItem(
+        "mcode-expanded-projects",
+        JSON.stringify({ [wsId]: true }),
+      );
+    }, WS_ID);
+    await mockWebSocketServer(page, {
+      "workspace.list": [workspace],
+      "workspace.enrich": { items: [] },
+      "workspace.touchLastOpened": null,
+      "thread.list": [thread],
+      "settings.get": MOCK_SETTINGS,
+      "provider.getUsage": () => {
+        usageCalls += 1;
+        throw new Error("usage provider unavailable");
+      },
+      "github.branchPr": null,
+      "git.log": [gitCommit],
+      "snapshot.listByThread": [snapshot],
+      "snapshot.getDiffStats": [],
+      "git.listBranches": branches,
+      "git.getRemoteUrl": {
+        label: "Mzeey-Empire/mcode",
+        webUrl: "https://github.com/Mzeey-Empire/mcode",
+      },
+      "git.workingTreeFiles": [],
+    });
+
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='thread-item']");
+    await page.locator("[data-testid='thread-item']").first().click();
+    await page.waitForSelector("[data-testid='chat-header-title']");
+    await ensureOverviewOpen(page);
+    await expect.poll(() => usageCalls).toBeGreaterThan(0);
+    await expect(page.getByTestId("thread-overview-usage")).toHaveCount(0);
+    await page.screenshot({ path: "e2e/screenshots/thread-overview-usage-unavailable-narrow.png", fullPage: true });
   });
 });
 
