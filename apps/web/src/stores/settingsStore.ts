@@ -124,10 +124,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const genAtStart = updateGeneration;
     try {
       const transport = getTransport();
-      const settings = await transport.getSettings();
+      const rawSettings = await transport.getSettings();
+      const parsed = SettingsSchema().safeParse(rawSettings);
+      if (!parsed.success) {
+        set({ loaded: true });
+        return;
+      }
       // Discard if an update resolved while this fetch was in flight.
       if (updateGeneration === genAtStart) {
-        set({ settings, loaded: true });
+        set({ settings: parsed.data, loaded: true });
       }
     } catch {
       // Degrade gracefully to defaults; loaded stays false so a retry can happen.

@@ -114,6 +114,44 @@ describe("filter logic", () => {
     expect(names).not.toContain("commit");
   });
 
+  it("caps rendered command options at 100 and keeps selection in range", async () => {
+    const manySkills = Array.from({ length: 150 }, (_, index) => ({
+      name: `skill-${String(index).padStart(3, "0")}`,
+      description: `Skill ${index}`,
+    }));
+    vi.mocked(getTransport).mockReturnValue({
+      listSkills: vi.fn().mockResolvedValue(manySkills),
+    } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, includeBuiltins: false })
+    );
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.items).toHaveLength(100);
+    for (let i = 0; i < 120; i++) {
+      await act(async () => {
+        result.current.onKeyDown({
+          key: "ArrowDown",
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        } as unknown as React.KeyboardEvent);
+      });
+    }
+    expect(result.current.selectedIndex).toBe(99);
+
+    let inserted = "";
+    await act(async () => {
+      result.current.onSelect(result.current.items[result.current.selectedIndex], (next) => {
+        inserted = next;
+      });
+    });
+    expect(inserted).toBe("/skill-099 ");
+  });
+
   it("matches mcode commands by name without 'm:' prefix in filter", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -455,6 +493,109 @@ describe("popup state machine", () => {
       const names = result.current.state.items.map((i) => i.name);
       expect(names).toContain("commit");
     }
+  });
+});
+
+describe("includeBuiltins: false", () => {
+  it("excludes all BUILTIN_COMMANDS when includeBuiltins is false", async () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, includeBuiltins: false })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    const names = result.current.allCommands.map((c) => c.name);
+    // Builtins that MUST be absent
+    expect(names).not.toContain("m:plan");
+    expect(names).not.toContain("compact");
+    expect(names).not.toContain("goal");
+  });
+
+  it("retains skills from the store when includeBuiltins is false", async () => {
+    const mockListSkills = vi.fn().mockResolvedValue([
+      { name: "commit", description: "Create a git commit" },
+      { name: "review-pr", description: "Review a PR" },
+    ]);
+    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, includeBuiltins: false })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    const names = result.current.allCommands.map((c) => c.name);
+    expect(names).toContain("commit");
+    expect(names).toContain("review-pr");
+  });
+
+  it("retains plugin-namespaced skills when includeBuiltins is false", async () => {
+    const mockListSkills = vi.fn().mockResolvedValue([
+      { name: "superpowers:pm", description: "Project manager", source: "plugin" },
+    ]);
+    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, includeBuiltins: false })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    const cmd = result.current.allCommands.find((c) => c.name === "superpowers:pm");
+    expect(cmd).toBeDefined();
+    expect(cmd?.namespace).toBe("plugin");
+  });
+
+  it("retains kind==='command' user skills when includeBuiltins is false", async () => {
+    const mockListSkills = vi.fn().mockResolvedValue([
+      { name: "my-custom", description: "My custom command", kind: "command" },
+    ]);
+    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, includeBuiltins: false })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    const cmd = result.current.allCommands.find((c) => c.name === "my-custom");
+    expect(cmd).toBeDefined();
+    // kind==="command" maps to "command" namespace, not "mcode"
+    expect(cmd?.namespace).toBe("command");
+  });
+
+  it("still shows the popup when includeBuiltins is false but skills exist", async () => {
+    const mockListSkills = vi.fn().mockResolvedValue([
+      { name: "commit", description: "Create a git commit" },
+    ]);
+    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, includeBuiltins: false })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.state.kind).toBe("ready");
+  });
+
+  it("includeBuiltins defaults to true when omitted", async () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref })
+    );
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    const names = result.current.allCommands.map((c) => c.name);
+    // At minimum, compact is always available (all providers)
+    expect(names).toContain("compact");
   });
 });
 

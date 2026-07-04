@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { Terminal, Zap, Puzzle, Sparkles, RefreshCw } from "lucide-react";
 import { NAMESPACE_BADGE_STYLES } from "@/lib/slash-command-styles";
 import type { Command, PopupState } from "./useSlashCommand";
+import { computeFixedPopupPosition } from "./popup-position";
 
 const ITEM_HEIGHT = 44; // px per row
 const VISIBLE_ITEMS = 8;
@@ -20,6 +22,17 @@ interface SlashCommandPopupProps {
   onSelect: (cmd: Command) => void;
   onDismiss: () => void;
   onRetry: () => void;
+  /**
+   * `"dark"` switches every surface, text, hover, and border token to dark
+   * hardcoded values so the popup coheres with the annotation bubble's
+   * intentionally dark palette (which must stay readable over arbitrary user
+   * web content regardless of the app theme). `"default"` (the default) leaves
+   * the Tailwind theme tokens untouched so the Composer's rendering is
+   * byte-identical to before this prop was added.
+   */
+  tone?: "default" | "dark";
+  /** Extra class names for border/positioning overrides that don't belong in tone. */
+  className?: string;
 }
 
 /**
@@ -37,6 +50,8 @@ export function SlashCommandPopup({
   onSelect,
   onDismiss,
   onRetry,
+  tone = "default",
+  className,
 }: SlashCommandPopupProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -78,19 +93,13 @@ export function SlashCommandPopup({
   const estimatedHeight =
     Math.min(items.length, VISIBLE_ITEMS) * ITEM_HEIGHT +
     (willRenderList ? FOOTER_HEIGHT : 0);
-  const spaceAbove = anchorRect.top;
-  const placeAbove = spaceAbove > estimatedHeight + 8;
+  const style = computeFixedPopupPosition({
+    anchorRect,
+    estimatedHeight,
+    minWidth: 320,
+  });
 
-  const style: React.CSSProperties = {
-    position: "fixed",
-    left: anchorRect.left,
-    width: Math.max(anchorRect.width, 320),
-    ...(placeAbove
-      ? { bottom: window.innerHeight - anchorRect.top + 4 }
-      : { top: anchorRect.bottom + 4 }),
-  };
-
-  return (
+  const popup = (
     // role="listbox" is intentionally NOT on this outer wrapper: the
     // Refresh footer button and the ErrorRow's Retry button live inside
     // and would be invalid descendants of a listbox per WAI-ARIA. The
@@ -99,8 +108,12 @@ export function SlashCommandPopup({
       data-slash-popup
       style={style}
       className={cn(
-        "z-50 overflow-hidden rounded-lg border border-border bg-card shadow-lg",
+        "z-50 overflow-hidden rounded-lg border shadow-lg",
         "animate-in fade-in-0 zoom-in-95 duration-[120ms]",
+        tone === "dark"
+          ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
+          : "border-border bg-card",
+        className,
       )}
     >
       {/*
@@ -120,7 +133,7 @@ export function SlashCommandPopup({
       {(() => {
         switch (state.kind) {
           case "error":
-            return <ErrorRow message={state.error.message} onRetry={onRetry} />;
+            return <ErrorRow message={state.error.message} onRetry={onRetry} tone={tone} />;
           case "ready":
           case "staleRevalidating":
             return (
@@ -138,11 +151,15 @@ export function SlashCommandPopup({
                         cmd={cmd}
                         selected={i === selectedIndex}
                         onSelect={onSelect}
+                        tone={tone}
                       />
                     </div>
                   ))}
                 </div>
-                <div className="flex items-center justify-end border-t border-border px-2 py-1">
+                <div className={cn(
+                  "flex items-center justify-end border-t px-2 py-1",
+                  tone === "dark" ? "border-white/[0.08]" : "border-border",
+                )}>
                   <button
                     type="button"
                     aria-label="Refresh commands"
@@ -150,7 +167,12 @@ export function SlashCommandPopup({
                     // onClick fires on both pointer and keyboard activation (Enter/Space).
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={onRetry}
-                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    className={cn(
+                      "rounded p-1",
+                      tone === "dark"
+                        ? "text-neutral-400 hover:bg-white/10 hover:text-neutral-100"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                    )}
                   >
                     <RefreshCw size={12} />
                   </button>
@@ -158,23 +180,26 @@ export function SlashCommandPopup({
               </>
             );
           case "loading":
-            return <LoadingInline />;
+            return <LoadingInline tone={tone} />;
           case "empty":
-            return <EmptyState />;
+            return <EmptyState tone={tone} />;
         }
       })()}
     </div>
   );
+  return createPortal(popup, document.body);
 }
 
 function CommandRow({
   cmd,
   selected,
   onSelect,
+  tone = "default",
 }: {
   cmd: Command;
   selected: boolean;
   onSelect: (cmd: Command) => void;
+  tone?: "default" | "dark";
 }) {
   return (
     <button
@@ -188,13 +213,20 @@ function CommandRow({
       }}
       className={cn(
         "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors",
-        selected
-          ? "bg-accent"
-          : "hover:bg-accent/50",
+        tone === "dark"
+          ? selected
+            ? "bg-white/[0.12]"
+            : "hover:bg-white/[0.06]"
+          : selected
+            ? "bg-accent"
+            : "hover:bg-accent/50",
       )}
     >
       {/* Icon column */}
-      <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center text-muted-foreground">
+      <span className={cn(
+        "flex h-5 w-5 flex-shrink-0 items-center justify-center",
+        tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
+      )}>
         {cmd.namespace === "mcode" ? (
           <Zap size={12} />
         ) : cmd.namespace === "plugin" ? (
@@ -208,10 +240,16 @@ function CommandRow({
 
       {/* Name + description */}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-medium text-foreground">
+        <span className={cn(
+          "truncate text-sm font-medium",
+          tone === "dark" ? "text-neutral-50" : "text-foreground",
+        )}>
           /{cmd.name}
         </span>
-        <span className="truncate text-xs text-muted-foreground">
+        <span className={cn(
+          "truncate text-xs",
+          tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
+        )}>
           {cmd.description}
         </span>
       </span>
@@ -238,7 +276,7 @@ function CommandRow({
  * the user has typed a filter that excludes every cached built-in AND a
  * skill load is still in flight -- an exceedingly rare combination.
  */
-function LoadingInline() {
+function LoadingInline({ tone = "default" }: { tone?: "default" | "dark" }) {
   return (
     <div
       aria-busy="true"
@@ -247,21 +285,35 @@ function LoadingInline() {
       className="flex items-center gap-3 px-3 py-2"
     >
       <span className="flex h-5 w-5 flex-shrink-0" />
-      <span className="text-sm text-muted-foreground">Loading commands...</span>
+      <span className={cn(
+        "text-sm",
+        tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
+      )}>Loading commands...</span>
     </div>
   );
 }
 
-function EmptyState() {
+function EmptyState({ tone = "default" }: { tone?: "default" | "dark" }) {
   return (
     <div aria-live="polite" role="status" className="flex items-center gap-3 px-3 py-2">
-      <span className="flex h-5 w-5 flex-shrink-0" /> {/* icon placeholder */}
-      <span className="text-sm text-muted-foreground">No commands match</span>
+      <span className="flex h-5 w-5 flex-shrink-0" />
+      <span className={cn(
+        "text-sm",
+        tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
+      )}>No commands match</span>
     </div>
   );
 }
 
-function ErrorRow({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorRow({
+  message,
+  onRetry,
+  tone = "default",
+}: {
+  message: string;
+  onRetry: () => void;
+  tone?: "default" | "dark";
+}) {
   return (
     <div role="alert" className="flex items-center gap-2 px-3 py-2 text-xs text-destructive">
       <span className="flex-1 truncate">Couldn't load commands: {message}</span>
@@ -271,7 +323,12 @@ function ErrorRow({ message, onRetry }: { message: string; onRetry: () => void }
         // mousedown to retain editor focus, action on click for keyboard a11y.
         onMouseDown={(e) => e.preventDefault()}
         onClick={onRetry}
-        className="rounded px-2 py-0.5 text-foreground hover:bg-accent"
+        className={cn(
+          "rounded px-2 py-0.5",
+          tone === "dark"
+            ? "text-neutral-100 hover:bg-white/10"
+            : "text-foreground hover:bg-accent",
+        )}
       >
         Retry
       </button>

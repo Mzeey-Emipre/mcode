@@ -60,6 +60,17 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useSlashCommand } from "@/components/chat/useSlashCommand";
+import { SlashCommandPopup } from "@/components/chat/SlashCommandPopup";
+import type { Command } from "@/components/chat/useSlashCommand";
+import { useFileAutocomplete } from "@/components/chat/useFileAutocomplete";
+import {
+  FileTagPopup,
+  useFileTagPopup,
+} from "@/components/chat/FileTagPopup";
+import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceThread } from "@/stores/workspace-selectors";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -73,6 +84,18 @@ const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
 const CAPTURE_CONFIRMATION_DURATION_MS = 2200;
 const ANNOTATION_BUBBLE_MAX_WIDTH_PX = 336;
 const ANNOTATION_BUBBLE_MARGIN_PX = 8;
+
+// ---------------------------------------------------------------------------
+// Annotation bubble dark palette
+// Hardcoded dark values intentional: the bubble floats over arbitrary user
+// web content in the preview, so theme tokens (which go light in light mode)
+// would make text unreadable. These two values must stay in sync with the
+// tooltip, advanced panel, and any autocomplete popups adjacent to the bubble.
+// ---------------------------------------------------------------------------
+/** Primary bubble surface used on the main row and the inspector panel. */
+const BUBBLE_SURFACE = "#282828";
+/** Inset/footer surface inside the bubble, slightly darker for depth. */
+const BUBBLE_SURFACE_INSET = "#202020";
 
 type VisualProposalKey = keyof PreviewAnnotationVisualProposal;
 type ColorVisualProposalKey = Extract<
@@ -1205,8 +1228,109 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     Partial<Record<ColorVisualProposalKey, ColorFormat>>
   >({});
   const [outsideWarned, setOutsideWarned] = useState(false);
+  // Tracks whether the note input inside the bubble has focus so we can show
+  // a subtle ring on the bubble container itself instead of an inner ring on
+  // the input (which would conflict with the dark background).
+  const [bubbleInputFocused, setBubbleInputFocused] = useState(false);
   const bubbleRef = useRef<HTMLDivElement | null>(null);
   const bubbleNoteInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Resolve provider + workspace path from the thread row so the autocomplete
+  // hooks can load skills scoped to the same context as the Composer.
+  const activeThread = useWorkspaceThread(threadId, (t) => t);
+  const providerId = (activeThread?.provider ?? undefined) as string | undefined;
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
+
+  // Slash-command autocomplete for the bubble. Builtins are excluded because
+  // mcode app-level actions (m:plan, compact, goal) have no meaning inside an
+  // annotation comment because they target the Composer's thread, not the bubble.
+  const bubbleSlashCommand = useSlashCommand({
+    anchorRef: bubbleNoteInputRef as React.RefObject<HTMLElement | null>,
+    cwd: workspacePath,
+    providerId,
+    includeBuiltins: false,
+  });
+  const {
+    isOpen: bubbleSlashOpen,
+    state: bubbleSlashState,
+    items: bubbleSlashItems,
+    selectedIndex: bubbleSlashSelectedIndex,
+    anchorRect: bubbleSlashAnchorRect,
+    onInputChange: onBubbleSlashInputChange,
+    onKeyDown: onBubbleSlashKeyDown,
+    onSelect: onBubbleSlashSelect,
+    onDismiss: dismissBubbleSlash,
+    onRetry: retryBubbleSlash,
+  } = bubbleSlashCommand;
+
+  // @ file/agent autocomplete for the bubble. Mirrors the Composer's setup;
+  // agents only appear when the provider is codex (same gate as Composer).
+  const bubbleFileAutocomplete = useFileAutocomplete({
+    workspaceId: workspaceId ?? undefined,
+    threadId,
+    providerId,
+  });
+  const {
+    suggestions: bubbleFileSuggestions,
+    query: bubbleFileQuery,
+    isOpen: bubbleFileOpen,
+    triggerStart: bubbleFileTriggerStart,
+    handleInputChange: onBubbleFileInputChange,
+    selectSuggestion: selectBubbleFileSuggestion,
+    dismiss: dismissBubbleFile,
+  } = bubbleFileAutocomplete;
+
+  const handleBubbleMentionSelect = useCallback(
+    (item: MentionSuggestion) => {
+      selectBubbleFileSuggestion(item);
+      const input = bubbleNoteInputRef.current;
+      if (!input) return;
+      const cursor = input.selectionStart ?? bubbleNote.length;
+      const text = bubbleNote;
+      // Insert `@<label> ` replacing the typed fragment from the @ trigger to
+      // the cursor. This matches the text form Lexical serializes for MentionNode
+      // (`@${label}`) so the agent-side parser sees identical content.
+      const before = text.slice(0, bubbleFileTriggerStart);
+      const after = text.slice(cursor);
+      const inserted = `@${item.label} `;
+      const next = before + inserted + after;
+      // Enforce the maxLength cap before updating state.
+      if (next.length <= 4000) {
+        setBubbleNote(next);
+        setOutsideWarned(false);
+        // Restore cursor after state update (one frame later via rAF).
+        const nextCursor = before.length + inserted.length;
+        window.requestAnimationFrame(() => {
+          if (!bubbleNoteInputRef.current) return;
+          bubbleNoteInputRef.current.setSelectionRange(nextCursor, nextCursor);
+        });
+      }
+    },
+    [bubbleFileTriggerStart, bubbleNote, selectBubbleFileSuggestion],
+  );
+
+  const bubbleFilePopup = useFileTagPopup({
+    items: bubbleFileSuggestions,
+    query: bubbleFileQuery,
+    isOpen: bubbleFileOpen,
+    onSelect: handleBubbleMentionSelect,
+    onDismiss: dismissBubbleFile,
+  });
+
+  // Capture the anchor rect when the file popup opens rather than reading it
+  // on every render. The bubble can shift (advanced panel expand, scroll) after
+  // open, but the popup should stay pinned to where the input was when the
+  // trigger fired, consistent with SlashCommandPopup's anchorRect behavior.
+  const [filePopupAnchorRect, setFilePopupAnchorRect] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    if (bubbleFileOpen) {
+      setFilePopupAnchorRect(bubbleNoteInputRef.current?.getBoundingClientRect() ?? null);
+    } else {
+      setFilePopupAnchorRect(null);
+    }
+  }, [bubbleFileOpen]);
+
   const omniboxFocusTick = usePreviewFocusStore((s) => s.omniboxFocusTick);
   const previewRenderingEngine = useSettingsStore(
     (s) => s.settings.preview.rendering.engine,
@@ -1517,7 +1641,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     setEditingAnnotationId(null);
     setBubbleAdvancedOpen(false);
     setOutsideWarned(false);
-  }, [threadId]);
+    // Dismiss any open autocomplete popups so they don't linger after the
+    // bubble closes (the hooks' own Escape handling only fires while the input
+    // has focus, which it loses when the bubble unmounts).
+    dismissBubbleSlash();
+    dismissBubbleFile();
+  }, [threadId, dismissBubbleSlash, dismissBubbleFile]);
 
   const requestOutsideBubbleDiscard = useCallback((): void => {
     if (!openBubbleBase) return;
@@ -1606,6 +1735,21 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       ) {
         return;
       }
+      // Exempt the fixed-position slash-command popup because it renders outside the
+      // bubble DOM so bubbleRef.contains() misses it, but a click on it should
+      // not count as "clicking outside" the bubble.
+      if (target instanceof Element && target.closest("[data-slash-popup]")) {
+        return;
+      }
+      // Exempt the file-tag popup because it also renders fixed/outside the bubble
+      // DOM when anchorRect is provided, so bubbleRef.contains() misses it.
+      if (target instanceof Element && target.closest("[data-file-popup]")) {
+        return;
+      }
+      // Legacy guard for data-file-item in case any row escapes the popup wrapper.
+      if (target instanceof Element && target.closest("[data-file-item]")) {
+        return;
+      }
       requestOutsideBubbleDiscard();
     };
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -1616,6 +1760,19 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const clearTransientAnnotationState = closeOpenAnnotationBubble;
 
   const handleDesignEscape = useCallback((): void => {
+    // When an inline autocomplete popup is open inside the bubble (slash
+    // command or file mention), Escape must close only that popup, not the
+    // bubble itself. The document capture listener fires before the input's
+    // React synthetic handler, so we intercept here. Dismissing the popup
+    // and returning prevents the capture listener from also closing the bubble.
+    if (bubbleSlashOpen) {
+      dismissBubbleSlash();
+      return;
+    }
+    if (bubbleFileOpen) {
+      dismissBubbleFile();
+      return;
+    }
     if (hasOpenBubble) {
       closeOpenAnnotationBubble();
       return;
@@ -1624,8 +1781,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     designModeSetActive(threadId, false);
     void window.desktopBridge?.preview?.cancelCapture();
   }, [
+    bubbleSlashOpen,
+    bubbleFileOpen,
     closeOpenAnnotationBubble,
     designModeSetActive,
+    dismissBubbleSlash,
+    dismissBubbleFile,
     hasOpenBubble,
     threadId,
   ]);
@@ -1788,6 +1949,44 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const onBubbleNoteKeyDown = (
     event: ReactKeyboardEvent<HTMLInputElement>,
   ): void => {
+    // When either autocomplete popup is open, delegate navigation keys to it
+    // before falling through to the save logic. Escape must close the popup
+    // only. It must NOT close/discard the bubble itself.
+    if (bubbleFileOpen) {
+      const handled = bubbleFilePopup.handleKeyDown(event);
+      if (handled) return;
+    }
+
+    if (bubbleSlashOpen) {
+      // Arrow + Escape are handled by the hook's own onKeyDown.
+      onBubbleSlashKeyDown(event);
+      if (event.isDefaultPrevented()) return;
+
+      // Enter/Tab select the highlighted command.
+      if (event.key === "Enter" || event.key === "Tab") {
+        const cmd = bubbleSlashItems[bubbleSlashSelectedIndex];
+        if (cmd) {
+          event.preventDefault();
+          event.stopPropagation();
+          onBubbleSlashSelect(cmd, (next) => {
+            if (next.length <= 4000) {
+              setBubbleNote(next);
+              setOutsideWarned(false);
+              // Restore cursor after the slash trigger + command name.
+              const input = bubbleNoteInputRef.current;
+              if (input) {
+                window.requestAnimationFrame(() => {
+                  input.setSelectionRange(next.length, next.length);
+                });
+              }
+            }
+          });
+          return;
+        }
+      }
+      return;
+    }
+
     if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
     event.preventDefault();
     event.stopPropagation();
@@ -2008,8 +2207,15 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               <TooltipContent
                 side="top"
                 sideOffset={8}
-                className="max-w-72 flex-col items-start gap-1.5 rounded-lg border border-white/10 bg-[#262626] px-3 py-2 text-neutral-100 shadow-xl"
-                arrowClassName="bg-[#262626] fill-[#262626]"
+                className="max-w-72 flex-col items-start gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-neutral-100 shadow-xl"
+                style={
+                  {
+                    backgroundColor: BUBBLE_SURFACE_INSET,
+                    // Arrow color is set via CSS variable on this element
+                    "--tooltip-arrow-bg": BUBBLE_SURFACE_INSET,
+                  } as React.CSSProperties
+                }
+                arrowClassName="fill-[#202020]"
               >
                 <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs text-neutral-300">
                   {targetLabel}
@@ -2059,16 +2265,25 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             ref={bubbleRef}
             data-testid="preview-annotation-bubble"
             className={cn(
-              "absolute z-30 w-[min(20.5rem,calc(100%-1rem))] overflow-hidden rounded-[1.55rem] border bg-[#282828] text-neutral-50 shadow-xl ring-1 ring-black/20",
+              // overflow-hidden clips the rounded corners against child backgrounds;
+              // the bubble is intentionally dark (BUBBLE_SURFACE) so it stays
+              // readable over any user webpage regardless of the app theme.
+              "absolute z-30 w-[min(20.5rem,calc(100%-1rem))] overflow-hidden rounded-[1.55rem] border shadow-xl transition-[border-color,box-shadow] duration-150",
               outsideWarned
                 ? "animate-preview-annotation-shake border-destructive/80"
-                : "border-white/10",
+                : bubbleInputFocused
+                  ? "border-white/25 ring-1 ring-white/15"
+                  : "border-white/10 ring-1 ring-black/20",
               bubbleAdvancedOpen ? "max-h-[20.5rem]" : "min-h-11",
             )}
-            style={annotationBubbleStyle(
-              visibleOpenBubbleBase.bounds,
-              previewSurfaceWidth,
-            )}
+            style={{
+              ...annotationBubbleStyle(
+                visibleOpenBubbleBase.bounds,
+                previewSurfaceWidth,
+              ),
+              backgroundColor: BUBBLE_SURFACE,
+              color: "rgb(250 250 250)", // neutral-50
+            }}
           >
             <div className="flex min-h-11 items-center gap-2 px-3 py-1.5">
               <Button
@@ -2086,17 +2301,27 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               >
                 <SlidersHorizontal size={15} aria-hidden />
               </Button>
+              {/* No relative wrapper needed because FileTagPopup now uses fixed
+                  positioning via anchorRect, escaping the overflow-hidden bubble. */}
               <Input
                 ref={bubbleNoteInputRef}
                 value={bubbleNote}
                 onChange={(event) => {
-                  setBubbleNote(event.target.value);
+                  const { value, selectionStart } = event.target;
+                  setBubbleNote(value);
                   setOutsideWarned(false);
+                  const cursor = selectionStart ?? value.length;
+                  // Notify slash-command hook first; if it opens, dismiss the
+                  // file autocomplete so both popups never show simultaneously.
+                  onBubbleSlashInputChange(value, cursor);
+                  onBubbleFileInputChange(value, cursor);
                 }}
                 onKeyDown={onBubbleNoteKeyDown}
+                onFocus={() => setBubbleInputFocused(true)}
+                onBlur={() => setBubbleInputFocused(false)}
                 className="h-7 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm text-neutral-50 shadow-none outline-none placeholder:text-neutral-500 focus-visible:ring-0"
                 maxLength={4000}
-                placeholder="Add a comment..."
+                placeholder="Comment · / for skills · @ to mention"
                 aria-label="Annotation note"
               />
               {canSaveOpenBubble ? (
@@ -2115,9 +2340,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             {bubbleAdvancedOpen ? (
               <div
                 data-testid="preview-annotation-advanced"
-                className="border-t border-white/[0.08] bg-[#262626]"
+                className="border-t border-white/[0.08]"
+                style={{ backgroundColor: BUBBLE_SURFACE_INSET }}
               >
-                <div className="flex items-center justify-between border-b border-white/[0.08] bg-white/[0.045] px-4 py-1.5 text-xs text-neutral-200">
+                <div
+                  className="flex items-center justify-between border-b border-white/[0.08] bg-white/[0.04] px-4 py-1.5 text-xs text-neutral-200"
+                >
                   <span className="max-w-[15rem] truncate font-semibold leading-5">
                     {visibleOpenBubbleBase.label?.trim() ||
                       visibleOpenBubbleBase.selectorHint?.trim() ||
@@ -2129,7 +2357,10 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                     aria-hidden
                   />
                 </div>
-                <div className="max-h-52 overflow-y-auto px-4 py-2 [scrollbar-color:rgb(115_115_115)_transparent] [scrollbar-width:thin]">
+                {/* scrollbar-color derives from the unified palette, lighter
+                    than the surface by ~30 lightness points so it stays subtle
+                    on dark backgrounds without being invisible. */}
+                <div className="max-h-52 overflow-y-auto px-4 py-2 [scrollbar-color:rgb(90_90_90)_transparent] [scrollbar-width:thin]">
                   <div className="space-y-2">
                     {VISUAL_CONTROL_FIELDS.map(([key, label]) => {
                       if (key in COLOR_CONTROL_DEFAULTS) {
@@ -2199,7 +2430,10 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               </div>
             ) : null}
             {bubbleAdvancedOpen || editingAnnotationId ? (
-              <div className="flex items-center justify-between border-t border-white/[0.08] bg-[#262626] px-3 py-2">
+              <div
+                className="flex items-center justify-between border-t border-white/[0.08] px-3 py-2"
+                style={{ backgroundColor: BUBBLE_SURFACE_INSET }}
+              >
                 <Button
                   type="button"
                   variant="ghost"
@@ -2241,6 +2475,39 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             ) : null}
           </div>
         ) : null}
+        {/* Both autocomplete popups render outside the bubble div (fixed
+            position) so they can escape its overflow-hidden container. */}
+        <SlashCommandPopup
+          state={bubbleSlashState}
+          selectedIndex={bubbleSlashSelectedIndex}
+          anchorRect={bubbleSlashAnchorRect}
+          onSelect={(cmd: Command) => {
+            onBubbleSlashSelect(cmd, (next) => {
+              if (next.length <= 4000) {
+                setBubbleNote(next);
+                setOutsideWarned(false);
+                const input = bubbleNoteInputRef.current;
+                if (input) {
+                  window.requestAnimationFrame(() => {
+                    input.setSelectionRange(next.length, next.length);
+                  });
+                }
+              }
+            });
+          }}
+          onDismiss={dismissBubbleSlash}
+          onRetry={retryBubbleSlash}
+          tone="dark"
+        />
+        <FileTagPopup
+          items={bubbleFileSuggestions}
+          isOpen={bubbleFileOpen}
+          onSelect={handleBubbleMentionSelect}
+          listRef={bubbleFilePopup.listRef}
+          selectedIndex={bubbleFilePopup.selectedIndex}
+          anchorRect={filePopupAnchorRect}
+          tone="dark"
+        />
         {pageError ? (
           // Approach A: the native view is hidden (bridge syncs visible:false
           // while phase === "error"), so this HTML panel owns the surface and

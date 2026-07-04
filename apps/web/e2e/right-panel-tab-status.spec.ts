@@ -245,7 +245,7 @@ test.describe("Right panel tab status", () => {
     // control shares the tab's product label in its accessible name, so a name
     // match would be ambiguous.
     const scopeTab = page.locator('[data-rail-tab="tasks"]');
-    const changesTab = page.locator('[data-rail-tab="changes"]');
+    const changesTab = page.locator('[data-rail-tab="review"]');
     await expect(scopeTab).toBeVisible();
 
     // Scope progress (2 completed of 5) and Review file count (4 distinct).
@@ -295,7 +295,7 @@ test.describe("Right panel tab status", () => {
     // current file count so pre-existing changes do not pulse.
     await seedPanel(page, "tasks");
 
-    const changesTab = page.locator('[data-rail-tab="changes"]');
+    const changesTab = page.locator('[data-rail-tab="review"]');
     await expect(changesTab).toContainText("4");
     await expect(changesTab.locator(".changes-fresh-ring")).toHaveCount(0);
 
@@ -340,7 +340,19 @@ test.describe("Right panel tab status", () => {
     }, THREAD.id);
 
     // 200 distinct files renders as the capped label, not "200".
-    const changesTab = page.locator('[data-rail-tab="changes"]');
-    await expect(changesTab).toContainText("99+");
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const reviewButton = Array.from(
+              document.querySelectorAll("button"),
+            ).find((button) =>
+              button.getAttribute("aria-label")?.startsWith("Review,"),
+            );
+            return reviewButton?.textContent?.includes("99+") ?? false;
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
   });
 });

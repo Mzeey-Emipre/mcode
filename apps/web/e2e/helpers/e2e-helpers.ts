@@ -100,7 +100,7 @@ export async function mockWebSocketServer(
         // If the override is a function, call it now with the request's params
         // so the test can observe the call timing/args. Static values are sent
         // verbatim. The try/catch ensures a thrown handler returns a JSON-RPC
-        // error response — without it the RPC stays unresolved and the test
+        // error response; without it the RPC stays unresolved and the test
         // hangs until Playwright's outer timeout fires.
         try {
           const result =
@@ -218,7 +218,7 @@ export async function mockWebSocketServer(
       // ADR-0010: TerminalView calls terminal.reattach on every mount to replay
       // the server's retained scrollback into a fresh xterm. Without a default
       // response the new mount path hangs forever, causing every terminal spec
-      // to time out. Return { gapped: false } — no replay gap, nothing trimmed —
+      // to time out. Return { gapped: false }: no replay gap, nothing trimmed,
       // so the reattach gate flushes immediately and the view finishes mounting.
       else if (method === "terminal.reattach") result = { gapped: false };
       // terminal.resume is called after reattach to release the server-side
@@ -259,7 +259,12 @@ export async function mockWebSocketServer(
  */
 export async function interceptZustandStores(page: Page): Promise<void> {
   await page.route("**/zustand.js*", async (route) => {
-    const response = await route.fetch();
+    let response: Awaited<ReturnType<typeof route.fetch>>;
+    try {
+      response = await route.fetch();
+    } catch {
+      response = await route.fetch();
+    }
     const originalBody = await response.text();
 
     const apiBlockPattern = /const api\s*=\s*\{[\s\S]*?subscribe[\s\S]*?\};/m;

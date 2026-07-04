@@ -195,6 +195,27 @@ async function injectPreviewBridge(
         }),
       adoptWebview: () => Promise.resolve({ ok: true } as const),
       releaseWebview: () => Promise.resolve({ ok: true } as const),
+      // Used by saveOpenBubble to capture a viewport screenshot for the saved
+      // annotation. The hook reads res.ok, res.meta.*, and res.capture so the
+      // mock must match the CaptureResult wire shape from the desktop bridge.
+      captureAnnotationSnapshot: () => Promise.resolve({
+        ok: true,
+        meta: {
+          id: "e2e-snapshot",
+          name: "Preview annotation",
+          sizeBytes: 0,
+          sourcePath: "preview/e2e-snapshot.png",
+        },
+        capture: {
+          schemaVersion: 2,
+          pageUrl: "https://example.com/",
+          pageTitle: "Example",
+          capturedAt: new Date().toISOString(),
+          captureKind: "element",
+          bounds: { x: 0, y: 0, width: 0, height: 0 },
+          layoutViewport: { width: 800, height: 600 },
+        },
+      }),
       design: {
         setViewport: () =>
           Promise.resolve({ ok: true, data: { width: 0, height: 0 } } as const),
@@ -471,10 +492,10 @@ async function savedAnnotationCount(page: Page): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — preview unavailable (no desktopBridge)
+// Tests: preview unavailable (no desktopBridge)
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — desktopBridge absent", () => {
+test.describe("PreviewPanel: desktopBridge absent", () => {
   test("renders the empty state when no bridge is injected", async ({ page }) => {
     await openAppAtThread(page);
     await openPreviewTab(page);
@@ -485,10 +506,10 @@ test.describe("PreviewPanel — desktopBridge absent", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — preview chrome (bridge mocked)
+// Tests: preview chrome (bridge mocked)
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — loaded header", () => {
+test.describe("PreviewPanel: loaded header", () => {
   test.beforeEach(async ({ page }) => {
     await interceptZustandStores(page);
     await injectPreviewBridge(page, { loaded: true });
@@ -685,10 +706,10 @@ test.describe("PreviewPanel — loaded header", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — empty browser (localhost ports)
+// Tests: empty browser (localhost ports)
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — empty localhost ports", () => {
+test.describe("PreviewPanel: empty localhost ports", () => {
   const PORTS = [
     { name: "Mcode", port: 5173, online: true },
     { name: "API", port: 19400, online: false },
@@ -736,10 +757,125 @@ test.describe("PreviewPanel — empty localhost ports", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — preview error states (W1)
+// Tests: annotation bubble slash-command popup
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — error states", () => {
+/**
+ * Seed the skillsStore directly from the page context so the slash-command
+ * popup has items to render. The store is module-scoped and exposed via
+ * `window.__mcodeStores`; we find it by its `skills` field.
+ */
+async function seedSkillsStore(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+      setState: (patch: Record<string, unknown>) => void;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const skillsStore = stores.find((store) => {
+      const state = store.getState();
+      return "skills" in state && "isLoading" in state && "load" in state;
+    });
+    if (!skillsStore) throw new Error("[E2E] skillsStore not found");
+    // Inject two skills so the popup renders a listbox with items.
+    skillsStore.setState({
+      skills: [
+        { name: "commit", description: "Create a git commit" },
+        { name: "review-pr", description: "Review a pull request" },
+      ],
+      isLoading: false,
+      error: null,
+    });
+  });
+}
+
+test.describe("PreviewPanel: annotation bubble slash-command popup", () => {
+  test.beforeEach(async ({ page }) => {
+    await interceptZustandStores(page);
+    await injectPreviewBridge(page, { loaded: true });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+    // Seed skills before seeding the annotation draft so the popup renders
+    // a full list when "/" is typed (not just the loading/empty state).
+    await seedSkillsStore(page);
+    await seedUnsavedAnnotationDraft(page);
+    // Wait for the annotation bubble to appear.
+    await page.waitForSelector('[aria-label="Annotation note"]', { timeout: 8000 });
+  });
+
+  test("opens the slash popup when '/' is typed in the annotation note", async ({ page }) => {
+    const note = page.getByLabel("Annotation note");
+    await note.focus();
+    await note.fill("/");
+
+    // The popup listbox must appear with the seeded skills.
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeVisible({
+      timeout: 6000,
+    });
+    // Builtins like /m:plan must not appear in the annotation bubble popup
+    // because includeBuiltins: false is passed to useSlashCommand here.
+    await expect(page.getByText("/m:plan")).toHaveCount(0);
+  });
+
+  test("ArrowDown + Enter inserts the command as plain text and does not save the annotation", async ({ page }) => {
+    const note = page.getByLabel("Annotation note");
+    await note.focus();
+    await note.fill("/");
+
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeVisible({
+      timeout: 6000,
+    });
+
+    // Move selection to the first item and confirm with Enter.
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    // Popup must close.
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toHaveCount(0);
+
+    // The note input now contains the inserted command text (e.g. "/commit ").
+    // It must start with "/" and end with a space, the hook's insertion format.
+    const value = await note.inputValue();
+    expect(value).toMatch(/^\/\S+ $/);
+
+    // The annotation must not have been saved to the store.
+    await expect.poll(() => savedAnnotationCount(page)).toBe(0);
+  });
+
+  test("Escape closes the popup without discarding the annotation bubble", async ({ page }) => {
+    const note = page.getByLabel("Annotation note");
+    await note.focus();
+    await note.fill("/");
+
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeVisible({
+      timeout: 6000,
+    });
+
+    await page.keyboard.press("Escape");
+
+    // Popup gone; bubble still present.
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toHaveCount(0);
+    await expect(page.getByTestId("preview-annotation-bubble")).toBeVisible();
+  });
+
+  test("Enter saves the annotation when the popup is not open", async ({ page }) => {
+    const note = page.getByLabel("Annotation note");
+    await note.focus();
+    await note.fill("Move the search bar");
+    // Popup is not open; Enter should save the annotation.
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => savedAnnotationCount(page), { timeout: 5000 }).toBe(1);
+    await expect(page.getByTestId("preview-annotation-bubble")).toHaveCount(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: preview error states (W1)
+// ---------------------------------------------------------------------------
+
+test.describe("PreviewPanel: error states", () => {
   test("surfaces a failed load with copy and the distilled recovery actions", async ({ page }) => {
     await injectPreviewBridge(page);
     await injectErrorBridge(page, { url: "https://nope.test", canGoBack: true });

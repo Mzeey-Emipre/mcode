@@ -14,16 +14,28 @@ const {
   mockUsePreviewBridge,
   mockOnAddElementAnnotation,
   mockCaptureAnnotationSnapshot,
+  mockListSkills,
 } = vi.hoisted(() => ({
   mockUsePreviewBridge: vi.fn(),
   mockOnAddElementAnnotation: vi.fn(),
   mockCaptureAnnotationSnapshot: vi.fn(),
+  mockListSkills: vi.fn().mockResolvedValue([
+    { name: "commit", description: "Create a git commit" },
+    { name: "review-pr", description: "Review a pull request" },
+  ]),
 }));
 
 // Mock hooks before importing the component under test.
 vi.mock("../hooks/usePreviewBridge", () => ({
   usePreviewBridge: mockUsePreviewBridge,
   formatNavError: (code: string) => code,
+}));
+
+// Transport mock keeps the skillsStore eager-prefetch from hitting real IPC in
+// tests. The mock is shared across all describe blocks; individual tests that
+// need specific skill lists override mockListSkills directly.
+vi.mock("@/transport", () => ({
+  getTransport: () => ({ listSkills: mockListSkills }),
 }));
 
 // The panel only consumes usePreviewTabs for the header's "New page" action and
@@ -65,6 +77,7 @@ import {
   usePreviewAnnotationStore,
 } from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
+import { useSkillsStore } from "@/stores/skillsStore";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -224,7 +237,7 @@ function installSavedAnnotation(
   });
 }
 
-describe("PreviewPanel — unavailable state", () => {
+describe("PreviewPanel: unavailable state", () => {
   beforeEach(() => {
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
     // Ensure no desktopBridge is present.
@@ -251,7 +264,7 @@ describe("PreviewPanel — unavailable state", () => {
   });
 });
 
-describe("PreviewPanel — full panel state", () => {
+describe("PreviewPanel: full panel state", () => {
   beforeEach(() => {
     // Some panel descendants observe layout via ResizeObserver; jsdom lacks it.
     vi.stubGlobal(
@@ -262,6 +275,11 @@ describe("PreviewPanel — full panel state", () => {
         disconnect() {}
       },
     );
+    // SlashCommandPopup calls scrollIntoView on focused list items; jsdom
+    // doesn't implement it, so we stub the prototype once per test rather than
+    // per-element. The stub is a no-op; the scroll behaviour is visual only
+    // and is covered by e2e tests.
+    Element.prototype.scrollIntoView = vi.fn();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = {
       preview: {
@@ -304,6 +322,7 @@ describe("PreviewPanel — full panel state", () => {
     usePreviewSuppressionStore.setState({ count: 0 });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
+    useSkillsStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
   });
 
@@ -315,6 +334,7 @@ describe("PreviewPanel — full panel state", () => {
     usePreviewSuppressionStore.setState({ count: 0 });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
+    useSkillsStore.getState().reset();
     mockUsePreviewBridge.mockClear();
     mockOnAddElementAnnotation.mockClear();
     mockCaptureAnnotationSnapshot.mockClear();
@@ -816,7 +836,7 @@ describe("PreviewPanel — full panel state", () => {
     render(<PreviewPanel threadId="thread-1" />);
 
     expect(screen.getByTestId("preview-annotation-bubble")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Add a comment...")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Comment · / for skills · @ to mention")).toBeInTheDocument();
     expect(screen.queryByTestId("preview-annotation-advanced")).not.toBeInTheDocument();
     expect(screen.queryByTestId("preview-annotation-save")).not.toBeInTheDocument();
   });
@@ -1411,5 +1431,122 @@ describe("PreviewPanel — full panel state", () => {
         },
       ],
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Annotation bubble slash-command popup
+  // ---------------------------------------------------------------------------
+
+  it("opens the slash-command popup when '/' is typed in the annotation note", async () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const note = screen.getByLabelText("Annotation note");
+    // onChange reads selectionStart ?? value.length; jsdom returns null for
+    // selectionStart on a synthetic change event, so it falls back to
+    // value.length (1 for "/"). SLASH_TRIGGER_RE matches "/" at cursor 1.
+    fireEvent.change(note, { target: { value: "/" } });
+
+    // Skills load is async; wait for the popup to become ready.
+    await waitFor(() => {
+      expect(screen.getByRole("listbox", { name: "Slash commands" })).toBeInTheDocument();
+    });
+  });
+
+  it("closes the slash-command popup when Escape is pressed in the annotation note", async () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const note = screen.getByLabelText("Annotation note");
+    fireEvent.change(note, { target: { value: "/" } });
+
+    await waitFor(() => {
+      expect(screen.getByRole("listbox", { name: "Slash commands" })).toBeInTheDocument();
+    });
+
+    // Escape must dismiss the popup without discarding the bubble.
+    fireEvent.keyDown(note, { key: "Escape", code: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox", { name: "Slash commands" })).not.toBeInTheDocument();
+    });
+    // The annotation bubble must remain open after a popup Escape.
+    expect(screen.getByTestId("preview-annotation-bubble")).toBeInTheDocument();
+  });
+
+  it("inserts the selected command text on Enter and does NOT save the annotation", async () => {
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const note = screen.getByLabelText("Annotation note");
+    fireEvent.change(note, { target: { value: "/" } });
+
+    await waitFor(() => {
+      expect(screen.getByRole("listbox", { name: "Slash commands" })).toBeInTheDocument();
+    });
+
+    // Enter selects the first item and inserts it as plain text. It must NOT
+    // save the annotation (no annotation should be saved to byThread).
+    fireEvent.keyDown(note, { key: "Enter", code: "Enter" });
+
+    // The annotation store must still be empty (not saved).
+    expect(
+      usePreviewAnnotationStore.getState().byThread["thread-1"],
+    ).toBeUndefined();
+    // The popup must be dismissed after selection.
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox", { name: "Slash commands" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("does not include builtin mcode commands in the annotation note popup", async () => {
+    // Override skills to be empty so only builtins would appear if they were
+    // included; with includeBuiltins: false the popup renders the empty state
+    // instead of a list. Confirms builtins don't leak into the annotation popup.
+    mockListSkills.mockResolvedValueOnce([]);
+    useSkillsStore.getState().reset();
+
+    installDraftAnnotation();
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const note = screen.getByLabelText("Annotation note");
+    fireEvent.change(note, { target: { value: "/" } });
+
+    // With no skills and no builtins, the popup shows the empty state, not a
+    // listbox. Builtins (m:plan, compact, goal) must not appear.
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox", { name: "Slash commands" })).not.toBeInTheDocument();
+      // The popup is still rendered (closed state would remove it entirely) but
+      // shows an empty-state status instead of items.
+      expect(screen.getByRole("status")).toBeInTheDocument();
+    });
+  });
+
+  it("Ctrl+Enter saves the annotation while the popup is closed", async () => {
+    const submitSpy = vi.fn();
+    window.addEventListener("mcode:submit-composer", submitSpy);
+    installDraftAnnotation();
+
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+
+      const note = screen.getByLabelText("Annotation note");
+      fireEvent.change(note, { target: { value: "Use stronger contrast" } });
+      // Ctrl+Enter saves when popup is NOT open.
+      fireEvent.keyDown(note, { key: "Enter", code: "Enter", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(
+          usePreviewAnnotationStore.getState().byThread["thread-1"],
+        ).toHaveLength(1);
+      });
+      expect(submitSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("mcode:submit-composer", submitSpy);
+    }
   });
 });
