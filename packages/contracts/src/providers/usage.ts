@@ -44,6 +44,14 @@ export const ProviderBillingModeSchema = lazySchema(() =>
 /** TypeScript type inferred from ProviderBillingModeSchema. */
 export type ProviderBillingMode = z.infer<ReturnType<typeof ProviderBillingModeSchema>>;
 
+/** Provider usage snapshot status around the latest successful usage payload. */
+export const ProviderUsageStatusSchema = lazySchema(() =>
+  z.enum(["ready", "ready-empty", "stale", "unavailable", "unsupported"]),
+);
+
+/** TypeScript type inferred from ProviderUsageStatusSchema. */
+export type ProviderUsageStatus = z.infer<ReturnType<typeof ProviderUsageStatusSchema>>;
+
 /** Provider-level usage state. Quota and cost only - context/turn data is thread-scoped. */
 export const ProviderUsageInfoSchema = lazySchema(() =>
   z.object({
@@ -61,6 +69,14 @@ export const ProviderUsageInfoSchema = lazySchema(() =>
     numTurns: z.number().int().optional(),
     /** Total wall-clock duration of the current session in ms (Claude only). */
     durationMs: z.number().optional(),
+    /** Snapshot status for provider/account-scoped quota freshness. */
+    usageStatus: ProviderUsageStatusSchema().optional(),
+    /** ISO timestamp for the last successful provider usage refresh. */
+    fetchedAt: z.string().optional(),
+    /** ISO timestamp for the failed refresh that made this data stale or unavailable. */
+    failedAt: z.string().optional(),
+    /** Redacted diagnostic suitable for UI diagnostics and logs. */
+    diagnostic: z.string().optional(),
   }),
 );
 

@@ -65,6 +65,26 @@ import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
 import { loadConversationPage } from "../services/conversation-page.js";
 import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
 
+function redactedUsageDiagnostic(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/(token|api[_-]?key|authorization|password|secret)=\S+/gi, "$1=[redacted]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
+    .slice(0, 240);
+}
+
+function readyUsageSnapshot(usage: ProviderUsageInfo): ProviderUsageInfo {
+  const fetchedAt = new Date().toISOString();
+  return {
+    ...usage,
+    usageStatus: usage.quotaCategories.length > 0 ? "ready" : "ready-empty",
+    fetchedAt,
+    diagnostic: undefined,
+    failedAt: undefined,
+  };
+}
+
 function teardownFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
 }
@@ -1004,9 +1024,32 @@ async function dispatch(
       deps.providerAvailability.assertUsable(params.providerId);
       const provider = deps.providerRegistry.resolve(params.providerId);
       if (!provider.getUsage) {
-        return { providerId: provider.id, quotaCategories: [] } satisfies ProviderUsageInfo;
+        return {
+          providerId: provider.id,
+          quotaCategories: [],
+          usageStatus: "unsupported",
+          failedAt: new Date().toISOString(),
+          diagnostic: "Provider usage is not supported",
+        } satisfies ProviderUsageInfo;
       }
-      return provider.getUsage();
+      try {
+        return readyUsageSnapshot(await provider.getUsage());
+      } catch (error) {
+        const diagnostic = redactedUsageDiagnostic(error);
+        logger.warn("Provider usage refresh failed", {
+          providerId: provider.id,
+          sourceKind: "getUsage",
+          lastRefreshTime: new Date().toISOString(),
+          reason: diagnostic,
+        });
+        return {
+          providerId: provider.id,
+          quotaCategories: [],
+          usageStatus: "unavailable",
+          failedAt: new Date().toISOString(),
+          diagnostic,
+        } satisfies ProviderUsageInfo;
+      }
     }
     case "providers.listAvailability": {
       return deps.providerAvailability.listAvailability();

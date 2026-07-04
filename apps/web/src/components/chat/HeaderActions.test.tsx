@@ -11,11 +11,13 @@ const {
   mockUseHasCommitsAhead,
   mockSetPendingPrefill,
   mockWorkspaceSelector,
+  mockGetProviderUsage,
 } = vi.hoisted(() => ({
   mockUseBranchPr: vi.fn().mockReturnValue(null),
   mockUseHasCommitsAhead: vi.fn().mockReturnValue(null),
   mockSetPendingPrefill: vi.fn(),
   mockWorkspaceSelector: vi.fn(),
+  mockGetProviderUsage: vi.fn<() => Promise<ProviderUsageInfo>>(),
 }));
 
 vi.mock("@/stores/workspaceStore", () => {
@@ -31,6 +33,28 @@ vi.mock("@/stores/composerDraftStore", () => ({
     selector({ setPendingPrefill: mockSetPendingPrefill }),
   ),
 }));
+
+vi.mock("@/transport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/transport")>();
+  return {
+    ...actual,
+    getTransport: () => ({
+      getProviderUsage: mockGetProviderUsage,
+      listSnapshots: vi.fn().mockResolvedValue([]),
+      getSnapshotDiffStats: vi.fn().mockResolvedValue([]),
+      getWorkingTreeFiles: vi.fn().mockResolvedValue([]),
+      getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
+      getBranchComparison: vi.fn().mockResolvedValue(null),
+      getBranchFiles: vi.fn().mockResolvedValue([]),
+      getRemoteUrl: vi.fn().mockResolvedValue({
+        label: "Mzeey-Empire/mcode",
+        webUrl: "https://github.com/Mzeey-Empire/mcode",
+      }),
+      listBranches: vi.fn().mockResolvedValue([]),
+      createBranch: vi.fn().mockResolvedValue({ branch: "feat/my-feature" }),
+    }),
+  };
+});
 
 vi.mock("@/stores/terminalStore", () => ({
   useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
@@ -174,12 +198,15 @@ const WORKSPACE = {
 
 const CLAUDE_USAGE: ProviderUsageInfo = {
   providerId: "claude",
+  usageStatus: "ready",
+  fetchedAt: "2026-07-03T12:00:00.000Z",
   quotaCategories: [
     {
       label: "5-hour limit",
       used: 12,
       total: 100,
       remainingPercent: 0.88,
+      resetDate: "2099-07-03T14:14:00.000Z",
       isUnlimited: false,
     },
     {
@@ -187,6 +214,7 @@ const CLAUDE_USAGE: ProviderUsageInfo = {
       used: 47,
       total: 100,
       remainingPercent: 0.53,
+      resetDate: "2099-07-07T14:14:00.000Z",
       isUnlimited: false,
     },
   ],
@@ -226,6 +254,11 @@ function defaultWorkspaceState() {
 function renderHeaderActions(thread: Thread = makeThread()) {
   return render(<HeaderActions thread={thread} threadPaneWidth={1400} />);
 }
+
+beforeEach(() => {
+  mockGetProviderUsage.mockReset();
+  mockGetProviderUsage.mockImplementation(() => new Promise(() => {}));
+});
 
 describe("HeaderActions - Create PR menu item", () => {
   beforeEach(() => {
@@ -458,6 +491,7 @@ describe("HeaderActions - consolidated header", () => {
   });
 
   it("renders usage limits as compact progress bars when quota data exists", () => {
+    mockGetProviderUsage.mockResolvedValue(CLAUDE_USAGE);
     seedThreadUsage("thread-1", CLAUDE_USAGE);
     renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
 
@@ -469,20 +503,21 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-usage-details")).toBeVisible();
     expect(screen.getByText("5-hour limit")).toBeInTheDocument();
     expect(screen.getByText("Weekly limit")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: "5-hour usage" })).toHaveAttribute(
+    expect(screen.getByRole("progressbar", { name: /5-hour usage 12 percent\. Resets in/ })).toHaveAttribute(
       "aria-valuenow",
       "12",
     );
-    expect(screen.getByRole("progressbar", { name: "weekly usage" })).toHaveAttribute(
+    expect(screen.getByRole("progressbar", { name: /weekly usage 47 percent\. Resets in/ })).toHaveAttribute(
       "aria-valuenow",
       "47",
     );
+    expect(screen.getAllByText(/Resets in/)).toHaveLength(2);
 
     fireEvent.click(usageTrigger);
 
     expect(usageTrigger).toHaveAttribute("aria-expanded", "false");
     expect(usageTrigger).toHaveTextContent("5-hour 12%, weekly 47%");
-    expect(screen.queryByRole("progressbar", { name: "5-hour usage" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: /5-hour usage/ })).not.toBeInTheDocument();
     expect(screen.queryByText("usage unavailable")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
   });
@@ -492,6 +527,25 @@ describe("HeaderActions - consolidated header", () => {
 
     expect(screen.queryByTestId("thread-overview-usage")).not.toBeInTheDocument();
     expect(screen.queryByRole("progressbar", { name: "5-hour usage" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["ready-empty", "No capped quota"],
+    ["unsupported", "Usage not supported"],
+    ["unavailable", "Usage unavailable"],
+  ] as const)("renders explicit %s usage status rows", (usageStatus, summary) => {
+    seedThreadUsage("thread-1", {
+      providerId: "claude",
+      quotaCategories: [],
+      usageStatus,
+    });
+
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+
+    const usageTrigger = screen.getByTestId("thread-overview-usage");
+    expect(usageTrigger).toHaveAttribute("aria-label", `Usage, ${summary}`);
+    expect(usageTrigger).toHaveTextContent(summary);
+    expect(screen.queryByTestId("thread-overview-usage-details")).not.toBeInTheDocument();
   });
 
   it("hides empty or unlimited-only usage without API-key billing mode", () => {
@@ -636,28 +690,31 @@ describe("formatThreadOverviewUsage", () => {
     ).toBe("5-hour 42%, weekly 18%");
   });
 
-  it("renders Cursor API and Auto limits", () => {
+  it("excludes Cursor team or admin usage limits from the Overview", () => {
     expect(
-      formatThreadOverviewUsage({
-        providerId: "cursor",
-        quotaCategories: [
-          {
-            label: "API usage",
-            used: 63,
-            total: 100,
-            remainingPercent: 0.37,
-            isUnlimited: false,
-          },
-          {
-            label: "Auto and Composer",
-            used: 21,
-            total: 100,
-            remainingPercent: 0.79,
-            isUnlimited: false,
-          },
-        ],
-      }),
-    ).toBe("API 63%, Auto 21%");
+      formatThreadOverviewUsage(
+        {
+          providerId: "cursor",
+          quotaCategories: [
+            {
+              label: "API usage",
+              used: 63,
+              total: 100,
+              remainingPercent: 0.37,
+              isUnlimited: false,
+            },
+            {
+              label: "Auto and Composer",
+              used: 21,
+              total: 100,
+              remainingPercent: 0.79,
+              isUnlimited: false,
+            },
+          ],
+        },
+        "cursor",
+      ),
+    ).toBeNull();
   });
 
   it("ignores unlimited cost-like categories and empty usage", () => {
