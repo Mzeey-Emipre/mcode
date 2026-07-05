@@ -4,7 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../Composer";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
+import {
+  usePreviewAnnotationStore,
+  type SavedPreviewAnnotation,
+} from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { mockTransport, createMockThread, createMockWorkspace } from "@/__tests__/mocks/transport";
@@ -187,6 +190,42 @@ async function typeAndSend() {
   return user;
 }
 
+function makeSavedAnnotation(): SavedPreviewAnnotation {
+  return {
+    id: "550e8400-e29b-41d4-a716-446655440001",
+    displayNumber: 1,
+    pageIdentity: "http://localhost:44354/product-preview",
+    pageContext: {
+      schemaVersion: 2,
+      pageUrl: "http://localhost:44354/product-preview",
+      pageTitle: "Product preview",
+      capturedAt: "2026-07-01T00:00:00.000Z",
+      bounds: { x: 0, y: 0, width: 1280, height: 720 },
+    },
+    targetContext: {
+      label: "html",
+      selectorHint: "html",
+      bounds: { x: 12, y: 16, width: 240, height: 80 },
+    },
+    note: "Make the content flush with the page edge.",
+    snapshot: {
+      id: "shot-1",
+      name: "annotation.png",
+      mimeType: "image/png",
+      sizeBytes: 128,
+      sourcePath: "preview/annotation.png",
+      capture: {
+        schemaVersion: 2,
+        pageUrl: "http://localhost:44354/product-preview",
+        pageTitle: "Product preview",
+        capturedAt: "2026-07-01T00:00:00.000Z",
+        bounds: { x: 12, y: 16, width: 240, height: 80 },
+      },
+    },
+    createdAt: 1_783_036_800_000,
+  };
+}
+
 describe("Composer checkout confirmation", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -286,41 +325,7 @@ describe("Composer checkout confirmation", () => {
     usePreviewAnnotationStore.setState({
       drafts: {},
       byThread: {
-        [thread.id]: [
-          {
-            id: "550e8400-e29b-41d4-a716-446655440001",
-            displayNumber: 1,
-            pageIdentity: "http://localhost:44354/product-preview",
-            pageContext: {
-              schemaVersion: 2,
-              pageUrl: "http://localhost:44354/product-preview",
-              pageTitle: "Product preview",
-              capturedAt: "2026-07-01T00:00:00.000Z",
-              bounds: { x: 0, y: 0, width: 1280, height: 720 },
-            },
-            targetContext: {
-              label: "html",
-              selectorHint: "html",
-              bounds: { x: 12, y: 16, width: 240, height: 80 },
-            },
-            note: "Make the content flush with the page edge.",
-            snapshot: {
-              id: "shot-1",
-              name: "annotation.png",
-              mimeType: "image/png",
-              sizeBytes: 128,
-              sourcePath: "preview/annotation.png",
-              capture: {
-                schemaVersion: 2,
-                pageUrl: "http://localhost:44354/product-preview",
-                pageTitle: "Product preview",
-                capturedAt: "2026-07-01T00:00:00.000Z",
-                bounds: { x: 12, y: 16, width: 240, height: 80 },
-              },
-            },
-            createdAt: 1_783_036_800_000,
-          },
-        ],
+        [thread.id]: [makeSavedAnnotation()],
       },
     });
     (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -335,5 +340,43 @@ describe("Composer checkout confirmation", () => {
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
     expect(usePreviewAnnotationStore.getState().byThread[thread.id] ?? []).toEqual([]);
     expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(false);
+  });
+
+  it("sends workspace-scoped annotations from a new thread composer", async () => {
+    seedComposerState("direct");
+    useWorkspaceStore.setState({
+      newThreadBranch: "main",
+      branches: [branch("main", true)],
+    });
+    usePreviewDesignModeStore.getState().setActive("ws-1", true);
+    usePreviewAnnotationStore.setState({
+      drafts: {},
+      byThread: {
+        "ws-1": [makeSavedAnnotation()],
+      },
+    });
+
+    render(<Composer isNewThread workspaceId="ws-1" />);
+
+    expect(screen.getByTestId("composer-annotation-bundle")).toHaveTextContent(
+      "1 annotation",
+    );
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    await waitFor(() => expect(mockTransport.createAndSendMessage).toHaveBeenCalled());
+    const createCall = (
+      mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>
+    ).mock.calls.at(-1);
+    expect(createCall?.[20]).toMatchObject({
+      schemaVersion: 1,
+      annotations: [
+        {
+          id: "550e8400-e29b-41d4-a716-446655440001",
+          note: "Make the content flush with the page edge.",
+        },
+      ],
+    });
+    expect(usePreviewAnnotationStore.getState().byThread["ws-1"] ?? []).toEqual([]);
+    expect(usePreviewDesignModeStore.getState().modes["ws-1"]).toBe(false);
   });
 });

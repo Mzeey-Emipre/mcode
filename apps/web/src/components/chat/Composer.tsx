@@ -908,8 +908,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [composerMode, setComposerModeLocal] = useState<ComposerMode>("direct");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const annotationScopeId = threadId ?? workspaceId;
   const annotationRows = usePreviewAnnotationStore((s) =>
-    threadId ? s.byThread[threadId] : undefined,
+    annotationScopeId ? s.byThread[annotationScopeId] : undefined,
   );
   const annotationCount = annotationRows?.length ?? 0;
   const annotationBundleForDisplay = useMemo(
@@ -2088,8 +2089,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const rawInput = composerMessage.text;
     const selectedMentions = composerMessage.mentions;
     const trimmed = rawInput.trim();
-    const outboundPreviewAnnotations = threadId
-      ? usePreviewAnnotationStore.getState().buildBundle(threadId)
+    const outboundPreviewAnnotations = annotationScopeId
+      ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
       : undefined;
     const effectivePreviewAnnotations =
       outboundPreviewAnnotations ?? (editingFromQueue ? editingOriginalRef.current?.previewAnnotations : undefined);
@@ -2169,9 +2170,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       if (!enqueued) {
         void releaseBrowserCaptureSpills(browserCaptureSpillPaths);
       }
-      if (enqueued && threadId && outboundPreviewAnnotations) {
-        usePreviewAnnotationStore.getState().clearThread(threadId);
-        setPreviewDesignModeActive(threadId, false);
+      if (enqueued && annotationScopeId && outboundPreviewAnnotations) {
+        usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+        setPreviewDesignModeActive(annotationScopeId, false);
       }
       if (editingFromQueue && enqueued) {
         useToastStore
@@ -2382,9 +2383,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         );
       }
 
-      if (threadId && outboundPreviewAnnotations) {
-        usePreviewAnnotationStore.getState().clearThread(threadId);
-        setPreviewDesignModeActive(threadId, false);
+      if (annotationScopeId && outboundPreviewAnnotations) {
+        usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+        setPreviewDesignModeActive(annotationScopeId, false);
       }
 
       // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
@@ -2421,19 +2422,19 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, annotationCount, isAgentRunning, isNewThread, composerMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setPreviewDesignModeActive]);
+  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setPreviewDesignModeActive]);
 
   useEffect(() => {
-    if (!threadId) return;
+    if (!annotationScopeId) return;
     const onSubmitComposer = (event: Event): void => {
       const detail = (event as CustomEvent<{ readonly threadId?: string }>).detail;
-      if (detail?.threadId && detail.threadId !== threadId) return;
+      if (detail?.threadId && detail.threadId !== annotationScopeId) return;
       void handleSend();
     };
     window.addEventListener("mcode:submit-composer", onSubmitComposer);
     return () =>
       window.removeEventListener("mcode:submit-composer", onSubmitComposer);
-  }, [handleSend, threadId]);
+  }, [handleSend, annotationScopeId]);
 
   // Reset the handoff-transition-seen flag whenever the user switches threads
   // so the guard below evaluates correctly for each new child thread.
@@ -2809,13 +2810,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         </div>
 
         {/* Attachment previews */}
-        {threadId && annotationBundleForDisplay ? (
+        {annotationScopeId && annotationBundleForDisplay ? (
           <div className="px-3 pt-2">
             <PreviewAnnotationBundleChip
               bundle={annotationBundleForDisplay}
               threadId={threadId}
               testId="composer-annotation-bundle"
-              onRemove={() => usePreviewAnnotationStore.getState().clearThread(threadId)}
+              onRemove={() => usePreviewAnnotationStore.getState().clearThread(annotationScopeId)}
             />
           </div>
         ) : null}

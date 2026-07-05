@@ -336,6 +336,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       records = patchThreadRecord(records, thread.id, { agentStartTime: startTime });
       return { runningThreadIds: nextRunning, records };
     });
+    useDiffStore.getState().hideRightPanel(workspaceId, thread.id);
     set((state) => {
       const without = state.threads.filter((t) => t.id !== placeholderId);
       const deduped = without.filter((t) => t.id !== thread.id);
@@ -821,6 +822,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     bumpThreadListMutationEpoch(workspaceId);
     pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
+    useDiffStore.getState().hideRightPanel(workspaceId, placeholderId);
     set((state) => ({
       threads: [placeholder, ...state.threads],
       activeThreadId: placeholderId,
@@ -943,6 +945,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     bumpThreadListMutationEpoch(workspaceId);
     pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
+    useDiffStore.getState().hideRightPanel(workspaceId, placeholderId);
     set((state) => ({
       threads: [placeholder, ...state.threads],
       activeThreadId: placeholderId,
@@ -1110,6 +1113,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   setPendingNewThread: (value) => {
+    const workspaceId = get().activeWorkspaceId;
+    if (value && workspaceId) {
+      useDiffStore.getState().hideRightPanel(workspaceId, null);
+    }
     set({
       pendingNewThread: value,
       ...(value

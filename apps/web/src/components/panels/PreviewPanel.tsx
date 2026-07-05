@@ -6,7 +6,9 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import {
@@ -16,6 +18,7 @@ import {
   Globe,
   GripVertical,
   Link2,
+  Pipette,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react";
@@ -103,6 +106,11 @@ type ColorVisualProposalKey = Extract<
   "textColor" | "background" | "borderColor"
 >;
 type ColorFormat = "rgb" | "hsl" | "hex";
+interface EyeDropperConstructor {
+  new (): {
+    open: () => Promise<{ sRGBHex: string }>;
+  };
+}
 type VisualLinkPairId =
   | "size"
   | "padding:block"
@@ -609,6 +617,54 @@ function rgbToHsl(color: RgbaColor): { h: number; s: number; l: number } {
   return { h: h * 60, s, l };
 }
 
+function rgbToHsv(color: RgbaColor): { h: number; s: number; v: number } {
+  const r = clampColorChannel(color.r) / 255;
+  const g = clampColorChannel(color.g) / 255;
+  const b = clampColorChannel(color.b) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  let h = 0;
+  if (delta !== 0) {
+    if (max === r) h = ((g - b) / delta) % 6;
+    if (max === g) h = (b - r) / delta + 2;
+    if (max === b) h = (r - g) / delta + 4;
+    h *= 60;
+  }
+  return {
+    h: h < 0 ? h + 360 : h,
+    s: max === 0 ? 0 : delta / max,
+    v: max,
+  };
+}
+
+function hsvToRgb(h: number, s: number, v: number, a?: number): RgbaColor {
+  const hue = ((h % 360) + 360) % 360;
+  const sat = clampUnit(s);
+  const value = clampUnit(v);
+  const chroma = value * sat;
+  const x = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = value - chroma;
+  const [r, g, b] =
+    hue < 60
+      ? [chroma, x, 0]
+      : hue < 120
+        ? [x, chroma, 0]
+        : hue < 180
+          ? [0, chroma, x]
+          : hue < 240
+            ? [0, x, chroma]
+            : hue < 300
+              ? [x, 0, chroma]
+              : [chroma, 0, x];
+  return {
+    r: clampColorChannel((r + m) * 255),
+    g: clampColorChannel((g + m) * 255),
+    b: clampColorChannel((b + m) * 255),
+    ...(a !== undefined ? { a } : {}),
+  };
+}
+
 function hueToRgb(p: number, q: number, t: number): number {
   let next = t;
   if (next < 0) next += 1;
@@ -698,6 +754,10 @@ function formatColorValue(color: RgbaColor, format: ColorFormat): string {
   }
   const base = `${clampColorChannel(color.r)}, ${clampColorChannel(color.g)}, ${clampColorChannel(color.b)}`;
   return alpha !== undefined ? `rgba(${base}, ${alpha})` : `rgb(${base})`;
+}
+
+function formatColorNumber(value: number): string {
+  return String(Math.round(value));
 }
 
 function colorEditableSelectionRange(
@@ -831,6 +891,187 @@ function ColorInspectorControl({
   const pickerColor = parsed ?? fallback;
   const swatch = colorSwatchValue(controlKey, value);
   const displayValue = String(value ?? "");
+  const hsv = rgbToHsv(pickerColor);
+  const hueColor = hsvToRgb(hsv.h, 1, 1);
+  const EyeDropperApi = (
+    window as Window & { EyeDropper?: EyeDropperConstructor }
+  ).EyeDropper;
+  const commitColor = useCallback(
+    (next: RgbaColor) => {
+      onChange(controlKey, formatColorValue(next, colorFormat));
+    },
+    [colorFormat, controlKey, onChange],
+  );
+  const pickFromScreen = useCallback(() => {
+    if (!EyeDropperApi) return;
+    const eyeDropper = new EyeDropperApi();
+    void eyeDropper
+      .open()
+      .then(({ sRGBHex }) => {
+        const next = parseColorValue(sRGBHex);
+        if (!next) return;
+        commitColor({ ...next, a: pickerColor.a });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        throw error;
+      });
+  }, [EyeDropperApi, commitColor, pickerColor.a]);
+  const updateFromPlane = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const saturation = clampUnit((event.clientX - rect.left) / rect.width);
+      const value = clampUnit(1 - (event.clientY - rect.top) / rect.height);
+      commitColor(hsvToRgb(hsv.h, saturation, value, pickerColor.a));
+    },
+    [commitColor, hsv.h, pickerColor.a],
+  );
+  const updateFromHue = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const hue = clampUnit((event.clientX - rect.left) / rect.width) * 360;
+      commitColor(hsvToRgb(hue, hsv.s, hsv.v, pickerColor.a));
+    },
+    [commitColor, hsv.s, hsv.v, pickerColor.a],
+  );
+  const updatePlaneFromKeyboard = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const step = event.shiftKey ? 0.1 : 0.01;
+      let nextSaturation = hsv.s;
+      let nextValue = hsv.v;
+      switch (event.key) {
+        case "ArrowLeft":
+          nextSaturation = clampUnit(hsv.s - step);
+          break;
+        case "ArrowRight":
+          nextSaturation = clampUnit(hsv.s + step);
+          break;
+        case "ArrowDown":
+          nextValue = clampUnit(hsv.v - step);
+          break;
+        case "ArrowUp":
+          nextValue = clampUnit(hsv.v + step);
+          break;
+        case "Home":
+          nextSaturation = 0;
+          nextValue = 0;
+          break;
+        case "End":
+          nextSaturation = 1;
+          nextValue = 1;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      commitColor(hsvToRgb(hsv.h, nextSaturation, nextValue, pickerColor.a));
+    },
+    [commitColor, hsv.h, hsv.s, hsv.v, pickerColor.a],
+  );
+  const updateHueFromKeyboard = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const step = event.shiftKey ? 10 : 1;
+      let nextHue: number;
+      switch (event.key) {
+        case "ArrowLeft":
+        case "ArrowDown":
+          nextHue = Math.max(0, hsv.h - step);
+          break;
+        case "ArrowRight":
+        case "ArrowUp":
+          nextHue = Math.min(360, hsv.h + step);
+          break;
+        case "Home":
+          nextHue = 0;
+          break;
+        case "End":
+          nextHue = 360;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      commitColor(hsvToRgb(nextHue, hsv.s, hsv.v, pickerColor.a));
+    },
+    [commitColor, hsv.h, hsv.s, hsv.v, pickerColor.a],
+  );
+  const updateRgbChannel = (channel: keyof Pick<RgbaColor, "r" | "g" | "b">) =>
+    (event: ChangeEvent<HTMLInputElement>) => {
+      commitColor({
+        ...pickerColor,
+        [channel]: clampColorChannel(Number(event.target.value)),
+      });
+    };
+  const hsl = rgbToHsl(pickerColor);
+  const updateHslChannel = (channel: "h" | "s" | "l") =>
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const numeric = Number(event.target.value);
+      const next = {
+        h: channel === "h" ? numeric : hsl.h,
+        s: channel === "s" ? numeric / 100 : hsl.s,
+        l: channel === "l" ? numeric / 100 : hsl.l,
+      };
+      commitColor(hslToRgb(next.h, next.s, next.l, pickerColor.a));
+    };
+  const formatFields =
+    colorFormat === "hex" ? (
+      <Input
+        size="xs"
+        aria-label={`${label} HEX value`}
+        value={colorToHex(pickerColor)}
+        onChange={(event) => {
+          const next = parseColorValue(event.target.value);
+          if (next) commitColor({ ...next, a: pickerColor.a });
+        }}
+        className="h-7 rounded-md border-white/[0.08] bg-[#242424] font-mono text-xs text-neutral-100 shadow-none focus-visible:border-amber-300/50 focus-visible:ring-1 focus-visible:ring-amber-300/30"
+      />
+    ) : colorFormat === "hsl" ? (
+      <div className="grid grid-cols-3 gap-1.5">
+        {([
+          ["H", "h", Math.round(hsl.h), "numeric"],
+          ["S", "s", Math.round(hsl.s * 100), "numeric"],
+          ["L", "l", Math.round(hsl.l * 100), "numeric"],
+        ] as const).map(([fieldLabel, channel, channelValue, inputMode]) => (
+          <label key={channel} className="min-w-0 space-y-1">
+            <span className="block text-center font-mono text-xs uppercase text-neutral-500">
+              {fieldLabel}
+            </span>
+            <Input
+              size="xs"
+              aria-label={`${label} ${fieldLabel}`}
+              value={formatColorNumber(channelValue)}
+              inputMode={inputMode}
+              onChange={updateHslChannel(channel)}
+              className="h-7 rounded-md border-white/[0.08] bg-[#242424] text-center font-mono text-xs text-neutral-100 shadow-none focus-visible:border-amber-300/50 focus-visible:ring-1 focus-visible:ring-amber-300/30"
+            />
+          </label>
+        ))}
+      </div>
+    ) : (
+      <div className="grid grid-cols-3 gap-1.5">
+        {([
+          ["R", "r", pickerColor.r, "numeric"],
+          ["G", "g", pickerColor.g, "numeric"],
+          ["B", "b", pickerColor.b, "numeric"],
+        ] as const).map(([fieldLabel, channel, channelValue, inputMode]) => (
+          <label key={channel} className="min-w-0 space-y-1">
+            <span className="block text-center font-mono text-xs uppercase text-neutral-500">
+              {fieldLabel}
+            </span>
+            <Input
+              size="xs"
+              aria-label={`${label} ${fieldLabel}`}
+              value={formatColorNumber(channelValue)}
+              inputMode={inputMode}
+              onChange={updateRgbChannel(channel)}
+              className="h-7 rounded-md border-white/[0.08] bg-[#242424] text-center font-mono text-xs text-neutral-100 shadow-none focus-visible:border-amber-300/50 focus-visible:ring-1 focus-visible:ring-amber-300/30"
+            />
+          </label>
+        ))}
+      </div>
+    );
   return (
     <InspectorRow label={label}>
       <div className="relative flex min-w-0 items-center">
@@ -853,19 +1094,109 @@ function ColorInspectorControl({
             sideOffset={6}
             collisionPadding={8}
             data-preview-design-keep-open="true"
-            className="w-64 rounded-lg border-white/10 bg-[#2f2f2f] p-2.5 text-neutral-100 shadow-2xl"
+            data-testid={`preview-color-popover-${controlKey}`}
+            className="w-64 rounded-lg border-white/10 bg-[#2a2a2a] p-2.5 text-neutral-100 shadow-2xl"
           >
             <div className="space-y-2.5">
-              <Input
-                type="color"
-                aria-label={`Color picker for ${label}`}
-                value={colorToHex(pickerColor)}
-                onChange={(event) => {
-                  const next = parseColorValue(event.target.value);
-                  if (!next) return;
-                  onChange(controlKey, formatColorValue(next, colorFormat));
+              <div
+                role="slider"
+                tabIndex={0}
+                aria-label={`Saturation and value for ${label}`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(hsv.s * 100)}
+                aria-valuetext={`${Math.round(hsv.s * 100)}% saturation, ${Math.round(hsv.v * 100)}% value`}
+                data-testid={`preview-color-plane-${controlKey}`}
+                className="relative h-28 touch-none overflow-hidden rounded-md border border-white/[0.09] outline-none ring-black/30 focus-visible:ring-2 focus-visible:ring-amber-300/35"
+                style={{
+                  background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, ${colorToHex(hueColor)})`,
                 }}
-                className="h-24 w-full rounded-md border-white/[0.08] bg-[#252525] p-1"
+                onPointerDown={(event) => {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  updateFromPlane(event);
+                }}
+                onPointerMove={(event) => {
+                  if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                  updateFromPlane(event);
+                }}
+                onKeyDown={updatePlaneFromKeyboard}
+              >
+                <span
+                  aria-hidden
+                  className="absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)]"
+                  style={{
+                    left: `${hsv.s * 100}%`,
+                    top: `${(1 - hsv.v) * 100}%`,
+                  }}
+                />
+              </div>
+              <div
+                role="slider"
+                tabIndex={0}
+                aria-label={`Hue for ${label}`}
+                aria-valuemin={0}
+                aria-valuemax={360}
+                aria-valuenow={Math.round(hsv.h)}
+                data-testid={`preview-color-hue-${controlKey}`}
+                className="relative h-4 touch-none rounded-full border border-white/[0.1] outline-none ring-black/30 focus-visible:ring-2 focus-visible:ring-amber-300/35"
+                style={{
+                  background:
+                    "linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)",
+                }}
+                onPointerDown={(event) => {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  updateFromHue(event);
+                }}
+                onPointerMove={(event) => {
+                  if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                  updateFromHue(event);
+                }}
+                onKeyDown={updateHueFromKeyboard}
+              >
+                <span
+                  aria-hidden
+                  className="absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.75)]"
+                  style={{ left: `${(hsv.h / 360) * 100}%`, background: colorToHex(hueColor) }}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0 rounded-full">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`Pick ${label} from screen`}
+                          disabled={!EyeDropperApi}
+                          onClick={pickFromScreen}
+                          className="size-6 rounded-full text-neutral-200 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:text-neutral-600"
+                        >
+                          <Pipette size={14} aria-hidden />
+                        </Button>
+                      </span>
+                    }
+                  />
+                  <TooltipContent>
+                    {EyeDropperApi
+                      ? "Pick a color from the screen"
+                      : "Screen color picker unavailable"}
+                  </TooltipContent>
+                </Tooltip>
+                <span
+                  aria-label={`Current ${label}`}
+                  className="size-5 shrink-0 rounded-full border border-white/20 ring-1 ring-black/30"
+                  style={{ background: colorToHex(pickerColor) }}
+                />
+                <div className="min-w-0 flex-1">{formatFields}</div>
+              </div>
+              <Input
+                size="xs"
+                aria-label={`Color picker for ${label}`}
+                value={formatColorValue(pickerColor, colorFormat)}
+                onChange={(event) => onChange(controlKey, event.target.value)}
+                className="h-7 rounded-md border-white/[0.08] bg-[#242424] font-mono text-xs text-neutral-100 shadow-none focus-visible:border-amber-300/50 focus-visible:ring-1 focus-visible:ring-amber-300/30"
               />
               <div className="grid grid-cols-3 overflow-hidden rounded-md border border-white/[0.08] bg-[#252525]">
                 {(["rgb", "hsl", "hex"] as const).map((format) => (

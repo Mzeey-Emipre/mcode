@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useWorkspaceStore, type WorkspaceRpcCall } from "../workspaceStore";
+import { useDiffStore } from "../diffStore";
 import type { Workspace } from "@/transport/types";
 
 function makeWs(overrides?: Partial<Workspace>): Workspace {
@@ -21,6 +22,10 @@ function makeWs(overrides?: Partial<Workspace>): Workspace {
 
 beforeEach(() => {
   useWorkspaceStore.setState({ workspaces: [makeWs()], activeWorkspaceId: null });
+  useDiffStore.setState({
+    rightPanelByThread: {},
+    rightPanelFallbackByWorkspace: {},
+  });
 });
 
 describe("workspaceStore pin/remove/touch", () => {
@@ -86,5 +91,29 @@ describe("workspaceStore reorderWorkspace", () => {
     } catch { /* expected */ }
     expect(useWorkspaceStore.getState().workspaces.map((w) => w.id)).toEqual(["a", "b"]);
     expect(useWorkspaceStore.getState().error).toMatch(/offline/);
+  });
+});
+
+describe("workspaceStore new-thread panel transition", () => {
+  it("closes the threadless right panel without clearing the active thread panel", () => {
+    useWorkspaceStore.setState({
+      workspaces: [makeWs()],
+      activeWorkspaceId: "ws-1",
+      activeThreadId: "thread-1",
+    });
+    const diff = useDiffStore.getState();
+    diff.showRightPanel("ws-1", null);
+    diff.setRightPanelTab("ws-1", null, "preview");
+    diff.showRightPanel("ws-1", "thread-1");
+    diff.setRightPanelTab("ws-1", "thread-1", "changes");
+
+    useWorkspaceStore.getState().setPendingNewThread(true);
+
+    expect(diff.getRightPanelVisible("ws-1", null)).toBe(false);
+    expect(diff.getRightPanel("ws-1", "thread-1")).toMatchObject({
+      visible: true,
+      activeTab: "changes",
+      openTabs: expect.arrayContaining(["changes"]),
+    });
   });
 });

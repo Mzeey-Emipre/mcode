@@ -305,6 +305,49 @@ test.describe("Bubble dark-tone visual cohesion", () => {
     await page.screenshot({ path: screenshotPath("c-advanced-open"), fullPage: false });
   });
 
+  test("(c2) inline color picker opens as a dark inspector popover", async ({ page }) => {
+    await interceptZustandStores(page);
+    await injectPreviewBridge(page);
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+    await seedDraft(page, "Adjust color");
+
+    await page.getByTestId("preview-annotation-advanced-toggle").click();
+    await page.getByLabel("Open Text color picker").click();
+
+    const plane = page.getByLabel("Saturation and value for Text color");
+    const hue = page.getByLabel("Hue for Text color");
+    const textColorValue = page
+      .getByTestId("preview-annotation-advanced")
+      .getByRole("textbox", { name: "Text color", exact: true });
+    await expect(plane).toBeVisible();
+    await expect(hue).toBeVisible();
+    await expect(page.getByLabel("Text color R")).toBeVisible();
+    await expect(page.locator('input[type="color"]')).toHaveCount(0);
+
+    const popoverBg = await page.getByTestId("preview-color-popover-textColor").evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(popoverBg).toBe("rgb(42, 42, 42)");
+
+    const box = await plane.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.click(box!.x + box!.width * 0.35, box!.y + box!.height * 0.45);
+    await expect(textColorValue).toHaveValue(/rgb\(/);
+
+    await page.getByLabel("Use HSL for Text color").click();
+    await expect(textColorValue).toHaveValue(/hsl\(/);
+    await page.screenshot({
+      path: screenshotPath("c2-inline-color-picker-hsl"),
+      fullPage: false,
+    });
+
+    await page.getByLabel("Use HEX for Text color").click();
+    await expect(textColorValue).toHaveValue(/^#[0-9A-F]{6}$/);
+    await page.screenshot({
+      path: screenshotPath("c2-inline-color-picker-hex"),
+      fullPage: false,
+    });
+  });
+
   test("(d) slash popup open above bubble: dark tone, no builtin commands", async ({ page }) => {
     await interceptZustandStores(page);
     await injectPreviewBridge(page);

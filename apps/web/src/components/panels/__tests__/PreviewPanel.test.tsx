@@ -280,6 +280,8 @@ describe("PreviewPanel: full panel state", () => {
     // per-element. The stub is a no-op; the scroll behaviour is visual only
     // and is covered by e2e tests.
     Element.prototype.scrollIntoView = vi.fn();
+    Element.prototype.setPointerCapture = vi.fn();
+    Element.prototype.hasPointerCapture = vi.fn().mockReturnValue(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = {
       preview: {
@@ -1335,6 +1337,306 @@ describe("PreviewPanel: full panel state", () => {
         "hsl(210, 50%, 40%)",
       );
     });
+  });
+
+  it("renders the rich color picker inline without a native color input gate", async () => {
+    const user = userEvent.setup();
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "rgb(255, 255, 255)",
+        background: "rgb(10, 52, 92)",
+        borderColor: "rgb(10, 52, 92)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Text color picker"));
+
+    expect(screen.getByLabelText("Saturation and value for Text color")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hue for Text color")).toBeInTheDocument();
+    expect(screen.getByLabelText("Text color R")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-color-popover-textColor")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("#ffffff")).not.toBeInTheDocument();
+    expect(document.querySelector('input[type="color"]')).toBeNull();
+  });
+
+  it("keeps the screen color picker available inside the rich color picker", async () => {
+    const user = userEvent.setup();
+    const openEyeDropper = vi.fn().mockResolvedValue({ sRGBHex: "#123456" });
+    const EyeDropperMock = vi.fn(function () {
+      return { open: openEyeDropper };
+    });
+    Object.defineProperty(window, "EyeDropper", {
+      configurable: true,
+      value: EyeDropperMock,
+    });
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "rgb(255, 255, 255)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Text color picker"));
+    await user.click(screen.getByLabelText("Pick Text color from screen"));
+
+    await waitFor(() => expect(openEyeDropper).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+        "rgb(18, 52, 86)",
+      );
+    });
+
+    Reflect.deleteProperty(window, "EyeDropper");
+  });
+
+  it("disables the screen color picker when the browser API is unavailable", async () => {
+    const user = userEvent.setup();
+    Reflect.deleteProperty(window, "EyeDropper");
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "rgb(255, 255, 255)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Text color picker"));
+
+    const eyedropper = screen.getByLabelText("Pick Text color from screen");
+    expect(eyedropper).toBeDisabled();
+
+    await user.hover(eyedropper.parentElement ?? eyedropper);
+    expect(
+      await screen.findByText("Screen color picker unavailable"),
+    ).toBeInTheDocument();
+  });
+
+  it("updates annotation color from the inline saturation plane and hue control", async () => {
+    const user = userEvent.setup();
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "rgb(255, 0, 0)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Text color picker"));
+
+    const plane = screen.getByTestId("preview-color-plane-textColor");
+    vi.spyOn(plane, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      left: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.pointerDown(plane, { clientX: 50, clientY: 50, pointerId: 1 });
+
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+      "rgb(128, 64, 64)",
+    );
+    expect(screen.getByTestId("preview-annotation-visual-proposal")).toHaveStyle({
+      color: "rgb(128, 64, 64)",
+    });
+
+    const hue = screen.getByTestId("preview-color-hue-textColor");
+    vi.spyOn(hue, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 10,
+      top: 0,
+      right: 100,
+      bottom: 10,
+      left: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.pointerDown(hue, { clientX: 33, clientY: 5, pointerId: 2 });
+
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+      "rgb(65, 128, 64)",
+    );
+  });
+
+  it("updates annotation color from keyboard input on the inline color controls", async () => {
+    const user = userEvent.setup();
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "rgb(255, 0, 0)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Text color picker"));
+
+    const plane = screen.getByTestId("preview-color-plane-textColor");
+    expect(plane).toHaveAttribute("role", "slider");
+    expect(plane).toHaveAttribute("aria-valuemin", "0");
+    expect(plane).toHaveAttribute("aria-valuemax", "100");
+    expect(plane).toHaveAttribute("aria-valuenow", "100");
+
+    fireEvent.keyDown(plane, { key: "ArrowLeft", code: "ArrowLeft" });
+
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+      "rgb(255, 3, 3)",
+    );
+    expect(plane).toHaveAttribute("aria-valuenow", "99");
+
+    fireEvent.keyDown(plane, { key: "Home", code: "Home" });
+
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+      "rgb(0, 0, 0)",
+    );
+    expect(plane).toHaveAttribute("aria-valuenow", "0");
+
+    fireEvent.keyDown(plane, { key: "End", code: "End" });
+
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+      "rgb(255, 0, 0)",
+    );
+    expect(plane).toHaveAttribute("aria-valuenow", "100");
+
+    const hue = screen.getByTestId("preview-color-hue-textColor");
+    expect(hue).toHaveAttribute("role", "slider");
+    expect(hue).toHaveAttribute("aria-valuemin", "0");
+    expect(hue).toHaveAttribute("aria-valuemax", "360");
+    expect(hue).toHaveAttribute("aria-valuenow", "0");
+
+    fireEvent.keyDown(hue, { key: "ArrowRight", code: "ArrowRight" });
+
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+      "rgb(255, 4, 0)",
+    );
+    expect(hue).toHaveAttribute("aria-valuenow", "1");
+  });
+
+  it("opens and updates the Background color picker while preserving rgba alpha", async () => {
+    const user = userEvent.setup();
+    installDraftAnnotation({
+      elementStyle: {
+        background: "rgba(10, 20, 30, 0.5)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Background picker"));
+
+    expect(screen.getByLabelText("Saturation and value for Background")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hue for Background")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-color-popover-background")).toBeInTheDocument();
+    expect(screen.getByLabelText("Background R")).toHaveValue("10");
+    expect(within(advanced).getByLabelText("Background")).toHaveValue(
+      "rgba(10, 20, 30, 0.5)",
+    );
+
+    const plane = screen.getByTestId("preview-color-plane-background");
+    vi.spyOn(plane, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      top: 0,
+      right: 100,
+      bottom: 100,
+      left: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.pointerDown(plane, { clientX: 100, clientY: 0, pointerId: 3 });
+
+    expect(within(advanced).getByLabelText("Background")).toHaveValue(
+      "rgba(0, 128, 255, 0.5)",
+    );
+    expect(screen.getByTestId("preview-annotation-visual-proposal")).toHaveStyle({
+      background: "rgba(0, 128, 255, 0.5)",
+    });
+  });
+
+  it("opens and updates the Border color picker from an hsla baseline", async () => {
+    const user = userEvent.setup();
+    installDraftAnnotation({
+      elementStyle: {
+        borderColor: "hsla(210, 50%, 40%, 0.25)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Border color picker"));
+
+    expect(screen.getByLabelText("Saturation and value for Border color")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hue for Border color")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-color-popover-borderColor")).toBeInTheDocument();
+    expect(within(advanced).getByLabelText("Border color")).toHaveValue(
+      "hsla(210, 50%, 40%, 0.25)",
+    );
+
+    await user.click(screen.getByLabelText("Use RGB for Border color"));
+    await waitFor(() => {
+      expect(within(advanced).getByLabelText("Border color")).toHaveValue(
+        "rgba(51, 102, 153, 0.25)",
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText("Border color R"), {
+      target: { value: "64" },
+    });
+    expect(within(advanced).getByLabelText("Border color")).toHaveValue(
+      "rgba(64, 102, 153, 0.25)",
+    );
+    expect(screen.getByTestId("preview-annotation-visual-proposal")).toHaveStyle({
+      borderColor: "rgba(64, 102, 153, 0.25)",
+    });
+  });
+
+  it("keeps the color popover open while changing formats and editing fields", async () => {
+    const user = userEvent.setup();
+    installDraftAnnotation({
+      elementStyle: {
+        textColor: "hsl(0, 50%, 50%)",
+      },
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByLabelText("Open annotation visual controls"));
+    const advanced = screen.getByTestId("preview-annotation-advanced");
+    await user.click(within(advanced).getByLabelText("Open Text color picker"));
+
+    expect(screen.getByTestId("preview-color-popover-textColor")).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Use HSL for Text color"));
+    expect(screen.getByTestId("preview-color-popover-textColor")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Text color H"), {
+      target: { value: "210" },
+    });
+    expect(screen.getByTestId("preview-color-popover-textColor")).toBeInTheDocument();
+    expect(within(advanced).getByLabelText("Text color")).toHaveValue(
+      "hsl(210, 50%, 50%)",
+    );
   });
 
   it("updates the active visual highlight as side controls change", () => {
