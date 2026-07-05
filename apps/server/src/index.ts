@@ -57,6 +57,7 @@ import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
 import { ThreadTeardownService } from "./services/thread-teardown-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage";
+import { seedAgentRuntimeWorkspace } from "./dev-agent-seed";
 import { WebSocket } from "ws";
 import { resolveGracePeriodMs } from "./grace-period-ms";
 import { createGraceController } from "./grace-controller";
@@ -118,6 +119,35 @@ function resolveAuthToken(): string {
 }
 
 const AUTH_TOKEN = resolveAuthToken();
+
+/**
+ * Parses MCODE_SINGLE_INSTANCE once at server boot.
+ *
+ * This intentionally stays server-local instead of importing the script helper:
+ * server defaults differ in test/production, and the Electron server bundle must
+ * not depend on repo-root dev scripts.
+ */
+function resolveSingleInstanceFlag(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.MCODE_SINGLE_INSTANCE;
+  if (raw !== undefined) {
+    const normalized = raw.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+    throw new Error("MCODE_SINGLE_INSTANCE must be true or false when set");
+  }
+  return env.NODE_ENV !== "test" && env.NODE_ENV !== "production";
+}
+
+const SINGLE_INSTANCE = resolveSingleInstanceFlag(process.env);
+const INSTANCE_TOKEN = process.env.MCODE_INSTANCE_TOKEN?.trim() || null;
+const WORKTREE_IDENTITY = process.env.MCODE_WORKTREE_IDENTITY?.trim() || null;
+
+logger.info("Single-instance dev mode resolved", {
+  enabled: SINGLE_INSTANCE,
+  authTokenPresent: AUTH_TOKEN.length > 0,
+  instanceTokenPresent: INSTANCE_TOKEN !== null,
+  worktreeIdentityPresent: WORKTREE_IDENTITY !== null,
+});
 
 // Clean-shutdown breadcrumb check. If the marker is missing AND a prior lock
 // file exists, the previous server process did not run shutdown() to completion.
@@ -211,6 +241,10 @@ const enricher = container.resolve(WorkspaceEnricher);
 const filesystemBrowser = container.resolve(FilesystemBrowser);
 const modelCacheService = container.resolve(ModelCacheService);
 const providerUsageWarmup = container.resolve(ProviderUsageWarmupService);
+
+seedAgentRuntimeWorkspace(process.env, {
+  workspaceRepo,
+});
 
 /** Tracks CLI path edits so model catalog caches refresh when a different binary is targeted. */
 let lastCliPathsForModelCache = settingsService.get().provider.cli;
@@ -568,6 +602,9 @@ const { httpServer, wss } = createWsServer({
   handoffStorage,
   threadTeardownService,
   authToken: AUTH_TOKEN,
+  singleInstance: SINGLE_INSTANCE,
+  instanceToken: INSTANCE_TOKEN,
+  worktreeIdentity: WORKTREE_IDENTITY,
   shutdown: requestShutdown,
 });
 
@@ -592,7 +629,7 @@ function listen(port: number, attempt = 1): void {
     try {
       const lockData = JSON.stringify({
         port,
-        authToken: AUTH_TOKEN,
+        ...(!SINGLE_INSTANCE && { authToken: AUTH_TOKEN }),
         pid: process.pid,
         startedAt: new Date().toISOString(),
         version: process.env.MCODE_VERSION ?? "0.0.0",

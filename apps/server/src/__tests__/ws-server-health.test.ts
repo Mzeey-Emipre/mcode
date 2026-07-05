@@ -7,15 +7,31 @@
 import "reflect-metadata";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import http from "http";
+import { WebSocket } from "ws";
 import { createWsServer } from "../transport/ws-server";
 import type { RouterDeps } from "../transport/ws-router";
 
 /** Minimal RouterDeps stub — only agentService is called by the health handler. */
 function makeMinimalDeps(
-  overrides: Partial<RouterDeps & { authToken: string; shutdown: () => void }> = {},
-): RouterDeps & { authToken: string; shutdown: () => void } {
+  overrides: Partial<RouterDeps & {
+    authToken: string;
+    singleInstance: boolean;
+    instanceToken: string | null;
+    worktreeIdentity: string | null;
+    shutdown: () => void;
+  }> = {},
+): RouterDeps & {
+  authToken: string;
+  singleInstance: boolean;
+  instanceToken: string | null;
+  worktreeIdentity: string | null;
+  shutdown: () => void;
+} {
   return {
     authToken: "test-token-abc",
+    singleInstance: false,
+    instanceToken: null,
+    worktreeIdentity: null,
     shutdown: vi.fn(),
     agentService: { activeCount: () => 2 } as unknown as RouterDeps["agentService"],
     workspaceService: undefined as unknown as RouterDeps["workspaceService"],
@@ -40,7 +56,13 @@ function makeMinimalDeps(
     workspaceRepo: undefined as unknown as RouterDeps["workspaceRepo"],
     threadTeardownService: undefined as unknown as RouterDeps["threadTeardownService"],
     ...overrides,
-  } as unknown as RouterDeps & { authToken: string; shutdown: () => void };
+  } as unknown as RouterDeps & {
+    authToken: string;
+    singleInstance: boolean;
+    instanceToken: string | null;
+    worktreeIdentity: string | null;
+    shutdown: () => void;
+  };
 }
 
 /** Issue a GET /health request to the given server and return status + parsed body. */
@@ -141,6 +163,20 @@ describe("/health endpoint", () => {
     expect(cookieHeader).toContain("mcode-auth=test-token-abc");
   });
 
+  it("does not expose authToken or Set-Cookie in single-instance mode", async () => {
+    const deps = makeMinimalDeps({
+      singleInstance: true,
+      instanceToken: "instance-token-abc1234567890abc1234567890",
+      worktreeIdentity: "C:\\repo\\worktree",
+    });
+    ({ httpServer: server } = createWsServer(deps));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    const { body, headers } = await getHealth(server);
+    expect((body as Record<string, unknown>).authToken).toBeUndefined();
+    expect(headers["set-cookie"]).toBeUndefined();
+  });
+
   it("includes status and activeAgents in the response body", async () => {
     const deps = makeMinimalDeps();
     ({ httpServer: server } = createWsServer(deps));
@@ -151,6 +187,52 @@ describe("/health endpoint", () => {
     expect((body as Record<string, unknown>).activeAgents).toBe(2);
   });
 
+});
+
+describe("single-instance WebSocket attachment", () => {
+  let server: http.Server;
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("returns structured WRONG_INSTANCE refusal without token values", async () => {
+    const deps = makeMinimalDeps({
+      singleInstance: true,
+      authToken: "expected-auth-token",
+      instanceToken: "expected-instance-token-abc1234567890abc1234567890",
+      worktreeIdentity: "C:\\repo\\expected",
+    });
+    ({ httpServer: server } = createWsServer(deps));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    if (!addr || typeof addr === "string") throw new Error("Server did not bind");
+
+    const refusal = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const url = new URL(`ws://127.0.0.1:${addr.port}`);
+      url.searchParams.set("token", "wrong-auth-token");
+      url.searchParams.set("instanceToken", "wrong-instance-token");
+      url.searchParams.set("worktree", "C:\\repo\\presented");
+      const ws = new WebSocket(url);
+      ws.on("message", (data) => {
+        resolve(JSON.parse(data.toString()) as Record<string, unknown>);
+      });
+      ws.on("error", reject);
+    });
+
+    expect(refusal).toEqual({
+      type: "refusal",
+      error: {
+        code: "WRONG_INSTANCE",
+        expectedWorktree: "C:\\repo\\expected",
+        presentedWorktree: "C:\\repo\\presented",
+      },
+    });
+    expect(JSON.stringify(refusal)).not.toContain("expected-auth-token");
+    expect(JSON.stringify(refusal)).not.toContain("expected-instance-token");
+    expect(JSON.stringify(refusal)).not.toContain("wrong-auth-token");
+    expect(JSON.stringify(refusal)).not.toContain("wrong-instance-token");
+  });
 });
 
 describe("/shutdown endpoint", () => {

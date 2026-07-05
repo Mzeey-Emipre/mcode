@@ -49,8 +49,54 @@ const ATTACHMENT_EXT_MIME: Record<string, string> = {
 
 type WsServerDeps = RouterDeps & {
   authToken: string;
+  singleInstance?: boolean;
+  instanceToken?: string | null;
+  worktreeIdentity?: string | null;
   shutdown: () => void;
 };
+
+type InstanceCheckResult =
+  | { ok: true }
+  | { ok: false; code: "WRONG_INSTANCE"; expectedWorktree: string | null; presentedWorktree: string | null };
+
+/** Query parameters used by browser clients to prove they target this dev instance. */
+export const INSTANCE_TOKEN_QUERY_PARAM = "instanceToken";
+export const WORKTREE_QUERY_PARAM = "worktree";
+
+/** Validates the single-instance token and worktree identity from a WebSocket request. */
+export function validateInstanceAttachment(
+  req: IncomingMessage,
+  expected: { singleInstance?: boolean; authToken: string; instanceToken?: string | null; worktreeIdentity?: string | null },
+): InstanceCheckResult {
+  if (!expected.singleInstance) return { ok: true };
+
+  const parsedUrl = new URL(req.url ?? "/", "http://localhost");
+  const presentedInstanceToken = parsedUrl.searchParams.get(INSTANCE_TOKEN_QUERY_PARAM);
+  const presentedWorktree = parsedUrl.searchParams.get(WORKTREE_QUERY_PARAM);
+  const presentedAuthToken = extractToken(req);
+
+  const matchesAuth =
+    typeof presentedAuthToken === "string" && safeTokenEqual(presentedAuthToken, expected.authToken);
+  const matchesInstance =
+    typeof expected.instanceToken === "string" &&
+    typeof presentedInstanceToken === "string" &&
+    safeTokenEqual(presentedInstanceToken, expected.instanceToken);
+  const matchesWorktree =
+    typeof expected.worktreeIdentity === "string" &&
+    typeof presentedWorktree === "string" &&
+    presentedWorktree === expected.worktreeIdentity;
+
+  if (matchesAuth && matchesInstance && matchesWorktree) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    code: "WRONG_INSTANCE",
+    expectedWorktree: expected.worktreeIdentity ?? null,
+    presentedWorktree,
+  };
+}
 
 /** Create and configure the HTTP + WebSocket server. */
 export function createWsServer(deps: WsServerDeps): {
@@ -61,20 +107,22 @@ export function createWsServer(deps: WsServerDeps): {
     const token = extractToken(req);
 
     if (req.method === "GET" && req.url?.startsWith("/health")) {
-      const body = JSON.stringify({
+      const body: Record<string, unknown> = {
         status: "ok",
         activeAgents: deps.agentService.activeCount(),
-        // Expose token so scanPortRange can recover it after a server restart
-        // without needing prior authentication. Safe because this server only
-        // binds to 127.0.0.1 (same trust boundary as the lock file).
-        authToken: deps.authToken,
-      });
+      };
+      if (!deps.singleInstance) {
+        // Shared-server mode keeps the legacy localhost token recovery path.
+        body.authToken = deps.authToken;
+      }
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "Set-Cookie": buildAuthCookie(deps.authToken),
       };
+      if (!deps.singleInstance) {
+        headers["Set-Cookie"] = buildAuthCookie(deps.authToken);
+      }
       res.writeHead(200, headers);
-      res.end(body);
+      res.end(JSON.stringify(body));
       return;
     }
 
@@ -170,6 +218,25 @@ export function createWsServer(deps: WsServerDeps): {
   });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+    const instanceCheck = validateInstanceAttachment(req, deps);
+    if (!instanceCheck.ok) {
+      logger.warn("WebSocket connection rejected: wrong dev instance", {
+        code: instanceCheck.code,
+        expectedWorktree: instanceCheck.expectedWorktree,
+        presentedWorktree: instanceCheck.presentedWorktree,
+      });
+      ws.send(JSON.stringify({
+        type: "refusal",
+        error: {
+          code: instanceCheck.code,
+          expectedWorktree: instanceCheck.expectedWorktree,
+          presentedWorktree: instanceCheck.presentedWorktree,
+        },
+      }));
+      ws.close(4001, instanceCheck.code);
+      return;
+    }
+
     const token = extractToken(req);
     if (!token || !safeTokenEqual(token, deps.authToken)) {
       logger.warn("WebSocket connection rejected: invalid token");

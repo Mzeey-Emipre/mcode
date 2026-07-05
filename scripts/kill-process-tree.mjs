@@ -18,13 +18,31 @@ export const TASKKILL_TIMEOUT_MS = 5_000;
  */
 export function killProcessTree(child) {
   if (!child?.pid) return;
+  killPidTree(child.pid);
+}
+
+/**
+ * Kill a process ID and its entire process tree.
+ *
+ * @param {number} pid
+ * @param {NodeJS.Signals} [signal]
+ */
+export function killPidTree(pid, signal = "SIGTERM") {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error(`Invalid PID: ${pid}`);
+  }
 
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
+    spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
       stdio: "ignore",
       timeout: TASKKILL_TIMEOUT_MS,
     });
-  } else {
-    child.kill();
+    return;
+  }
+
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
   }
 }

@@ -9,37 +9,27 @@
  */
 
 import { spawn } from "node:child_process";
-import { createServer } from "node:net";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { resolve, dirname } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { rebuildServerDevBundle } from "./build-server-dev-bundle.mjs";
 import { killProcessTree } from "./kill-process-tree.mjs";
+import {
+  buildPortsContract,
+  computeAvailablePorts,
+  ensureRuntimeRoot,
+  generateInstanceToken,
+  resolveRepoRoot,
+  writePortsFile,
+} from "./agent/runtime-contract.mjs";
+import { resolveDevSingleInstanceFlag } from "./agent/single-instance-flag.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 const desktopRoot = resolve(rootDir, "apps", "desktop");
 const serverCjs = resolve(desktopRoot, "dist", "server", "server.cjs");
-const SERVER_PORT = 19400;
-
-/** Find an available port starting from `preferred`, incrementing on conflict. */
-function findPort(preferred) {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.once("error", (err) => {
-      if (err.code === "EADDRINUSE") {
-        resolve(findPort(preferred + 1));
-      } else {
-        reject(err);
-      }
-    });
-    srv.listen(preferred, "127.0.0.1", () => {
-      srv.close(() => resolve(preferred));
-    });
-  });
-}
 
 /**
  * Resolve the Electron binary path. The native module (better-sqlite3)
@@ -60,22 +50,42 @@ function getElectronBinary() {
 }
 
 /** Poll until the server's /health endpoint responds 200. */
-async function waitForHealth(port, timeoutMs = 15_000) {
+async function waitForHealth(healthUrl, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`http://localhost:${port}/health`);
+      const res = await fetch(healthUrl);
       if (res.ok) return;
     } catch {
       // not ready yet
     }
     await new Promise((r) => setTimeout(r, 300));
   }
-  throw new Error(`Server did not respond on port ${port} within ${timeoutMs}ms`);
+  throw new Error(`Server did not respond at ${healthUrl} within ${timeoutMs}ms`);
 }
 
-const port = await findPort(SERVER_PORT);
+const repoRoot = resolveRepoRoot(rootDir);
+const paths = ensureRuntimeRoot(repoRoot);
+mkdirSync(paths.logsDir, { recursive: true });
+const { serverPort, webPort: computedWebPort } = await computeAvailablePorts(repoRoot);
 const devToken = randomUUID();
+const instanceToken = generateInstanceToken();
+const singleInstance = resolveDevSingleInstanceFlag(process.env.MCODE_SINGLE_INSTANCE);
+const contract = buildPortsContract({
+  repoRoot,
+  serverPort,
+  webPort: process.env.MCODE_WEB_PORT
+    ? Number.parseInt(process.env.MCODE_WEB_PORT, 10)
+    : computedWebPort,
+  instanceToken,
+  worktreeIdentity: repoRoot,
+  seedLogin: {
+    email: "agent@seed.local",
+    token: devToken,
+    authHeader: `Bearer ${devToken}`,
+    cookieName: "mcode-auth",
+  },
+});
 const electronBin = getElectronBinary();
 
 if (!electronBin) {
@@ -95,7 +105,7 @@ try {
   process.exit(1);
 }
 
-console.log(`\x1b[36m[dev:web]\x1b[0m Starting server on port ${port}...`);
+console.log(`\x1b[36m[dev:web]\x1b[0m Starting server on port ${serverPort}...`);
 
 let serverFailed = false;
 
@@ -108,9 +118,16 @@ const server = spawn(
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
-      MCODE_PORT: String(port),
+      MCODE_PORT: String(serverPort),
       MCODE_HOST: "127.0.0.1",
       MCODE_AUTH_TOKEN: devToken,
+      MCODE_SINGLE_INSTANCE: singleInstance ? "true" : "false",
+      ...(singleInstance
+        ? {
+            MCODE_INSTANCE_TOKEN: instanceToken,
+            MCODE_WORKTREE_IDENTITY: repoRoot,
+          }
+        : {}),
     },
     stdio: "inherit",
   },
@@ -128,8 +145,9 @@ server.on("exit", (code) => {
 
 // Wait for the server to become healthy
 try {
-  await waitForHealth(port);
-  console.log(`\x1b[36m[dev:web]\x1b[0m Server ready on port ${port}`);
+  await waitForHealth(contract.healthUrl);
+  writePortsFile(contract, repoRoot);
+  console.log(`\x1b[36m[dev:web]\x1b[0m Server ready on port ${serverPort}`);
 } catch {
   if (!serverFailed) {
     console.warn(
@@ -147,7 +165,7 @@ try {
 // auto-increment behaviour.
 const webPort = process.env.MCODE_WEB_PORT
   ? Number.parseInt(process.env.MCODE_WEB_PORT, 10)
-  : null;
+  : contract.webPort;
 const viteArgs = ["run", "dev"];
 if (Number.isInteger(webPort) && webPort > 0) {
   viteArgs.push("--port", String(webPort), "--strictPort");
@@ -162,7 +180,16 @@ const vite = spawn("bun", viteArgs, {
   env: {
     ...process.env,
     NODE_ENV: "development",
-    VITE_SERVER_URL: `ws://localhost:${port}?token=${devToken}`,
+    ...(singleInstance
+      ? {
+          VITE_MCODE_SINGLE_INSTANCE: "true",
+          VITE_MCODE_WORKTREE_IDENTITY: repoRoot,
+          VITE_MCODE_RUNTIME_CONTRACT: paths.portsFile,
+        }
+      : {
+          VITE_SERVER_URL: buildLegacyWebSocketUrl(serverPort, devToken),
+          VITE_MCODE_SINGLE_INSTANCE: "false",
+        }),
   },
   stdio: "inherit",
 });
@@ -185,3 +212,16 @@ vite.on("exit", () => {
   killProcessTree(server);
   process.exit();
 });
+
+/**
+ * Builds the legacy shared-server WebSocket URL for flag-off dev UI.
+ *
+ * @param {number} port
+ * @param {string} token
+ * @returns {string}
+ */
+function buildLegacyWebSocketUrl(port, token) {
+  const url = new URL(`ws://localhost:${port}`);
+  url.searchParams.set("token", token);
+  return url.toString();
+}

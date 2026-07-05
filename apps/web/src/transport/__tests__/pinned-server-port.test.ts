@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { getReconnectScanRange, parseServerPort } from "../index";
+import {
+  buildSingleInstanceServerUrl,
+  getReconnectScanRange,
+  isSingleInstanceDev,
+  parseServerPort,
+} from "../index";
 
 /**
  * `parseServerPort` backs the guard (`getPinnedServerPort`) that stops a
@@ -46,5 +51,36 @@ describe("getReconnectScanRange", () => {
 
   it("falls back to the full range when nothing is pinned", () => {
     expect(getReconnectScanRange(null)).toEqual({ min: 19400, max: 19800 });
+  });
+});
+
+describe("isSingleInstanceDev", () => {
+  it("returns false when the Vite single-instance flag is unset", () => {
+    expect(isSingleInstanceDev()).toBe(false);
+  });
+});
+
+describe("buildSingleInstanceServerUrl", () => {
+  it("builds the WebSocket URL from the runtime contract", () => {
+    const url = buildSingleInstanceServerUrl({
+      serverPort: 41_234,
+      instanceToken: "instance-token-abc",
+      worktreeIdentity: "C:\\repo\\worktree-a",
+      seedLogin: {
+        token: "seed-token-abc",
+      },
+    });
+
+    const parsed = new URL(url);
+    expect(parsed.origin).toBe("ws://127.0.0.1:41234");
+    expect(parsed.searchParams.get("token")).toBe("seed-token-abc");
+    expect(parsed.searchParams.get("instanceToken")).toBe("instance-token-abc");
+    expect(parsed.searchParams.get("worktree")).toBe("C:\\repo\\worktree-a");
+  });
+
+  it("rejects contracts without the pairing fields", () => {
+    expect(() => buildSingleInstanceServerUrl({ serverPort: 41_234 })).toThrow(
+      /instanceToken/,
+    );
   });
 });
