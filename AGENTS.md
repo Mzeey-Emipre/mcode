@@ -17,6 +17,27 @@ Performant AI agent orchestration desktop app built with Electron + TypeScript.
 Run `bun run setup` to bootstrap from a fresh clone.
 Run `bun run doctor` to verify all prerequisites are installed.
 
+## Runtime contract for agents
+
+Start a worktree-local runtime with `bun run --shell system agent:up`. The
+command creates `.dev/`, starts the server and web app, writes `.dev/ports.json`,
+and prints that JSON as its final line after `/health` returns 200. Plain
+`bun run agent:up` still starts the runtime on Windows, but Bun Shell can drop
+that final stdout line.
+
+Read `.dev/ports.json` instead of recomputing ports. It includes the paired
+`instanceToken` and `worktreeIdentity` used by this worktree's dev UI. Poll
+`healthUrl` until it returns 200, open `appUrl`, and authenticate with
+`seedLogin` (`authHeader` for HTTP or the `mcode-auth` cookie). Runtime logs
+live in `.dev/logs`. In single-instance dev mode, `/health` does not return a
+token or set an auth cookie.
+
+Write exploratory Playwright specs in `.dev/playwright-scratch`. Promote a spec
+to the committed e2e suite only when the behavior deserves permanent coverage.
+Stop the runtime with `bun run --shell system agent:down`; use
+`bun run --shell system agent:reset` to stop it, delete only `.dev/db`, and start
+a fresh seeded runtime.
+
 ## Agent skills
 
 Per-repo configuration for the engineering skills (`to-issues`, `to-prd`, `triage`, `diagnose`, `tdd`, `improve-codebase-architecture`, `zoom-out`). These tell the skills how this repo tracks issues, what labels to apply during triage, and where domain docs live.

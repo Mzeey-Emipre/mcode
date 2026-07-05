@@ -1,12 +1,45 @@
-import { defineConfig } from "vite";
+import { readFileSync } from "node:fs";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 const analyze = process.env.ANALYZE === "true" || process.env.ANALYZE === "1";
+const runtimeContractEndpoint = "/__mcode_runtime/ports.json";
+
+function mcodeRuntimeContractPlugin(): Plugin {
+  return {
+    name: "mcode-runtime-contract",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.split("?")[0] !== runtimeContractEndpoint) {
+          next();
+          return;
+        }
+        const singleInstance = process.env.VITE_MCODE_SINGLE_INSTANCE;
+        const contractPath = process.env.VITE_MCODE_RUNTIME_CONTRACT;
+        if (!(singleInstance === "true" || singleInstance === "1") || !contractPath) {
+          res.statusCode = 404;
+          res.end("Not found");
+          return;
+        }
+        try {
+          const contract = readFileSync(contractPath, "utf8");
+          res.setHeader("Content-Type", "application/json");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(contract);
+        } catch {
+          res.statusCode = 503;
+          res.end("Runtime contract unavailable");
+        }
+      });
+    },
+  };
+}
 
 export default defineConfig({
   plugins: [
+    mcodeRuntimeContractPlugin(),
     // React Compiler auto-memoizes components and hooks at build time, so manual
     // React.memo / useMemo / useCallback become redundant. Runs as a Babel pass
     // inside @vitejs/plugin-react; React 19 ships the runtime it emits against.
@@ -65,7 +98,7 @@ export default defineConfig({
     port: 5173,
     hmr: true,
     watch: {
-      ignored: ["**/desktop/**"],
+      ignored: ["**/desktop/**", "**/.dev/**"],
     },
   },
   build: {
@@ -81,7 +114,7 @@ export default defineConfig({
     pool: "threads",
     minWorkers: 1,
     maxWorkers: 4,
-    exclude: ["e2e/**", "node_modules/**"],
+    exclude: ["e2e/**", "node_modules/**", "../../.dev/**"],
     env: {
       NODE_ENV: "test",
     },

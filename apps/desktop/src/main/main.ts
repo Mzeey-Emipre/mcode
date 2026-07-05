@@ -60,7 +60,14 @@ import { shouldPrintVersion } from "./cli-args.js";
 // Electron's userData is derived from app.getName() and must be set here,
 // before app.whenReady() and any other path-dependent call.
 if (!app.isPackaged) {
-  app.setPath("userData", join(app.getPath("appData"), "Mcode-Dev"));
+  const agentUserDataDir =
+    process.env.MCODE_AGENT_RUNTIME === "1"
+      ? process.env.MCODE_ELECTRON_USER_DATA_DIR?.trim()
+      : undefined;
+  app.setPath(
+    "userData",
+    agentUserDataDir || join(app.getPath("appData"), "Mcode-Dev"),
+  );
 }
 
 if (shouldPrintVersion(process.argv)) {

@@ -14,6 +14,7 @@ export { pushEmitter } from "./ws-transport";
 
 /** Default server URL when running standalone (no Electron shell). */
 const DEFAULT_SERVER_URL = "ws://localhost:19400";
+const RUNTIME_CONTRACT_ENDPOINT = "/__mcode_runtime/ports.json";
 
 /** Inclusive-min / exclusive-max port window scanned when no backend is pinned. */
 const SERVER_SCAN_MIN = 19400;
@@ -65,6 +66,64 @@ export function getReconnectScanRange(pinnedPort: number | null): { min: number;
   return { min: SERVER_SCAN_MIN, max: SERVER_SCAN_MAX };
 }
 
+/** Returns whether this browser build must bind only to its paired worktree server. */
+export function isSingleInstanceDev(): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const raw = (import.meta as any).env?.VITE_MCODE_SINGLE_INSTANCE as string | undefined;
+  return raw === "true" || raw === "1";
+}
+
+/**
+ * Builds the single-instance WebSocket URL from the worktree runtime contract.
+ *
+ * This browser-side validation intentionally mirrors the Node script contract
+ * because the JSON is fetched at runtime and must be checked before it can drive
+ * a WebSocket URL.
+ */
+export function buildSingleInstanceServerUrl(contract: unknown): string {
+  if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+    throw new Error("Runtime contract must be an object");
+  }
+  const record = contract as Record<string, unknown>;
+  const seedLogin = record.seedLogin;
+  const serverPort = record.serverPort;
+  if (
+    typeof serverPort !== "number" ||
+    !Number.isInteger(serverPort) ||
+    serverPort <= 0 ||
+    serverPort > 65_535
+  ) {
+    throw new Error("Runtime contract has an invalid serverPort");
+  }
+  if (typeof record.instanceToken !== "string" || record.instanceToken.length === 0) {
+    throw new Error("Runtime contract is missing instanceToken");
+  }
+  if (typeof record.worktreeIdentity !== "string" || record.worktreeIdentity.length === 0) {
+    throw new Error("Runtime contract is missing worktreeIdentity");
+  }
+  if (!seedLogin || typeof seedLogin !== "object" || Array.isArray(seedLogin)) {
+    throw new Error("Runtime contract is missing seedLogin");
+  }
+  const token = (seedLogin as Record<string, unknown>).token;
+  if (typeof token !== "string" || token.length === 0) {
+    throw new Error("Runtime contract is missing seedLogin.token");
+  }
+
+  const url = new URL(`ws://127.0.0.1:${serverPort}`);
+  url.searchParams.set("token", token);
+  url.searchParams.set("instanceToken", record.instanceToken);
+  url.searchParams.set("worktree", record.worktreeIdentity);
+  return url.toString();
+}
+
+async function readSingleInstanceServerUrl(): Promise<string> {
+  const response = await fetch(RUNTIME_CONTRACT_ENDPOINT, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Runtime contract unavailable: ${response.status}`);
+  }
+  return buildSingleInstanceServerUrl(await response.json());
+}
+
 /** How long to wait for the WebSocket to connect before giving up. */
 const CONNECT_TIMEOUT_MS = 5000;
 
@@ -84,6 +143,10 @@ async function resolveServerUrl(): Promise<{ url: string; ipcPath: string }> {
     } catch {
       // fall through
     }
+  }
+
+  if (isSingleInstanceDev()) {
+    return { url: await readSingleInstanceServerUrl(), ipcPath: "" };
   }
 
   // Vite injects env vars prefixed with VITE_
@@ -128,6 +191,9 @@ export async function initTransport(): Promise<McodeTransport> {
         if (window.desktopBridge?.getServerUrl) {
           const info = await window.desktopBridge.getServerUrl();
           return info.url;
+        }
+        if (isSingleInstanceDev()) {
+          return readSingleInstanceServerUrl();
         }
         // In browser, reconnect using the last-known token from localStorage so
         // the URL carries valid auth.

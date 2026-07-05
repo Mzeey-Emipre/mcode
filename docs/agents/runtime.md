@@ -9,9 +9,19 @@ Read it before starting any work. Run `bun run doctor` to verify your environmen
 
 | Command | What it starts |
 |---------|---------------|
+| `bun run --shell system agent:up` | Worktree-local agent runtime under `.dev/`, with startup JSON printed to stdout |
+| `bun run --shell system agent:down` | Stops only PIDs recorded under `.dev/pids/` |
+| `bun run --shell system agent:reset` | Stops the runtime, deletes `.dev/db`, then starts a fresh seeded runtime |
 | `bun run dev:web` | Vite frontend + bundled backend under Electron's Node (no Electron window) |
 | `bun run dev:desktop` | Full Electron desktop app |
 | `bun run dev:server` | Backend server only (no frontend): `bun src/index.ts` |
+
+For agent-driven work, prefer `bun run --shell system agent:up`. It creates
+`.dev/`, starts the server and web app with per-worktree ports and database
+paths, writes `.dev/ports.json`, and prints that JSON as the final line after
+`/health` returns 200. Consumers should read `ports.json`; do not recompute
+ports. On Windows, plain `bun run agent:up` still starts the runtime, but Bun
+Shell can drop the final stdout line.
 
 **For most development work, use `bun run dev:web`.** It builds the server bundle
 into `apps/desktop/dist/server/server.cjs` on startup (`scripts/build-server-dev-bundle.mjs`),
@@ -75,6 +85,9 @@ All variables are optional — defaults work for local development.
 | `MCODE_PORT` | `19400` | HTTP/WS server port (increments on collision, up to 19409) |
 | `MCODE_HOST` | `127.0.0.1` | Server bind host |
 | `MCODE_AUTH_TOKEN` | `""` (empty) | Empty string bypasses auth in dev |
+| `MCODE_SINGLE_INSTANCE` | `true` in dev, `false` in test/prod | Requires a paired dev UI to present this worktree's instance token and identity |
+| `MCODE_INSTANCE_TOKEN` | (unset) | Random per-runtime token used only for dev UI pairing |
+| `MCODE_WORKTREE_IDENTITY` | (unset) | Worktree identity the UI must present when single-instance mode is on |
 | `MCODE_VERSION` | `0.0.1` | Reported version string |
 | `MCODE_CLAUDE_PATH` | `claude` | Path to the Claude CLI binary |
 | `MCODE_GIT_PATH` | `git` | Path to the git binary |
@@ -112,6 +125,37 @@ Use `bun run state:paths` to print all resolved paths for the current environmen
 
 Log files rotate daily and are retained for 14 days.
 
+### Agent runtime artifacts
+
+`bun run --shell system agent:up` owns only the current worktree's `.dev/`
+directory.
+
+| Artifact | Path |
+|----------|------|
+| Runtime contract | `.dev/ports.json` |
+| Database | `.dev/db/app.sqlite` |
+| Fixture repo | `.dev/fixture-repo/` |
+| Logs | `.dev/logs/` |
+| PID files | `.dev/pids/` |
+| Scratch Playwright specs | `.dev/playwright-scratch/` |
+| Electron user data | `.dev/electron/` |
+
+`ports.json` contains `{ instanceToken, worktreeIdentity, serverPort, webPort,
+healthUrl, appUrl, seedLogin, logsDir }`. `seedLogin.email` is
+`agent@seed.local`; Mcode uses token auth, so agents authenticate with
+`seedLogin.authHeader` or the `mcode-auth` cookie. Treat `instanceToken` and
+`seedLogin.token` as secrets.
+
+In single-instance dev mode, browser discovery reads only this worktree's
+`.dev/ports.json` through the dev entry point. It does not scan localhost or
+recover a token from `/health`. A wrong-instance WebSocket attach is refused
+with `WRONG_INSTANCE`, `expectedWorktree`, and `presentedWorktree`; token values
+are not included.
+
+The fixture repo has `main`, `feature/agent-runtime`, and
+`conflict/agent-runtime`. Merging the conflict branch into `main` creates a real
+conflict for handoff and conflict-flow testing.
+
 ### Cursor provider tracing
 
 Set `provider.cursor.traceSessionUpdates` to `true` in `settings.json`, restart so the backend reloads settings, reproduce a Cursor thread, then grep `mcode.log.*` under `$MCODE_DATA_DIR/logs/` for `Cursor ACP session/update trace`. Each structured line lists the sanitized inbound `notification` envelope plus summarized `mappedEvents` so you can decide whether Cursor is omitting `kind`/`rawInput`, mis-sizing sub-agent parents, etc. Streaming assistant chunks (`sessionUpdate: "agent_message_chunk"`) stay off the trace on purpose because they overwhelm the logs.
@@ -141,6 +185,11 @@ The backend server is an HTTP + WebSocket server.
 - **WebSocket:** `ws://localhost:<port>`
 - **Auth:** In dev, `MCODE_AUTH_TOKEN=""` bypasses authentication entirely.
 
+When `MCODE_SINGLE_INSTANCE=true`, `/health` remains unauthenticated but does
+not return `authToken` and does not set `mcode-auth`. Set
+`MCODE_SINGLE_INSTANCE=false` to keep the shared-server discovery behavior where
+`/health` can return the current token for localhost reconnects.
+
 ---
 
 ## Debug Scripts
@@ -151,6 +200,9 @@ The backend server is an HTTP + WebSocket server.
 | `bun run logs:tail` | Stream and follow today's log file (Ctrl+C to exit) |
 | `bun run state:reset` | Wipe `MCODE_DATA_DIR` safely (dev-only, prompts for confirmation) |
 | `bun run db:info` | Print DB path, schema version, and row counts for key tables |
+| `bun run --shell system agent:up` | Start the worktree-local agent runtime and print `.dev/ports.json` |
+| `bun run --shell system agent:down` | Stop only PIDs recorded in `.dev/pids/` |
+| `bun run --shell system agent:reset` | Stop, delete `.dev/db`, remigrate, reseed, and restart |
 
 ---
 
