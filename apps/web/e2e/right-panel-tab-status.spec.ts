@@ -245,7 +245,7 @@ test.describe("Right panel tab status", () => {
     // control shares the tab's product label in its accessible name, so a name
     // match would be ambiguous.
     const planTab = page.locator('[data-rail-tab="tasks"]');
-    const changesTab = page.locator('[data-rail-tab="changes"]');
+    const changesTab = page.locator('[data-rail-tab="review"]');
     await expect(planTab).toBeVisible();
 
     // Plan no longer carries task progress in the rail; Review keeps file count.

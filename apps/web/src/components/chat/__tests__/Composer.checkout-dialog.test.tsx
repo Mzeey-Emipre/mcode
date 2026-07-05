@@ -499,7 +499,7 @@ describe("Composer checkout confirmation", () => {
       previewAnnotations,
       attachments: [],
       model: "claude-sonnet-4-6",
-      permissionMode: "FULL",
+      permissionMode: "full",
     });
     useQueueStore.getState().enqueue(thread.id, {
       content: "Message B",
@@ -507,7 +507,7 @@ describe("Composer checkout confirmation", () => {
       mentions: undefined,
       attachments: [],
       model: "claude-sonnet-4-6",
-      permissionMode: "FULL",
+      permissionMode: "full",
     });
 
     render(<Composer threadId={thread.id} workspaceId="ws-1" />);

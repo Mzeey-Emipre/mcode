@@ -104,6 +104,7 @@ import type {
   AttachedBrowserCapture,
   ContextWindowMode,
   MessageMention,
+  PreviewAnnotationBundle,
   ReasoningLevel,
   ProviderId,
   GoalState,
