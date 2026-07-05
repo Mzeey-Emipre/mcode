@@ -111,7 +111,7 @@ export default function DiffPreviewMarkdown({
         // Blockquote: indented italic with a faint bg tint instead of a
         // left stripe (border-l > 1px is banned per impeccable).
         "[&_blockquote]:bg-muted/15 [&_blockquote]:px-3 [&_blockquote]:py-1 [&_blockquote]:italic [&_blockquote]:text-muted-foreground [&_blockquote]:rounded-sm",
-        "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2",
+        "[&_a]:text-link [&_a]:underline [&_a]:underline-offset-2",
         "[&_hr]:my-4 [&_hr]:border-border/40",
         "[&_table]:border-collapse [&_table]:my-2",
         "[&_th]:border [&_th]:border-border/40 [&_th]:px-2 [&_th]:py-1",

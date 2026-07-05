@@ -267,9 +267,9 @@ export function App() {
       }),
       registerCommand({
         id: "tasks.toggle",
-        title: "Toggle Scope Panel",
+        title: "Toggle Plan Panel",
         category: "View",
-        // Scope is thread-only; summonTab no-ops when there is no thread.
+        // Plan is thread-only; summonTab no-ops when there is no thread.
         handler: () => summonTab("tasks"),
       }),
       registerCommand({

@@ -476,7 +476,16 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     const deleteWorkspace = vi.fn();
     const deps = {
       threadRepo: {
-        listAllByWorkspace: vi.fn().mockReturnValue([{ id: "thread-1" }, { id: "thread-2" }]),
+        listAllByWorkspace: vi.fn().mockReturnValue([
+          { id: "thread-1", worktree_path: null },
+          { id: "thread-2", worktree_path: null },
+        ]),
+      },
+      githubService: {
+        cancelForRepoPath: vi.fn().mockResolvedValue(undefined),
+      },
+      ciWatcherService: {
+        teardownThread: vi.fn().mockResolvedValue(undefined),
       },
       threadTeardownService: {
         teardownThread: vi
@@ -511,7 +520,16 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     const teardownThread = vi.fn().mockResolvedValue(undefined);
     const deps = {
       threadRepo: {
-        listAllByWorkspace: vi.fn().mockReturnValue([{ id: "thread-1" }, { id: "thread-2" }]),
+        listAllByWorkspace: vi.fn().mockReturnValue([
+          { id: "thread-1", worktree_path: null },
+          { id: "thread-2", worktree_path: null },
+        ]),
+      },
+      githubService: {
+        cancelForRepoPath: vi.fn().mockResolvedValue(undefined),
+      },
+      ciWatcherService: {
+        teardownThread: vi.fn().mockResolvedValue(undefined),
       },
       threadTeardownService: {
         teardownThread,
@@ -557,7 +575,16 @@ describe("routeMessage thread.delete watcher teardown", () => {
       .mockImplementation(options.deleteThread ?? (() => Promise.resolve(true)));
     const deps = {
       ciWatcherService: {
-        unwatch: vi.fn(),
+        teardownThread: vi.fn().mockResolvedValue(undefined),
+      },
+      githubService: {
+        cancelForRepoPath: vi.fn().mockResolvedValue(undefined),
+      },
+      threadRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "thread-1",
+          worktree_path: "C:/repo-worktree",
+        }),
       },
       gitWatcherService: {
         unwatchThreadWorktree,

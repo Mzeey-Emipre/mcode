@@ -104,7 +104,7 @@ interface QuotaSnapshot {
  * Converts a raw Copilot quota snapshot map into an array of normalized QuotaCategory objects
  * suitable for the QuotaUpdate AgentEvent.
  */
-function normalizeQuotaSnapshots(
+export function normalizeQuotaSnapshots(
   snapshots: Record<string, QuotaSnapshot>,
 ): QuotaCategory[] {
   return Object.entries(snapshots).map(([key, snap]) => {
@@ -493,20 +493,15 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
   /** Return current usage/quota state by fetching from account.getQuota(). */
   async getUsage(): Promise<ProviderUsageInfo> {
-    try {
-      await this.refreshClient();
-      if (this.lastResolution?.source === "not-found" || !this.client) {
-        return { providerId: "copilot", quotaCategories: [] };
-      }
-      const result = await this.client.rpc.account.getQuota();
-      const categories = result?.quotaSnapshots
-        ? normalizeQuotaSnapshots(result.quotaSnapshots)
-        : [];
-      return { providerId: "copilot", quotaCategories: categories };
-    } catch (error) {
-      logger.warn("Failed to fetch Copilot quota", { error });
-      return { providerId: "copilot", quotaCategories: [] };
+    await this.refreshClient();
+    if (this.lastResolution?.source === "not-found" || !this.client) {
+      throw new Error("Copilot client unavailable");
     }
+    const result = await this.client.rpc.account.getQuota();
+    const categories = result?.quotaSnapshots
+      ? normalizeQuotaSnapshots(result.quotaSnapshots)
+      : [];
+    return { providerId: "copilot", quotaCategories: categories };
   }
 
   /**

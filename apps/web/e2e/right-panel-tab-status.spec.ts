@@ -49,7 +49,7 @@ function makeThread(id: string, title: string): Thread {
 
 const THREAD = makeThread("thread-tab-status", "Tab Status Thread");
 
-/** Two completed of five parent tasks → Scope reads "2/5". */
+/** Two completed of five parent tasks → Task bubble reads "2/5 steps". */
 const TASKS = [
   { id: "t1", content: "Map data sources", status: "completed", group: "Tasks" },
   { id: "t2", content: "Build tab status", status: "completed", group: "Tasks" },
@@ -238,60 +238,63 @@ test.describe("Right panel tab status", () => {
     );
   });
 
-  test("rail icons show scope progress, change count, and the active-tab lamp", async ({ page }, testInfo) => {
+  test("rail icons show Plan, change count, and the active-tab lamp", async ({ page }, testInfo) => {
     await seedPanel(page, "tasks");
 
     // Rail icons are addressed by their stable data attribute: the hover-× close
     // control shares the tab's product label in its accessible name, so a name
     // match would be ambiguous.
-    const scopeTab = page.locator('[data-rail-tab="tasks"]');
-    const changesTab = page.locator('[data-rail-tab="review"]');
-    await expect(scopeTab).toBeVisible();
+    const planTab = page.locator('[data-rail-tab="tasks"]');
+    const changesTab = page.locator('[data-rail-tab="changes"]');
+    await expect(planTab).toBeVisible();
 
-    // Scope progress (2 completed of 5) and Review file count (4 distinct).
-    await expect(scopeTab).toContainText("2/5");
+    // Plan no longer carries task progress in the rail; Review keeps file count.
+    await expect(planTab).toHaveAttribute("aria-label", "Plan");
+    await expect(planTab).not.toContainText("2/5");
     await expect(changesTab).toContainText("4");
 
     // The active icon carries the amber lamp + its indicator bar.
-    await expect(scopeTab).toHaveClass(/text-primary/);
+    await expect(planTab).toHaveClass(/text-primary/);
     await expect(page.getByTestId("rail-active-indicator")).toBeAttached();
 
-    await page.screenshot({ path: testInfo.outputPath("scope-active.png") });
+    await page.screenshot({ path: testInfo.outputPath("plan-active.png") });
 
     // Switching tabs moves the lamp to Review.
     await changesTab.click();
     await expect(changesTab).toHaveClass(/text-primary/);
-    await expect(scopeTab).not.toHaveClass(/text-primary/);
+    await expect(planTab).not.toHaveClass(/text-primary/);
 
     await page.screenshot({ path: testInfo.outputPath("changes-active.png") });
   });
 
-  test("scope renders live TaskCreate tool calls", async ({ page }) => {
+  test("task bubble renders live TaskCreate tool calls", async ({ page }) => {
     await seedPanel(page, "tasks");
-    await expect(page.locator('[data-rail-tab="tasks"]')).toContainText("2/5");
+    await expect(page.getByText("2/5 steps")).toBeVisible();
 
     await emitTaskCreate(page);
 
+    await expect(page.getByText("2/6 steps")).toBeVisible();
+    await page.getByText("2/6 steps").click();
     await expect(page.getByText("Buy groceries - Pick up milk, eggs, bread")).toBeVisible();
-    await expect(page.locator('[data-rail-tab="tasks"]')).toContainText("2/6");
     await expect(page.getByText(/nothing on the docket/i)).toHaveCount(0);
   });
 
-  test("scope renders live Codex update_plan tool calls", async ({ page }) => {
+  test("task bubble renders live Codex update_plan tool calls", async ({ page }) => {
     await seedPanel(page, "tasks");
-    await expect(page.locator('[data-rail-tab="tasks"]')).toContainText("2/5");
+    await expect(page.getByText("2/5 steps")).toBeVisible();
 
     await emitUpdatePlan(page);
 
+    await expect(page.getByText("1/3 steps")).toBeVisible();
+    await page.getByText("1/3 steps").click();
     await expect(page.getByText("Test todo item one with CODE-A1 and CODE-B1")).toBeVisible();
     await expect(page.getByText("Test todo item two with CODE-A2 and CODE-B2")).toBeVisible();
     await expect(page.getByText("Test todo item three with CODE-A3 and CODE-B3")).toBeVisible();
-    await expect(page.locator('[data-rail-tab="tasks"]')).toContainText("1/3");
     await expect(page.getByText(/nothing on the docket/i)).toHaveCount(0);
   });
 
   test("review tab pulses fresh when new files land while viewing another tab", async ({ page }) => {
-    // Open on Scope so the Review tab is inactive; this also baselines the
+    // Open on Plan so the Review tab is inactive; this also baselines the
     // current file count so pre-existing changes do not pulse.
     await seedPanel(page, "tasks");
 
@@ -299,7 +302,7 @@ test.describe("Right panel tab status", () => {
     await expect(changesTab).toContainText("4");
     await expect(changesTab.locator(".changes-fresh-ring")).toHaveCount(0);
 
-    // A new turn lands while the user is on Scope → Review goes fresh.
+    // A new turn lands while the user is on Plan, so Review goes fresh.
     await addSnapshotWithNewFile(page);
     await expect(changesTab).toContainText("5");
     await expect(changesTab.locator(".changes-fresh-ring")).toBeVisible();
@@ -310,7 +313,7 @@ test.describe("Right panel tab status", () => {
   });
 
   test("review badge caps the count for very large diffs", async ({ page }) => {
-    // Seed on Scope (Changes inactive) so the DiffPanel does not refetch and
+    // Seed on Plan (Changes inactive) so the DiffPanel does not refetch and
     // overwrite the large snapshot we poke in below.
     await seedPanel(page, "tasks");
 

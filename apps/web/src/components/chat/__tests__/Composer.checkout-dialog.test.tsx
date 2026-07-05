@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../Composer";
@@ -9,11 +9,14 @@ import {
   type SavedPreviewAnnotation,
 } from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
-import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
+import { useQueueStore } from "@/stores/queueStore";
+import { resetThreadStoreForTests, seedThreadRecord } from "@/stores/thread-store-test-utils";
+import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockThread, createMockWorkspace } from "@/__tests__/mocks/transport";
 import type { GitBranch } from "@/transport";
 
 let lastComposerText = "";
+const EMPTY_QUEUE: [] = [];
 
 const branch = (name: string, isCurrent = false): GitBranch => ({
   name,
@@ -138,7 +141,31 @@ vi.mock("../PrDetectedCard", () => ({
 }));
 
 vi.mock("../ComposerQueueList", () => ({
-  ComposerQueueList: () => <div />,
+  ComposerQueueList: ({
+    threadId,
+    onLoadIntoComposer,
+  }: {
+    threadId: string;
+    onLoadIntoComposer: (message: unknown) => void;
+  }) => {
+    const queue = useQueueStore((s) => s.queues[threadId] ?? EMPTY_QUEUE);
+    return React.createElement(
+      "div",
+      null,
+      queue.map((message) =>
+        React.createElement(
+          "button",
+          {
+            key: message.id,
+            type: "button",
+            "aria-label": `Edit ${message.displayContent ?? message.content}`,
+            onClick: () => onLoadIntoComposer(message),
+          },
+          "Edit",
+        ),
+      ),
+    );
+  },
 }));
 
 vi.mock("../ContextTracker", () => ({
@@ -232,6 +259,7 @@ describe("Composer checkout confirmation", () => {
     vi.clearAllMocks();
     lastComposerText = "";
     resetThreadStoreForTests({ runningThreadIds: new Set() });
+    useQueueStore.setState({ queues: {}, toast: null, editingThreadId: null });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     useWorkspaceStore.setState({
@@ -378,5 +406,122 @@ describe("Composer checkout confirmation", () => {
     });
     expect(usePreviewAnnotationStore.getState().byThread["ws-1"] ?? []).toEqual([]);
     expect(usePreviewDesignModeStore.getState().modes["ws-1"]).toBe(false);
+  });
+
+  it("keeps annotations on a handoff queued send when the handoff becomes ready", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      records: seedThreadRecord(thread.id, {
+        handoffMeta: { status: "ready" },
+      }),
+    });
+    usePreviewAnnotationStore.setState({
+      drafts: {},
+      byThread: {
+        [thread.id]: [makeSavedAnnotation()],
+      },
+    });
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    await waitFor(() =>
+      expect(
+        useThreadStore.getState().records.get(thread.id)?.handoffMeta?.status,
+      ).toBe("ready"),
+    );
+    act(() => {
+      useThreadStore.setState({
+        records: seedThreadRecord(thread.id, {
+          handoffMeta: { status: "generating" },
+        }),
+      });
+    });
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Message Mcode"), "Queued follow-up");
+    await user.click(screen.getByLabelText("Send message"));
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+
+    act(() => {
+      useThreadStore.setState({
+        records: seedThreadRecord(thread.id, {
+          handoffMeta: { status: "ready" },
+        }),
+      });
+    });
+
+    await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
+    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(sendCall?.[17]).toMatchObject({
+      schemaVersion: 1,
+      annotations: [
+        {
+          id: "550e8400-e29b-41d4-a716-446655440001",
+          note: "Make the content flush with the page edge.",
+        },
+      ],
+    });
+  });
+
+  it("preserves annotations when swapping away from an edited queued message", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    const previewAnnotations = {
+      schemaVersion: 1 as const,
+      annotations: [makeSavedAnnotation()],
+    };
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Message A",
+      displayContent: "Message A",
+      mentions: undefined,
+      previewAnnotations,
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "FULL",
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Message B",
+      displayContent: "Message B",
+      mentions: undefined,
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "FULL",
+    });
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    await userEvent.click(screen.getByLabelText("Edit Message A"));
+    await userEvent.type(screen.getByLabelText("Message Mcode"), "Message A edited");
+    await userEvent.click(screen.getByLabelText("Edit Message B"));
+
+    await waitFor(() => {
+      const queue = useQueueStore.getState().queues[thread.id] ?? [];
+      expect(queue[0]).toMatchObject({
+        content: "Message A edited",
+        previewAnnotations,
+      });
+    });
   });
 });

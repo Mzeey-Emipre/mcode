@@ -1,0 +1,348 @@
+#!/usr/bin/env node
+/**
+ * Starts a self-contained per-worktree runtime for automation agents.
+ */
+import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { rebuildServerDevBundle } from "../build-server-dev-bundle.mjs";
+import {
+  buildPortsContract,
+  computeAvailablePorts,
+  ensureRuntimeRoot,
+  generateInstanceToken,
+  getRuntimePaths,
+  resolveRepoRoot,
+  writePortsFile,
+} from "./runtime-contract.mjs";
+import { seedFixtureRepo } from "./fixture-repo.mjs";
+import { stopRecordedPidFile } from "./runtime-processes.mjs";
+import { stopRecordedRuntimePids } from "./agent-down.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const rootDir = resolve(__dirname, "..", "..");
+const desktopRoot = resolve(rootDir, "apps", "desktop");
+const serverCjs = resolve(desktopRoot, "dist", "server", "server.cjs");
+let agentUpTestHooks = {};
+
+/**
+ * Installs process-local hooks for focused agentUp tests.
+ *
+ * @param {Partial<{
+ *   stopRecordedRuntimePids: typeof stopRecordedRuntimePids,
+ *   seedFixtureRepo: typeof seedFixtureRepo,
+ *   computeAvailablePorts: typeof computeAvailablePorts,
+ *   getElectronBinary: typeof getElectronBinary,
+ *   rebuildServerDevBundle: typeof rebuildServerDevBundle,
+ *   spawnLogged: typeof spawnLogged,
+ * }>} hooks
+ * @returns {() => void}
+ */
+export function setAgentUpTestHooks(hooks) {
+  agentUpTestHooks = hooks;
+  return () => {
+    agentUpTestHooks = {};
+  };
+}
+
+/**
+ * Starts the server and Vite web app for the current worktree.
+ *
+ * @param {string} [repoRoot]
+ * @returns {Promise<import("./runtime-contract.mjs").AgentRuntimePorts>}
+ */
+export async function agentUp(repoRoot = resolveRepoRoot()) {
+  const paths = ensureRuntimeRoot(repoRoot);
+  mkdirSync(paths.dbDir, { recursive: true });
+  mkdirSync(paths.logsDir, { recursive: true });
+  mkdirSync(paths.pidsDir, { recursive: true });
+  mkdirSync(paths.playwrightScratchDir, { recursive: true });
+  mkdirSync(paths.electronDir, { recursive: true });
+  const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
+  stopRuntimePids(repoRoot);
+  writeScratchPlaywrightConfig(paths);
+
+  const seedRuntimeFixtureRepo = agentUpTestHooks.seedFixtureRepo ?? seedFixtureRepo;
+  const computeRuntimePorts = agentUpTestHooks.computeAvailablePorts ?? computeAvailablePorts;
+  const fixtureRepo = seedRuntimeFixtureRepo(repoRoot);
+  const { serverPort, webPort } = await computeRuntimePorts(repoRoot);
+  const token = randomUUID();
+  const instanceToken = generateInstanceToken();
+  const contract = buildPortsContract({
+    repoRoot,
+    serverPort,
+    webPort,
+    instanceToken,
+    worktreeIdentity: repoRoot,
+    seedLogin: {
+      email: "agent@seed.local",
+      token,
+      authHeader: `Bearer ${token}`,
+      cookieName: "mcode-auth",
+    },
+  });
+
+  const resolveElectronBinary = agentUpTestHooks.getElectronBinary ?? getElectronBinary;
+  const electronBin = resolveElectronBinary();
+  if (!electronBin) {
+    throw new Error("Electron binary not found. Run 'bun install' in the project root.");
+  }
+
+  const rebuildRuntimeServerBundle = agentUpTestHooks.rebuildServerDevBundle ?? rebuildServerDevBundle;
+  await rebuildRuntimeServerBundle();
+
+  const startedPidFiles = [];
+  try {
+    const spawnRuntimeProcess = agentUpTestHooks.spawnLogged ?? spawnLogged;
+    const server = spawnRuntimeProcess(
+      electronBin,
+      [serverCjs],
+      {
+        cwd: dirname(serverCjs),
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+          NODE_ENV: "development",
+          MCODE_AGENT_RUNTIME: "1",
+          MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
+          MCODE_DATA_DIR: paths.devDir,
+          MCODE_DB_PATH: paths.dbPath,
+          MCODE_PORT: String(serverPort),
+          MCODE_HOST: "127.0.0.1",
+          MCODE_AUTH_TOKEN: token,
+          MCODE_SINGLE_INSTANCE: "true",
+          MCODE_INSTANCE_TOKEN: instanceToken,
+          MCODE_WORKTREE_IDENTITY: repoRoot,
+          MCODE_ELECTRON_USER_DATA_DIR: paths.electronDir,
+        },
+      },
+      resolve(paths.logsDir, "server.log"),
+    );
+    startedPidFiles.push(writePid(paths, "server", server.pid));
+
+    await waitForHealth(contract.healthUrl);
+    writePortsFile(contract, repoRoot);
+
+    const web = spawnRuntimeProcess(
+      getBunBinary(),
+      ["run", "dev", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"],
+      {
+        cwd: resolve(rootDir, "apps", "web"),
+        env: {
+          ...process.env,
+          NODE_ENV: "development",
+          MCODE_AGENT_RUNTIME: "1",
+          MCODE_WEB_PORT: String(webPort),
+          VITE_MCODE_SINGLE_INSTANCE: "true",
+          VITE_MCODE_WORKTREE_IDENTITY: repoRoot,
+          VITE_MCODE_RUNTIME_CONTRACT: paths.portsFile,
+        },
+      },
+      resolve(paths.logsDir, "web.log"),
+    );
+    startedPidFiles.push(writePid(paths, "web", web.pid));
+    await waitForHttpOk(contract.appUrl, "web app");
+
+    if (!process.argv.includes("--quiet")) {
+      await writeStdout(`${JSON.stringify(contract)}\n`);
+    }
+    return contract;
+  } catch (error) {
+    cleanupStartedProcesses(startedPidFiles, repoRoot);
+    throw error;
+  }
+}
+
+/**
+ * Resolve the local Electron binary used to run the server bundle.
+ *
+ * @returns {string | null}
+ */
+function getElectronBinary() {
+  try {
+    const desktopRequire = createRequire(resolve(rootDir, "apps", "desktop", "package.json"));
+    const electronPath = desktopRequire("electron");
+    return existsSync(electronPath) ? electronPath : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Spawn a long-running process with stdout and stderr redirected to one log file.
+ *
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{ cwd: string, env: NodeJS.ProcessEnv }} options
+ * @param {string} logPath
+ * @returns {import("node:child_process").ChildProcess}
+ */
+function spawnLogged(command, args, options, logPath) {
+  const logFd = openSync(logPath, "a");
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ["ignore", logFd, logFd],
+    detached: true,
+    shell: false,
+  });
+  child.unref();
+  return child;
+}
+
+/**
+ * Resolve the Bun executable used to launch Vite.
+ *
+ * @returns {string}
+ */
+function getBunBinary() {
+  if (process.env.BUN) return process.env.BUN;
+  if (process.platform === "win32") {
+    const result = spawnSync("where.exe", ["bun"], { encoding: "utf8" });
+    const candidate = result.stdout.split(/\r?\n/).find(Boolean);
+    if (candidate) return candidate;
+  }
+  return "bun";
+}
+
+/**
+ * Persist the PID of a process started by `agent:up`.
+ *
+ * @param {ReturnType<typeof getRuntimePaths>} paths
+ * @param {string} name
+ * @param {number | undefined} pid
+ */
+function writePid(paths, name, pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error(`Could not start ${name}: child process has no PID`);
+  }
+  const pidFile = resolve(paths.pidsDir, `${name}.pid`);
+  writeFileSync(pidFile, `${pid}\n`, { encoding: "utf8" });
+  return pidFile;
+}
+
+/**
+ * Writes the per-runtime Playwright config used for scratch verification specs.
+ *
+ * @param {ReturnType<typeof getRuntimePaths>} paths
+ */
+function writeScratchPlaywrightConfig(paths) {
+  const configPath = join(paths.playwrightScratchDir, "playwright.config.mjs");
+  const playwrightTestPath = "../../apps/web/node_modules/@playwright/test/index.js";
+  writeFileSync(
+    configPath,
+    `import { readFileSync } from "node:fs";
+import playwrightTest from ${JSON.stringify(playwrightTestPath)};
+
+const { defineConfig } = playwrightTest;
+
+const ports = JSON.parse(readFileSync(new URL("../ports.json", import.meta.url), "utf8"));
+
+export default defineConfig({
+  testDir: ".",
+  testMatch: /.*\\.spec\\.(js|ts)/,
+  outputDir: "./test-results",
+  reporter: [["list"]],
+  use: {
+    baseURL: ports.appUrl,
+  },
+});
+`,
+    { encoding: "utf8" },
+  );
+  writeFileSync(
+    join(paths.playwrightScratchDir, "test.mjs"),
+    `import playwrightTest from ${JSON.stringify(playwrightTestPath)};
+
+export const { test, expect } = playwrightTest;
+`,
+    { encoding: "utf8" },
+  );
+}
+
+/**
+ * Wait for the server health endpoint to return HTTP 200.
+ *
+ * @param {string} healthUrl
+ * @param {number} [timeoutMs]
+ */
+async function waitForHealth(healthUrl, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(healthUrl);
+      if (res.ok) return;
+    } catch {
+      // Retry until the startup deadline.
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 300));
+  }
+  throw new Error(`Server did not become healthy: ${healthUrl}`);
+}
+
+/**
+ * Wait for a URL to return a successful HTTP response.
+ *
+ * @param {string} url
+ * @param {string} label
+ * @param {number} [timeoutMs]
+ */
+async function waitForHttpOk(url, label, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {
+      // Retry until the startup deadline.
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 300));
+  }
+  throw new Error(`${label} did not become reachable: ${url}`);
+}
+
+/**
+ * Stops only processes started by the current failed `agent:up` attempt.
+ *
+ * @param {string[]} pidFiles
+ * @param {string} repoRoot
+ */
+function cleanupStartedProcesses(pidFiles, repoRoot) {
+  const paths = getRuntimePaths(repoRoot);
+  rmSync(paths.portsFile, { force: true });
+  for (const pidFile of [...pidFiles].reverse()) {
+    try {
+      stopRecordedPidFile(pidFile, { repoRoot });
+    } catch {
+      // Startup is already failing; preserve the original error.
+    }
+  }
+}
+
+/**
+ * Waits for stdout to accept the full startup contract before Node exits.
+ *
+ * @param {string} value
+ * @returns {Promise<void>}
+ */
+async function writeStdout(value) {
+  await new Promise((resolveWrite, rejectWrite) => {
+    process.stdout.write(value, (error) => {
+      if (error) {
+        rejectWrite(error);
+        return;
+      }
+      resolveWrite();
+    });
+  });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const repoArg = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
+  const repoRoot = repoArg ? resolve(repoArg) : resolveRepoRoot();
+  await agentUp(repoRoot);
+}

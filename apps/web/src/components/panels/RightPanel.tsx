@@ -2,7 +2,6 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useTaskStore } from "@/stores/taskStore";
 import {
   useDiffStore,
   PANEL_MIN_WIDTH,
@@ -13,7 +12,7 @@ import {
   createDefaultRightPanelState,
   getDefaultPanelWidthPx,
 } from "@/stores/diffStore";
-import { ScopeSplitPane } from "./ScopeSplitPane";
+import { PlanPanel } from "./plan";
 import { PanelEmptyState } from "./PanelEmptyState";
 import { ActivityRail, type ScopeProgress } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
@@ -89,7 +88,7 @@ export function RightPanel() {
   // the panel shows the card-grid empty state. Defensive default for any stored
   // row that predates the openTabs field. See ADR-0004 / issue #610.
   const openTabs = panelState.openTabs ?? [];
-  // Review and Scope are creatable only in a thread; threadless the panel runs
+  // Plan is creatable only in a thread; threadless the panel runs
   // against the workspace root and offers just Browser/Terminal/Files.
   const panelScope: PanelScope = activeThreadId ? "thread" : "threadless";
   // The whole panel record (visibility included) is per-thread, falling back to
@@ -117,27 +116,10 @@ export function RightPanel() {
   const { setRightPanelWidth, setRightPanelTab, closeRightPanelTab } =
     useDiffStore.getState();
 
-  const tasks = useTaskStore(
-    (s) => (activeThreadId ? s.tasksByThread[activeThreadId] : undefined),
-  );
-
-  // Scope to-do progress and visible list use only parent-agent tasks.
-  const parentTasks = useMemo(
-    () => (tasks ?? []).filter((t) => t.group === "Tasks"),
-    [tasks],
-  );
-
-  // Tab-strip glance status. Scope progress counts completed and cancelled
-  // tasks as settled (a dropped task is no longer pending work); Changes counts
+  // Tab-strip glance status. Changes counts
   // distinct files across every turn snapshot (the cumulative working-tree diff
   // the user reviews and ships).
-  const scope = useMemo<ScopeProgress>(() => {
-    const total = parentTasks.length;
-    const done = parentTasks.filter(
-      (t) => t.status === "completed" || t.status === "cancelled",
-    ).length;
-    return { done, total };
-  }, [parentTasks]);
+  const scope = useMemo<ScopeProgress>(() => ({ done: 0, total: 0 }), []);
 
   const snapshots = useDiffStore((s) =>
     activeThreadId ? s.snapshotsByThread[activeThreadId] : undefined,
@@ -403,7 +385,7 @@ export function RightPanel() {
             />
           )}
           {activeTab === "tasks" && openTabs.includes("tasks") && activeThreadId && (
-            <ScopeSplitPane threadId={activeThreadId} parentTasks={parentTasks} />
+            <PlanPanel threadId={activeThreadId} />
           )}
           <div
             className={

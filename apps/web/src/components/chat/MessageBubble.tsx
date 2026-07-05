@@ -14,7 +14,6 @@ import { FileAttachmentTile } from "./FileAttachmentTile";
 import { ImageAttachmentLightbox } from "./ImageAttachmentLightbox";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { AnsweredSummary } from "./plan-questions/AnsweredSummary";
-import { PlanCard } from "./PlanCard";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 import { DeltaBlock } from "./narrative/DeltaBlock";
 import { parseGoalStatusNotice } from "@/lib/goal-message";
@@ -79,7 +78,7 @@ function MentionedUserText({
     nodes.push(
       <span
         key={`${mention.id}-${mention.range.start}`}
-        className="rounded-md bg-primary-foreground/20 px-1 py-0.5 font-medium"
+        className="rounded-md bg-foreground/10 px-1 py-0.5 font-medium"
       >
         {text.slice(mention.range.start, mention.range.end)}
       </span>,
@@ -635,7 +634,7 @@ export const MessageBubble = memo(function MessageBubble({
             ) : null}
 
           {userDisplayText.trim() && (
-            <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-primary px-3 py-1.5 text-sm text-primary-foreground shadow-sm shadow-primary/15">
+            <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground">
               {!userGoal && message.mentions?.length ? (
                 <MentionedUserText text={userDisplayText} mentions={message.mentions} />
               ) : (
@@ -774,10 +773,6 @@ export const MessageBubble = memo(function MessageBubble({
             </Suspense>
           )}
         </div>
-      )}
-      {/* Plan card: shows when a plan was extracted from this message */}
-      {message.role === "assistant" && (
-        <PlanCard messageId={message.id} />
       )}
       <div
         className={assistantActionsClass}

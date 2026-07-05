@@ -55,6 +55,8 @@ interface ComposerQueueListProps {
    * the composer and confuse the user.
    */
   isEditing?: boolean;
+  /** True when another composer surface must finish before queued sends resume. */
+  isPaused?: boolean;
 }
 
 /**
@@ -76,6 +78,7 @@ export function ComposerQueueList({
   onLoadIntoComposer,
   onResume,
   isEditing = false,
+  isPaused = false,
 }: ComposerQueueListProps) {
   const queue = useQueueStore((s) => s.queues[threadId] ?? EMPTY_QUEUE);
   const removeFromQueue = useQueueStore((s) => s.removeFromQueue);
@@ -89,7 +92,8 @@ export function ComposerQueueList({
 
   if (queue.length === 0) return null;
 
-  const canSendNow = isAgentRunning && providerSupportsSendNow(provider) && !!onSendNow;
+  const canSendNow =
+    !isPaused && isAgentRunning && providerSupportsSendNow(provider) && !!onSendNow;
 
   function handleDragEnd(e: DragEndEvent) {
     const { active, over } = e;
@@ -114,7 +118,7 @@ export function ComposerQueueList({
           </span>
         </span>
         <div className="flex items-center gap-1.5">
-          {!isAgentRunning && !isEditing && (
+          {!isAgentRunning && !isEditing && !isPaused && (
             <button
               type="button"
               onClick={onResume}

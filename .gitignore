@@ -39,6 +39,7 @@ Thumbs.db
 # Mcode data
 .mcode/
 .mcode-dev/
+.dev/
 
 # Per-worktree local dev SQLite (inside linked git worktrees only)
 .mcode-local/

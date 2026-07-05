@@ -74,5 +74,6 @@ test.describe("status indicator animations", () => {
 
     expect(cssText).toMatch(/\.status-spin\s*\{[^}]*animation:[^}]*spin/);
     expect(cssText).toMatch(/\.status-pulse\s*\{[^}]*animation:[^}]*pulse/);
+    expect(cssText).toMatch(/\.spinner-tail-fade\s*\{[^}]*conic-gradient/);
   });
 });

@@ -2553,6 +2553,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    const hasThreadMetrics =
+      this.lastSessionCostUsd !== undefined ||
+      this.lastServiceTier !== undefined ||
+      this.lastNumTurns !== undefined ||
+      this.lastDurationMs !== undefined;
+    if (categories === null && !hasThreadMetrics) {
+      throw new Error("Claude usage source unavailable");
+    }
     return {
       providerId: "claude",
       quotaCategories: categories ?? [],

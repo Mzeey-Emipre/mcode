@@ -11,6 +11,7 @@ import {
   Globe,
   Info,
   Laptop,
+  ListChecks,
   Loader2,
   Menu,
   Plus,
@@ -18,6 +19,7 @@ import {
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
   Dialog,
   DialogContent,
@@ -51,13 +53,16 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useOverviewStore } from "@/stores/overviewStore";
+import { usePlanStore } from "@/stores/planStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
 import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
+import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { cn } from "@/lib/utils";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
+import { formatUsageResetText } from "@/lib/usage-reset-format";
 import {
   getTransport,
   type GitBranch as GitBranchRecord,
@@ -67,6 +72,7 @@ import {
 import type {
   ChecksStatus,
   Message,
+  PlanRecord,
   ProviderUsageInfo,
   QuotaCategory,
   TurnSnapshot,
@@ -74,6 +80,8 @@ import type {
 
 /** Stable empty messages reference so the closed Overview never re-renders on new messages. */
 const EMPTY_MESSAGES: Message[] = [];
+/** Stable empty plans reference so closed Overview selectors never allocate. */
+const EMPTY_PLANS: readonly PlanRecord[] = [];
 
 /** CI dot shown on the Overview trigger for terminal check states. */
 export type ThreadOverviewCiDot = "red" | "green" | null;
@@ -220,8 +228,9 @@ export function formatThreadOverviewSessionCost(
  */
 export function getThreadOverviewUsageCategories(
   usageInfo: ProviderUsageInfo | undefined,
-  _providerId = usageInfo?.providerId,
+  providerId = usageInfo?.providerId,
 ): QuotaCategory[] {
+  if (providerId === "cursor") return [];
   return (
     usageInfo?.quotaCategories
       .filter((category) => !category.isUnlimited)
@@ -239,6 +248,7 @@ export function formatThreadOverviewUsage(
   usageInfo: ProviderUsageInfo | undefined,
   providerId = usageInfo?.providerId,
 ): string | null {
+  if (providerId === "cursor") return null;
   const categories = getThreadOverviewUsageCategories(usageInfo, providerId);
   const costSummary = formatThreadOverviewSessionCost(usageInfo);
 
@@ -252,13 +262,22 @@ export function formatThreadOverviewUsage(
       .join(", ")
     : null;
 
-  return [quotaSummary, costSummary].filter(Boolean).join(", ") || null;
+  const statusSummary = (() => {
+    if (quotaSummary || costSummary) return null;
+    if (usageInfo?.usageStatus === "ready-empty") return "No capped quota";
+    if (usageInfo?.usageStatus === "unsupported") return "Usage not supported";
+    if (usageInfo?.usageStatus === "unavailable") return "Usage unavailable";
+    return null;
+  })();
+
+  return [quotaSummary, costSummary, statusSummary].filter(Boolean).join(", ") || null;
 }
 
 interface ThreadOverviewUsageBarsProps {
   categories: QuotaCategory[];
   summary: string;
   sessionCostSummary: string | null;
+  usageStatus?: ProviderUsageInfo["usageStatus"];
 }
 
 const THREAD_OVERVIEW_USAGE_DETAILS_ID = "thread-overview-usage-details-panel";
@@ -268,6 +287,7 @@ function ThreadOverviewUsageBars({
   categories,
   summary,
   sessionCostSummary,
+  usageStatus,
 }: ThreadOverviewUsageBarsProps) {
   const [open, setOpen] = useState(true);
 
@@ -339,6 +359,10 @@ function ThreadOverviewUsageBars({
             const rounded = Math.round(percent);
             const shortLabel = usageCategoryShortLabel(category.label);
             const displayLabel = category.label.trim();
+            const resetText = formatUsageResetText(category.resetDate);
+            const progressDescription = resetText
+              ? `${shortLabel} usage ${rounded} percent. ${resetText}`
+              : `${shortLabel} usage ${rounded} percent`;
             return (
               <div key={category.label} className="space-y-1">
                 <div className="flex items-baseline justify-between gap-3">
@@ -349,7 +373,7 @@ function ThreadOverviewUsageBars({
                 </div>
                 <div
                   role="progressbar"
-                  aria-label={`${shortLabel} usage`}
+                  aria-label={progressDescription}
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-valuenow={rounded}
@@ -364,9 +388,19 @@ function ThreadOverviewUsageBars({
                     style={{ width: `${percent}%` }}
                   />
                 </div>
+                {resetText ? (
+                  <div className="font-mono text-xs tabular-nums text-muted-foreground/70">
+                    {resetText}
+                  </div>
+                ) : null}
               </div>
             );
           })}
+          {usageStatus === "stale" ? (
+            <div className="font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
+              STALE
+            </div>
+          ) : null}
           {sessionCostSummary ? (
             <div className="flex items-baseline justify-between gap-3 pt-0.5">
               <span className="min-w-0 truncate text-xs text-foreground/80">Session cost</span>
@@ -1712,6 +1746,19 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     executeCommand("changes.toggle");
   }, []);
 
+  const plans = usePlanStore((s) => s.plansByThread[thread.id] ?? EMPTY_PLANS);
+  const latestPlan = useMemo(() => {
+    if (plans.length === 0) return null;
+    return [...plans].reverse().find((plan) => plan.status !== "superseded") ?? null;
+  }, [plans]);
+
+  const openLatestPlan = useCallback(() => {
+    if (!latestPlan) return;
+    usePlanStore.getState().setActiveVersion(thread.id, latestPlan.version);
+    showRightPanelAdaptive(thread.workspace_id, thread.id);
+    useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "tasks");
+  }, [latestPlan, thread.id, thread.workspace_id]);
+
   const openRepository = useCallback(() => {
     if (!repository.webUrl) return;
     if (window.desktopBridge?.openExternalUrl) {
@@ -1759,6 +1806,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
         ? "Thread overview, CI checks passing"
         : "Thread overview";
   const modeLabel = thread.mode === "worktree" ? "Worktree" : "Direct";
+  const LocalModeIcon = thread.mode === "worktree" ? WorktreeModeIcon : Laptop;
   const checkoutLabel = resolveThreadCheckoutLabel(thread);
 
   const triggerButton = (
@@ -1831,6 +1879,26 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               onOpen={openRepository}
             />
 
+            {latestPlan && (
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                data-testid="thread-overview-plan"
+                onClick={openLatestPlan}
+                aria-label={`Plan, ${latestPlan.title}`}
+                className="h-8 w-full cursor-pointer justify-between gap-3 px-2 text-left"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <ListChecks size={14} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate text-xs font-medium">Plans</span>
+                </span>
+                <span className="min-w-0 max-w-[11rem] truncate text-xs text-muted-foreground">
+                  {latestPlan.title}
+                </span>
+              </Button>
+            )}
+
             <Popover open={localOpen} onOpenChange={setLocalOpen}>
               <PopoverTrigger
                 render={
@@ -1846,7 +1914,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                     )}
                   >
                     <span className="flex min-w-0 items-center gap-2">
-                      <Laptop size={14} className="shrink-0 text-muted-foreground" />
+                      <LocalModeIcon
+                        size={14}
+                        aria-hidden
+                        data-testid="thread-overview-local-mode-icon"
+                        className="shrink-0 text-muted-foreground"
+                      />
                       <span className="truncate text-xs font-medium">{modeLabel}</span>
                     </span>
                     <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
@@ -1920,6 +1993,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 categories={usageCategories}
                 summary={usageSummary}
                 sessionCostSummary={sessionCostSummary}
+                usageStatus={usageInfo?.usageStatus}
               />
             )}
 

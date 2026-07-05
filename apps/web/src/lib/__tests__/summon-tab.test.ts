@@ -86,12 +86,12 @@ describe("summonTab", () => {
     });
   });
 
-  describe("Scope no-op when threadless", () => {
+  describe("Plan no-op when threadless", () => {
     beforeEach(() => {
       useWorkspaceStore.setState({ activeWorkspaceId: WID, activeThreadId: null });
     });
 
-    it("does nothing when summoning Scope with no thread", () => {
+    it("does nothing when summoning Plan with no thread", () => {
       summonTab("tasks");
 
       expect(panel().visible).toBe(false);
@@ -105,7 +105,7 @@ describe("summonTab", () => {
       expect(panel().activeTab).toBe("preview");
     });
 
-    it("summons Scope once a thread exists", () => {
+    it("summons Plan once a thread exists", () => {
       useWorkspaceStore.setState({ activeThreadId: TID });
 
       summonTab("tasks");

@@ -5,10 +5,9 @@ import {
 } from "./helpers/e2e-helpers";
 
 /**
- * E2E tests for the plan view inside the Scope tab.
+ * E2E tests for the plan view inside the Plan tab.
  *
- * The plan document renders above the task list in the Scope tab.
- * When no plan exists, only the task list (or empty state) shows.
+ * The Plan tab renders saved plan content only.
  */
 
 const WORKSPACE = {
@@ -82,27 +81,7 @@ async function showRightPanel(page: Page, workspaceId: string, threadId: string)
   );
 }
 
-async function seedPlanStore(page: Page, threadId: string): Promise<void> {
-  await page.evaluate(
-    ({ tid }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stores: any[] = (window as any).__mcodeStores ?? [];
-      const planStore = stores.find((s) => {
-        const st = s.getState();
-        return "plansByThread" in st && "generatingThreads" in st;
-      });
-      if (planStore) {
-        planStore.setState({
-          plansByThread: { [tid]: [] },
-          activeVersionByThread: { [tid]: null },
-        });
-      }
-    },
-    { tid: threadId },
-  );
-}
-
-test.describe("Plan view in Scope tab", () => {
+test.describe("Plan view in Plan tab", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);
     await interceptZustandStores(page);
@@ -111,18 +90,99 @@ test.describe("Plan view in Scope tab", () => {
     await setupWorkspace(page);
   });
 
-  test("scope tab button exists in the right panel header", async ({ page }) => {
+  test("plan tab button exists in the right panel rail", async ({ page }) => {
     await showRightPanel(page, WORKSPACE.id, THREAD.id);
 
-    const scopeTab = page.getByRole("button", { name: "Scope", exact: true });
-    await expect(scopeTab).toBeVisible({ timeout: 3000 });
+    await expect(page.getByRole("button", { name: "Plan", exact: true })).toBeVisible({
+      timeout: 3000,
+    });
   });
 
-  test("scope tab shows empty state when no plan and no tasks exist", async ({ page }) => {
-    await seedPlanStore(page, THREAD.id);
+  test("plan tab shows saved plan content without task docket", async ({ page }) => {
+    await page.evaluate(
+      ({ tid }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const stores: any[] = (window as any).__mcodeStores ?? [];
+        const planStore = stores.find((s) => {
+          const st = s.getState();
+          return "plansByThread" in st && "generatingThreads" in st;
+        });
+        if (!planStore) throw new Error("[E2E] plan store not found");
+        planStore.setState({
+          plansByThread: {
+            [tid]: [
+              {
+                id: "plan-e2e-1",
+                threadId: tid,
+                messageId: "message-e2e-1",
+                version: 1,
+                title: "Add retry mechanism for failed API calls",
+                contentMd: "## Objective\n\nAdd retry handling.\n\n## Approach\n\nUse bounded backoff.",
+                sectionsJson: [
+                  { id: "objective", title: "Objective", level: 2 },
+                  { id: "approach", title: "Approach", level: 2 },
+                ],
+                changeSummary: null,
+                status: "draft",
+                createdAt: new Date().toISOString(),
+              },
+            ],
+          },
+          activeVersionByThread: { [tid]: null },
+        });
+      },
+      { tid: THREAD.id },
+    );
     await showRightPanel(page, WORKSPACE.id, THREAD.id);
 
-    // The empty state shows the existing "Nothing on the docket" message
-    await expect(page.getByText("Nothing on the docket")).toBeVisible({ timeout: 3000 });
+    await expect(page.getByTestId("plan-panel-viewport")).toBeVisible({ timeout: 3000 });
+    await expect(page.getByText("Add retry mechanism for failed API calls")).toBeVisible();
+    await expect(page.getByText("Nothing on the docket")).toHaveCount(0);
+  });
+
+  test("composer plan preview is hidden while the Plan tab is open", async ({ page }) => {
+    await page.evaluate(
+      ({ tid }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const stores: any[] = (window as any).__mcodeStores ?? [];
+        const planStore = stores.find((s) => {
+          const st = s.getState();
+          return "plansByThread" in st && "livePreviewByThread" in st;
+        });
+        if (!planStore) throw new Error("[E2E] plan store not found");
+        planStore.setState({
+          plansByThread: {
+            [tid]: [
+              {
+                id: "plan-preview-hidden-1",
+                threadId: tid,
+                messageId: "message-preview-hidden-1",
+                version: 1,
+                title: "Sequential implementation tasks for README update",
+                contentMd: "## Objective\n\nUpdate README.",
+                sectionsJson: [{ id: "objective", title: "Objective", level: 2 }],
+                changeSummary: null,
+                status: "draft",
+                createdAt: new Date().toISOString(),
+              },
+            ],
+          },
+          activeVersionByThread: { [tid]: null },
+          livePreviewByThread: {
+            [tid]: {
+              id: "plan-preview-hidden-1",
+              version: 1,
+              title: "Sequential implementation tasks for README update",
+            },
+          },
+        });
+      },
+      { tid: THREAD.id },
+    );
+
+    await showRightPanel(page, WORKSPACE.id, THREAD.id);
+
+    await expect(page.getByTestId("plan-panel-viewport")).toBeVisible({ timeout: 3000 });
+    await expect(page.getByTestId("plan-preview")).toHaveCount(0);
   });
 });

@@ -16,7 +16,7 @@ import {
   ChevronDown,
   Loader2,
   Check,
-  ListTodo,
+  ListChecks,
   MoreHorizontal,
   Paperclip,
   Target,
@@ -64,7 +64,8 @@ import {
   type MentionNodeData,
 } from "./lexical";
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
-import { useTaskStore } from "@/stores/taskStore";
+import { useTaskStore, type TaskItem } from "@/stores/taskStore";
+import { usePlanStore } from "@/stores/planStore";
 import { useDiffStore } from "@/stores/diffStore";
 import {
   hideRightPanelAdaptive,
@@ -83,6 +84,8 @@ import { RetryBanner } from "./RetryBanner";
 import { InterruptStopBanner } from "./InterruptStopBanner";
 import { ComposerBranchBar } from "./ComposerBranchBar";
 import { ComposerReplyBar } from "./ComposerReplyBar";
+import { PlanPreview } from "./PlanPreview";
+import { TaskBubble } from "./TaskBubble";
 import { useReplyStore } from "@/stores/replyStore";
 import { useQueueStore, type QueuedMessage } from "@/stores/queueStore";
 import {
@@ -124,6 +127,8 @@ import {
   collectSpillPathsFromPendingAttachments,
   releaseBrowserCaptureSpills,
 } from "@/lib/browser-capture-spill";
+
+const EMPTY_TASK_BUBBLE_TASKS: readonly TaskItem[] = [];
 
 /** Build structured preview metadata payloads paired with outbound attachment IDs. */
 function buildAttachedBrowserCaptures(list: PendingAttachment[]): AttachedBrowserCapture[] {
@@ -273,7 +278,7 @@ type AccessMode = PermissionMode;
 
 /**
  * Overflow popover that hosts secondary composer controls (interaction mode,
- * permission mode, and the Tasks-panel toggle when applicable).
+ * permission mode, and the Plan-panel toggle when applicable).
  *
  * Centralizing these behind a single trigger keeps the status bar compact on
  * every viewport — previously each toggle was its own button and they wrapped
@@ -300,16 +305,16 @@ function ComposerOptionsMenu({
   onModeChange: (next: InteractionMode) => void;
   onAccessChange: (next: PermissionMode) => void;
 }) {
-  const hasTasks = useTaskStore(
-    (s) => !!(threadId && s.tasksByThread[threadId]?.length),
+  const hasPlans = usePlanStore(
+    (s) => !!(threadId && ((s.plansByThread[threadId]?.length ?? 0) > 0 || s.generatingThreads.has(threadId))),
   );
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const panelVisible = useDiffStore((s) =>
     activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, threadId) : false,
   );
 
-  const toggleTasksPanel = () => {
-    // Scope is thread-only; the whole panel record is per-thread (ADR-0012).
+  const togglePlanPanel = () => {
+    // Plan is thread-only; the whole panel record is per-thread (ADR-0012).
     if (!threadId || !activeWorkspaceId) return;
     if (panelVisible) {
       hideRightPanelAdaptive(activeWorkspaceId, threadId);
@@ -374,7 +379,7 @@ function ComposerOptionsMenu({
           <div
             className={cn(
               "flex items-center gap-1.5 rounded-md bg-muted/40 px-2 py-1.5 text-xs font-medium text-muted-foreground",
-              hasTasks && "mb-2",
+              hasPlans && "mb-2",
             )}
             title="Cursor on Windows runs in full access — supervised mode is unavailable because cursor-agent's OS sandbox requires macOS or Linux."
           >
@@ -382,7 +387,7 @@ function ComposerOptionsMenu({
             Full access (Cursor on Windows)
           </div>
         ) : (
-          <div className={cn("flex rounded-md bg-muted/40 p-0.5", hasTasks && "mb-2")}>
+          <div className={cn("flex rounded-md bg-muted/40 p-0.5", hasPlans && "mb-2")}>
             <Button
               variant="ghost"
               size="xs"
@@ -416,18 +421,18 @@ function ComposerOptionsMenu({
           </div>
         )}
 
-        {/* Tasks panel — only available when the thread has tasks. */}
-        {hasTasks && (
+        {/* Plan panel — only available when the thread has saved or generating plans. */}
+        {hasPlans && (
           <Button
             variant="ghost"
             size="xs"
-            onClick={toggleTasksPanel}
+            onClick={togglePlanPanel}
             aria-pressed={panelVisible}
             className="h-auto w-full justify-between rounded-md px-2 py-1.5 text-xs font-normal text-foreground hover:bg-muted/40"
           >
             <span className="flex items-center gap-2">
-              <ListTodo size={13} className={panelVisible ? "text-primary" : "text-muted-foreground"} />
-              Tasks panel
+              <ListChecks size={13} className={panelVisible ? "text-primary" : "text-muted-foreground"} />
+              Plan panel
             </span>
             <span className={cn("text-[10px] font-medium uppercase tracking-[0.1em]", panelVisible ? "text-primary" : "text-muted-foreground/60")}>
               {panelVisible ? "On" : "Off"}
@@ -441,7 +446,7 @@ function ComposerOptionsMenu({
 
 /**
  * Inline rendering of the same controls — Mode (Chat/Plan), Permissions
- * (Full/Supervised), and the Tasks-panel toggle. Used at md+ widths where the
+ * (Full/Supervised), and the Plan-panel toggle. Used at md+ widths where the
  * controls fit comfortably in the model bar; below md the parent renders
  * `ComposerOptionsMenu` instead so they collapse behind a single trigger.
  */
@@ -461,16 +466,16 @@ function InlineComposerOptions({
   onModeChange: (next: InteractionMode) => void;
   onAccessChange: (next: PermissionMode) => void;
 }) {
-  const hasTasks = useTaskStore(
-    (s) => !!(threadId && s.tasksByThread[threadId]?.length),
+  const hasPlans = usePlanStore(
+    (s) => !!(threadId && ((s.plansByThread[threadId]?.length ?? 0) > 0 || s.generatingThreads.has(threadId))),
   );
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const panelVisible = useDiffStore((s) =>
     activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, threadId) : false,
   );
 
-  const toggleTasksPanel = () => {
-    // Scope is thread-only; the whole panel record is per-thread (ADR-0012).
+  const togglePlanPanel = () => {
+    // Plan is thread-only; the whole panel record is per-thread (ADR-0012).
     if (!threadId || !activeWorkspaceId) return;
     if (panelVisible) {
       hideRightPanelAdaptive(activeWorkspaceId, threadId);
@@ -535,14 +540,14 @@ function InlineComposerOptions({
         </Tooltip>
       )}
 
-      {hasTasks && (
+      {hasPlans && (
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
                 variant="ghost"
                 size="xs"
-                onClick={toggleTasksPanel}
+                onClick={togglePlanPanel}
                 aria-pressed={panelVisible}
                 className={cn(
                   "gap-1.5 transition-colors hover:bg-muted/40",
@@ -551,12 +556,12 @@ function InlineComposerOptions({
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                <ListTodo size={14} />
-                <span className="text-sm">Scope</span>
+                <ListChecks size={14} />
+                <span className="text-sm">Plan</span>
               </Button>
             }
           />
-          <TooltipContent>{panelVisible ? "Hide scope panel" : "Show scope panel"}</TooltipContent>
+          <TooltipContent>{panelVisible ? "Hide Plan panel" : "Show Plan panel"}</TooltipContent>
         </Tooltip>
       )}
     </>
@@ -888,6 +893,17 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const replyContext = useReplyStore((s) => threadId ? s.replyByThread[threadId] : undefined);
   const clearReply = useReplyStore((s) => s.clearReply);
+  const planPreview = usePlanStore((s) =>
+    threadId ? s.livePreviewByThread[threadId] : undefined,
+  );
+  const planPanelOpen = useDiffStore((s) => {
+    if (!workspaceId || !threadId) return false;
+    const panel = s.getRightPanel(workspaceId, threadId);
+    return panel.visible && panel.activeTab === "tasks" && panel.openTabs.includes("tasks");
+  });
+  const taskBubbleTasks = useTaskStore((s) =>
+    threadId ? s.taskBubbleByThread[threadId] ?? EMPTY_TASK_BUBBLE_TASKS : EMPTY_TASK_BUBBLE_TASKS,
+  );
 
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<MessageMention[]>([]);
@@ -924,6 +940,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     [annotationRows],
   );
   const setPreviewDesignModeActive = usePreviewDesignModeStore((s) => s.setActive);
+
+  useEffect(() => {
+    if (threadId && planPanelOpen) {
+      usePlanStore.getState().clearLivePreview(threadId);
+    }
+  }, [planPanelOpen, threadId]);
   /**
    * When the user pulls a queued message back into the composer to edit, we
    * remember which message it was and what slot it held. Saving (send) and
@@ -949,6 +971,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     content: string;
     displayContent: string;
     mentions: MessageMention[];
+    previewAnnotations?: PreviewAnnotationBundle;
   } | null>(null);
   const [pendingCheckoutConfirmation, setPendingCheckoutConfirmation] =
     useState<PendingCheckoutConfirmation | null>(null);
@@ -1630,10 +1653,15 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         sourcePath: att.filePath ?? "",
       }));
       const trimmedInput = inputSnapshot.trim();
+      const currentPreviewAnnotations = annotationScopeId
+        ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
+        : undefined;
       return {
         content: trimmedInput,
         displayContent: trimmedInput,
         mentions: mentionsSnapshot.length > 0 ? mentionsSnapshot : undefined,
+        previewAnnotations:
+          currentPreviewAnnotations ?? editingOriginalRef.current?.previewAnnotations,
         attachments: attachmentMetas,
         model: modelId,
         permissionMode: access,
@@ -1648,7 +1676,18 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         quotedText: replyContext?.quotedText,
       };
     },
-    [modelId, access, reasoning, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyContext],
+    [
+      annotationScopeId,
+      modelId,
+      access,
+      reasoning,
+      provider,
+      copilotAgent,
+      contextWindow,
+      thinking,
+      codexFastMode,
+      replyContext,
+    ],
   );
 
   /**
@@ -2130,6 +2169,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           content: trimmed,
           displayContent: trimmed,
           mentions: selectedMentions,
+          previewAnnotations: effectivePreviewAnnotations,
         });
         return;
       }
@@ -2477,6 +2517,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       undefined,
       undefined,
       queued.mentions,
+      queued.previewAnnotations,
     );
   // modelId/access/reasoning/provider intentionally read from render-time values via closure;
   // handoffStatus is the sole reactive trigger so we don't re-fire on unrelated changes.
@@ -2609,6 +2650,17 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       {/* Max-width wrapper to align with message list column */}
       <div className="mx-auto w-full max-w-4xl">
+      {threadId && workspaceId && planPreview && !planPanelOpen && !branchFromMessageId && !isNewThread && (
+        <div className="mb-2">
+          <PlanPreview workspaceId={workspaceId} threadId={threadId} preview={planPreview} />
+        </div>
+      )}
+
+      {threadId && taskBubbleTasks.length > 0 && !branchFromMessageId && !isNewThread && (
+        <div className="mb-2 flex justify-center">
+          <TaskBubble tasks={taskBubbleTasks} />
+        </div>
+      )}
 
       {/* Inline queued-message stack (above the composer; Cursor-style).
           Auto-hides when the queue is empty. Editing a row pops the message
@@ -2619,8 +2671,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           isAgentRunning={isAgentRunning}
           provider={provider}
           isEditing={!!editingFromQueue}
+          isPaused={planPending}
           onLoadIntoComposer={loadIntoComposer}
           onResume={async () => {
+            if (planPending) return;
             const next = useQueueStore.getState().dequeueNext(threadId);
             if (!next) return;
             try {
@@ -2655,6 +2709,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             }
           }}
           onSendNow={async (msg) => {
+            if (planPending) return;
             if (useThreadStore.getState().runningThreadIds.has(threadId)) {
               useQueueStore.getState().moveMessage(threadId, msg.id, 0);
               return;

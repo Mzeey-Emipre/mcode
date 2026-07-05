@@ -35,6 +35,7 @@ export class CiWatcherService {
   private passive = new Map<string, WatchEntry>();
   private activeTimer: ReturnType<typeof setInterval> | null = null;
   private passiveTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly bumpTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
   private activeTicking = false;
   private passiveTicking = false;
 
@@ -79,9 +80,19 @@ export class CiWatcherService {
   unwatch(threadId: string): void {
     this.active.delete(threadId);
     this.passive.delete(threadId);
+    this.clearBumpTimers(threadId);
     if (this.active.size === 0) this.stopActiveTimer();
     // Stop the passive timer independently — it's not needed just because active is non-empty.
     if (this.passive.size === 0) this.stopPassiveTimer();
+  }
+
+  /** Remove a thread from the watcher and cancel its in-flight GitHub check process. */
+  async teardownThread(threadId: string): Promise<void> {
+    const entry = this.active.get(threadId) ?? this.passive.get(threadId);
+    this.unwatch(threadId);
+    if (entry) {
+      await this.githubService.cancelCheckRuns(entry.branch, entry.repoPath);
+    }
   }
 
   /** Check if a thread is being watched. */
@@ -160,8 +171,17 @@ export class CiWatcherService {
   scheduleBumpAfterPush(threadId: string): void {
     const entry = this.active.get(threadId) ?? this.passive.get(threadId);
     if (!entry) return;
+    this.clearBumpTimers(threadId);
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    this.bumpTimers.set(threadId, timers);
     for (const delay of POST_PUSH_BUMP_DELAYS_MS) {
-      setTimeout(() => { void this.bump(threadId); }, delay).unref?.();
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        if (timers.size === 0) this.bumpTimers.delete(threadId);
+        void this.bump(threadId);
+      }, delay);
+      timer.unref?.();
+      timers.add(timer);
     }
   }
 
@@ -231,9 +251,15 @@ export class CiWatcherService {
   }
 
   /** Clean up all timers. Called on server shutdown. */
-  dispose(): void {
+  async dispose(): Promise<void> {
+    for (const threadId of [...this.bumpTimers.keys()]) {
+      this.clearBumpTimers(threadId);
+    }
     this.stopActiveTimer();
     this.stopPassiveTimer();
+    this.active.clear();
+    this.passive.clear();
+    await this.githubService.cancelAllInFlight();
   }
 
   private startActiveTimer(): void {
@@ -266,6 +292,13 @@ export class CiWatcherService {
       clearInterval(this.passiveTimer);
       this.passiveTimer = null;
     }
+  }
+
+  private clearBumpTimers(threadId: string): void {
+    const timers = this.bumpTimers.get(threadId);
+    if (!timers) return;
+    for (const timer of timers) clearTimeout(timer);
+    this.bumpTimers.delete(threadId);
   }
 
   /** Returns true when `next` differs semantically from `cached` (aggregate, run count, or per-run status/conclusion). */

@@ -1,4 +1,4 @@
-import { render, screen, act, fireEvent } from "@testing-library/react";
+import { render, screen, act, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Thread } from "@/transport/types";
 
@@ -315,9 +315,8 @@ describe("ProjectTree action-required indicator", () => {
   // Holder the tests mutate before calling installWorkspaceMock so they can
   // swap the rendered thread (e.g. attach a pr_number) and the CI check map.
   let currentThread: Thread;
-  // Shape matches ChecksStatus just enough for CiChip's getBreakdown call,
-  // which reads checks.runs.length. Main now renders CI as a chip even when
-  // the test's focus is the action-required ring, so runs must be non-null.
+  // Shape matches ChecksStatus just enough for sidebar CI aggregation,
+  // while keeping the action-required ring tests focused on row state.
   let currentChecks: Record<string, { aggregate: string; runs: unknown[] }>;
 
   function installWorkspaceMock() {
@@ -426,7 +425,7 @@ describe("ProjectTree action-required indicator", () => {
     expect(indicator.className).not.toContain("bg-primary");
   });
 
-  it("renders the ring on the PR overlay when the thread has a pr_number", () => {
+  it("renders the ring on the right edge when the thread has a pr_number", () => {
     currentThread = makeThread({
       id: "thread-pending",
       status: "active",
@@ -441,8 +440,7 @@ describe("ProjectTree action-required indicator", () => {
     render(<ProjectTree />);
     const indicator = screen.getByLabelText("Action required");
     expect(indicator.className).toContain("ring-amber-500");
-    // PR overlay uses absolute positioning; the non-PR dot does not.
-    expect(indicator.className).toContain("absolute");
+    expect(indicator.className).not.toContain("absolute");
   });
 
   it("prefers the ring over a CI status dot on the PR overlay", () => {
@@ -474,7 +472,7 @@ describe("ProjectTree action-required indicator", () => {
     expect(indicator.className).not.toContain("bg-red-500");
   });
 
-  it("does not dim the CI chip when the thread row is a client scaffold", () => {
+  it("does not dim row chrome when the thread row is a client scaffold", () => {
     currentThread = {
       ...makeThread({
         id: "thread-pending",
@@ -507,8 +505,8 @@ describe("ProjectTree action-required indicator", () => {
     const titleCluster = screen.getByTestId("thread-title").parentElement;
     expect(titleCluster?.className).toContain("opacity-[0.72]");
 
-    const chip = screen.getByLabelText("0 of 1 checks done");
-    expect(chip.className).not.toContain("opacity-[0.72]");
+    const prIcon = screen.getByTitle(/PR #42/);
+    expect(prIcon.className).not.toContain("opacity-[0.72]");
   });
 });
 
@@ -563,7 +561,7 @@ describe("ProjectTree PR-ability gating by mode", () => {
   it("renders the PR icon and number badge for a worktree thread with a pr_number", () => {
     renderWithThread(makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }));
     expect(screen.getByTitle(/PR #42/)).toBeInTheDocument();
-    expect(screen.getByText("#42")).toBeInTheDocument();
+    expect(screen.queryByText("#42")).toBeNull();
   });
 
   it("renders the merged PR visual for a worktree thread", () => {
@@ -571,9 +569,9 @@ describe("ProjectTree PR-ability gating by mode", () => {
     expect(screen.getByTitle(/PR #42 \u2013 merged/)).toBeInTheDocument();
   });
 
-  it("hides the CI chip for a direct-mode thread even when checks are present", () => {
+  it("keeps CI checks out of thread rows even when checks are present", () => {
     renderWithThread(
-      makeThread({ mode: "direct", pr_number: 42, pr_status: "open" }),
+      makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }),
       {
         "thread-1": {
           aggregate: "pending",
@@ -582,5 +580,47 @@ describe("ProjectTree PR-ability gating by mode", () => {
       },
     );
     expect(screen.queryByLabelText(/checks done/i)).toBeNull();
+  });
+
+  it("renders no leading status dot for non-PR rows", () => {
+    renderWithThread(makeThread({ mode: "direct", pr_number: null, status: "paused" }));
+    expect(screen.queryByLabelText("Action required")).toBeNull();
+    expect(screen.queryByLabelText("Completed")).toBeNull();
+    expect(screen.queryByLabelText("Errored")).toBeNull();
+    expect(screen.queryByLabelText("Interrupted")).toBeNull();
+    expect(screen.queryByTitle(/PR #/)).toBeNull();
+  });
+
+  it("renders a worktree indicator only for worktree rows", () => {
+    const { unmount } = renderWithThread(makeThread({ mode: "direct" }));
+    expect(screen.queryByLabelText("Worktree mode")).toBeNull();
+    unmount();
+
+    renderWithThread(makeThread({ mode: "worktree", checkout_state: "branchless", branch: "HEAD" }));
+    expect(screen.getByLabelText("Worktree mode")).toBeInTheDocument();
+  });
+
+  it("shows a read-only preview on focus with project, HEAD branch, and provider labels", async () => {
+    renderWithThread(makeThread({
+      id: "thread-branchless",
+      title: "Branchless Thread",
+      mode: "worktree",
+      checkout_state: "branchless",
+      branch: "HEAD",
+      status: "paused",
+      provider: "codex",
+    }));
+
+    screen.getByRole("button", { name: /Branchless Thread/i }).focus();
+
+    const preview = await screen.findByTestId("thread-preview-thread-branchless");
+    expect(preview).toHaveTextContent("Branchless Thread");
+    expect(screen.getByLabelText("Project, Test Project")).toBeInTheDocument();
+    expect(screen.getByLabelText("Branch, HEAD")).toBeInTheDocument();
+    expect(within(preview).queryByLabelText(/^Provider,/)).toBeNull();
+    expect(screen.getByLabelText("Provider, Codex")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Status,/)).toBeNull();
+    expect(preview).not.toHaveTextContent("Ready");
+    expect(preview).not.toHaveTextContent(/ago|now|yesterday/i);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ListChecks } from "lucide-react";
 import {
   PANEL_TAB_TYPES,
   creatableTypes,
@@ -27,7 +28,7 @@ describe("PANEL_TAB_TYPES catalog", () => {
     expect(comingSoon).toEqual(["files"]);
   });
 
-  it("marks only Scope as thread-only (Review is dual-scope)", () => {
+  it("marks only Plan as thread-only (Review is dual-scope)", () => {
     const threadOnly = PANEL_TAB_TYPES.filter((t) => t.needsThread).map((t) => t.id);
     expect(threadOnly).toEqual(["tasks"]);
   });
@@ -47,6 +48,13 @@ describe("PANEL_TAB_TYPES catalog", () => {
       expect(type.label.length).toBeGreaterThan(0);
       expect(type.blurb.length).toBeGreaterThan(0);
     }
+  });
+
+  it("uses Plan language for the legacy tasks tab id", () => {
+    const plan = PANEL_TAB_TYPES.find((type) => type.id === "tasks");
+    expect(plan?.label).toBe("Plan");
+    expect(plan?.blurb).toBe("Read saved plans");
+    expect(plan?.icon).toBe(ListChecks);
   });
 });
 

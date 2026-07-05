@@ -7,6 +7,7 @@ import {
   useMemo,
   memo,
   type CSSProperties,
+  type ComponentType,
 } from "react";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -14,8 +15,17 @@ import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { Plus, Trash2, ChevronRight, ChevronDown, GitBranch, GitBranchMinus, Loader2, AlertTriangle, FolderPlus } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronDown, GitBranch, GitBranchMinus, Loader2, AlertTriangle, FolderPlus, Folder, Activity } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  CopilotIcon,
+  CursorProviderIcon,
+  GeminiIcon,
+  OpenCodeIcon,
+} from "@/components/chat/ProviderIcons";
 import { getPrVisual } from "@/lib/pr-status";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -31,9 +41,9 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
 import { schedulePrefetch, cancelPrefetch } from "@/lib/thread-hydrator/prefetch-scheduler";
-import { getStatusDisplay, getNotificationDot } from "@/lib/thread-status";
 import { isPrable } from "@/lib/is-prable";
-import { getBreakdown, getCiVisual, CI_ICON_STROKE } from "@/lib/ci-status";
+import { getCiVisual, CI_ICON_STROKE, getCiOverviewSummaryLabel } from "@/lib/ci-status";
+import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
 import type { ChecksStatus } from "@mcode/contracts";
 import type { Workspace, Thread } from "@/transport/types";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
@@ -930,6 +940,8 @@ export function ProjectTree() {
 
 /** Props for the virtualized thread list rendered inside an expanded workspace. */
 interface VirtualizedThreadListProps {
+  /** Workspace name displayed in read-only thread previews. */
+  workspaceName: string;
   /** Pre-computed tree items from the parent to avoid duplicate buildThreadTree calls. */
   treeItems: ThreadTreeItem[];
   /** Maximum number of tree rows to render. Used by the parent to enforce the THREAD_LIST_CAP. */
@@ -952,68 +964,13 @@ interface VirtualizedThreadListProps {
 }
 
 /**
- * Sidebar CI status chip — a compact icon+count capsule shown in the thread row.
- *
- * Kept deliberately distinct from the agent-activity dot on the PR icon:
- * it's a shape (capsule), not a dot, and it carries a numeric count + icon
- * so it reads as a labelled "CI widget" rather than a notification pip.
- *
- * Chrome + icon + strokeWidth all come from the shared `getCiVisual()` so the
- * chip stays in lockstep with the chat-header button and the popover.
- */
-const CiChip = memo(function CiChip({ checks }: { checks: ChecksStatus }) {
-  const b = getBreakdown(checks);
-  if (checks.aggregate === "no_checks" || b.total === 0) return null;
-
-  const agg = checks.aggregate;
-  const { icon: Icon, chromeClass } = getCiVisual(agg);
-
-  // Text: "1" failing, "2/5" running, "7" passing. The icon carries state;
-  // the number carries scale — together they read unmistakably as CI.
-  const text =
-    agg === "failing"
-      ? String(b.failing || b.total)
-      : agg === "pending"
-        ? `${b.total - b.running}/${b.total}`
-        : String(b.total);
-
-  const label =
-    agg === "failing"
-      ? `${b.failing || b.total} failing`
-      : agg === "pending"
-        ? `${b.total - b.running} of ${b.total} checks done`
-        : `${b.total} checks passing`;
-
-  return (
-    <span
-      title={label}
-      aria-label={label}
-      className={cn(
-        // h-4 (16px) sits on the 4pt scale; text-[10px] stays legible on HiDPI
-        // displays and OS text-scale settings above 100%.
-        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border",
-        "text-[10px] font-medium tabular-nums leading-none",
-        chromeClass,
-      )}
-    >
-      <Icon
-        size={9}
-        strokeWidth={CI_ICON_STROKE}
-        className={cn("shrink-0", agg === "pending" && "status-spin")}
-      />
-      <span>{text}</span>
-    </span>
-  );
-});
-
-/**
  * Workspace-row CI roll-up chip.
  *
  * Silent-on-healthy: renders nothing when all threads are green (or none have CI).
  * Surfaces a single chip when any thread is failing or pending, so a collapsed
  * project row still shouts when something needs attention but stays quiet when
- * nothing does. Same chrome + glyphs as the per-thread `CiChip`, so the CI
- * language stays consistent between zoom levels.
+ * nothing does. Uses the shared CI chrome so it stays consistent with the
+ * chat-header button and overview popover.
  */
 const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
   threads,
@@ -1063,8 +1020,149 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
   );
 });
 
+type IconComponent = ComponentType<{ size?: number; className?: string }>;
+
+const PROVIDER_META: Record<string, { icon: IconComponent; label: string; color: string }> = {
+  claude: { icon: ClaudeIcon, label: "Claude", color: "text-orange-500 dark:text-orange-400" },
+  codex: { icon: CodexIcon, label: "Codex", color: "text-emerald-400" },
+  copilot: { icon: CopilotIcon, label: "GitHub Copilot", color: "text-violet-400 dark:text-violet-300" },
+  cursor: { icon: CursorProviderIcon, label: "Cursor", color: "" },
+  gemini: { icon: GeminiIcon, label: "Gemini", color: "text-sky-400" },
+  opencode: { icon: OpenCodeIcon, label: "OpenCode", color: "text-violet-400" },
+};
+
+type SidebarThreadMarker =
+  | { kind: "action"; label: "Action required" }
+  | { kind: "running"; label: "Running" }
+  | { kind: "ci"; label: string; aggregate: "failing" | "pending" }
+  | { kind: "completed"; label: "Completed" }
+  | { kind: "errored"; label: "Errored" }
+  | { kind: "interrupted"; label: "Interrupted" }
+  | { kind: "time"; label: string };
+
+function getProviderMeta(provider: string) {
+  return PROVIDER_META[provider] ?? {
+    icon: Activity,
+    label: provider || "Provider",
+    color: "text-muted-foreground",
+  };
+}
+
+function getSidebarThreadMarker({
+  thread,
+  checks,
+  isRunning,
+  hasPendingPermission,
+}: {
+  thread: WorkspaceThread;
+  checks: ChecksStatus | undefined;
+  isRunning: boolean;
+  hasPendingPermission: boolean;
+}): SidebarThreadMarker {
+  if (hasPendingPermission) return { kind: "action", label: "Action required" };
+  if (isRunning) return { kind: "running", label: "Running" };
+  if (checks?.aggregate === "failing" || checks?.aggregate === "pending") {
+    return {
+      kind: "ci",
+      label: getCiOverviewSummaryLabel(checks),
+      aggregate: checks.aggregate,
+    };
+  }
+  switch (thread.status) {
+    case "completed":
+      return { kind: "completed", label: "Completed" };
+    case "errored":
+      return { kind: "errored", label: "Errored" };
+    case "interrupted":
+      return { kind: "interrupted", label: "Interrupted" };
+    default:
+      return { kind: "time", label: relativeTime(thread.updated_at) };
+  }
+}
+
+function SidebarThreadMarker({ marker, dim }: { marker: SidebarThreadMarker; dim: boolean }) {
+  if (marker.kind === "time") {
+    return (
+      <span className={cn("shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/45", dim && "opacity-[0.72]")}>
+        {marker.label}
+      </span>
+    );
+  }
+
+  if (marker.kind === "running") {
+    return (
+      <span
+        aria-label={marker.label}
+        className={cn("shrink-0 status-spin spinner-tail-fade text-primary", dim && "opacity-[0.72]")}
+      />
+    );
+  }
+
+  if (marker.kind === "ci") {
+    const { icon: Icon, color } = getCiVisual(marker.aggregate);
+    return (
+      <Icon
+        size={13}
+        strokeWidth={CI_ICON_STROKE}
+        aria-label={marker.label}
+        className={cn("shrink-0", color, marker.aggregate === "pending" && "status-spin", dim && "opacity-[0.72]")}
+      />
+    );
+  }
+
+  const markerClass =
+    marker.kind === "action"
+      ? "ring-2 ring-inset ring-amber-500 bg-transparent status-pulse"
+      : marker.kind === "completed"
+        ? "bg-[var(--diff-add-strong)]/80"
+        : marker.kind === "errored"
+          ? "bg-[var(--diff-remove-strong)]/85"
+          : "bg-amber-500/85 status-pulse";
+
+  return (
+    <span
+      aria-label={marker.label}
+      className={cn(
+        "shrink-0 rounded-full",
+        marker.kind === "action" ? "h-2 w-2" : "h-1.5 w-1.5",
+        markerClass,
+        dim && "opacity-[0.72]",
+      )}
+    />
+  );
+}
+
+function SidebarThreadPreview({
+  workspaceName,
+  thread,
+}: {
+  workspaceName: string;
+  thread: WorkspaceThread;
+}) {
+  const checkoutLabel = resolveThreadCheckoutLabel(thread);
+
+  return (
+    <div data-testid={`thread-preview-${thread.id}`} className="w-64 space-y-2 text-popover-foreground">
+      <div className="min-w-0 font-medium text-xs leading-5">
+        {thread.title}
+      </div>
+      <div className="grid gap-1.5">
+        <div aria-label={`Project, ${workspaceName}`} className="flex min-w-0 items-center gap-2">
+          <Folder size={13} aria-hidden className="shrink-0 opacity-75" />
+          <span className="truncate text-xs">{workspaceName}</span>
+        </div>
+        <div aria-label={`Branch, ${checkoutLabel}`} className="flex min-w-0 items-center gap-2">
+          <GitBranch size={13} aria-hidden className="shrink-0 opacity-75" />
+          <span className="truncate font-mono text-xs">{checkoutLabel}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Renders a virtualized, scrollable list of threads for a single workspace. */
 function VirtualizedThreadList({
+  workspaceName,
   treeItems: allTreeItems,
   maxVisible,
   activeThreadId,
@@ -1163,12 +1261,21 @@ function VirtualizedThreadList({
     >
       {virtualizer.getVirtualItems().map((virtualItem) => {
         const { thread, depth } = treeItems[virtualItem.index];
-        const status = getStatusDisplay(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
+        const isRunning = runningThreadIds.has(thread.id);
+        const hasPendingPermission = pendingPermissionThreadIds.has(thread.id);
+        const checks = checksById[thread.id];
+        const marker = getSidebarThreadMarker({
+          thread,
+          checks,
+          isRunning,
+          hasPendingPermission,
+        });
         const isEditing = inlineEdit?.threadId === thread.id;
         // Only PR-able (worktree) threads surface PR affordances. A direct-mode
         // thread shows its branch/agent status, never a PR icon, even if a PR
         // number happens to be attached.
         const prable = isPrable(thread);
+        const showEndMarker = !(prable && thread.pr_number != null && marker.kind === "ci");
         // Worktree thread whose directory no longer exists on disk.
         // Only check threads from the workspace whose worktrees are loaded — comparing
         // against a different workspace's worktree list would produce false positives.
@@ -1188,9 +1295,135 @@ function VirtualizedThreadList({
           : !providerRow.enabled
             ? "Provider disabled"
             : "CLI not found";
-        // Opacity on the row would compound onto CiChip; dim only the title cluster and timestamp.
+        // Opacity on the row would compound onto status markers; dim only the title cluster and timestamp.
         const scaffoldDim =
           (thread.clientPreparing || thread.clientError) && "opacity-[0.72]";
+        const providerMeta = getProviderMeta(thread.provider);
+        const RowProviderIcon = providerMeta.icon;
+        const row = (
+          <div
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (isEditing) return;
+              // Keyboard navigation fires immediately — no double-click semantics for keyboard users.
+              // Enter/Space always navigates; rename must be triggered via mouse double-click.
+              if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+                e.preventDefault();
+                onSelectThread(thread.id);
+              }
+            }}
+            onClick={() => handleThreadClick(thread.id, thread.title)}
+            onDoubleClick={() => handleThreadDoubleClick(thread.id, thread.title)}
+            onContextMenu={(e) => onThreadContextMenu(e, thread)}
+            onMouseEnter={() => {
+              if (!thread.clientPreparing && !thread.clientError) {
+                schedulePrefetch(thread.id);
+              }
+            }}
+            onMouseLeave={cancelPrefetch}
+            className={cn(
+              "group/row relative flex items-center gap-2 rounded-md pr-2 py-1 text-[13px] cursor-pointer transition-colors",
+              activeThreadId === thread.id
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
+            )}
+            style={{ paddingLeft: `${42 + depth * 12}px` }}
+          >
+            {prable && thread.pr_number != null ? (() => {
+              const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
+              return (
+                <span
+                  title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
+                  className="absolute left-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center"
+                >
+                  <PrIcon size={12} className={prColor} />
+                </span>
+              );
+            })() : null}
+            <span
+              aria-label={`Provider, ${providerMeta.label}`}
+              className={cn(
+                "absolute top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center",
+                providerMeta.color,
+                scaffoldDim,
+              )}
+              style={{ left: `${22 + depth * 12}px` }}
+            >
+              <RowProviderIcon size={12} />
+            </span>
+            <div
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-2",
+                scaffoldDim,
+              )}
+            >
+            {isEditing ? (
+              <Input
+                type="text"
+                size="xs"
+                value={inlineEdit.title}
+                onChange={(e) => onInlineEditChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (!e.nativeEvent.isComposing) {
+                    if (e.key === "Enter") onInlineEditCommit();
+                    if (e.key === "Escape") onInlineEditCancel();
+                  }
+                  e.stopPropagation();
+                }}
+                onBlur={onInlineEditCommit}
+                autoFocus
+                onClick={(e) => e.stopPropagation()}
+                className="flex-1 border-ring"
+              />
+            ) : (
+              <>
+                <span className={cn("truncate flex-1", isStaleWorktree && "text-[var(--diff-remove-strong)]/85 line-through")} data-testid="thread-title">
+                  {isStaleWorktree && (
+                    <Tooltip>
+                      <TooltipTrigger render={<AlertTriangle size={11} className="inline mr-1 align-text-bottom text-[var(--diff-remove-strong)]/80" />} />
+                      <TooltipContent side="right" className="text-xs">Worktree directory no longer exists</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {thread.title}
+                </span>
+                {thread.mode === "worktree" && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <WorktreeModeIcon
+                          size={12}
+                          data-testid={`thread-worktree-indicator-${thread.id}`}
+                          aria-label="Worktree mode"
+                          className="text-muted-foreground/65"
+                        />
+                      }
+                    />
+                    <TooltipContent side="right" className="text-xs">Worktree</TooltipContent>
+                  </Tooltip>
+                )}
+              </>
+            )}
+            {!isEditing && unusable && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      data-testid={`sidebar-unusable-${thread.id}`}
+                      className="ml-1 shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
+                      aria-label={unusableReason}
+                    />
+                  }
+                />
+                <TooltipContent side="right" className="text-xs">{unusableReason}</TooltipContent>
+              </Tooltip>
+            )}
+            </div>
+            {!isEditing && showEndMarker && (
+              <SidebarThreadMarker marker={marker} dim={Boolean(scaffoldDim)} />
+            )}
+          </div>
+        );
         return (
           <div
             key={thread.id}
@@ -1205,146 +1438,16 @@ function VirtualizedThreadList({
               transform: `translateY(${virtualItem.start - scrollMargin}px)`,
             }}
           >
-              <div
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (isEditing) return;
-                  // Keyboard navigation fires immediately — no double-click semantics for keyboard users.
-                  // Enter/Space always navigates; rename must be triggered via mouse double-click.
-                  if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
-                    e.preventDefault();
-                    onSelectThread(thread.id);
-                  }
-                }}
-                onClick={() => handleThreadClick(thread.id, thread.title)}
-                onDoubleClick={() => handleThreadDoubleClick(thread.id, thread.title)}
-                onContextMenu={(e) => onThreadContextMenu(e, thread)}
-                onMouseEnter={() => {
-                  if (!thread.clientPreparing && !thread.clientError) {
-                    schedulePrefetch(thread.id);
-                  }
-                }}
-                onMouseLeave={cancelPrefetch}
-                className={cn(
-                  "group/row flex items-center gap-2 rounded-md pr-2 py-1 text-[13px] cursor-pointer transition-colors",
-                  activeThreadId === thread.id
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
-                )}
-                style={{ paddingLeft: `${8 + depth * 12}px` }}
-              >
-                <div
-                  className={cn(
-                    "flex min-w-0 flex-1 items-center gap-2",
-                    scaffoldDim,
-                  )}
-                >
-                {prable && thread.pr_number != null ? (() => {
-                  const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
-                  const agentDot = getNotificationDot(thread, runningThreadIds.has(thread.id), pendingPermissionThreadIds.has(thread.id));
-                  // Only the agent signal lives on the PR icon — a top-right dot.
-                  // CI status is surfaced as a labelled chip in the row's end-section
-                  // so it cannot be confused with an agent-activity dot.
-                  return (
-                    <span
-                      title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
-                      className="relative shrink-0"
-                    >
-                      <PrIcon size={12} className={prColor} />
-                      {agentDot && (
-                        <span
-                          aria-label={agentDot.shape === "ring" ? "Action required" : undefined}
-                          className={cn(
-                            "absolute rounded-full",
-                            // Ring variant sizes up slightly and drops the background ring so the
-                            // amber ring isn't confused with the 1px separator ring used on dots.
-                            agentDot.shape === "ring"
-                              ? "-top-1 -right-1 h-2 w-2"
-                              : "-top-0.5 -right-0.5 h-1.5 w-1.5 ring-1 ring-background",
-                            agentDot.dotClass,
-                            agentDot.animate && "status-pulse",
-                          )}
-                        />
-                      )}
-                    </span>
-                  );
-                })() : (
-                  <span
-                    aria-label={status.shape === "ring" ? "Action required" : undefined}
-                    className={cn(
-                      "shrink-0 rounded-full",
-                      status.shape === "ring" ? "h-2 w-2" : "h-1.5 w-1.5",
-                      status.dotClass,
-                    )}
-                  />
-                )}
-                {status.label && (
-                  <span className={cn("shrink-0 font-mono text-[9.5px] uppercase tracking-[0.12em]", status.color)}>
-                    {status.label}
-                  </span>
-                )}
-                {isEditing ? (
-                  <Input
-                    type="text"
-                    size="xs"
-                    value={inlineEdit.title}
-                    onChange={(e) => onInlineEditChange(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (!e.nativeEvent.isComposing) {
-                        if (e.key === "Enter") onInlineEditCommit();
-                        if (e.key === "Escape") onInlineEditCancel();
-                      }
-                      e.stopPropagation();
-                    }}
-                    onBlur={onInlineEditCommit}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex-1 border-ring"
-                  />
-                ) : (
-                  <span className={cn("truncate flex-1", isStaleWorktree && "text-[var(--diff-remove-strong)]/85 line-through")} data-testid="thread-title">
-                    {isStaleWorktree && (
-                      <Tooltip>
-                        <TooltipTrigger render={<AlertTriangle size={11} className="inline mr-1 align-text-bottom text-[var(--diff-remove-strong)]/80" />} />
-                        <TooltipContent side="right" className="text-xs">Worktree directory no longer exists</TooltipContent>
-                      </Tooltip>
-                    )}
-                    {thread.title}
-                  </span>
-                )}
-                {!isEditing && unusable && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          data-testid={`sidebar-unusable-${thread.id}`}
-                          className="ml-1 shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
-                          aria-label={unusableReason}
-                        />
-                      }
-                    />
-                    <TooltipContent side="right" className="text-xs">{unusableReason}</TooltipContent>
-                  </Tooltip>
-                )}
-                </div>
-                {!isEditing && prable && thread.pr_number != null && checksById[thread.id] && (
-                  <CiChip checks={checksById[thread.id]} />
-                )}
-                {!isEditing && (
-                  <span
-                    className={cn(
-                      "shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/45",
-                      scaffoldDim,
-                    )}
-                  >
-                    {prable && thread.pr_number != null && (
-                      <span className="mr-1 opacity-80">#{thread.pr_number}</span>
-                    )}
-                    {relativeTime(thread.updated_at)}
-                  </span>
-                )}
-              </div>
+              {isEditing ? (
+                row
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger render={row} />
+                  <TooltipContent side="right" align="start" sideOffset={8} variant="surface" className="max-w-none p-3">
+                    <SidebarThreadPreview workspaceName={workspaceName} thread={thread} />
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </div>
           );
         })}
@@ -1556,6 +1659,7 @@ const ProjectNode = memo(function ProjectNode({
             </div>
           ) : (
             <VirtualizedThreadList
+              workspaceName={workspace.name}
               treeItems={treeItems}
               maxVisible={maxVisible}
               activeThreadId={activeThreadId}

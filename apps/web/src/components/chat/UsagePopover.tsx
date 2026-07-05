@@ -5,6 +5,7 @@ import { useThreadRecord } from "../../stores/thread-selectors";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import type { QuotaCategory } from "@mcode/contracts";
 import { useEffect, useRef, type ReactNode } from "react";
+import { formatUsageResetText } from "@/lib/usage-reset-format";
 
 interface UsagePopoverProps {
   threadId: string | undefined;
@@ -19,13 +20,6 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
-}
-
-/** Days until a quota reset date. */
-function daysUntil(iso: string | undefined): number | undefined {
-  if (!iso) return undefined;
-  const diff = new Date(iso).getTime() - Date.now();
-  return diff > 0 ? Math.ceil(diff / 86_400_000) : 0;
 }
 
 /** Horizontal fill bar for usage visualization. */
@@ -58,6 +52,7 @@ function QuotaRow({ category }: { category: QuotaCategory }) {
       ? `${category.used} / ${category.total}`
       : `${category.used}`;
   const percent = category.isUnlimited ? 0 : (1 - category.remainingPercent);
+  const resetText = formatUsageResetText(category.resetDate);
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs">
@@ -66,7 +61,19 @@ function QuotaRow({ category }: { category: QuotaCategory }) {
           {category.isUnlimited ? "unlimited" : usedDisplay}
         </span>
       </div>
-      {!category.isUnlimited && <UsageBar percent={percent} label={`${category.label} usage`} />}
+      {!category.isUnlimited && (
+        <>
+          <UsageBar
+            percent={percent}
+            label={resetText ? `${category.label} usage. ${resetText}` : `${category.label} usage`}
+          />
+          {resetText ? (
+            <div className="font-mono text-xs tabular-nums text-muted-foreground/70">
+              {resetText}
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
@@ -101,12 +108,6 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
   const hasContext = tokensIn > 0 && contextWindow;
   const hasTurn = tokensIn > 0 || tokensOut > 0;
 
-  // Earliest reset date across quota categories
-  const resetDays = categories
-    .map((c) => daysUntil(c.resetDate ?? undefined))
-    .filter((d): d is number => d !== undefined)
-    .sort((a, b) => a - b)[0];
-
   return (
     <Popover onOpenChange={handleOpenChange}>
       <PopoverTrigger render={<span style={{ display: "contents" }} />}>
@@ -125,12 +126,11 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
                 </div>
               )}
             </div>
-            {resetDays !== undefined && (
-              <div className="text-right">
-                <div className="text-[10px] text-muted-foreground">resets in</div>
-                <div className="text-xs text-foreground/70">{resetDays}d</div>
+            {usageInfo?.usageStatus === "stale" ? (
+              <div className="text-right font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
+                STALE
               </div>
-            )}
+            ) : null}
           </div>
 
           {/* Quota section */}
@@ -145,7 +145,20 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
             </div>
           ) : (
             <div className="text-xs text-muted-foreground">
-              Quota data not available for this provider
+              {usageInfo?.usageStatus === "unsupported"
+                ? "Usage not supported for this provider"
+                : usageInfo?.usageStatus === "ready-empty"
+                  ? "No capped quota reported"
+                  : "Usage unavailable"}
+            </div>
+          )}
+
+          {(usageInfo?.usageStatus === "stale" || usageInfo?.usageStatus === "unavailable") && (
+            <div className="text-xs text-muted-foreground">
+              {usageInfo.usageStatus === "stale"
+                ? `Could not refresh. Showing last update from ${usageInfo.fetchedAt ?? "this session"}.`
+                : "Usage unavailable."}
+              {usageInfo.diagnostic ? ` ${usageInfo.diagnostic}` : ""}
             </div>
           )}
 

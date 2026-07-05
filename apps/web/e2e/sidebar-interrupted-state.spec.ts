@@ -98,7 +98,7 @@ test.describe("Sidebar: interrupted thread state", () => {
     );
   });
 
-  test("interrupted thread shows amber pulsing dot in sidebar", async ({ page }) => {
+  test("interrupted thread shows amber pulsing marker in sidebar", async ({ page }) => {
     await setupWorkspaceState(page, {
       workspaces: [WORKSPACE],
       threads: [THREAD_INTERRUPTED],
@@ -110,13 +110,13 @@ test.describe("Sidebar: interrupted thread state", () => {
     );
     await expect(threadRow).toBeVisible();
 
-    const statusDot = threadRow.locator("span.rounded-full").first();
+    const statusMarker = threadRow.getByLabel("Interrupted");
 
     // Must show amber (not idle grey, not primary blue).
-    await expect(statusDot).toHaveClass(/amber/);
-    await expect(statusDot).toHaveClass(/status-pulse/);
+    await expect(statusMarker).toHaveClass(/amber/);
+    await expect(statusMarker).toHaveClass(/status-pulse/);
     // Must NOT look like a running thread.
-    await expect(statusDot).not.toHaveClass(/bg-primary/);
+    await expect(statusMarker).not.toHaveClass(/bg-primary/);
 
     await page.screenshot({
       path: "e2e/screenshots/interrupted-amber-dot.png",
@@ -124,7 +124,7 @@ test.describe("Sidebar: interrupted thread state", () => {
     });
   });
 
-  test("interrupted dot switches to primary pulsing when session.turnStarted fires", async ({ page }) => {
+  test("interrupted marker switches to primary spinner when session.turnStarted fires", async ({ page }) => {
     await setupWorkspaceState(page, {
       workspaces: [WORKSPACE],
       threads: [THREAD_INTERRUPTED],
@@ -136,10 +136,10 @@ test.describe("Sidebar: interrupted thread state", () => {
     );
     await expect(threadRow).toBeVisible();
 
-    const statusDot = threadRow.locator("span.rounded-full").first();
+    const statusMarker = threadRow.getByLabel("Interrupted");
 
     // Confirm amber state before resume.
-    await expect(statusDot).toHaveClass(/amber/);
+    await expect(statusMarker).toHaveClass(/amber/);
 
     // Inject session.turnStarted to simulate user resuming the thread.
     await page.evaluate(
@@ -160,10 +160,11 @@ test.describe("Sidebar: interrupted thread state", () => {
       { threadId: THREAD_INTERRUPTED.id },
     );
 
-    // After resume the dot must switch to primary running indicator.
-    await expect(statusDot).toHaveClass(/bg-primary/);
-    await expect(statusDot).toHaveClass(/status-pulse/);
-    await expect(statusDot).not.toHaveClass(/amber/);
+    // After resume the marker must switch to the primary running spinner.
+    const runningMarker = threadRow.getByLabel("Running");
+    await expect(runningMarker).toHaveClass(/text-primary/);
+    await expect(runningMarker).toHaveClass(/status-spin/);
+    await expect(runningMarker).not.toHaveClass(/amber/);
 
     await page.screenshot({
       path: "e2e/screenshots/interrupted-resumed-running-dot.png",
