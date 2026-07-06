@@ -48,6 +48,9 @@ export const useProviderModelsStore = create<ProviderModelsState>((set, get) => 
     if (!shouldFetch) return;
     try {
       const info = await getTransport().listProviderModels(providerId);
+      if (!Array.isArray(info)) {
+        throw new Error("provider.listModels returned a non-array payload");
+      }
       const mapped: ModelDefinition[] = info.map((m) => ({
         id: m.id,
         label: m.name,

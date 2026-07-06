@@ -228,6 +228,7 @@ describe("ServerManager", () => {
     const env = opts.env as Record<string, string>;
     expect(env.MCODE_PORT).toBe("19600");
     expect(env.MCODE_MODE).toBe("desktop");
+    expect(env.MCODE_SINGLE_INSTANCE).toBe("false");
     // Auth token is NOT set by ServerManager - it is read from the lock file
     expect(env.MCODE_AUTH_TOKEN).toBeUndefined();
 

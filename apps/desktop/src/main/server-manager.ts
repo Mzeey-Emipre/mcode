@@ -346,6 +346,7 @@ export class ServerManager {
         ELECTRON_RUN_AS_NODE: "1",
         MCODE_PORT: String(this._port),
         MCODE_MODE: "desktop",
+        MCODE_SINGLE_INSTANCE: "false",
         MCODE_DATA_DIR: getMcodeDir(),
         MCODE_TEMP_DIR: app.getPath("temp"),
         MCODE_VERSION: app.getVersion(),

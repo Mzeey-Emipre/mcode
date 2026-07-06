@@ -103,6 +103,7 @@ export const messages = sqliteTable(
     timestamp: text("timestamp").notNull().default(timestampDefault),
     sequence: integer("sequence").notNull(),
     attachments: text("attachments"),
+    previewAnnotations: text("preview_annotations"),
     mentions: text("mentions"),
     replyToMessageId: text("reply_to_message_id").references((): AnySQLiteColumn => messages.id, { onDelete: "set null" }),
     quotedText: text("quoted_text"),

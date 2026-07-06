@@ -799,6 +799,86 @@ The embedded in-app browser panel that renders a web URL or a local file.
 It is the **Browser** tab type within the workspace-global right panel.
 Distinct from opening the page in the user's external browser.
 
+### Preview annotation
+A saved request anchored to part of the Preview page. It can carry note text,
+proposed changes for that page target, or both; the annotation bubble is only
+the editor, and an unsaved bubble is not a Preview annotation yet. Its delete
+control belongs inside the opened annotation bubble so passive markers are
+harder to remove accidentally.
+_Avoid_: treating annotation-bubble styling as the requested page change
+
+### Draft annotation
+An unsaved annotation bubble on the Preview page. It has no display number,
+does not belong to the Preview annotation set, and can become a Preview
+annotation once it has note text or proposed changes.
+_Avoid_: treating draft annotations as sendable annotations
+
+### Annotation change summary
+The generated text that describes proposed changes on a Preview annotation
+when the user did not write note text. It lets visual-only annotations remain
+readable in the annotation bubble and Annotation bundle.
+_Avoid_: requiring note text merely to explain a visual change
+
+### Visual proposal
+The Preview-only rendering of proposed visual changes for a page target. It
+shows what the user is asking for without making the live page state the source
+of truth. When several saved annotations are visible, only the active annotation
+shows its full Visual proposal.
+_Avoid_: treating visual proposals as applied page edits
+
+### Annotation display number
+The visible number shown on a Preview annotation marker and in the Annotation
+bundle. It is unique within the thread's current Annotation bundle, but it may
+change when annotations are deleted or reordered. Numbers follow creation
+order across the bundle; editing an annotation does not move it.
+_Avoid_: treating the display number as the annotation identity
+
+### Preview annotation snapshot
+A frozen full-viewport Preview capture associated with a Preview annotation
+when the user saves it. It preserves the page state the user saw, even if the
+live page later reloads or changes; editing and saving the annotation replaces
+its snapshot. It includes the annotation bubble and a highlight for the related
+page target.
+_Avoid_: keeping annotation snapshot revision history
+
+### Preview page identity
+The normalized page target used to decide where Preview annotations appear.
+It ignores fragments, query order, and tracking noise while still separating
+distinct page states such as different product or route parameters.
+_Avoid_: exact raw URL matching for annotation visibility
+
+### Preview annotation set
+The saved Preview annotations waiting to be sent with the next user message.
+Each annotation is displayed only on its saved Preview page identity; the set
+remains available when Preview navigates elsewhere, Design mode exits, or the
+page refreshes. The Preview header can discard annotations for the current page
+identity; the whole set clears after the annotated message sends successfully.
+_Avoid_: clearing saved annotations before send success
+
+### Annotation bundle
+The composer item representing a Preview annotation set as one sendable unit.
+It may contain several snapshots underneath, but the user sees a single bundle.
+It is counted separately from normal composer attachments and is not an editing
+surface; saved annotations are edited from the Preview page where their marker
+is visible. Removing the bundle clears the saved Preview annotation set. There
+is no user-facing count limit for annotations in the bundle.
+_Avoid_: showing each annotation snapshot as a separate composer attachment
+
+### Annotation payload
+The structured information sent to the agent for an Annotation bundle. It pairs
+each Preview annotation with its display number, page context, target context,
+note or change summary, proposed changes, and snapshot.
+_Avoid_: relying on screenshots alone for annotation intent
+
+### Preview annotation mode
+The Preview state where the user creates and edits Preview annotations. The
+UI may label this state as **Design**, but the product concept is annotation
+because the notes are sent as page-specific change requests. Saving an
+annotation leaves the mode active so the user can create more annotations.
+While active, the Preview uses an annotation header with empty and saved states
+instead of the normal browser header.
+_Avoid_: treating Design as a separate interaction mode
+
 ### Preview rendering host
 The Electron surface that owns a preview tab's live Chromium page. Mcode has
 two rendering hosts: **WebContentsView**, a native view managed by the main

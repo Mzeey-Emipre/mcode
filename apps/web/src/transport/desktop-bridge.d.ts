@@ -66,6 +66,19 @@ export type PreviewPictureReferenceResult =
     }
   | { readonly ok: false; readonly error: string };
 
+/** One marker to draw into a saved annotation screenshot. */
+export type PreviewAnnotationSnapshotMarker = {
+  readonly displayNumber: number;
+  readonly bounds: PreviewShellBounds;
+};
+
+/** Overlay data burned into a saved annotation screenshot. */
+export type PreviewAnnotationSnapshotRequest = {
+  readonly activeDisplayNumber: number;
+  readonly activeBounds: PreviewShellBounds;
+  readonly markers: readonly PreviewAnnotationSnapshotMarker[];
+};
+
 /** Result of capturing preview page context without a PNG (desktop only). */
 export type PreviewContextReferenceResult =
   | { readonly ok: true; readonly capture: McodeBrowserCapture }
@@ -130,6 +143,10 @@ interface PreviewBridge {
   capturePictureReferenceRegion(): Promise<PreviewPictureReferenceResult>;
   /** Pick an element by hover and click; captures its box as PNG with selector and excerpt; desktop only. */
   capturePictureReferenceElementPick(): Promise<PreviewPictureReferenceResult>;
+  /** Captures the visible preview with annotation marker and target highlight overlays burned in. */
+  captureAnnotationSnapshot(
+    payload: PreviewAnnotationSnapshotRequest,
+  ): Promise<PreviewPictureReferenceResult>;
   /**
    * Captures structured page context (v2) without a screenshot. Desktop only.
    */
@@ -179,6 +196,7 @@ interface PreviewDesignBridge {
   }): Promise<{ ok: true; data: { width: number; height: number } } | { ok: false; error: string }>;
   resetViewport(): Promise<{ ok: true } | { ok: false; error: string }>;
   setInspect(enabled: boolean): Promise<{ ok: true } | { ok: false; error: string }>;
+  setAnnotationGuard(enabled: boolean): Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 /** Wire-side result of a tab IPC call. */

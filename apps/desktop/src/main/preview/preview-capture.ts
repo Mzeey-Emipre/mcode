@@ -16,6 +16,7 @@ import {
 import { redactMcodeBrowserCaptureV2 } from "@mcode/shared";
 import { type Bounds, type PreviewSession, type CaptureFinishResult, sessions, getSession, resetIdle } from "./preview-session.js";
 import { persistBrowserCaptureSpill } from "./preview-spill.js";
+import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
 /**
  * Outcome of capturing the visible preview viewport as a PNG attachment.
@@ -29,6 +30,17 @@ export type PreviewContextReferenceResult =
   | { ok: true; capture: McodeBrowserCaptureV2 }
   | { ok: false; error: string };
 
+type AnnotationSnapshotMarker = {
+  displayNumber: number;
+  bounds: Bounds;
+};
+
+type AnnotationSnapshotRequest = {
+  activeDisplayNumber: number;
+  activeBounds: Bounds;
+  markers: AnnotationSnapshotMarker[];
+};
+
 /** Hard cap per guest-derived string before redaction so hostile pages cannot exhaust memory. */
 const GUEST_TEXT_SAFETY_MAX = 500_000;
 
@@ -40,6 +52,9 @@ export const PREVIEW_CONSOLE_LINE_MAX = 480;
 
 /** Maximum number of failed request entries buffered per session. */
 export const PREVIEW_FAILED_REQUEST_MAX = 24;
+
+/** Maximum annotation markers burned into one snapshot. */
+const PREVIEW_ANNOTATION_SNAPSHOT_MARKER_MAX = 50;
 
 /** Max length for selector hints after guest + main sanitization (keeps prompts small, bounds CSS injection). */
 export const SELECTOR_HINT_MAX_LEN = 512;
@@ -276,6 +291,127 @@ export function clampRectInPlace(rect: Bounds, maxW: number, maxH: number): Boun
   return { x, y, width, height };
 }
 
+function parseDisplayNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value)) return null;
+  if (value < 1 || value > 999) return null;
+  return value;
+}
+
+function clampSnapshotBounds(value: unknown, viewport: Bounds): Bounds | null {
+  const parsed = parseBoundsRecord(value);
+  if (!parsed) return null;
+  const clamped = clampRectInPlace(parsed, viewport.width, viewport.height);
+  if (clamped.width < 1 || clamped.height < 1) return null;
+  return clamped;
+}
+
+function parseAnnotationSnapshotMarker(value: unknown, viewport: Bounds): AnnotationSnapshotMarker | null {
+  if (!value || typeof value !== "object") return null;
+  const marker = value as Record<string, unknown>;
+  const displayNumber = parseDisplayNumber(marker.displayNumber);
+  const bounds = clampSnapshotBounds(marker.bounds, viewport);
+  if (!displayNumber || !bounds) return null;
+  return { displayNumber, bounds };
+}
+
+function parseAnnotationSnapshotRequest(value: unknown, viewport: Bounds): AnnotationSnapshotRequest | null {
+  if (!value || typeof value !== "object") return null;
+  const payload = value as Record<string, unknown>;
+  const activeDisplayNumber = parseDisplayNumber(payload.activeDisplayNumber);
+  const activeBounds = clampSnapshotBounds(payload.activeBounds, viewport);
+  if (!activeDisplayNumber || !activeBounds) return null;
+
+  const markers = Array.isArray(payload.markers)
+    ? payload.markers
+        .slice(0, PREVIEW_ANNOTATION_SNAPSHOT_MARKER_MAX)
+        .map((marker) => parseAnnotationSnapshotMarker(marker, viewport))
+        .filter((marker): marker is AnnotationSnapshotMarker => marker !== null)
+    : [];
+  if (!markers.some((marker) => marker.displayNumber === activeDisplayNumber)) {
+    markers.push({ displayNumber: activeDisplayNumber, bounds: activeBounds });
+  }
+
+  return { activeDisplayNumber, activeBounds, markers };
+}
+
+const REMOVE_ANNOTATION_SNAPSHOT_OVERLAY_JS = `(function(){
+  var root = document.getElementById("__mcode_annotation_snapshot_overlay");
+  if (root) root.remove();
+  document.querySelectorAll('style[data-mcode-annotation-snapshot="1"]').forEach(function (node) { node.remove(); });
+})()`;
+
+const WAIT_FOR_ANNOTATION_SNAPSHOT_OVERLAY_PAINT_JS = `(function(){
+  return new Promise(function(resolve) {
+    try {
+      var root = document.getElementById("__mcode_annotation_snapshot_overlay");
+      if (!root) {
+        resolve(false);
+        return;
+      }
+      var settled = false;
+      var finish = function(value) {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      var raf = window.requestAnimationFrame || function(cb) { return setTimeout(cb, 16); };
+      raf(function() {
+        raf(function() {
+          finish(true);
+        });
+      });
+      setTimeout(function() {
+        finish(true);
+      }, 80);
+    } catch (err) {
+      resolve(false);
+    }
+  });
+})()`;
+
+function buildAnnotationSnapshotOverlayJs(payload: AnnotationSnapshotRequest): string {
+  const json = JSON.stringify(payload);
+  return `(function(){
+    var data = ${json};
+    var old = document.getElementById("__mcode_annotation_snapshot_overlay");
+    if (old) old.remove();
+    document.querySelectorAll('style[data-mcode-annotation-snapshot="1"]').forEach(function (node) { node.remove(); });
+    var style = document.createElement("style");
+    style.setAttribute("data-mcode-annotation-snapshot", "1");
+    style.textContent = [
+      "#__mcode_annotation_snapshot_overlay{position:fixed;inset:0;pointer-events:none;z-index:2147483645}",
+      "#__mcode_annotation_snapshot_overlay .mcode-annotation-highlight{position:fixed;box-sizing:border-box;border:3px solid #f59e0b;background:rgba(245,158,11,.18);border-radius:3px;box-shadow:0 0 0 1px rgba(17,24,39,.55) inset,0 0 0 9999px rgba(0,0,0,.08)}",
+      "#__mcode_annotation_snapshot_overlay .mcode-annotation-marker{position:fixed;width:30px;height:30px;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;color:#fff;font:700 12px/1 ui-sans-serif,system-ui,sans-serif;text-shadow:0 1px 1px rgba(0,0,0,.35)}",
+      "#__mcode_annotation_snapshot_overlay .mcode-annotation-marker::before{content:\\"\\";position:absolute;inset:1px;border-radius:999px;background:#f59e0b;box-shadow:0 4px 10px rgba(0,0,0,.28),0 0 0 2px rgba(17,24,39,.78)}",
+      "#__mcode_annotation_snapshot_overlay .mcode-annotation-marker::after{content:\\"\\";position:absolute;left:9px;bottom:1px;width:8px;height:8px;border-radius:2px;background:#f59e0b;transform:rotate(45deg);box-shadow:1px 1px 0 rgba(17,24,39,.78)}",
+      "#__mcode_annotation_snapshot_overlay .mcode-annotation-marker span{position:relative;z-index:1}"
+    ].join("");
+    (document.head || document.documentElement).appendChild(style);
+    var root = document.createElement("div");
+    root.id = "__mcode_annotation_snapshot_overlay";
+    root.setAttribute("aria-hidden", "true");
+    var highlight = document.createElement("div");
+    highlight.className = "mcode-annotation-highlight";
+    highlight.style.left = data.activeBounds.x + "px";
+    highlight.style.top = data.activeBounds.y + "px";
+    highlight.style.width = data.activeBounds.width + "px";
+    highlight.style.height = data.activeBounds.height + "px";
+    root.appendChild(highlight);
+    for (var i = 0; i < data.markers.length; i++) {
+      var marker = data.markers[i];
+      var node = document.createElement("div");
+      node.className = "mcode-annotation-marker";
+      node.style.left = Math.max(16, marker.bounds.x + marker.bounds.width / 2) + "px";
+      node.style.top = Math.max(16, marker.bounds.y + Math.min(marker.bounds.height / 2, 18)) + "px";
+      var label = document.createElement("span");
+      label.textContent = String(marker.displayNumber);
+      node.appendChild(label);
+      root.appendChild(node);
+    }
+    (document.body || document.documentElement).appendChild(root);
+  })()`;
+}
+
 /** Sanitized hostname (or fallback) used in capture filenames for the preview tab. */
 export function previewCaptureFileStem(pageUrl: string): string {
   try {
@@ -304,6 +440,7 @@ export async function buildBrowserCapturePayload(
     captureKind?: "viewport" | "region" | "element";
     selectorHint?: string | null;
     htmlExcerpt?: string | null;
+    elementStyle?: McodeBrowserCaptureV2["elementStyle"] | null;
   },
 ): Promise<McodeBrowserCaptureV2> {
   const ctx = await captureGuestPageContextForCapture(webContents);
@@ -329,6 +466,9 @@ export async function buildBrowserCapturePayload(
   }
   if (tail) {
     out.consoleTail = tail;
+  }
+  if (extras?.elementStyle && Object.keys(extras.elementStyle).length > 0) {
+    out.elementStyle = extras.elementStyle;
   }
   if (ctx && !ctx.error) {
     if (ctx.visibleText != null && ctx.visibleText.length > 0) {
@@ -393,8 +533,8 @@ export function registerWebRequestInterceptor(partition: Electron.Session): void
     const rt = String(details.resourceType ?? "other").slice(0, 32);
     const safeUrl = url.length > 2048 ? url.slice(0, 2048) : url;
     for (const s of sessions.values()) {
-      if (!s.view || s.view.webContents.isDestroyed()) continue;
-      if (s.view.webContents.id !== wcId) continue;
+      const activeWebContents = resolveActivePreviewWebContents(s);
+      if (!activeWebContents || activeWebContents.id !== wcId) continue;
       pushFailedRequest(s, { url: safeUrl, statusCode: code, resourceType: rt });
       return;
     }
@@ -411,19 +551,20 @@ export function registerCaptureHandlers(): void {
     if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
 
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) {
+    const activeWebContents = resolveActivePreviewWebContents(s);
+    if (!activeWebContents) {
       return { ok: false, error: "no-preview" };
     }
 
     try {
-      const image = await s.view.webContents.capturePage();
+      const image = await activeWebContents.capturePage();
       const buffer = image.toPNG();
       if (buffer.length === 0) {
         return { ok: false, error: "empty-capture" };
       }
 
       const id = randomUUID();
-      const stem = previewCaptureFileStem(s.view.webContents.getURL());
+      const stem = previewCaptureFileStem(activeWebContents.getURL());
       const name = `preview-${stem}-${Date.now()}.png`;
       const tempDir = join(app.getPath("temp"), "mcode-attachments");
       await mkdir(tempDir, { recursive: true });
@@ -443,7 +584,7 @@ export function registerCaptureHandlers(): void {
       const boundsCss =
         lb !== null ? viewportBoundsFallback(lb.width, lb.height) : viewportBoundsFallback(pngSize.width, pngSize.height);
       const capture = await buildBrowserCapturePayload(
-        s.view.webContents,
+        activeWebContents,
         boundsCss,
         s.consoleBuffer,
         snapshotFailedRequestsForCapture(s),
@@ -459,12 +600,93 @@ export function registerCaptureHandlers(): void {
     }
   });
 
+  ipcMain.handle(
+    "preview:capture-annotation-snapshot",
+    async (_event, payload: unknown): Promise<PreviewPictureReferenceResult> => {
+      const win = BrowserWindow.fromWebContents(_event.sender);
+      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+
+      const s = getSession(win);
+      const activeWebContents = resolveActivePreviewWebContents(s);
+      if (!activeWebContents) {
+        return { ok: false, error: "no-preview" };
+      }
+
+      const lb = s.lastBounds;
+      if (!lb) {
+        return { ok: false, error: "no-bounds" };
+      }
+
+      const viewportBounds = viewportBoundsFallback(lb.width, lb.height);
+      const overlay = parseAnnotationSnapshotRequest(payload, viewportBounds);
+      if (!overlay) {
+        return { ok: false, error: "capture-failed" };
+      }
+
+      try {
+        await activeWebContents.executeJavaScript(buildAnnotationSnapshotOverlayJs(overlay), true);
+        const overlayPainted = await activeWebContents.executeJavaScript(
+          WAIT_FOR_ANNOTATION_SNAPSHOT_OVERLAY_PAINT_JS,
+          true,
+        );
+        if (overlayPainted !== true) {
+          return { ok: false, error: "capture-failed" };
+        }
+        const image = await activeWebContents.capturePage();
+        const buffer = image.toPNG();
+        if (buffer.length === 0) {
+          return { ok: false, error: "empty-capture" };
+        }
+
+        const id = randomUUID();
+        const stem = previewCaptureFileStem(activeWebContents.getURL());
+        const name = `preview-annotation-${stem}-${Date.now()}.png`;
+        const tempDir = join(app.getPath("temp"), "mcode-attachments");
+        await mkdir(tempDir, { recursive: true });
+        const tempPath = join(tempDir, `${id}.png`);
+        await writeFile(tempPath, buffer);
+
+        const meta: AttachmentMeta = {
+          id,
+          name,
+          mimeType: "image/png",
+          sizeBytes: buffer.length,
+          sourcePath: tempPath,
+        };
+
+        const capture = await buildBrowserCapturePayload(
+          activeWebContents,
+          viewportBounds,
+          s.consoleBuffer,
+          snapshotFailedRequestsForCapture(s),
+          s.workspaceId,
+          {
+            captureKind: "viewport",
+          },
+        );
+        resetIdle(win, s);
+        return { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture };
+      } catch {
+        return { ok: false, error: "capture-failed" };
+      } finally {
+        if (!activeWebContents.isDestroyed()) {
+          try {
+            await activeWebContents.executeJavaScript(REMOVE_ANNOTATION_SNAPSHOT_OVERLAY_JS, true);
+          } catch {
+            /* page may be navigating */
+          }
+        }
+      }
+    },
+  );
+
   ipcMain.handle("preview:capture-context-reference", async (_event): Promise<PreviewContextReferenceResult> => {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
 
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) {
+    const activeWebContents = resolveActivePreviewWebContents(s);
+    if (!activeWebContents) {
       return { ok: false, error: "no-preview" };
     }
 
@@ -476,7 +698,7 @@ export function registerCaptureHandlers(): void {
     try {
       const boundsCss = viewportBoundsFallback(lb.width, lb.height);
       const capture = await buildBrowserCapturePayload(
-        s.view.webContents,
+        activeWebContents,
         boundsCss,
         s.consoleBuffer,
         snapshotFailedRequestsForCapture(s),

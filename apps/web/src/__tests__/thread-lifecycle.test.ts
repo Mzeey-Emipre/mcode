@@ -13,11 +13,51 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 import { clearRecordCache } from "@/lib/thread-hydrator/record-cache";
+import type { PreviewAnnotationBundle } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
   getTransport: () => mockTransport,
 }));
+
+function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
+  const capture = {
+    schemaVersion: 2 as const,
+    pageUrl: "https://www.google.com/",
+    pageTitle: "Google",
+    capturedAt: "2026-07-02T00:00:00.000Z",
+    captureKind: "element" as const,
+    selectorHint: "html",
+    bounds: { x: 0, y: 0, width: 1280, height: 720 },
+    layoutViewport: { width: 1280, height: 720 },
+  };
+
+  return {
+    schemaVersion: 1,
+    annotations: [
+      {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        displayNumber: 1,
+        pageIdentity: "https://www.google.com/",
+        pageContext: capture,
+        targetContext: {
+          label: "html",
+          selectorHint: "html",
+          bounds: { x: 0, y: 0, width: 1280, height: 720 },
+        },
+        note: "Move the header down.",
+        snapshot: {
+          id: "annotation-shot-1",
+          name: "preview.png",
+          mimeType: "image/png",
+          sizeBytes: 2048,
+          sourcePath: "C:/tmp/annotation-shot-1.png",
+          capture,
+        },
+      },
+    ],
+  };
+}
 
 describe("Thread Lifecycle Behavior", () => {
   beforeEach(() => {
@@ -31,6 +71,46 @@ describe("Thread Lifecycle Behavior", () => {
     await useThreadStore.getState().sendMessage(threadId, "Hello");
 
     expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+  });
+
+  it("shows saved annotation screenshots as optimistic image attachments", async () => {
+    const threadId = "thread-1";
+    const bundle = makePreviewAnnotationBundle();
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([
+        [threadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    await useThreadStore.getState().sendMessage(
+      threadId,
+      "fix this",
+      undefined,
+      undefined,
+      undefined,
+      "fix this",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      bundle,
+    );
+
+    expect(getTestThreadMessages(threadId)[0]?.attachments).toEqual([
+      {
+        id: "annotation-shot-1",
+        name: "Annotation 1 screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 2048,
+      },
+    ]);
   });
 
   it("when the user sends a follow-up, stale live turn text is cleared immediately", async () => {

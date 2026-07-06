@@ -220,6 +220,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     capturePictureReferenceElementPick(): Promise<unknown> {
       return ipcRenderer.invoke("preview:capture-picture-element-pick");
     },
+    /** Capture the visible preview with annotation marker and target highlight context. */
+    captureAnnotationSnapshot(payload: unknown): Promise<unknown> {
+      return ipcRenderer.invoke("preview:capture-annotation-snapshot", payload);
+    },
     /** Structured page context for the composer fence without capturing a PNG. */
     capturePageContext(): Promise<unknown> {
       return ipcRenderer.invoke("preview:capture-context-reference");
@@ -292,6 +296,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       },
       setInspect(enabled: boolean): Promise<unknown> {
         return ipcRenderer.invoke("preview:design.set-inspect", { enabled });
+      },
+      setAnnotationGuard(enabled: boolean): Promise<unknown> {
+        return ipcRenderer.invoke("preview:design.set-annotation-guard", { enabled });
       },
     },
     /**

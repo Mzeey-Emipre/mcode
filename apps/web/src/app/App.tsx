@@ -15,6 +15,7 @@ import { resizeRecordCache } from "@/lib/thread-hydrator/record-cache";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { COMPOSER_MIN_WIDTH } from "@/stores/diffStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
+import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { useUiStore } from "@/stores/uiStore";
 import { initShortcuts } from "@/lib/shortcuts";
 import { summonTab } from "@/lib/summon-tab";
@@ -175,7 +176,21 @@ export function App() {
           if (ui.shortcutHelpOpen) {
             ui.setShortcutHelpOpen(false);
           } else {
-            useWorkspaceStore.getState().setActiveThread(null);
+            const workspace = useWorkspaceStore.getState();
+            const threadId = workspace.activeThreadId;
+            if (threadId && usePreviewDesignModeStore.getState().isActive(threadId)) {
+              const event = new CustomEvent("mcode:preview-design-escape", {
+                cancelable: true,
+                detail: { threadId },
+              });
+              const handled = !window.dispatchEvent(event);
+              if (!handled) {
+                usePreviewDesignModeStore.getState().setActive(threadId, false);
+                void window.desktopBridge?.preview?.cancelCapture?.();
+              }
+              return;
+            }
+            workspace.setActiveThread(null);
           }
         },
       }),

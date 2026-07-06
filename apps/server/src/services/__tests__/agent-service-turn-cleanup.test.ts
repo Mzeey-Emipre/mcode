@@ -2,7 +2,13 @@ import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent, Thread, IProviderRegistry } from "@mcode/contracts";
+import type {
+  AgentEvent,
+  AttachmentMeta,
+  IProviderRegistry,
+  PreviewAnnotationBundle,
+  Thread,
+} from "@mcode/contracts";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../store/database.js";
 import { ThreadRepo as RealThreadRepo } from "../../repositories/thread-repo.js";
@@ -73,6 +79,45 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
   } as Thread;
 }
 
+function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
+  const capture = {
+    schemaVersion: 2 as const,
+    pageUrl: "https://www.google.com/",
+    pageTitle: "Google",
+    capturedAt: "2026-07-02T00:00:00.000Z",
+    captureKind: "element" as const,
+    selectorHint: "html",
+    bounds: { x: 0, y: 0, width: 1280, height: 720 },
+    layoutViewport: { width: 1280, height: 720 },
+  };
+
+  return {
+    schemaVersion: 1,
+    annotations: [
+      {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        displayNumber: 1,
+        pageIdentity: "https://www.google.com/",
+        pageContext: capture,
+        targetContext: {
+          label: "html",
+          selectorHint: "html",
+          bounds: { x: 0, y: 0, width: 1280, height: 720 },
+        },
+        note: "Move the header down.",
+        snapshot: {
+          id: "annotation-shot-1",
+          name: "preview.png",
+          mimeType: "image/png",
+          sizeBytes: 2048,
+          sourcePath: "C:/tmp/annotation-shot-1.png",
+          capture,
+        },
+      },
+    ],
+  };
+}
+
 /**
  * Build a minimal AgentService wired to a fake EventEmitter-based provider.
  * The returned `providerEmitter` lets the test fire events as if the SDK
@@ -81,6 +126,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 function buildService(): {
   service: AgentService;
   providerEmitter: EventEmitter;
+  attachmentService: AttachmentService;
+  messageRepo: MessageRepo;
   memoryPressureService: { markActive: ReturnType<typeof vi.fn>; markIdle: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
@@ -121,7 +168,17 @@ function buildService(): {
   } as unknown as GitService;
 
   const attachmentService = {
-    persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
+    persist: vi.fn((_threadId: string, attachments: AttachmentMeta[]) =>
+      Promise.resolve({
+        stored: attachments.map((att) => ({
+          id: att.id,
+          name: att.name,
+          mimeType: att.mimeType,
+          sizeBytes: att.sizeBytes,
+        })),
+        persisted: attachments,
+      }),
+    ),
   } as unknown as AttachmentService;
 
   // The provider must be an EventEmitter so init() can subscribe via
@@ -216,7 +273,13 @@ function buildService(): {
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
   );
 
-  return { service, providerEmitter, memoryPressureService: memoryPressureService as MemoryPressureService & { markActive: ReturnType<typeof vi.fn>; markIdle: ReturnType<typeof vi.fn> } };
+  return {
+    service,
+    providerEmitter,
+    attachmentService,
+    messageRepo,
+    memoryPressureService: memoryPressureService as MemoryPressureService & { markActive: ReturnType<typeof vi.fn>; markIdle: ReturnType<typeof vi.fn> },
+  };
 }
 
 describe("AgentService turn cleanup", () => {
@@ -249,6 +312,73 @@ describe("AgentService turn cleanup", () => {
     // Thread should no longer be active
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markIdle).toHaveBeenCalled();
+  });
+
+  it("persists preview annotation snapshots as visible provider attachments", async () => {
+    const { service, providerEmitter, attachmentService, messageRepo } = buildService();
+    const bundle = makePreviewAnnotationBundle();
+
+    await service.sendMessage(
+      THREAD_ID,
+      "fix this",
+      "default",
+      "claude-sonnet-4-6",
+      [],
+      undefined,
+      "claude",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      bundle,
+    );
+
+    const expectedAttachment = {
+      id: "annotation-shot-1",
+      name: "Annotation 1 screenshot.png",
+      mimeType: "image/png",
+      sizeBytes: 2048,
+      sourcePath: "C:/tmp/annotation-shot-1.png",
+    };
+
+    expect(attachmentService.persist).toHaveBeenCalledWith(THREAD_ID, [
+      expectedAttachment,
+    ]);
+    expect(messageRepo.create).toHaveBeenCalledWith(
+      THREAD_ID,
+      "user",
+      "fix this",
+      1,
+      [
+        {
+          id: "annotation-shot-1",
+          name: "Annotation 1 screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 2048,
+        },
+      ],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      bundle,
+    );
+    expect((providerEmitter as any).sendTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: [expectedAttachment],
+      }),
+    );
   });
 
   it("does NOT remove thread from activeThreadIds on TurnComplete during compaction", async () => {

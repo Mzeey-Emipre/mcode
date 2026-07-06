@@ -33,6 +33,7 @@ import { ProviderAvailabilitySchema } from "../providers/availability.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
 import { GoalLookupResultSchema } from "../models/goal.js";
+import { PreviewAnnotationBundleSchema } from "../models/browser-preview.js";
 
 /** Maximum recap input messages accepted by recap.generate. */
 export const RECAP_MAX_MESSAGES = 80;
@@ -64,6 +65,8 @@ export const SendMessageSchema = lazySchema(() =>
     model: z.string().optional(),
     permissionMode: PermissionModeSchema.optional(),
     attachments: z.array(AttachmentMetaSchema).max(MAX_ATTACHMENTS).optional(),
+    /** Structured Preview Annotation bundle, counted separately from normal attachments. */
+    previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
     mentions: MessageMentionsSchema.optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
@@ -111,6 +114,8 @@ export const CreateAndSendSchema = lazySchema(() =>
     existingWorktreePath: z.string().optional(),
     existingWorktreeBaseBranch: GitBranchNameSchema.optional(),
     attachments: z.array(AttachmentMetaSchema).max(MAX_ATTACHMENTS).optional(),
+    /** Structured Preview Annotation bundle, counted separately from normal attachments. */
+    previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
     mentions: MessageMentionsSchema.optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),

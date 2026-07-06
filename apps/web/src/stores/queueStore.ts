@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import type { AttachmentMeta, PermissionMode } from "@/transport";
-import type { ContextWindowMode, MessageMention, ReasoningLevel } from "@mcode/contracts";
+import type {
+  ContextWindowMode,
+  MessageMention,
+  PreviewAnnotationBundle,
+  ReasoningLevel,
+} from "@mcode/contracts";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 
 /** A message waiting to be sent while the thread is busy with another turn. */
@@ -11,6 +16,8 @@ export interface QueuedMessage {
   displayContent?: string;
   /** Selected typed mentions with offsets into content. Plain typed @text is not included. */
   mentions?: MessageMention[];
+  /** Saved preview annotations to send with the queued message. */
+  previewAnnotations?: PreviewAnnotationBundle;
   attachments: AttachmentMeta[];
   model: string;
   permissionMode: PermissionMode;

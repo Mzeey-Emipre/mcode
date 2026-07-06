@@ -10,8 +10,10 @@ import type {
   Message,
   MessageMention,
   MessageRole,
+  PreviewAnnotationBundle,
   StoredAttachment,
 } from "@mcode/contracts";
+import { PreviewAnnotationBundleSchema } from "@mcode/contracts";
 
 interface MessageRow {
   id: string;
@@ -25,6 +27,7 @@ interface MessageRow {
   timestamp: string;
   sequence: number;
   attachments: string | null;
+  preview_annotations: string | null;
   mentions: string | null;
   reply_to_message_id: string | null;
   quoted_text: string | null;
@@ -74,6 +77,19 @@ function parseJsonField(value: string | null): unknown | null {
   }
 }
 
+function parsePreviewAnnotations(value: string | null): PreviewAnnotationBundle | null {
+  const parsed = parseJsonField(value);
+  if (parsed === null) return null;
+  return PreviewAnnotationBundleSchema().parse(parsed);
+}
+
+function serializePreviewAnnotations(
+  previewAnnotations: PreviewAnnotationBundle | undefined,
+): string | null {
+  if (!previewAnnotations) return null;
+  return JSON.stringify(PreviewAnnotationBundleSchema().parse(previewAnnotations));
+}
+
 function rowToMessage(row: MessageRow): Message {
   const msg: Message = {
     id: row.id,
@@ -89,6 +105,7 @@ function rowToMessage(row: MessageRow): Message {
     attachments: parseJsonField(row.attachments) as
       | StoredAttachment[]
       | null,
+    previewAnnotations: parsePreviewAnnotations(row.preview_annotations),
     mentions: parseJsonField(row.mentions) as MessageMention[] | null,
     reply_to_message_id: row.reply_to_message_id,
     quoted_text: row.quoted_text,
@@ -104,10 +121,10 @@ function rowToMessage(row: MessageRow): Message {
 }
 
 const MESSAGE_COLUMNS =
-  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, mentions, reply_to_message_id, quoted_text, model, is_internal";
+  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, is_internal";
 
 const MESSAGE_COLUMNS_PREFIXED =
-  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal";
+  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal";
 
 /**
  * Pre-aggregates tool call counts for the selected page only.
@@ -184,6 +201,7 @@ export class MessageRepo {
     model?: string | null,
     isInternal?: boolean,
     mentions?: MessageMention[],
+    previewAnnotations?: PreviewAnnotationBundle,
   ): Message {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -195,16 +213,17 @@ export class MessageRepo {
       mentions && mentions.length > 0
         ? JSON.stringify(mentions)
         : null;
+    const previewAnnotationsJson = serializePreviewAnnotations(previewAnnotations);
     const modelValue = model ?? null;
     const isInternalValue = isInternal ? 1 : 0;
 
     this.db
       .prepare(
-        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, mentions, reply_to_message_id, quoted_text, model, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id, threadId, role, content, now, sequence,
-        attachmentsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, isInternalValue,
+        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, isInternalValue,
       );
 
     return {
@@ -219,6 +238,7 @@ export class MessageRepo {
       timestamp: now,
       sequence,
       attachments: attachments ?? null,
+      previewAnnotations: previewAnnotations ?? null,
       mentions: mentions ?? null,
       reply_to_message_id: replyToMessageId ?? null,
       quoted_text: quotedText ?? null,
@@ -530,7 +550,7 @@ LIMIT ?`,
       `SELECT
   m.id, m.thread_id, m.role, m.content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
-  m.attachments, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
   ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,
@@ -539,7 +559,7 @@ WHERE m.id = ?`,
       `SELECT
   m.id, m.thread_id, m.role, substr(m.content, 1, ?) AS content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
-  m.attachments, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
   ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,

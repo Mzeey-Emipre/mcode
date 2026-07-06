@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME } from "@mcode/contracts";
 import { usePreviewCapture } from "../usePreviewCapture";
+import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
 
 // ---------------------------------------------------------------------------
 // Store mocks — must be declared before the module is imported.
@@ -58,6 +59,7 @@ const mockPreview = {
   capturePictureReference: vi.fn(),
   capturePictureReferenceRegion: vi.fn(),
   capturePictureReferenceElementPick: vi.fn(),
+  captureAnnotationSnapshot: vi.fn(),
   capturePageContext: vi.fn(),
 };
 
@@ -71,6 +73,7 @@ beforeEach(() => {
   window.desktopBridge = {
     preview: mockPreview,
   } as unknown as typeof window.desktopBridge;
+  usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
 
   // jsdom does not implement URL.createObjectURL
   URL.createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
@@ -79,6 +82,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (window as unknown as Record<string, unknown>).desktopBridge;
+  usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
   vi.clearAllMocks();
 });
 
@@ -110,6 +114,7 @@ describe("usePreviewCapture", () => {
       expect(typeof result.current.onAddRegionPictureReference).toBe("function");
       expect(typeof result.current.onAddElementPickPictureReference).toBe("function");
       expect(typeof result.current.onAddPageContextOnly).toBe("function");
+      expect(typeof result.current.captureAnnotationSnapshot).toBe("function");
     });
   });
 
@@ -336,6 +341,71 @@ describe("usePreviewCapture", () => {
   });
 
   // -------------------------------------------------------------------------
+  // captureAnnotationSnapshot
+  // -------------------------------------------------------------------------
+
+  describe("captureAnnotationSnapshot", () => {
+    const overlay = {
+      activeDisplayNumber: 2,
+      activeBounds: { x: 40, y: 50, width: 120, height: 32 },
+      markers: [
+        { displayNumber: 1, bounds: { x: 10, y: 12, width: 80, height: 24 } },
+        { displayNumber: 2, bounds: { x: 40, y: 50, width: 120, height: 32 } },
+      ],
+    };
+
+    const capture = {
+      schemaVersion: 2 as const,
+      pageUrl: "https://example.com",
+      pageTitle: "Example",
+      capturedAt: "2026-07-02T00:00:00.000Z",
+      captureKind: "viewport" as const,
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    };
+
+    it("calls pushSync(true) before captureAnnotationSnapshot", async () => {
+      const opts = defaultOptions();
+      mockPreview.captureAnnotationSnapshot.mockResolvedValue(
+        makeCapturePngResult({ capture }),
+      );
+
+      const { result } = renderHook(() => usePreviewCapture(opts));
+
+      await act(async () => {
+        await result.current.captureAnnotationSnapshot(overlay);
+      });
+
+      expect(opts.pushSync).toHaveBeenCalledWith(true);
+      expect(mockPreview.captureAnnotationSnapshot).toHaveBeenCalledWith(overlay);
+      const pushOrder = opts.pushSync.mock.invocationCallOrder[0];
+      const captureOrder = mockPreview.captureAnnotationSnapshot.mock.invocationCallOrder[0];
+      expect(pushOrder).toBeLessThan(captureOrder);
+    });
+
+    it("returns snapshot metadata from the annotated capture result", async () => {
+      mockPreview.captureAnnotationSnapshot.mockResolvedValue(
+        makeCapturePngResult({ capture }),
+      );
+
+      const { result } = renderHook(() => usePreviewCapture(defaultOptions()));
+      let snapshot: Awaited<ReturnType<typeof result.current.captureAnnotationSnapshot>> = null;
+
+      await act(async () => {
+        snapshot = await result.current.captureAnnotationSnapshot(overlay);
+      });
+
+      expect(snapshot).toEqual({
+        id: "capture-id-1",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        sourcePath: "/tmp/capture.png",
+        capture,
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // onAddElementPickPictureReference
   // -------------------------------------------------------------------------
 
@@ -405,6 +475,49 @@ describe("usePreviewCapture", () => {
       });
 
       expect(result.current.elementPickBusy).toBe(false);
+    });
+  });
+
+  describe("onAddElementAnnotation", () => {
+    it("stores selected element style details on the draft", async () => {
+      mockPreview.capturePictureReferenceElementPick.mockResolvedValue(
+        makeCapturePngResult({
+          capture: {
+            schemaVersion: 2,
+            pageUrl: "https://example.com/products#details",
+            pageTitle: "Products",
+            capturedAt: "2026-07-01T00:00:00.000Z",
+            captureKind: "element",
+            selectorHint: "button.buy",
+            bounds: { x: 10, y: 20, width: 120, height: 40 },
+            elementStyle: {
+              textColor: "rgb(255, 255, 255)",
+              background: "rgb(10, 52, 92)",
+              opacity: 0.75,
+              font: "Inter, sans-serif",
+              fontSize: "14px",
+            },
+          },
+        }),
+      );
+
+      const { result } = renderHook(() => usePreviewCapture(defaultOptions()));
+
+      await act(async () => {
+        await result.current.onAddElementAnnotation();
+      });
+
+      expect(usePreviewAnnotationStore.getState().drafts[THREAD_ID]).toMatchObject({
+        pageIdentity: "https://example.com/products",
+        selectorHint: "button.buy",
+        elementStyle: {
+          textColor: "rgb(255, 255, 255)",
+          background: "rgb(10, 52, 92)",
+          opacity: 0.75,
+          font: "Inter, sans-serif",
+          fontSize: "14px",
+        },
+      });
     });
   });
 

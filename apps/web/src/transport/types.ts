@@ -40,6 +40,7 @@ import type {
   ConversationPage,
   MessageMention,
   GoalLookupResult,
+  PreviewAnnotationBundle,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -212,6 +213,7 @@ export interface McodeTransport {
     quotedText?: string,
     planAction?: PlanAction,
     mentions?: MessageMention[],
+    previewAnnotations?: PreviewAnnotationBundle,
   ): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
@@ -234,6 +236,7 @@ export interface McodeTransport {
     codexFastMode?: boolean,
     displayContent?: string,
     mentions?: MessageMention[],
+    previewAnnotations?: PreviewAnnotationBundle,
   ): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<void>;
   /** Respond to a tool permission request from the agent. */

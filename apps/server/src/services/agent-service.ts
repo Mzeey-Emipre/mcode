@@ -9,7 +9,13 @@ import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
 import { logger, validateBranchName } from "@mcode/shared";
-import { AgentEventType, isGoalCapable, isGoalOpen, isSessionEvictable } from "@mcode/contracts";
+import {
+  AgentEventType,
+  isGoalCapable,
+  isGoalOpen,
+  isSessionEvictable,
+  previewAnnotationSnapshotAttachments,
+} from "@mcode/contracts";
 import type {
   Thread,
   AttachmentMeta,
@@ -26,6 +32,7 @@ import type {
   PlanOutput,
   PlanAction,
   MessageMention,
+  PreviewAnnotationBundle,
   GoalState,
   GoalLookupResult,
 } from "@mcode/contracts";
@@ -389,6 +396,7 @@ export class AgentService {
     messageDisplayContent?: string,
     planAction?: PlanAction,
     mentions: MessageMention[] = [],
+    previewAnnotations?: PreviewAnnotationBundle,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -511,9 +519,16 @@ export class AgentService {
 
       const persistedUserText = messageDisplayContent ?? content;
 
+      const previewAnnotationAttachments =
+        previewAnnotationSnapshotAttachments(previewAnnotations);
+      const attachmentsForPersistence =
+        previewAnnotationAttachments.length > 0
+          ? [...attachments, ...previewAnnotationAttachments]
+          : attachments;
+
       const { stored, persisted } = await this.attachmentService.persist(
         threadId,
-        attachments,
+        attachmentsForPersistence,
       );
     // Persist the user message and (when answering plan questions) the
     // answered marker in a single transaction. If the marker insert fails
@@ -533,6 +548,7 @@ export class AgentService {
         undefined,
         undefined,
         validatedMentions.length > 0 ? validatedMentions : undefined,
+        previewAnnotations,
       );
       if (markPlanAnswerForMessageId) {
         // INSERT OR IGNORE inside the repo skips PK collisions (idempotent
@@ -1028,6 +1044,7 @@ export class AgentService {
     codexFastMode?: boolean,
     displayContent?: string,
     mentions: MessageMention[] = [],
+    previewAnnotations?: PreviewAnnotationBundle,
   ): Promise<Thread & { warnings?: string[] }> {
     const title = truncateTitle(displayContent ?? content);
 
@@ -1042,6 +1059,7 @@ export class AgentService {
         thinking,
         codexFastMode,
         displayContent,
+        previewAnnotations,
       });
     }
 
@@ -1123,6 +1141,7 @@ export class AgentService {
       displayContent,
       undefined,
       mentions,
+      previewAnnotations,
     ).catch((err) => {
       logger.error("createAndSend initial send failed", {
         threadId: thread.id,
@@ -1164,6 +1183,7 @@ export class AgentService {
     thinking?: boolean;
     codexFastMode?: boolean;
     displayContent?: string;
+    previewAnnotations?: PreviewAnnotationBundle;
   }): Promise<Thread & { warnings?: string[] }> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
@@ -1175,6 +1195,7 @@ export class AgentService {
       thinking,
       codexFastMode,
       displayContent,
+      previewAnnotations,
     } = params;
 
     // Validate parent
@@ -1332,6 +1353,7 @@ export class AgentService {
       displayContent,
       undefined,
       mentions,
+      previewAnnotations,
     ).catch((err) => {
       logger.error("createBranchedThread initial send failed", {
         threadId: thread.id,

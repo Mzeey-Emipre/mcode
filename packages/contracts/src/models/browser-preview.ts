@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
+import type { AttachmentMeta, StoredAttachment } from "./attachment.js";
 
 /** Max lengths for {@link McodeBrowserCaptureV1} excerpt fields (matches Zod). */
 export const MCODE_BROWSER_CAPTURE_V1_STRING_MAX = {
@@ -25,6 +26,58 @@ export const MCODE_BROWSER_CAPTURE_SPILL_APP_DATA_PATH_MAX = 200;
 
 /** Max length for {@link McodeBrowserCaptureV2.spillAbsolutePath} (native absolute path for tools). */
 export const MCODE_BROWSER_CAPTURE_SPILL_ABSOLUTE_PATH_MAX = 640;
+
+/** Max lengths for Preview annotation payload strings. */
+export const PREVIEW_ANNOTATION_STRING_MAX = {
+  note: 4000,
+  changeSummary: 1200,
+  pageIdentity: 2048,
+  targetLabel: 512,
+  visualValue: 512,
+} as const;
+
+const browserPreviewElementStyleSchema = z.object({
+  textColor: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  background: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  opacity: z.number().min(0).max(1).optional(),
+  font: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  fontSize: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  fontWeight: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderRadius: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderTopLeftRadius: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderTopRightRadius: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderBottomRightRadius: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderBottomLeftRadius: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderColor: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderWidth: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderTopWidth: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderRightWidth: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderBottomWidth: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  borderLeftWidth: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  width: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  height: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  padding: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  paddingTop: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  paddingRight: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  paddingBottom: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  paddingLeft: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  margin: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  marginTop: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  marginRight: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  marginBottom: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+  marginLeft: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.visualValue).optional(),
+});
+
+/**
+ * Computed visual details for the selected Preview element, used to prefill annotation controls.
+ */
+export const BrowserPreviewElementStyleSchema = lazySchema(() =>
+  browserPreviewElementStyleSchema,
+);
+
+export type BrowserPreviewElementStyle = z.infer<
+  ReturnType<typeof BrowserPreviewElementStyleSchema>
+>;
 
 /** App-data-relative POSIX path: `browser-capture-spill/<workspaceDir>/<uuid>.json`. */
 const SPILL_APP_DATA_PATH_RE =
@@ -162,6 +215,8 @@ export const McodeBrowserCaptureV2Schema = lazySchema(() =>
     consoleTail: z.string().max(MCODE_BROWSER_CAPTURE_V2_STRING_MAX.consoleTail).optional(),
     viewportScroll: viewportScrollSchema.optional(),
     layoutViewport: layoutViewportSchema.optional(),
+    /** Computed styles for an element pick, bounded and sanitized at the IPC boundary. */
+    elementStyle: BrowserPreviewElementStyleSchema().optional(),
     /** Recent HTTP subresource failures observed in the preview session (capped, best-effort). */
     failedRequests: z.array(failedRequestEntrySchema).max(24).optional(),
     /**
@@ -209,6 +264,57 @@ function clampOptStr(s: string | undefined, max: number): string | undefined {
   return clampStrLen(s, max);
 }
 
+const BROWSER_PREVIEW_ELEMENT_STYLE_STRING_KEYS = [
+  "textColor",
+  "background",
+  "font",
+  "fontSize",
+  "fontWeight",
+  "borderRadius",
+  "borderTopLeftRadius",
+  "borderTopRightRadius",
+  "borderBottomRightRadius",
+  "borderBottomLeftRadius",
+  "borderColor",
+  "borderWidth",
+  "borderTopWidth",
+  "borderRightWidth",
+  "borderBottomWidth",
+  "borderLeftWidth",
+  "width",
+  "height",
+  "padding",
+  "paddingTop",
+  "paddingRight",
+  "paddingBottom",
+  "paddingLeft",
+  "margin",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
+] as const;
+
+function clampBrowserPreviewElementStyle(
+  style: BrowserPreviewElementStyle | undefined,
+): BrowserPreviewElementStyle | undefined {
+  if (!style) return undefined;
+  const next: BrowserPreviewElementStyle = { ...style };
+  for (const key of BROWSER_PREVIEW_ELEMENT_STYLE_STRING_KEYS) {
+    if (next[key] !== undefined) {
+      next[key] = clampStrLen(next[key], PREVIEW_ANNOTATION_STRING_MAX.visualValue);
+    }
+  }
+  if (next.opacity !== undefined) {
+    if (Number.isFinite(next.opacity)) {
+      next.opacity = Math.min(1, Math.max(0, next.opacity));
+    } else {
+      delete next.opacity;
+    }
+  }
+  return next;
+}
+
 /**
  * Truncates v2 excerpt strings and failed-request fields to schema caps. Run after PII redaction
  * so expanded placeholders still fit {@link McodeBrowserCaptureV2Schema}.
@@ -238,6 +344,9 @@ export function clampMcodeBrowserCaptureV2<T extends McodeBrowserCaptureV2>(capt
       resourceType: clampOptStr(e.resourceType, m.failedRequestResourceType),
     }));
   }
+  if (next.elementStyle !== undefined) {
+    next.elementStyle = clampBrowserPreviewElementStyle(next.elementStyle);
+  }
   if (next.spillAbsolutePath !== undefined) {
     next.spillAbsolutePath = clampStrLen(next.spillAbsolutePath, MCODE_BROWSER_CAPTURE_SPILL_ABSOLUTE_PATH_MAX);
   }
@@ -264,3 +373,125 @@ export function clampAttachedBrowserCaptureForOutbound(att: AttachedBrowserCaptu
 }
 
 export type McodeBrowserCapture = McodeBrowserCaptureV1 | McodeBrowserCaptureV2;
+
+/**
+ * Visual style changes requested for a Preview annotation target.
+ */
+export const PreviewAnnotationVisualProposalSchema = lazySchema(() =>
+  browserPreviewElementStyleSchema.refine((value) => Object.keys(value).length > 0, {
+    message: "visual proposal must contain at least one change",
+  }),
+);
+
+export type PreviewAnnotationVisualProposal = z.infer<
+  ReturnType<typeof PreviewAnnotationVisualProposalSchema>
+>;
+
+/**
+ * One saved Preview annotation sent as part of an Annotation bundle.
+ */
+export const PreviewAnnotationPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      id: z.string().uuid(),
+      displayNumber: z.number().int().positive(),
+      pageIdentity: z.string().min(1).max(PREVIEW_ANNOTATION_STRING_MAX.pageIdentity),
+      pageContext: McodeBrowserCaptureV2Schema(),
+      targetContext: z.object({
+        label: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.targetLabel).nullable().optional(),
+        selectorHint: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.targetLabel).nullable().optional(),
+        bounds: BrowserPreviewBoundsSchema(),
+      }),
+      note: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.note).optional(),
+      changeSummary: z.string().max(PREVIEW_ANNOTATION_STRING_MAX.changeSummary).optional(),
+      proposedChanges: PreviewAnnotationVisualProposalSchema().optional(),
+      snapshot: z.object({
+        id: z.string(),
+        name: z.string().max(255),
+        mimeType: z.literal("image/png"),
+        sizeBytes: z.number().int().nonnegative(),
+        sourcePath: z.string().max(1024),
+        capture: McodeBrowserCaptureV2Schema(),
+      }),
+    })
+    .refine((value) => Boolean(value.note?.trim() || value.proposedChanges), {
+      message: "annotation requires a note or proposed changes",
+      path: ["note"],
+    })
+    .refine((value) => Boolean(value.note?.trim() || value.changeSummary?.trim()), {
+      message: "annotation requires note or change summary text",
+      path: ["changeSummary"],
+    }),
+);
+
+export type PreviewAnnotationPayload = z.infer<
+  ReturnType<typeof PreviewAnnotationPayloadSchema>
+>;
+
+/**
+ * Structured Annotation bundle payload sent beside normal composer content.
+ */
+export const PreviewAnnotationBundleSchema = lazySchema(() =>
+  z.object({
+    schemaVersion: z.literal(1),
+    annotations: z.array(PreviewAnnotationPayloadSchema()).min(1),
+  }),
+);
+
+export type PreviewAnnotationBundle = z.infer<
+  ReturnType<typeof PreviewAnnotationBundleSchema>
+>;
+
+/**
+ * Returns the filename shown for a saved annotation screenshot attachment.
+ */
+export function previewAnnotationSnapshotAttachmentName(displayNumber: number): string {
+  return `Annotation ${displayNumber} screenshot.png`;
+}
+
+/**
+ * Converts a saved preview annotation snapshot into normal attachment metadata.
+ */
+export function previewAnnotationSnapshotAttachmentMeta(
+  annotation: PreviewAnnotationPayload,
+): AttachmentMeta {
+  return {
+    id: annotation.snapshot.id,
+    name: previewAnnotationSnapshotAttachmentName(annotation.displayNumber),
+    mimeType: annotation.snapshot.mimeType,
+    sizeBytes: annotation.snapshot.sizeBytes,
+    sourcePath: annotation.snapshot.sourcePath,
+  };
+}
+
+/**
+ * Converts a saved preview annotation snapshot into stored attachment metadata.
+ */
+export function previewAnnotationSnapshotStoredAttachment(
+  annotation: PreviewAnnotationPayload,
+): StoredAttachment {
+  return {
+    id: annotation.snapshot.id,
+    name: previewAnnotationSnapshotAttachmentName(annotation.displayNumber),
+    mimeType: annotation.snapshot.mimeType,
+    sizeBytes: annotation.snapshot.sizeBytes,
+  };
+}
+
+/**
+ * Converts a preview annotation bundle into normal attachment metadata rows.
+ */
+export function previewAnnotationSnapshotAttachments(
+  bundle: PreviewAnnotationBundle | undefined,
+): AttachmentMeta[] {
+  return bundle?.annotations.map(previewAnnotationSnapshotAttachmentMeta) ?? [];
+}
+
+/**
+ * Converts a preview annotation bundle into stored attachment metadata rows.
+ */
+export function previewAnnotationSnapshotStoredAttachments(
+  bundle: PreviewAnnotationBundle | null | undefined,
+): StoredAttachment[] {
+  return bundle?.annotations.map(previewAnnotationSnapshotStoredAttachment) ?? [];
+}

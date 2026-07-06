@@ -1,0 +1,720 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-01",
+  "tool": "bun audit --json",
+  "scope": "Known dependency advisories present before the Preview Design annotation release gate.",
+  "advisories": [
+    {
+      "key": "@anthropic-ai/sdk:1119428",
+      "package": "@anthropic-ai/sdk",
+      "id": 1119428,
+      "severity": "moderate",
+      "title": "Claude SDK for TypeScript has Insecure Default File Permissions in Local Filesystem Memory Tool",
+      "url": "https://github.com/advisories/GHSA-p7fg-763f-g4gf"
+    },
+    {
+      "key": "@babel/core:1120793",
+      "package": "@babel/core",
+      "id": 1120793,
+      "severity": "low",
+      "title": "@babel/core: Arbitrary File Read via sourceMappingURL Comment",
+      "url": "https://github.com/advisories/GHSA-4x5r-pxfx-6jf8"
+    },
+    {
+      "key": "@github/copilot:1120327",
+      "package": "@github/copilot",
+      "id": 1120327,
+      "severity": "high",
+      "title": "GitHub Copilot CLI: Nested Bare Repository Can Execute Arbitrary Commands via core.fsmonitor",
+      "url": "https://github.com/advisories/GHSA-9ccr-r5hg-74gf"
+    },
+    {
+      "key": "@tootallnate/once:1119438",
+      "package": "@tootallnate/once",
+      "id": 1119438,
+      "severity": "low",
+      "title": "@tootallnate/once vulnerable to Incorrect Control Flow Scoping",
+      "url": "https://github.com/advisories/GHSA-vpq2-c234-7xj6"
+    },
+    {
+      "key": "@xmldom/xmldom:1117894",
+      "package": "@xmldom/xmldom",
+      "id": 1117894,
+      "severity": "high",
+      "title": "xmldom: Uncontrolled recursion in XML serialization leads to DoS",
+      "url": "https://github.com/advisories/GHSA-2v35-w6hq-6mfw"
+    },
+    {
+      "key": "@xmldom/xmldom:1117897",
+      "package": "@xmldom/xmldom",
+      "id": 1117897,
+      "severity": "high",
+      "title": "xmldom has XML injection through unvalidated DocumentType serialization",
+      "url": "https://github.com/advisories/GHSA-f6ww-3ggp-fr8h"
+    },
+    {
+      "key": "@xmldom/xmldom:1117900",
+      "package": "@xmldom/xmldom",
+      "id": 1117900,
+      "severity": "high",
+      "title": "xmldom has XML node injection through unvalidated processing instruction serialization",
+      "url": "https://github.com/advisories/GHSA-x6wf-f3px-wcqx"
+    },
+    {
+      "key": "@xmldom/xmldom:1117903",
+      "package": "@xmldom/xmldom",
+      "id": 1117903,
+      "severity": "high",
+      "title": "xmldom has XML node injection through unvalidated comment serialization",
+      "url": "https://github.com/advisories/GHSA-j759-j44w-7fr8"
+    },
+    {
+      "key": "brace-expansion:1120311",
+      "package": "brace-expansion",
+      "id": 1120311,
+      "severity": "moderate",
+      "title": "brace-expansion: Large numeric range defeats documented `max` DoS protection",
+      "url": "https://github.com/advisories/GHSA-jxxr-4gwj-5jf2"
+    },
+    {
+      "key": "dompurify:1116663",
+      "package": "dompurify",
+      "id": 1116663,
+      "severity": "moderate",
+      "title": "DOMPurify's ADD_TAGS function form bypasses FORBID_TAGS due to short-circuit evaluation",
+      "url": "https://github.com/advisories/GHSA-39q2-94rc-95cp"
+    },
+    {
+      "key": "dompurify:1117138",
+      "package": "dompurify",
+      "id": 1117138,
+      "severity": "moderate",
+      "title": "DOMPurify: FORBID_TAGS bypassed by function-based ADD_TAGS predicate (asymmetry with FORBID_ATTR fix)",
+      "url": "https://github.com/advisories/GHSA-h7mw-gpvr-xq4m"
+    },
+    {
+      "key": "dompurify:1117139",
+      "package": "dompurify",
+      "id": 1117139,
+      "severity": "moderate",
+      "title": "DOMPurify has a SAFE_FOR_TEMPLATES bypass in RETURN_DOM mode",
+      "url": "https://github.com/advisories/GHSA-crv5-9vww-q3g8"
+    },
+    {
+      "key": "dompurify:1117140",
+      "package": "dompurify",
+      "id": 1117140,
+      "severity": "moderate",
+      "title": "DOMPurify: Prototype Pollution to XSS Bypass via CUSTOM_ELEMENT_HANDLING Fallback",
+      "url": "https://github.com/advisories/GHSA-v9jr-rg53-9pgp"
+    },
+    {
+      "key": "dompurify:1120800",
+      "package": "dompurify",
+      "id": 1120800,
+      "severity": "low",
+      "title": "DOMPurify: `IN_PLACE` mode trusts attacker-controlled `nodeName` on live non-form nodes, allowing script retention and XSS via attacker-supplied DOM objects",
+      "url": "https://github.com/advisories/GHSA-x4vx-rjvf-j5p4"
+    },
+    {
+      "key": "dompurify:1120801",
+      "package": "dompurify",
+      "id": 1120801,
+      "severity": "moderate",
+      "title": "DOMPurify: Hook mutation of `data.allowedTags` / `data.allowedAttributes` permanently pollutes `DEFAULT_ALLOWED_TAGS` / `DEFAULT_ALLOWED_ATTR`",
+      "url": "https://github.com/advisories/GHSA-76mc-f452-cxcm"
+    },
+    {
+      "key": "dompurify:1120802",
+      "package": "dompurify",
+      "id": 1120802,
+      "severity": "moderate",
+      "title": "DOMPurify: Cross-realm IN_PLACE sanitization leaves executable markup intact via realm-bound `instanceof` checks",
+      "url": "https://github.com/advisories/GHSA-hpcv-96wg-7vj8"
+    },
+    {
+      "key": "dompurify:1120803",
+      "package": "dompurify",
+      "id": 1120803,
+      "severity": "moderate",
+      "title": "DOMPurify: IN_PLACE mode preserves attributes of a clobbered root element, allowing XSS via attacker-controlled root DOM",
+      "url": "https://github.com/advisories/GHSA-r47g-fvhr-h676"
+    },
+    {
+      "key": "dompurify:1120805",
+      "package": "dompurify",
+      "id": 1120805,
+      "severity": "low",
+      "title": "DOMPurify: Trusted Types policy survives `clearConfig()` and can poison later `RETURN_TRUSTED_TYPE` output",
+      "url": "https://github.com/advisories/GHSA-vxr8-fq34-vvx9"
+    },
+    {
+      "key": "dompurify:1120812",
+      "package": "dompurify",
+      "id": 1120812,
+      "severity": "low",
+      "title": "DOMPurify: SAFE_FOR_TEMPLATES bypass - template expressions survive sanitization inside <template> content when using DOM output modes",
+      "url": "https://github.com/advisories/GHSA-gvmj-g25r-r7wr"
+    },
+    {
+      "key": "dompurify:1120813",
+      "package": "dompurify",
+      "id": 1120813,
+      "severity": "moderate",
+      "title": "DOMPurify IN_PLACE Sanitization Bypass via Attached Shadow Root Inside <template>.content",
+      "url": "https://github.com/advisories/GHSA-rp9w-3fw7-7cwq"
+    },
+    {
+      "key": "dompurify:1121192",
+      "package": "dompurify",
+      "id": 1121192,
+      "severity": "moderate",
+      "title": "DOMPurify: Permanent `ALLOWED_ATTR` pollution via `setConfig()` bypassing the hook clone-guard (incomplete fix of the 3.4.7 hook-pollution patch)",
+      "url": "https://github.com/advisories/GHSA-cmwh-pvxp-8882"
+    },
+    {
+      "key": "electron:1116041",
+      "package": "electron",
+      "id": 1116041,
+      "severity": "moderate",
+      "title": "Electron: AppleScript injection in app.moveToApplicationsFolder on macOS",
+      "url": "https://github.com/advisories/GHSA-5rqw-r77c-jp79"
+    },
+    {
+      "key": "electron:1116045",
+      "package": "electron",
+      "id": 1116045,
+      "severity": "moderate",
+      "title": "Electron: Service worker can spoof executeJavaScript IPC replies",
+      "url": "https://github.com/advisories/GHSA-xj5x-m3f3-5x3h"
+    },
+    {
+      "key": "electron:1116049",
+      "package": "electron",
+      "id": 1116049,
+      "severity": "moderate",
+      "title": "Electron: Incorrect origin passed to permission request handler for iframe requests",
+      "url": "https://github.com/advisories/GHSA-r5p7-gp4j-qhrx"
+    },
+    {
+      "key": "electron:1116053",
+      "package": "electron",
+      "id": 1116053,
+      "severity": "moderate",
+      "title": "Electron: Out-of-bounds read in second-instance IPC on macOS and Linux",
+      "url": "https://github.com/advisories/GHSA-3c8v-cfp5-9885"
+    },
+    {
+      "key": "electron:1116057",
+      "package": "electron",
+      "id": 1116057,
+      "severity": "moderate",
+      "title": "Electron: nodeIntegrationInWorker not correctly scoped in shared renderer processes",
+      "url": "https://github.com/advisories/GHSA-xwr5-m59h-vwqr"
+    },
+    {
+      "key": "electron:1116060",
+      "package": "electron",
+      "id": 1116060,
+      "severity": "high",
+      "title": "Electron: Use-after-free in offscreen child window paint callback",
+      "url": "https://github.com/advisories/GHSA-532v-xpq5-8h95"
+    },
+    {
+      "key": "electron:1116064",
+      "package": "electron",
+      "id": 1116064,
+      "severity": "moderate",
+      "title": "Electron: Registry key path injection in app.setAsDefaultProtocolClient on Windows",
+      "url": "https://github.com/advisories/GHSA-mwmh-mq4g-g6gr"
+    },
+    {
+      "key": "electron:1116068",
+      "package": "electron",
+      "id": 1116068,
+      "severity": "moderate",
+      "title": "Electron: Use-after-free in download save dialog callback",
+      "url": "https://github.com/advisories/GHSA-9w97-2464-8783"
+    },
+    {
+      "key": "electron:1116072",
+      "package": "electron",
+      "id": 1116072,
+      "severity": "high",
+      "title": "Electron: Use-after-free in WebContents fullscreen, pointer-lock, and keyboard-lock permission callbacks",
+      "url": "https://github.com/advisories/GHSA-8337-3p73-46f4"
+    },
+    {
+      "key": "electron:1116076",
+      "package": "electron",
+      "id": 1116076,
+      "severity": "high",
+      "title": "Electron: Use-after-free in PowerMonitor on Windows and macOS",
+      "url": "https://github.com/advisories/GHSA-jjp3-mq3x-295m"
+    },
+    {
+      "key": "electron:1116084",
+      "package": "electron",
+      "id": 1116084,
+      "severity": "low",
+      "title": "Electron: Unquoted executable path in app.setLoginItemSettings on Windows",
+      "url": "https://github.com/advisories/GHSA-jfqx-fxh3-c62j"
+    },
+    {
+      "key": "electron:1116088",
+      "package": "electron",
+      "id": 1116088,
+      "severity": "moderate",
+      "title": "Electron: HTTP Response Header Injection in custom protocol handlers and webRequest",
+      "url": "https://github.com/advisories/GHSA-4p4r-m79c-wq3v"
+    },
+    {
+      "key": "electron:1116092",
+      "package": "electron",
+      "id": 1116092,
+      "severity": "low",
+      "title": "Electron: USB device selection not validated against filtered device list",
+      "url": "https://github.com/advisories/GHSA-9899-m83m-qhpj"
+    },
+    {
+      "key": "electron:1116111",
+      "package": "electron",
+      "id": 1116111,
+      "severity": "low",
+      "title": "Electron: Use-after-free in offscreen shared texture release() callback",
+      "url": "https://github.com/advisories/GHSA-8x5q-pvf5-64mp"
+    },
+    {
+      "key": "electron:1116259",
+      "package": "electron",
+      "id": 1116259,
+      "severity": "low",
+      "title": "Electron: Crash in clipboard.readImage() on malformed clipboard image data",
+      "url": "https://github.com/advisories/GHSA-f37v-82c4-4x64"
+    },
+    {
+      "key": "electron:1116320",
+      "package": "electron",
+      "id": 1116320,
+      "severity": "moderate",
+      "title": "Electron: Named window.open targets not scoped to the opener's browsing context",
+      "url": "https://github.com/advisories/GHSA-f3pv-wv63-48x8"
+    },
+    {
+      "key": "electron:1117459",
+      "package": "electron",
+      "id": 1117459,
+      "severity": "high",
+      "title": "Electron: Renderer command-line switch injection via undocumented commandLineSwitches webPreference",
+      "url": "https://github.com/advisories/GHSA-9wfr-w7mm-pc7f"
+    },
+    {
+      "key": "esbuild:1102341",
+      "package": "esbuild",
+      "id": 1102341,
+      "severity": "moderate",
+      "title": "esbuild enables any website to send any requests to the development server and read the response",
+      "url": "https://github.com/advisories/GHSA-67mh-4wv8-2f99"
+    },
+    {
+      "key": "esbuild:1120680",
+      "package": "esbuild",
+      "id": 1120680,
+      "severity": "low",
+      "title": "esbuild allows arbitrary file read when running the development server on Windows",
+      "url": "https://github.com/advisories/GHSA-g7r4-m6w7-qqqr"
+    },
+    {
+      "key": "fast-uri:1117870",
+      "package": "fast-uri",
+      "id": 1117870,
+      "severity": "high",
+      "title": "fast-uri vulnerable to path traversal via percent-encoded dot segments",
+      "url": "https://github.com/advisories/GHSA-q3j6-qgpj-74h6"
+    },
+    {
+      "key": "fast-uri:1117884",
+      "package": "fast-uri",
+      "id": 1117884,
+      "severity": "high",
+      "title": "fast-uri vulnerable to host confusion via percent-encoded authority delimiters",
+      "url": "https://github.com/advisories/GHSA-v39h-62p7-jpjc"
+    },
+    {
+      "key": "form-data:1120743",
+      "package": "form-data",
+      "id": 1120743,
+      "severity": "high",
+      "title": "form-data: CRLF injection in form-data via unescaped multipart field names and filenames",
+      "url": "https://github.com/advisories/GHSA-hmw2-7cc7-3qxx"
+    },
+    {
+      "key": "hono:1117915",
+      "package": "hono",
+      "id": 1117915,
+      "severity": "moderate",
+      "title": "Hono has CSS Declaration Injection via Style Object Values in JSX SSR",
+      "url": "https://github.com/advisories/GHSA-qp7p-654g-cw7p"
+    },
+    {
+      "key": "hono:1118963",
+      "package": "hono",
+      "id": 1118963,
+      "severity": "low",
+      "title": "Hono has improper validation of NumericDate claims (exp, nbf, iat) in JWT verify()",
+      "url": "https://github.com/advisories/GHSA-hm8q-7f3q-5f36"
+    },
+    {
+      "key": "hono:1118964",
+      "package": "hono",
+      "id": 1118964,
+      "severity": "moderate",
+      "title": "Hono's Cache Middleware ignores Vary: Authorization / Vary: Cookie leading to cross-user cache leakage",
+      "url": "https://github.com/advisories/GHSA-p77w-8qqv-26rm"
+    },
+    {
+      "key": "hono:1118982",
+      "package": "hono",
+      "id": 1118982,
+      "severity": "moderate",
+      "title": "Hono: bodyLimit() can be bypassed for chunked / unknown-length requests",
+      "url": "https://github.com/advisories/GHSA-9vqf-7f2p-gf9v"
+    },
+    {
+      "key": "hono:1118983",
+      "package": "hono",
+      "id": 1118983,
+      "severity": "moderate",
+      "title": "hono/jsx has Unvalidated JSX Tag Names that May Allow HTML Injection",
+      "url": "https://github.com/advisories/GHSA-69xw-7hcm-h432"
+    },
+    {
+      "key": "hono:1120082",
+      "package": "hono",
+      "id": 1120082,
+      "severity": "moderate",
+      "title": "Hono: IP Restriction bypasses static deny rules for non-canonical IPv6 ",
+      "url": "https://github.com/advisories/GHSA-xrhx-7g5j-rcj5"
+    },
+    {
+      "key": "hono:1120083",
+      "package": "hono",
+      "id": 1120083,
+      "severity": "moderate",
+      "title": "Hono: Cookie helper does not sanitize sameSite and priority, allowing Set-Cookie injection",
+      "url": "https://github.com/advisories/GHSA-3hrh-pfw6-9m5x"
+    },
+    {
+      "key": "hono:1120084",
+      "package": "hono",
+      "id": 1120084,
+      "severity": "moderate",
+      "title": "Hono: JWT middleware accepts any Authorization scheme, not only Bearer",
+      "url": "https://github.com/advisories/GHSA-f577-qrjj-4474"
+    },
+    {
+      "key": "hono:1120085",
+      "package": "hono",
+      "id": 1120085,
+      "severity": "moderate",
+      "title": "Hono: app.mount() strips mount prefix using undecoded path, causing incorrect routing for percent-encoded paths",
+      "url": "https://github.com/advisories/GHSA-2gcr-mfcq-wcc3"
+    },
+    {
+      "key": "hono:1120910",
+      "package": "hono",
+      "id": 1120910,
+      "severity": "moderate",
+      "title": "hono: Path traversal in `serve-static` on Windows via encoded backslash (`%5C`)",
+      "url": "https://github.com/advisories/GHSA-wwfh-h76j-fc44"
+    },
+    {
+      "key": "hono:1120911",
+      "package": "hono",
+      "id": 1120911,
+      "severity": "moderate",
+      "title": "hono: AWS Lambda adapter merges multiple `Set-Cookie` headers into one value, dropping cookies on ALB single-header and Lattice",
+      "url": "https://github.com/advisories/GHSA-j6c9-x7qj-28xf"
+    },
+    {
+      "key": "hono:1120913",
+      "package": "hono",
+      "id": 1120913,
+      "severity": "high",
+      "title": "hono: CORS Middleware reflects any Origin with credentials when `origin` defaults to the wildcard",
+      "url": "https://github.com/advisories/GHSA-88fw-hqm2-52qc"
+    },
+    {
+      "key": "hono:1120921",
+      "package": "hono",
+      "id": 1120921,
+      "severity": "moderate",
+      "title": "hono: Body Limit Middleware can be bypassed on AWS Lambda by understating `Content-Length`",
+      "url": "https://github.com/advisories/GHSA-rv63-4mwf-qqc2"
+    },
+    {
+      "key": "hono:1120922",
+      "package": "hono",
+      "id": 1120922,
+      "severity": "moderate",
+      "title": "hono: Lambda@Edge adapter keeps only the last value of a repeated request header, dropping the rest",
+      "url": "https://github.com/advisories/GHSA-wgpf-jwqj-8h8p"
+    },
+    {
+      "key": "hono:1121418",
+      "package": "hono",
+      "id": 1121418,
+      "severity": "moderate",
+      "title": "hono Improperly Handles JSX Attribute Names Allows HTML Injection in hono/jsx SSR",
+      "url": "https://github.com/advisories/GHSA-458j-xx4x-4375"
+    },
+    {
+      "key": "ip-address:1118827",
+      "package": "ip-address",
+      "id": 1118827,
+      "severity": "moderate",
+      "title": "ip-address has XSS in Address6 HTML-emitting methods",
+      "url": "https://github.com/advisories/GHSA-v2v4-37r5-5v8g"
+    },
+    {
+      "key": "js-yaml:1121860",
+      "package": "js-yaml",
+      "id": 1121860,
+      "severity": "moderate",
+      "title": "JS-YAML: Quadratic-complexity DoS in merge key handling via repeated aliases",
+      "url": "https://github.com/advisories/GHSA-h67p-54hq-rp68"
+    },
+    {
+      "key": "mermaid:1120138",
+      "package": "mermaid",
+      "id": 1120138,
+      "severity": "moderate",
+      "title": "Mermaid: Improper sanitization of `classDef` in state diagrams leads to HTML injection",
+      "url": "https://github.com/advisories/GHSA-ghcm-xqfw-q4vr"
+    },
+    {
+      "key": "mermaid:1120140",
+      "package": "mermaid",
+      "id": 1120140,
+      "severity": "moderate",
+      "title": "Mermaid: Improper sanitization of `classDefs` in diagrams leads to CSS injection",
+      "url": "https://github.com/advisories/GHSA-xcj9-5m2h-648r"
+    },
+    {
+      "key": "mermaid:1120324",
+      "package": "mermaid",
+      "id": 1120324,
+      "severity": "moderate",
+      "title": "Mermaid: Improper sanitization of configuration leads to CSS injection",
+      "url": "https://github.com/advisories/GHSA-87f9-hvmw-gh4p"
+    },
+    {
+      "key": "mermaid:1120326",
+      "package": "mermaid",
+      "id": 1120326,
+      "severity": "moderate",
+      "title": "Mermaid Gantt Charts are vulnerable to an Infinite Loop DoS",
+      "url": "https://github.com/advisories/GHSA-6m6c-36f7-fhxh"
+    },
+    {
+      "key": "piscina:1121167",
+      "package": "piscina",
+      "id": 1121167,
+      "severity": "high",
+      "title": "piscina: Prototype Pollution Gadget → RCE via inherited options.filename",
+      "url": "https://github.com/advisories/GHSA-x9g3-xrwr-cwfg"
+    },
+    {
+      "key": "postcss:1117015",
+      "package": "postcss",
+      "id": 1117015,
+      "severity": "moderate",
+      "title": "PostCSS has XSS via Unescaped </style> in its CSS Stringify Output",
+      "url": "https://github.com/advisories/GHSA-qx2v-qp2m-jg93"
+    },
+    {
+      "key": "qs:1119502",
+      "package": "qs",
+      "id": 1119502,
+      "severity": "moderate",
+      "title": "qs has a remotely triggerable DoS: qs.stringify crashes with TypeError on null/undefined entries in comma-format arrays when encodeValuesOnly is set",
+      "url": "https://github.com/advisories/GHSA-q8mj-m7cp-5q26"
+    },
+    {
+      "key": "tar:1112659",
+      "package": "tar",
+      "id": 1112659,
+      "severity": "high",
+      "title": "node-tar Vulnerable to Arbitrary File Creation/Overwrite via Hardlink Path Traversal",
+      "url": "https://github.com/advisories/GHSA-34x7-hfp2-rc4v"
+    },
+    {
+      "key": "tar:1113300",
+      "package": "tar",
+      "id": 1113300,
+      "severity": "high",
+      "title": "node-tar is Vulnerable to Arbitrary File Overwrite and Symlink Poisoning via Insufficient Path Sanitization",
+      "url": "https://github.com/advisories/GHSA-8qq5-rm4j-mr97"
+    },
+    {
+      "key": "tar:1113375",
+      "package": "tar",
+      "id": 1113375,
+      "severity": "high",
+      "title": "Arbitrary File Read/Write via Hardlink Target Escape Through Symlink Chain in node-tar Extraction",
+      "url": "https://github.com/advisories/GHSA-83g3-92jg-28cx"
+    },
+    {
+      "key": "tar:1114200",
+      "package": "tar",
+      "id": 1114200,
+      "severity": "high",
+      "title": "tar has Hardlink Path Traversal via Drive-Relative Linkpath",
+      "url": "https://github.com/advisories/GHSA-qffp-2rhf-9h96"
+    },
+    {
+      "key": "tar:1114302",
+      "package": "tar",
+      "id": 1114302,
+      "severity": "high",
+      "title": "node-tar Symlink Path Traversal via Drive-Relative Linkpath",
+      "url": "https://github.com/advisories/GHSA-9ppj-qmqm-q256"
+    },
+    {
+      "key": "tar:1114680",
+      "package": "tar",
+      "id": 1114680,
+      "severity": "high",
+      "title": "Race Condition in node-tar Path Reservations via Unicode Ligature Collisions on macOS APFS",
+      "url": "https://github.com/advisories/GHSA-r6q2-hw4h-h46w"
+    },
+    {
+      "key": "tar:1120782",
+      "package": "tar",
+      "id": 1120782,
+      "severity": "moderate",
+      "title": "node-tar applies PAX size override to intermediary GNU long-name/long-link headers, causing tar parser interpretation differential (file smuggling)",
+      "url": "https://github.com/advisories/GHSA-vmf3-w455-68vh"
+    },
+    {
+      "key": "tmp:1120654",
+      "package": "tmp",
+      "id": 1120654,
+      "severity": "high",
+      "title": "tmp has Path Traversal via unsanitized prefix/postfix that enables directory escape",
+      "url": "https://github.com/advisories/GHSA-ph9p-34f9-6g65"
+    },
+    {
+      "key": "turbo:1119389",
+      "package": "turbo",
+      "id": 1119389,
+      "severity": "low",
+      "title": "Turbo: Unexpected local code execution during Yarn Berry detection",
+      "url": "https://github.com/advisories/GHSA-3qcw-2rhx-2726"
+    },
+    {
+      "key": "turbo:1121861",
+      "package": "turbo",
+      "id": 1121861,
+      "severity": "moderate",
+      "title": "Turbo: Login callback CSRF/session fixation",
+      "url": "https://github.com/advisories/GHSA-hcf7-66rw-9f5r"
+    },
+    {
+      "key": "undici:1121187",
+      "package": "undici",
+      "id": 1121187,
+      "severity": "high",
+      "title": "undici vulnerable to TLS certificate validation bypass via dropped requestTls in SOCKS5 ProxyAgent",
+      "url": "https://github.com/advisories/GHSA-vmh5-mc38-953g"
+    },
+    {
+      "key": "undici:1121241",
+      "package": "undici",
+      "id": 1121241,
+      "severity": "moderate",
+      "title": "undici vulnerable to HTTP header injection via Set-Cookie percent-decoding",
+      "url": "https://github.com/advisories/GHSA-p88m-4jfj-68fv"
+    },
+    {
+      "key": "undici:1121244",
+      "package": "undici",
+      "id": 1121244,
+      "severity": "high",
+      "title": "undici WebSocket client vulnerable to denial of service via fragment count bypass",
+      "url": "https://github.com/advisories/GHSA-vxpw-j846-p89q"
+    },
+    {
+      "key": "undici:1121247",
+      "package": "undici",
+      "id": 1121247,
+      "severity": "high",
+      "title": "undici vulnerable to cross-origin request routing via SOCKS5 proxy pool reuse",
+      "url": "https://github.com/advisories/GHSA-hm92-r4w5-c3mj"
+    },
+    {
+      "key": "undici:1121249",
+      "package": "undici",
+      "id": 1121249,
+      "severity": "low",
+      "title": "undici vulnerable to HTTP response queue poisoning via keep-alive socket reuse",
+      "url": "https://github.com/advisories/GHSA-35p6-xmwp-9g52"
+    },
+    {
+      "key": "undici:1121254",
+      "package": "undici",
+      "id": 1121254,
+      "severity": "low",
+      "title": "undici vulnerable to Set-Cookie SameSite attribute downgrade via permissive substring matching",
+      "url": "https://github.com/advisories/GHSA-g8m3-5g58-fq7m"
+    },
+    {
+      "key": "undici:1121428",
+      "package": "undici",
+      "id": 1121428,
+      "severity": "moderate",
+      "title": "undici vulnerable to cross-user information disclosure via shared cache whitespace bypass",
+      "url": "https://github.com/advisories/GHSA-pr7r-676h-xcf6"
+    },
+    {
+      "key": "uuid:1119441",
+      "package": "uuid",
+      "id": 1119441,
+      "severity": "moderate",
+      "title": "uuid: Missing buffer bounds check in v3/v5/v6 when buf is provided",
+      "url": "https://github.com/advisories/GHSA-w5hq-g745-h8pq"
+    },
+    {
+      "key": "vite:1120786",
+      "package": "vite",
+      "id": 1120786,
+      "severity": "moderate",
+      "title": "launch-editor: NTLMv2 hash disclosure via UNC path handling on Windows",
+      "url": "https://github.com/advisories/GHSA-v6wh-96g9-6wx3"
+    },
+    {
+      "key": "vite:1120791",
+      "package": "vite",
+      "id": 1120791,
+      "severity": "high",
+      "title": "vite: `server.fs.deny` bypass on Windows alternate paths",
+      "url": "https://github.com/advisories/GHSA-fx2h-pf6j-xcff"
+    },
+    {
+      "key": "ws:1119108",
+      "package": "ws",
+      "id": 1119108,
+      "severity": "moderate",
+      "title": "ws: Uninitialized memory disclosure",
+      "url": "https://github.com/advisories/GHSA-58qx-3vcg-4xpx"
+    },
+    {
+      "key": "ws:1120730",
+      "package": "ws",
+      "id": 1120730,
+      "severity": "high",
+      "title": "ws: Memory exhaustion DoS from tiny fragments and data chunks",
+      "url": "https://github.com/advisories/GHSA-96hv-2xvq-fx4p"
+    }
+  ]
+}

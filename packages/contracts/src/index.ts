@@ -148,6 +148,7 @@ export type { FileCategory } from "./models/file-types.js";
 export {
   BrowserPreviewBoundsSchema,
   BrowserPreviewCaptureKindSchema,
+  BrowserPreviewElementStyleSchema,
   McodeBrowserCaptureV1Schema,
   AttachedBrowserCaptureV1Schema,
   McodeBrowserCaptureV2Schema,
@@ -158,13 +159,23 @@ export {
   MCODE_BROWSER_CAPTURE_V2_STRING_MAX,
   MCODE_BROWSER_CAPTURE_SPILL_APP_DATA_PATH_MAX,
   MCODE_BROWSER_CAPTURE_SPILL_ABSOLUTE_PATH_MAX,
+  PREVIEW_ANNOTATION_STRING_MAX,
+  PreviewAnnotationVisualProposalSchema,
+  PreviewAnnotationPayloadSchema,
+  PreviewAnnotationBundleSchema,
   isBrowserCaptureSpillAppDataPath,
   clampMcodeBrowserCaptureV2,
   clampAttachedBrowserCaptureForOutbound,
+  previewAnnotationSnapshotAttachmentName,
+  previewAnnotationSnapshotAttachmentMeta,
+  previewAnnotationSnapshotStoredAttachment,
+  previewAnnotationSnapshotAttachments,
+  previewAnnotationSnapshotStoredAttachments,
 } from "./models/browser-preview.js";
 export type {
   BrowserPreviewBounds,
   BrowserPreviewCaptureKind,
+  BrowserPreviewElementStyle,
   McodeBrowserCaptureV1,
   AttachedBrowserCaptureV1,
   McodeBrowserCaptureV2,
@@ -172,6 +183,9 @@ export type {
   McodeBrowserCapture,
   AttachedBrowserCapture,
   BrowserCaptureSpillFile,
+  PreviewAnnotationVisualProposal,
+  PreviewAnnotationPayload,
+  PreviewAnnotationBundle,
 } from "./models/browser-preview.js";
 
 export {

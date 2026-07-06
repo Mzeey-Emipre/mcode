@@ -5,7 +5,7 @@ import {
   buildPlaceholderWorkspaceThread,
   titleFromMessageContent,
 } from "@/lib/workspace-thread";
-import type { ChecksStatus, CreateAndSendResult, MessageMention } from "@mcode/contracts";
+import type { ChecksStatus, CreateAndSendResult, MessageMention, PreviewAnnotationBundle } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
@@ -87,6 +87,8 @@ interface PendingThreadCreation {
   displayContent?: string;
   /** Selected typed mentions with offsets into content. */
   mentions?: MessageMention[];
+  /** Structured Preview Annotation bundle sent beside normal attachments. */
+  previewAnnotations?: PreviewAnnotationBundle;
   model: string;
   permissionMode?: PermissionMode;
   transportMode: "direct" | "worktree";
@@ -129,6 +131,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     pending.codexFastMode,
     pending.displayContent,
     pending.mentions,
+    pending.previewAnnotations,
   );
 }
 /**
@@ -210,6 +213,7 @@ interface WorkspaceState {
     codexFastMode?: boolean,
     displayContent?: string,
     mentions?: MessageMention[],
+    previewAnnotations?: PreviewAnnotationBundle,
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: {
@@ -232,6 +236,7 @@ interface WorkspaceState {
     thinking?: boolean;
     codexFastMode?: boolean;
     mentions?: MessageMention[];
+    previewAnnotations?: PreviewAnnotationBundle;
   }) => Promise<Thread>;
   /**
    * Re-run server creation for a placeholder thread after {@link WorkspaceThread.clientError}.
@@ -331,6 +336,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       records = patchThreadRecord(records, thread.id, { agentStartTime: startTime });
       return { runningThreadIds: nextRunning, records };
     });
+    useDiffStore.getState().hideRightPanel(workspaceId, thread.id);
     set((state) => {
       const without = state.threads.filter((t) => t.id !== placeholderId);
       const deduped = without.filter((t) => t.id !== thread.id);
@@ -726,6 +732,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     codexFastMode,
     displayContent,
     mentions,
+    previewAnnotations,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -781,6 +788,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       thinking,
       codexFastMode,
       mentions,
+      previewAnnotations,
     };
 
     const captionForUi = displayContent ?? content;
@@ -814,6 +822,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     bumpThreadListMutationEpoch(workspaceId);
     pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
+    useDiffStore.getState().hideRightPanel(workspaceId, placeholderId);
     set((state) => ({
       threads: [placeholder, ...state.threads],
       activeThreadId: placeholderId,
@@ -900,6 +909,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       thinking: params.thinking,
       codexFastMode: params.codexFastMode,
       mentions: params.mentions,
+      previewAnnotations: params.previewAnnotations,
     };
 
     const branchCaptionForUi = params.displayContent ?? params.content;
@@ -935,6 +945,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     bumpThreadListMutationEpoch(workspaceId);
     pendingThreadCreationByPlaceholderId.set(placeholderId, pending);
+    useDiffStore.getState().hideRightPanel(workspaceId, placeholderId);
     set((state) => ({
       threads: [placeholder, ...state.threads],
       activeThreadId: placeholderId,
@@ -1102,6 +1113,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   setPendingNewThread: (value) => {
+    const workspaceId = get().activeWorkspaceId;
+    if (value && workspaceId) {
+      useDiffStore.getState().hideRightPanel(workspaceId, null);
+    }
     set({
       pendingNewThread: value,
       ...(value

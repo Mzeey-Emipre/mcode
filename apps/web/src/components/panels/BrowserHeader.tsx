@@ -312,7 +312,7 @@ export function BrowserHeader({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon-sm"
+                  size={designModeActive ? "sm" : "icon-sm"}
                   aria-label="Design"
                   aria-pressed={designModeActive}
                   disabled={!threadId}
@@ -328,6 +328,7 @@ export function BrowserHeader({
                   ) : (
                     <PenTool size={16} aria-hidden />
                   )}
+                  {designModeActive ? <span>Design</span> : null}
                 </Button>
               }
             />

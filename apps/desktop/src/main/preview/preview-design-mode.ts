@@ -16,6 +16,7 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { logger } from "@mcode/shared";
 import { getSession } from "./preview-session.js";
+import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
 /** Built-in viewport presets surfaced to the design bar. */
 export const DESIGN_VIEWPORT_PRESETS = [
@@ -80,6 +81,52 @@ const INSPECT_SCRIPT = String.raw`(() => {
 const TEARDOWN_SCRIPT = String.raw`(() => {
   if (typeof window.__mcodeInspectTeardown === 'function') {
     window.__mcodeInspectTeardown();
+  }
+})();`;
+
+const ANNOTATION_GUARD_SCRIPT = String.raw`(() => {
+  if (window.__mcodeAnnotationGuardActive) return;
+  window.__mcodeAnnotationGuardActive = true;
+
+  const block = (ev) => {
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    ev.stopPropagation();
+  };
+  const events = [
+    'click',
+    'mousedown',
+    'mouseup',
+    'contextmenu',
+    'dblclick',
+    'auxclick',
+    'pointerdown',
+    'pointermove',
+    'pointerup',
+    'mousemove',
+    'mouseover',
+    'mouseout',
+    'touchstart',
+    'touchmove',
+    'touchend',
+  ];
+
+  for (const eventName of events) {
+    document.addEventListener(eventName, block, true);
+  }
+
+  window.__mcodeAnnotationGuardTeardown = () => {
+    for (const eventName of events) {
+      document.removeEventListener(eventName, block, true);
+    }
+    delete window.__mcodeAnnotationGuardActive;
+    delete window.__mcodeAnnotationGuardTeardown;
+  };
+})();`;
+
+const ANNOTATION_GUARD_TEARDOWN_SCRIPT = String.raw`(() => {
+  if (typeof window.__mcodeAnnotationGuardTeardown === 'function') {
+    window.__mcodeAnnotationGuardTeardown();
   }
 })();`;
 
@@ -152,6 +199,24 @@ export function registerDesignModeHandlers(): void {
       );
     } catch (err) {
       logger.warn("Preview: design inspect script threw", { err: String(err) });
+      return { ok: false, error: "script-failed" };
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle("preview:design.set-annotation-guard", async (event, payload: { enabled?: boolean }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+    const s = getSession(win);
+    const webContents = resolveActivePreviewWebContents(s);
+    if (!webContents || webContents.isDestroyed()) return { ok: false, error: "no-view" };
+    try {
+      await webContents.executeJavaScript(
+        payload?.enabled === false ? ANNOTATION_GUARD_TEARDOWN_SCRIPT : ANNOTATION_GUARD_SCRIPT,
+        true,
+      );
+    } catch (err) {
+      logger.warn("Preview: annotation guard script threw", { err: String(err) });
       return { ok: false, error: "script-failed" };
     }
     return { ok: true };

@@ -190,7 +190,7 @@ test.describe("Right panel activity rail", () => {
     await expect(page.getByRole("button", { name: "New tab" })).toHaveCount(0);
 
     await addDirect.click();
-    await expect(page.locator('[data-rail-tab="changes"]')).toHaveClass(/text-primary/);
+    await expect(page.locator('[data-rail-tab="review"]')).toHaveClass(/text-primary/);
   });
 
   test("add control: several creatable types show a menu", async ({ page }) => {

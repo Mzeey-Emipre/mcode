@@ -1,5 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
-import { mockWebSocketServer } from "./helpers/e2e-helpers";
+import {
+  interceptZustandStores,
+  mockWebSocketServer,
+} from "./helpers/e2e-helpers";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -192,11 +195,33 @@ async function injectPreviewBridge(
         }),
       adoptWebview: () => Promise.resolve({ ok: true } as const),
       releaseWebview: () => Promise.resolve({ ok: true } as const),
+      // Used by saveOpenBubble to capture a viewport screenshot for the saved
+      // annotation. The hook reads res.ok, res.meta.*, and res.capture so the
+      // mock must match the CaptureResult wire shape from the desktop bridge.
+      captureAnnotationSnapshot: () => Promise.resolve({
+        ok: true,
+        meta: {
+          id: "e2e-snapshot",
+          name: "Preview annotation",
+          sizeBytes: 0,
+          sourcePath: "preview/e2e-snapshot.png",
+        },
+        capture: {
+          schemaVersion: 2,
+          pageUrl: "https://example.com/",
+          pageTitle: "Example",
+          capturedAt: new Date().toISOString(),
+          captureKind: "element",
+          bounds: { x: 0, y: 0, width: 0, height: 0 },
+          layoutViewport: { width: 800, height: 600 },
+        },
+      }),
       design: {
         setViewport: () =>
           Promise.resolve({ ok: true, data: { width: 0, height: 0 } } as const),
         resetViewport: noop,
         setInspect: () => Promise.resolve({ ok: true } as const),
+        setAnnotationGuard: () => Promise.resolve({ ok: true } as const),
       },
     };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -294,11 +319,183 @@ async function openPreviewTab(page: Page): Promise<void> {
   );
 }
 
+async function waitForAnnotationStores(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          type StoreHandle = {
+            getState: () => Record<string, unknown>;
+          };
+          const stores =
+            (window as unknown as { __mcodeStores?: StoreHandle[] })
+              .__mcodeStores ?? [];
+          const annotationStore = stores.find((store) => {
+            const state = store.getState();
+            return "byThread" in state && "drafts" in state && "buildBundle" in state;
+          });
+          const designStore = stores.find((store) => {
+            const state = store.getState();
+            return "modes" in state && "toggle" in state && "isActive" in state;
+          });
+          return Boolean(annotationStore && designStore);
+        }),
+      { timeout: 10000 },
+    )
+    .toBe(true);
+}
+
+async function seedUnsavedAnnotationDraft(page: Page): Promise<void> {
+  await waitForAnnotationStores(page);
+  await page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+      setState: (patch: Record<string, unknown>) => void;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const annotationStore = stores.find((store) => {
+      const state = store.getState();
+      return "byThread" in state && "drafts" in state && "buildBundle" in state;
+    });
+    const designStore = stores.find((store) => {
+      const state = store.getState();
+      return "modes" in state && "toggle" in state && "isActive" in state;
+    });
+    if (!annotationStore) throw new Error("[E2E] annotation store not found");
+    if (!designStore) throw new Error("[E2E] design mode store not found");
+    annotationStore.setState({
+      drafts: {
+        [threadId]: {
+          threadId,
+          pageIdentity: "https://example.com/",
+          bounds: { x: 20, y: 24, width: 220, height: 48 },
+          selectorHint: "input[name='q']",
+          label: "Search input",
+          pageContext: {
+            schemaVersion: 2,
+            pageUrl: "https://example.com/",
+            pageTitle: "Example",
+            capturedAt: "2026-07-01T00:00:00.000Z",
+            captureKind: "element",
+            bounds: { x: 20, y: 24, width: 220, height: 48 },
+            layoutViewport: { width: 800, height: 600 },
+          },
+          note: "",
+        },
+      },
+    });
+    designStore.setState({ modes: { [threadId]: true } });
+  }, THREAD.id);
+}
+
+async function hasUnsavedAnnotationDraft(page: Page): Promise<boolean> {
+  return page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const annotationStore = stores.find((store) => {
+      const state = store.getState();
+      return "byThread" in state && "drafts" in state && "buildBundle" in state;
+    });
+    const drafts = annotationStore?.getState().drafts as
+      | Record<string, unknown>
+      | undefined;
+    return Boolean(drafts?.[threadId]);
+  }, THREAD.id);
+}
+
+async function seedSavedAnnotation(page: Page): Promise<void> {
+  await waitForAnnotationStores(page);
+  await page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+      setState: (patch: Record<string, unknown>) => void;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const annotationStore = stores.find((store) => {
+      const state = store.getState();
+      return "byThread" in state && "drafts" in state && "buildBundle" in state;
+    });
+    const designStore = stores.find((store) => {
+      const state = store.getState();
+      return "modes" in state && "toggle" in state && "isActive" in state;
+    });
+    if (!annotationStore) throw new Error("[E2E] annotation store not found");
+    if (!designStore) throw new Error("[E2E] design mode store not found");
+    annotationStore.setState({
+      byThread: {
+        [threadId]: [
+          {
+            id: "annotation-1",
+            createdAt: Date.now(),
+            displayNumber: 1,
+            pageIdentity: "https://example.com/",
+            pageContext: {
+              schemaVersion: 2,
+              pageUrl: "https://example.com/",
+              pageTitle: "Example",
+              capturedAt: "2026-07-01T00:00:00.000Z",
+              captureKind: "element",
+              bounds: { x: 20, y: 24, width: 220, height: 48 },
+              layoutViewport: { width: 800, height: 600 },
+            },
+            targetContext: {
+              label: "Search input",
+              selectorHint: "input[name='q']",
+              bounds: { x: 20, y: 24, width: 220, height: 48 },
+            },
+            note: "Move this field",
+            snapshot: {
+              id: "snapshot-1",
+              name: "Preview annotation 1",
+              mimeType: "image/png",
+              sizeBytes: 12,
+              sourcePath: "preview/snapshot-1.png",
+              capture: {
+                schemaVersion: 2,
+                pageUrl: "https://example.com/",
+                pageTitle: "Example",
+                capturedAt: "2026-07-01T00:00:00.000Z",
+                captureKind: "element",
+                bounds: { x: 20, y: 24, width: 220, height: 48 },
+                layoutViewport: { width: 800, height: 600 },
+              },
+            },
+          },
+        ],
+      },
+    });
+    designStore.setState({ modes: { [threadId]: true } });
+  }, THREAD.id);
+}
+
+async function savedAnnotationCount(page: Page): Promise<number> {
+  return page.evaluate((threadId) => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const annotationStore = stores.find((store) => {
+      const state = store.getState();
+      return "byThread" in state && "drafts" in state && "buildBundle" in state;
+    });
+    const byThread = annotationStore?.getState().byThread as
+      | Record<string, unknown[]>
+      | undefined;
+    return byThread?.[threadId]?.length ?? 0;
+  }, THREAD.id);
+}
+
 // ---------------------------------------------------------------------------
-// Tests — preview unavailable (no desktopBridge)
+// Tests: preview unavailable (no desktopBridge)
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — desktopBridge absent", () => {
+test.describe("PreviewPanel: desktopBridge absent", () => {
   test("renders the empty state when no bridge is injected", async ({ page }) => {
     await openAppAtThread(page);
     await openPreviewTab(page);
@@ -309,11 +506,12 @@ test.describe("PreviewPanel — desktopBridge absent", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — preview chrome (bridge mocked)
+// Tests: preview chrome (bridge mocked)
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — loaded header", () => {
+test.describe("PreviewPanel: loaded header", () => {
   test.beforeEach(async ({ page }) => {
+    await interceptZustandStores(page);
     await injectPreviewBridge(page, { loaded: true });
     await openAppAtThread(page);
     await openPreviewTab(page);
@@ -427,21 +625,91 @@ test.describe("PreviewPanel — loaded header", () => {
     await expect(menu.getByText("100%")).toBeVisible();
   });
 
-  test("design mode aria-pressed toggles on and back off", async ({ page }) => {
+  test("design mode keeps browser chrome before the first annotation", async ({ page }) => {
     const designBtn = page.getByRole("button", { name: "Design", exact: true });
     await expect(designBtn).toHaveAttribute("aria-pressed", "false");
     await designBtn.click();
+    await expect(page.getByTestId("browser-header")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-header")).toHaveCount(0);
+    await expect(page.getByTestId("preview-annotation-send-state")).toHaveCount(0);
     await expect(designBtn).toHaveAttribute("aria-pressed", "true");
     await designBtn.click();
+    await expect(page.getByRole("button", { name: "Design", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  test("exiting design mode removes an unsaved annotation draft", async ({ page }) => {
+    await seedUnsavedAnnotationDraft(page);
+
+    const designBtn = page.getByRole("button", { name: "Design", exact: true });
+    await expect(designBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("preview-annotation-bubble")).toBeVisible();
+    await expect.poll(() => hasUnsavedAnnotationDraft(page)).toBe(true);
+
+    await designBtn.click();
+
     await expect(designBtn).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByTestId("preview-annotation-bubble")).toHaveCount(0);
+    await expect.poll(() => hasUnsavedAnnotationDraft(page)).toBe(false);
+  });
+
+  test("discarding page annotations asks for confirmation", async ({ page }) => {
+    await seedSavedAnnotation(page);
+
+    await expect(page.getByTestId("preview-annotation-header")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(1);
+    await expect.poll(() => savedAnnotationCount(page)).toBe(1);
+
+    await page.getByLabel("Discard page annotations").click();
+
+    const cancelDialog = page.getByRole("dialog", {
+      name: "Delete page annotations?",
+    });
+    await expect(cancelDialog).toBeVisible();
+    await expect(
+      cancelDialog.getByText("This removes 1 saved annotation from this page."),
+    ).toBeVisible();
+
+    await cancelDialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect(
+      page.getByRole("dialog", { name: "Delete page annotations?" }),
+    ).toHaveCount(0);
+    await expect.poll(() => savedAnnotationCount(page)).toBe(1);
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(1);
+
+    await page.getByLabel("Discard page annotations").click();
+    const deleteDialog = page.getByRole("dialog", {
+      name: "Delete page annotations?",
+    });
+    await deleteDialog.getByRole("button", { name: "Delete" }).click();
+
+    await expect.poll(() => savedAnnotationCount(page)).toBe(0);
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(0);
+  });
+
+  test("exiting design mode hides saved annotation markers", async ({ page }) => {
+    await seedSavedAnnotation(page);
+
+    await expect(page.getByTestId("preview-annotation-header")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(1);
+
+    await page.getByLabel("Exit Design").click();
+
+    await expect(page.getByTestId("browser-header")).toBeVisible();
+    await expect(page.getByTestId("preview-annotation-header")).toHaveCount(0);
+    await expect(page.getByTestId("preview-annotation-marker")).toHaveCount(0);
+    await expect.poll(() => savedAnnotationCount(page)).toBe(1);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests — empty browser (localhost ports)
+// Tests: empty browser (localhost ports)
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — empty localhost ports", () => {
+test.describe("PreviewPanel: empty localhost ports", () => {
   const PORTS = [
     { name: "Mcode", port: 5173, online: true },
     { name: "API", port: 19400, online: false },
@@ -489,10 +757,125 @@ test.describe("PreviewPanel — empty localhost ports", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — preview error states (W1)
+// Tests: annotation bubble slash-command popup
 // ---------------------------------------------------------------------------
 
-test.describe("PreviewPanel — error states", () => {
+/**
+ * Seed the skillsStore directly from the page context so the slash-command
+ * popup has items to render. The store is module-scoped and exposed via
+ * `window.__mcodeStores`; we find it by its `skills` field.
+ */
+async function seedSkillsStore(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    type StoreHandle = {
+      getState: () => Record<string, unknown>;
+      setState: (patch: Record<string, unknown>) => void;
+    };
+    const stores =
+      (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
+    const skillsStore = stores.find((store) => {
+      const state = store.getState();
+      return "skills" in state && "isLoading" in state && "load" in state;
+    });
+    if (!skillsStore) throw new Error("[E2E] skillsStore not found");
+    // Inject two skills so the popup renders a listbox with items.
+    skillsStore.setState({
+      skills: [
+        { name: "commit", description: "Create a git commit" },
+        { name: "review-pr", description: "Review a pull request" },
+      ],
+      isLoading: false,
+      error: null,
+    });
+  });
+}
+
+test.describe("PreviewPanel: annotation bubble slash-command popup", () => {
+  test.beforeEach(async ({ page }) => {
+    await interceptZustandStores(page);
+    await injectPreviewBridge(page, { loaded: true });
+    await openAppAtThread(page);
+    await openPreviewTab(page);
+    // Seed skills before seeding the annotation draft so the popup renders
+    // a full list when "/" is typed (not just the loading/empty state).
+    await seedSkillsStore(page);
+    await seedUnsavedAnnotationDraft(page);
+    // Wait for the annotation bubble to appear.
+    await page.waitForSelector('[aria-label="Annotation note"]', { timeout: 8000 });
+  });
+
+  test("opens the slash popup when '/' is typed in the annotation note", async ({ page }) => {
+    const note = page.getByLabel("Annotation note");
+    await note.focus();
+    await note.fill("/");
+
+    // The popup listbox must appear with the seeded skills.
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeVisible({
+      timeout: 6000,
+    });
+    // Builtins like /m:plan must not appear in the annotation bubble popup
+    // because includeBuiltins: false is passed to useSlashCommand here.
+    await expect(page.getByText("/m:plan")).toHaveCount(0);
+  });
+
+  test("ArrowDown + Enter inserts the command as plain text and does not save the annotation", async ({ page }) => {
+    const note = page.getByLabel("Annotation note");
+    await note.focus();
+    await note.fill("/");
+
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeVisible({
+      timeout: 6000,
+    });
+
+    // Move selection to the first item and confirm with Enter.
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    // Popup must close.
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toHaveCount(0);
+
+    // The note input now contains the inserted command text (e.g. "/commit ").
+    // It must start with "/" and end with a space, the hook's insertion format.
+    const value = await note.inputValue();
+    expect(value).toMatch(/^\/\S+ $/);
+
+    // The annotation must not have been saved to the store.
+    await expect.poll(() => savedAnnotationCount(page)).toBe(0);
+  });
+
+  test("Escape closes the popup without discarding the annotation bubble", async ({ page }) => {
+    const note = page.getByLabel("Annotation note");
+    await note.focus();
+    await note.fill("/");
+
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeVisible({
+      timeout: 6000,
+    });
+
+    await page.keyboard.press("Escape");
+
+    // Popup gone; bubble still present.
+    await expect(page.getByRole("listbox", { name: "Slash commands" })).toHaveCount(0);
+    await expect(page.getByTestId("preview-annotation-bubble")).toBeVisible();
+  });
+
+  test("Enter saves the annotation when the popup is not open", async ({ page }) => {
+    const note = page.getByLabel("Annotation note");
+    await note.focus();
+    await note.fill("Move the search bar");
+    // Popup is not open; Enter should save the annotation.
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => savedAnnotationCount(page), { timeout: 5000 }).toBe(1);
+    await expect(page.getByTestId("preview-annotation-bubble")).toHaveCount(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: preview error states (W1)
+// ---------------------------------------------------------------------------
+
+test.describe("PreviewPanel: error states", () => {
   test("surfaces a failed load with copy and the distilled recovery actions", async ({ page }) => {
     await injectPreviewBridge(page);
     await injectErrorBridge(page, { url: "https://nope.test", canGoBack: true });

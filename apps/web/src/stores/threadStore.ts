@@ -1,9 +1,15 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
-import { PlanQuestionSchema, PERMISSION_MODES, INTERACTION_MODES, isGoalOpen } from "@mcode/contracts";
+import {
+  PlanQuestionSchema,
+  PERMISSION_MODES,
+  INTERACTION_MODES,
+  isGoalOpen,
+  previewAnnotationSnapshotStoredAttachments,
+} from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
 import { useQueueStore } from "./queueStore";
@@ -80,7 +86,7 @@ interface ThreadState {
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
   loadOlderMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[]) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   /** Replace runningThreadIds with the authoritative server snapshot. Called on WS (re)connect. */
   hydrateRunningThreads: (ids: string[]) => void;
@@ -341,6 +347,7 @@ export function scheduleDrainAfterEdit(threadId: string): void {
             next.quotedText,
             undefined,
             next.mentions,
+            next.previewAnnotations,
           );
         } catch {
           void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);
@@ -1022,7 +1029,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * message to local state, marks the thread as running, then dispatches
    * to the transport layer. On failure, rolls back the running state.
    */
-  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction, mentions) => {
+  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction, mentions, previewAnnotations) => {
     evictCachedRecord(threadId);
 
     // A `/goal` control form (show/clear/reset/bare) never starts a provider
@@ -1040,6 +1047,20 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
     }
 
+    const storedComposerAttachments =
+      attachments?.map((a) => ({
+        id: a.id,
+        name: a.name,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+      })) ?? [];
+    const storedPreviewAnnotationAttachments =
+      previewAnnotationSnapshotStoredAttachments(previewAnnotations);
+    const visibleAttachments = [
+      ...storedComposerAttachments,
+      ...storedPreviewAnnotationAttachments,
+    ];
+
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
     const userMessage: Message = {
@@ -1053,12 +1074,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       tokens_used: null,
       timestamp: new Date().toISOString(),
       sequence: messageSequenceFor(threadId),
-      attachments: attachments?.map((a) => ({
-        id: a.id,
-        name: a.name,
-        mimeType: a.mimeType,
-        sizeBytes: a.sizeBytes,
-      })) ?? null,
+      attachments: visibleAttachments.length > 0 ? visibleAttachments : null,
+      previewAnnotations: previewAnnotations ?? null,
       mentions: mentions && mentions.length > 0 ? mentions : null,
       reply_to_message_id: replyToMessageId ?? null,
       quoted_text: quotedText ?? null,
@@ -1132,6 +1149,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         quotedText,
         planAction,
         mentions,
+        previewAnnotations,
       );
     } catch (e) {
       if (planAction === "revise") {
@@ -2758,6 +2776,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                   next.quotedText,
                   undefined,
                   next.mentions,
+                  next.previewAnnotations,
                 );
               } catch {
                 void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);

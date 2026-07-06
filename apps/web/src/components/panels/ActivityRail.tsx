@@ -34,6 +34,10 @@ function metaForTab(id: RightPanelTab): PanelTabType | undefined {
   return PANEL_TAB_TYPES.find((t) => t.id === id);
 }
 
+function railDomId(id: RightPanelTab): string {
+  return id === "changes" ? "review" : id;
+}
+
 /** The mcode keycap for a tab type, or null when it has no binding. */
 function tabKeycap(type: PanelTabType): string | null {
   if (!type.commandId) return null;
@@ -67,7 +71,7 @@ function railAccessibleLabel(
 /**
  * Compact glance status under a rail icon: Review
  * file count. Returns null for tabs with nothing to report so a calm icon stays
- * a bare glyph. Mirrors the One Lamp Rule — the active icon tints amber while
+ * a bare glyph. Mirrors the One Lamp Rule: the active icon tints amber while
  * its status text stays legible.
  */
 function RailStatus({
@@ -131,7 +135,7 @@ function RailTab({
     <div className="group relative">
       <button
         type="button"
-        data-rail-tab={id}
+        data-rail-tab={railDomId(id)}
         data-active={active ? "true" : undefined}
         aria-pressed={active}
         aria-label={railAccessibleLabel(id, label, scope, changesCount, changesFresh)}
@@ -309,7 +313,7 @@ function BrowserPageGroup({
 /**
  * The dynamic add control: hidden when nothing is creatable, opens the one
  * creatable type directly when exactly one remains, otherwise a menu of the
- * shown set (the same set the empty-state grid presents — coming-soon teasers
+ * shown set (the same set the empty-state grid presents; coming-soon teasers
  * disabled). Only rendered when at least one tab is already open; the empty
  * state's card grid is its own create surface (ADR-0004, issue #611).
  */
@@ -328,7 +332,7 @@ function RailAddControl({
   // Nothing openable hides the control entirely, even if a coming-soon teaser remains.
   if (creatable.length === 0) return null;
 
-  // Exactly one creatable type opens directly — no pointless menu.
+  // Exactly one creatable type opens directly; no pointless menu.
   if (creatable.length === 1) {
     const only = creatable[0];
     return (
@@ -444,6 +448,7 @@ export function ActivityRail({
         aria-label={maximized ? "Restore panel" : "Maximize panel"}
         title={maximized ? "Restore panel" : "Maximize panel"}
         data-testid="rail-maximize-toggle"
+        data-preview-design-keep-open="true"
       >
         {maximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
       </Button>

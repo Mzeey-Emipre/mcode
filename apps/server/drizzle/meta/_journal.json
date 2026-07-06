@@ -127,6 +127,13 @@
       "when": 1782172800002,
       "tag": "0016_branchless_base_branch",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1782172800003,
+      "tag": "0017_message_preview_annotations",
+      "breakpoints": true
     }
   ]
 }

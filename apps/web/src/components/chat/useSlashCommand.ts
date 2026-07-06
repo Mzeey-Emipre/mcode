@@ -46,10 +46,11 @@ interface BuiltinCommand extends Command {
 /**
  * Providers that support `/goal` today. It is a gradual rollout (implemented in
  * Claude's Stop hook; Codex planned), so this is an allow-list that grows by
- * adding entries — not a Claude special-case. `/goal` is hidden for any
+ * adding entries, not a Claude special-case. `/goal` is hidden for any
  * provider not in this set, including when no provider is selected.
  */
 const GOAL_PROVIDERS = new Set<string>(["claude", "codex"]);
+const MAX_SLASH_COMMAND_ITEMS = 100;
 
 const BUILTIN_COMMANDS: BuiltinCommand[] = [
   {
@@ -118,6 +119,12 @@ interface UseSlashCommandOptions {
   cwd?: string;
   /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /m:plan for "copilot"). */
   providerId?: string;
+  /**
+   * Whether to include mcode built-in commands (m:plan, compact, goal) in the
+   * command list. Default `true`. Pass `false` for contexts like the annotation
+   * bubble where mcode actions are meaningless and must not be selectable.
+   */
+  includeBuiltins?: boolean;
 }
 
 /** Return value of the useSlashCommand hook. */
@@ -134,7 +141,12 @@ export interface UseSlashCommandReturn {
   allCommands: Command[];
   selectedIndex: number;
   anchorRect: DOMRect | null;
-  onInputChange: (value: string) => void;
+  /**
+   * Notify the hook of a text change. Pass `cursorPos` for inputs where the
+   * cursor may be mid-text (e.g. the annotation bubble `<input>`); when omitted
+   * the hook defaults to end-of-string, matching the Composer's Lexical path.
+   */
+  onInputChange: (value: string, cursorPos?: number) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   onSelect: (cmd: Command, replaceText: (v: string) => void) => void;
   onDismiss: () => void;
@@ -147,12 +159,17 @@ export function useSlashCommand({
   onMcodeCommand,
   cwd,
   providerId,
+  includeBuiltins = true,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const lastInputRef = useRef("");
   const lastFilterRef = useRef("");
+  // Tracks the cursor position supplied by the most recent onInputChange call
+  // so onSelect can splice the replacement at the correct offset rather than
+  // always appending to the end (which breaks mid-text trigger detection).
+  const lastCursorRef = useRef<number | undefined>(undefined);
 
   const skills = useSkillsStore((s) => s.skills);
   const cachedCwd = useSkillsStore((s) => s.cwd);
@@ -161,41 +178,44 @@ export function useSlashCommand({
   const error = useSkillsStore((s) => s.error);
   const load = useSkillsStore((s) => s.load);
 
-  // Build the full command list (memoize via skills identity and providerId).
-  // The filter is inside the callback so `providerId` (a stable string) is the
-  // dep — if we filtered outside and put the resulting array in deps, every
-  // render would produce a new reference and break memoization.
+  // Build the full command list (memoize via skills identity, providerId, and
+  // includeBuiltins). The filter is inside the callback so `providerId` (a
+  // stable string) is the dep. If we filtered outside and put the resulting
+  // array in deps, every render would produce a new reference and break
+  // memoization.
   const allCommands = useCallback(() => {
     // Strip the predicate so the rendered list holds plain Command objects;
     // availability has already been resolved here.
-    const builtins: Command[] = BUILTIN_COMMANDS.filter((cmd) =>
-      cmd.isAvailable(providerId),
-    ).map(
-      (cmd): Command => ({
-        name: cmd.name,
-        description: cmd.description,
-        namespace: cmd.namespace,
-        action: cmd.action,
-      }),
-    );
+    const builtins: Command[] = includeBuiltins
+      ? BUILTIN_COMMANDS.filter((cmd) => cmd.isAvailable(providerId)).map(
+          (cmd): Command => ({
+            name: cmd.name,
+            description: cmd.description,
+            namespace: cmd.namespace,
+            action: cmd.action,
+          }),
+        )
+      : [];
     const commands: Command[] = [
       ...builtins,
       ...((skills ?? []).map(toCommand)),
     ];
     return sortCommands(commands);
-  }, [skills, providerId])();
+  }, [skills, providerId, includeBuiltins])();
 
   const filtered = (() => {
     const f = lastFilterRef.current.toLowerCase();
-    if (!f) return allCommands;
-    return allCommands.filter((c) => c.name.toLowerCase().includes(f));
+    const matches = f
+      ? allCommands.filter((c) => c.name.toLowerCase().includes(f))
+      : allCommands;
+    return matches.slice(0, MAX_SLASH_COMMAND_ITEMS);
   })();
 
   // Derive the typed popup state. Order encodes the stale-while-revalidate
   // priority that previously lived in a comment in SlashCommandPopup:
   //   error → list (ready / staleRevalidating) → loading → empty.
   // The list branch splits on isLoading so a background refresh while cached
-  // items are shown is the explicit `staleRevalidating` state — the one that
+  // items are shown is the explicit `staleRevalidating` state, the one that
   // got stuck when invalidate() left isLoading=true.
   const state: PopupState = !isOpen
     ? { kind: "closed" }
@@ -234,9 +254,12 @@ export function useSlashCommand({
   }, [skills, cachedCwd, cachedProviderId, cwd, providerId, isLoading, error, load]);
 
   const onInputChange = useCallback(
-    (value: string) => {
+    (value: string, cursorPos?: number) => {
       lastInputRef.current = value;
-      const cursor = value.length;
+      // Default to end-of-string when no cursor position is given, preserving
+      // the Composer's Lexical path which always notifies with the full text.
+      const cursor = cursorPos ?? value.length;
+      lastCursorRef.current = cursor;
       const before = value.slice(0, cursor);
       const match = SLASH_TRIGGER_RE.exec(before);
 
@@ -286,7 +309,10 @@ export function useSlashCommand({
   const onSelect = useCallback(
     (cmd: Command, replaceText: (v: string) => void) => {
       const value = lastInputRef.current;
-      const cursor = value.length;
+      // Use the stored cursor position from the last onInputChange so that
+      // mid-text replacements splice at the right offset. Falls back to
+      // end-of-string for the Composer's Lexical path which never sets it.
+      const cursor = lastCursorRef.current ?? value.length;
       const before = value.slice(0, cursor);
       const match = SLASH_TRIGGER_RE.exec(before);
 

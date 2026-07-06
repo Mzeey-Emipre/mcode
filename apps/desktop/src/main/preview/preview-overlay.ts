@@ -7,12 +7,15 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { BrowserWindow, app, ipcMain, type WebContents } from "electron";
-import { type AttachmentMeta } from "@mcode/contracts";
+import {
+  PREVIEW_ANNOTATION_STRING_MAX,
+  type AttachmentMeta,
+  type BrowserPreviewElementStyle,
+} from "@mcode/contracts";
 import {
   type Bounds,
   type PreviewSession,
   getSession,
-  getActiveTab,
   clearIdle,
   resetIdle,
 } from "./preview-session.js";
@@ -26,7 +29,7 @@ import {
   sanitizeSelectorHintFromGuest,
   scrubHtmlExcerptForOutbound,
 } from "./preview-capture.js";
-import { findAdoptedWebContents } from "./preview-webview-adopt.js";
+import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
 /**
  * Element-pick runs entirely inside the guest page: capture-phase event handlers block
@@ -39,6 +42,11 @@ import { findAdoptedWebContents } from "./preview-webview-adopt.js";
  * paints opaque (black), hiding the page underneath. Injecting into the guest keeps the
  * amber highlight visible on top of real page pixels.
  */
+const EP_CHAT_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path fill="#f59e0b" stroke="#111827" stroke-width="1.5" d="M14 3.5c6.1 0 10.8 3.8 10.8 8.7s-4.7 8.7-10.8 8.7c-1.1 0-2.2-.1-3.2-.4L5 24l1.8-5C4.6 17.4 3.2 15 3.2 12.2 3.2 7.3 7.9 3.5 14 3.5Z"/><circle cx="10.6" cy="12.3" r="1.2" fill="#fff"/><circle cx="14" cy="12.3" r="1.2" fill="#fff"/><circle cx="17.4" cy="12.3" r="1.2" fill="#fff"/></svg>`;
+const EP_CHAT_CURSOR_CSS = `url('data:image/svg+xml,${encodeURIComponent(
+  EP_CHAT_CURSOR_SVG,
+)}') 8 8, pointer`;
+
 const EP_INJECT_JS = `(function(){
   if (window.__mcodeEpTeardown) return;
   var HL_ID = "__mcode_ep_hl", TIP_ID = "__mcode_ep_tip";
@@ -49,7 +57,7 @@ const EP_INJECT_JS = `(function(){
   // cyan. Inlined as a literal because injected JS cannot read host CSS vars.
   // The tip's foreground sits at oklch(0.18 0.01 75) - very dark, slight warm
   // tint - which gives high contrast against the amber pill.
-  style.textContent = "#__mcode_ep_hl{position:fixed;left:0;top:0;width:0;height:0;pointer-events:none;border:2px solid oklch(0.72 0.17 75);box-sizing:border-box;z-index:2147483646;display:none;box-shadow:0 0 0 1px rgba(0,0,0,.35) inset;border-radius:2px}#__mcode_ep_tip{position:fixed;left:0;top:0;pointer-events:none;z-index:2147483647;display:none;max-width:min(360px,calc(100vw - 12px));font:600 11px/1.2 ui-sans-serif,system-ui,sans-serif;color:oklch(0.18 0.01 75);background:oklch(0.72 0.17 75);border-radius:3px 3px 0 0;padding:3px 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 4px rgba(0,0,0,.25)}#__mcode_ep_tip[data-flipped=\\"1\\"]{border-radius:0 0 3px 3px}html.__mcode_ep_active,html.__mcode_ep_active *{cursor:crosshair !important}";
+  style.textContent = "#__mcode_ep_hl{position:fixed;left:0;top:0;width:0;height:0;pointer-events:none;border:2px solid oklch(0.72 0.17 75);box-sizing:border-box;z-index:2147483646;display:none;box-shadow:0 0 0 1px rgba(0,0,0,.35) inset;border-radius:2px}#__mcode_ep_tip{position:fixed;left:0;top:0;pointer-events:none;z-index:2147483647;display:none;max-width:min(360px,calc(100vw - 12px));font:600 11px/1.2 ui-sans-serif,system-ui,sans-serif;color:oklch(0.18 0.01 75);background:oklch(0.72 0.17 75);border-radius:3px 3px 0 0;padding:3px 7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 4px rgba(0,0,0,.25)}#__mcode_ep_tip[data-flipped=\\"1\\"]{border-radius:0 0 3px 3px}html.__mcode_ep_active,html.__mcode_ep_active *{cursor:${EP_CHAT_CURSOR_CSS} !important}";
   (document.head || document.documentElement).appendChild(style);
   var box = document.createElement("div");
   box.id = HL_ID;
@@ -462,6 +470,7 @@ type HitTestResult =
       bounds: Bounds;
       selectorHint: string | null;
       htmlExcerpt: string | null;
+      elementStyle: BrowserPreviewElementStyle | null;
     }
   | { ok: false; code: string };
 
@@ -518,16 +527,7 @@ async function removeRgMarqueeHighlighter(wc: WebContents): Promise<void> {
   }
 }
 
-function resolveActiveCaptureWebContents(s: PreviewSession): WebContents | null {
-  const threadId = s.lastPreviewThreadId;
-  if (threadId) {
-    const activeTab = getActiveTab(s, threadId);
-    const adopted = findAdoptedWebContents(threadId, activeTab.id);
-    if (adopted && !adopted.isDestroyed()) return adopted;
-  }
-  if (s.view && !s.view.webContents.isDestroyed()) return s.view.webContents;
-  return null;
-}
+const resolveActiveCaptureWebContents = resolveActivePreviewWebContents;
 
 /** Prefer WebContentsView bounds for native captures; webview captures use shell bounds. */
 function hostBoundsForHitTest(s: PreviewSession, webContents: WebContents): Bounds | null {
@@ -752,6 +752,54 @@ function buildHitTestJs(overlayX: number, overlayY: number, hostWidth: number, h
     var h0 = Math.max(1, Math.round(r.height));
     return { x: x0, y: y0, width: w0, height: h0 };
   }
+  function cleanStyleValue(value) {
+    var text = String(value == null ? "" : value).replace(/[\\u0000-\\u001F\\u007F]/g, " ").trim();
+    return text ? text.slice(0, 512) : null;
+  }
+  function setStyleValue(target, key, value) {
+    var clean = cleanStyleValue(value);
+    if (clean) target[key] = clean;
+  }
+  function pxStyleValue(value) {
+    return Number.isFinite(value) ? Math.max(0, Math.round(value)) + "px" : null;
+  }
+  function computedElementStyle(el, rect) {
+    var next = {};
+    try {
+      var cs = window.getComputedStyle(el);
+      setStyleValue(next, "textColor", cs.color);
+      setStyleValue(next, "background", cs.backgroundColor);
+      var opacity = Number(cs.opacity);
+      if (Number.isFinite(opacity)) next.opacity = Math.max(0, Math.min(1, opacity));
+      setStyleValue(next, "font", cs.fontFamily);
+      setStyleValue(next, "fontSize", cs.fontSize);
+      setStyleValue(next, "fontWeight", cs.fontWeight);
+      setStyleValue(next, "borderRadius", cs.borderRadius);
+      setStyleValue(next, "borderTopLeftRadius", cs.borderTopLeftRadius);
+      setStyleValue(next, "borderTopRightRadius", cs.borderTopRightRadius);
+      setStyleValue(next, "borderBottomRightRadius", cs.borderBottomRightRadius);
+      setStyleValue(next, "borderBottomLeftRadius", cs.borderBottomLeftRadius);
+      setStyleValue(next, "borderColor", cs.borderColor);
+      setStyleValue(next, "borderWidth", cs.borderWidth);
+      setStyleValue(next, "borderTopWidth", cs.borderTopWidth);
+      setStyleValue(next, "borderRightWidth", cs.borderRightWidth);
+      setStyleValue(next, "borderBottomWidth", cs.borderBottomWidth);
+      setStyleValue(next, "borderLeftWidth", cs.borderLeftWidth);
+      setStyleValue(next, "width", pxStyleValue(rect.width));
+      setStyleValue(next, "height", pxStyleValue(rect.height));
+      setStyleValue(next, "padding", cs.padding);
+      setStyleValue(next, "paddingTop", cs.paddingTop);
+      setStyleValue(next, "paddingRight", cs.paddingRight);
+      setStyleValue(next, "paddingBottom", cs.paddingBottom);
+      setStyleValue(next, "paddingLeft", cs.paddingLeft);
+      setStyleValue(next, "margin", cs.margin);
+      setStyleValue(next, "marginTop", cs.marginTop);
+      setStyleValue(next, "marginRight", cs.marginRight);
+      setStyleValue(next, "marginBottom", cs.marginBottom);
+      setStyleValue(next, "marginLeft", cs.marginLeft);
+    } catch (styleErr) {}
+    return Object.keys(next).length ? next : null;
+  }
   /** getBoundingClientRect in a subframe is relative to that frame; fixed overlays in the root need root layout coords. */
   function boundingRectInRootLayoutViewport(el) {
     var br = el.getBoundingClientRect();
@@ -793,6 +841,7 @@ function buildHitTestJs(overlayX: number, overlayY: number, hostWidth: number, h
     var r = boundingRectInRootLayoutViewport(el);
     var rbGuest = roundBounds(r);
     var selectorHint = selectorHintFor(el);
+    var elementStyle = computedElementStyle(el, r);
     var htmlExcerpt = null;
     if (typeof HTMLInputElement !== "undefined" && el instanceof HTMLInputElement && el.type === "password") {
       htmlExcerpt = null;
@@ -814,12 +863,67 @@ function buildHitTestJs(overlayX: number, overlayY: number, hostWidth: number, h
       ok: true,
       bounds: rbGuest,
       selectorHint: selectorHint,
-      htmlExcerpt: htmlExcerpt
+      htmlExcerpt: htmlExcerpt,
+      elementStyle: elementStyle
     });
   } catch (err) {
     return JSON.stringify({ ok: false, code: "hit-test-error" });
   }
 })()`;
+}
+
+const ELEMENT_STYLE_STRING_KEYS = [
+  "textColor",
+  "background",
+  "font",
+  "fontSize",
+  "fontWeight",
+  "borderRadius",
+  "borderTopLeftRadius",
+  "borderTopRightRadius",
+  "borderBottomRightRadius",
+  "borderBottomLeftRadius",
+  "borderColor",
+  "borderWidth",
+  "borderTopWidth",
+  "borderRightWidth",
+  "borderBottomWidth",
+  "borderLeftWidth",
+  "width",
+  "height",
+  "padding",
+  "paddingTop",
+  "paddingRight",
+  "paddingBottom",
+  "paddingLeft",
+  "margin",
+  "marginTop",
+  "marginRight",
+  "marginBottom",
+  "marginLeft",
+] as const;
+
+function sanitizeElementStyleValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.replace(/[\u0000-\u001F\u007F]/g, " ").trim();
+  if (!text) return undefined;
+  return text.length > PREVIEW_ANNOTATION_STRING_MAX.visualValue
+    ? text.slice(0, PREVIEW_ANNOTATION_STRING_MAX.visualValue)
+    : text;
+}
+
+function parseElementStylePayload(value: unknown): BrowserPreviewElementStyle | null {
+  if (!value || typeof value !== "object") return null;
+  const p = value as Record<string, unknown>;
+  const next: BrowserPreviewElementStyle = {};
+  for (const key of ELEMENT_STYLE_STRING_KEYS) {
+    const text = sanitizeElementStyleValue(p[key]);
+    if (text) next[key] = text;
+  }
+  if (typeof p.opacity === "number" && Number.isFinite(p.opacity)) {
+    next.opacity = Math.min(1, Math.max(0, p.opacity));
+  }
+  return Object.keys(next).length > 0 ? next : null;
 }
 
 /** Validates hit-test JSON from the guest so spoofed shapes never become typed results. */
@@ -844,6 +948,7 @@ function parseHitTestPayload(parsed: unknown): HitTestResult | null {
     bounds,
     selectorHint,
     htmlExcerpt,
+    elementStyle: parseElementStylePayload(p.elementStyle),
   };
 }
 
@@ -1389,6 +1494,7 @@ async function finishElementPickCapture(
         captureKind: "element",
         selectorHint: hit.selectorHint,
         htmlExcerpt: hit.htmlExcerpt,
+        elementStyle: hit.elementStyle,
       },
     );
 

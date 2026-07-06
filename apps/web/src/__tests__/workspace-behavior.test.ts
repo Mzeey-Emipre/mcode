@@ -7,6 +7,7 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import {
@@ -34,6 +35,10 @@ describe("Workspace Behavior", () => {
     });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
     usePreviewReferenceQueueStore.setState({ signal: 0, queueByThread: {} });
+    useDiffStore.setState({
+      rightPanelByThread: {},
+      rightPanelFallbackByWorkspace: {},
+    });
     vi.clearAllMocks();
   });
 
@@ -232,6 +237,50 @@ describe("Workspace Behavior", () => {
     await Promise.resolve();
 
     expect(useWorkspaceStore.getState().threads.some((t) => t.id === "new-first-send")).toBe(true);
+  });
+
+  it("when first send creates a real thread, the new thread does not inherit the threadless right panel", async () => {
+    const ws = createMockWorkspace({ id: "ws-first-send-panel" });
+    const created = createMockThread({
+      id: "created-thread",
+      workspace_id: ws.id,
+      title: "New Thread",
+    });
+    let resolveRpc!: (value: typeof created) => void;
+    const rpcPromise = new Promise<typeof created>((resolve) => {
+      resolveRpc = resolve;
+    });
+
+    useWorkspaceStore.setState({
+      workspaces: [ws],
+      activeWorkspaceId: ws.id,
+      threads: [],
+      activeThreadId: null,
+      pendingNewThread: true,
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+    });
+    const diff = useDiffStore.getState();
+    diff.showRightPanel(ws.id, null);
+    diff.setRightPanelTab(ws.id, null, "preview");
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockReturnValue(rpcPromise);
+
+    const sendOp = useWorkspaceStore.getState().createAndSendMessage("Hello", "composer-2-fast");
+    await Promise.resolve();
+
+    const placeholderId = useWorkspaceStore.getState().activeThreadId;
+    expect(placeholderId).not.toBeNull();
+    expect(diff.getRightPanelVisible(ws.id, placeholderId)).toBe(false);
+
+    resolveRpc(created);
+    await sendOp;
+
+    expect(useWorkspaceStore.getState().activeThreadId).toBe(created.id);
+    expect(diff.getRightPanelVisible(ws.id, created.id)).toBe(false);
+    expect(diff.getRightPanel(ws.id, null)).toMatchObject({
+      visible: true,
+      activeTab: "preview",
+    });
   });
 
   it("when the user creates a thread, it appears in the list", async () => {

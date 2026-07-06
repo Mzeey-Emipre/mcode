@@ -29,9 +29,11 @@ type TooltipContentProps = TooltipPrimitive.Popup.Props &
     "align" | "alignOffset" | "side" | "sideOffset"
   > & {
     variant?: "inverse" | "surface"
+    arrowClassName?: string
   }
 
 function TooltipContent({
+  arrowClassName,
   className,
   side = "top",
   sideOffset = 4,
@@ -65,9 +67,11 @@ function TooltipContent({
         >
           {children}
           <TooltipPrimitive.Arrow
+            data-slot="tooltip-arrow"
             className={cn(
               "z-50 size-2.5 translate-y-[calc(-50%-2px)] rotate-45 rounded-[2px] data-[side=bottom]:top-1 data-[side=inline-end]:top-1/2! data-[side=inline-end]:-left-1 data-[side=inline-end]:-translate-y-1/2 data-[side=inline-start]:top-1/2! data-[side=inline-start]:-right-1 data-[side=inline-start]:-translate-y-1/2 data-[side=left]:top-1/2! data-[side=left]:-right-1 data-[side=left]:-translate-y-1/2 data-[side=right]:top-1/2! data-[side=right]:-left-1 data-[side=right]:-translate-y-1/2 data-[side=top]:-bottom-2.5",
-              isSurface ? "bg-popover fill-popover" : "bg-foreground fill-foreground"
+              isSurface ? "bg-popover fill-popover" : "bg-foreground fill-foreground",
+              arrowClassName
             )}
           />
         </TooltipPrimitive.Popup>

@@ -64,6 +64,7 @@ function makeWebContentsView() {
     executeJavaScript: vi.fn().mockResolvedValue(undefined),
     capturePage: vi.fn().mockResolvedValue({
       toPNG: vi.fn(() => Buffer.from("png-bytes")),
+      getSize: vi.fn(() => ({ width: VALID_BOUNDS.width, height: VALID_BOUNDS.height })),
     }),
     send: vi.fn(),
   };
@@ -1247,6 +1248,172 @@ describe("preview-browser", () => {
   });
 
   describe("design mode (Phase G)", () => {
+    it("viewport screenshot uses the active adopted webview when no native view exists", async () => {
+      const win = createWindow();
+      const ev = fakeEvent(win);
+
+      await ipcHandlers["preview:sync"]!(ev, {
+        visible: false,
+        bounds: VALID_BOUNDS,
+        threadId: "thread-webview",
+        resumeUrlHint: "https://example.com",
+        workspaceId: "ws-1",
+      });
+
+      const adopted = makeWebContentsView().webContents;
+      adopted.getURL.mockReturnValue("https://example.com/page");
+      adopted.getTitle.mockReturnValue("Adopted page");
+      adopted.executeJavaScript.mockResolvedValueOnce(
+        JSON.stringify({
+          visibleText: "Visible adopted text",
+          headingOutline: "H1: Adopted",
+          interactiveOutline: "- [button] Save",
+          scrollX: 0,
+          scrollY: 4,
+          layoutWidth: 1024,
+          layoutHeight: 768,
+        }),
+      );
+      mockWebContentsById.set(44, adopted);
+
+      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
+      await ipcHandlers["preview:adopt-webview"]!(ev, {
+        threadId: "thread-webview",
+        tabId,
+        webContentsId: 44,
+      });
+
+      const result = await ipcHandlers["preview:capture-picture-reference"]!(ev) as {
+        ok: true;
+        capture: { pageUrl: string; pageTitle: string; visibleTextExcerpt?: string };
+      };
+
+      expect(result.ok).toBe(true);
+      expect(adopted.capturePage).toHaveBeenCalledTimes(1);
+      expect(result.capture.pageUrl).toBe("https://example.com/page");
+      expect(result.capture.pageTitle).toBe("Adopted page");
+      expect(result.capture.visibleTextExcerpt).toContain("Visible adopted text");
+    });
+
+    it("annotation snapshot burns marker and active highlight overlay into the captured viewport", async () => {
+      const win = createWindow();
+      const ev = fakeEvent(win);
+
+      await ipcHandlers["preview:sync"]!(ev, {
+        visible: false,
+        bounds: VALID_BOUNDS,
+        threadId: "thread-webview",
+        resumeUrlHint: "https://example.com",
+        workspaceId: "ws-1",
+      });
+
+      const adopted = makeWebContentsView().webContents;
+      adopted.getURL.mockReturnValue("https://example.com/page");
+      adopted.getTitle.mockReturnValue("Adopted page");
+      adopted.executeJavaScript
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(
+          JSON.stringify({
+            visibleText: "Visible adopted text",
+            headingOutline: "H1: Adopted",
+            interactiveOutline: "- [button] Save",
+            scrollX: 0,
+            scrollY: 4,
+            layoutWidth: 1024,
+            layoutHeight: 768,
+          }),
+        )
+        .mockResolvedValueOnce(undefined);
+      mockWebContentsById.set(46, adopted);
+
+      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
+      await ipcHandlers["preview:adopt-webview"]!(ev, {
+        threadId: "thread-webview",
+        tabId,
+        webContentsId: 46,
+      });
+
+      const result = await ipcHandlers["preview:capture-annotation-snapshot"]!(ev, {
+        activeDisplayNumber: 2,
+        activeBounds: { x: 200, y: 120, width: 180, height: 44 },
+        markers: [
+          { displayNumber: 1, bounds: { x: 20, y: 24, width: 120, height: 32 } },
+          { displayNumber: 2, bounds: { x: 200, y: 120, width: 180, height: 44 } },
+        ],
+      }) as {
+        ok: true;
+        capture: { pageUrl: string; pageTitle: string; visibleTextExcerpt?: string };
+      };
+
+      expect(result.ok).toBe(true);
+      expect(adopted.capturePage).toHaveBeenCalledTimes(1);
+      expect(adopted.capturePage).toHaveBeenCalledWith();
+      const overlayJs = adopted.executeJavaScript.mock.calls[0]![0] as string;
+      expect(overlayJs).toContain("__mcode_annotation_snapshot_overlay");
+      expect(overlayJs).toContain("mcode-annotation-highlight");
+      expect(overlayJs).toContain('"activeDisplayNumber":2');
+      expect(overlayJs).toContain('"displayNumber":1');
+      expect(overlayJs).toContain('"displayNumber":2');
+      const waitForPaintJs = adopted.executeJavaScript.mock.calls[1]![0] as string;
+      expect(waitForPaintJs).toContain("requestAnimationFrame");
+      expect(waitForPaintJs).toContain("__mcode_annotation_snapshot_overlay");
+      expect(adopted.executeJavaScript.mock.invocationCallOrder[1]).toBeLessThan(
+        adopted.capturePage.mock.invocationCallOrder[0]!,
+      );
+      const removeJs = adopted.executeJavaScript.mock.calls.at(-1)![0] as string;
+      expect(removeJs).toContain("__mcode_annotation_snapshot_overlay");
+      expect(removeJs).toContain("remove()");
+      expect(result.capture.visibleTextExcerpt).toContain("Visible adopted text");
+    });
+
+    it("page context uses the active adopted webview when no native view exists", async () => {
+      const win = createWindow();
+      const ev = fakeEvent(win);
+
+      await ipcHandlers["preview:sync"]!(ev, {
+        visible: false,
+        bounds: VALID_BOUNDS,
+        threadId: "thread-webview",
+        resumeUrlHint: "https://example.com",
+        workspaceId: "ws-1",
+      });
+
+      const adopted = makeWebContentsView().webContents;
+      adopted.getURL.mockReturnValue("https://example.com/context");
+      adopted.getTitle.mockReturnValue("Context page");
+      adopted.executeJavaScript.mockResolvedValueOnce(
+        JSON.stringify({
+          visibleText: "Context visible text",
+          headingOutline: "H2: Context",
+          interactiveOutline: "- [a] Details",
+          scrollX: 2,
+          scrollY: 6,
+          layoutWidth: 800,
+          layoutHeight: 600,
+        }),
+      );
+      mockWebContentsById.set(45, adopted);
+
+      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
+      await ipcHandlers["preview:adopt-webview"]!(ev, {
+        threadId: "thread-webview",
+        tabId,
+        webContentsId: 45,
+      });
+
+      const result = await ipcHandlers["preview:capture-context-reference"]!(ev) as {
+        ok: true;
+        capture: { pageUrl: string; pageTitle: string; visibleTextExcerpt?: string };
+      };
+
+      expect(result.ok).toBe(true);
+      expect(adopted.capturePage).not.toHaveBeenCalled();
+      expect(result.capture.pageUrl).toBe("https://example.com/context");
+      expect(result.capture.pageTitle).toBe("Context page");
+      expect(result.capture.visibleTextExcerpt).toContain("Context visible text");
+    });
+
     it("element pick uses the active adopted webview when no native view exists", async () => {
       vi.useFakeTimers();
       try {
@@ -1281,6 +1448,10 @@ describe("preview-browser", () => {
         await Promise.resolve();
 
         expect(adopted.executeJavaScript).toHaveBeenCalledTimes(1);
+        const injectedPicker = adopted.executeJavaScript.mock.calls[0]![0] as string;
+        expect(injectedPicker).toContain("data:image/svg+xml");
+        expect(injectedPicker).toContain("pointer !important");
+        expect(injectedPicker).not.toContain("cursor:crosshair !important");
 
         await vi.advanceTimersByTimeAsync(120);
         await expect(capturePromise).resolves.toEqual({ ok: false, error: "cancelled" });
@@ -1314,6 +1485,20 @@ describe("preview-browser", () => {
               bounds: { x: 8, y: 18, width: 120, height: 80 },
               selectorHint: "button.primary",
               htmlExcerpt: "<button>Attach</button>",
+              elementStyle: {
+                textColor: "rgb(255, 255, 255)",
+                background: "rgb(10, 52, 92)",
+                opacity: 0.8,
+                font: "Inter, sans-serif",
+                fontSize: "14px",
+                borderTopLeftRadius: "6px",
+                width: "120px",
+                height: "80px",
+                paddingLeft: "20px",
+                paddingTop: "4px",
+                marginRight: "8px",
+                borderBottomWidth: "2px",
+              },
             }),
           )
           .mockResolvedValueOnce(undefined)
@@ -1329,7 +1514,12 @@ describe("preview-browser", () => {
 
         const capturePromise = ipcHandlers["preview:capture-picture-element-pick"]!(
           ev,
-        ) as Promise<{ ok: true; meta: { sizeBytes: number }; previewBytes: Uint8Array }>;
+        ) as Promise<{
+          ok: true;
+          meta: { sizeBytes: number };
+          previewBytes: Uint8Array;
+          capture: { elementStyle?: Record<string, unknown> };
+        }>;
         await Promise.resolve();
         await vi.advanceTimersByTimeAsync(120);
         const result = await capturePromise;
@@ -1337,6 +1527,17 @@ describe("preview-browser", () => {
         expect(result.ok).toBe(true);
         expect(result.meta.sizeBytes).toBeGreaterThan(0);
         expect(result.previewBytes.length).toBeGreaterThan(0);
+        expect(result.capture.elementStyle).toMatchObject({
+          textColor: "rgb(255, 255, 255)",
+          background: "rgb(10, 52, 92)",
+          opacity: 0.8,
+          fontSize: "14px",
+          borderTopLeftRadius: "6px",
+          paddingLeft: "20px",
+          paddingTop: "4px",
+          marginRight: "8px",
+          borderBottomWidth: "2px",
+        });
         expect(adopted.capturePage).toHaveBeenCalledWith({ x: 8, y: 18, width: 120, height: 80 });
         expect(adopted.executeJavaScript).toHaveBeenCalledTimes(5);
       } finally {
@@ -1437,6 +1638,28 @@ describe("preview-browser", () => {
       expect(r2).toEqual({ ok: true });
       const arg2 = view.webContents.executeJavaScript.mock.calls[1]![0] as string;
       expect(arg2).toContain("__mcodeInspectTeardown");
+    });
+
+    it("setAnnotationGuard injects and tears down the page interaction guard", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.executeJavaScript.mockClear();
+
+      const r1 = await ipcHandlers["preview:design.set-annotation-guard"]!(fakeEvent(win), {
+        enabled: true,
+      });
+      expect(r1).toEqual({ ok: true });
+      expect(view.webContents.executeJavaScript).toHaveBeenCalledTimes(1);
+      const arg1 = view.webContents.executeJavaScript.mock.calls[0]![0] as string;
+      expect(arg1).toContain("__mcodeAnnotationGuardActive");
+
+      const r2 = await ipcHandlers["preview:design.set-annotation-guard"]!(fakeEvent(win), {
+        enabled: false,
+      });
+      expect(r2).toEqual({ ok: true });
+      const arg2 = view.webContents.executeJavaScript.mock.calls[1]![0] as string;
+      expect(arg2).toContain("__mcodeAnnotationGuardTeardown");
     });
   });
 });
