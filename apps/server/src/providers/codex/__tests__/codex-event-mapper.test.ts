@@ -2057,4 +2057,26 @@ describe("CodexEventMapper", () => {
       expect.objectContaining({ method: "unknown/method" }),
     );
   });
+
+  it("logs warning notifications without treating them as unrecognized", async () => {
+    const { logger } = await import("@mcode/shared");
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "warning",
+      params: { message: "configuration degraded", code: "config" },
+    });
+
+    expect(events).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Codex warning notification",
+      expect.objectContaining({
+        method: "warning",
+        params: { message: "configuration degraded", code: "config" },
+      }),
+    );
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      "CodexEventMapper: unrecognized notification",
+      expect.anything(),
+    );
+  });
 });

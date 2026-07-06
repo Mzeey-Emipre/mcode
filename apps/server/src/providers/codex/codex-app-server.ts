@@ -217,6 +217,71 @@ const INITIALIZE_HANDSHAKE = {
   backoffMs: 500,
 } as const;
 
+/** Maximum non-benign stderr lines retained for app-server diagnostics. */
+const STDERR_TAIL_MAX_LINES = 50;
+/** Maximum UTF-8 bytes retained across non-benign stderr diagnostics. */
+const STDERR_TAIL_MAX_BYTES = 16 * 1024;
+
+/** Decoded child-process exit details used in user-facing and structured diagnostics. */
+interface ExitDiagnostics {
+  /** Raw exit code reported by Node. */
+  rawCode: number | null;
+  /** Signal reported by Node. */
+  signal: string | null;
+  /** Signed int32 representation for unsigned Windows-style exit codes. */
+  signedInt32?: number;
+  /** Hex representation for numeric exit codes. */
+  hexCode?: string;
+}
+
+/** Retains a bounded tail of non-benign stderr lines for Codex crash diagnostics. */
+class StderrTail {
+  private readonly lines: string[] = [];
+  private totalBytes = 0;
+
+  add(line: string): void {
+    const boundedLine = this.boundLine(line);
+    const bytes = Buffer.byteLength(boundedLine, "utf8");
+    this.lines.push(boundedLine);
+    this.totalBytes += bytes;
+    this.evict();
+  }
+
+  latest(): string | null {
+    return this.lines.at(-1) ?? null;
+  }
+
+  snapshot(): string[] {
+    return [...this.lines];
+  }
+
+  private evict(): void {
+    while (
+      this.lines.length > STDERR_TAIL_MAX_LINES
+      || (this.totalBytes > STDERR_TAIL_MAX_BYTES && this.lines.length > 1)
+    ) {
+      const removed = this.lines.shift();
+      if (removed != null) this.totalBytes -= Buffer.byteLength(removed, "utf8");
+    }
+  }
+
+  private boundLine(line: string): string {
+    if (Buffer.byteLength(line, "utf8") <= STDERR_TAIL_MAX_BYTES) {
+      return line;
+    }
+
+    let bytes = 0;
+    let out = "";
+    for (const char of line) {
+      const next = Buffer.byteLength(char, "utf8");
+      if (bytes + next > STDERR_TAIL_MAX_BYTES) break;
+      out += char;
+      bytes += next;
+    }
+    return out;
+  }
+}
+
 /**
  * Minimal RPC surface needed to run the `initialize` step. Lets the handshake
  * be unit-tested against a fake client without spawning a real `codex` CLI.
@@ -324,6 +389,33 @@ export function enrichHandshakeError(err: unknown, stderr: string | null): Error
     return err instanceof Error ? err : new Error(base);
   }
   return new Error(`${base} (codex app-server reported: ${stderr})`);
+}
+
+/** Decodes raw child-process exit metadata for crash diagnostics. */
+function decodeExitDiagnostics(code: number | null, signal: string | null): ExitDiagnostics {
+  if (code == null) {
+    return { rawCode: code, signal };
+  }
+  return {
+    rawCode: code,
+    signal,
+    signedInt32: code > 0x7fffffff ? code | 0 : undefined,
+    hexCode: `0x${(code >>> 0).toString(16).padStart(8, "0")}`,
+  };
+}
+
+/** Formats the unexpected-exit message shown to users and error banners. */
+function formatUnexpectedExitMessage(exit: ExitDiagnostics, latestStderr: string | null): string {
+  const parts = [
+    `raw code=${exit.rawCode}`,
+    `signal=${exit.signal}`,
+    ...(exit.signedInt32 != null ? [`signed int32=${exit.signedInt32}`] : []),
+    ...(exit.hexCode ? [`hex=${exit.hexCode}`] : []),
+  ];
+  const stderr = latestStderr
+    ? `latest stderr: ${latestStderr}`
+    : "no stderr was captured";
+  return `Codex app-server exited unexpectedly (${parts.join(", ")}; ${stderr})`;
 }
 
 /**
@@ -490,12 +582,8 @@ export class CodexAppServer extends EventEmitter {
   /** Shared in-flight teardown so concurrent `kill()` callers await the same work. */
   private teardownPromise: Promise<void> | null = null;
 
-  /**
-   * Most recent non-benign stderr line from the child. Surfaced into the
-   * handshake failure error so a genuine setup problem (auth, version) is
-   * legible instead of appearing as a bare initialize timeout.
-   */
-  private lastStderr: string | null = null;
+  /** Bounded non-benign stderr tail shared by handshake and exit diagnostics. */
+  private readonly stderrTail = new StderrTail();
 
   private readonly options: CodexAppServerOptions;
 
@@ -646,7 +734,7 @@ export class CodexAppServer extends EventEmitter {
       await this.runHandshake();
     } catch (err) {
       await this.kill();
-      throw enrichHandshakeError(err, this.lastStderr);
+      throw enrichHandshakeError(err, this.stderrTail.latest());
     }
   }
 
@@ -882,7 +970,7 @@ export class CodexAppServer extends EventEmitter {
       if (this._threadId === null) {
         for (const pattern of FATAL_PATTERNS) {
           if (line.includes(pattern)) {
-            this.lastStderr = line;
+            this.stderrTail.add(line);
             const msg = `Codex app-server fatal stderr: ${line}`;
             logger.error(msg, { cliPath: this.cliPath });
             this.emit("fatal", msg);
@@ -898,7 +986,7 @@ export class CodexAppServer extends EventEmitter {
       // the real cause. Tool output, Rust tracing, and agent-generated content
       // are often muxed onto stderr; warn-level logs were drowning useful signal
       // in .mcode-dev, so the line itself stays at debug.
-      this.lastStderr = line;
+      this.stderrTail.add(line);
       logger.debug("Codex stderr", { line });
     });
   }
@@ -912,8 +1000,11 @@ export class CodexAppServer extends EventEmitter {
       this.emit("exit", code, signal);
 
       if (!this.killRequested) {
-        const msg = `Codex app-server exited unexpectedly (code=${code}, signal=${signal})`;
-        logger.error(msg, { cliPath });
+        const exit = decodeExitDiagnostics(code, signal);
+        const stderrTail = this.stderrTail.snapshot();
+        const latestStderr = stderrTail.at(-1) ?? null;
+        const msg = formatUnexpectedExitMessage(exit, latestStderr);
+        logger.error(msg, { cliPath, exit, stderrTail });
         this.emit("fatal", msg);
       }
     });
@@ -930,7 +1021,7 @@ export class CodexAppServer extends EventEmitter {
       timeoutMs: INITIALIZE_HANDSHAKE.timeoutMs,
       attempts: INITIALIZE_HANDSHAKE.attempts,
       backoffMs: INITIALIZE_HANDSHAKE.backoffMs,
-      getLastStderr: () => this.lastStderr,
+      getLastStderr: () => this.stderrTail.latest(),
     });
 
     // Step 2: initialized notification (no response expected)

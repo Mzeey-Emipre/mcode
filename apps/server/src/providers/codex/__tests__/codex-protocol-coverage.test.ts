@@ -31,6 +31,7 @@ const KNOWN_METHODS = new Set([
   "item/reasoning/summaryPartAdded",
   "item/plan/delta",
   "error",
+  "warning",
   // Silenced lifecycle plus structured plan snapshots.
   "thread/started",
   "thread/status/changed",
@@ -83,6 +84,7 @@ const SYNTHETIC_NOTIFICATIONS: CodexNotification[] = [
   },
   { jsonrpc: "2.0", method: "item/plan/delta", params: { delta: "Planning…" } },
   { jsonrpc: "2.0", method: "item/reasoning/textDelta", params: { delta: "Think" } },
+  { jsonrpc: "2.0", method: "warning", params: { message: "config warning" } },
   { jsonrpc: "2.0", method: "item/agentMessage/delta", params: { delta: "Final" } },
   {
     jsonrpc: "2.0",

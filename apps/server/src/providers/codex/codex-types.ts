@@ -320,6 +320,13 @@ export interface ErrorNotificationPayload {
   [key: string]: unknown;
 }
 
+/** Payload for the `warning` notification. */
+export interface WarningNotificationPayload {
+  threadId?: string;
+  turnId?: string;
+  [key: string]: unknown;
+}
+
 /** One Codex account rate-limit window from `account/rateLimits/updated`. */
 export interface CodexRateLimitWindow {
   usedPercent?: number;
@@ -376,4 +383,5 @@ export type CodexNotification =
   | (JsonRpcNotification<ThreadGoalUpdatedPayload> & { method: "thread/goal/updated" })
   | (JsonRpcNotification<ThreadGoalClearedPayload> & { method: "thread/goal/cleared" })
   | (JsonRpcNotification<CodexRateLimitsPayload> & { method: "account/rateLimits/updated" })
-  | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" });
+  | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" })
+  | (JsonRpcNotification<WarningNotificationPayload> & { method: "warning" });
