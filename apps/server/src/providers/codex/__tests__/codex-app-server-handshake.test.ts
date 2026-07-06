@@ -166,8 +166,15 @@ interface RpcRequest {
   method?: string;
 }
 
+function findUnexpectedExitLogFields(): { stderrTail?: string[] } | undefined {
+  const call = (vi.mocked(logger.error).mock.calls as unknown[][]).find(([message]) =>
+    String(message).includes("Codex app-server exited unexpectedly"),
+  );
+  return call?.[1] as { stderrTail?: string[] } | undefined;
+}
+
 /** Builds an EventEmitter-backed fake child with stream-backed stdio. */
-function makeFakeChild(): { child: FakeChild; stdin: PassThrough; stdout: PassThrough } {
+function makeFakeChild(): { child: FakeChild; stdin: PassThrough; stdout: PassThrough; stderr: PassThrough } {
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -177,7 +184,7 @@ function makeFakeChild(): { child: FakeChild; stdin: PassThrough; stdout: PassTh
   child.stderr = stderr;
   child.pid = 4321;
   child.kill = vi.fn();
-  return { child, stdin, stdout };
+  return { child, stdin, stdout, stderr };
 }
 
 /**
@@ -188,8 +195,8 @@ function makeFakeChild(): { child: FakeChild; stdin: PassThrough; stdout: PassTh
  */
 function harnessFakeServer(
   respond: (req: RpcRequest) => Record<string, unknown> | null,
-): { child: FakeChild } {
-  const { child, stdin, stdout } = makeFakeChild();
+): { child: FakeChild; stderr: PassThrough } {
+  const { child, stdin, stdout, stderr } = makeFakeChild();
 
   mockWhich.mockResolvedValue("/usr/bin/codex");
   mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
@@ -212,7 +219,7 @@ function harnessFakeServer(
     }
   });
 
-  return { child };
+  return { child, stderr };
 }
 
 describe("CodexAppServer.start (failed handshake teardown)", () => {
@@ -307,5 +314,185 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     // Clean up the live fake session (taskkill is mocked under the forced win32 platform).
     await server.kill();
     void child;
+  }, 10_000);
+
+  it("emits decoded unexpected-exit diagnostics with the latest non-benign stderr", async () => {
+    const { child, stderr } = harnessFakeServer((req): Record<string, unknown> => {
+      switch (req.method) {
+        case "thread/start":
+          return { result: { thread: { id: "thread-crash" } } };
+        default:
+          return { result: {} };
+      }
+    });
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const fatal = vi.fn();
+    server.on("fatal", fatal);
+
+    await server.start();
+    stderr.write("ExperimentalWarning: ignore me\n");
+    stderr.write("\u001b[31mfirst useful line\u001b[0m\n");
+    stderr.write("latest crash cause\n");
+    child.emit("exit", 4294967295, null);
+
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("Codex app-server exited unexpectedly"));
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("raw code=4294967295"));
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("signal=null"));
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("signed int32=-1"));
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("hex=0xffffffff"));
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("latest stderr: latest crash cause"));
+    expect(fatal).not.toHaveBeenCalledWith(expect.stringContaining("ExperimentalWarning"));
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.stringContaining("Codex app-server exited unexpectedly"),
+      expect.objectContaining({
+        exit: expect.objectContaining({
+          rawCode: 4294967295,
+          signal: null,
+          signedInt32: -1,
+          hexCode: "0xffffffff",
+        }),
+        stderrTail: ["first useful line", "latest crash cause"],
+      }),
+    );
+  }, 10_000);
+
+  it("reports when unexpected exit has no captured non-benign stderr", async () => {
+    const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-no-stderr" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const fatal = vi.fn();
+    server.on("fatal", fatal);
+
+    await server.start();
+    stderr.write("Reading prompt from stdin\n");
+    child.emit("exit", 1, "SIGTERM");
+
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("no stderr was captured"));
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.stringContaining("Codex app-server exited unexpectedly"),
+      expect.objectContaining({ stderrTail: [] }),
+    );
+  }, 10_000);
+
+  it("bounds unexpected-exit stderr tail by line count and evicts oldest lines", async () => {
+    const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-bounded" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+
+    await server.start();
+    for (let i = 0; i < 60; i++) {
+      stderr.write(`line-${i}\n`);
+    }
+    child.emit("exit", 2, null);
+
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.stringContaining("Codex app-server exited unexpectedly"),
+      expect.objectContaining({
+        stderrTail: expect.arrayContaining(["line-10", "line-59"]),
+      }),
+    );
+    const logFields = findUnexpectedExitLogFields();
+    expect(logFields?.stderrTail).toHaveLength(50);
+    expect(logFields?.stderrTail?.[0]).toBe("line-10");
+    expect(logFields?.stderrTail).not.toContain("line-9");
+  }, 10_000);
+
+  it("bounds unexpected-exit stderr tail by bytes and keeps the newest line", async () => {
+    const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-byte-bounded" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+
+    await server.start();
+    stderr.write(`${"A".repeat(12 * 1024)}\n`);
+    stderr.write(`${"B".repeat(12 * 1024)}\n`);
+    child.emit("exit", 2, null);
+
+    const logFields = findUnexpectedExitLogFields();
+    expect(logFields?.stderrTail).toHaveLength(1);
+    expect(logFields?.stderrTail?.[0]).toBe("B".repeat(12 * 1024));
+  }, 10_000);
+
+  it("retains one oversized non-benign stderr line in bounded form", async () => {
+    const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-oversized-stderr" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const fatal = vi.fn();
+    server.on("fatal", fatal);
+
+    await server.start();
+    stderr.write(`${"oversized crash cause ".repeat(1024)}\n`);
+    child.emit("exit", 2, null);
+
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("latest stderr:"));
+    const logFields = findUnexpectedExitLogFields();
+    expect(logFields?.stderrTail).toHaveLength(1);
+    expect(Buffer.byteLength(logFields?.stderrTail?.[0] ?? "", "utf8")).toBeLessThanOrEqual(16 * 1024);
+    expect(logFields?.stderrTail?.[0]).toContain("oversized crash cause");
+  }, 10_000);
+
+  it("truncates and strips backticks in the fatal message excerpt while keeping the full line in stderrTail", async () => {
+    const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-backtick-stderr" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const fatal = vi.fn();
+    server.on("fatal", fatal);
+
+    await server.start();
+    const longBadLine = "run `rm -rf ~` now ".repeat(30);
+    stderr.write(longBadLine + "\n");
+    child.emit("exit", 2, null);
+
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("latest stderr:"));
+
+    const fatalMsg: string = vi.mocked(fatal).mock.calls
+      .flatMap((args) => args)
+      .find((a): a is string => typeof a === "string" && a.includes("latest stderr:")) ?? "";
+
+    expect(fatalMsg).not.toContain("`");
+
+    const excerptMatch = fatalMsg.match(/latest stderr: ([\s\S]*)\)$/);
+    expect(excerptMatch).not.toBeNull();
+    const excerpt = excerptMatch![1];
+    // 256-code-point cap plus the trailing ellipsis character.
+    expect([...excerpt].length).toBeLessThanOrEqual(257);
+
+    const logFields = findUnexpectedExitLogFields();
+    expect(logFields?.stderrTail?.some((l) => l.includes("`"))).toBe(true);
+  }, 10_000);
+
+  it("does not split surrogate pairs when bounding an oversized stderr line", async () => {
+    const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-emoji-stderr" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+
+    await server.start();
+    stderr.write(`${"A".repeat(16 * 1024 - 3)}😀${"B".repeat(100)}\n`);
+    child.emit("exit", 2, null);
+
+    const retainedLine = findUnexpectedExitLogFields()?.stderrTail?.[0] ?? "";
+    const lastCodeUnit = retainedLine.charCodeAt(retainedLine.length - 1);
+    expect(Buffer.byteLength(retainedLine, "utf8")).toBeLessThanOrEqual(16 * 1024);
+    expect(lastCodeUnit < 0xd800 || lastCodeUnit > 0xdfff).toBe(true);
+  }, 10_000);
+
+  it("keeps kill-requested teardown silent", async () => {
+    const { child } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-kill" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const fatal = vi.fn();
+    server.on("fatal", fatal);
+
+    await server.start();
+    await server.kill();
+    child.emit("exit", 1, null);
+
+    expect(fatal).not.toHaveBeenCalledWith(expect.stringContaining("Codex app-server exited unexpectedly"));
   }, 10_000);
 });

@@ -771,6 +771,11 @@ export class CodexEventMapper {
    */
   mapNotification(notification: CodexNotification): AgentEvent[] {
     const { method } = notification;
+    if (method === "warning") {
+      logger.warn("Codex warning notification", { method, params: notification.params });
+      return [];
+    }
+
     const route = this.classifyNotificationThread(notification);
 
     if (route === "unknown") {
