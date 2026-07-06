@@ -256,6 +256,9 @@ class StderrTail {
   }
 
   private evict(): void {
+    // The `lines.length > 1` floor is safe: boundLine caps any single line at
+    // STDERR_TAIL_MAX_BYTES on insertion, so total retention never exceeds
+    // max(STDERR_TAIL_MAX_BYTES, one bounded line).
     while (
       this.lines.length > STDERR_TAIL_MAX_LINES
       || (this.totalBytes > STDERR_TAIL_MAX_BYTES && this.lines.length > 1)
@@ -391,6 +394,29 @@ export function enrichHandshakeError(err: unknown, stderr: string | null): Error
   return new Error(`${base} (codex app-server reported: ${stderr})`);
 }
 
+/** Maximum code points of stderr excerpt embedded in the user-facing fatal message. */
+const STDERR_EXCERPT_MAX_CHARS = 256;
+
+/**
+ * Bounds and sanitizes a stderr line for embedding in the user-facing fatal
+ * message. Backticks are stripped because the web CliErrorBanner extracts
+ * backtick-quoted substrings as copyable commands, and child stderr can carry
+ * agent-generated content. The full line stays in the structured log fields.
+ */
+function excerptForMessage(line: string): string {
+  const stripped = line.replaceAll("`", "'");
+  let codePoints = 0;
+  let out = "";
+  for (const char of stripped) {
+    if (codePoints >= STDERR_EXCERPT_MAX_CHARS) {
+      return out + "…";
+    }
+    out += char;
+    codePoints += 1;
+  }
+  return out;
+}
+
 /** Decodes raw child-process exit metadata for crash diagnostics. */
 function decodeExitDiagnostics(code: number | null, signal: string | null): ExitDiagnostics {
   if (code == null) {
@@ -413,7 +439,7 @@ function formatUnexpectedExitMessage(exit: ExitDiagnostics, latestStderr: string
     ...(exit.hexCode ? [`hex=${exit.hexCode}`] : []),
   ];
   const stderr = latestStderr
-    ? `latest stderr: ${latestStderr}`
+    ? `latest stderr: ${excerptForMessage(latestStderr)}`
     : "no stderr was captured";
   return `Codex app-server exited unexpectedly (${parts.join(", ")}; ${stderr})`;
 }
@@ -1002,7 +1028,7 @@ export class CodexAppServer extends EventEmitter {
       if (!this.killRequested) {
         const exit = decodeExitDiagnostics(code, signal);
         const stderrTail = this.stderrTail.snapshot();
-        const latestStderr = stderrTail.at(-1) ?? null;
+        const latestStderr = this.stderrTail.latest();
         const msg = formatUnexpectedExitMessage(exit, latestStderr);
         logger.error(msg, { cliPath, exit, stderrTail });
         this.emit("fatal", msg);

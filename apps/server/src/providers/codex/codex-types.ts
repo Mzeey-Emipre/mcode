@@ -320,10 +320,8 @@ export interface ErrorNotificationPayload {
   [key: string]: unknown;
 }
 
-/** Payload for the `warning` notification. */
+/** Payload for the `warning` notification. Logged wholesale; never routed per-thread. */
 export interface WarningNotificationPayload {
-  threadId?: string;
-  turnId?: string;
   [key: string]: unknown;
 }
 

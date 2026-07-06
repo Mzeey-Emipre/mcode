@@ -434,6 +434,37 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     expect(logFields?.stderrTail?.[0]).toContain("oversized crash cause");
   }, 10_000);
 
+  it("truncates and strips backticks in the fatal message excerpt while keeping the full line in stderrTail", async () => {
+    const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-backtick-stderr" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const fatal = vi.fn();
+    server.on("fatal", fatal);
+
+    await server.start();
+    const longBadLine = "run `rm -rf ~` now ".repeat(30);
+    stderr.write(longBadLine + "\n");
+    child.emit("exit", 2, null);
+
+    expect(fatal).toHaveBeenCalledWith(expect.stringContaining("latest stderr:"));
+
+    const fatalMsg: string = vi.mocked(fatal).mock.calls
+      .flatMap((args) => args)
+      .find((a): a is string => typeof a === "string" && a.includes("latest stderr:")) ?? "";
+
+    expect(fatalMsg).not.toContain("`");
+
+    const excerptMatch = fatalMsg.match(/latest stderr: ([\s\S]*)\)$/);
+    expect(excerptMatch).not.toBeNull();
+    const excerpt = excerptMatch![1];
+    // 256-code-point cap plus the trailing ellipsis character.
+    expect([...excerpt].length).toBeLessThanOrEqual(257);
+
+    const logFields = findUnexpectedExitLogFields();
+    expect(logFields?.stderrTail?.some((l) => l.includes("`"))).toBe(true);
+  }, 10_000);
+
   it("does not split surrogate pairs when bounding an oversized stderr line", async () => {
     const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
       req.method === "thread/start" ? { result: { thread: { id: "thread-emoji-stderr" } } } : { result: {} },
