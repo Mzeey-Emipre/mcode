@@ -356,6 +356,18 @@ export interface ThreadGoalClearedPayload {
   turnId?: string | null;
 }
 
+/** Native status values for a Codex app-server MCP startup attempt. */
+export type McpServerStartupStatus = "starting" | "ready" | "failed" | "cancelled";
+
+/** Payload for `mcpServer/startupStatus/updated` notifications. */
+export interface McpServerStartupStatusUpdatedPayload {
+  threadId?: string;
+  name: string;
+  status: McpServerStartupStatus;
+  error?: string | null;
+  failureReason?: string | null;
+}
+
 /**
  * Discriminated union of all JSON-RPC notifications from `codex app-server`
  * that reach the mapper (lifecycle notifications are filtered upstream).
@@ -364,7 +376,8 @@ export interface ThreadGoalClearedPayload {
  *
  * Notifications whose `method` matches `LIFECYCLE_NOTIFICATION_PREFIXES` in
  * `CodexAppServer` never reach the mapper. Everything else (including
- * `item/reasoning/*` streams) is mapped to {@link AgentEvent} values.
+ * `mcpServer/startupStatus/updated` and `item/reasoning/*` streams) is mapped
+ * to {@link AgentEvent} values.
  */
 export type CodexNotification =
   | (JsonRpcNotification<LifecyclePayload> & { method: "turn/started" })
@@ -380,6 +393,7 @@ export type CodexNotification =
   | (JsonRpcNotification<TurnCompletedPayload> & { method: "turn/completed" })
   | (JsonRpcNotification<ThreadGoalUpdatedPayload> & { method: "thread/goal/updated" })
   | (JsonRpcNotification<ThreadGoalClearedPayload> & { method: "thread/goal/cleared" })
+  | (JsonRpcNotification<McpServerStartupStatusUpdatedPayload> & { method: "mcpServer/startupStatus/updated" })
   | (JsonRpcNotification<CodexRateLimitsPayload> & { method: "account/rateLimits/updated" })
   | (JsonRpcNotification<ErrorNotificationPayload> & { method: "error" })
   | (JsonRpcNotification<WarningNotificationPayload> & { method: "warning" });

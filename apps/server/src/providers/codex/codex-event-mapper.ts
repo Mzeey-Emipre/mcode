@@ -20,7 +20,6 @@ const SILENCED_METHODS = new Set([
   "remoteControl/status/changed",
   // Observed against codex-cli 0.130.0; see docs/guides/codex-app-server-trace.md
   "thread/started", "thread/status/changed",
-  "mcpServer/startupStatus/updated",
   "account/rateLimits/updated", "thread/tokenUsage/updated",
 ]);
 
@@ -823,6 +822,33 @@ export class CodexEventMapper {
         providerId: "codex",
         reason: "cleared",
         turnId: notification.params.turnId ?? null,
+      }];
+    }
+
+    if (method === "mcpServer/startupStatus/updated") {
+      const serverThreadId = notification.params.threadId ?? this.mainCodexThreadId;
+      if (!serverThreadId) {
+        logger.warn("CodexEventMapper: dropping MCP startup status without thread id", {
+          name: notification.params.name,
+          status: notification.params.status,
+        });
+        return [];
+      }
+      const error = typeof notification.params.error === "string"
+        ? notification.params.error
+        : undefined;
+      const failureReason = typeof notification.params.failureReason === "string"
+        ? notification.params.failureReason
+        : undefined;
+      return [{
+        type: AgentEventType.McpServerStartupStatus,
+        threadId: this.threadId,
+        providerId: "codex",
+        serverThreadId,
+        name: notification.params.name,
+        status: notification.params.status,
+        ...(error ? { error } : {}),
+        ...(failureReason ? { failureReason } : {}),
       }];
     }
 

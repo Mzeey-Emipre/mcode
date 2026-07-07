@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
 import {
   useDiffStore,
@@ -663,6 +663,20 @@ describe("diffStore", () => {
       const state = useDiffStore.getState();
       expect(state.previewUrlByThread["thread-1"]).toBe("https://a.test");
       expect(state.previewUrlByThread["thread-2"]).toBe("https://b.test");
+    });
+
+    it("does not notify subscribers when the url is unchanged", () => {
+      const { setPreviewUrlForThread } = useDiffStore.getState();
+      setPreviewUrlForThread("thread-1", "https://a.test");
+      const previewUrls = useDiffStore.getState().previewUrlByThread;
+      const subscriber = vi.fn();
+      const unsubscribe = useDiffStore.subscribe(subscriber);
+
+      setPreviewUrlForThread("thread-1", "https://a.test");
+
+      unsubscribe();
+      expect(useDiffStore.getState().previewUrlByThread).toBe(previewUrls);
+      expect(subscriber).not.toHaveBeenCalled();
     });
   });
 

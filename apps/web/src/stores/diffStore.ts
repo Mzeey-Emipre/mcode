@@ -677,10 +677,12 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       },
       inlineDiffCache: omitInlineDiffCacheByPrefix(s.inlineDiffCache, `${scopeId}:`),
     })),
-  setPreviewUrlForThread: (threadId, url) =>
+  setPreviewUrlForThread: (threadId, url) => {
+    if (get().previewUrlByThread[threadId] === url) return;
     set((s) => ({
       previewUrlByThread: { ...s.previewUrlByThread, [threadId]: url },
-    })),
+    }));
+  },
   clearThread: (threadId) =>
     set((state) => {
       const snapshots = { ...state.snapshotsByThread };

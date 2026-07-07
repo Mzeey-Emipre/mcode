@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, Loader2 } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -7,6 +7,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getTransport } from "@/transport";
@@ -210,9 +211,9 @@ export function DiffToolbar() {
 
         {/* Total +/- for the active view; spinner while the stat loads. */}
         {diffStatLoading ? (
-          <Loader2
+          <Spinner
             size={12}
-            className="shrink-0 animate-spin text-muted-foreground/50"
+            className="text-muted-foreground/50"
             aria-label="Loading diff stats"
             data-testid="review-diff-stat-loading"
           />

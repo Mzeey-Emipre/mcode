@@ -29,6 +29,24 @@ describe("TurnErrorPolicy.classify", () => {
     expect(policy.classify(new Error("fetch failed"))).toBe("transient");
   });
 
+  it("classifies Codex loopback MCP transport exits as transient", () => {
+    expect(
+      policy.classify(
+        new Error(
+          'Codex app-server exited unexpectedly (raw code=4294967295, signal=null, signed int32=-1, hex=0xffffffff; latest stderr: Transport channel closed, when Client(HttpRequest(HttpRequest("http/request failed: error sending request for url (http://127.0.0.1:3845/mcp)"))))',
+        ),
+      ),
+    ).toBe("transient");
+  });
+
+  it("keeps bare Windows app-server exits fatal without a matching transport stderr", () => {
+    expect(
+      policy.classify(
+        new Error("Codex app-server exited unexpectedly (raw code=4294967295, hex=0xffffffff; latest stderr: permission denied)"),
+      ),
+    ).toBe("fatal");
+  });
+
   it("matches against a raw string error and never throws on nullish input", () => {
     expect(policy.classify("read ECONNRESET")).toBe("transient");
     expect(policy.classify("permission denied")).toBe("fatal");

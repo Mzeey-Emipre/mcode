@@ -41,6 +41,7 @@ export const AgentEventType = {
   AssistantMessageBoundary: "assistantMessageBoundary",
   GoalUpdated: "goalUpdated",
   GoalCleared: "goalCleared",
+  McpServerStartupStatus: "mcpServerStartupStatus",
 } as const;
 
 /** Union of all valid `AgentEvent` type discriminants. */
@@ -337,6 +338,19 @@ export const AgentEventSchema = lazySchema(() =>
       providerId: z.string().optional(),
       reason: z.enum(["cleared", "rollback", "completed"]).optional(),
       turnId: z.string().nullable().optional(),
+    }),
+    z.object({
+      /** Emitted when a provider reports a native MCP server startup status. */
+      type: z.literal(AgentEventType.McpServerStartupStatus),
+      threadId: z.string(),
+      providerId: z.string(),
+      /** Provider-native thread id that owns the MCP startup attempt. */
+      serverThreadId: z.string(),
+      /** Provider-configured MCP server name. */
+      name: z.string(),
+      status: z.enum(["starting", "ready", "failed", "cancelled"]),
+      error: z.string().optional(),
+      failureReason: z.string().optional(),
     }),
   ]),
 );

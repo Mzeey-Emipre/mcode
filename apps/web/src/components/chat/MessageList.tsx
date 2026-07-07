@@ -1,8 +1,9 @@
 import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, useState, type WheelEvent } from "react";
 import { useReplyStore } from "@/stores/replyStore";
-import { ArrowDown, Loader2 } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { useShallow } from "zustand/shallow";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -1189,7 +1190,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       {isLoadingMore && (
         <div className="absolute top-2 left-1/2 z-10 -translate-x-1/2">
           <div className="rounded-md border border-border/40 bg-background/80 px-2 py-1 backdrop-blur-sm">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground/70" />
+            <Spinner size={14} className="text-muted-foreground/70" />
           </div>
         </div>
       )}

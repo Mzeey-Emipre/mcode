@@ -253,8 +253,7 @@ test.describe("Keyboard shortcuts", () => {
   test("Escape key does not crash the app when no thread is selected", async ({
     page,
   }) => {
-    // Escape fires the escape.handle command which calls setActiveThread(null) —
-    // a no-op when no thread is active. The landing should remain visible.
+    // Escape has no global chat-clearing fallback. The landing should remain visible.
     await page.keyboard.press("Escape");
     // Landing should still be visible, no error overlay
     await expect(page.getByText("mcode", { exact: true })).toBeVisible();

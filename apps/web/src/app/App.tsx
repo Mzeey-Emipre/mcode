@@ -190,7 +190,6 @@ export function App() {
               }
               return;
             }
-            workspace.setActiveThread(null);
           }
         },
       }),

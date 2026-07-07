@@ -7,6 +7,7 @@ import type {
   PreviewAnnotationPayload,
   PreviewAnnotationVisualProposal,
 } from "@mcode/contracts";
+import { PreviewAnnotationBundleSchema } from "@mcode/contracts";
 
 /** Draft data captured from the Preview before it becomes a saved annotation. */
 export interface PreviewDraftAnnotation {
@@ -57,6 +58,8 @@ interface PreviewAnnotationStore {
   discardPage(threadId: string, pageIdentity: string): void;
   /** Clears the full annotation set for a thread. */
   clearThread(threadId: string): void;
+  /** Restores a validated outbound annotation bundle into a thread's saved set. */
+  restoreBundle(threadId: string, bundle: PreviewAnnotationBundle | undefined): boolean;
   /** Builds the validated outbound bundle for a thread. */
   buildBundle(threadId: string): PreviewAnnotationBundle | undefined;
 }
@@ -178,6 +181,30 @@ export const usePreviewAnnotationStore = create<PreviewAnnotationStore>((set, ge
       delete drafts[threadId];
       return { byThread, drafts };
     });
+  },
+
+  restoreBundle(threadId, bundle) {
+    if (!bundle) {
+      get().clearThread(threadId);
+      return true;
+    }
+    const parsed = PreviewAnnotationBundleSchema().safeParse(bundle);
+    if (!parsed.success) {
+      get().clearThread(threadId);
+      return false;
+    }
+    const baseCreatedAt = Date.now();
+    const annotations = renumber(
+      parsed.data.annotations.map((annotation, index) => ({
+        ...annotation,
+        createdAt: baseCreatedAt + index,
+      })),
+    );
+    set((state) => ({
+      byThread: { ...state.byThread, [threadId]: annotations },
+      drafts: { ...state.drafts, [threadId]: undefined },
+    }));
+    return true;
   },
 
   buildBundle(threadId) {

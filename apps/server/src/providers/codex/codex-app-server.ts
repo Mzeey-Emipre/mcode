@@ -89,6 +89,8 @@ export interface CodexAppServerOptions {
    * Supplies env for the child `codex` process. When unset, `process.env` is copied.
    */
   getSpawnEnv?: () => Record<string, string>;
+  /** Config overrides passed to `codex app-server` as repeated `-c key=value`. */
+  configOverrides?: readonly string[];
 }
 
 /**
@@ -173,7 +175,7 @@ const LIFECYCLE_NOTIFICATION_PREFIXES = [
   "hook/",             // hook/started, hook/completed
   "rawResponseItem/",  // rawResponseItem/completed - low-level response items
   "serverRequest/",    // serverRequest/resolved - approval flow bookkeeping
-  "mcpServer/",        // mcpServer/startupStatus/updated, mcpServer/oauthLogin/completed
+  "mcpServer/oauthLogin/", // OAuth lifecycle stays provider-internal; startup status is user-visible.
   "fuzzyFileSearch/",  // fuzzyFileSearch/sessionUpdated, fuzzyFileSearch/sessionCompleted
   "windows",           // windows/worldWritableWarning, windowsSandbox/setupCompleted
   "app/",              // app/list/updated (EXPERIMENTAL)
@@ -658,7 +660,11 @@ export class CodexAppServer extends EventEmitter {
       needsShell = true;
     }
 
-    const child = spawn(resolvedCliPath, ["app-server"], {
+    const configArgs = (this.options.configOverrides ?? []).flatMap((override) => [
+      "-c",
+      override,
+    ]);
+    const child = spawn(resolvedCliPath, ["app-server", ...configArgs], {
       stdio: ["pipe", "pipe", "pipe"],
       shell: needsShell,
       cwd: workingDirectory,

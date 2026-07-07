@@ -180,10 +180,6 @@ vi.mock("../RetryBanner", () => ({
   RetryBanner: () => <div />,
 }));
 
-vi.mock("../InterruptStopBanner", () => ({
-  InterruptStopBanner: () => <div />,
-}));
-
 vi.mock("../SlashCommandPopup", () => ({
   SlashCommandPopup: () => <div />,
 }));
@@ -250,6 +246,15 @@ function makeSavedAnnotation(): SavedPreviewAnnotation {
       },
     },
     createdAt: 1_783_036_800_000,
+  };
+}
+
+function makePreviewAnnotationBundle() {
+  const { createdAt, ...annotation } = makeSavedAnnotation();
+  void createdAt;
+  return {
+    schemaVersion: 1 as const,
+    annotations: [annotation],
   };
 }
 
@@ -488,10 +493,7 @@ describe("Composer checkout confirmation", () => {
       newThreadBranch: "main",
       selectedWorktree: null,
     });
-    const previewAnnotations = {
-      schemaVersion: 1 as const,
-      annotations: [makeSavedAnnotation()],
-    };
+    const previewAnnotations = makePreviewAnnotationBundle();
     useQueueStore.getState().enqueue(thread.id, {
       content: "Message A",
       displayContent: "Message A",
@@ -523,5 +525,211 @@ describe("Composer checkout confirmation", () => {
         previewAnnotations,
       });
     });
+  });
+
+  it("drops restored annotations when the chip is removed before saving a queued edit", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      runningThreadIds: new Set([thread.id]),
+      records: seedThreadRecord(thread.id),
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Fix the preview",
+      displayContent: "Fix the preview",
+      mentions: undefined,
+      previewAnnotations: makePreviewAnnotationBundle(),
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Edit Fix the preview"));
+    await user.click(screen.getByLabelText("Remove 1 annotation"));
+    await user.type(screen.getByLabelText("Message Mcode"), "Fix the preview without annotations");
+    await user.click(screen.getByLabelText("Queue message"));
+
+    await waitFor(() => {
+      const queue = useQueueStore.getState().queues[thread.id] ?? [];
+      expect(queue[0]).toMatchObject({
+        content: "Fix the preview without annotations",
+      });
+      expect(queue[0]?.previewAnnotations).toBeUndefined();
+    });
+  });
+
+  it("sends undefined annotations after a restored queued annotation chip is removed", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Fix the preview",
+      displayContent: "Fix the preview",
+      mentions: undefined,
+      previewAnnotations: makePreviewAnnotationBundle(),
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Edit Fix the preview"));
+    await user.click(screen.getByLabelText("Remove 1 annotation"));
+    await user.type(screen.getByLabelText("Message Mcode"), "Fix the preview without annotations");
+    await user.click(screen.getByLabelText("Send message"));
+
+    await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
+    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(sendCall?.[17]).toBeUndefined();
+  });
+
+  it("does not resurrect restored annotations when swapping after chip removal", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Message A",
+      displayContent: "Message A",
+      mentions: undefined,
+      previewAnnotations: makePreviewAnnotationBundle(),
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Message B",
+      displayContent: "Message B",
+      mentions: undefined,
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Edit Message A"));
+    await user.click(screen.getByLabelText("Remove 1 annotation"));
+    await user.type(screen.getByLabelText("Message Mcode"), "Message A edited");
+    await user.click(screen.getByLabelText("Edit Message B"));
+
+    await waitFor(() => {
+      const queue = useQueueStore.getState().queues[thread.id] ?? [];
+      expect(queue[0]).toMatchObject({
+        content: "Message A edited",
+      });
+      expect(queue[0]?.previewAnnotations).toBeUndefined();
+    });
+  });
+
+  it("removes an annotation-only queued edit after clearing the restored chip", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "",
+      displayContent: "",
+      mentions: undefined,
+      previewAnnotations: makePreviewAnnotationBundle(),
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^Edit\s*$/ }));
+    await user.click(screen.getByLabelText("Remove 1 annotation"));
+    await user.click(screen.getByLabelText("Send message"));
+
+    await waitFor(() => {
+      expect(useQueueStore.getState().queues[thread.id] ?? []).toEqual([]);
+    });
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("restores queued annotations into composer edit state", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    const previewAnnotations = makePreviewAnnotationBundle();
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Fix the preview",
+      displayContent: "Fix the preview",
+      mentions: undefined,
+      previewAnnotations,
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    await userEvent.click(screen.getByLabelText("Edit Fix the preview"));
+
+    expect(screen.getByTestId("composer-annotation-bundle")).toHaveTextContent(
+      "1 annotation",
+    );
+    expect(usePreviewAnnotationStore.getState().byThread[thread.id]).toMatchObject([
+      {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        note: "Make the content flush with the page edge.",
+      },
+    ]);
+    expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(true);
   });
 });

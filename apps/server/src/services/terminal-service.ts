@@ -52,10 +52,16 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const TERM_NAME = "xterm-256color";
 
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** Immutable record describing a single PTY session. */
 interface PtySession {
   readonly id: string;
   readonly threadId: string;
+  readonly shell: string;
+  readonly cwd: string;
   readonly pty: IPty;
   readonly dataDisposable: IDisposable;
   readonly exitDisposable: IDisposable;
@@ -194,13 +200,25 @@ export class TerminalService {
 
     logger.info("Spawning PTY", { id, scopeId, shell, cwd });
 
-    const pty = getSpawn()(shell, [], {
-      name: TERM_NAME,
-      cols: DEFAULT_COLS,
-      rows: DEFAULT_ROWS,
-      cwd,
-      env: this.envService.getEnv(),
-    });
+    let pty: IPty;
+    try {
+      pty = getSpawn()(shell, [], {
+        name: TERM_NAME,
+        cols: DEFAULT_COLS,
+        rows: DEFAULT_ROWS,
+        cwd,
+        env: this.envService.getEnv(),
+      });
+    } catch (err) {
+      logger.error("PTY spawn failed", {
+        id,
+        scopeId,
+        shell,
+        cwd,
+        error: describeError(err),
+      });
+      throw err;
+    }
 
     let seq = 0;
 
@@ -227,6 +245,7 @@ export class TerminalService {
     this.replayBuffers.set(id, replayBuffer);
 
     this.pidRegistry.register(id, pty.pid, shell);
+    logger.info("PTY spawned", { id, pid: pty.pid, scopeId, shell, cwd });
     // Attach the shell PID to the server's Job Object. node-pty uses ConPTY
     // on Windows, which can spawn processes with CREATE_BREAKAWAY_FROM_JOB,
     // so explicit assignment is needed — inheritance alone is not sufficient.
@@ -247,7 +266,16 @@ export class TerminalService {
       fc.push(currentSeq, bytes);
     });
 
-    const exitDisposable = pty.onExit(({ exitCode }) => {
+    const exitDisposable = pty.onExit(({ exitCode, signal }) => {
+      logger.info("PTY exited", {
+        id,
+        pid: pty.pid,
+        scopeId,
+        shell,
+        cwd,
+        exitCode,
+        signal,
+      });
       this.sender?.json("terminal.exit", { ptyId: id, code: exitCode });
       this.removePty(id);
     });
@@ -255,6 +283,8 @@ export class TerminalService {
     const session: PtySession = {
       id,
       threadId: scopeId,
+      shell,
+      cwd,
       pty,
       dataDisposable,
       exitDisposable,
@@ -309,20 +339,54 @@ export class TerminalService {
   write(ptyId: string, data: string): void {
     const session = this.sessions.get(ptyId);
     if (!session) throw new Error(`PTY not found: ${ptyId}`);
-    session.pty.write(data);
+    try {
+      session.pty.write(data);
+    } catch (err) {
+      logger.error("PTY write failed", {
+        id: session.id,
+        pid: session.pty.pid,
+        threadId: session.threadId,
+        shell: session.shell,
+        cwd: session.cwd,
+        bytes: Buffer.byteLength(data, "utf8"),
+        error: describeError(err),
+      });
+      throw err;
+    }
   }
 
   /** Resize a PTY session. */
   resize(ptyId: string, cols: number, rows: number): void {
     const session = this.sessions.get(ptyId);
     if (!session) throw new Error(`PTY not found: ${ptyId}`);
-    session.pty.resize(cols, rows);
+    try {
+      session.pty.resize(cols, rows);
+    } catch (err) {
+      logger.error("PTY resize failed", {
+        id: session.id,
+        pid: session.pty.pid,
+        threadId: session.threadId,
+        shell: session.shell,
+        cwd: session.cwd,
+        cols,
+        rows,
+        error: describeError(err),
+      });
+      throw err;
+    }
   }
 
   /** Kill a single PTY session. No-op if the ID is unknown. */
   async kill(ptyId: string): Promise<void> {
     const session = this.sessions.get(ptyId);
     if (!session) return;
+    logger.info("PTY kill requested", {
+      id: session.id,
+      pid: session.pty.pid,
+      threadId: session.threadId,
+      shell: session.shell,
+      cwd: session.cwd,
+    });
     await this.destroyPty(session);
     this.removePty(ptyId);
   }
@@ -417,7 +481,9 @@ export class TerminalService {
     } catch (err) {
       logger.warn("Failed to dispose data listener", {
         id: session.id,
-        error: err,
+        pid: session.pty.pid,
+        threadId: session.threadId,
+        error: describeError(err),
       });
     }
     try {
@@ -425,7 +491,9 @@ export class TerminalService {
     } catch (err) {
       logger.warn("Failed to dispose exit listener", {
         id: session.id,
-        error: err,
+        pid: session.pty.pid,
+        threadId: session.threadId,
+        error: describeError(err),
       });
     }
     // Kill the PTY first so node-pty's conpty cleanup agent (conpty_console_list_agent)
@@ -437,7 +505,11 @@ export class TerminalService {
     } catch (err) {
       logger.warn("Failed to kill PTY process", {
         id: session.id,
-        error: err,
+        pid: session.pty.pid,
+        threadId: session.threadId,
+        shell: session.shell,
+        cwd: session.cwd,
+        error: describeError(err),
       });
     }
     // Kill any grandchildren (git, npm, etc.) that were not attached to the

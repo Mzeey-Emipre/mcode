@@ -127,6 +127,10 @@ test.describe("Composer Codex fast mode", () => {
     const settings = getDefaultSettings();
     settings.provider.codex.fastMode = true;
     await bootComposer(page, settings);
+    const modelOptions = page.getByRole("button", { name: /Medium/ });
+    await expect(modelOptions.getByText("FAST")).toHaveCount(0);
+    await expect(modelOptions.getByTestId("composer-fast-mode-icon")).toBeVisible();
+
     await page.getByRole("button", { name: /Medium/ }).click();
     const fastSwitch = page.getByTestId("composer-codex-fast-switch");
     await expect(fastSwitch).toBeVisible({ timeout: 10_000 });

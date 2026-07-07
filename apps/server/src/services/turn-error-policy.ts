@@ -17,6 +17,10 @@ export type TurnErrorKind = "transient" | "fatal";
  *   `ENOENT` is intentionally excluded — a missing CLI is fatal, not a flake.
  * - Brief network blip: a dropped or timed-out connection to the provider
  *   (`ECONNRESET`, `ETIMEDOUT`, `socket hang up`, `fetch failed`).
+ * - Codex MCP transport churn: Codex app-server can exit when a configured
+ *   MCP transport disappears mid-session. A fresh app-server session gets one
+ *   retry, while normal MCP startup failures are reported through provider
+ *   status notifications rather than treated as Mcode initialization failure.
  */
 const TRANSIENT_SIGNATURES: readonly RegExp[] = [
   /\bacp connection closed\b/i,
@@ -27,6 +31,8 @@ const TRANSIENT_SIGNATURES: readonly RegExp[] = [
   /\bETIMEDOUT\b/i,
   /\bsocket hang up\b/i,
   /\bfetch failed\b/i,
+  /\btransport channel closed\b/i,
+  /\bhttp\/request failed\b/i,
 ];
 
 /** One original send plus one automatic retry. */

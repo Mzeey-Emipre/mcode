@@ -996,6 +996,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         const entry = this.runtime.get(sessionId);
         if (entry && turnId) entry.pendingTurnId = turnId;
       }
+      if (server.threadId) {
+        mapper.setMainCodexThreadId(server.threadId);
+      }
       const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification);
       for (const event of generatedImageEvents) {
         this.emit("event", event);

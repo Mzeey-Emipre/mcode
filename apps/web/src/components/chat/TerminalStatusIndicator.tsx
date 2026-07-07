@@ -1,8 +1,8 @@
 import { useCallback } from "react";
-import { TerminalSquare } from "lucide-react";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { executeCommand } from "@/lib/command-registry";
+import { Spinner } from "@/components/ui/spinner";
 
 const SLOW_SPIN_STYLE = { animationDuration: "2s" } as const;
 
@@ -26,10 +26,7 @@ export function TerminalStatusIndicator() {
       onClick={togglePanel}
       className="flex cursor-pointer items-center gap-1.5 text-[11px] hover:opacity-80"
     >
-      <TerminalSquare
-        className="h-3 w-3 animate-spin text-muted-foreground"
-        style={SLOW_SPIN_STYLE}
-      />
+      <Spinner size={12} className="text-muted-foreground" style={SLOW_SPIN_STYLE} />
       <span className="flex items-center gap-1.5 text-muted-foreground font-medium">
         <span className="size-1.5 rounded-full bg-primary animate-pulse" />
         {count} active terminal{count !== 1 ? "s" : ""}

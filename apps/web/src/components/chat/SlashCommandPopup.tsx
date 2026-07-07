@@ -8,6 +8,7 @@ import { computeFixedPopupPosition } from "./popup-position";
 
 const ITEM_HEIGHT = 44; // px per row
 const VISIBLE_ITEMS = 8;
+const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
 // Footer (Refresh row) intrinsic height: border-t (1px) + py-1 (8px) + icon
 // button height (~20px). Used to estimate popup height for the above/below
 // placement calculation; the rendered footer remains naturally sized.
@@ -91,7 +92,9 @@ export function SlashCommandPopup({
   // those cases would cause unnecessary above-placement flips.
   const willRenderList = state.kind === "ready" || state.kind === "staleRevalidating";
   const estimatedHeight =
-    Math.min(items.length, VISIBLE_ITEMS) * ITEM_HEIGHT +
+    (willRenderList
+      ? Math.min(items.length, VISIBLE_ITEMS) * ITEM_HEIGHT
+      : STATUS_ROW_HEIGHT) +
     (willRenderList ? FOOTER_HEIGHT : 0);
   const style = computeFixedPopupPosition({
     anchorRect,

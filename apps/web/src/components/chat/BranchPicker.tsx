@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { GitBranch, ChevronDown, Loader2, GitPullRequest } from "lucide-react";
+import { GitBranch, ChevronDown, GitPullRequest } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 import type { GitBranch as GitBranchType, PrDetail } from "@/transport/types";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
@@ -169,7 +170,7 @@ export function BranchPicker({
             {pr.branch} &middot; {pr.author}
           </span>
         </div>
-        {isFetching && <Loader2 size={12} className="animate-spin shrink-0 text-muted-foreground" />}
+        {isFetching && <Spinner size={12} className="text-muted-foreground" />}
       </button>
     );
   };
@@ -214,7 +215,7 @@ export function BranchPicker({
           <div className="max-h-[250px] overflow-y-auto p-1">
             {loading ? (
               <div className="flex items-center justify-center py-4">
-                <Loader2 size={16} className="animate-spin text-muted-foreground" />
+                <Spinner size={16} className="text-muted-foreground" />
               </div>
             ) : activeTab === "local" ? (
               localBranches.length === 0 ? (
@@ -231,7 +232,7 @@ export function BranchPicker({
             ) : activeTab === "prs" ? (
               prsLoading ? (
                 <div className="flex items-center justify-center py-4">
-                  <Loader2 size={16} className="animate-spin text-muted-foreground" />
+                  <Spinner size={16} className="text-muted-foreground" />
                 </div>
               ) : filteredPrs.length === 0 ? (
                 <p className="px-2 py-3 text-center text-xs text-muted-foreground">No pull requests match</p>

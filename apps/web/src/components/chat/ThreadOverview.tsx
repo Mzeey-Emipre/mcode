@@ -12,12 +12,12 @@ import {
   Info,
   Laptop,
   ListChecks,
-  Loader2,
   Menu,
   Plus,
   RefreshCw,
   Search,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
@@ -1510,7 +1510,7 @@ function CreateThreadBranchDialog({
             disabled={submitting || !finalBranchName}
             className="min-w-[7rem] gap-1.5"
           >
-            {submitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+            {submitting ? <Spinner size={14} className="text-current" /> : null}
             {submitLabel}
           </Button>
         </DialogFooter>
