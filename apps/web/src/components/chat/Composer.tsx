@@ -14,7 +14,6 @@ import {
   Lock,
   Unlock,
   ChevronDown,
-  Loader2,
   Check,
   ListChecks,
   MoreHorizontal,
@@ -23,8 +22,10 @@ import {
   Info,
   Trash2,
   X,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -81,7 +82,6 @@ import { ComposerQueueList } from "./ComposerQueueList";
 import { ContextTracker } from "./ContextTracker";
 import { CompactingBanner } from "./CompactingBanner";
 import { RetryBanner } from "./RetryBanner";
-import { InterruptStopBanner } from "./InterruptStopBanner";
 import { ComposerBranchBar } from "./ComposerBranchBar";
 import { ComposerReplyBar } from "./ComposerReplyBar";
 import { PlanPreview } from "./PlanPreview";
@@ -118,7 +118,10 @@ import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { ProviderUnavailableBanner } from "./ProviderUnavailableBanner";
 import { appendBrowserCaptureFence } from "@/lib/browser-capture-append";
-import { appendPreviewAnnotationFence } from "@/lib/preview-annotation-append";
+import {
+  appendPreviewAnnotationFence,
+  stripPreviewAnnotationFence,
+} from "@/lib/preview-annotation-append";
 import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
@@ -130,7 +133,6 @@ import {
 } from "@/lib/browser-capture-spill";
 
 const EMPTY_TASK_BUBBLE_TASKS: readonly TaskItem[] = [];
-
 /** Build structured preview metadata payloads paired with outbound attachment IDs. */
 function buildAttachedBrowserCaptures(list: PendingAttachment[]): AttachedBrowserCapture[] {
   const rows: AttachedBrowserCapture[] = [];
@@ -964,6 +966,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
    * code path that ends edit mode.
    */
   const editingOriginalRef = useRef<QueuedMessage | null>(null);
+  const restoredPreviewAnnotationsClearedRef = useRef(false);
   /**
    * Text queued for send while the child thread's handoff context is still generating.
    * Fires automatically when handoff status transitions to ready or fallback.
@@ -1634,6 +1637,15 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
   }, [threadId, stopAgent]);
 
+  const resolveEditingPreviewAnnotations = useCallback(
+    (currentPreviewAnnotations: PreviewAnnotationBundle | undefined) =>
+      currentPreviewAnnotations ??
+      (editingFromQueue && !restoredPreviewAnnotationsClearedRef.current
+        ? editingOriginalRef.current?.previewAnnotations
+        : undefined),
+    [editingFromQueue],
+  );
+
   /**
    * Build a fresh queue payload from the current composer state. Mirrors the
    * shape that `handleSend`'s queue path constructs - used by the edit-swap
@@ -1657,12 +1669,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const currentPreviewAnnotations = annotationScopeId
         ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
         : undefined;
+      const effectivePreviewAnnotations =
+        resolveEditingPreviewAnnotations(currentPreviewAnnotations);
       return {
         content: trimmedInput,
         displayContent: trimmedInput,
         mentions: mentionsSnapshot.length > 0 ? mentionsSnapshot : undefined,
-        previewAnnotations:
-          currentPreviewAnnotations ?? editingOriginalRef.current?.previewAnnotations,
+        previewAnnotations: effectivePreviewAnnotations,
         attachments: attachmentMetas,
         model: modelId,
         permissionMode: access,
@@ -1679,6 +1692,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     },
     [
       annotationScopeId,
+      resolveEditingPreviewAnnotations,
       modelId,
       access,
       reasoning,
@@ -1733,10 +1747,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       if (!popped) return;
 
       editingOriginalRef.current = popped;
+      restoredPreviewAnnotationsClearedRef.current = false;
       setEditingFromQueue({ messageId: popped.id, originalIndex: targetIndex });
       useQueueStore.getState().setEditingThreadId(threadId);
 
-      const text = popped.displayContent || popped.content;
+      const text = stripPreviewAnnotationFence(popped.displayContent || popped.content);
       const poppedMentions = popped.mentions ?? [];
       setInput(text);
       setMentions(poppedMentions);
@@ -1772,10 +1787,21 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         void releaseBrowserCaptureSpills(popped.browserCaptureSpillPaths);
       }
 
+      if (annotationScopeId) {
+        const restored = usePreviewAnnotationStore
+          .getState()
+          .restoreBundle(annotationScopeId, popped.previewAnnotations);
+        setPreviewDesignModeActive(
+          annotationScopeId,
+          restored && Boolean(popped.previewAnnotations?.annotations.length),
+        );
+      }
+
       editorRef.current?.focus();
     },
     [
       threadId,
+      annotationScopeId,
       editingFromQueue,
       input,
       attachments,
@@ -1791,6 +1817,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       setContextWindow,
       setThinking,
       setCodexFastMode,
+      setPreviewDesignModeActive,
     ],
   );
 
@@ -1826,8 +1853,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       });
     }
     editingOriginalRef.current = null;
+    restoredPreviewAnnotationsClearedRef.current = false;
     setEditingFromQueue(null);
     useQueueStore.getState().setEditingThreadId(null);
+    if (annotationScopeId) {
+      usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+      setPreviewDesignModeActive(annotationScopeId, false);
+    }
     scheduleDrainAfterEdit(threadId);
     setInput("");
     setMentions([]);
@@ -1839,7 +1871,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         root.append($createParagraphNode());
       });
     }
-  }, [threadId, editingFromQueue, setInput, setAttachments]);
+  }, [
+    threadId,
+    annotationScopeId,
+    editingFromQueue,
+    setInput,
+    setAttachments,
+    setPreviewDesignModeActive,
+  ]);
 
   const handleFetchAndSelect = useCallback(async (branch: string, prNumber: number) => {
     if (!workspaceId) return;
@@ -2133,7 +2172,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
       : undefined;
     const effectivePreviewAnnotations =
-      outboundPreviewAnnotations ?? (editingFromQueue ? editingOriginalRef.current?.previewAnnotations : undefined);
+      resolveEditingPreviewAnnotations(outboundPreviewAnnotations);
     if (trimmed.length === 0 && attachments.length === 0 && !effectivePreviewAnnotations) {
       // Empty submit while editing a queued message = the user emptied it
       // intentionally. Treat as "remove from queue" instead of silently
@@ -2141,8 +2180,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       if (editingFromQueue) {
         const slot = editingFromQueue.originalIndex;
         editingOriginalRef.current = null;
+        restoredPreviewAnnotationsClearedRef.current = false;
         setEditingFromQueue(null);
         useQueueStore.getState().setEditingThreadId(null);
+        if (annotationScopeId) {
+          usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+          setPreviewDesignModeActive(annotationScopeId, false);
+        }
         if (threadId) scheduleDrainAfterEdit(threadId);
         useToastStore
           .getState()
@@ -2225,6 +2269,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           );
       }
       editingOriginalRef.current = null;
+      restoredPreviewAnnotationsClearedRef.current = false;
       setEditingFromQueue(null);
       useQueueStore.getState().setEditingThreadId(null);
 
@@ -2332,6 +2377,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       setPrDismissed(false);
       // Edit mode ends on send regardless of which path we took.
       editingOriginalRef.current = null;
+      restoredPreviewAnnotationsClearedRef.current = false;
       setEditingFromQueue(null);
       useQueueStore.getState().setEditingThreadId(null);
       const currentAttachments = collectAndClearAttachments();
@@ -2463,7 +2509,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setPreviewDesignModeActive]);
+  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setPreviewDesignModeActive, resolveEditingPreviewAnnotations]);
 
   useEffect(() => {
     if (!annotationScopeId) return;
@@ -2872,7 +2918,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               bundle={annotationBundleForDisplay}
               threadId={threadId}
               testId="composer-annotation-bundle"
-              onRemove={() => usePreviewAnnotationStore.getState().clearThread(annotationScopeId)}
+              onRemove={() => {
+                if (editingFromQueue && editingOriginalRef.current?.previewAnnotations) {
+                  restoredPreviewAnnotationsClearedRef.current = true;
+                }
+                usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+              }}
             />
           </div>
         ) : null}
@@ -2881,7 +2932,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         {/* Compacting banner — shown while the SDK is summarising the context window */}
         {isCompacting && <CompactingBanner />}
         {!isCompacting && hasRetryState && threadId && <RetryBanner threadId={threadId} />}
-        {threadId && <InterruptStopBanner threadId={threadId} />}
 
         {/* Drag overlay */}
         {isDragOver && (
@@ -2960,13 +3010,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             const activeChipLabel =
               hasReasoning && has1M && ctxMode === "1m"
                 ? "1M"
-                : hasReasoning && hasCodexFast && effectiveCodexFast
-                  ? "FAST"
-                  : !hasReasoning && hasThinking && thinkingOn
-                    ? "ON"
-                    : hasCodexFast && codexFastMode === null && effectiveCodexFast
-                      ? "FAST"
-                      : null;
+                : !hasReasoning && hasThinking && thinkingOn
+                  ? "ON"
+                  : null;
+            const showFastIcon = hasCodexFast && effectiveCodexFast;
 
             const tooltipLabel = hasReasoning
               ? has1M || hasThinking || hasCodexFast ? "Reasoning & model options" : "Reasoning level"
@@ -2998,6 +3045,15 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                         }}
                         className="gap-1.5 text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-colors"
                       >
+                        {showFastIcon && (
+                          <Zap
+                            size={12}
+                            strokeWidth={2.5}
+                            aria-hidden="true"
+                            data-testid="composer-fast-mode-icon"
+                            className="shrink-0 text-foreground/80"
+                          />
+                        )}
                         <span className="text-sm">{triggerLabel}</span>
                         {activeChipLabel && (
                           <span
@@ -3260,7 +3316,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             className={cn(
               "rounded-full p-1.5 transition-colors",
               isThreadScaffold
-                ? "bg-primary text-primary-foreground animate-spin"
+                ? "bg-primary text-primary-foreground"
                 : isAgentRunning && hasContent
                   ? "bg-primary/60 text-primary-foreground hover:bg-primary/75"
                   : isAgentRunning
@@ -3289,7 +3345,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             }
           >
             {isThreadScaffold ? (
-              <Loader2 size={14} />
+              <Spinner size={14} className="text-current" />
             ) : isAgentRunning && hasContent ? (
               <ArrowUp size={14} />
             ) : isAgentRunning ? (

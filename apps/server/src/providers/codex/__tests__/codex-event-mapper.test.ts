@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { AgentEventSchema } from "@mcode/contracts";
 
 vi.mock("@mcode/shared", () => ({
   getMcodeDir: () => process.env.MCODE_DATA_DIR ?? ".",
@@ -126,6 +127,59 @@ describe("CodexEventMapper", () => {
         turnId: "turn-1",
       },
     ]);
+  });
+
+  it("maps MCP server startup status notifications", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "codex-thread",
+        name: "figma-dev-mode",
+        status: "failed",
+        error: "connection refused",
+        failureReason: "optional server unavailable",
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "mcpServerStartupStatus",
+        threadId: "test-thread",
+        providerId: "codex",
+        serverThreadId: "codex-thread",
+        name: "figma-dev-mode",
+        status: "failed",
+        error: "connection refused",
+        failureReason: "optional server unavailable",
+      },
+    ]);
+  });
+
+  it("maps golden MCP startup status without native thread id and null error into schema-safe event", () => {
+    mapper = new CodexEventMapper("test-thread", "codex-thread");
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        name: "figma-dev-mode",
+        status: "ready",
+        error: null,
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "mcpServerStartupStatus",
+        threadId: "test-thread",
+        providerId: "codex",
+        serverThreadId: "codex-thread",
+        name: "figma-dev-mode",
+        status: "ready",
+      },
+    ]);
+    expect(AgentEventSchema().parse(events[0])).toEqual(events[0]);
   });
 
   it("emits Agent toolUse for item/started collabAgentToolCall", () => {

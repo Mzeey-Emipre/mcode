@@ -2,7 +2,8 @@ import { useRef, useEffect } from "react";
 import { useSidebarSearchStore } from "@/stores/sidebarSearchStore";
 import { ThreadFilterDropdown } from "./ThreadFilterDropdown";
 import { ThreadSortControl } from "./ThreadSortControl";
-import { Search, X, Loader2 } from "lucide-react";
+import { Search, X } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 
 /** Dismissible filter chip. */
 function FilterChip({
@@ -82,10 +83,7 @@ export function ThreadSearchBar({ providers }: { providers: string[] }) {
           data-testid="sidebar-search-input"
         />
         {isSearching && (
-          <Loader2
-            size={10}
-            className="absolute right-8 top-1/2 -translate-y-1/2 animate-spin text-muted-foreground/45 motion-reduce:animate-none"
-          />
+          <Spinner size={10} className="absolute right-8 top-1/2 -translate-y-1/2 text-muted-foreground/45" />
         )}
         {query && !isSearching && (
           <button

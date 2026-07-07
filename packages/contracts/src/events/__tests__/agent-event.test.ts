@@ -69,3 +69,23 @@ describe("AgentEvent ended outcome", () => {
     expect(parsed.outcome).toBe("errored");
   });
 });
+
+describe("AgentEvent MCP startup status", () => {
+  it("parses Codex MCP startup status payloads", () => {
+    const parsed = AgentEventSchema().parse({
+      type: AgentEventType.McpServerStartupStatus,
+      threadId: "thread-1",
+      providerId: "codex",
+      serverThreadId: "codex-thread-1",
+      name: "figma-dev-mode",
+      status: "failed",
+      error: "connection refused",
+      failureReason: "optional server unavailable",
+    });
+
+    expect(parsed.type).toBe(AgentEventType.McpServerStartupStatus);
+    if (parsed.type !== AgentEventType.McpServerStartupStatus) throw new Error("unreachable");
+    expect(parsed.name).toBe("figma-dev-mode");
+    expect(parsed.status).toBe("failed");
+  });
+});

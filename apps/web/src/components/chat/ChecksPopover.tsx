@@ -11,11 +11,11 @@ import { createPortal } from "react-dom";
 import {
   CircleCheck,
   CircleX,
-  Loader2,
   MinusCircle,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 import { CI_ICON_STROKE } from "@/lib/ci-status";
 import type { ChecksStatus, CheckRun } from "@mcode/contracts";
 
@@ -32,7 +32,7 @@ interface ChecksPopoverProps {
 }
 
 interface CheckRunVisual {
-  icon: LucideIcon;
+  icon?: LucideIcon;
   iconClassName: string;
   label: string;
   labelClassName: string;
@@ -52,7 +52,6 @@ const VIEWPORT_PADDING = 8;
 function getRunVisual(run: CheckRun): CheckRunVisual {
   if (run.status !== "completed") {
     return {
-      icon: Loader2,
       iconClassName: "text-primary",
       label: "Running",
       labelClassName: "text-muted-foreground",
@@ -221,11 +220,15 @@ function RunRow({ run }: { run: CheckRun }) {
 
   return (
     <div className="flex h-[30px] min-h-[30px] items-center gap-2 px-3.5 text-sm" title={title}>
-      <Icon
-        size={16}
-        strokeWidth={CI_ICON_STROKE}
-        className={cn("shrink-0", visual.iconClassName, visual.spinning && "status-spin")}
-      />
+      {visual.spinning ? (
+        <Spinner size={16} className={visual.iconClassName} />
+      ) : Icon ? (
+        <Icon
+          size={16}
+          strokeWidth={CI_ICON_STROKE}
+          className={cn("shrink-0", visual.iconClassName)}
+        />
+      ) : null}
       <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
         {run.name}
       </span>

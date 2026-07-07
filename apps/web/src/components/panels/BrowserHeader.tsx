@@ -4,13 +4,13 @@ import {
   ArrowRight,
   ArrowUpRight,
   Camera,
-  Loader2,
   PenTool,
   RotateCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ICON_HIT_SLOP } from "@/lib/ui-hit-target";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
   TooltipContent,
@@ -324,7 +324,7 @@ export function BrowserHeader({
                   )}
                 >
                   {elementPickBusy ? (
-                    <Loader2 size={16} className="animate-spin" aria-hidden />
+                    <Spinner size={16} className="text-current" />
                   ) : (
                     <PenTool size={16} aria-hidden />
                   )}
@@ -357,7 +357,7 @@ export function BrowserHeader({
                   )}
                 >
                   {captureBusy ? (
-                    <Loader2 size={16} className="animate-spin" aria-hidden />
+                    <Spinner size={16} className="text-current" />
                   ) : (
                     <Camera size={16} aria-hidden />
                   )}

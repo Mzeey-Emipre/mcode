@@ -15,7 +15,7 @@ import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { Plus, Trash2, ChevronRight, ChevronDown, GitBranch, GitBranchMinus, Loader2, AlertTriangle, FolderPlus, Folder, Activity } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronDown, GitBranch, GitBranchMinus, AlertTriangle, FolderPlus, Folder, Activity } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
@@ -37,6 +37,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { relativeTime } from "@/lib/time";
@@ -740,7 +741,7 @@ export function ProjectTree() {
           {/* Loading more results from server */}
           {isSearching && (
             <div className="flex items-center gap-1.5 px-4 py-2">
-              <Loader2 size={10} className="animate-spin text-muted-foreground/30" />
+              <Spinner size={10} className="text-muted-foreground/30" />
               <span className="font-mono text-[10px] text-muted-foreground/30">
                 loading more...
               </span>
@@ -896,7 +897,7 @@ export function ProjectTree() {
               disabled={isDeleting}
               onClick={handleDeleteConfirm}
             >
-              {isDeleting && <Loader2 size={14} className="animate-spin" />}
+              {isDeleting && <Spinner size={14} className="text-current" />}
               {isDeleting ? "Deleting..." : "Delete"}
             </Button>
           </div>
@@ -1010,11 +1011,15 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
         chromeClass,
       )}
     >
-      <Icon
-        size={9}
-        strokeWidth={CI_ICON_STROKE}
-        className={cn("shrink-0", agg === "pending" && "status-spin")}
-      />
+      {agg === "pending" ? (
+        <Spinner size={9} className="text-current" />
+      ) : (
+        <Icon
+          size={9}
+          strokeWidth={CI_ICON_STROKE}
+          className="shrink-0"
+        />
+      )}
       <span>{count}</span>
     </span>
   );
@@ -1091,21 +1096,30 @@ function SidebarThreadMarker({ marker, dim }: { marker: SidebarThreadMarker; dim
 
   if (marker.kind === "running") {
     return (
-      <span
+      <Spinner
         aria-label={marker.label}
-        className={cn("shrink-0 status-spin spinner-tail-fade text-primary", dim && "opacity-[0.72]")}
+        className={cn("text-primary", dim && "opacity-[0.72]")}
       />
     );
   }
 
   if (marker.kind === "ci") {
     const { icon: Icon, color } = getCiVisual(marker.aggregate);
+    if (marker.aggregate === "pending") {
+      return (
+        <Spinner
+          size={13}
+          aria-label={marker.label}
+          className={cn(color, dim && "opacity-[0.72]")}
+        />
+      );
+    }
     return (
       <Icon
         size={13}
         strokeWidth={CI_ICON_STROKE}
         aria-label={marker.label}
-        className={cn("shrink-0", color, marker.aggregate === "pending" && "status-spin", dim && "opacity-[0.72]")}
+        className={cn("shrink-0", color, dim && "opacity-[0.72]")}
       />
     );
   }

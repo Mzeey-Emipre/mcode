@@ -20,7 +20,9 @@ import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifi
 import { GripVertical, Paperclip, Pencil, Play, Trash2, X, Zap } from "lucide-react";
 import { useQueueStore, type QueuedMessage } from "@/stores/queueStore";
 import { providerSupportsSendNow } from "@/lib/model-registry";
+import { stripPreviewAnnotationFence } from "@/lib/preview-annotation-append";
 import { cn } from "@/lib/utils";
+import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
@@ -113,9 +115,6 @@ export function ComposerQueueList({
       <header className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
         <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/70">
           Queued
-          <span className="ml-1.5 tabular-nums text-muted-foreground/45">
-            {queue.length}
-          </span>
         </span>
         <div className="flex items-center gap-1.5">
           {!isAgentRunning && !isEditing && !isPaused && (
@@ -219,8 +218,9 @@ const QueueRow = memo(function QueueRow({
   void role;
   void tabIndex;
 
-  const previewText = msg.displayContent || msg.content;
+  const previewText = stripPreviewAnnotationFence(msg.displayContent || msg.content);
   const hasAttachments = msg.attachments.length > 0;
+  const hasAnnotations = (msg.previewAnnotations?.annotations.length ?? 0) > 0;
 
   return (
     <div
@@ -236,10 +236,6 @@ const QueueRow = memo(function QueueRow({
     >
       <DragGrip listeners={listeners} />
 
-      <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-muted-foreground/45">
-        {String(index + 1).padStart(2, "0")}
-      </span>
-
       {/* Row body acts as a secondary click target. The labelled edit
           affordance is the pencil button in the action cluster - this
           element has no aria-label so screen readers don't see two
@@ -247,13 +243,28 @@ const QueueRow = memo(function QueueRow({
       <button
         type="button"
         onClick={onEdit}
+        aria-label={previewText ? undefined : "Edit queued annotation"}
         title="Edit in composer"
         className="min-w-0 flex-1 cursor-text text-left"
       >
-        <span className="block truncate text-[12px] leading-snug text-foreground/90">
-          {previewText}
-        </span>
+        {previewText ? (
+          <span className="block truncate text-[12px] leading-snug text-foreground/90">
+            {previewText}
+          </span>
+        ) : hasAnnotations ? (
+          <span className="sr-only">Preview annotation</span>
+        ) : (
+          <span className="sr-only">Empty queued message</span>
+        )}
       </button>
+
+      {hasAnnotations && msg.previewAnnotations ? (
+        <PreviewAnnotationBundleChip
+          bundle={msg.previewAnnotations}
+          testId="queue-annotation-bundle"
+          className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px]"
+        />
+      ) : null}
 
       {hasAttachments && (
         <span

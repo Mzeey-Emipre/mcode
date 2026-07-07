@@ -258,6 +258,65 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     expect(server.isAlive).toBe(false);
   }, 10_000);
 
+  it("passes config overrides to codex app-server as -c arguments", async () => {
+    harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-config" } } } : { result: {} },
+    );
+
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      getSpawnEnv: () => ({}),
+      configOverrides: ["mcp_servers.figma-dev-mode.enabled=false"],
+    });
+
+    await server.start();
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "/usr/bin/codex",
+      ["app-server", "-c", "mcp_servers.figma-dev-mode.enabled=false"],
+      expect.any(Object),
+    );
+  }, 10_000);
+
+  it("forwards MCP startup status notifications to provider mapping", async () => {
+    const { child } = harnessFakeServer((req): Record<string, unknown> => {
+      switch (req.method) {
+        case "thread/start":
+          return { result: { thread: { id: "thread-mcp-status" } } };
+        default:
+          return { result: {} };
+      }
+    });
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const notification = vi.fn();
+
+    server.on("notification", notification);
+    await server.start();
+    child.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "thread-mcp-status",
+        name: "figma-dev-mode",
+        status: "cancelled",
+        failureReason: "optional server was cancelled",
+      },
+    }) + "\n");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(notification).toHaveBeenCalledWith({
+      jsonrpc: "2.0",
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "thread-mcp-status",
+        name: "figma-dev-mode",
+        status: "cancelled",
+        failureReason: "optional server was cancelled",
+      },
+    });
+  }, 10_000);
+
   it("(d) kills the spawned child via taskkill on Windows so a failed start leaves no orphan", async () => {
     harnessFakeServer(rejectInitialize);
 

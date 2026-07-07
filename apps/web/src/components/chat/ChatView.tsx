@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { GitFork, Loader2 } from "lucide-react";
+import { GitFork } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   useActiveWorkspaceThread,
@@ -12,6 +12,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -161,7 +162,7 @@ function ThreadPreparingShell({
           />
         ) : (
           <div className="text-muted-foreground flex items-center justify-center gap-2 text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            <Spinner size={16} />
             <span>{statusLabel}</span>
           </div>
         )}

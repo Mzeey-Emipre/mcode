@@ -1,5 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { relativeTime } from "@/lib/time";
+import { formatDuration, relativeTime } from "@/lib/time";
+
+describe("formatDuration", () => {
+  it("formats seconds below a minute", () => {
+    expect(formatDuration(59)).toBe("59s");
+  });
+
+  it("formats the minute threshold", () => {
+    expect(formatDuration(60)).toBe("1m");
+  });
+
+  it("formats minutes with remaining seconds", () => {
+    expect(formatDuration(75)).toBe("1m 15s");
+  });
+
+  it("formats the hour threshold", () => {
+    expect(formatDuration(3600)).toBe("1h");
+  });
+
+  it("formats hours with remaining minutes", () => {
+    expect(formatDuration(7070)).toBe("1h 57m");
+  });
+
+  it("formats days with remaining hours", () => {
+    expect(formatDuration(90061)).toBe("1d 1h");
+  });
+});
 
 describe("relativeTime", () => {
   beforeEach(() => {

@@ -54,8 +54,8 @@ export function ThreadTitleEditor({
       didSaveRef.current = true;
     } else if (e.key === "Escape") {
       e.preventDefault();
-      // Stop propagation so the app-level Escape shortcut doesn't also fire
-      // (which would call setActiveThread(null) and deactivate the thread).
+      // Stop propagation so the app-level Escape shortcut does not also handle
+      // overlay state while the title edit is being cancelled.
       e.stopPropagation();
       didSaveRef.current = true;
       onCancel();

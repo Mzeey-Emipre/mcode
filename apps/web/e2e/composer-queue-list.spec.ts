@@ -117,6 +117,80 @@ async function seedQueue(
   );
 }
 
+async function seedAnnotatedQueue(
+  page: Page,
+  threadId: string,
+  content = "Fix the preview",
+): Promise<void> {
+  await page.evaluate(
+    ({ tid, messageContent }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stores: any[] = (window as any).__mcodeStores ?? [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const queueStore = stores.find((s: any) => {
+        const st = s.getState();
+        return "queues" in st && "enqueue" in st;
+      });
+      if (!queueStore) throw new Error("[E2E] queue store not found");
+      const bundle = {
+        schemaVersion: 1,
+        annotations: [
+          {
+            id: "550e8400-e29b-41d4-a716-446655440001",
+            displayNumber: 1,
+            pageIdentity: "http://localhost:44354/product-preview",
+            pageContext: {
+              schemaVersion: 2,
+              pageUrl: "http://localhost:44354/product-preview",
+              pageTitle: "Product preview",
+              capturedAt: "2026-07-01T00:00:00.000Z",
+              bounds: { x: 0, y: 0, width: 1280, height: 720 },
+            },
+            targetContext: {
+              label: "html",
+              selectorHint: "html",
+              bounds: { x: 12, y: 16, width: 240, height: 80 },
+            },
+            note: "Make the content flush with the page edge.",
+            snapshot: {
+              id: "shot-1",
+              name: "annotation.png",
+              mimeType: "image/png",
+              sizeBytes: 128,
+              sourcePath: "preview/annotation.png",
+              capture: {
+                schemaVersion: 2,
+                pageUrl: "http://localhost:44354/product-preview",
+                pageTitle: "Product preview",
+                capturedAt: "2026-07-01T00:00:00.000Z",
+                bounds: { x: 12, y: 16, width: 240, height: 80 },
+              },
+            },
+          },
+        ],
+      };
+      queueStore.setState({
+        queues: {
+          [tid]: [
+            {
+              id: "q-annotated",
+              content: `${messageContent}\n\n<!-- mcode-preview-annotations:v1\n${JSON.stringify(bundle)}\nmcode-preview-annotations:end -->`,
+              attachments: [],
+              previewAnnotations: bundle,
+              model: "claude-sonnet-4-6",
+              permissionMode: "FULL",
+              provider: "claude",
+              queuedAt: Date.now(),
+            },
+          ],
+        },
+        toast: null,
+      });
+    },
+    { tid: threadId, messageContent: content },
+  );
+}
+
 test.describe("Composer queue list (inline)", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page, {
@@ -154,6 +228,9 @@ test.describe("Composer queue list (inline)", () => {
     const region = page.getByRole("region", { name: "Queued messages" });
     await expect(region).toBeVisible();
     await expect(region.getByText("Queued")).toBeVisible();
+    await expect(region.locator("header")).toHaveText(/Queued\s*(Continue)?\s*Clear all/i);
+    await expect(region.locator("header")).not.toContainText(/\b3\b/);
+    await expect(region.locator("span", { hasText: /^0[1-3]$/ })).toHaveCount(0);
     await expect(region.getByText("Refactor the queue store")).toBeVisible();
     await expect(region.getByText("Wire send-now interrupt")).toBeVisible();
     await expect(region.getByText("Add drag-and-drop reorder")).toBeVisible();
@@ -169,6 +246,44 @@ test.describe("Composer queue list (inline)", () => {
       path: "e2e/screenshots/composer-queue-list-row-hover.png",
       fullPage: false,
     });
+  });
+
+  test("renders annotation count instead of raw transport fence", async ({ page }) => {
+    await setupChat(page, { running: true });
+    await page.waitForSelector('[contenteditable="true"]', { timeout: 30_000 });
+    await seedAnnotatedQueue(page, THREAD.id);
+
+    const region = page.getByRole("region", { name: "Queued messages" });
+    await expect(region.getByText("Fix the preview")).toBeVisible();
+    await expect(region.getByTestId("queue-annotation-bundle")).toHaveText(
+      "1 annotation",
+    );
+    await expect(region).not.toContainText("mcode-preview-annotations:v1");
+    await expect(region).not.toContainText("schemaVersion");
+
+    await page.screenshot({
+      path: "e2e/screenshots/composer-queue-list-annotated-row.png",
+      fullPage: false,
+    });
+
+    await region.getByText("Fix the preview").hover();
+    await page.screenshot({
+      path: "e2e/screenshots/composer-queue-list-annotated-row-hover.png",
+      fullPage: false,
+    });
+  });
+
+  test("renders annotation-only queued messages without fallback text", async ({ page }) => {
+    await setupChat(page, { running: true });
+    await page.waitForSelector('[contenteditable="true"]', { timeout: 30_000 });
+    await seedAnnotatedQueue(page, THREAD.id, "");
+
+    const region = page.getByRole("region", { name: "Queued messages" });
+    await expect(region.getByTestId("queue-annotation-bundle")).toHaveText(
+      "1 annotation",
+    );
+    await expect(region).not.toContainText("Annotation bundle");
+    await expect(region).not.toContainText("mcode-preview-annotations:v1");
   });
 
   test("Continue button is hidden while running and visible when idle", async ({ page }) => {

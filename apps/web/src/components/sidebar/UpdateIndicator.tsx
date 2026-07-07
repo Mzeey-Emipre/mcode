@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Loader2, ArrowUpCircle } from "lucide-react";
+import { ArrowUpCircle } from "lucide-react";
 import { useUpdateStore } from "@/stores/updateStore";
+import { Spinner } from "@/components/ui/spinner";
 
 /**
  * Quiet auto-updater affordance that lives in the sidebar footer. Renders
@@ -23,7 +24,7 @@ export function UpdateIndicator() {
       <div className="space-y-1.5 px-1.5 py-1">
         <div className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <Loader2 size={11} className="animate-spin text-primary" aria-hidden="true" />
+            <Spinner size={11} className="text-primary" />
             Downloading update
           </span>
           <span className="shrink-0 font-mono text-[10px] tabular-nums text-foreground/45">
@@ -108,7 +109,7 @@ export function UpdateIndicator() {
       >
         <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-primary">
           {busy ? (
-            <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+            <Spinner size={12} className="text-current" />
           ) : (
             <ArrowUpCircle size={12} aria-hidden="true" />
           )}

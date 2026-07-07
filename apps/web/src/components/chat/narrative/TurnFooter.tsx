@@ -1,3 +1,4 @@
+import { formatDuration as formatElapsedSeconds } from "@/lib/time";
 import type { NarrativeCounts } from "./types";
 
 /** Props for {@link TurnFooter}. */
@@ -18,9 +19,7 @@ function formatDuration(ms: number | null): string {
   if (ms < 1000) return `${ms}ms`;
   const totalSec = ms / 1000;
   if (totalSec < 60) return `${totalSec.toFixed(1)}s`;
-  const minutes = Math.floor(totalSec / 60);
-  const seconds = Math.round(totalSec % 60);
-  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  return formatElapsedSeconds(Math.floor(totalSec));
 }
 
 /**

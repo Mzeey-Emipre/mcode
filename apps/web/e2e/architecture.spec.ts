@@ -906,7 +906,7 @@ test.describe("Architecture: Settings", () => {
 });
 
 test.describe("Architecture: Keyboard shortcuts", () => {
-  test("Escape deselects thread without crash", async ({ page }) => {
+  test("Escape keeps the active chat selected", async ({ page }) => {
     await mockWebSocketServer(page);
     await interceptZustandStores(page);
     await page.goto("/");
@@ -922,13 +922,10 @@ test.describe("Architecture: Keyboard shortcuts", () => {
     // Thread is active, composer should be visible
     await expect(page.locator('[contenteditable="true"]')).toBeVisible();
 
-    // Press Escape to deselect
+    // Press Escape; it should close transient overlays, not clear the chat.
     await page.keyboard.press("Escape");
 
-    // Deselecting clears activeThreadId, which swaps the chat view for the
-    // project landing. Assert the composer is gone and the store is cleared
-    // (the successful evaluate also proves no crash tore down the app).
-    await expect(page.locator('[contenteditable="true"]')).toBeHidden();
+    await expect(page.locator('[contenteditable="true"]')).toBeVisible();
     const result = await page.evaluate(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stores: any[] = (window as any).__mcodeStores ?? [];
@@ -936,15 +933,13 @@ test.describe("Architecture: Keyboard shortcuts", () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (s: any) => "activeThreadId" in s.getState(),
       );
-      // Distinguish "store missing" from a legitimate null activeThreadId —
-      // `?? sentinel` would collapse the success case (null) into the sentinel.
       return {
         found: Boolean(wsStore),
         activeThreadId: wsStore ? wsStore.getState().activeThreadId : "STORE_MISSING",
       };
     });
     expect(result.found).toBe(true);
-    expect(result.activeThreadId).toBeNull();
+    expect(result.activeThreadId).toBe(THREAD_DIRECT.id);
   });
 });
 

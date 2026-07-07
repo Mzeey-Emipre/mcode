@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useId, type ComponentType } from "react";
-import { ChevronDown, Lock, Check, Loader2, Star } from "lucide-react";
+import { ChevronDown, Lock, Check, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatContextWindow } from "./format-context-window";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import {
   Tooltip,
@@ -503,7 +504,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
       <div className="space-y-0.5">
         {loadingProviders.has(p.id) ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 size={14} className="animate-spin text-muted-foreground" aria-hidden />
+            <Spinner size={14} className="text-muted-foreground" />
             <span className="sr-only">Loading models</span>
           </div>
         ) : (

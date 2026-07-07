@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { Loader2 } from "lucide-react";
 import { useUpdateStore } from "@/stores/updateStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { SettingRow } from "../SettingRow";
 import { SectionHeading } from "../SectionHeading";
 import { Switch } from "@/components/ui/switch";
 import { SegControl } from "../SegControl";
+import { Spinner } from "@/components/ui/spinner";
 import type { UpdateStatus } from "@/transport/desktop-bridge";
 import type { UpdateCheckInterval, UpdateReleaseLine } from "@mcode/contracts";
 import { ConfirmChannelDowngradeDialog } from "./ConfirmChannelDowngradeDialog";
@@ -231,11 +231,7 @@ export function AboutSection() {
                 aria-label={isBusy ? "Checking for updates…" : "Check for updates now"}
               >
                 {isBusy && (
-                  <Loader2
-                    size={11}
-                    className="animate-spin"
-                    aria-hidden="true"
-                  />
+                  <Spinner size={11} className="text-current" />
                 )}
                 {isBusy ? "Checking…" : "Check now"}
               </button>

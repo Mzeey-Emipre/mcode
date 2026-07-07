@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { GitFork, ChevronDown, Loader2 } from "lucide-react";
+import { GitFork, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,7 @@ import type { WorktreeInfo } from "@/transport/types";
 import { normalizeWorktreePath, worktreeBranchLabel } from "@/lib/worktree";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
+import { Spinner } from "@/components/ui/spinner";
 
 interface WorktreePickerProps {
   worktrees: WorktreeInfo[];
@@ -36,7 +37,7 @@ export function WorktreePicker({
         <Button variant="ghost" size="xs" className="text-muted-foreground">
           <GitFork size={12} />
           {selectedName === null
-            ? <Loader2 size={11} className="animate-spin" />
+            ? <Spinner size={11} className="text-current" />
             : <span>{selectedName}</span>}
           <ChevronDown size={10} />
         </Button>
@@ -45,7 +46,7 @@ export function WorktreePicker({
       <PopoverContent align="end" sideOffset={4} className="w-[300px] p-0">
         {loading ? (
           <div className="flex items-center justify-center py-4">
-            <Loader2 size={16} className="animate-spin text-muted-foreground" />
+            <Spinner size={16} className="text-muted-foreground" />
           </div>
         ) : (
           <Command

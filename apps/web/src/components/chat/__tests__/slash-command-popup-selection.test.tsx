@@ -78,6 +78,23 @@ function renderPopup(selectedIndex: number) {
   );
 }
 
+function renderStatusPopup(state: "empty" | "loading" | "error") {
+  return render(
+    <SlashCommandPopup
+      state={
+        state === "error"
+          ? { kind: "error", error: new Error("network failed") }
+          : { kind: state }
+      }
+      selectedIndex={0}
+      anchorRect={makeAnchorRect()}
+      onSelect={() => {}}
+      onDismiss={() => {}}
+      onRetry={() => {}}
+    />,
+  );
+}
+
 function renderLongPopup() {
   return render(
     <SlashCommandPopup
@@ -126,5 +143,21 @@ describe("SlashCommandPopup selection indicator", () => {
     renderLongPopup();
     expect(screen.getByRole("option", { name: /skill-00/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /skill-24/ })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["empty", "No commands match"],
+    ["loading", "Loading commands..."],
+    ["error", "Couldn't load commands: network failed"],
+  ] as const)("positions the %s state above the anchor without overlap", (state, text) => {
+    renderStatusPopup(state);
+    const row =
+      state === "error"
+        ? screen.getByRole("alert")
+        : screen.getByText(text).closest('[role="status"]');
+    if (row === null) throw new Error(`${state} popup row not found`);
+    const popup = row.closest("[data-slash-popup]") as HTMLElement;
+
+    expect(popup.style.top).toBe("352px");
   });
 });

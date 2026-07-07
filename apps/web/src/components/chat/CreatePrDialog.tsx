@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from "react";
-import { Loader2, GitPullRequest, GitBranch, ChevronDown, RefreshCw } from "lucide-react";
+import { GitPullRequest, GitBranch, ChevronDown, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -8,6 +8,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -401,7 +402,7 @@ export function CreatePrDialog({
                 className="w-full gap-1.5"
               >
                 {state === "submitting" && (
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                  <Spinner size={14} className="text-current" />
                 )}
                 Create PR
               </Button>
@@ -424,7 +425,7 @@ export function CreatePrDialog({
                 aria-live="polite"
                 className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
               >
-                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                <Spinner size={16} className="text-muted-foreground" />
                 Generating PR draft…
               </div>
             ) : (
@@ -442,7 +443,7 @@ export function CreatePrDialog({
                       className="h-6 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
                     >
                       {isRegenerating ? (
-                        <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                        <Spinner size={12} className="text-current" />
                       ) : (
                         <RefreshCw className="size-3" aria-hidden="true" />
                       )}
