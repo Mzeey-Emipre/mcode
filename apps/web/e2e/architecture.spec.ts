@@ -387,7 +387,9 @@ test.describe("Architecture: Thread lifecycle", () => {
       activeThreadId: THREAD_WORKTREE.id,
     });
 
-    // The worktree thread has branch "feature-x"
+    await page.getByTestId("header-workspace-menu").click();
+
+    // The worktree thread has branch "feature-x" in Thread Overview.
     await expect(page.locator("text=feature-x")).toBeVisible();
   });
 
