@@ -33,7 +33,7 @@ export const TerminalToolbar = memo(function TerminalToolbar({
             />
           }
         >
-          <Columns2 className="size-3.5" />
+          <Columns2 />
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
           Toggle terminal list
@@ -51,7 +51,7 @@ export const TerminalToolbar = memo(function TerminalToolbar({
             />
           }
         >
-          <Plus className="size-3.5" />
+          <Plus />
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
           New terminal
@@ -69,7 +69,7 @@ export const TerminalToolbar = memo(function TerminalToolbar({
             />
           }
         >
-          <Trash2 className="size-3.5" />
+          <Trash2 />
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
           Kill all

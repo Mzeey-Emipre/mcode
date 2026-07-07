@@ -321,7 +321,7 @@ export function SummaryView() {
   // Empty state — glyph + mono small-caps matching sibling diff views
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-14">
-      <span aria-hidden="true" className="font-mono text-[28px] leading-none text-muted-foreground/20">Σ</span>
+      <span aria-hidden="true" className="font-mono text-2xl leading-none text-muted-foreground/20">Σ</span>
       <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
         no summary
       </p>

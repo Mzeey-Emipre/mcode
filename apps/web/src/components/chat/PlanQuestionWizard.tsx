@@ -274,13 +274,13 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
                 <span className="font-mono text-[10px] tabular-nums tracking-[0.12em] text-muted-foreground/45">
                   {formatStep(i + 1, displayQuestions.length)}
                 </span>
-                <span className="flex-1 truncate text-[12px] text-muted-foreground/60">
+                <span className="flex-1 truncate text-xs text-muted-foreground/60">
                   {prev.question}
                 </span>
                 <span className="flex-shrink-0 max-w-[140px] truncate text-[11.5px] font-medium text-muted-foreground">
                   {answerLabel}
                 </span>
-                <span className="text-[12px] text-[oklch(0.48_0.14_145)]" aria-hidden="true">
+                <span className="text-xs text-[oklch(0.48_0.14_145)]" aria-hidden="true">
                   ✓
                 </span>
               </button>

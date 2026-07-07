@@ -496,8 +496,12 @@ describe("HeaderActions - consolidated header", () => {
     renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
 
     const usageTrigger = screen.getByTestId("thread-overview-usage");
+    const prAction = screen.getByTestId("thread-overview-pr");
+    const recap = screen.getByTestId("thread-overview-recap");
     expect(usageTrigger).toHaveAttribute("aria-label", "Usage, 5-hour 12%, weekly 47%");
     expect(usageTrigger).toHaveAttribute("aria-expanded", "true");
+    expect(Boolean(prAction.compareDocumentPosition(usageTrigger) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(usageTrigger.compareDocumentPosition(recap) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(usageTrigger).toHaveTextContent("Usage");
     expect(usageTrigger).not.toHaveTextContent("5-hour 12%, weekly 47%");
     expect(screen.getByTestId("thread-overview-usage-details")).toBeVisible();

@@ -1988,15 +1988,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               </Popover>
             )}
 
-            {usageSummary && (
-              <ThreadOverviewUsageBars
-                categories={usageCategories}
-                summary={usageSummary}
-                sessionCostSummary={sessionCostSummary}
-                usageStatus={usageInfo?.usageStatus}
-              />
-            )}
-
             {branchlessCreatePr ? (
               <Button
                 variant="ghost"
@@ -2023,6 +2014,18 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 onCreatePr={() => setCreatePrOpen(true)}
                 onOpenPr={handleOpenPr}
               />
+            )}
+
+            {usageSummary && (
+              <>
+                <Separator className="my-1.5" />
+                <ThreadOverviewUsageBars
+                  categories={usageCategories}
+                  summary={usageSummary}
+                  sessionCostSummary={sessionCostSummary}
+                  usageStatus={usageInfo?.usageStatus}
+                />
+              </>
             )}
 
             {sources.length > 0 && (

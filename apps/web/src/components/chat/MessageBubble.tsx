@@ -196,7 +196,7 @@ function GoalPill({ label, condition, hint }: { label: string; condition?: strin
             aria-expanded="true"
             aria-label="Collapse goal condition"
             dir="auto"
-            className="cursor-pointer text-left font-serif text-[14px] italic leading-snug text-foreground [overflow-wrap:anywhere] hover:text-foreground/80"
+            className="cursor-pointer text-left font-serif text-sm italic leading-snug text-foreground [overflow-wrap:anywhere] hover:text-foreground/80"
           >
             &ldquo;{condition}&rdquo;
           </button>
@@ -226,7 +226,7 @@ function GoalPill({ label, condition, hint }: { label: string; condition?: strin
             aria-label="Expand full goal condition"
             title={condition}
             dir="auto"
-            className="min-w-0 cursor-pointer truncate text-left font-serif text-[14px] italic leading-snug text-foreground hover:text-foreground/80"
+            className="min-w-0 cursor-pointer truncate text-left font-serif text-sm italic leading-snug text-foreground hover:text-foreground/80"
           >
             &ldquo;{condition}&rdquo;
           </button>

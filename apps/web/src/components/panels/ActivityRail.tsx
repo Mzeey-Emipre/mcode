@@ -339,12 +339,12 @@ function RailAddControl({
       <Button
         variant="ghost"
         size="icon-xs"
-        className="h-9 w-9 text-muted-foreground hover:text-foreground"
+        className="text-muted-foreground hover:text-foreground"
         title={`New ${only.label}`}
         aria-label={`New ${only.label}`}
         onClick={() => onCreate(only.id as RightPanelTab)}
       >
-        <Plus size={16} />
+        <Plus />
       </Button>
     );
   }
@@ -356,11 +356,11 @@ function RailAddControl({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="h-9 w-9 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
             title="New tab"
             aria-label="New tab"
           >
-            <Plus size={16} />
+            <Plus />
           </Button>
         }
       />
@@ -444,13 +444,13 @@ export function ActivityRail({
         variant="ghost"
         size="icon-xs"
         onClick={onToggleMaximized}
-        className="h-7 w-7 shrink-0 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
+        className="shrink-0 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
         aria-label={maximized ? "Restore panel" : "Maximize panel"}
         title={maximized ? "Restore panel" : "Maximize panel"}
         data-testid="rail-maximize-toggle"
         data-preview-design-keep-open="true"
       >
-        {maximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        {maximized ? <Minimize2 /> : <Maximize2 />}
       </Button>
 
       {openTabs.map((id) => {

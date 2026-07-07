@@ -63,7 +63,7 @@ export const TerminalList = memo(function TerminalList({
                 />
               }
             >
-              <ChevronsLeft className="size-3.5 rotate-180" />
+              <ChevronsLeft className="rotate-180" />
             </TooltipTrigger>
             <TooltipContent side="right" className="text-xs">
               Expand sidebar
@@ -83,13 +83,13 @@ export const TerminalList = memo(function TerminalList({
                         variant="ghost"
                         size="icon-xs"
                         onClick={() => setActiveTerminal(threadId, terminal.id)}
-                        className="size-7 bg-transparent hover:bg-transparent active:translate-y-0 active:bg-transparent"
+                        className="bg-transparent hover:bg-transparent active:translate-y-0 active:bg-transparent"
                         aria-label={terminal.label}
                         aria-current={isActive ? "true" : undefined}
                       />
                     }
                   >
-                    <Terminal className="size-3.5" />
+                    <Terminal />
                   </TooltipTrigger>
                   <TooltipContent side="right" className="text-xs">
                     {terminal.label}
@@ -119,7 +119,7 @@ export const TerminalList = memo(function TerminalList({
               />
             }
           >
-            <ChevronsLeft className="size-3.5" />
+            <ChevronsLeft />
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">
             Collapse
@@ -137,7 +137,7 @@ export const TerminalList = memo(function TerminalList({
               />
             }
           >
-            <Plus className="size-3.5" />
+            <Plus />
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">
             New terminal
@@ -155,7 +155,7 @@ export const TerminalList = memo(function TerminalList({
               />
             }
           >
-            <Trash2 className="size-3.5" />
+            <Trash2 />
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">
             Kill all
@@ -178,7 +178,7 @@ export const TerminalList = memo(function TerminalList({
               >
                 <Terminal
                   className={cn(
-                    "size-3.5 shrink-0",
+                    "shrink-0",
                     isActive ? "opacity-70" : "opacity-40",
                   )}
                 />
@@ -195,11 +195,11 @@ export const TerminalList = memo(function TerminalList({
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                className="size-6 shrink-0 bg-transparent opacity-0 transition-opacity hover:bg-transparent active:translate-y-0 active:bg-transparent focus-visible:opacity-100 group-hover:opacity-60"
+                className="shrink-0 bg-transparent opacity-0 transition-opacity hover:bg-transparent active:translate-y-0 active:bg-transparent focus-visible:opacity-100 group-hover:opacity-60"
                 onClick={() => onClose(terminal.id)}
                 aria-label={`Close ${terminal.label}`}
               >
-                <X className="size-2.5" />
+                <X />
               </Button>
             </div>
           );

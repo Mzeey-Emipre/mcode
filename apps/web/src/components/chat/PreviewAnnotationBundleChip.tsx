@@ -67,7 +67,7 @@ export function PreviewAnnotationBundleChip({
             tabIndex={0}
             aria-label={`${label}. Annotation details available.`}
             className={cn(
-              "group inline-flex max-w-full items-center gap-2 rounded-lg border border-primary/35 bg-primary/10 px-2 py-1 text-xs font-medium text-primary shadow-sm transition-colors hover:border-primary/55 hover:bg-primary/15 focus-visible:border-primary/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35",
+              "group inline-flex max-w-full items-center gap-2 rounded-lg border border-accent-foreground/10 bg-accent px-2 py-1 text-xs font-medium text-accent-foreground shadow-sm transition-colors hover:border-accent-foreground/15 hover:bg-accent/90 focus-visible:border-accent-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-foreground/20",
               className,
             )}
           >
@@ -83,7 +83,7 @@ export function PreviewAnnotationBundleChip({
                   event.stopPropagation();
                   onRemove();
                 }}
-                className="pointer-events-none -ml-1 text-primary opacity-0 transition-opacity hover:bg-primary/10 focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+                className="pointer-events-none -ml-1 text-accent-foreground/70 opacity-0 transition-opacity hover:bg-accent-foreground/10 hover:text-accent-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
               >
                 <X size={12} aria-hidden />
               </Button>

@@ -4,6 +4,7 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useProjectSelectorStore } from "@/stores/projectSelectorStore";
 import { useRecentThreadsStore } from "@/stores/recentThreadsStore";
 import { Button } from "@/components/ui/button";
+import { Plus } from "lucide-react";
 import { ProjectRow } from "./ProjectRow";
 import { RecentThreadRow } from "./RecentThreadRow";
 import { Kbd } from "../palette/Kbd";
@@ -168,11 +169,12 @@ export function ProjectSelectorLanding() {
             data-testid="landing-add-project"
             variant="outline"
             draggable={false}
+            size="sm"
             onDragStart={(e) => e.preventDefault()}
             onClick={handleAdd}
-            className="group mt-2 w-full gap-2 py-2.5 text-[12.5px] text-foreground/80"
+            className="group mt-2 w-full gap-2 text-foreground/80"
           >
-            <span aria-hidden className="text-base leading-none text-muted-foreground/60 group-hover:text-foreground">+</span>
+            <Plus aria-hidden className="text-muted-foreground/60 group-hover:text-foreground" />
             Add project
           </Button>
         </div>
@@ -185,11 +187,12 @@ export function ProjectSelectorLanding() {
           <Button
             data-testid="landing-add-project"
             draggable={false}
+            size="md"
             onDragStart={(e) => e.preventDefault()}
             onClick={handleAdd}
-            className="gap-2 px-4 py-2 text-[13px]"
+            className="gap-2"
           >
-            <span aria-hidden className="text-base leading-none">+</span>
+            <Plus aria-hidden />
             Open a folder
           </Button>
         </div>

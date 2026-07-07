@@ -173,7 +173,7 @@ function PaletteInput({
           }}
           onClick={onAddClick}
           title={`Add this folder as a project (${modKey}+Enter)`}
-          className="absolute end-2.5 top-1/2 -translate-y-1/2 h-7 gap-1 px-2 text-[11px]"
+          className="absolute end-2.5 top-1/2 -translate-y-1/2"
         >
           Add
           <Kbd variant="inline">{modKey}+Enter</Kbd>

@@ -35,7 +35,7 @@ export const UnifiedDiff = memo(function UnifiedDiff({
   const firstHunkHeaderIndex = skipLeadingHunkSeparator ? getFirstHunkHeaderIndex(lines) : -1;
 
   return (
-    <div className={`select-text text-[12px] font-mono leading-5 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
+    <div className={`select-text text-xs font-mono leading-5 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
       <div className={lineWrap ? "w-full" : "w-fit min-w-full"}>
       {lines.map((line, i) => {
         if (line.type === "header") {

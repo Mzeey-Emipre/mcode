@@ -248,7 +248,7 @@ const QueueRow = memo(function QueueRow({
         className="min-w-0 flex-1 cursor-text text-left"
       >
         {previewText ? (
-          <span className="block truncate text-[12px] leading-snug text-foreground/90">
+          <span className="block truncate text-xs leading-snug text-foreground/90">
             {previewText}
           </span>
         ) : hasAnnotations ? (

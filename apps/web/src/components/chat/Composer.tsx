@@ -124,7 +124,6 @@ import {
 } from "@/lib/preview-annotation-append";
 import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
-import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
 import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
 import {
   collectBrowserCaptureSpillPaths,
@@ -886,9 +885,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   // token-count badge + send button fit comfortably on one row with the
   // standard gaps and breathing room. Below this the row collapses to a
   // single "Composer options" trigger so the send button never gets clipped.
-  // Empirically the row needs roughly 720–740px of container width to render
-  // without crowding; 760 leaves a small safety margin for longer model names.
-  const COMPOSER_INLINE_OPTIONS_THRESHOLD = 760;
+  // With 32px small controls, the 1280px shell still has room for inline
+  // options after the sidebar and right rail are reserved. Keep the collapse
+  // point below that shell width while preserving the 600px overflow behavior.
+  const COMPOSER_INLINE_OPTIONS_THRESHOLD = 560;
   // Default to inline before the first measurement lands so the first frame
   // doesn't briefly render the popover trigger and snap to inline buttons.
   const showInlineComposerOptions =
@@ -2680,6 +2680,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
   }, [pendingCheckoutConfirmation, checkoutConfirming]);
 
+  const showComposerStatusBar = isNewThread === true || !!branchFromMessageId;
+
   return (
     <div className="relative px-8 py-4">
       {/* Soft gradient hint above the composer — short enough that it doesn't
@@ -3295,8 +3297,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           })()}
 
           {/* Send / Queue / Stop button */}
-          <button
+          <Button
             type="button"
+            size="icon-sm"
             onClick={
               isThreadScaffold
                 ? undefined
@@ -3314,7 +3317,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               (!isAgentRunning && !hasContent)
             }
             className={cn(
-              "rounded-full p-1.5 transition-colors",
+              "rounded-full transition-colors",
               isThreadScaffold
                 ? "bg-primary text-primary-foreground"
                 : isAgentRunning && hasContent
@@ -3347,13 +3350,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             {isThreadScaffold ? (
               <Spinner size={14} className="text-current" />
             ) : isAgentRunning && hasContent ? (
-              <ArrowUp size={14} />
+              <ArrowUp />
             ) : isAgentRunning ? (
-              <div className="h-3 w-3 rounded-sm bg-current" />
+              <div className="h-4 w-4 rounded-sm bg-current" />
             ) : (
-              <ArrowUp size={14} />
+              <ArrowUp />
             )}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -3365,50 +3368,34 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       )}
 
       {/* Status bar - below the container */}
-      <div className="flex items-center justify-between px-1 pt-1.5">
-        {!isGitRepo && isNewThread ? (
-          <span className="flex h-6 items-center rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground/40">
-            Not a git repo
-          </span>
-        ) : (
-          <ModeSelector
-            mode={branchFromMessageId ? branchExecMode : composerMode}
-            onModeChange={branchFromMessageId ? setBranchExecMode : setComposerMode}
-            locked={!isNewThread && !branchFromMessageId}
-            options={modeOptions}
-          />
+      <div
+        className={cn(
+          "grid overflow-hidden transition-[grid-template-rows,opacity,transform] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none",
+          showComposerStatusBar ? "grid-rows-[1fr] opacity-100 translate-y-0" : "grid-rows-[0fr] opacity-0 translate-y-1 pointer-events-none",
         )}
-        <div className="flex items-center gap-3">
-          <TerminalStatusIndicator />
-        </div>
-        <div className="ml-auto flex items-center gap-1">
-          {isNewThread ? (
-            !isGitRepo ? null :
-            composerMode === "direct" ? (
-              <BranchPicker
-                branches={branches}
-                selectedBranch={newThreadBranch || "main"}
-                onSelect={setNewThreadBranch}
-                loading={branchesLoading}
-                locked={false}
+        aria-hidden={!showComposerStatusBar}
+      >
+        <div className="min-h-0">
+          <div className="flex items-center justify-between px-1 pt-1.5">
+            {!isGitRepo && isNewThread ? (
+              <span className="flex h-6 items-center rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground/40">
+                Not a git repo
+              </span>
+            ) : (
+              <ModeSelector
+                mode={branchFromMessageId ? branchExecMode : composerMode}
+                onModeChange={branchFromMessageId ? setBranchExecMode : setComposerMode}
+                locked={!isNewThread && !branchFromMessageId}
+                options={modeOptions}
               />
-            ) : composerMode === "worktree" ? (
-              <>
-                <BranchPicker
-                  branches={branches}
-                  selectedBranch={newThreadBranch || "main"}
-                  onSelect={setNewThreadBranch}
-                  loading={branchesLoading}
-                  locked={false}
-                  pullRequests={openPrs}
-                  prsLoading={openPrsLoading}
-                  fetchingBranch={fetchingBranch}
-                  onFetchAndSelect={handleFetchAndSelect}
-                />
-              </>
-            ) : composerMode === "existing-worktree" ? (
-              <>
-                {selectedWorktreeIsDetached && (
+            )}
+            <div className="flex items-center gap-3">
+              <TerminalStatusIndicator />
+            </div>
+            <div className="ml-auto flex items-center gap-1">
+              {isNewThread ? (
+                !isGitRepo ? null :
+                composerMode === "direct" ? (
                   <BranchPicker
                     branches={branches}
                     selectedBranch={newThreadBranch || "main"}
@@ -3416,64 +3403,82 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                     loading={branchesLoading}
                     locked={false}
                   />
-                )}
-                <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
-                  worktrees={worktrees}
-                  selectedPath={selectedWorktree?.path ?? ""}
-                  onSelect={setSelectedWorktree}
-                  loading={worktreesLoading}
-                /></Suspense>
-              </>
-            ) : null
-          ) : branchFromMessageId ? (
-            // Branch mode: show execution controls for the child thread
-            !isGitRepo ? null :
-            branchExecMode === "direct" ? (
-              <BranchPicker
-                branches={branches}
-                selectedBranch={branchTargetBranch || activeThread?.branch || ""}
-                onSelect={setBranchTargetBranch}
-                loading={branchesLoading}
-                locked={false}
-              />
-            ) : branchExecMode === "worktree" ? (
-              <>
-                <BranchPicker
-                  branches={branches}
-                  selectedBranch={branchTargetBranch || activeThread?.branch || ""}
-                  onSelect={setBranchTargetBranch}
-                  loading={branchesLoading}
-                  locked={false}
-                />
-              </>
-            ) : (
-              <>
-                {branchWorktreeIsDetached && (
+                ) : composerMode === "worktree" ? (
+                  <>
+                    <BranchPicker
+                      branches={branches}
+                      selectedBranch={newThreadBranch || "main"}
+                      onSelect={setNewThreadBranch}
+                      loading={branchesLoading}
+                      locked={false}
+                      pullRequests={openPrs}
+                      prsLoading={openPrsLoading}
+                      fetchingBranch={fetchingBranch}
+                      onFetchAndSelect={handleFetchAndSelect}
+                    />
+                  </>
+                ) : composerMode === "existing-worktree" ? (
+                  <>
+                    {selectedWorktreeIsDetached && (
+                      <BranchPicker
+                        branches={branches}
+                        selectedBranch={newThreadBranch || "main"}
+                        onSelect={setNewThreadBranch}
+                        loading={branchesLoading}
+                        locked={false}
+                      />
+                    )}
+                    <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
+                      worktrees={worktrees}
+                      selectedPath={selectedWorktree?.path ?? ""}
+                      onSelect={setSelectedWorktree}
+                      loading={worktreesLoading}
+                    /></Suspense>
+                  </>
+                ) : null
+              ) : branchFromMessageId ? (
+                // Branch mode: show execution controls for the child thread
+                !isGitRepo ? null :
+                branchExecMode === "direct" ? (
                   <BranchPicker
                     branches={branches}
-                    selectedBranch={branchTargetBranch || activeThread?.base_branch || activeThread?.branch || "main"}
+                    selectedBranch={branchTargetBranch || activeThread?.branch || ""}
                     onSelect={setBranchTargetBranch}
                     loading={branchesLoading}
                     locked={false}
                   />
-                )}
-                <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
-                  worktrees={worktrees}
-                  selectedPath={branchWorktreePath}
-                  onSelect={(wt) => setBranchWorktreePath(wt.path)}
-                  loading={worktreesLoading}
-                /></Suspense>
-              </>
-            )
-          ) : activeThread && isGitRepo ? (
-            <BranchPicker
-              branches={[]}
-              selectedBranch={resolveThreadCheckoutLabel(activeThread)}
-              onSelect={() => {}}
-              loading={false}
-              locked={true}
-            />
-          ) : null}
+                ) : branchExecMode === "worktree" ? (
+                  <>
+                    <BranchPicker
+                      branches={branches}
+                      selectedBranch={branchTargetBranch || activeThread?.branch || ""}
+                      onSelect={setBranchTargetBranch}
+                      loading={branchesLoading}
+                      locked={false}
+                    />
+                  </>
+                ) : (
+                  <>
+                    {branchWorktreeIsDetached && (
+                      <BranchPicker
+                        branches={branches}
+                        selectedBranch={branchTargetBranch || activeThread?.base_branch || activeThread?.branch || "main"}
+                        onSelect={setBranchTargetBranch}
+                        loading={branchesLoading}
+                        locked={false}
+                      />
+                    )}
+                    <Suspense fallback={<div className="h-7" />}><LazyWorktreePicker
+                      worktrees={worktrees}
+                      selectedPath={branchWorktreePath}
+                      onSelect={(wt) => setBranchWorktreePath(wt.path)}
+                      loading={worktreesLoading}
+                    /></Suspense>
+                  </>
+                )
+              ) : null}
+            </div>
+          </div>
         </div>
       </div>
       </div>{/* end max-width wrapper */}
