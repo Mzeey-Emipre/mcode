@@ -3374,6 +3374,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           showComposerStatusBar ? "grid-rows-[1fr] opacity-100 translate-y-0" : "grid-rows-[0fr] opacity-0 translate-y-1 pointer-events-none",
         )}
         aria-hidden={!showComposerStatusBar}
+        inert={showComposerStatusBar ? undefined : true}
       >
         <div className="min-h-0">
           <div className="flex items-center justify-between px-1 pt-1.5">

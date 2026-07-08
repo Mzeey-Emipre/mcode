@@ -2003,6 +2003,18 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               </Button>
             ) : null}
 
+            {usageSummary && (
+              <>
+                <Separator className="my-1.5" />
+                <ThreadOverviewUsageBars
+                  categories={usageCategories}
+                  summary={usageSummary}
+                  sessionCostSummary={sessionCostSummary}
+                  usageStatus={usageInfo?.usageStatus}
+                />
+              </>
+            )}
+
             {canShowPrActions && (
               <ThreadOverviewPrRow
                 pr={pr}
@@ -2014,18 +2026,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 onCreatePr={() => setCreatePrOpen(true)}
                 onOpenPr={handleOpenPr}
               />
-            )}
-
-            {usageSummary && (
-              <>
-                <Separator className="my-1.5" />
-                <ThreadOverviewUsageBars
-                  categories={usageCategories}
-                  summary={usageSummary}
-                  sessionCostSummary={sessionCostSummary}
-                  usageStatus={usageInfo?.usageStatus}
-                />
-              </>
             )}
 
             {sources.length > 0 && (

@@ -8,18 +8,71 @@ This phase normalized the global design primitives, shared Button/Input/Badge sc
 
 ## Commands And Patterns
 
-Counts came from `rg` over `apps/web/src` with these patterns:
+Counts came from `rg` over `apps/web/src`.
 
-| Category | Pattern |
-| --- | --- |
-| Raw px | `rg -n -P "(?<![A-Za-z0-9_-])\d+(?:\.\d+)?px" apps/web/src` |
-| Arbitrary text | `text-\[[^\]]+\]` |
-| Arbitrary spacing/sizing | `(?:h\|w\|min-h\|min-w\|max-h\|max-w\|size\|p\|px\|py\|pt\|pr\|pb\|pl\|m\|mx\|my\|mt\|mr\|mb\|ml\|gap\|space-x\|space-y\|top\|right\|bottom\|left\|inset\|translate-x\|translate-y)-\[[^\]]+\]` |
-| Arbitrary radii | `rounded(?:-[trbl]{1,2})?-\[[^\]]+\]` |
-| Raw colors | `(?:#[0-9a-fA-F]{3,8}\|rgb\(\|rgba\(\|hsl\(\|hsla\()` |
-| Raw buttons | `<button(?:\s\|>)` |
-| Raw inputs | `<input(?:\s\|>)` |
-| Off-scale icons | `(?:size\|h\|w)-(?:2\.5\|3\|3\.5\|4\.5\|5\|6\|7\|9\|10\|11\|12)(?![\d.])` plus arbitrary icon pixel sizes |
+Copy-paste raw pixel count:
+
+```powershell
+rg -n -P "(?<![A-Za-z0-9_-])\d+(?:\.\d+)?px" apps/web/src | Measure-Object
+```
+
+Cross-shell raw pixel count:
+
+```bash
+rg -n -P "(?<![A-Za-z0-9_-])\d+(?:\.\d+)?px" apps/web/src | wc -l
+```
+
+Audit patterns:
+
+- Raw px:
+
+```regex
+(?<![A-Za-z0-9_-])\d+(?:\.\d+)?px
+```
+
+- Arbitrary text:
+
+```regex
+text-\[[^\]]+\]
+```
+
+- Arbitrary spacing/sizing:
+
+```regex
+(?:h|w|min-h|min-w|max-h|max-w|size|p|px|py|pt|pr|pb|pl|m|mx|my|mt|mr|mb|ml|gap|space-x|space-y|top|right|bottom|left|inset|translate-x|translate-y)-\[[^\]]+\]
+```
+
+- Arbitrary radii:
+
+```regex
+rounded(?:-[trbl]{1,2})?-\[[^\]]+\]
+```
+
+- Raw colors:
+
+```regex
+(?:#[0-9a-fA-F]{3,8}|rgb\(|rgba\(|hsl\(|hsla\()
+```
+
+- Raw buttons:
+
+```regex
+<button(?:\s|>)
+```
+
+- Raw inputs:
+
+```regex
+<input(?:\s|>)
+```
+
+- Off-scale icons:
+
+```regex
+(?:size|h|w)-(?:2\.5|3|3\.5|4\.5|5|6|7|9|10|11|12)(?![\d.])
+```
+
+Also search for arbitrary icon pixel sizes with the raw px pattern.
 
 ## Counts
 
@@ -36,7 +89,7 @@ Counts came from `rg` over `apps/web/src` with these patterns:
 
 The raw input count rose because focused component tests now render `Input` variants directly.
 
-The raw-px count uses PCRE2 lookbehind through `rg -P`; the current documented count matches `rg -n -P "(?<![A-Za-z0-9_-])\d+(?:\.\d+)?px" apps/web/src | Measure-Object`.
+The raw-px count uses PCRE2 lookbehind through `rg -P`; the current documented count matches the PowerShell count command above.
 
 ## Files Normalized
 

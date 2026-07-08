@@ -10,6 +10,7 @@ describe("Composer footer visibility", () => {
 
     expect(source).toContain("const showComposerStatusBar = isNewThread === true || !!branchFromMessageId;");
     expect(source).toContain("aria-hidden={!showComposerStatusBar}");
+    expect(source).toContain("inert={showComposerStatusBar ? undefined : true}");
     expect(source).not.toContain('import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";');
     expect(source).not.toContain("selectedBranch={resolveThreadCheckoutLabel(activeThread)}");
   });

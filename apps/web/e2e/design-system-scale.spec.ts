@@ -1,4 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
+import { badgeVariants } from "../src/components/ui/badge";
+import { buttonVariants } from "../src/components/ui/button";
+import { inputVariants } from "../src/components/ui/input";
 import { mockWebSocketServer } from "./helpers/e2e-helpers";
 
 async function setup(page: Page): Promise<void> {
@@ -103,44 +106,47 @@ test.describe("Design system scale", () => {
   });
 
   test("maps Button, Input, and Badge classes to documented computed sizes", async ({ page }) => {
-    const buttonBase =
-      "inline-flex items-center justify-center rounded-lg border border-transparent font-medium [&_svg:not([class*='size-'])]:size-4";
-    const buttonSmall =
-      "h-8 gap-1.5 px-2.5 text-sm";
-    const buttonMedium =
-      "h-12 gap-2 px-3 text-base [&_svg:not([class*='size-'])]:size-6";
-    const buttonLarge =
-      "h-14 gap-2.5 px-4 text-lg [&_svg:not([class*='size-'])]:size-8";
-    const inputSmall =
-      "flex h-8 w-full rounded-lg border border-input bg-input px-3 py-1 text-sm";
-    const badgeDefault =
-      "inline-flex h-5 items-center justify-center rounded-4xl px-2 py-0 text-xs leading-4";
-    const badgeSmall =
-      "inline-flex h-4 items-center justify-center rounded-4xl px-1 py-0 text-xs leading-4";
-
     await expect
-      .poll(() => measuredStyles(page, `${buttonBase} ${buttonSmall}`, "button"))
-      .toEqual(expect.objectContaining({ height: "32px", fontSize: "14px", lineHeight: "16px" }));
+      .poll(() => measuredStyles(page, buttonVariants({ size: "sm" }), "button"))
+      .toEqual(expect.objectContaining({
+        gap: "8px",
+        height: "32px",
+        fontSize: "14px",
+        lineHeight: "16px",
+        paddingLeft: "12px",
+      }));
     await expect
-      .poll(() => measuredStyles(page, `${buttonBase} ${buttonMedium}`, "button"))
-      .toEqual(expect.objectContaining({ height: "48px", fontSize: "16px", lineHeight: "20px" }));
+      .poll(() => measuredStyles(page, buttonVariants({ size: "md" }), "button"))
+      .toEqual(expect.objectContaining({
+        gap: "8px",
+        height: "48px",
+        fontSize: "16px",
+        lineHeight: "20px",
+        paddingLeft: "12px",
+      }));
     await expect
-      .poll(() => measuredStyles(page, `${buttonBase} ${buttonLarge}`, "button"))
-      .toEqual(expect.objectContaining({ height: "56px", fontSize: "20px", lineHeight: "24px" }));
+      .poll(() => measuredStyles(page, buttonVariants({ size: "lg" }), "button"))
+      .toEqual(expect.objectContaining({
+        gap: "8px",
+        height: "56px",
+        fontSize: "20px",
+        lineHeight: "24px",
+        paddingLeft: "16px",
+      }));
     await expect
-      .poll(() => measuredStyles(page, "inline-flex size-8 [&_svg:not([class*='size-'])]:size-4", "button"))
+      .poll(() => measuredStyles(page, buttonVariants({ size: "icon-sm" }), "button"))
       .toEqual(expect.objectContaining({ height: "32px", width: "32px" }));
     await expect
-      .poll(() => measuredStyles(page, "inline-flex size-12 [&_svg:not([class*='size-'])]:size-6", "button"))
+      .poll(() => measuredStyles(page, buttonVariants({ size: "icon-md" }), "button"))
       .toEqual(expect.objectContaining({ height: "48px", width: "48px" }));
     await expect
-      .poll(() => measuredStyles(page, "inline-flex size-14 [&_svg:not([class*='size-'])]:size-8", "button"))
+      .poll(() => measuredStyles(page, buttonVariants({ size: "icon-lg" }), "button"))
       .toEqual(expect.objectContaining({ height: "56px", width: "56px" }));
     await expect
       .poll(() =>
-        page.evaluate(() => {
+        page.evaluate((className) => {
           const button = document.createElement("button");
-          button.className = "inline-flex h-12 [&_svg:not([class*='size-'])]:size-6";
+          button.className = className;
           const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
           button.append(svg);
           document.body.append(button);
@@ -148,17 +154,17 @@ test.describe("Design system scale", () => {
           const result = { height: styles.height, width: styles.width };
           button.remove();
           return result;
-        }),
+        }, buttonVariants({ size: "icon-md" })),
       )
       .toEqual({ height: "24px", width: "24px" });
     await expect
-      .poll(() => measuredStyles(page, inputSmall, "input"))
+      .poll(() => measuredStyles(page, inputVariants({ size: "sm" }), "input"))
       .toEqual(expect.objectContaining({ height: "32px", fontSize: "14px", lineHeight: "16px" }));
     await expect
-      .poll(() => measuredStyles(page, badgeDefault, "span"))
+      .poll(() => measuredStyles(page, badgeVariants({ size: "default" }), "span"))
       .toEqual(expect.objectContaining({ height: "20px", fontSize: "12px", lineHeight: "16px", paddingLeft: "8px" }));
     await expect
-      .poll(() => measuredStyles(page, badgeSmall, "span"))
+      .poll(() => measuredStyles(page, badgeVariants({ size: "sm" }), "span"))
       .toEqual(expect.objectContaining({ height: "16px", fontSize: "12px", lineHeight: "16px", paddingLeft: "4px" }));
   });
 
