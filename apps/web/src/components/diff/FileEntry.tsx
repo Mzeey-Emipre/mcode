@@ -78,7 +78,10 @@ export const FileEntry = memo(function FileEntry({
   highlightToken,
 }: FileEntryProps) {
   const contentId = useId();
-  const [expanded, setExpanded] = useState(defaultExpandedProp);
+  // Bulk commands live in global Review state so rows mounted later by
+  // virtualization inherit the user's last expand/collapse choice.
+  const bulkDiffExpand = useDiffStore((s) => s.bulkDiffExpand);
+  const [expanded, setExpanded] = useState(() => bulkDiffExpand?.expand ?? defaultExpandedProp);
   const [showAllLines, setShowAllLines] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
   const [jumpHighlight, setJumpHighlight] = useState(false);
@@ -104,7 +107,6 @@ export const FileEntry = memo(function FileEntry({
   const scrolledJumpRef = useRef<number | undefined>(undefined);
   // Bulk expand/collapse command from the Review-options menu. The ref tracks the
   // last nonce we applied so we react only to new commands, never on mount.
-  const bulkDiffExpand = useDiffStore((s) => s.bulkDiffExpand);
   const appliedBulkRef = useRef(bulkDiffExpand?.nonce);
 
   // Reset local state when the cache identity changes so a reused component
