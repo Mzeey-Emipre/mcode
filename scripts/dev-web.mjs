@@ -18,12 +18,14 @@ import { rebuildServerDevBundle } from "./build-server-dev-bundle.mjs";
 import { killProcessTree } from "./kill-process-tree.mjs";
 import {
   buildPortsContract,
+  buildRuntimeStateEnv,
   computeAvailablePorts,
   ensureRuntimeRoot,
   generateInstanceToken,
   resolveRepoRoot,
   writePortsFile,
 } from "./agent/runtime-contract.mjs";
+import { seedFixtureRepo } from "./agent/fixture-repo.mjs";
 import { resolveDevSingleInstanceFlag } from "./agent/single-instance-flag.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -66,7 +68,13 @@ async function waitForHealth(healthUrl, timeoutMs = 15_000) {
 
 const repoRoot = resolveRepoRoot(rootDir);
 const paths = ensureRuntimeRoot(repoRoot);
+mkdirSync(paths.dbDir, { recursive: true });
 mkdirSync(paths.logsDir, { recursive: true });
+mkdirSync(paths.electronDir, { recursive: true });
+const fixtureRepo = seedFixtureRepo(repoRoot);
+const runtimeStateEnv = buildRuntimeStateEnv(repoRoot, {
+  MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
+});
 const { serverPort, webPort: computedWebPort } = await computeAvailablePorts(repoRoot);
 const devToken = randomUUID();
 const instanceToken = generateInstanceToken();
@@ -118,6 +126,8 @@ const server = spawn(
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
+      NODE_ENV: "development",
+      ...runtimeStateEnv,
       MCODE_PORT: String(serverPort),
       MCODE_HOST: "127.0.0.1",
       MCODE_AUTH_TOKEN: devToken,
@@ -180,6 +190,7 @@ const vite = spawn("bun", viteArgs, {
   env: {
     ...process.env,
     NODE_ENV: "development",
+    ...runtimeStateEnv,
     ...(singleInstance
       ? {
           VITE_MCODE_SINGLE_INSTANCE: "true",

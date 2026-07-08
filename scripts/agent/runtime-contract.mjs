@@ -68,6 +68,24 @@ export function getRuntimePaths(repoRoot = resolveRepoRoot()) {
 }
 
 /**
+ * Builds the environment variables that point a dev process at the worktree-local runtime state.
+ *
+ * @param {string} repoRoot
+ * @param {Partial<NodeJS.ProcessEnv>} [overrides]
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function buildRuntimeStateEnv(repoRoot = resolveRepoRoot(), overrides = {}) {
+  const paths = getRuntimePaths(repoRoot);
+  return {
+    MCODE_AGENT_RUNTIME: "1",
+    MCODE_DATA_DIR: paths.devDir,
+    MCODE_DB_PATH: paths.dbPath,
+    MCODE_ELECTRON_USER_DATA_DIR: paths.electronDir,
+    ...overrides,
+  };
+}
+
+/**
  * Verifies `.dev/` is ignored before runtime files are created.
  *
  * @param {string} repoRoot

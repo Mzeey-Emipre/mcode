@@ -18,6 +18,7 @@ import { join, resolve } from "node:path";
 
 import {
   buildPortsContract,
+  buildRuntimeStateEnv,
   computeAvailablePorts,
   computeDeterministicPort,
   ensureRuntimeRoot,
@@ -39,6 +40,21 @@ test("runtime paths stay under .dev and require .dev to be ignored", () => {
     assert.equal(paths.pidsDir, join(repo, ".dev", "pids"));
     assert.equal(paths.playwrightScratchDir, join(repo, ".dev", "playwright-scratch"));
     assert.equal(paths.electronDir, join(repo, ".dev", "electron"));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("runtime state env points dev commands at the worktree-local agent state", () => {
+  const repo = makeRepo({ gitignore: ".dev/\n" });
+  try {
+    const env = buildRuntimeStateEnv(repo, { MCODE_AGENT_FIXTURE_REPO: "fixture" });
+
+    assert.equal(env.MCODE_AGENT_RUNTIME, "1");
+    assert.equal(env.MCODE_DATA_DIR, join(repo, ".dev"));
+    assert.equal(env.MCODE_DB_PATH, join(repo, ".dev", "db", "app.sqlite"));
+    assert.equal(env.MCODE_ELECTRON_USER_DATA_DIR, join(repo, ".dev", "electron"));
+    assert.equal(env.MCODE_AGENT_FIXTURE_REPO, "fixture");
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
