@@ -375,6 +375,52 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     void child;
   }, 10_000);
 
+  it("uses the raised thread handshake budget for thread/start", async () => {
+    harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-start-budget" } } } : { result: {} },
+    );
+    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+
+    try {
+      await server.start();
+
+      const timeoutBudgets = setTimeoutSpy.mock.calls.map(([, delay]) => delay);
+      expect(timeoutBudgets).toContain(10_000);
+      expect(timeoutBudgets).toContain(3_000);
+      expect(timeoutBudgets.filter((delay) => delay === 30_000)).toHaveLength(2);
+      expect(timeoutBudgets).not.toContain(15_000);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      await server.kill();
+    }
+  }, 10_000);
+
+  it("uses the raised thread handshake budget for thread/resume", async () => {
+    harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/resume" ? { result: { thread: { id: "thread-resume-budget" } } } : { result: {} },
+    );
+    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      getSpawnEnv: () => ({}),
+      resumeThreadId: "thread-existing",
+    });
+
+    try {
+      await server.start();
+
+      const timeoutBudgets = setTimeoutSpy.mock.calls.map(([, delay]) => delay);
+      expect(timeoutBudgets).toContain(10_000);
+      expect(timeoutBudgets.filter((delay) => delay === 30_000)).toHaveLength(2);
+      expect(timeoutBudgets).not.toContain(15_000);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      await server.kill();
+    }
+  }, 10_000);
+
   it("emits decoded unexpected-exit diagnostics with the latest non-benign stderr", async () => {
     const { child, stderr } = harnessFakeServer((req): Record<string, unknown> => {
       switch (req.method) {
