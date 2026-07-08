@@ -219,6 +219,13 @@ const INITIALIZE_HANDSHAKE = {
   backoffMs: 500,
 } as const;
 
+/**
+ * Startup budget for establishing or resuming a Codex thread after the app-server
+ * is initialized. Newer Codex builds can spend longer here while loading session
+ * state, but turn execution remains governed by the separate turn watchdogs.
+ */
+const THREAD_HANDSHAKE_TIMEOUT_MS = 30_000;
+
 /** Maximum non-benign stderr lines retained for app-server diagnostics. */
 const STDERR_TAIL_MAX_LINES = 50;
 /** Maximum UTF-8 bytes retained across non-benign stderr diagnostics. */
@@ -1081,7 +1088,7 @@ export class CodexAppServer extends EventEmitter {
             ...(approvalPolicy && { approvalPolicy }),
             ...(workingDirectory && { cwd: workingDirectory }),
           },
-          15000,
+          THREAD_HANDSHAKE_TIMEOUT_MS,
         );
         // Accept both flat `threadId` and nested `thread.id` shapes,
         // same as the thread/start path. The codex app-server returns the
@@ -1139,7 +1146,7 @@ export class CodexAppServer extends EventEmitter {
         startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
           "thread/start",
           startParams,
-          15000,
+          THREAD_HANDSHAKE_TIMEOUT_MS,
         );
         logger.debug("Codex thread/start response", { result: startResult });
       } catch (err) {
