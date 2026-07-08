@@ -222,6 +222,7 @@ export interface McodeTransport {
     permissionMode?: PermissionMode,
     mode?: "direct" | "worktree",
     branch?: string,
+    worktreeBranchMode?: "branchless" | "named",
     existingWorktreePath?: string,
     existingWorktreeBaseBranch?: string,
     attachments?: AttachmentMeta[],
