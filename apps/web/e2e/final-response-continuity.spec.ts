@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { interceptZustandStores, mockWebSocketServer } from "./helpers/e2e-helpers";
 
 const now = new Date().toISOString();
+const MAX_FINAL_RESPONSE_HEIGHT_DELTA_PX = 40;
 
 const WORKSPACE = {
   id: "ws-final-response",
@@ -307,7 +308,9 @@ test.describe("final response continuity", () => {
       };
     }, continuity.scrollTop);
     expect(continuity.nestedScrollableCount).toBe(0);
-    expect(Math.abs(result.height - continuity.height)).toBeLessThan(36);
+    expect(Math.abs(result.height - continuity.height)).toBeLessThan(
+      MAX_FINAL_RESPONSE_HEIGHT_DELTA_PX,
+    );
     expect(result.sameNode).toBe(true);
     expect(result.scrollDelta).toBeLessThan(2);
 

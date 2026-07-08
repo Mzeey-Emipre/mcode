@@ -31,7 +31,7 @@ const COMPONENTS: Components = {
       return (
         <Suspense
           fallback={
-            <pre className="rounded bg-muted/30 p-3 text-[12px] font-mono overflow-x-auto">
+            <pre className="rounded bg-muted/30 p-3 text-xs font-mono overflow-x-auto">
               <code>{code}</code>
             </pre>
           }
@@ -106,8 +106,8 @@ export default function DiffPreviewMarkdown({
         "[&_p]:leading-relaxed",
         "[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5",
         "[&_li]:my-1",
-        "[&_code]:rounded [&_code]:bg-muted/40 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px] [&_code]:font-mono",
-        "[&_pre]:rounded [&_pre]:bg-muted/30 [&_pre]:p-3 [&_pre]:text-[12px] [&_pre]:font-mono [&_pre]:overflow-x-auto",
+        "[&_code]:rounded [&_code]:bg-muted/40 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:font-mono",
+        "[&_pre]:rounded [&_pre]:bg-muted/30 [&_pre]:p-3 [&_pre]:text-xs [&_pre]:font-mono [&_pre]:overflow-x-auto",
         // Blockquote: indented italic with a faint bg tint instead of a
         // left stripe (border-l > 1px is banned per impeccable).
         "[&_blockquote]:bg-muted/15 [&_blockquote]:px-3 [&_blockquote]:py-1 [&_blockquote]:italic [&_blockquote]:text-muted-foreground [&_blockquote]:rounded-sm",

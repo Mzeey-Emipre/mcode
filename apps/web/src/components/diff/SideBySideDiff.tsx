@@ -136,7 +136,7 @@ export const SideBySideDiff = memo(function SideBySideDiff({
   };
 
   return (
-    <div className="flex select-text text-[12px] font-mono leading-5">
+    <div className="flex select-text text-xs font-mono leading-5">
       {/* Left (removed) */}
       <div className={`flex-1 border-r border-border/15 ${lineWrap ? "overflow-x-hidden" : "overflow-x-auto"}`}>
         <div className={lineWrap ? "w-full" : "w-fit min-w-full"}>

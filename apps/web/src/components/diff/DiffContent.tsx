@@ -67,7 +67,7 @@ export function DiffContent() {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 border-t border-border/20">
         {/* Registration mark — a typographic blank canvas */}
-        <span aria-hidden="true" className="font-mono text-[28px] leading-none text-muted-foreground/15">
+        <span aria-hidden="true" className="font-mono text-2xl leading-none text-muted-foreground/15">
           ⊕
         </span>
         <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">

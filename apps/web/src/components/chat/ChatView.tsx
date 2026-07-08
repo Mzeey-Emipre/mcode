@@ -467,9 +467,6 @@ export function ChatView() {
               onCancel={() => setEditingThreadId(null)}
             />
           </div>
-          <Badge variant="secondary">
-            {activeWorkspaceName}
-          </Badge>
           {activeThread.parent_thread_id && parentThreadExists && (
             <Tooltip>
               <TooltipTrigger

@@ -158,7 +158,7 @@ function PaletteInput({
           // Reserve right padding for the Add chip when it's visible so the
           // typed path doesn't get hidden under it.
           "flex h-10 w-full rounded-md bg-transparent py-3 text-[13.5px] outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 " +
-          (browseMode ? "pe-[5.5rem]" : "")
+          (browseMode ? "pe-44" : "")
         }
       />
       {browseMode && (
@@ -173,7 +173,7 @@ function PaletteInput({
           }}
           onClick={onAddClick}
           title={`Add this folder as a project (${modKey}+Enter)`}
-          className="absolute end-2.5 top-1/2 -translate-y-1/2 h-7 gap-1 px-2 text-[11px]"
+          className="absolute end-3 top-1/2 -translate-y-1/2"
         >
           Add
           <Kbd variant="inline">{modKey}+Enter</Kbd>

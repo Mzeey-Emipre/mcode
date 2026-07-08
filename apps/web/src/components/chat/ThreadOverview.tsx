@@ -1988,15 +1988,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               </Popover>
             )}
 
-            {usageSummary && (
-              <ThreadOverviewUsageBars
-                categories={usageCategories}
-                summary={usageSummary}
-                sessionCostSummary={sessionCostSummary}
-                usageStatus={usageInfo?.usageStatus}
-              />
-            )}
-
             {branchlessCreatePr ? (
               <Button
                 variant="ghost"
@@ -2011,6 +2002,18 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 <span className="font-medium">Commit or push</span>
               </Button>
             ) : null}
+
+            {usageSummary && (
+              <>
+                <Separator className="my-1.5" />
+                <ThreadOverviewUsageBars
+                  categories={usageCategories}
+                  summary={usageSummary}
+                  sessionCostSummary={sessionCostSummary}
+                  usageStatus={usageInfo?.usageStatus}
+                />
+              </>
+            )}
 
             {canShowPrActions && (
               <ThreadOverviewPrRow

@@ -94,14 +94,13 @@ export function OpenInAppButton({ dirPath, threadId, threadOverride }: OpenInApp
             render={
               <Button
                 variant="ghost"
-                size="xs"
-                className="gap-1 text-xs text-foreground/70 hover:text-foreground hover:bg-muted/40 h-6 rounded-r-none"
+                size="icon-xs"
+                className="text-foreground/70 hover:text-foreground hover:bg-muted/40 rounded-r-none"
                 onClick={openDefault}
                 disabled={disabled}
                 aria-label={`Open in ${resolvedLabel}`}
               >
-                {openInAppIcon(resolvedApp?.iconKey ?? FILE_EXPLORER_ID, 14)}
-                <span>Open</span>
+                {openInAppIcon(resolvedApp?.iconKey ?? FILE_EXPLORER_ID, 16)}
               </Button>
             }
           />
@@ -115,7 +114,7 @@ export function OpenInAppButton({ dirPath, threadId, threadOverride }: OpenInApp
             aria-label="Choose app to open in"
             disabled={disabled}
             className={cn(
-              "inline-flex items-center px-1 h-6 text-xs border-l border-border/20 rounded-r transition-colors outline-none",
+              "inline-flex h-8 items-center px-1.5 text-xs border-l border-border/20 rounded-r transition-colors outline-none",
               "text-foreground/70 hover:text-foreground hover:bg-muted/40 focus-visible:ring-1 focus-visible:ring-ring",
               "disabled:opacity-50 disabled:pointer-events-none",
             )}

@@ -67,10 +67,10 @@ function ToastItem({ toast }: { toast: ToastData }) {
         variant="ghost"
         size="icon-xs"
         onClick={handleDismiss}
-        className="shrink-0 mt-0.5 h-5 w-5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+        className="shrink-0 mt-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
         aria-label="Dismiss"
       >
-        <X size={12} />
+        <X />
       </Button>
     </div>
   );

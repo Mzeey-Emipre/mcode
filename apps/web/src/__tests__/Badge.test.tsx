@@ -10,11 +10,11 @@ describe("Badge", () => {
     expect(badge.className).toContain("px-2");
   });
 
-  it("renders sm size with h-4 and px-1.5", () => {
+  it("renders sm size with h-4 and px-1", () => {
     const { container } = render(<Badge size="sm">Status</Badge>);
     const badge = container.firstElementChild!;
     expect(badge.className).toContain("h-4");
-    expect(badge.className).toContain("px-1.5");
+    expect(badge.className).toContain("px-1");
   });
 
   it("applies variant alongside size", () => {

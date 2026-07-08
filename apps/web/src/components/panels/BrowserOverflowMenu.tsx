@@ -124,9 +124,9 @@ export function BrowserOverflowMenu({
             variant="ghost"
             size="icon-xs"
             aria-label="More browser tools"
-            className="size-7 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
           >
-            <EllipsisVertical size={15} aria-hidden />
+            <EllipsisVertical aria-hidden />
           </Button>
         }
       />
@@ -211,10 +211,9 @@ export function BrowserOverflowMenu({
               size="icon-xs"
               aria-label="Zoom out"
               disabled={!hasLoadedPage}
-              className="size-5"
               onClick={() => applyZoom(zoom - ZOOM_STEP)}
             >
-              <Minus size={12} aria-hidden />
+              <Minus aria-hidden />
             </Button>
             <span className="w-9 text-center tabular-nums" aria-live="polite">
               {Math.round(zoom * 100)}%
@@ -225,10 +224,9 @@ export function BrowserOverflowMenu({
               size="icon-xs"
               aria-label="Zoom in"
               disabled={!hasLoadedPage}
-              className="size-5"
               onClick={() => applyZoom(zoom + ZOOM_STEP)}
             >
-              <Plus size={12} aria-hidden />
+              <Plus aria-hidden />
             </Button>
             <Button
               type="button"
@@ -236,10 +234,10 @@ export function BrowserOverflowMenu({
               size="icon-xs"
               aria-label="Reset zoom"
               disabled={!hasLoadedPage}
-              className="ml-1 size-5"
+              className="ml-1"
               onClick={() => applyZoom(1)}
             >
-              <RotateCw size={11} aria-hidden />
+              <RotateCw aria-hidden />
             </Button>
           </span>
         </div>

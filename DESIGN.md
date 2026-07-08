@@ -19,35 +19,107 @@ colors:
   oxide-clay: "oklch(0.78 0.13 25)"
   destructive: "oklch(0.65 0.2 25)"
 typography:
-  heading:
-    fontFamily: "SF Mono, Cascadia Code, Consolas, monospace"
-    fontSize: "0.65rem"
-    fontWeight: 600
-    lineHeight: 1.2
-    letterSpacing: "0.16em"
-  body:
+  h1:
     fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
-    fontSize: "0.875rem"
-    fontWeight: 400
-    lineHeight: 1.55
-    letterSpacing: "normal"
-  title:
-    fontFamily: "Public Sans, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1rem"
+    fontSize: "4.8rem"
     fontWeight: 600
-    lineHeight: 1.3
+    lineHeight: "5.6rem"
+    letterSpacing: "-0.03em"
+  h2:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "4rem"
+    fontWeight: 600
+    lineHeight: "4.8rem"
+    letterSpacing: "-0.025em"
+  h3:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "3.2rem"
+    fontWeight: 600
+    lineHeight: "4rem"
+    letterSpacing: "-0.02em"
+  h4:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "2.8rem"
+    fontWeight: 600
+    lineHeight: "3.2rem"
+    letterSpacing: "-0.015em"
+  h5:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "2.4rem"
+    fontWeight: 600
+    lineHeight: "2.8rem"
     letterSpacing: "-0.01em"
-  label:
-    fontFamily: "SF Mono, Cascadia Code, Consolas, monospace"
-    fontSize: "0.625rem"
-    fontWeight: 500
-    lineHeight: 1.2
-    letterSpacing: "0.18em"
-  mono:
-    fontFamily: "SF Mono, Cascadia Code, Consolas, monospace"
-    fontSize: "0.75rem"
+  h6:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "2rem"
+    fontWeight: 600
+    lineHeight: "2.4rem"
+    letterSpacing: "normal"
+  body-md:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "1.6rem"
     fontWeight: 400
-    lineHeight: 1.4
+    lineHeight: "2rem"
+    letterSpacing: "normal"
+  body-md-semibold:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.6rem"
+    fontWeight: 600
+    lineHeight: "2rem"
+    letterSpacing: "normal"
+  body-sm:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "1.4rem"
+    fontWeight: 400
+    lineHeight: "1.6rem"
+    letterSpacing: "normal"
+  body-sm-semibold:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "1.4rem"
+    fontWeight: 600
+    lineHeight: "1.6rem"
+    letterSpacing: "normal"
+  body-lg:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "2rem"
+    fontWeight: 400
+    lineHeight: "2.4rem"
+    letterSpacing: "normal"
+  body-lg-semibold:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "2rem"
+    fontWeight: 600
+    lineHeight: "2.4rem"
+    letterSpacing: "normal"
+  button-link:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "1.6rem"
+    fontWeight: 500
+    lineHeight: "2rem"
+    letterSpacing: "normal"
+  button-link-sm:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "1.4rem"
+    fontWeight: 500
+    lineHeight: "1.6rem"
+    letterSpacing: "normal"
+  button-link-lg:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "2rem"
+    fontWeight: 500
+    lineHeight: "2.4rem"
+    letterSpacing: "normal"
+  caption:
+    fontFamily: "Public Sans, ui-sans-serif, system-ui, -apple-system, sans-serif"
+    fontSize: "1.2rem"
+    fontWeight: 400
+    lineHeight: "1.6rem"
+    letterSpacing: "normal"
+  mono-data:
+    fontFamily: "SF Mono, Cascadia Code, Consolas, monospace"
+    fontSize: "1.2rem"
+    fontWeight: 400
+    lineHeight: "1.6rem"
     letterSpacing: "normal"
 rounded:
   sm: "0.375rem"
@@ -55,30 +127,44 @@ rounded:
   lg: "0.625rem"
   xl: "0.875rem"
   2xl: "1.125rem"
+spacing:
+  1: "0.4rem"
+  2: "0.8rem"
+  3: "1.2rem"
+  4: "1.6rem"
+  5: "2rem"
+  6: "2.4rem"
+  8: "3.2rem"
+  10: "4rem"
+  12: "4.8rem"
+  14: "5.6rem"
 components:
   button-primary:
     backgroundColor: "{colors.amber-primary}"
     textColor: "{colors.ink}"
+    typography: "{typography.button-link-sm}"
     rounded: "{rounded.lg}"
-    padding: "0 0.625rem"
-    height: "2rem"
+    padding: "0 1.2rem"
+    height: "3.2rem"
   button-ghost:
     backgroundColor: "transparent"
     textColor: "{colors.ink}"
+    typography: "{typography.button-link-sm}"
     rounded: "{rounded.lg}"
-    padding: "0 0.625rem"
-    height: "2rem"
+    padding: "0 1.2rem"
+    height: "3.2rem"
   input:
     backgroundColor: "{colors.slate-accent}"
     textColor: "{colors.ink}"
+    typography: "{typography.body-sm}"
     rounded: "{rounded.lg}"
-    padding: "0 0.625rem"
-    height: "2rem"
+    padding: "0 1.2rem"
+    height: "3.2rem"
   panel:
     backgroundColor: "{colors.slate-card}"
     textColor: "{colors.ink}"
     rounded: "{rounded.xl}"
-    padding: "0.75rem"
+    padding: "1.2rem"
 ---
 
 # Design System: Mcode
@@ -100,6 +186,7 @@ This system explicitly rejects the consumer-app reflexes: no softened "Oops, som
 - Monospace carries machine facts (SHAs, counts, timestamps, status labels); Public Sans carries human prose.
 - Keyboard-first: shortcuts are first-class, not hidden.
 - Information-dense by intent: tight, tabular, no decorative padding.
+- Four-point spacing: every layout gap, inset, control size, and icon size lands on a 4px step.
 
 ## 2. Colors
 
@@ -141,19 +228,28 @@ Light theme mirrors this on cool neutrals: page `oklch(0.955 0.005 260)`, backgr
 **Display / Body Font:** Public Sans (with `ui-sans-serif, system-ui, -apple-system, sans-serif`)
 **Label / Mono Font:** SF Mono (with `Cascadia Code, Consolas, monospace`)
 
-**Character:** A single humanist sans does the human-facing work — prose, titles, controls — at a calm 14px baseline. Monospace is not a "developer vibe"; it is reserved for facts a machine produced. The contrast between the two is the entire type system: if it came from a person, it is Public Sans; if it is a SHA, a count, a timestamp, or a status label, it is mono.
+**Character:** A single humanist sans does the human-facing work: headings, prose, controls, and captions. Monospace is not a "developer vibe"; it is reserved for facts a machine produced. The contrast between the two is the entire type system: if it came from a person, it is Public Sans; if it is a SHA, a count, a timestamp, or a status label, it is mono.
 
 ### Hierarchy
-- **Title** (Public Sans, 600, 1rem, line-height 1.3, letter-spacing -0.01em): Panel and dialog titles. The largest type in the app; this is product UI, not a hero — there is no display scale above ~1rem.
-- **Body** (Public Sans, 400, 0.875rem / 14px, line-height 1.55): Agent prose, descriptions, the Whisper narrative timeline. Cap prose at 65–75ch.
-- **Heading / Eyebrow** (mono, 600, ~0.65rem, letter-spacing 0.16em, uppercase small-caps): Section headings inside panels. Wide-tracked mono small-caps, used sparingly as structure, not on every block.
-- **Label** (mono, 500, 0.625rem / 10.5px, letter-spacing 0.18em, uppercase): Status labels ("ERRORED", "IDLE"), empty-state captions, micro-meta.
-- **Mono Data** (mono, 400, 0.75rem, tabular-nums): SHAs, file counts, timestamps, durations. Always `tabular-nums` so columns of numerals align.
+- **H1** (Public Sans, 600, `4.8rem / 5.6rem`): Rare screen-level or document-level heading. Use only when the surface has room to carry it.
+- **H2** (Public Sans, 600, `4rem / 4.8rem`): Major panel heading or document section heading.
+- **H3** (Public Sans, 600, `3.2rem / 4rem`): Section title inside a full surface.
+- **H4** (Public Sans, 600, `2.8rem / 3.2rem`): Dialog title or high-emphasis panel title.
+- **H5** (Public Sans, 600, `2.4rem / 2.8rem`): Compact panel title.
+- **H6** (Public Sans, 600, `2rem / 2.4rem`): Dense subsection heading.
+- **Body MD** (Public Sans, 400 or 600, `1.6rem / 2rem`): Default prose, forms, list rows, and primary readable UI copy.
+- **Body SM** (Public Sans, 400 or 600, `1.4rem / 1.6rem`): Dense rows, helper text, compact controls, and secondary metadata.
+- **Body LG** (Public Sans, 400 or 600, `2rem / 2.4rem`): High-emphasis readable copy where H6 would feel too structural.
+- **Button Link** (Public Sans, 500, `1.6rem / 2rem`; small `1.4rem / 1.6rem`; large `2rem / 2.4rem`): Text inside buttons and link-styled actions.
+- **Caption** (Public Sans, 400, `1.2rem / 1.6rem`): Fine print, timestamps, and low-emphasis labels.
+- **Mono Data** (mono, 400, `1.2rem / 1.6rem`, tabular-nums): SHAs, file counts, timestamps, durations. Always `tabular-nums` so columns of numerals align.
 
 ### Named Rules
 **The Mono-Is-Machine Rule.** Monospace marks machine-authored facts only. Prose in mono, or numerals in Public Sans, is a category error. Counts and timestamps additionally take `tabular-nums`.
 
-**The No-Hero Rule.** This is an app, not a landing page. Type tops out near 1rem. There is no `clamp()` display scale, no oversized headline; hierarchy comes from weight and mono/sans contrast, not size.
+**The Fixed-Type Rule.** Product UI uses fixed rem sizes, never fluid type. H1 through H6 are available for document and spacious panel hierarchy, but dense app chrome defaults to Body SM or Body MD. Do not invent in-between sizes.
+
+**The Decimal Rem Rule.** The root font size is `62.5%`, making `1rem` equal to 10px in default browser settings. Express fixed dimensions in rem or em whenever practical, so `12px` becomes `1.2rem`, `32px` becomes `3.2rem`, and `48px` becomes `4.8rem`. Use raw px only for true hairlines, bitmap dimensions, canvas pixels, and sub-pixel optical fixes.
 
 ## 4. Elevation
 
@@ -175,12 +271,16 @@ Shadows exist only as a response to interactive state, never as ambient decorati
 
 ### Buttons
 - **Shape:** Gently rounded (`var(--radius-lg)`, 10px); smaller sizes step down to `min(var(--radius-md), 12px)`.
-- **Primary:** Filament Amber fill, ink text, `h-8 px-2.5`, `text-sm font-medium`. Hover drops opacity to 80%.
+- **Control scale:** Small is `3.2rem` (32px), medium is `4.8rem` (48px), large is `5.6rem` (56px). Default dense toolbar buttons use small. Medium is for primary row actions and dialogs. Large is rare and belongs only to spacious confirmation or onboarding surfaces.
+- **Icon-button scale:** Small is `3.2rem` (32px), medium is `4.8rem` (48px), large is `5.6rem` (56px). Icon-only buttons use the same outer box scale as text buttons so hit targets stay predictable.
+- **Icon scale:** Small icons are `1.6rem` (16px), medium icons are `2.4rem` (24px), large icons are `3.2rem` (32px). Do not invent intermediate icon sizes unless the source artwork demands optical correction.
+- **Primary:** Filament Amber fill, ink text, small height `3.2rem`, horizontal padding `1.2rem`, `text-sm font-medium`. Hover drops opacity to 80%.
 - **Ghost / Secondary:** Transparent or slate-secondary fill; hover lifts to `--muted`. Ghost is the default for dense toolbars — most buttons are not primary.
 - **Hover / Focus:** `transition-all`; `active:translate-y-px` for a tactile press; focus-visible draws `ring-3 ring-ring/50` plus a border shift. Destructive uses a 10% destructive tint, not a solid red fill.
 
 ### Inputs / Fields
 - **Style:** Slate-accent well (`--input`), 10px radius, no heavy stroke; the well's tone separates it from the panel.
+- **Typography:** Default inputs use Body SM (`1.4rem / 1.6rem`). Use Body MD (`1.6rem / 2rem`) for standard forms and dialogs. Use Body LG (`2rem / 2.4rem`) only when the input is the primary task on the surface.
 - **Focus:** Cool-ring glow (`0 0 0 3px ring/20%`) with a border shift to `--ring`. No bounce, no color flash.
 - **Error / Disabled:** `aria-invalid` draws a destructive border and ring; disabled drops to 50% opacity and `pointer-events-none`.
 
@@ -213,6 +313,9 @@ The interface expression of the "Anticipate the next step" product principle. A 
 ## 6. Do's and Don'ts
 
 ### Do:
+- **Do** use the 4-point spacing scale: `0.4rem` (4px), `0.8rem` (8px), `1.2rem` (12px), `1.6rem` (16px), `2.4rem` (24px), `3.2rem` (32px), `4.8rem` (48px), and `5.6rem` (56px).
+- **Do** write fixed dimensions in rem or em where practical. With the `62.5%` root, divide px by 10 to get the rem value.
+- **Do** keep buttons, icon buttons, and icons on their named small, medium, and large scales.
 - **Do** ration Filament Amber. One accent, small footprint, reserved for the active row, the primary action, and live indicators.
 - **Do** carry separation with tonal lift; step a surface along the lightness ramp before adding a line.
 - **Do** set SHAs, counts, timestamps, and status labels in mono, with `tabular-nums` for any numerals.
@@ -220,10 +323,12 @@ The interface expression of the "Anticipate the next step" product principle. A 
 - **Do** set hyperlinks and link-styled text in Cool Link (`text-link`), never amber. Cold for plumbing, warm for the lamp.
 - **Do** write technical copy: "Errored", "Idle", "Empty". Match PRODUCT.md's voice.
 - **Do** give every animation a `prefers-reduced-motion` alternative, and reuse the existing `wizard-*` and `narrative-*` curves (`cubic-bezier(0.25, 1, 0.5, 1)` and `cubic-bezier(0.22, 1, 0.36, 1)`) rather than inventing new ones.
-- **Do** keep type capped near 1rem; build hierarchy from weight and mono/sans contrast.
+- **Do** use the documented type scale exactly; dense chrome defaults to Body SM or Body MD, while H1-H6 are reserved for document and spacious panel hierarchy.
 - **Do** elevate exactly one next-step per state in Filament Amber, bound to the Tab accept key, and auto-advance only single-outcome transitions.
 
 ### Don't:
+- **Don't** add off-scale gaps or control sizes for visual convenience. If a value is not a 4px step, it needs an optical reason.
+- **Don't** mix px and rem for the same sizing system. Raw px is reserved for hairlines, bitmap dimensions, canvas pixels, and sub-pixel fixes.
 - **Don't** use `border-left` or `border-right` greater than 1px as a colored accent stripe on rows, cards, callouts, or alerts. Selection is a row-fill.
 - **Don't** add nested guide rails (`border-l border-border/50 pl-2`) for tree indentation. Indentation alone.
 - **Don't** use gradient text (`background-clip: text` over a gradient). Solid colors only.

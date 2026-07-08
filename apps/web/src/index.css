@@ -3,6 +3,8 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+@source inline("text-xs text-sm text-base text-lg text-xl text-2xl text-3xl text-4xl text-5xl rounded-sm rounded-md rounded-lg rounded-xl rounded-2xl rounded-3xl rounded-4xl h-8 h-12 h-14 w-8 w-12 w-14 size-8 size-12 size-14 p-4 gap-4");
+
 @custom-variant dark (&:is(.dark *));
 
 :root {
@@ -36,7 +38,6 @@
   --chart-3: oklch(0.439 0.005 260);
   --chart-4: oklch(0.371 0.005 260);
   --chart-5: oklch(0.269 0.005 260);
-  --radius: 0.625rem;
   --sidebar: oklch(0.945 0.008 260);
   --sidebar-foreground: oklch(0.18 0.005 260);
   --sidebar-primary: oklch(0.52 0.17 75);
@@ -110,6 +111,25 @@
 }
 
 @theme inline {
+  --spacing: 0.4rem;
+  --text-xs: 1.2rem;
+  --text-xs--line-height: 1.6rem;
+  --text-sm: 1.4rem;
+  --text-sm--line-height: 1.6rem;
+  --text-base: 1.6rem;
+  --text-base--line-height: 2rem;
+  --text-lg: 2rem;
+  --text-lg--line-height: 2.4rem;
+  --text-xl: 2.4rem;
+  --text-xl--line-height: 2.8rem;
+  --text-2xl: 2.8rem;
+  --text-2xl--line-height: 3.2rem;
+  --text-3xl: 3.2rem;
+  --text-3xl--line-height: 4rem;
+  --text-4xl: 4rem;
+  --text-4xl--line-height: 4.8rem;
+  --text-5xl: 4.8rem;
+  --text-5xl--line-height: 5.6rem;
   --font-sans: "Public Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
   --color-page: var(--page);
@@ -145,13 +165,13 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-sm: 0.6rem;
+  --radius-md: 0.8rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.4rem;
+  --radius-2xl: 1.8rem;
+  --radius-3xl: 2.2rem;
+  --radius-4xl: 2.6rem;
 }
 
 
@@ -564,6 +584,7 @@
   }
   html {
     @apply font-sans;
+    font-size: 62.5%;
     overflow: hidden;
     height: 100%;
   }

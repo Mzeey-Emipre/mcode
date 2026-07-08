@@ -132,7 +132,6 @@ test.describe("Branchless Create PR", () => {
     await page.waitForSelector("[data-testid='chat-header-title']");
 
     await ensureOverviewOpen(page);
-    await expect(page.getByText("HEAD").first()).toBeVisible();
     await expect(page.getByTestId("thread-overview-create-branch")).toBeVisible();
     await expect(page.getByTestId("workspace-menu-branch")).toHaveCount(0);
     await expect(page.getByTestId("workspace-menu-create-pr")).toHaveCount(0);

@@ -126,7 +126,7 @@ export function PlanDocument({
             aria-label={`${text}. Activate to ${isOpen ? "close" : "add"} a section note.`}
             className={cn(
               HEADING_BASE,
-              level === 1 && "text-[14px] font-semibold",
+              level === 1 && "text-base font-semibold",
               level === 2 && "text-[13.5px] font-semibold",
               level === 3 && "text-[13px] font-medium",
             )}

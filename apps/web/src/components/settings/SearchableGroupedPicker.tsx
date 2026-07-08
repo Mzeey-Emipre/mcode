@@ -107,7 +107,7 @@ export function SearchableGroupedPicker({
             aria-expanded={open}
             aria-haspopup="dialog"
             className={cn(
-              "h-8 min-w-[220px] max-w-[280px] justify-between gap-2 px-2.5 text-xs font-normal",
+              "min-w-[220px] max-w-[280px] justify-between font-normal",
               (disabled || loading) && "opacity-60",
             )}
           >

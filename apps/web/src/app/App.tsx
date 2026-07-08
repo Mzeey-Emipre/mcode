@@ -387,7 +387,7 @@ export function App() {
             {!rightPanelMaximized && (
             <main
               className="flex-1 overflow-hidden bg-background"
-              style={{ minWidth: COMPOSER_MIN_WIDTH }}
+              style={{ minWidth: showLanding ? 0 : COMPOSER_MIN_WIDTH }}
             >
               {settingsOpen ? (
                 <Suspense fallback={null}>

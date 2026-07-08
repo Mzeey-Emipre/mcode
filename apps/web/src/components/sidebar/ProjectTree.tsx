@@ -753,7 +753,7 @@ export function ProjectTree() {
             return (filteredThreadsByWorkspace.get(ws.id) ?? []).length === 0;
           }) && serverResults.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-2 px-4 py-8">
-              <span className="font-mono text-[28px] text-muted-foreground/15" aria-hidden>&#x2298;</span>
+              <span className="font-mono text-2xl text-muted-foreground/15" aria-hidden>&#x2298;</span>
               <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
                 No matching threads
               </p>
@@ -1664,7 +1664,7 @@ const ProjectNode = memo(function ProjectNode({
         <div className="pl-2">
           {threads.length === 0 ? (
             <div className="flex items-center gap-2 px-2 py-2">
-              <span aria-hidden="true" className="font-mono text-[12px] leading-none text-muted-foreground/25">
+              <span aria-hidden="true" className="font-mono text-xs leading-none text-muted-foreground/25">
                 ◌
               </span>
               <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/40">

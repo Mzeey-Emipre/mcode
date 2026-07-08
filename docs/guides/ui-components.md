@@ -23,7 +23,8 @@ All UI primitives live in `apps/web/src/components/ui/`. **Always use these inst
 
 ```tsx
 // Variants: default, outline, secondary, ghost, destructive, link
-// Sizes: default (h-8), xs (h-6), sm (h-7), lg (h-9), icon (8x8), icon-xs (6x6), icon-sm (7x7), icon-lg (9x9)
+// Text sizes: xs/sm/default = small (h-8, text-sm), md = medium (h-12, text-base), lg = large (h-14, text-lg)
+// Icon-only sizes: icon-xs/icon-sm/icon = small (size-8), icon-md = medium (size-12), icon-lg = large (size-14)
 <Button variant="ghost" size="sm">Click me</Button>
 <Button variant="outline" size="icon-xs"><Icon /></Button>
 ```
@@ -31,17 +32,18 @@ All UI primitives live in `apps/web/src/components/ui/`. **Always use these inst
 ## Input Sizes
 
 ```tsx
-// Sizes: default (h-8), sm (h-7), xs (h-6)
+// Sizes: xs/sm/default = small (h-8, text-sm), md = medium (h-12, text-base), lg = large (h-14, text-lg)
 <Input placeholder="Default input" />
 <Input size="sm" placeholder="Compact search input" />
-<Input size="xs" placeholder="Inline edit input" />
+<Input size="md" placeholder="Dialog input" />
 ```
 
 ## Badge Variants
 
 ```tsx
 // Variants: default, secondary, destructive, outline, ghost, link
-// Sizes: default (h-5), sm (h-4)
+// Sizes: default (h-5, text-xs, px-2), sm (h-4, text-xs, px-1)
+// Badge is a passive-label exception: compact caption sizing is allowed here, not for interactive controls.
 <Badge variant="secondary">Status</Badge>
 <Badge variant="secondary" size="sm">Tag</Badge>
 ```
@@ -52,7 +54,7 @@ All UI primitives live in `apps/web/src/components/ui/`. **Always use these inst
 2. **Never use raw `<input>` with Tailwind classes.** Use `<Input>` with the appropriate size.
 3. **Never use styled `<span>` for status labels or counts.** Use `<Badge>` with the appropriate variant and size.
 4. **If no existing component fits**, create a new one in `components/ui/` with CVA variants following the existing pattern. Then use it wherever needed.
-5. **Stick to the Tailwind text scale** (`text-xs`, `text-sm`, `text-base`). Do not use arbitrary values like `text-[10px]` or `text-[11px]`.
+5. **Stick to the documented Tailwind text scale** (`text-xs` through `text-5xl`). Do not use arbitrary values like `text-[10px]` or `text-[11px]` unless the value is an audited exception.
 
 ## Testing UI Changes
 
@@ -80,4 +82,4 @@ Run `cd apps/web && bun run e2e` (or target a single spec with `bunx playwright 
 
 ### Minimum bar
 
-For every change that matches a trigger, run at least the specs that touch the components you modified, plus `ui-improvements-floating.spec.ts` if layout or tokens moved. Report the pass count in the PR — "N/N of touched specs pass; unrelated pre-existing failures out of scope" is the expected shape. Do not claim success without fresh output.
+For every change that matches a trigger, run at least the specs that touch the components you modified, plus `ui-improvements-floating.spec.ts` if layout or tokens moved. Report the pass count in the PR: "N/N of touched specs pass; unrelated pre-existing failures out of scope" is the expected shape. Do not claim success without fresh output.

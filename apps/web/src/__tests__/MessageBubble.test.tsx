@@ -201,6 +201,10 @@ describe("MessageBubble user messages", () => {
     expect(getByTestId("sent-preview-annotation-bundle-chip")).toHaveTextContent(
       "1 annotation",
     );
+    expect(getByTestId("sent-preview-annotation-bundle-chip")).toHaveClass(
+      "bg-accent",
+      "text-accent-foreground",
+    );
     expect(queryByText("bundle")).not.toBeInTheDocument();
   });
 
