@@ -93,6 +93,7 @@ interface PendingThreadCreation {
   permissionMode?: PermissionMode;
   transportMode: "direct" | "worktree";
   branch: string;
+  worktreeBranchMode?: "branchless" | "named";
   existingWorktreePath?: string;
   existingWorktreeBaseBranch?: string;
   attachments?: AttachmentMeta[];
@@ -117,6 +118,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     pending.permissionMode,
     pending.transportMode,
     pending.branch,
+    pending.worktreeBranchMode,
     pending.existingWorktreePath,
     pending.existingWorktreeBaseBranch,
     pending.attachments,
@@ -154,6 +156,7 @@ interface WorkspaceState {
   branchesLoading: boolean;
   newThreadMode: "direct" | "worktree" | "existing-worktree";
   newThreadBranch: string;
+  newThreadBranchSource: "branch" | "pr";
   worktrees: WorktreeInfo[];
   worktreesLoading: boolean;
   /** The workspace ID whose worktrees are currently in the `worktrees` array. Null before any load. */
@@ -259,6 +262,7 @@ interface WorkspaceState {
   checkoutBranch: (workspaceId: string, branch: string) => Promise<void>;
   setNewThreadMode: (mode: "direct" | "worktree" | "existing-worktree") => void;
   setNewThreadBranch: (branch: string) => void;
+  setNewThreadBranchFromPr: (branch: string) => void;
   /** Set whether the user has explicitly picked a branch, preventing live branch updates from overriding it. */
   setBranchManuallySelected: (value: boolean) => void;
 
@@ -405,6 +409,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   branchesLoading: false,
   newThreadMode: "direct" as const,
   newThreadBranch: "",
+  newThreadBranchSource: "branch" as const,
   worktrees: [],
   worktreesLoading: false,
   worktreesLoadedForWorkspace: null,
@@ -737,15 +742,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
 
-    const { newThreadMode, newThreadBranch, selectedWorktree } = get();
+    const { newThreadMode, newThreadBranch, newThreadBranchSource, selectedWorktree } = get();
 
     let mode: "direct" | "worktree" = "direct";
     let branch = newThreadBranch || "main";
+    let worktreeBranchMode: "branchless" | "named" | undefined;
     let existingWorktreePath: string | undefined;
     let existingWorktreeBaseBranch: string | undefined;
 
     if (newThreadMode === "worktree") {
       mode = "worktree";
+      worktreeBranchMode = newThreadBranchSource === "pr" ? "named" : "branchless";
     } else if (newThreadMode === "existing-worktree") {
       mode = "worktree";
       if (!selectedWorktree) throw new Error("No worktree selected");
@@ -777,6 +784,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       permissionMode,
       transportMode: mode,
       branch,
+      worktreeBranchMode,
       existingWorktreePath,
       existingWorktreeBaseBranch,
       attachments,
@@ -804,7 +812,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ? existingWorktreeBaseBranch
           ? "branchless"
           : "named"
-        : undefined,
+        : worktreeBranchMode,
       baseBranch: existingWorktreeBaseBranch ?? null,
       worktreePath: existingWorktreePath ?? null,
       worktreeManaged: existingWorktreePath ? false : undefined,
@@ -828,6 +836,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       activeThreadId: placeholderId,
       pendingNewThread: false,
       branchManuallySelected: false,
+      newThreadBranchSource: "branch",
       error: null,
     }));
 
@@ -951,6 +960,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       activeThreadId: placeholderId,
       pendingNewThread: false,
       branchManuallySelected: false,
+      newThreadBranchSource: "branch",
       error: null,
     }));
 
@@ -1123,6 +1133,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ? {
             newThreadMode: "direct" as const,
             newThreadBranch: "",
+            newThreadBranchSource: "branch" as const,
             namingMode: "auto" as const,
             customBranchName: "",
             autoPreviewBranch: generateBranchId(),
@@ -1181,7 +1192,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   setNewThreadBranch: (branch) => {
-    set({ newThreadBranch: branch });
+    set({ newThreadBranch: branch, newThreadBranchSource: "branch" });
+  },
+
+  setNewThreadBranchFromPr: (branch) => {
+    set({ newThreadBranch: branch, newThreadBranchSource: "pr" });
   },
 
   setBranchManuallySelected: (value) => {

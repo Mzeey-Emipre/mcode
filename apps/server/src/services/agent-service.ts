@@ -1028,6 +1028,7 @@ export class AgentService {
     permissionMode = "default",
     mode: "direct" | "worktree" = "direct",
     branch = "main",
+    worktreeBranchMode: "branchless" | "named" = "branchless",
     existingWorktreePath?: string,
     existingWorktreeBaseBranch?: string,
     attachments: AttachmentMeta[] = [],
@@ -1051,7 +1052,7 @@ export class AgentService {
     if (parentThreadId) {
       return this.createBranchedThread({
         workspaceId, content, model, permissionMode, mode, branch,
-        existingWorktreePath, existingWorktreeBaseBranch, attachments, mentions, reasoningLevel, provider,
+        existingWorktreePath, existingWorktreeBaseBranch, worktreeBranchMode, attachments, mentions, reasoningLevel, provider,
         interactionMode, parentThreadId, forkedFromMessageId, title,
         maxBudgetUsd, maxTurns,
         copilotAgent,
@@ -1074,7 +1075,13 @@ export class AgentService {
         baseBranch: existingWorktreeBaseBranch,
       });
     } else if (mode === "worktree") {
-      const createResult = await this.threadService.create(workspaceId, title, "worktree", branch, { branchless: true });
+      const createResult = await this.threadService.create(
+        workspaceId,
+        title,
+        "worktree",
+        branch,
+        { branchless: worktreeBranchMode !== "named" },
+      );
       threadWarnings = createResult.warnings;
       thread = createResult;
       this.threadRepo.updateProvider(thread.id, provider);
@@ -1166,6 +1173,7 @@ export class AgentService {
     permissionMode: string;
     mode: "direct" | "worktree";
     branch: string;
+    worktreeBranchMode?: "branchless" | "named";
     existingWorktreePath?: string;
     existingWorktreeBaseBranch?: string;
     attachments: AttachmentMeta[];
@@ -1187,7 +1195,7 @@ export class AgentService {
   }): Promise<Thread & { warnings?: string[] }> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
-      existingWorktreePath, existingWorktreeBaseBranch, attachments, mentions, reasoningLevel, provider,
+      existingWorktreePath, existingWorktreeBaseBranch, worktreeBranchMode, attachments, mentions, reasoningLevel, provider,
       interactionMode, parentThreadId, forkedFromMessageId, title,
       maxBudgetUsd, maxTurns,
       copilotAgent,
@@ -1257,7 +1265,13 @@ export class AgentService {
         baseBranch: existingWorktreeBaseBranch,
       });
     } else if (mode === "worktree") {
-      const createResult = await this.threadService.create(workspaceId, title, "worktree", branch, { branchless: true });
+      const createResult = await this.threadService.create(
+        workspaceId,
+        title,
+        "worktree",
+        branch,
+        { branchless: worktreeBranchMode !== "named" },
+      );
       threadWarnings = createResult.warnings;
       thread = createResult;
       // Patch lineage + provider atomically. If either fails, delete the orphan thread.

@@ -736,6 +736,7 @@ async function dispatch(
         params.permissionMode,
         params.mode,
         params.branch,
+        params.worktreeBranchMode,
         params.existingWorktreePath,
         params.existingWorktreeBaseBranch,
         params.attachments,

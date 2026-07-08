@@ -98,8 +98,24 @@ vi.mock("../ModeSelector", () => ({
 }));
 
 vi.mock("../BranchPicker", () => ({
-  BranchPicker: ({ selectedBranch }: { selectedBranch: string }) => (
-    <div data-testid="branch-picker">{selectedBranch}</div>
+  BranchPicker: ({
+    selectedBranch,
+    onFetchAndSelect,
+  }: {
+    selectedBranch: string;
+    onFetchAndSelect?: (branch: string, prNumber: number) => void;
+  }) => (
+    <div data-testid="branch-picker">
+      {selectedBranch}
+      {onFetchAndSelect ? (
+        <button
+          type="button"
+          onClick={() => onFetchAndSelect("contributor/pr-branch", 42)}
+        >
+          Select PR branch
+        </button>
+      ) : null}
+    </div>
   ),
 }));
 
@@ -342,6 +358,35 @@ describe("Composer checkout confirmation", () => {
     }
   });
 
+  it("preserves PR branch selection when submitting a new worktree thread", async () => {
+    seedComposerState("worktree");
+    (mockTransport.fetchBranch as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    render(<Composer isNewThread workspaceId="ws-1" />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Select PR branch" }));
+    await waitFor(() =>
+      expect(mockTransport.fetchBranch).toHaveBeenCalledWith(
+        "ws-1",
+        "contributor/pr-branch",
+        42,
+      ),
+    );
+
+    await user.type(screen.getByLabelText("Message Mcode"), "Review this PR");
+    await user.click(screen.getByLabelText("Send message"));
+
+    await waitFor(() => expect(mockTransport.createAndSendMessage).toHaveBeenCalled());
+    const createCall = (
+      mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>
+    ).mock.calls.at(-1);
+    expect(createCall?.slice(4, 7)).toEqual([
+      "worktree",
+      "contributor/pr-branch",
+      "named",
+    ]);
+  });
+
   it("clears annotations and exits design mode after a successful annotation send", async () => {
     const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
     const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
@@ -405,7 +450,7 @@ describe("Composer checkout confirmation", () => {
     const createCall = (
       mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>
     ).mock.calls.at(-1);
-    expect(createCall?.[20]).toMatchObject({
+    expect(createCall?.[21]).toMatchObject({
       schemaVersion: 1,
       annotations: [
         {

@@ -93,6 +93,50 @@ describe("AgentService.createAndSend existing worktree attach", () => {
     });
   });
 
+  it("creates a new worktree on a PR branch as a named checkout", async () => {
+    const { threadRepo, workspaceRepo, threadService, service } = createAgentServiceHarness();
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const createdThread = {
+      ...threadRepo.create(
+        workspace.id,
+        "Review PR",
+        "worktree",
+        "contributor/pr-branch",
+        true,
+        "claude",
+        undefined,
+        "named",
+        null,
+      ),
+      worktree_path: "/repo/.worktrees/contributor-pr-branch",
+    };
+    vi.mocked(threadService.create).mockResolvedValue(createdThread);
+
+    const thread = await service.createAndSend(
+      workspace.id,
+      "Review PR",
+      "claude-sonnet-4-6",
+      "default",
+      "worktree",
+      "contributor/pr-branch",
+      "named",
+    );
+
+    expect(threadService.create).toHaveBeenCalledWith(
+      workspace.id,
+      "Review PR",
+      "worktree",
+      "contributor/pr-branch",
+      { branchless: false },
+    );
+    expect(thread).toMatchObject({
+      mode: "worktree",
+      branch: "contributor/pr-branch",
+      checkout_state: "named",
+      base_branch: null,
+    });
+  });
+
   it("attaches a detached existing worktree as branchless with the selected base branch", async () => {
     const { workspaceRepo, gitService, service } = createAgentServiceHarness();
     const workspace = workspaceRepo.create("Repo", "/repo");
@@ -112,6 +156,7 @@ describe("AgentService.createAndSend existing worktree attach", () => {
       "default",
       "worktree",
       "main",
+      undefined,
       "/repo/.worktrees/branchless-existing/",
       "main",
       [],
@@ -152,6 +197,7 @@ describe("AgentService.createAndSend existing worktree attach", () => {
       "default",
       "worktree",
       "main",
+      undefined,
       "/repo/.worktrees/feature-existing",
       undefined,
       [],
@@ -189,6 +235,7 @@ describe("AgentService.createAndSend existing worktree attach", () => {
         "default",
         "worktree",
         "main",
+        undefined,
         "/repo/.worktrees/branchless-existing",
         "HEAD",
         [],

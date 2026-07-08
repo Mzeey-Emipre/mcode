@@ -1397,8 +1397,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
   const newThreadMode = useWorkspaceStore((s) => s.newThreadMode);
   const newThreadBranch = useWorkspaceStore((s) => s.newThreadBranch);
+  const newThreadBranchSource = useWorkspaceStore((s) => s.newThreadBranchSource);
   const setNewThreadMode = useWorkspaceStore((s) => s.setNewThreadMode);
   const setNewThreadBranch = useWorkspaceStore((s) => s.setNewThreadBranch);
+  const setNewThreadBranchFromPr = useWorkspaceStore((s) => s.setNewThreadBranchFromPr);
 
   const activeWorkspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId),
@@ -1883,14 +1885,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const handleFetchAndSelect = useCallback(async (branch: string, prNumber: number) => {
     if (!workspaceId) return;
     await fetchBranch(workspaceId, branch, prNumber);
-    setNewThreadBranch(branch);
-  }, [workspaceId, fetchBranch, setNewThreadBranch]);
+    setNewThreadBranchFromPr(branch);
+  }, [workspaceId, fetchBranch, setNewThreadBranchFromPr]);
 
   const handlePrReview = useCallback(async () => {
     if (!detectedPr || !workspaceId) return;
     setComposerMode("worktree");
     await fetchBranch(workspaceId, detectedPr.branch, detectedPr.number);
-    setNewThreadBranch(detectedPr.branch);
+    setNewThreadBranchFromPr(detectedPr.branch);
     const prefill = `Review PR #${detectedPr.number}: ${detectedPr.title}`;
     setInput(prefill);
     setMentions([]);
@@ -1898,7 +1900,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (editorRef.current) writeComposerContent(editorRef.current, prefill);
     setDetectedPr(null);
     setPrDismissed(false);
-  }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranch]);
+  }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranchFromPr]);
 
   const addFiles = useCallback((files: File[], filePaths?: (string | null)[]) => {
     setAttachments((prev) => {
@@ -2328,6 +2330,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
     const submittedNewThreadMode = composerMode;
     const submittedNewThreadBranch = newThreadBranch;
+    const submittedNewThreadBranchSource = newThreadBranchSource;
 
     // Validate worktree mode requirements
     if (isNewThread && submittedNewThreadMode === "existing-worktree" && !selectedWorktree) {
@@ -2387,7 +2390,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       if (isNewThread && workspaceId) {
         setNewThreadMode(submittedNewThreadMode);
-        setNewThreadBranch(submittedNewThreadBranch);
+        if (submittedNewThreadMode === "worktree" && submittedNewThreadBranchSource === "pr") {
+          setNewThreadBranchFromPr(submittedNewThreadBranch);
+        } else {
+          setNewThreadBranch(submittedNewThreadBranch);
+        }
         await useWorkspaceStore
           .getState()
           .createAndSendMessage(
@@ -2509,7 +2516,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setPreviewDesignModeActive, resolveEditingPreviewAnnotations]);
+  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations]);
 
   useEffect(() => {
     if (!annotationScopeId) return;

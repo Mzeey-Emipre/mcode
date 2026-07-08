@@ -111,6 +111,7 @@ export const CreateAndSendSchema = lazySchema(() =>
     permissionMode: PermissionModeSchema.optional(),
     mode: ThreadModeSchema.optional(),
     branch: z.string().optional(),
+    worktreeBranchMode: z.enum(["branchless", "named"]).optional(),
     existingWorktreePath: z.string().optional(),
     existingWorktreeBaseBranch: GitBranchNameSchema.optional(),
     attachments: z.array(AttachmentMetaSchema).max(MAX_ATTACHMENTS).optional(),
