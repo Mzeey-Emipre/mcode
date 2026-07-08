@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { rebuildServerDevBundle } from "../build-server-dev-bundle.mjs";
 import {
   buildPortsContract,
+  buildRuntimeStateEnv,
   computeAvailablePorts,
   ensureRuntimeRoot,
   generateInstanceToken,
@@ -107,17 +108,15 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
           ...process.env,
           ELECTRON_RUN_AS_NODE: "1",
           NODE_ENV: "development",
-          MCODE_AGENT_RUNTIME: "1",
-          MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
-          MCODE_DATA_DIR: paths.devDir,
-          MCODE_DB_PATH: paths.dbPath,
+          ...buildRuntimeStateEnv(repoRoot, {
+            MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
+          }),
           MCODE_PORT: String(serverPort),
           MCODE_HOST: "127.0.0.1",
           MCODE_AUTH_TOKEN: token,
           MCODE_SINGLE_INSTANCE: "true",
           MCODE_INSTANCE_TOKEN: instanceToken,
           MCODE_WORKTREE_IDENTITY: repoRoot,
-          MCODE_ELECTRON_USER_DATA_DIR: paths.electronDir,
         },
       },
       resolve(paths.logsDir, "server.log"),

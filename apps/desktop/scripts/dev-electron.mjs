@@ -13,7 +13,7 @@
 
 import { context, build } from "esbuild";
 import { spawn } from "child_process";
-import { watch } from "fs";
+import { mkdirSync, watch } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -25,11 +25,25 @@ import {
 import { killProcessTree } from "../../../scripts/kill-process-tree.mjs";
 import { ensureElectronBinary } from "../../../scripts/ensure-electron.mjs";
 import { makeCoalescedAsync } from "./coalesce-async.mjs";
+import {
+  buildRuntimeStateEnv,
+  ensureRuntimeRoot,
+} from "../../../scripts/agent/runtime-contract.mjs";
+import { seedFixtureRepo } from "../../../scripts/agent/fixture-repo.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
+const repoRoot = resolve(projectRoot, "..", "..");
 const webRoot = resolve(projectRoot, "..", "web");
 const serverRoot = resolve(projectRoot, "..", "server");
+const runtimePaths = ensureRuntimeRoot(repoRoot);
+mkdirSync(runtimePaths.dbDir, { recursive: true });
+mkdirSync(runtimePaths.logsDir, { recursive: true });
+mkdirSync(runtimePaths.electronDir, { recursive: true });
+const fixtureRepo = seedFixtureRepo(repoRoot);
+const runtimeStateEnv = buildRuntimeStateEnv(repoRoot, {
+  MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
+});
 
 /** Paths to Electron main/preload bundles and server bundle (restart triggers). */
 const mainOutFile = resolve(projectRoot, "dist/main/main.cjs");
@@ -200,7 +214,7 @@ function startViteDevServer() {
     viteProcess = spawn("bun", ["run", "dev"], {
       cwd: webRoot,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, NODE_ENV: "development" },
+      env: { ...process.env, NODE_ENV: "development", ...runtimeStateEnv },
     });
 
     viteProcess.stdout.on("data", (data) => {
@@ -310,16 +324,11 @@ function spawnElectron() {
   const electronBin = desktopRequire("electron");
   const electronEnv = {
     ...process.env,
+    ...runtimeStateEnv,
     ELECTRON_RENDERER_URL: devServerUrl,
     NODE_ENV: "development",
   };
   delete electronEnv.ELECTRON_RUN_AS_NODE;
-  // Normal dev desktop should keep using ~/.mcode-dev; agent:up passes an
-  // explicit .dev data dir and Electron userData dir for worktree isolation.
-  if (electronEnv.MCODE_AGENT_RUNTIME !== "1") {
-    delete electronEnv.MCODE_DATA_DIR;
-    delete electronEnv.MCODE_ELECTRON_USER_DATA_DIR;
-  }
   electronProcess = spawn(electronBin, ["."], {
     cwd: projectRoot,
     stdio: "inherit",
