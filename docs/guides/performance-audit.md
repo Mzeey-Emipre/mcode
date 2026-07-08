@@ -8,19 +8,30 @@ Performance principles for building a fast, memory-efficient Electron + React ap
 
 Any list that can grow beyond ~30 items must use virtual scrolling. Only DOM nodes visible in the viewport (plus a small overscan) should exist.
 
+For timelines and other high-churn lists, build the UI as a viewport engine with
+fine-grained row subscriptions. A single item, token stream, tool-call status,
+or measurement change should update the affected row or segment, not make React
+reconcile the whole list. Treat visible range, row measurements, scroll anchors,
+and item data as separate concerns so the user keeps their place while the app
+does less work.
+
 **Do:**
 - Use a virtualizer (`@tanstack/react-virtual`, `react-window`, etc.) for dynamic-length lists
 - Set a fixed or estimated item height for the virtualizer
 - Add overscan (2-5 items) for smooth scrolling
+- Subscribe rows to the smallest stable data slice they need
+- Preserve scroll anchors when items are prepended, resized, or streamed
 
 **Don't:**
 - Render all items with `.map()` inside a scrollable container
 - Rely on `max-height` + `overflow-y: auto` as a substitute for virtualization
 - Assume a list will stay small forever
+- Replace whole arrays or parent objects for updates that affect one row
 
 **How to verify:**
 - Open React DevTools, inspect a scrollable container, scroll to the bottom. DOM node count should stay constant regardless of list length.
 - Chrome DevTools Performance tab: DOM node count in any scrollable area should stay under ~500 regardless of data size.
+- React DevTools Profiler: row updates should be limited to changed rows or the active streaming row.
 
 ---
 

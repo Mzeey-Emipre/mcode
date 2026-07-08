@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   FileSearch,
   WrapText,
@@ -32,7 +33,11 @@ import {
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { DIFF_FILE_LIST_GAP, DIFF_FILE_LIST_PADDING } from "./diff-surface";
+import { DIFF_FILE_LIST_PADDING } from "./diff-surface";
+
+const FILE_ROW_ESTIMATE_PX = 260;
+const FILE_ROW_OVERSCAN = 4;
+const FILE_LIST_VIRTUALIZE_THRESHOLD = 30;
 
 /** Props for FileList. */
 interface FileListProps {
@@ -61,6 +66,10 @@ export function FileList({
   defaultFilesExpanded = false,
   cacheVersion = 0,
 }: FileListProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  const [fallbackAnchorIndex, setFallbackAnchorIndex] = useState(0);
   const [jumpOpen, setJumpOpen] = useState(false);
   const [jumpTarget, setJumpTarget] = useState<{ path: string; token: number } | null>(null);
   const [highlightTarget, setHighlightTarget] = useState<{ path: string; token: number } | null>(null);
@@ -94,6 +103,50 @@ export function FileList({
   // The expand/collapse toggle reflects the last bulk action, falling back to
   // the view's default expand state when none has run yet.
   const allExpanded = bulkDiffExpand?.expand ?? defaultFilesExpanded;
+  const shouldVirtualize = sortedFiles.length > FILE_LIST_VIRTUALIZE_THRESHOLD;
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const viewport = list?.closest<HTMLElement>("[data-slot='scroll-area-viewport']") ?? null;
+    const nextScrollElement = viewport ?? list;
+    setScrollElement((prev) => (prev === nextScrollElement ? prev : nextScrollElement));
+    setScrollMargin((prev) => {
+      const next = list?.offsetTop ?? 0;
+      return prev === next ? prev : next;
+    });
+  }, [sortedFiles.length]);
+
+  const virtualizer = useVirtualizer({
+    count: sortedFiles.length,
+    getScrollElement: () => scrollElement,
+    estimateSize: () => FILE_ROW_ESTIMATE_PX,
+    getItemKey: (index) => sortedFiles[index] ?? String(index),
+    overscan: FILE_ROW_OVERSCAN,
+    scrollMargin,
+    useFlushSync: false,
+  });
+  const virtualItems = shouldVirtualize ? virtualizer.getVirtualItems() : [];
+  const fileVirtualItems = useMemo(() => {
+    if (!shouldVirtualize) return [];
+    if (virtualItems.length > 0) return virtualItems;
+
+    const visibleCount = Math.min(
+      sortedFiles.length,
+      Math.max(1, Math.ceil((scrollElement?.clientHeight ?? 0) / FILE_ROW_ESTIMATE_PX) + FILE_ROW_OVERSCAN * 2),
+    );
+    const firstIndex = Math.min(
+      fallbackAnchorIndex,
+      Math.max(0, sortedFiles.length - visibleCount),
+    );
+    return Array.from({ length: visibleCount }, (_, offset) => {
+      const index = firstIndex + offset;
+      return {
+        index,
+        key: sortedFiles[index] ?? String(index),
+        start: index * FILE_ROW_ESTIMATE_PX,
+      };
+    });
+  }, [fallbackAnchorIndex, scrollElement?.clientHeight, shouldVirtualize, sortedFiles, virtualItems]);
 
   // Refresh re-fetches the view: bump the scope revision (clears the inline diff
   // cache + reloads git-view file lists); thread views also need a snapshot
@@ -118,16 +171,21 @@ export function FileList({
 
   const jumpToFile = useCallback((path: string) => {
     const token = ++jumpTokenRef.current;
+    const index = sortedFiles.indexOf(path);
     setJumpOpen(false);
     setJumpTarget({ path, token });
     setHighlightTarget({ path, token });
+    if (index >= 0) {
+      setFallbackAnchorIndex(index);
+      virtualizer.scrollToIndex(index, { align: "start" });
+    }
 
     if (highlightClearRef.current) clearTimeout(highlightClearRef.current);
     highlightClearRef.current = setTimeout(() => {
       setHighlightTarget((current) => (current?.token === token ? null : current));
       highlightClearRef.current = null;
     }, 1500);
-  }, []);
+  }, [sortedFiles, virtualizer]);
 
   const clearJumpTarget = useCallback((token: number) => {
     setJumpTarget((current) => (current?.token === token ? null : current));
@@ -281,21 +339,55 @@ export function FileList({
           </TooltipContent>
         </Tooltip>
       </div>
-      <div className={`flex flex-col ${DIFF_FILE_LIST_GAP} ${DIFF_FILE_LIST_PADDING}`}>
-        {sortedFiles.map((file) => (
-          <FileEntry
-            key={file}
-            filePath={file}
-            source={source}
-            id={id}
-            threadId={threadId}
-            defaultExpanded={defaultFilesExpanded}
-            cacheVersion={cacheVersion}
-            jumpToken={jumpTarget?.path === file ? jumpTarget.token : undefined}
-            onJumpSettled={clearJumpTarget}
-            highlightToken={highlightTarget?.path === file ? highlightTarget.token : undefined}
-          />
-        ))}
+      <div
+        ref={listRef}
+        className={
+          shouldVirtualize
+            ? `${DIFF_FILE_LIST_PADDING} relative`
+            : `flex flex-col gap-2 ${DIFF_FILE_LIST_PADDING}`
+        }
+        style={shouldVirtualize ? { height: virtualizer.getTotalSize() } : undefined}
+      >
+        {shouldVirtualize
+          ? fileVirtualItems.map((virtualItem) => {
+              const file = sortedFiles[virtualItem.index];
+              if (!file) return null;
+              return (
+                <div
+                  key={virtualItem.key}
+                  ref={virtualizer.measureElement}
+                  data-index={virtualItem.index}
+                  className="absolute left-0 w-full pb-2"
+                  style={{ transform: `translateY(${virtualItem.start - scrollMargin}px)` }}
+                >
+                  <FileEntry
+                    filePath={file}
+                    source={source}
+                    id={id}
+                    threadId={threadId}
+                    defaultExpanded={defaultFilesExpanded}
+                    cacheVersion={cacheVersion}
+                    jumpToken={jumpTarget?.path === file ? jumpTarget.token : undefined}
+                    onJumpSettled={clearJumpTarget}
+                    highlightToken={highlightTarget?.path === file ? highlightTarget.token : undefined}
+                  />
+                </div>
+              );
+            })
+          : sortedFiles.map((file) => (
+              <FileEntry
+                key={file}
+                filePath={file}
+                source={source}
+                id={id}
+                threadId={threadId}
+                defaultExpanded={defaultFilesExpanded}
+                cacheVersion={cacheVersion}
+                jumpToken={jumpTarget?.path === file ? jumpTarget.token : undefined}
+                onJumpSettled={clearJumpTarget}
+                highlightToken={highlightTarget?.path === file ? highlightTarget.token : undefined}
+              />
+            ))}
       </div>
     </div>
   );
