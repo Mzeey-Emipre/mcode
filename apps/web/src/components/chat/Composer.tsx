@@ -23,6 +23,7 @@ import {
   Trash2,
   X,
   Zap,
+  Folder,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -2687,7 +2688,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
   }, [pendingCheckoutConfirmation, checkoutConfirming]);
 
-  const showComposerStatusBar = isNewThread === true || !!branchFromMessageId;
+  const showComposerStatusBar = !!branchFromMessageId;
 
   return (
     <div className="relative px-4 py-4 sm:px-8">
@@ -2695,7 +2696,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           bury the last line of content (e.g. the turn footer) when the chat is
           scrolled to its tail. Reduced from h-5/opaque to h-3/70% so the band
           reads as edge-softening rather than a mask. */}
-      <div className="pointer-events-none absolute inset-x-0 -top-3 h-3 bg-gradient-to-t from-background/70 to-transparent" />
+      {!isNewThread && (
+        <div className="pointer-events-none absolute inset-x-0 -top-3 h-3 bg-gradient-to-t from-background/70 to-transparent" />
+      )}
       {/* Queue toast */}
       {toast && (
         <div className="pointer-events-none absolute -top-8 right-4 z-20 flex items-center gap-1.5 rounded-full bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-sm ring-1 ring-border/50 backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-150">
@@ -2810,11 +2813,78 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         <ActiveGoalBar threadId={threadId} goal={activeGoal} />
       )}
 
+      {isNewThread && (
+        <div
+          data-testid="new-thread-context-strip"
+          className="relative z-10 flex min-h-9 min-w-0 items-center gap-1 overflow-x-auto rounded-t-xl bg-muted/30 px-2 py-1 ring-1 ring-inset ring-border/60"
+        >
+          <span
+            className="inline-flex h-7 min-w-0 shrink items-center gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/90"
+            title={activeWorkspace?.path}
+          >
+            <Folder size={13} className="shrink-0 text-muted-foreground" aria-hidden />
+            <span className="max-w-40 truncate">{activeWorkspace?.name ?? "Project"}</span>
+          </span>
+          <ModeSelector
+            mode={composerMode}
+            onModeChange={setComposerMode}
+            locked={!isGitRepo}
+            options={modeOptions}
+          />
+          {isGitRepo && composerMode === "direct" && (
+            <BranchPicker
+              branches={branches}
+              selectedBranch={newThreadBranch || "main"}
+              onSelect={setNewThreadBranch}
+              loading={branchesLoading}
+              locked={false}
+            />
+          )}
+          {isGitRepo && composerMode === "worktree" && (
+            <BranchPicker
+              branches={branches}
+              selectedBranch={newThreadBranch || "main"}
+              onSelect={setNewThreadBranch}
+              loading={branchesLoading}
+              locked={false}
+              pullRequests={openPrs}
+              prsLoading={openPrsLoading}
+              fetchingBranch={fetchingBranch}
+              onFetchAndSelect={handleFetchAndSelect}
+            />
+          )}
+          {isGitRepo && composerMode === "existing-worktree" && (
+            <>
+              {selectedWorktreeIsDetached && (
+                <BranchPicker
+                  branches={branches}
+                  selectedBranch={newThreadBranch || "main"}
+                  onSelect={setNewThreadBranch}
+                  loading={branchesLoading}
+                  locked={false}
+                />
+              )}
+              <Suspense fallback={<div className="h-7 w-28 animate-pulse rounded-md bg-accent" />}>
+                <LazyWorktreePicker
+                  worktrees={worktrees}
+                  selectedPath={selectedWorktree?.path ?? ""}
+                  onSelect={setSelectedWorktree}
+                  loading={worktreesLoading}
+                />
+              </Suspense>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Main composer container - dark bg, rounded */}
       <div
         ref={composerContainerRef}
         className={cn(
-          "relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
+          "relative bg-muted/50 ring-1 ring-inset ring-border/60 focus-within:ring-2 focus-within:ring-primary/70",
+          isNewThread
+            ? "-mt-px rounded-b-xl rounded-t-lg shadow-none"
+            : "rounded-xl shadow-lg shadow-black/20",
           isDragOver && "ring-2 ring-primary"
         )}
         onDragEnter={handleDragEnter}
@@ -2908,7 +2978,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             disabled={planPending || isStaleWorktree || !!providerReason}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
+            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : isNewThread ? "Do anything" : "Message Mcode..."}
           />
           <FileTagPopup
             items={fileAutocomplete.suggestions}
@@ -3383,7 +3453,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         aria-hidden={!showComposerStatusBar}
         inert={showComposerStatusBar ? undefined : true}
       >
-        <div className="min-h-0">
+        {showComposerStatusBar && <div className="min-h-0">
           <div className="flex items-center justify-between px-1 pt-1.5">
             {!isGitRepo && isNewThread ? (
               <span className="flex h-6 items-center rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground/40">
@@ -3487,7 +3557,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               ) : null}
             </div>
           </div>
-        </div>
+        </div>}
       </div>
       </div>{/* end max-width wrapper */}
 

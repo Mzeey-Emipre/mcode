@@ -62,6 +62,15 @@ describe('Sidebar "Edit settings.json" button', () => {
     );
   }
 
+  /** Render the main project sidebar navigation. */
+  function renderProjectSidebar() {
+    return render(
+      React.createElement(Sidebar, {
+        onOpenSettings: vi.fn(),
+      }),
+    );
+  }
+
   it("does not render a span with font-mono text-xs class containing {}", () => {
     const { container } = renderSettingsSidebar();
 
@@ -91,5 +100,21 @@ describe('Sidebar "Edit settings.json" button', () => {
     const editButton = screen.getByRole("button", { name: /Edit settings\.json/i });
     const svg = editButton.querySelector("svg");
     expect(svg?.classList.contains("lucide-braces")).toBe(true);
+  });
+
+  it("keeps the primary sidebar actions on the same neutral treatment", () => {
+    renderProjectSidebar();
+
+    const newThread = screen.getByRole("button", { name: "New thread" });
+    const searchThreads = screen.getByRole("button", { name: "Search threads" });
+    expect(newThread).not.toHaveClass("bg-secondary");
+    expect(searchThreads).not.toHaveClass("bg-secondary");
+  });
+
+  it("does not display a keyboard shortcut beside thread search", () => {
+    renderProjectSidebar();
+
+    expect(screen.queryByText("Ctrl Shift F")).not.toBeInTheDocument();
+    expect(screen.queryByText("⌘⇧F")).not.toBeInTheDocument();
   });
 });

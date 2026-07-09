@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useSidebarSearchStore, type ThreadSortField } from "@/stores/sidebarSearchStore";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 const SORT_OPTIONS: { field: ThreadSortField; label: string }[] = [
   { field: "updated_at", label: "Recent activity" },
@@ -36,14 +37,15 @@ export function ThreadSortControl() {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
-          <button
-            className={`inline-flex cursor-pointer items-center gap-0.5 rounded px-1 py-0.5 font-mono text-[9px] tracking-[0.06em] transition-colors hover:bg-accent/40 focus-visible:ring-1 focus-visible:ring-primary/40 ${
-              isNonDefault ? "text-primary/70" : "text-primary/55"
-            }`}
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className={isNonDefault ? "h-7 gap-1 px-2 text-xs text-primary" : "h-7 gap-1 px-2 text-xs text-muted-foreground"}
             aria-label="Sort threads"
           >
             {SORT_LABELS[sortField]} {arrow}
-          </button>
+          </Button>
         }
       />
       <PopoverContent
@@ -56,9 +58,12 @@ export function ThreadSortControl() {
           Sort threads by
         </div>
         {SORT_OPTIONS.map((opt) => (
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
             key={opt.field}
-            className={`flex w-full cursor-pointer items-center justify-between rounded px-2 py-1.5 text-[11px] transition-colors hover:bg-accent/40 focus-visible:ring-1 focus-visible:ring-primary/40 ${
+            className={`h-7 w-full justify-between px-2 text-xs font-normal ${
               sortField === opt.field ? "text-primary" : "text-muted-foreground"
             }`}
             onClick={() => {
@@ -68,18 +73,21 @@ export function ThreadSortControl() {
           >
             {opt.label}
             {sortField === opt.field && <Check size={11} className="text-primary" />}
-          </button>
+          </Button>
         ))}
         <div className="mx-1 my-1 h-px bg-border/50" />
-        <button
-          className="flex w-full cursor-pointer items-center gap-1.5 rounded px-2 py-1.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-accent/40 focus-visible:ring-1 focus-visible:ring-primary/40"
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="h-7 w-full justify-start gap-1.5 px-2 text-xs font-normal text-muted-foreground"
           onClick={toggleSortDirection}
         >
           {directionLabel(sortField, sortDirection)}
           <span className="ml-auto font-mono text-[9px] text-muted-foreground/40">
             click to flip
           </span>
-        </button>
+        </Button>
       </PopoverContent>
     </Popover>
   );

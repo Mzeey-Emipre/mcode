@@ -22,8 +22,7 @@ export function ProjectsView() {
   const nextAction = currentView?.kind === "projects" ? currentView.nextAction : undefined;
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
-  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
+  const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
   const pinWorkspace = useWorkspaceStore((s) => s.pinWorkspace);
 
   const q = query.trim().toLowerCase();
@@ -53,15 +52,10 @@ export function ProjectsView() {
   }, [visibleIds, enrich]);
 
   const handleSelect = (id: string) => {
-    setActiveWorkspace(id);
-    // setActiveWorkspace clears `pendingNewThread`, so re-set it AFTER activation
-    // when the caller asked us to chain into the new-thread state.
-    // Clear the active thread even when staying on the same workspace; otherwise
-    // `ChatView` stays on the old thread (same-workspace early-return + keep thread
-    // when thread belongs to selected workspace).
     if (nextAction === "newThread") {
-      setActiveThread(null);
-      setPendingNewThread(true);
+      beginNewThread(id);
+    } else {
+      setActiveWorkspace(id);
     }
     close();
   };

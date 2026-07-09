@@ -22,7 +22,7 @@ export function ProjectSelectorLanding() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
-  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
+  const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
   const pinWorkspace = useWorkspaceStore((s) => s.pinWorkspace);
   const removeRecent = useWorkspaceStore((s) => s.removeRecent);
   const pinned = useMemo(() => workspaces.filter((w) => w.pinned), [workspaces]);
@@ -69,13 +69,8 @@ export function ProjectSelectorLanding() {
   }, [visibleIds, enrich]);
 
   // Picking a project from the landing means "I want to start work on this".
-  // Drop straight into the new-thread composer for that workspace — without
-  // setPendingNewThread the landing's `showLanding` guard
-  // (activeThreadId === null && !pendingNewThread) stays true and the user
-  // visibly goes nowhere.
   const handleSelect = (id: string) => {
-    setActiveWorkspace(id);
-    setPendingNewThread(true);
+    beginNewThread(id);
   };
   // pinWorkspace/removeRecent rethrow on RPC failure. The store has already
   // rolled back its optimistic update by the time we get here, so swallow the

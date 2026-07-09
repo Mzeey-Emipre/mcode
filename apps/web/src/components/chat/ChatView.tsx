@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { GitFork } from "lucide-react";
+import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   useActiveWorkspaceThread,
@@ -31,6 +31,8 @@ import { useReplyStore } from "@/stores/replyStore";
 import { getTransport } from "@/transport";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
+import { Button } from "@/components/ui/button";
+import { McodeLogo } from "@/components/brand/McodeLogo";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -53,6 +55,29 @@ const ENTRY_POINTS = [
     label: "Review open PRs",
     description: "Diff + summary for each",
     prompt: "List and summarize open pull requests in this repo",
+  },
+] as const;
+
+const NEW_THREAD_STARTERS = [
+  {
+    label: "Explore and understand code",
+    prompt: "Explore this codebase and explain how it works.",
+    icon: ScanSearch,
+  },
+  {
+    label: "Build a new feature, app, or tool",
+    prompt: "Build a new feature, app, or tool in this project.",
+    icon: Hammer,
+  },
+  {
+    label: "Review code and suggest changes",
+    prompt: "Review this codebase and suggest concrete improvements.",
+    icon: SearchCode,
+  },
+  {
+    label: "Fix issues and failures",
+    prompt: "Find and fix issues or failures in this project.",
+    icon: Bug,
   },
 ] as const;
 
@@ -82,6 +107,42 @@ function EmptyState({ onPromptSelect }: EmptyStateProps) {
             <span className="text-[11px] text-muted-foreground/60">{ep.description}</span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** Premium blank-thread welcome that turns common coding tasks into composer prefills. */
+function NewThreadWelcome({
+  projectName,
+  onPromptSelect,
+}: {
+  projectName: string;
+  onPromptSelect: (text: string) => void;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-10">
+      <div className="flex w-full max-w-3xl flex-col items-center gap-7 text-center">
+        <McodeLogo variant="newThread" markOnly />
+        <h1 className="text-balance text-2xl font-medium tracking-[-0.025em] text-foreground sm:text-[28px]">
+          What should we build in <span className="text-primary">{projectName}</span>?
+        </h1>
+        <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+          {NEW_THREAD_STARTERS.map(({ label, prompt, icon: Icon }) => (
+            <Button
+              key={label}
+              type="button"
+              variant="outline"
+              onClick={() => onPromptSelect(prompt)}
+              className="group h-auto min-h-24 flex-col items-start justify-between rounded-xl border-border/70 bg-transparent px-4 py-3.5 text-left shadow-none hover:border-primary/35 hover:bg-accent/45"
+            >
+              <Icon size={15} className="text-primary transition-transform duration-200 group-hover:-translate-y-0.5 motion-reduce:transform-none" aria-hidden />
+              <span className="max-w-32 text-wrap text-[13px] font-medium leading-5 text-foreground/90">
+                {label}
+              </span>
+            </Button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -374,26 +435,16 @@ export function ChatView() {
   // New thread state: show empty composer when pending
   if (pendingNewThread && !activeThreadId) {
     return (
-      <div className="flex h-full flex-col bg-background">
-        {/* Header */}
-        <div className="flex h-11 items-center justify-between border-b border-border/40 pr-4 pl-2">
-          <div className="flex items-center gap-2">
-            {sidebarCollapsed && <SidebarRevealButton />}
-            <span className="text-sm text-muted-foreground">New thread</span>
-            {activeWorkspaceId && (
-              <Badge variant="secondary">
-                {activeWorkspaceName}
-              </Badge>
-            )}
+      <div className="relative flex h-full min-h-0 flex-col bg-background">
+        {sidebarCollapsed && (
+          <div className="absolute left-2 top-2 z-10">
+            <SidebarRevealButton />
           </div>
-        </div>
-
-        {/* Empty state */}
-        <div className="flex flex-1 items-center justify-center">
-          <EmptyState onPromptSelect={setPendingPrefill} />
-        </div>
-
-        {/* Composer for new thread */}
+        )}
+        <NewThreadWelcome
+          projectName={activeWorkspaceName || "this project"}
+          onPromptSelect={setPendingPrefill}
+        />
         <Composer isNewThread workspaceId={activeWorkspaceId ?? undefined} />
       </div>
     );

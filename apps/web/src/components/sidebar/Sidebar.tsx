@@ -1,5 +1,5 @@
 import { ProjectTree } from "./ProjectTree";
-import { Settings, ArrowLeft, ExternalLink, Braces } from "lucide-react";
+import { Settings, ArrowLeft, ExternalLink, Braces, Search, SquarePen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import type { SettingsSection } from "@/components/settings/settings-nav";
@@ -8,6 +8,7 @@ import { PanelCollapseIcon } from "./SidebarRevealButton";
 import { useUiStore } from "@/stores/uiStore";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { cn } from "@/lib/utils";
+import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 
 /** True when running inside the Electron shell. */
 const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
@@ -93,7 +94,36 @@ export function Sidebar({
             <SettingsNav section={settingsSection} onSection={onSettingsSection} />
           </div>
         ) : (
-          <ProjectTree />
+          <>
+            <div className="grid shrink-0 gap-0.5 px-2 pb-3 pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 justify-start gap-2 rounded-md px-2 text-[13px] font-normal text-foreground/90 shadow-none hover:text-foreground"
+                onClick={() =>
+                  useCommandPaletteStore.getState().open({
+                    intent: "projects",
+                    nextAction: "newThread",
+                  })
+                }
+              >
+                <SquarePen size={15} aria-hidden />
+                New thread
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 justify-start gap-2 rounded-md px-2 text-[13px] font-normal text-foreground/90 hover:text-foreground"
+                onClick={() =>
+                  useCommandPaletteStore.getState().open({ intent: "threadSearch" })
+                }
+              >
+                <Search size={15} aria-hidden />
+                Search threads
+              </Button>
+            </div>
+            <ProjectTree />
+          </>
         )}
       </div>
 

@@ -205,6 +205,14 @@ export function App() {
         },
       }),
       registerCommand({
+        id: "thread.search",
+        title: "Search Threads",
+        category: "Thread",
+        handler: () => {
+          useCommandPaletteStore.getState().open({ intent: "threadSearch" });
+        },
+      }),
+      registerCommand({
         // Command id stays `workspace.new` for shortcut/persistence stability
         // even though the user-facing label is now "New Project".
         id: "workspace.new",

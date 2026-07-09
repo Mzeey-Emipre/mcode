@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { mockWebSocketServer } from "./helpers/e2e-helpers";
 
-test.describe("Sidebar thread search", () => {
+test.describe("Sidebar thread actions", () => {
   test.beforeEach(async ({ page }) => {
     const now = new Date().toISOString();
     await mockWebSocketServer(page, {
@@ -52,45 +52,56 @@ test.describe("Sidebar thread search", () => {
     });
   });
 
-  test("search input is visible and focusable", async ({ page }) => {
+  test("Search threads opens the cross-project finder", async ({ page }) => {
     await page.goto("/");
-    const searchInput = page.getByTestId("sidebar-search-input");
+    await page.getByRole("button", { name: "Search threads" }).click();
+
+    const searchInput = page.locator('[data-slot="palette-input"]');
     await expect(searchInput).toBeVisible();
-    await searchInput.focus();
-    await expect(searchInput).toBeFocused();
+    await expect(searchInput).toHaveAttribute(
+      "placeholder",
+      "Search thread title, project, provider, branch, or worktree…",
+    );
+    await expect(page.getByText("Recent activity", { exact: true })).toBeVisible();
   });
 
-  test("Ctrl+Shift+F focuses search input", async ({ page }) => {
+  test("Ctrl+Shift+F opens and focuses the thread finder", async ({ page }) => {
     await page.goto("/");
-    const searchInput = page.getByTestId("sidebar-search-input");
     await page.keyboard.press("Control+Shift+F");
+    const searchInput = page.locator('[data-slot="palette-input"]');
+    await expect(searchInput).toBeVisible();
     await expect(searchInput).toBeFocused();
   });
 
-  test("typing in search updates input value", async ({ page }) => {
+  test("New thread opens the project picker", async ({ page }) => {
     await page.goto("/");
-    const searchInput = page.getByTestId("sidebar-search-input");
-    await searchInput.fill("test query");
-    await expect(searchInput).toHaveValue("test query");
+    await page.getByRole("button", { name: "New thread", exact: true }).click();
+
+    await expect(page.locator('[data-slot="palette-input"]')).toHaveAttribute(
+      "placeholder",
+      "Search projects…",
+    );
+    await expect(page.getByTestId("command-palette").getByText("Test Workspace")).toBeVisible();
   });
 
-  test("Escape clears search query", async ({ page }) => {
+  test("project controls appear only when the project row is hovered", async ({ page }) => {
     await page.goto("/");
-    const searchInput = page.getByTestId("sidebar-search-input");
-    await searchInput.fill("some text");
-    await expect(searchInput).toHaveValue("some text");
-    await page.keyboard.press("Escape");
-    await expect(searchInput).toHaveValue("");
+    const projectRow = page.getByTestId("project-row-ws-1");
+    const newThread = projectRow.getByRole("button", { name: "New thread in Test Workspace" });
+    const options = projectRow.getByRole("button", { name: "Project options for Test Workspace" });
+
+    await expect(newThread).toHaveCSS("opacity", "0");
+    await expect(options).toHaveCSS("opacity", "0");
+    await projectRow.hover();
+    await expect(newThread).toHaveCSS("opacity", "1");
+    await expect(options).toHaveCSS("opacity", "1");
   });
 
-  test("sort control is visible beside Projects", async ({ page }) => {
+  test("the finder keeps sort and filter controls with its results", async ({ page }) => {
     await page.goto("/");
+    await page.getByRole("button", { name: "Search threads" }).click();
     const sortButton = page.getByLabel("Sort threads");
     await expect(sortButton).toBeVisible();
-  });
-
-  test("filter icon is visible in search bar", async ({ page }) => {
-    await page.goto("/");
     const filterButton = page.getByLabel("Filter threads");
     await expect(filterButton).toBeVisible();
   });

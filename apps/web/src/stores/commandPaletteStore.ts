@@ -19,6 +19,7 @@ export type ProjectsNextAction = "newThread";
 export type View =
   | { kind: "root" }
   | { kind: "projects"; nextAction?: ProjectsNextAction }
+  | { kind: "threadSearch" }
   | { kind: "selectionList"; title: string; items: { id: string; title: string }[]; onPick: (id: string) => void };
 
 interface State {
@@ -37,12 +38,13 @@ interface State {
    * Open the palette, optionally at a specific intent.
    * - `projects`: open at the projects view. Pass `nextAction` to chain a
    *   follow-up (e.g. start a new thread inside the picked project).
+   * - `threadSearch`: open the cross-project thread finder.
    * - `addProject`: open at the root view with the input pre-seeded to `~/`.
    *   The unified shell flips into browse mode on render because `~/` matches
    *   the browse-mode prefix detection.
    */
   open: (opts?: {
-    intent?: "projects" | "addProject";
+    intent?: "projects" | "threadSearch" | "addProject";
     nextAction?: ProjectsNextAction;
   }) => void;
   /** Push a new view onto the navigation stack and clear the query. */
@@ -72,7 +74,9 @@ export const useCommandPaletteStore = create<State>((set, get) => ({
     // Only attach `nextAction` when set so equality-based tests on the bare
     // `{ kind: "projects" }` view shape continue to match.
     const view: View =
-      intent === "projects"
+      intent === "threadSearch"
+        ? { kind: "threadSearch" }
+        : intent === "projects"
         ? opts?.nextAction
           ? { kind: "projects", nextAction: opts.nextAction }
           : { kind: "projects" }

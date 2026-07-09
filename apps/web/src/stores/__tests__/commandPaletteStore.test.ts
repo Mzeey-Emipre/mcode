@@ -15,6 +15,11 @@ describe("commandPaletteStore", () => {
     expect(useCommandPaletteStore.getState().viewStack).toEqual([{ kind: "projects" }]);
   });
 
+  it("open({ intent: 'threadSearch' }) pushes the thread-search view", () => {
+    useCommandPaletteStore.getState().open({ intent: "threadSearch" });
+    expect(useCommandPaletteStore.getState().viewStack).toEqual([{ kind: "threadSearch" }]);
+  });
+
   it("push/pop maintain a stack", () => {
     useCommandPaletteStore.getState().open();
     useCommandPaletteStore.getState().push({ kind: "projects" });

@@ -11,6 +11,7 @@ import { RootView } from "./views/RootView";
 import { ProjectsView } from "./views/ProjectsView";
 import { BrowseView } from "./views/BrowseView";
 import { SelectionListView } from "./views/SelectionListView";
+import { ThreadSearchView } from "./views/ThreadSearchView";
 import { Kbd } from "./Kbd";
 import { isBrowseQuery, getPaletteMode } from "./CommandPalette.logic";
 import { cn } from "@/lib/utils";
@@ -49,6 +50,8 @@ export function CommandPalette() {
     ? "Type a path or filter…"
     : top?.kind === "projects"
       ? "Search projects…"
+      : top?.kind === "threadSearch"
+        ? "Search thread title, project, provider, branch, or worktree…"
       : top?.kind === "selectionList"
         ? `Search ${top.title.toLowerCase()}…`
         : "Search commands, type ~/ to browse, > for actions only…";
@@ -61,7 +64,7 @@ export function CommandPalette() {
           data-testid="command-palette"
           className={cn(
             "fixed left-1/2 top-[clamp(4rem,15vh,9rem)] z-50 w-full -translate-x-1/2 outline-none",
-            top?.kind === "projects" ? "max-w-2xl" : "max-w-xl",
+            top?.kind === "projects" || top?.kind === "threadSearch" ? "max-w-2xl" : "max-w-xl",
           )}
         >
           <Command
@@ -79,7 +82,7 @@ export function CommandPalette() {
               query={query}
               setQuery={setQuery}
               browseMode={browseMode}
-              modeLabel={browseMode ? "browse" : top?.kind === "projects" ? "projects" : getPaletteMode(query)}
+              modeLabel={browseMode ? "browse" : top?.kind === "projects" ? "projects" : top?.kind === "threadSearch" ? "threads" : getPaletteMode(query)}
               onKeyDown={(e) => {
                 // Ctrl/Cmd+Enter triggers the active view's confirm action.
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -104,6 +107,8 @@ export function CommandPalette() {
               <BrowseView />
             ) : top?.kind === "projects" ? (
               <ProjectsView />
+            ) : top?.kind === "threadSearch" ? (
+              <ThreadSearchView />
             ) : top?.kind === "selectionList" ? (
               <SelectionListView view={top} />
             ) : (

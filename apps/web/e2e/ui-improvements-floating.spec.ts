@@ -108,7 +108,7 @@ test.describe("Composer options — narrow viewport (below md)", () => {
     // Popover exposes grouped Mode + Permissions controls.
     await expect(page.getByText("Mode", { exact: true })).toBeVisible();
     await expect(page.getByText("Permissions", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Build" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Build", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Plan" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Full" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Supervised" })).toBeVisible();
@@ -120,8 +120,8 @@ test.describe("Composer options — narrow viewport (below md)", () => {
     await openComposerInNewThread(page);
 
     await page.getByRole("button", { name: "Composer options" }).click();
-    const planBtn = page.getByRole("button", { name: "Plan" });
-    const buildBtn = page.getByRole("button", { name: "Build" });
+    const planBtn = page.getByRole("button", { name: "Plan", exact: true });
+    const buildBtn = page.getByRole("button", { name: "Build", exact: true });
 
     await expect(buildBtn).toHaveAttribute("aria-pressed", "true");
     await expect(planBtn).toHaveAttribute("aria-pressed", "false");

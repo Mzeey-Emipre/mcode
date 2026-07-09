@@ -15,7 +15,7 @@ import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { Plus, Trash2, ChevronRight, ChevronDown, GitBranch, GitBranchMinus, AlertTriangle, FolderPlus, Folder, Activity } from "lucide-react";
+import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, FolderPlus, Folder, Activity, MoreHorizontal, SquarePen } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
@@ -40,6 +40,12 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { relativeTime } from "@/lib/time";
 import { schedulePrefetch, cancelPrefetch } from "@/lib/thread-hydrator/prefetch-scheduler";
 import { isPrable } from "@/lib/is-prable";
@@ -68,8 +74,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import { ThreadSearchBar } from "./ThreadSearchBar";
-import { useSidebarSearchStore, type ThreadSortField } from "@/stores/sidebarSearchStore";
 
 // Persist expand/collapse in localStorage
 function getExpandedState(): Record<string, boolean> {
@@ -90,28 +94,12 @@ const THREAD_LIST_CAP = 6;
 /** Stable empty array used as default when a workspace has no threads. */
 const EMPTY_THREADS: WorkspaceThread[] = [];
 
-/** Stable empty Set used as a sentinel when status filters don't need running/permission state. */
-const EMPTY_ID_SET = new Set<string>();
 const PROJECT_DND_MODIFIERS = [restrictToVerticalAxis];
 const PROJECT_DND_MEASURING = {
   droppable: {
     strategy: MeasuringStrategy.BeforeDragging,
   },
 } as const;
-
-/**
- * Returns `prev` if it contains the same elements in the same order as `next`
- * (by reference equality). Avoids new array references when content hasn't changed,
- * which preserves React.memo effectiveness on child components.
- */
-function stableArray<T>(prev: T[] | undefined, next: T[]): T[] {
-  if (prev === next) return prev;
-  if (!prev || prev.length !== next.length) return next;
-  for (let i = 0; i < next.length; i++) {
-    if (prev[i] !== next[i]) return next;
-  }
-  return prev;
-}
 
 /** Time window in ms during which a second click on the same thread row is treated as a double-click. */
 const DOUBLE_CLICK_THRESHOLD_MS = 250;
@@ -128,17 +116,6 @@ function getThreadListExpanded(): Record<string, boolean> {
 /** Persist per-workspace "show all threads" state to localStorage. */
 function setThreadListExpanded(state: Record<string, boolean>) {
   localStorage.setItem("mcode-expanded-thread-lists", JSON.stringify(state));
-}
-
-/**
- * Returns the parent directory name from an absolute path, or null if there isn't one
- * worth showing (e.g., the path is at the filesystem root).
- */
-function parentDirName(path: string): string | null {
-  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  const segments = normalized.split("/").filter(Boolean);
-  if (segments.length < 2) return null;
-  return segments[segments.length - 2];
 }
 
 interface ContextMenuState {
@@ -209,73 +186,6 @@ function buildThreadTree(threads: WorkspaceThread[]): ThreadTreeItem[] {
   return result;
 }
 
-/** Filter and sort threads based on sidebar search state. */
-function filterAndSortThreads(
-  threads: WorkspaceThread[],
-  query: string,
-  filters: { status: string[]; provider: string[] },
-  sortField: ThreadSortField,
-  sortDirection: "asc" | "desc",
-  runningThreadIds: Set<string>,
-  pendingPermissionThreadIds: Set<string>,
-): WorkspaceThread[] {
-  let result = threads;
-
-  // Text search filter
-  if (query) {
-    const q = query.toLowerCase();
-    result = result.filter((t) => t.title.toLowerCase().includes(q));
-  }
-
-  // Status filter
-  if (filters.status.length > 0) {
-    result = result.filter((t) => {
-      // "action_required" is a client-side pseudo-status
-      if (filters.status.includes("action_required") && pendingPermissionThreadIds.has(t.id)) {
-        return true;
-      }
-      // "active" means currently running
-      if (filters.status.includes("active") && t.status === "active" && runningThreadIds.has(t.id)) {
-        return true;
-      }
-      // "paused" means status is active but NOT running
-      if (filters.status.includes("paused") && t.status === "active" && !runningThreadIds.has(t.id)) {
-        return true;
-      }
-      // For DB-level statuses (completed, errored, interrupted), match directly
-      // but exclude "active" from fallthrough since it's handled above
-      if (t.status === "active") return false;
-      return filters.status.includes(t.status);
-    });
-  }
-
-  // Provider filter
-  if (filters.provider.length > 0) {
-    result = result.filter((t) => filters.provider.includes(t.provider));
-  }
-
-  // Sort
-  const dir = sortDirection === "asc" ? 1 : -1;
-  result = [...result].sort((a, b) => {
-    let cmp: number;
-    switch (sortField) {
-      case "title":
-        cmp = a.title.localeCompare(b.title);
-        break;
-      case "created_at":
-        cmp = a.created_at.localeCompare(b.created_at);
-        break;
-      case "updated_at":
-      default:
-        cmp = a.updated_at.localeCompare(b.updated_at);
-        break;
-    }
-    return cmp * dir;
-  });
-
-  return result;
-}
-
 /** Sidebar tree listing workspaces and their threads with CRUD actions. */
 export function ProjectTree() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -290,7 +200,7 @@ export function ProjectTree() {
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
-  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
+  const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const reorderWorkspace = useWorkspaceStore((s) => s.reorderWorkspace);
   const error = useWorkspaceStore((s) => s.error);
@@ -312,21 +222,6 @@ export function ProjectTree() {
     [pendingPermissionIds],
   );
 
-  const searchQuery = useSidebarSearchStore((s) => s.query);
-  const searchFilters = useSidebarSearchStore((s) => s.filters);
-  const sortField = useSidebarSearchStore((s) => s.sortField);
-  const sortDirection = useSidebarSearchStore((s) => s.sortDirection);
-  const isSearching = useSidebarSearchStore((s) => s.isSearching);
-  const serverResults = useSidebarSearchStore((s) => s.serverResults);
-  const setExpandedSnapshot = useSidebarSearchStore((s) => s.setExpandedSnapshot);
-  const expandedSnapshot = useSidebarSearchStore((s) => s.expandedSnapshot);
-  const isSearchActive = searchQuery.trim().length > 0 || searchFilters.status.length > 0 || searchFilters.provider.length > 0;
-
-  const availableProviders = useMemo(
-    () => [...new Set(threads.map((t) => t.provider))].sort(),
-    [threads],
-  );
-
   // Pre-group threads by workspace in one pass instead of filtering all threads per workspace.
   const threadsByWorkspace = useMemo(() => {
     const map = new Map<string, WorkspaceThread[]>();
@@ -338,39 +233,7 @@ export function ProjectTree() {
     return map;
   }, [threads]);
 
-  // Only include running/permission IDs as dependencies when status filters actually
-  // consult them. This prevents the entire filteredThreadsByWorkspace map from being
-  // recomputed every time an agent starts/stops (which creates new Set references).
-  const statusNeedsRunning = searchFilters.status.length > 0
-    && searchFilters.status.some((s) => s === "active" || s === "paused" || s === "action_required");
-  const effectiveRunning = statusNeedsRunning ? runningThreadIds : EMPTY_ID_SET;
-  const effectivePending = statusNeedsRunning ? pendingPermissionThreadIds : EMPTY_ID_SET;
-
-  const prevFilteredRef = useRef<Map<string, WorkspaceThread[]>>(new Map());
-
-  const filteredThreadsByWorkspace = useMemo(() => {
-    const map = new Map<string, WorkspaceThread[]>();
-    const prev = prevFilteredRef.current;
-    for (const ws of workspaces) {
-      const wsThreads = threadsByWorkspace.get(ws.id) ?? EMPTY_THREADS;
-      const filtered = isSearchActive
-        ? filterAndSortThreads(wsThreads, searchQuery, searchFilters, sortField, sortDirection, effectiveRunning, effectivePending)
-        : sortField !== "updated_at" || sortDirection !== "desc"
-          ? filterAndSortThreads(wsThreads, "", { status: [], provider: [] }, sortField, sortDirection, effectiveRunning, effectivePending)
-          : wsThreads;
-      // Reuse the previous array reference when elements haven't changed.
-      // Prevents downstream React.memo children from re-rendering when the
-      // map recomputes but a workspace's thread list is structurally identical.
-      map.set(ws.id, stableArray(prev.get(ws.id), filtered));
-    }
-    prevFilteredRef.current = map;
-    return map;
-  }, [workspaces, threadsByWorkspace, isSearchActive, searchQuery, searchFilters, sortField, sortDirection, effectiveRunning, effectivePending]);
-
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
-  /** Ref mirror of `expanded` so effects can read current state without re-triggering. */
-  const expandedRef = useRef(expanded);
-  expandedRef.current = expanded;
   const [threadListExpanded, setThreadListExpandedState] = useState<Record<string, boolean>>(getThreadListExpanded);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -411,57 +274,6 @@ export function ProjectTree() {
   useEffect(() => {
     setThreadListExpanded(threadListExpanded);
   }, [threadListExpanded]);
-
-  // Snapshot expanded state when search begins, restore when cleared
-  useEffect(() => {
-    if (isSearchActive && !expandedSnapshot) {
-      setExpandedSnapshot({ ...expandedRef.current });
-    }
-    if (!isSearchActive && expandedSnapshot) {
-      setExpanded(expandedSnapshot);
-      useSidebarSearchStore.setState({ expandedSnapshot: null });
-    }
-  }, [isSearchActive, expandedSnapshot, setExpandedSnapshot]);
-
-  // Auto-expand projects with matching threads during search
-  useEffect(() => {
-    if (!isSearchActive) return;
-    const workspaceIdsWithMatches = new Set<string>();
-
-    for (const ws of workspaces) {
-      const wsThreads = filteredThreadsByWorkspace.get(ws.id) ?? [];
-      if (wsThreads.length > 0) workspaceIdsWithMatches.add(ws.id);
-    }
-
-    for (const t of serverResults) {
-      workspaceIdsWithMatches.add(t.workspace_id);
-    }
-
-    const prev = expandedRef.current;
-    const next: Record<string, boolean> = {};
-    const workspacesToLoad: string[] = [];
-
-    for (const ws of workspaces) {
-      if (workspaceIdsWithMatches.has(ws.id)) {
-        next[ws.id] = true;
-        if (!prev[ws.id]) workspacesToLoad.push(ws.id);
-      } else {
-        next[ws.id] = false;
-      }
-    }
-
-    // Only update state if expanded values actually changed (prevents infinite loop)
-    const changed = workspaces.some(
-      (ws) => (prev[ws.id] ?? false) !== (next[ws.id] ?? false),
-    );
-    if (changed) {
-      setExpanded(next);
-    }
-
-    for (const wsId of workspacesToLoad) {
-      loadThreads(wsId);
-    }
-  }, [isSearchActive, filteredThreadsByWorkspace, serverResults, workspaces, loadThreads]);
 
   const checksById = useWorkspaceStore(useShallow((s) => s.checksById));
 
@@ -555,10 +367,8 @@ export function ProjectTree() {
   }, [setActiveWorkspace, setActiveThread]);
 
   const handleCreateThread = useCallback((wsId: string) => {
-    setActiveWorkspace(wsId);
-    setPendingNewThread(true);
-    setActiveThread(null);
-  }, [setActiveWorkspace, setPendingNewThread, setActiveThread]);
+    beginNewThread(wsId);
+  }, [beginNewThread]);
 
   const handleDeleteWorkspace = useCallback((wsId: string) => {
     const ws = useWorkspaceStore.getState().workspaces.find((w) => w.id === wsId);
@@ -666,23 +476,20 @@ export function ProjectTree() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Search bar */}
-      <ThreadSearchBar providers={availableProviders} />
-
-      <div className="mb-0.5 flex items-center justify-between px-2.5 py-1.5">
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/55">
+      <div className="mb-1 flex items-center justify-between px-3 py-1.5">
+        <span className="text-xs font-medium text-muted-foreground">
           Projects
         </span>
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button variant="ghost" size="icon-xs" onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground/60 hover:text-foreground">
-                <Plus size={14} />
+              <Button variant="ghost" size="icon-xs" onClick={handleOpenFolder} aria-label="Add project" className="text-muted-foreground hover:text-foreground">
+                <FolderPlus size={14} />
               </Button>
             }
           />
           <TooltipContent side="right" className="text-xs">
-            Open project folder
+            Add project
           </TooltipContent>
         </Tooltip>
       </div>
@@ -701,10 +508,7 @@ export function ProjectTree() {
           >
             <SortableContext items={workspaceIds} strategy={verticalListSortingStrategy}>
               {workspaces.map((ws) => {
-                const wsThreads = filteredThreadsByWorkspace.get(ws.id) ?? [];
-
-                // Hide projects with zero matches during active search
-                if (isSearchActive && wsThreads.length === 0) return null;
+                const wsThreads = threadsByWorkspace.get(ws.id) ?? EMPTY_THREADS;
 
                 return (
                 <SortableProjectShell
@@ -737,28 +541,6 @@ export function ProjectTree() {
               })}
             </SortableContext>
           </DndContext>
-
-          {/* Loading more results from server */}
-          {isSearching && (
-            <div className="flex items-center gap-1.5 px-4 py-2">
-              <Spinner size={10} className="text-muted-foreground/30" />
-              <span className="font-mono text-[10px] text-muted-foreground/30">
-                loading more...
-              </span>
-            </div>
-          )}
-
-          {/* No results empty state */}
-          {isSearchActive && !isSearching && workspaces.every((ws) => {
-            return (filteredThreadsByWorkspace.get(ws.id) ?? []).length === 0;
-          }) && serverResults.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-2 px-4 py-8">
-              <span className="font-mono text-2xl text-muted-foreground/15" aria-hidden>&#x2298;</span>
-              <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
-                No matching threads
-              </p>
-            </div>
-          )}
 
           {workspaces.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-3 px-4 py-12">
@@ -1258,7 +1040,7 @@ function VirtualizedThreadList({
   const virtualizer = useVirtualizer({
     count: treeItems.length,
     getScrollElement: () => scrollElementRef.current,
-    estimateSize: () => 28,
+    estimateSize: () => 32,
     overscan: 5,
     scrollMargin,
     // Opt out of react-virtual's flushSync(rerender) on sync measurement; it
@@ -1337,12 +1119,12 @@ function VirtualizedThreadList({
             }}
             onMouseLeave={cancelPrefetch}
             className={cn(
-              "group/row relative flex items-center gap-2 rounded-md pr-2 py-1 text-[13px] cursor-pointer transition-colors",
+              "group/row relative flex min-h-8 items-center gap-2 rounded-md pr-2 text-[13px] cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
               activeThreadId === thread.id
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
             )}
-            style={{ paddingLeft: `${42 + depth * 12}px` }}
+            style={{ paddingLeft: `${36 + depth * 12}px` }}
           >
             {prable && thread.pr_number != null ? (() => {
               const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
@@ -1362,7 +1144,7 @@ function VirtualizedThreadList({
                 providerMeta.color,
                 scaffoldDim,
               )}
-              style={{ left: `${22 + depth * 12}px` }}
+              style={{ left: `${16 + depth * 12}px` }}
             >
               <RowProviderIcon size={12} />
             </span>
@@ -1531,7 +1313,6 @@ const ProjectNode = memo(function ProjectNode({
   sortableListeners,
   isProjectDragging = false,
 }: ProjectNodeProps) {
-  const parentDir = useMemo(() => parentDirName(workspace.path), [workspace.path]);
   const hasRunning = useMemo(
     () => threads.some((t) => runningThreadIds.has(t.id)),
     [threads, runningThreadIds],
@@ -1550,6 +1331,10 @@ const ProjectNode = memo(function ProjectNode({
   const handleToggle = useCallback(() => onToggle(wsId), [onToggle, wsId]);
   const handleToggleThreadList = useCallback(() => onToggleThreadList(wsId), [onToggleThreadList, wsId]);
   const handleCreateThread = useCallback(() => onCreateThread(wsId), [onCreateThread, wsId]);
+  const handleCreateThreadClick = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    handleCreateThread();
+  }, [handleCreateThread]);
   const handleDelete = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     onDelete(wsId);
@@ -1562,18 +1347,18 @@ const ProjectNode = memo(function ProjectNode({
 
   return (
     <div>
-      {/* Workspace row — typographic anchor. No folder icon; a quiet caret + name + parent caption. */}
+      {/* Workspace row keeps project controls quiet until the row is engaged. */}
       <div
         role="button"
         tabIndex={0}
         aria-expanded={isExpanded}
         data-testid={`project-row-${workspace.id}`}
         className={cn(
-          "group/ws relative flex items-center gap-1.5 rounded-md px-1.5 py-1.5 text-[12.5px] cursor-pointer transition-colors touch-none",
+          "group/ws relative flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-[13px] cursor-pointer transition-colors touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
           isProjectDragging && "cursor-grabbing",
           isActive
             ? "text-foreground"
-            : "text-muted-foreground/85 hover:text-foreground",
+            : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
         )}
         {...sortableListeners}
         onKeyDown={(e) => {
@@ -1586,11 +1371,7 @@ const ProjectNode = memo(function ProjectNode({
         }}
         onClick={handleToggle}
       >
-        {isExpanded ? (
-          <ChevronDown size={12} className="shrink-0 text-muted-foreground/55 transition-transform" />
-        ) : (
-          <ChevronRight size={12} className="shrink-0 text-muted-foreground/55 transition-transform" />
-        )}
+        <Folder size={14} className="shrink-0 text-muted-foreground/80" aria-hidden />
 
         <span className="truncate font-medium tracking-tight">{workspace.name}</span>
 
@@ -1610,16 +1391,6 @@ const ProjectNode = memo(function ProjectNode({
               Not a git repository
             </TooltipContent>
           </Tooltip>
-        )}
-
-        {parentDir && (
-          <span
-            aria-hidden="true"
-            className="hidden min-w-0 truncate font-mono text-[9.5px] tracking-tight text-muted-foreground/35 group-hover/ws:inline"
-            title={workspace.path}
-          >
-            · {parentDir}
-          </span>
         )}
 
         <span className="flex-1" />
@@ -1651,17 +1422,36 @@ const ProjectNode = memo(function ProjectNode({
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label={`Delete ${workspace.name}`}
-          onClick={handleDelete}
-          className="opacity-0 text-muted-foreground/60 hover:text-destructive group-hover/ws:opacity-100 focus:opacity-100"
+          aria-label={`New thread in ${workspace.name}`}
+          title={`New thread in ${workspace.name}`}
+          onClick={handleCreateThreadClick}
+          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
-          <Trash2 size={11} />
+          <SquarePen size={13} />
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={`Project options for ${workspace.name}`}
+            onClick={(event) => event.stopPropagation()}
+            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100"
+          >
+            <MoreHorizontal size={13} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={4} className="min-w-40">
+            <DropdownMenuItem
+              onClick={handleDelete}
+              className="flex cursor-pointer items-center gap-2 text-destructive focus:text-destructive"
+            >
+              <Trash2 size={13} />
+              Delete project
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Threads (when expanded) — indented, no guide rail. */}
       {isExpanded && (
-        <div className="pl-2">
+        <div>
           {threads.length === 0 ? (
             <div className="flex items-center gap-2 px-2 py-2">
               <span aria-hidden="true" className="font-mono text-xs leading-none text-muted-foreground/25">
@@ -1704,16 +1494,6 @@ const ProjectNode = memo(function ProjectNode({
             </Button>
           )}
 
-          {/* New thread action — quiet typographic button, not a filled CTA. */}
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={handleCreateThread}
-            className="mt-0.5 h-auto w-full justify-start gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-normal text-muted-foreground/55 hover:bg-accent/40 hover:text-foreground"
-          >
-            <Plus size={11} className="opacity-70" />
-            New thread
-          </Button>
         </div>
       )}
     </div>
@@ -1735,9 +1515,7 @@ const SortableProjectShell = memo(function SortableProjectShell(
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    ...(isDragging
-      ? { opacity: 0.92, zIndex: 2, boxShadow: "0 2px 10px rgba(0,0,0,0.08)" }
-      : {}),
+    ...(isDragging ? { opacity: 0.92, zIndex: 2 } : {}),
   };
   // useSortable sets role/tabIndex on the activator; this outer div uses explicit group semantics.
   const { role, tabIndex, ...sortableA11y } = attributes;

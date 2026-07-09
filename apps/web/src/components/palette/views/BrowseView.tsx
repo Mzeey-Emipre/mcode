@@ -37,9 +37,7 @@ export function BrowseView() {
   const setPendingConfirm = useCommandPaletteStore((s) => s.setPendingConfirm);
   const close = useCommandPaletteStore((s) => s.close);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
-  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
-  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
+  const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
 
   const mode = getPaletteMode(query);
   const isDrivesMode = mode === "drives";
@@ -98,13 +96,7 @@ export function BrowseView() {
     const name = target.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Untitled";
     try {
       const ws = await createWorkspace(name, target);
-      setActiveWorkspace(ws.id);
-      // Drop straight into the new-thread composer on the just-added project.
-      // setActiveWorkspace clears `pendingNewThread`, so re-set it AFTER
-      // activation; clear the active thread so ChatView shows the composer
-      // rather than a stale thread. Mirrors ProjectsView's "newThread" chain.
-      setActiveThread(null);
-      setPendingNewThread(true);
+      beginNewThread(ws.id);
       close();
     } catch (err) {
       console.error("Failed to create workspace:", err);
@@ -113,9 +105,7 @@ export function BrowseView() {
     result,
     isDrivesMode,
     createWorkspace,
-    setActiveWorkspace,
-    setActiveThread,
-    setPendingNewThread,
+    beginNewThread,
     close,
   ]);
 

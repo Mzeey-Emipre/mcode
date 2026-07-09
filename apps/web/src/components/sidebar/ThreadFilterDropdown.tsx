@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useSidebarSearchStore } from "@/stores/sidebarSearchStore";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Check, ListFilter } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 const STATUS_OPTIONS = [
   { value: "active", label: "Active" },
@@ -23,10 +25,13 @@ function FilterCheckbox({
   onChange: () => void;
 }) {
   return (
-    <button
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
       role="checkbox"
       aria-checked={checked}
-      className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent/40 focus-visible:ring-1 focus-visible:ring-primary/40"
+      className="h-7 w-full justify-start gap-2 px-2 text-xs font-normal text-muted-foreground"
       onClick={onChange}
     >
       <span
@@ -39,7 +44,7 @@ function FilterCheckbox({
         {checked && <Check size={8} strokeWidth={3} />}
       </span>
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -56,16 +61,18 @@ export function ThreadFilterDropdown({ providers }: { providers: string[] }) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
-          <button
-            className={`absolute right-1.5 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 transition-colors focus-visible:ring-1 focus-visible:ring-primary/40 ${
-              hasActiveFilters
-                ? "bg-primary/8 text-primary/60"
-                : "text-muted-foreground/40 hover:text-muted-foreground/55"
-            }`}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className={cn(
+              "text-muted-foreground",
+              hasActiveFilters ? "bg-primary/10 text-primary" : "hover:text-foreground",
+            )}
             aria-label="Filter threads"
           >
             <ListFilter size={12} />
-          </button>
+          </Button>
         }
       />
       <PopoverContent
@@ -104,15 +111,18 @@ export function ThreadFilterDropdown({ providers }: { providers: string[] }) {
         {hasActiveFilters && (
           <>
             <div className="mx-1 my-1 h-px bg-border/50" />
-            <button
-              className="w-full cursor-pointer rounded px-2 py-1.5 text-left font-mono text-[9px] text-muted-foreground/40 transition-colors hover:bg-accent/40 hover:text-muted-foreground focus-visible:ring-1 focus-visible:ring-primary/40"
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="h-7 w-full justify-start px-2 text-xs font-normal text-muted-foreground"
               onClick={() => {
                 clearFilters();
                 setOpen(false);
               }}
             >
               Clear all
-            </button>
+            </Button>
           </>
         )}
       </PopoverContent>

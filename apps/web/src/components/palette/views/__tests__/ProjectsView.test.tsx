@@ -23,8 +23,7 @@ const hoisted = vi.hoisted(() => {
   return {
     pinnedWorkspace,
     setActiveWorkspace: vi.fn(),
-    setActiveThread: vi.fn(),
-    setPendingNewThread: vi.fn(),
+    beginNewThread: vi.fn(),
     enrich: vi.fn(),
   };
 });
@@ -45,8 +44,7 @@ vi.mock("@/stores/workspaceStore", () => ({
     selector({
       workspaces: [hoisted.pinnedWorkspace],
       setActiveWorkspace: hoisted.setActiveWorkspace,
-      setActiveThread: hoisted.setActiveThread,
-      setPendingNewThread: hoisted.setPendingNewThread,
+      beginNewThread: hoisted.beginNewThread,
       pinWorkspace: vi.fn(),
     }),
 }));
@@ -73,15 +71,14 @@ function renderWithCommandPaletteShell(ui: ReactElement) {
 describe("ProjectsView", () => {
   beforeEach(() => {
     hoisted.setActiveWorkspace.mockClear();
-    hoisted.setActiveThread.mockClear();
-    hoisted.setPendingNewThread.mockClear();
+    hoisted.beginNewThread.mockClear();
     hoisted.enrich.mockClear();
     act(() => {
       useCommandPaletteStore.getState().close();
     });
   });
 
-  it("clears the active thread and sets pending new thread when choosing a project after New Thread", async () => {
+  it("uses the shared new-thread transition after project selection", async () => {
     const user = userEvent.setup();
     act(() => {
       useCommandPaletteStore.getState().open({
@@ -94,17 +91,7 @@ describe("ProjectsView", () => {
 
     await user.click(screen.getByTestId("project-row"));
 
-    expect(hoisted.setActiveWorkspace).toHaveBeenCalledWith("ws-1");
-    // cmdk's CommandItem and ProjectRow's onClick both call handleSelect on mouse pick.
-    expect(hoisted.setActiveThread).toHaveBeenCalledWith(null);
-    expect(hoisted.setPendingNewThread).toHaveBeenCalledWith(true);
-
-    expect(hoisted.setActiveWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
-      hoisted.setActiveThread.mock.invocationCallOrder[0]!,
-    );
-    expect(hoisted.setActiveThread.mock.invocationCallOrder[0]).toBeLessThan(
-      hoisted.setPendingNewThread.mock.invocationCallOrder[0]!,
-    );
+    expect(hoisted.beginNewThread).toHaveBeenCalledWith("ws-1");
 
     expect(useCommandPaletteStore.getState().isOpen).toBe(false);
   });
@@ -120,7 +107,6 @@ describe("ProjectsView", () => {
     await user.click(screen.getByTestId("project-row"));
 
     expect(hoisted.setActiveWorkspace).toHaveBeenCalledWith("ws-1");
-    expect(hoisted.setActiveThread).not.toHaveBeenCalled();
-    expect(hoisted.setPendingNewThread).not.toHaveBeenCalled();
+    expect(hoisted.beginNewThread).not.toHaveBeenCalled();
   });
 });

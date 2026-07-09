@@ -3,6 +3,7 @@
   { "key": "mod+p", "command": "commandPalette.toggle" },
   { "key": "mod+o", "command": "openin.openDefault", "when": "!inputFocused" },
   { "key": "mod+n", "command": "thread.new", "when": "!inputFocused" },
+  { "key": "mod+shift+f", "command": "thread.search", "when": "!inputFocused" },
   { "key": "mod+shift+n", "command": "workspace.new", "when": "!inputFocused" },
   {
     "key": "mod+enter",
