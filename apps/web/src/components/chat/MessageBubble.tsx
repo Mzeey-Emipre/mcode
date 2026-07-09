@@ -576,7 +576,7 @@ export const MessageBubble = memo(function MessageBubble({
     return (
       <>
         <div className="group/msg flex justify-end" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
-          <div className="min-w-0 max-w-[75%] space-y-1.5">
+          <div className="min-w-0 max-w-[min(82%,56rem)] space-y-1.5">
             {/* Quote block — shown when this message is a reply */}
             {message.reply_to_message_id && (
               <QuoteBlock

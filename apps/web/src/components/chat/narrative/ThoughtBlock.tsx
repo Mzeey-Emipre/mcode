@@ -26,7 +26,7 @@ interface ThoughtBlockProps {
  */
 export function ThoughtBlock({ segment, isActive }: ThoughtBlockProps) {
   return (
-    <div className="px-2 py-1">
+    <div className="px-2 py-1 text-sm text-foreground">
       {/* `showCursor={false}` — a thought rendered in the timeline is either
           settled (turn over) or just-closed because a tool_use boundary
           fired. In neither case is the agent actively typing INTO this block:

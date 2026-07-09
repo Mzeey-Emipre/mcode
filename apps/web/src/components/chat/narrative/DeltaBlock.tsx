@@ -260,13 +260,13 @@ export function DeltaBlock({ text, isStreaming = true, showCursor = true }: Delt
   return (
     <div ref={rootRef} className="relative">
       {isStreaming ? (
-        <p className="whitespace-pre-wrap text-[0.9375rem] leading-relaxed">
+        <p className="whitespace-pre-wrap text-sm leading-relaxed">
           {displayed}
         </p>
       ) : (
         <Suspense
           fallback={
-            <p className="whitespace-pre-wrap text-[0.9375rem] leading-relaxed">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed">
               {displayed}
             </p>
           }

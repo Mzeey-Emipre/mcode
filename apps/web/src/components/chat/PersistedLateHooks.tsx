@@ -8,33 +8,13 @@
 import { useMemo } from "react";
 import { useActiveThreadRecord } from "@/stores/thread-selectors";
 import { HookRow } from "@/components/chat/narrative/HookRow";
-import type { HookExecution } from "@/transport/types";
+import { recordToHookExecution } from "@/components/chat/narrative/build-persisted-narrative";
 import type { HookExecutionRecord } from "@mcode/contracts";
 
 /** Props for `PersistedLateHooks`. */
 interface PersistedLateHooksProps {
   /** Assistant message id whose late stop hooks to render. */
   messageId: string;
-}
-
-/**
- * Adapts a persisted `HookExecutionRecord` to the volatile `HookExecution`
- * shape expected by `HookRow`. No live output is available for persisted hooks
- * so `outputLines` and `fullOutput` are empty arrays.
- */
-function recordToExecution(record: HookExecutionRecord): HookExecution {
-  return {
-    hookName: record.hook_name,
-    hookType: "stop",
-    toolName: record.tool_name ?? undefined,
-    status: "completed",
-    outputLines: [],
-    fullOutput: [],
-    exitCode: 0,
-    durationMs: record.duration_ms ?? undefined,
-    didBlock: record.did_block,
-    startedAt: Date.parse(record.started_at) || 0,
-  };
 }
 
 /**
@@ -57,7 +37,7 @@ export function PersistedLateHooks({ messageId }: PersistedLateHooksProps) {
   return (
     <div className="mt-1 flex flex-col gap-0.5">
       {lateHooks.map((record, i) => (
-        <HookRow key={`${record.hook_name}-${record.started_at}-${i}`} hook={recordToExecution(record)} />
+        <HookRow key={`${record.hook_name}-${record.started_at}-${i}`} hook={recordToHookExecution(record)} />
       ))}
     </div>
   );

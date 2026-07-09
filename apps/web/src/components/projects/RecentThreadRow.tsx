@@ -83,7 +83,7 @@ export function RecentThreadRow({ thread, isActive, onSelect, onRemove, home }: 
         }
       }}
       className={cn(
-        "group flex cursor-pointer items-center gap-3 rounded-sm px-3 py-2 text-[13px] transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "group flex cursor-pointer items-center gap-3 rounded-sm px-3 py-2 text-[13px] transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring max-[520px]:flex-col max-[520px]:items-stretch max-[520px]:gap-1.5",
         "hover:bg-accent/60 data-[active=true]:bg-accent",
       )}
       onClick={() => onSelect(thread)}
@@ -101,7 +101,7 @@ export function RecentThreadRow({ thread, isActive, onSelect, onRemove, home }: 
       </div>
 
       {/* Right: status dot, branch, ago time */}
-      <div className="flex shrink-0 flex-col items-end gap-0.5 font-mono text-[11px] text-muted-foreground/60">
+      <div className="flex shrink-0 flex-col items-end gap-0.5 font-mono text-[11px] text-muted-foreground/60 max-[520px]:flex-row max-[520px]:items-center max-[520px]:justify-between">
         <div className="flex items-center gap-1.5">
           {dot && (
             <span
@@ -120,7 +120,7 @@ export function RecentThreadRow({ thread, isActive, onSelect, onRemove, home }: 
           )}
         </div>
         {updatedLabel && (
-          <span className="tabular-nums">{updatedLabel}</span>
+          <span className="whitespace-nowrap tabular-nums">{updatedLabel}</span>
         )}
       </div>
 

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import {
@@ -22,6 +23,57 @@ interface ToolSummaryLineProps {
   hasError: boolean;
   /** Whether any call in the group was cancelled. */
   hasCancelled: boolean;
+}
+
+interface NarrativeSummaryLineProps {
+  /** Whether the row is currently expanded. */
+  open: boolean;
+  /** Called when the row is clicked. */
+  onToggle: () => void;
+  /** Leading status or type icon. */
+  icon: ReactNode;
+  /** Primary summary text. */
+  children: ReactNode;
+  /** Optional status badge rendered before the chevron. */
+  badge?: ReactNode;
+  /** Whether the row can be expanded. */
+  expandable?: boolean;
+  /** Whether clicking the row is disabled. */
+  disabled?: boolean;
+}
+
+/** Shared compact narrative summary row used by tool and hook groups. */
+export function NarrativeSummaryLine({
+  open,
+  onToggle,
+  icon,
+  children,
+  badge,
+  expandable = true,
+  disabled = false,
+}: NarrativeSummaryLineProps) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled}
+      className={`${NARRATIVE_TOOL_ROW} w-full px-2 py-1 text-left rounded-md transition-colors duration-100 text-sm ${
+        disabled ? "cursor-default" : "hover:bg-muted/30"
+      }`}
+      aria-expanded={expandable ? open : undefined}
+    >
+      {icon}
+      {children}
+      {badge}
+      {expandable && (
+        <ChevronRight
+          className={`h-3 w-3 text-muted-foreground/30 shrink-0 transition-transform duration-150 ${
+            open ? "rotate-90" : ""
+          }`}
+        />
+      )}
+    </button>
+  );
 }
 
 /**
@@ -91,26 +143,16 @@ export function ToolSummaryLine({
   return (
     <div className="min-w-0 max-w-full rounded-md">
       {/* Summary row */}
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className={`${NARRATIVE_TOOL_ROW} w-full px-2 py-1 text-left hover:bg-muted/30 rounded-md transition-colors duration-100 text-[0.8125rem]`}
-        aria-expanded={open}
+      <NarrativeSummaryLine
+        open={open}
+        onToggle={() => setOpen((prev) => !prev)}
+        icon={<LeadingIcon className="w-3 h-3 shrink-0 text-muted-foreground/40" />}
+        badge={worstBadge ? <StatusBadge status={worstBadge} /> : undefined}
       >
-        <LeadingIcon className="w-3 h-3 shrink-0 text-muted-foreground/40" />
-
         <span className="text-muted-foreground/60 flex-1 min-w-0 truncate">
           {summaryText}
         </span>
-
-        {worstBadge && <StatusBadge status={worstBadge} />}
-
-        <ChevronRight
-          className={`h-3 w-3 text-muted-foreground/30 shrink-0 transition-transform duration-150 ${
-            open ? "rotate-90" : ""
-          }`}
-        />
-      </button>
+      </NarrativeSummaryLine>
 
       {/* Expanded detail list */}
       <AnimatedCollapsible open={open}>
@@ -125,7 +167,7 @@ export function ToolSummaryLine({
             return (
               <li key={tc.id} className="flex min-w-0 max-w-full flex-col gap-0.5">
                 {/* Row: icon + label + detail + badge */}
-                <div className={`${NARRATIVE_TOOL_ROW} text-[0.8125rem]`}>
+                <div className={`${NARRATIVE_TOOL_ROW} text-sm`}>
                   <Icon className="w-[14px] h-[14px] text-muted-foreground/75 shrink-0" />
                   <span className="text-foreground/65 font-medium shrink-0">
                     {label}
@@ -140,7 +182,7 @@ export function ToolSummaryLine({
                 {tc.isComplete && !tc.isError && isShellTool(tc.toolName) && tc.output && (
                   <div className="flex min-w-0 max-w-full flex-col gap-1">
                     <ToolOutputTruncationNotice toolCall={tc} />
-                    <pre className="max-w-full text-[0.75rem] font-mono rounded px-2 py-1 bg-[var(--code-bg)] text-foreground/80 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
+                    <pre className="max-w-full text-sm font-mono rounded px-2 py-1 bg-[var(--code-bg)] text-foreground/80 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
                       {tc.output}
                     </pre>
                   </div>
@@ -149,7 +191,7 @@ export function ToolSummaryLine({
                 {tc.isError && tc.output && (
                   <div className="flex min-w-0 max-w-full flex-col gap-1">
                     <ToolOutputTruncationNotice toolCall={tc} />
-                    <pre className="max-w-full text-[0.75rem] font-mono rounded px-2 py-1 bg-[var(--diff-remove)]/10 text-[var(--diff-remove)] overflow-x-auto whitespace-pre-wrap break-words max-h-40">
+                    <pre className="max-w-full text-sm font-mono rounded px-2 py-1 bg-[var(--diff-remove)]/10 text-[var(--diff-remove)] overflow-x-auto whitespace-pre-wrap break-words max-h-40">
                       {tc.output}
                     </pre>
                   </div>

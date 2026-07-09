@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildPersistedNarrativeItems } from "./build-persisted-narrative";
+import {
+  buildPersistedNarrativeItems,
+  recordToHookExecution,
+} from "./build-persisted-narrative";
 import type {
   ToolCallRecord,
   ThoughtSegmentRecord,
@@ -115,6 +118,44 @@ describe("buildPersistedNarrativeItems", () => {
     });
     expect(items).toHaveLength(1);
     expect(items[0].type).toBe("hook");
+  });
+
+  it("omits stop hooks from the pre-message narrative", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [],
+      thoughts: [],
+      hooks: [
+        makeHook({
+          id: "hk-1",
+          phase: "stop",
+        }),
+      ],
+    });
+
+    expect(items).toEqual([]);
+  });
+
+  it("maps persisted hook metadata into readable detail lines", () => {
+    const hook = recordToHookExecution(
+      makeHook({
+        id: "hk-1",
+        phase: "stop",
+        tool_name: "Bash",
+        payload: "{\"command\":\"bun test\"}",
+        duration_ms: 42,
+        did_block: true,
+      }),
+    );
+
+    expect(hook.hookType).toBe("stop");
+    expect(hook.outputLines).toEqual([
+      "phase: stop",
+      "tool: Bash",
+      "duration: 42ms",
+      "blocked: yes",
+      "payload: {\"command\":\"bun test\"}",
+    ]);
+    expect(hook.fullOutput).toEqual(hook.outputLines);
   });
 
   it("nests child tool calls under their parent Agent as a subagent row", () => {

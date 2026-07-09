@@ -57,21 +57,36 @@ function recordToThoughtSegment(r: ThoughtSegmentRecord): ThoughtSegment {
 }
 
 /** Map a persisted hook record to the live `HookExecution` shape. */
-function recordToHookExecution(r: HookExecutionRecord): HookExecution {
+export function recordToHookExecution(r: HookExecutionRecord): HookExecution {
   // Phase strings from server are arbitrary; coerce to the live discriminator.
   const hookType: HookExecution["hookType"] =
     r.phase === "stop" ? "stop" : "permission";
+  const detailLines = persistedHookDetailLines(r);
   return {
     hookName: r.hook_name,
     hookType,
     toolName: r.tool_name ?? undefined,
     status: "completed",
-    outputLines: [],
-    fullOutput: [],
+    outputLines: detailLines,
+    fullOutput: detailLines,
+    detailLines,
     durationMs: r.duration_ms ?? undefined,
     didBlock: r.did_block,
     startedAt: isoToMs(r.started_at),
   };
+}
+
+/** Format persisted hook metadata into bounded detail lines for HookRow. */
+export function persistedHookDetailLines(r: HookExecutionRecord): string[] {
+  const lines: string[] = [`phase: ${r.phase}`];
+  if (r.tool_name) lines.push(`tool: ${r.tool_name}`);
+  if (r.duration_ms != null) lines.push(`duration: ${r.duration_ms}ms`);
+  lines.push(`blocked: ${r.did_block ? "yes" : "no"}`);
+  const payload = r.payload.trim();
+  if (payload.length > 0 && payload !== "{}") {
+    lines.push(`payload: ${payload.length > 500 ? `${payload.slice(0, 500)}...` : payload}`);
+  }
+  return lines;
 }
 
 /** A unified timeline event sorted by persisted `sort_order` ascending. */
@@ -174,6 +189,7 @@ export function buildPersistedNarrativeItems(
     });
   }
   for (const h of hooks) {
+    if (h.phase === "stop") continue;
     timeline.push({
       kind: "hook",
       hook: recordToHookExecution(h),

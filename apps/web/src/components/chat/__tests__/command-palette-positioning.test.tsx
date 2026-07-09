@@ -78,13 +78,13 @@ describe("CommandPalette popup positioning", () => {
 describe("SettingsView padding", () => {
   it("does NOT have px-10 in the outer div className", () => {
     const { container } = render(<SettingsView section="model" />);
-    const innerDiv = container.querySelector(".max-w-4xl");
+    const innerDiv = container.querySelector(".max-w-\\[96rem\\]");
     expect(innerDiv?.className ?? "").not.toContain("px-10");
   });
 
-  it("DOES have px-8 in the outer div className", () => {
+  it("keeps px-8 padding at the sm breakpoint", () => {
     const { container } = render(<SettingsView section="model" />);
-    const innerDiv = container.querySelector(".max-w-4xl");
-    expect(innerDiv?.className ?? "").toContain("px-8");
+    const innerDiv = container.querySelector(".max-w-\\[96rem\\]");
+    expect(innerDiv?.className ?? "").toContain("sm:px-8");
   });
 });

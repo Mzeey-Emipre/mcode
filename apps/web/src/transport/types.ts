@@ -117,6 +117,8 @@ export interface HookExecution {
   outputLines: string[];
   /** Full hook output buffer, available via "show all" toggle. */
   fullOutput: string[];
+  /** Persisted hook metadata rendered when stdout is unavailable. */
+  detailLines?: string[];
   exitCode?: number;
   durationMs?: number;
   didBlock?: boolean;

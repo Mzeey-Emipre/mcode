@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { Check, X, ChevronRight } from "lucide-react";
+import { Webhook, X } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import type { HookExecution } from "@/transport/types";
+import { NarrativeSummaryLine } from "./ToolSummaryLine";
+import { getHookOutputLines } from "@/components/chat/hook-output";
+import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 
 interface HookRowProps {
   /** The hook execution to display. */
@@ -21,7 +24,7 @@ function formatDuration(ms: number): string {
  * Compact inline row for displaying hook executions in the narrative timeline.
  *
  * Renders three visual states:
- * - **Passed** (status "completed", exitCode 0, !didBlock): green check, hook name, trigger, duration, expandable output.
+ * - **Passed** (status "completed", exitCode 0, !didBlock): hook icon, hook name, trigger, duration, expandable output.
  * - **Running** (status "running"): spinning clock, hook name, trigger, live elapsed timer, "running" badge.
  * - **Blocked** (didBlock true): red X, hook name, trigger, duration, "blocked" badge, error output in red.
  *
@@ -38,13 +41,7 @@ export function HookRow({ hook }: HookRowProps) {
   const isBlocked = hook.didBlock === true;
   const hasPassed = !isBlocked && hook.status === "completed";
 
-  const hasOutput =
-    hook.fullOutput.length > 0 || hook.outputLines.length > 0;
-
-  const outputText =
-    hook.fullOutput.length > 0
-      ? hook.fullOutput.join("\n")
-      : hook.outputLines.join("\n");
+  const { fullLines, hasOutput } = getHookOutputLines(hook);
 
   useEffect(() => {
     if (!isRunning) return;
@@ -63,97 +60,84 @@ export function HookRow({ hook }: HookRowProps) {
   };
 
   return (
-    <div className="rounded-md">
+    <div className="min-w-0 max-w-full rounded-md">
       {/* Main row */}
-      <button
-        type="button"
-        onClick={handleClick}
+      <NarrativeSummaryLine
+        open={open}
+        onToggle={handleClick}
         disabled={!hasOutput}
-        className={`flex w-full items-center gap-1.5 px-2 py-1 text-left rounded-md transition-colors duration-100 text-xs ${
-          hasOutput ? "hover:bg-muted/30 cursor-pointer" : "cursor-default"
-        }`}
-        aria-expanded={hasOutput ? open : undefined}
-      >
-        {/* Status icon */}
-        {isRunning ? (
-          <span aria-label="running" className="flex items-center justify-center shrink-0">
+        expandable={hasOutput}
+        icon={isRunning ? (
+          <span aria-label="running" className="flex w-3 h-3 items-center justify-center shrink-0">
             <span className="size-1.5 rounded-full bg-primary animate-pulse" />
           </span>
         ) : isBlocked ? (
-          <span aria-label="blocked" className="flex w-[13px] h-[13px] items-center justify-center shrink-0">
-            <X className="w-[13px] h-[13px] text-[var(--diff-remove)]" />
+          <span aria-label="blocked" className="flex w-3 h-3 items-center justify-center shrink-0">
+            <X className="w-3 h-3 text-[var(--diff-remove)]" />
           </span>
         ) : (
-          <span aria-label="passed" className="flex w-[13px] h-[13px] items-center justify-center shrink-0">
-            <Check className="w-[13px] h-[13px] text-[var(--diff-add)]" />
+          <span aria-label="hook completed" className="flex w-3 h-3 items-center justify-center shrink-0">
+            <Webhook className="w-3 h-3 text-muted-foreground/55" />
           </span>
         )}
+        badge={isRunning ? (
+          <span className="font-mono text-[0.625rem] font-medium px-1.5 py-px rounded-sm bg-primary/15 text-primary shrink-0">
+            running
+          </span>
+        ) : isBlocked ? (
+          <span className="font-mono text-[0.625rem] font-medium px-1.5 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
+            blocked
+          </span>
+        ) : undefined}
+      >
 
         {/* Hook name */}
-        <span className="font-medium text-foreground/60 shrink-0">
+        <span className="min-w-0 truncate text-muted-foreground/60 flex-1">
           {hook.hookName}
         </span>
 
         {/* Trigger label */}
         {hook.toolName && (
-          <span className="font-mono text-[0.6875rem] text-muted-foreground/70 shrink-0">
+          <span className="min-w-0 truncate font-mono text-[0.6875rem] text-muted-foreground/50">
             on {hook.toolName}
           </span>
         )}
 
-        {/* Spacer */}
-        <span className="flex-1" />
-
         {/* Duration or elapsed timer - hide for sub-5ms instant hooks */}
         {(isRunning || (hook.durationMs != null && hook.durationMs >= 5)) && (
-          <span className="font-mono text-[0.6875rem] tabular-nums text-muted-foreground/60 shrink-0">
+          <span className="font-mono text-[0.6875rem] tabular-nums text-muted-foreground/50 shrink-0">
             {isRunning ? `${elapsedSeconds}s` : formatDuration(hook.durationMs!)}
           </span>
         )}
+      </NarrativeSummaryLine>
 
-        {/* Status badge */}
-        {isRunning && (
-          <span className="font-mono text-[0.625rem] font-medium px-1.5 py-px rounded-sm bg-primary/15 text-primary shrink-0">
-            running
-          </span>
-        )}
-        {isBlocked && (
-          <span className="font-mono text-[0.625rem] font-medium px-1.5 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
-            blocked
-          </span>
-        )}
-
-        {/* Chevron - only when output exists */}
-        {hasOutput && (
-          <ChevronRight
-            className={`h-3.5 w-3.5 text-muted-foreground/60 shrink-0 transition-transform duration-200 ${
-              open ? "rotate-90" : ""
-            }`}
-          />
-        )}
-      </button>
-
-      {/* Expandable output */}
       {hasOutput && (
         <AnimatedCollapsible open={open}>
-          <div className="pl-6 pb-1 mt-0.5">
-            <pre
-              className={`font-mono text-[0.6875rem] leading-normal bg-[var(--code-bg)] rounded-md px-2.5 py-1.5 whitespace-pre-wrap max-h-24 overflow-auto ${
-                isBlocked || (hasPassed && hook.exitCode !== 0)
-                  ? "text-[var(--diff-remove)]"
-                  : ""
-              }`}
-            >
-              {isRunning ? (
-                <>
-                  {outputText}
-                  <span aria-hidden="true" className="typing-cursor" />
-                </>
-              ) : (
-                outputText
-              )}
-            </pre>
-          </div>
+          <ul className="min-w-0 max-w-full pl-6 mt-0.5 space-y-0.5 pb-1">
+            {fullLines.map((line, index) => (
+              <li key={`${index}-${line}`} className="flex min-w-0 max-w-full flex-col gap-0.5">
+                <div className={`${NARRATIVE_TOOL_ROW} text-sm`}>
+                  <Webhook className="w-[14px] h-[14px] text-muted-foreground/75 shrink-0" />
+                  <span className="text-foreground/65 font-medium shrink-0">
+                    Hook detail
+                  </span>
+                  <span
+                    className={
+                      isBlocked || (hasPassed && hook.exitCode !== 0)
+                        ? `${narrativeToolDetailClass("md")} text-[var(--diff-remove)]`
+                        : narrativeToolDetailClass("md")
+                    }
+                    title={line}
+                  >
+                    {line}
+                    {isRunning && index === fullLines.length - 1 && (
+                      <span aria-hidden="true" className="typing-cursor" />
+                    )}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
         </AnimatedCollapsible>
       )}
     </div>

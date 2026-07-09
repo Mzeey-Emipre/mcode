@@ -1,7 +1,8 @@
 import type { PermissionDecision } from "@mcode/contracts";
-import type { Message, ToolCall, HookExecution } from "@/transport/types";
+import type { Message, ToolCall, HookExecution, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord } from "@/transport/types";
 import type { ThoughtSegment } from "./narrative/types";
 import { computeLiveStreamingText } from "./narrative/build-narrative";
+import { buildPersistedNarrativeItems } from "./narrative/build-persisted-narrative";
 import { isGoalStatusNotice } from "@/lib/goal-message";
 
 /** Compile-time exhaustive check; throws at runtime for unhandled discriminants. */
@@ -28,6 +29,16 @@ export const STREAMING_CARD_COLLAPSED_HEIGHT = 56;
 
 const EMPTY_HOOKS: readonly HookExecution[] = [];
 const EMPTY_THOUGHT_SEGMENTS: readonly ThoughtSegment[] = [];
+
+/** Cached persisted narrative rows for an assistant message. */
+export type PersistedNarrativeRecords = {
+  tools: ToolCallRecord[];
+  thoughts: ThoughtSegmentRecord[];
+  hooks: HookExecutionRecord[];
+} | undefined;
+
+/** Persisted narrative cache keyed by assistant message id. */
+export type PersistedNarrativeRecordsByMessage = Record<string, PersistedNarrativeRecords>;
 
 /** State that lets the current turn's live and persisted assistant rows share one React key. */
 export interface CurrentTurnResponseIdentity {
@@ -174,22 +185,37 @@ export function buildStableItems(
   persistedFilesChanged?: Record<string, string[]>,
   latestTurnWithChanges?: string | null,
   currentTurn?: CurrentTurnResponseIdentity,
+  persistedNarrativeByMessage?: PersistedNarrativeRecordsByMessage,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    // Persisted narrative timeline appears immediately BEFORE each
-    // assistant message so the audit trail visually precedes the response
-    // text - matching the live narrative-flow placement. The component
-    // renders `null` until records are fetched, so emitting a placeholder
-    // here doesn't cause layout jitter once records land.
+    const persistedRecords =
+      msg.role === "assistant" ? persistedNarrativeByMessage?.[msg.id] : undefined;
+    const persistedRows =
+      persistedRecords && msg.role === "assistant"
+        ? buildPersistedNarrativeItems({ ...persistedRecords, messageContent: msg.content })
+        : undefined;
+    const hasPersistedNarrativeRows =
+      persistedRows != null && persistedRows.length > 0;
+    const hasLateHookRows =
+      persistedRecords?.hooks.some((h) => h.phase === "stop") === true;
+    const hasPersistedFooter =
+      persistedRecords?.tools.some((t) => t.parent_tool_call_id == null) === true;
+
+    // Persisted narrative timeline appears immediately BEFORE each assistant
+    // message so the audit trail visually precedes the response text. Only
+    // visible persisted chrome is emitted; lazy loading is handled by
+    // MessageList so null renderers do not reserve virtualized rail height.
     if (msg.role === "assistant") {
-      items.push({
-        key: `persisted-narrative-${msg.id}`,
-        type: "persisted-narrative",
-        messageId: msg.id,
-        messageContent: msg.content,
-      });
+      if (hasPersistedNarrativeRows) {
+        items.push({
+          key: `persisted-narrative-${msg.id}`,
+          type: "persisted-narrative",
+          messageId: msg.id,
+          messageContent: msg.content,
+        });
+      }
     }
     const isCurrentAssistant =
       msg.role === "assistant" &&
@@ -213,20 +239,24 @@ export function buildStableItems(
       // after the assistant bubble, before the files-changed summary.
       // The component renders null when no late hooks are present, so this
       // placeholder costs nothing for turns without stop hooks.
-      items.push({
-        key: `persisted-late-hooks-${msg.id}`,
-        type: "persisted-late-hooks",
-        messageId: msg.id,
-      });
+      if (hasLateHookRows) {
+        items.push({
+          key: `persisted-late-hooks-${msg.id}`,
+          type: "persisted-late-hooks",
+          messageId: msg.id,
+        });
+      }
 
       // Turn footer (step / sub-agent counts + duration) renders AFTER the
       // assistant body — closing the turn rather than separating its actions
       // from its answer.
-      items.push({
-        key: `persisted-turn-footer-${msg.id}`,
-        type: "persisted-turn-footer",
-        messageId: msg.id,
-      });
+      if (hasPersistedFooter) {
+        items.push({
+          key: `persisted-turn-footer-${msg.id}`,
+          type: "persisted-turn-footer",
+          messageId: msg.id,
+        });
+      }
 
       // File change summary appears after the late hook rows
       const files = persistedFilesChanged?.[msg.id];

@@ -116,7 +116,7 @@ export function ProjectSelectorLanding() {
           <McodeLogo variant="landing" />
 
           {hasContent ? (
-        <div className="w-full max-w-lg">
+        <div className="w-full max-w-3xl">
           {hasRecentThreads && (
             <section className="mb-5">
               <h2 className="mb-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/70">

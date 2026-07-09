@@ -3,9 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import type { HookExecution } from "@/transport/types";
-
-/** Maximum output lines shown before "show all" toggle. */
-const OUTPUT_LINE_CAP = 20;
+import { HOOK_OUTPUT_LINE_CAP, getHookOutputLines } from "./hook-output";
 
 /** Collapsible section displaying hook execution activity for a turn. */
 export function HookActivitySection({ hooks }: { hooks: readonly HookExecution[] }) {
@@ -113,9 +111,9 @@ function HookRowContent({ hook, hasOutput, detailOpen }: { hook: HookExecution; 
 const HookRow = memo(function HookRow({ hook }: { hook: HookExecution }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const hasOutput = hook.fullOutput.length > 0;
-  const displayLines = showAll ? hook.fullOutput : hook.outputLines;
-  const hasMore = hook.fullOutput.length > OUTPUT_LINE_CAP;
+  const { previewLines, fullLines, hasOutput } = getHookOutputLines(hook);
+  const displayLines = showAll ? fullLines : previewLines;
+  const hasMore = fullLines.length > HOOK_OUTPUT_LINE_CAP;
   const outputText = useMemo(() => displayLines.join("\n"), [displayLines]);
 
   const rowClasses = "flex items-center gap-2 py-0.5 w-full text-left";
@@ -151,7 +149,7 @@ const HookRow = memo(function HookRow({ hook }: { hook: HookExecution }) {
                 onClick={() => setShowAll((v) => !v)}
                 className="text-xs text-link hover:underline mt-0.5 cursor-pointer"
               >
-                {showAll ? `Show preview (${OUTPUT_LINE_CAP} lines)` : `Show all (${hook.fullOutput.length} lines)`}
+                {showAll ? `Show preview (${HOOK_OUTPUT_LINE_CAP} lines)` : `Show all (${fullLines.length} lines)`}
               </button>
             )}
           </div>

@@ -77,7 +77,7 @@ export function preferredSplitPanelWidth(contentRowWidth: number, fraction = 0.5
  */
 export const OVERVIEW_AUTO_OPEN_MIN_ROW = 1024;
 
-/** Visual thread column width from the shared `max-w-4xl` message/composer shell. */
+/** Visual thread column width used for Overview collision spacing. */
 export const OVERVIEW_THREAD_CONTENT_MAX_WIDTH_PX = 896;
 
 /** Right-side popover footprint for Overview (`w-80`) plus collision padding. */
