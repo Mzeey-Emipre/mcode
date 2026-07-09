@@ -9,11 +9,6 @@ export const MCODE_LOGO_SCALES = {
     mark: "h-9 w-9",
     wordmark: "text-sm",
   },
-  landing: {
-    root: "mb-10 flex-col gap-2.5",
-    mark: "h-28 w-28",
-    wordmark: "text-4xl",
-  },
   newThread: {
     root: "",
     mark: "h-12 w-12 opacity-45",
@@ -32,7 +27,6 @@ interface McodeLogoProps {
 
 /** Renders the Mcode logo mark with the app wordmark. */
 export function McodeLogo({ variant = "sidebar", markOnly = false }: McodeLogoProps) {
-  const isLanding = variant === "landing";
   const scale = MCODE_LOGO_SCALES[variant];
 
   return (
@@ -59,8 +53,7 @@ export function McodeLogo({ variant = "sidebar", markOnly = false }: McodeLogoPr
             scale.wordmark,
           )}
         >
-          <span>{isLanding ? "mcode" : "Mcode"}</span>
-          {isLanding && <span className="text-primary/80">_</span>}
+          <span>Mcode</span>
         </div>
       )}
     </div>

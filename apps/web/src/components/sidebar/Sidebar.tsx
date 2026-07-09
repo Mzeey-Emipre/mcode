@@ -9,6 +9,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { cn } from "@/lib/utils";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 /** True when running inside the Electron shell. */
 const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
@@ -95,17 +96,12 @@ export function Sidebar({
           </div>
         ) : (
           <>
-            <div className="grid shrink-0 gap-0.5 px-2 pb-3 pt-2">
+            <div className="grid shrink-0 gap-0.5 px-1.5 py-2">
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 justify-start gap-2 rounded-md px-2 text-[13px] font-normal text-foreground/90 shadow-none hover:text-foreground"
-                onClick={() =>
-                  useCommandPaletteStore.getState().open({
-                    intent: "projects",
-                    nextAction: "newThread",
-                  })
-                }
+                className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-foreground/90 shadow-none hover:text-foreground"
+                onClick={() => useWorkspaceStore.getState().beginNewThread()}
               >
                 <SquarePen size={15} aria-hidden />
                 New thread
@@ -113,7 +109,7 @@ export function Sidebar({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 justify-start gap-2 rounded-md px-2 text-[13px] font-normal text-foreground/90 hover:text-foreground"
+                className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-foreground/90 hover:text-foreground"
                 onClick={() =>
                   useCommandPaletteStore.getState().open({ intent: "threadSearch" })
                 }

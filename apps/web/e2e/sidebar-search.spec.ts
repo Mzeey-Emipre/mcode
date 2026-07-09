@@ -67,21 +67,34 @@ test.describe("Sidebar thread actions", () => {
 
   test("Ctrl+Shift+F opens and focuses the thread finder", async ({ page }) => {
     await page.goto("/");
+    await page.getByRole("heading", { name: "What should we work on?" }).click();
     await page.keyboard.press("Control+Shift+F");
     const searchInput = page.locator('[data-slot="palette-input"]');
     await expect(searchInput).toBeVisible();
     await expect(searchInput).toBeFocused();
   });
 
-  test("New thread opens the project picker", async ({ page }) => {
+  test("New thread opens the projectless workbench", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "New thread", exact: true }).click();
 
-    await expect(page.locator('[data-slot="palette-input"]')).toHaveAttribute(
-      "placeholder",
-      "Search projects…",
-    );
-    await expect(page.getByTestId("command-palette").getByText("Test Workspace")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
+    await expect(page.getByTestId("new-thread-project-picker")).toBeVisible();
+    await expect(page.getByTestId("command-palette")).toHaveCount(0);
+  });
+
+  test("top actions and project rows share one left alignment", async ({ page }) => {
+    await page.goto("/");
+    const actionIcon = page.getByRole("button", { name: "New thread", exact: true }).locator("svg");
+    const projectIcon = page.getByTestId("project-row-ws-1").locator("svg").first();
+    const [actionBox, projectBox] = await Promise.all([
+      actionIcon.boundingBox(),
+      projectIcon.boundingBox(),
+    ]);
+
+    expect(actionBox).not.toBeNull();
+    expect(projectBox).not.toBeNull();
+    expect(Math.abs(actionBox!.x - projectBox!.x)).toBeLessThanOrEqual(1);
   });
 
   test("project controls appear only when the project row is hovered", async ({ page }) => {

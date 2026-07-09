@@ -23,7 +23,6 @@ const hoisted = vi.hoisted(() => {
   return {
     pinnedWorkspace,
     setActiveWorkspace: vi.fn(),
-    beginNewThread: vi.fn(),
     enrich: vi.fn(),
   };
 });
@@ -44,7 +43,6 @@ vi.mock("@/stores/workspaceStore", () => ({
     selector({
       workspaces: [hoisted.pinnedWorkspace],
       setActiveWorkspace: hoisted.setActiveWorkspace,
-      beginNewThread: hoisted.beginNewThread,
       pinWorkspace: vi.fn(),
     }),
 }));
@@ -71,32 +69,13 @@ function renderWithCommandPaletteShell(ui: ReactElement) {
 describe("ProjectsView", () => {
   beforeEach(() => {
     hoisted.setActiveWorkspace.mockClear();
-    hoisted.beginNewThread.mockClear();
     hoisted.enrich.mockClear();
     act(() => {
       useCommandPaletteStore.getState().close();
     });
   });
 
-  it("uses the shared new-thread transition after project selection", async () => {
-    const user = userEvent.setup();
-    act(() => {
-      useCommandPaletteStore.getState().open({
-        intent: "projects",
-        nextAction: "newThread",
-      });
-    });
-
-    renderWithCommandPaletteShell(<ProjectsView />);
-
-    await user.click(screen.getByTestId("project-row"));
-
-    expect(hoisted.beginNewThread).toHaveBeenCalledWith("ws-1");
-
-    expect(useCommandPaletteStore.getState().isOpen).toBe(false);
-  });
-
-  it("only switches workspace when the projects view has no newThread follow-up", async () => {
+  it("switches workspace and closes after project selection", async () => {
     const user = userEvent.setup();
     act(() => {
       useCommandPaletteStore.getState().open({ intent: "projects" });
@@ -107,6 +86,6 @@ describe("ProjectsView", () => {
     await user.click(screen.getByTestId("project-row"));
 
     expect(hoisted.setActiveWorkspace).toHaveBeenCalledWith("ws-1");
-    expect(hoisted.beginNewThread).not.toHaveBeenCalled();
+    expect(useCommandPaletteStore.getState().isOpen).toBe(false);
   });
 });

@@ -155,7 +155,7 @@ function setupStoreMocks({
   beginNewThread = vi.fn(),
   updateThreadTitle = vi.fn(),
 }: {
-  thread?: Thread;
+  thread?: Thread | null;
   setActiveThread?: ReturnType<typeof vi.fn>;
   setActiveWorkspace?: ReturnType<typeof vi.fn>;
   beginNewThread?: ReturnType<typeof vi.fn>;
@@ -165,7 +165,7 @@ function setupStoreMocks({
     workspaces: [WORKSPACE],
     activeWorkspaceId: "ws-1",
     activeThreadId: null,
-    threads: [thread],
+    threads: thread ? [thread] : [],
     loadWorkspaces: vi.fn(),
     loadThreads: vi.fn(),
     setActiveWorkspace,
@@ -234,6 +234,14 @@ describe("ProjectTree thread interactions", () => {
       "group-hover/ws:opacity-100",
       "group-focus-within/ws:opacity-100",
     );
+  });
+
+  it("does not add a decorative row when an expanded project has no threads", () => {
+    setupStoreMocks({ thread: null });
+
+    render(<ProjectTree />);
+
+    expect(screen.queryByText("Empty")).not.toBeInTheDocument();
   });
 
   it("single click navigates immediately with no delay", () => {

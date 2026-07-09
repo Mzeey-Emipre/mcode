@@ -48,17 +48,11 @@ async function activateWorkspace(page: Page): Promise<void> {
 }
 
 async function openComposerInNewThread(page: Page): Promise<void> {
+  await expect(page.getByText("No projects yet", { exact: true })).toBeVisible();
   await activateWorkspace(page);
-  const isMac = process.platform === "darwin";
-  await page.keyboard.press(isMac ? "Meta+n" : "Control+n");
-  await expect(page.getByPlaceholder("Search projects…")).toBeVisible();
-  // Palette content portals after the landing; scope rows to the palette shell so we do not
-  // collide with landing page project lists that reuse the same data-testid.
-  const palette = page.getByTestId("command-palette");
-  await expect(palette).toBeVisible();
-  const projectRow = palette.getByTestId("project-row").last();
-  await expect(projectRow).toBeVisible();
-  await projectRow.click();
+  await expect(
+    page.getByRole("heading", { name: "What should we build in Test Workspace?" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /^(Send message|Queue message|Stop agent)$/ })).toBeVisible();
 }
 
@@ -257,7 +251,7 @@ test.describe("Visual regression — docked layout", () => {
   test("captures narrow-viewport screenshot (600×800)", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 600, height: 800 });
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath("docked-narrow.png"),
       fullPage: false,

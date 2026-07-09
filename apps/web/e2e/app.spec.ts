@@ -83,9 +83,7 @@ test.describe("Sidebar", () => {
   });
 
   test("plus button to add a project is visible", async ({ page }) => {
-    await expect(
-      page.locator('[aria-label="Open project folder"]')
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add project" })).toBeVisible();
   });
 
   test("collapses and expands when toggle button is clicked", async ({
@@ -107,35 +105,26 @@ test.describe("Sidebar", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Landing / empty state (no active workspace)
+// Projectless new-thread workbench
 // ---------------------------------------------------------------------------
 
-test.describe("Landing empty state", () => {
+test.describe("Projectless new-thread workbench", () => {
   test.beforeEach(async ({ page }) => {
     await setup(page);
   });
 
-  test("shows landing when no workspace is active", async ({ page }) => {
-    // When no workspace is active the landing replaces the chat view
-    await expect(page.locator("main").getByRole("img", { name: "Mcode" })).toBeVisible();
+  test("shows the new-thread canvas when no workspace is active", async ({ page }) => {
+    await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
+    await expect(page.getByTestId("new-thread-project-picker")).toBeVisible();
     await page.screenshot({
       path: "e2e/screenshots/chat-empty-state.png",
       fullPage: true,
     });
   });
 
-  test("landing shows Add project CTA when no workspaces exist", async ({
-    page,
-  }) => {
-    // The landing shows "No projects yet" (appears in sidebar and landing)
-    await expect(page.locator("text=No projects yet").first()).toBeVisible();
-  });
-
-  test("no composer textarea is rendered on the landing", async ({
-    page,
-  }) => {
-    // Composer is only mounted when a thread is active or a new thread is pending
-    await expect(page.locator("textarea")).not.toBeVisible();
+  test("keeps the composer available before project selection", async ({ page }) => {
+    await expect(page.locator('[aria-placeholder="Do anything"]')).toBeVisible();
+    await expect(page.getByRole("button", { name: "Choose a project" })).toBeDisabled();
   });
 });
 
@@ -253,10 +242,9 @@ test.describe("Keyboard shortcuts", () => {
   test("Escape key does not crash the app when no thread is selected", async ({
     page,
   }) => {
-    // Escape has no global chat-clearing fallback. The landing should remain visible.
+    // Escape has no global chat-clearing fallback. The new-thread canvas should remain visible.
     await page.keyboard.press("Escape");
-    // Landing should still be visible, no error overlay
-    await expect(page.getByText("mcode", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
     await expect(page.locator(".vite-error-overlay")).not.toBeVisible();
   });
 });
@@ -270,8 +258,8 @@ test.describe("Accessibility", () => {
     await setup(page);
   });
 
-  test("open project folder button has aria-label", async ({ page }) => {
-    const btn = page.locator('[aria-label="Open project folder"]');
+  test("add project button has an accessible name", async ({ page }) => {
+    const btn = page.getByRole("button", { name: "Add project" });
     await expect(btn).toBeVisible();
   });
 

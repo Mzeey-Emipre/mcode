@@ -1450,36 +1450,25 @@ const ProjectNode = memo(function ProjectNode({
       </div>
 
       {/* Threads (when expanded) — indented, no guide rail. */}
-      {isExpanded && (
+      {isExpanded && threads.length > 0 && (
         <div>
-          {threads.length === 0 ? (
-            <div className="flex items-center gap-2 px-2 py-2">
-              <span aria-hidden="true" className="font-mono text-xs leading-none text-muted-foreground/25">
-                ◌
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/40">
-                Empty
-              </span>
-            </div>
-          ) : (
-            <VirtualizedThreadList
-              workspaceName={workspace.name}
-              treeItems={treeItems}
-              maxVisible={maxVisible}
-              activeThreadId={activeThreadId}
-              runningThreadIds={runningThreadIds}
-              pendingPermissionThreadIds={pendingPermissionThreadIds}
-              checksById={checksById}
-              scrollElementRef={scrollElementRef}
-              inlineEdit={inlineEdit}
-              onInlineEditChange={onInlineEditChange}
-              onInlineEditCommit={onInlineEditCommit}
-              onInlineEditCancel={onInlineEditCancel}
-              onStartInlineEdit={onStartInlineEdit}
-              onSelectThread={handleSelectThread}
-              onThreadContextMenu={handleThreadContextMenu}
-            />
-          )}
+          <VirtualizedThreadList
+            workspaceName={workspace.name}
+            treeItems={treeItems}
+            maxVisible={maxVisible}
+            activeThreadId={activeThreadId}
+            runningThreadIds={runningThreadIds}
+            pendingPermissionThreadIds={pendingPermissionThreadIds}
+            checksById={checksById}
+            scrollElementRef={scrollElementRef}
+            inlineEdit={inlineEdit}
+            onInlineEditChange={onInlineEditChange}
+            onInlineEditCommit={onInlineEditCommit}
+            onInlineEditCancel={onInlineEditCancel}
+            onStartInlineEdit={onStartInlineEdit}
+            onSelectThread={handleSelectThread}
+            onThreadContextMenu={handleThreadContextMenu}
+          />
 
           {needsCap && !forceExpand && (
             <Button

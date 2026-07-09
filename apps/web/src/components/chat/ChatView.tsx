@@ -117,7 +117,7 @@ function NewThreadWelcome({
   projectName,
   onPromptSelect,
 }: {
-  projectName: string;
+  projectName?: string;
   onPromptSelect: (text: string) => void;
 }) {
   return (
@@ -125,7 +125,13 @@ function NewThreadWelcome({
       <div className="flex w-full max-w-3xl flex-col items-center gap-7 text-center">
         <McodeLogo variant="newThread" markOnly />
         <h1 className="text-balance text-2xl font-medium tracking-[-0.025em] text-foreground sm:text-[28px]">
-          What should we build in <span className="text-primary">{projectName}</span>?
+          {projectName ? (
+            <>
+              What should we build in <span className="text-primary">{projectName}</span>?
+            </>
+          ) : (
+            "What should we work on?"
+          )}
         </h1>
         <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
           {NEW_THREAD_STARTERS.map(({ label, prompt, icon: Icon }) => (
@@ -239,7 +245,6 @@ const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024; // 20 MB
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const pendingNewThread = useWorkspaceStore((s) => s.pendingNewThread);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
@@ -432,8 +437,9 @@ export function ChatView() {
     prevThreadIdRef.current = activeThreadId;
   }, [activeThreadId, loadMessages, clearMessages]);
 
-  // New thread state: show empty composer when pending
-  if (pendingNewThread && !activeThreadId) {
+  // A threadless workspace is always the new-thread workbench. This also covers
+  // cold start before the user has chosen a project.
+  if (!activeThreadId) {
     return (
       <div className="relative flex h-full min-h-0 flex-col bg-background">
         {sidebarCollapsed && (
@@ -442,7 +448,7 @@ export function ChatView() {
           </div>
         )}
         <NewThreadWelcome
-          projectName={activeWorkspaceName || "this project"}
+          projectName={activeWorkspaceName || undefined}
           onPromptSelect={setPendingPrefill}
         />
         <Composer isNewThread workspaceId={activeWorkspaceId ?? undefined} />

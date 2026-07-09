@@ -95,6 +95,22 @@ describe("workspaceStore reorderWorkspace", () => {
 });
 
 describe("workspaceStore new-thread panel transition", () => {
+  it("opens the projectless composer without inventing a workspace", () => {
+    useWorkspaceStore.setState({
+      activeWorkspaceId: null,
+      activeThreadId: "thread-1",
+      pendingNewThread: false,
+    });
+
+    useWorkspaceStore.getState().beginNewThread();
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      activeWorkspaceId: null,
+      activeThreadId: null,
+      pendingNewThread: true,
+    });
+  });
+
   it("enters a clean pending composer for the selected workspace", () => {
     useWorkspaceStore.setState({
       workspaces: [makeWs(), makeWs({ id: "ws-2", name: "second" })],

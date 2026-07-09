@@ -51,6 +51,7 @@ import { ModelSelector } from "./ModelSelector";
 import { ModeSelector, ALL_MODE_OPTIONS } from "./ModeSelector";
 import type { ComposerMode, ModeOption } from "./ModeSelector";
 import { BranchPicker } from "./BranchPicker";
+import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
 const LazyWorktreePicker = lazy(() => import("./WorktreePicker"));
 import { CopilotAgentSelector } from "./CopilotAgentSelector";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -1406,7 +1407,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const activeWorkspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId),
   );
-  const isGitRepo = activeWorkspace?.is_git_repo ?? true;
+  const isGitRepo = activeWorkspace?.is_git_repo ?? false;
+  const needsWorkspace = Boolean(isNewThread && !workspaceId);
 
   const modeOptions = useMemo<ModeOption[]>(
     () => isGitRepo ? ALL_MODE_OPTIONS : ALL_MODE_OPTIONS.filter((o) => o.value === "direct"),
@@ -2165,6 +2167,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   }, [attachments]);
 
   const handleSend = useCallback(async () => {
+    if (isNewThread && !workspaceId) return;
+
     const composerMessage = editorRef.current
       ? extractComposerMessage(editorRef.current)
       : { text: input, mentions };
@@ -2818,44 +2822,22 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           data-testid="new-thread-context-strip"
           className="relative z-10 flex min-h-9 min-w-0 items-center gap-1 overflow-x-auto rounded-t-xl bg-muted/30 px-2 py-1 ring-1 ring-inset ring-border/60"
         >
-          <span
-            className="inline-flex h-7 min-w-0 shrink items-center gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/90"
-            title={activeWorkspace?.path}
-          >
-            <Folder size={13} className="shrink-0 text-muted-foreground" aria-hidden />
-            <span className="max-w-40 truncate">{activeWorkspace?.name ?? "Project"}</span>
-          </span>
-          <ModeSelector
-            mode={composerMode}
-            onModeChange={setComposerMode}
-            locked={!isGitRepo}
-            options={modeOptions}
-          />
-          {isGitRepo && composerMode === "direct" && (
-            <BranchPicker
-              branches={branches}
-              selectedBranch={newThreadBranch || "main"}
-              onSelect={setNewThreadBranch}
-              loading={branchesLoading}
-              locked={false}
-            />
-          )}
-          {isGitRepo && composerMode === "worktree" && (
-            <BranchPicker
-              branches={branches}
-              selectedBranch={newThreadBranch || "main"}
-              onSelect={setNewThreadBranch}
-              loading={branchesLoading}
-              locked={false}
-              pullRequests={openPrs}
-              prsLoading={openPrsLoading}
-              fetchingBranch={fetchingBranch}
-              onFetchAndSelect={handleFetchAndSelect}
-            />
-          )}
-          {isGitRepo && composerMode === "existing-worktree" && (
+          {activeWorkspace ? (
             <>
-              {selectedWorktreeIsDetached && (
+              <span
+                className="inline-flex h-7 min-w-0 shrink items-center gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/90"
+                title={activeWorkspace.path}
+              >
+                <Folder size={13} className="shrink-0 text-muted-foreground" aria-hidden />
+                <span className="max-w-40 truncate">{activeWorkspace.name}</span>
+              </span>
+              <ModeSelector
+                mode={composerMode}
+                onModeChange={setComposerMode}
+                locked={!isGitRepo}
+                options={modeOptions}
+              />
+              {isGitRepo && composerMode === "direct" && (
                 <BranchPicker
                   branches={branches}
                   selectedBranch={newThreadBranch || "main"}
@@ -2864,15 +2846,43 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                   locked={false}
                 />
               )}
-              <Suspense fallback={<div className="h-7 w-28 animate-pulse rounded-md bg-accent" />}>
-                <LazyWorktreePicker
-                  worktrees={worktrees}
-                  selectedPath={selectedWorktree?.path ?? ""}
-                  onSelect={setSelectedWorktree}
-                  loading={worktreesLoading}
+              {isGitRepo && composerMode === "worktree" && (
+                <BranchPicker
+                  branches={branches}
+                  selectedBranch={newThreadBranch || "main"}
+                  onSelect={setNewThreadBranch}
+                  loading={branchesLoading}
+                  locked={false}
+                  pullRequests={openPrs}
+                  prsLoading={openPrsLoading}
+                  fetchingBranch={fetchingBranch}
+                  onFetchAndSelect={handleFetchAndSelect}
                 />
-              </Suspense>
+              )}
+              {isGitRepo && composerMode === "existing-worktree" && (
+                <>
+                  {selectedWorktreeIsDetached && (
+                    <BranchPicker
+                      branches={branches}
+                      selectedBranch={newThreadBranch || "main"}
+                      onSelect={setNewThreadBranch}
+                      loading={branchesLoading}
+                      locked={false}
+                    />
+                  )}
+                  <Suspense fallback={<div className="h-7 w-28 animate-pulse rounded-md bg-accent" />}>
+                    <LazyWorktreePicker
+                      worktrees={worktrees}
+                      selectedPath={selectedWorktree?.path ?? ""}
+                      onSelect={setSelectedWorktree}
+                      loading={worktreesLoading}
+                    />
+                  </Suspense>
+                </>
+              )}
             </>
+          ) : (
+            <NewThreadProjectPicker />
           )}
         </div>
       )}
@@ -3387,6 +3397,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                     : handleSend
             }
             disabled={
+              needsWorkspace ||
               !!providerReason ||
               isStaleWorktree ||
               planPending ||
@@ -3406,7 +3417,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                       : "bg-muted text-muted-foreground opacity-40"
             )}
             title={
-              isThreadScaffold
+              needsWorkspace
+                ? "Choose a project"
+                : isThreadScaffold
                 ? "Starting thread"
                 : isAgentRunning && hasContent
                   ? "Queue message"
@@ -3415,7 +3428,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                     : "Send message"
             }
             aria-label={
-              isThreadScaffold
+              needsWorkspace
+                ? "Choose a project"
+                : isThreadScaffold
                 ? "Starting thread"
                 : isAgentRunning && hasContent
                   ? "Queue message"

@@ -15,14 +15,8 @@ export function ProjectsView() {
   const query = useCommandPaletteStore((s) => s.query);
   const close = useCommandPaletteStore((s) => s.close);
   const setQuery = useCommandPaletteStore((s) => s.setQuery);
-  // Read the current view to pick up any post-selection follow-up (e.g. dropping
-  // straight into the new-thread composer once a project is chosen).
-  const viewStack = useCommandPaletteStore((s) => s.viewStack);
-  const currentView = viewStack[viewStack.length - 1];
-  const nextAction = currentView?.kind === "projects" ? currentView.nextAction : undefined;
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
   const pinWorkspace = useWorkspaceStore((s) => s.pinWorkspace);
 
   const q = query.trim().toLowerCase();
@@ -52,11 +46,7 @@ export function ProjectsView() {
   }, [visibleIds, enrich]);
 
   const handleSelect = (id: string) => {
-    if (nextAction === "newThread") {
-      beginNewThread(id);
-    } else {
-      setActiveWorkspace(id);
-    }
+    setActiveWorkspace(id);
     close();
   };
 

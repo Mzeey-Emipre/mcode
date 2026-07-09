@@ -63,8 +63,8 @@ import { ChatView } from "../ChatView";
 function defaultWorkspaceState() {
   return {
     workspaces: [{ id: "ws-1", name: "Test Project", path: "/test", created_at: "", updated_at: "" }],
-    activeWorkspaceId: "ws-1",
-    activeThreadId: null,
+    activeWorkspaceId: "ws-1" as string | null,
+    activeThreadId: null as string | null,
     pendingNewThread: true,
     threads: [],
     loadWorkspaces: vi.fn(),
@@ -95,6 +95,19 @@ describe("NewThreadWelcome", () => {
   it("names the active project in the heading", () => {
     render(<ChatView />);
     expect(screen.getByText("Test Project")).toBeInTheDocument();
+  });
+
+  it("uses the projectless heading before a project is selected", () => {
+    setupWorkspaceMock({
+      ...defaultWorkspaceState(),
+      activeWorkspaceId: null,
+      pendingNewThread: false,
+    });
+
+    render(<ChatView />);
+
+    expect(screen.getByRole("heading", { name: "What should we work on?" })).toBeInTheDocument();
+    expect(screen.queryByText("Test Project")).not.toBeInTheDocument();
   });
 
   it("renders all four starter actions", () => {

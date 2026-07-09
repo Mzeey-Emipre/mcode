@@ -8,17 +8,9 @@ import { create } from "zustand";
  * To open the palette in browse mode, call `open({ intent: "addProject" })` which
  * seeds the input with `~/` and stays on the root view.
  */
-/**
- * Optional follow-up action triggered after a project is selected from the
- * projects view. Lets a caller (e.g. the "New Thread" command from the
- * cold-start landing) open the picker first, then chain into the new-thread
- * state inside the chosen project.
- */
-export type ProjectsNextAction = "newThread";
-
 export type View =
   | { kind: "root" }
-  | { kind: "projects"; nextAction?: ProjectsNextAction }
+  | { kind: "projects" }
   | { kind: "threadSearch" }
   | { kind: "selectionList"; title: string; items: { id: string; title: string }[]; onPick: (id: string) => void };
 
@@ -36,8 +28,7 @@ interface State {
   pendingConfirm: (() => void) | null;
   /**
    * Open the palette, optionally at a specific intent.
-   * - `projects`: open at the projects view. Pass `nextAction` to chain a
-   *   follow-up (e.g. start a new thread inside the picked project).
+   * - `projects`: open at the projects view.
    * - `threadSearch`: open the cross-project thread finder.
    * - `addProject`: open at the root view with the input pre-seeded to `~/`.
    *   The unified shell flips into browse mode on render because `~/` matches
@@ -45,7 +36,6 @@ interface State {
    */
   open: (opts?: {
     intent?: "projects" | "threadSearch" | "addProject";
-    nextAction?: ProjectsNextAction;
   }) => void;
   /** Push a new view onto the navigation stack and clear the query. */
   push: (view: View) => void;
@@ -71,15 +61,11 @@ export const useCommandPaletteStore = create<State>((set, get) => ({
   pendingConfirm: null,
   open: (opts) => {
     const intent = opts?.intent;
-    // Only attach `nextAction` when set so equality-based tests on the bare
-    // `{ kind: "projects" }` view shape continue to match.
     const view: View =
       intent === "threadSearch"
         ? { kind: "threadSearch" }
         : intent === "projects"
-        ? opts?.nextAction
-          ? { kind: "projects", nextAction: opts.nextAction }
-          : { kind: "projects" }
+        ? { kind: "projects" }
         : { kind: "root" };
     // The addProject intent stays on the root view but seeds the query with `~/`
     // so the unified shell renders in browse mode immediately.
