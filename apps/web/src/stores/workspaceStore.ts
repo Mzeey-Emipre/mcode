@@ -251,6 +251,8 @@ interface WorkspaceState {
   failPreparingThreadOnConnectionLost: (placeholderId: string) => void;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
+  /** Enter a clean pending-thread composer for the selected workspace. */
+  beginNewThread: (workspaceId: string) => void;
   setPendingNewThread: (value: boolean) => void;
   updateThreadTitle: (threadId: string, title: string) => Promise<void>;
   /** Clear non-fatal warnings for a thread (user dismissed the warning banner). */
@@ -1120,6 +1122,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     if (isCompleted && id) {
       scheduleMarkThreadViewed(id);
     }
+  },
+
+  beginNewThread: (workspaceId) => {
+    if (get().activeWorkspaceId !== workspaceId) {
+      get().setActiveWorkspace(workspaceId);
+    }
+    get().setActiveThread(null);
+    get().setPendingNewThread(true);
   },
 
   setPendingNewThread: (value) => {
