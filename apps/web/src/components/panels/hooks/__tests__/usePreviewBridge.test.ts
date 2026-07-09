@@ -181,7 +181,7 @@ describe("usePreviewBridge", () => {
     );
   });
 
-  it("forces native sync hidden when forceHidden is enabled", async () => {
+  it("hides native sync without marking the panel hidden when forceHidden is enabled", async () => {
     const mockPreview = makeMockPreview();
     window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
 
@@ -203,13 +203,16 @@ describe("usePreviewBridge", () => {
       rerender({ threadId: "t-2" });
     });
 
-    expect(mockPreview.sync).toHaveBeenCalled();
+    expect(mockPreview.sync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visible: false,
+        hideReason: "renderer-webview",
+        threadId: "t-1",
+      }),
+    );
     expect(mockPreview.sync.mock.calls).not.toContainEqual([
       expect.objectContaining({ visible: true }),
     ]);
-    expect(
-      mockPreview.sync.mock.calls.every(([payload]) => payload.visible === false),
-    ).toBe(true);
   });
 
   it("hides the native BrowserView during overlays while preserving panel bounds", async () => {

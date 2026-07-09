@@ -84,6 +84,8 @@ interface PreviewTabsState {
   setTabSet: (scopeId: string, set: BrowserTabSet | null) => void;
   /** Publish (or clear) the active page's live chrome for a scope. */
   setLiveChrome: (scopeId: string, chrome: PreviewLiveChrome | null) => void;
+  /** Merge renderer-observed chrome into one tab's persisted renderer mirror. */
+  updateTabChrome: (scopeId: string, tabId: string, chrome: PreviewLiveChrome) => void;
 
   /** Create a new page on the scope's browser and focus the omnibox for it. */
   createPage: (scopeId: string) => Promise<void>;
@@ -131,6 +133,34 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       const prev = s.liveChromeByScope[scopeId] ?? null;
       if (sameLiveChrome(prev, chrome)) return s;
       return { liveChromeByScope: { ...s.liveChromeByScope, [scopeId]: chrome } };
+    }),
+
+  updateTabChrome: (scopeId, tabId, chrome) =>
+    set((s) => {
+      const tabSet = s.tabSetByScope[scopeId] ?? null;
+      if (!tabSet) return s;
+      let changed = false;
+      const tabs = tabSet.tabs.map((tab) => {
+        if (tab.id !== tabId) return tab;
+        const next = {
+          ...tab,
+          title: chrome.title ?? tab.title,
+          url: chrome.url ?? tab.url,
+          faviconUrl: chrome.favicon ?? tab.faviconUrl,
+        };
+        changed =
+          next.title !== tab.title ||
+          next.url !== tab.url ||
+          next.faviconUrl !== tab.faviconUrl;
+        return changed ? next : tab;
+      });
+      if (!changed) return s;
+      return {
+        tabSetByScope: {
+          ...s.tabSetByScope,
+          [scopeId]: { ...tabSet, tabs },
+        },
+      };
     }),
 
   createPage: async (scopeId) => {

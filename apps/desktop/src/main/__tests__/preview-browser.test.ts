@@ -247,6 +247,18 @@ function createWindow() {
   return win;
 }
 
+it("allows sanitized clipboard writes in the preview partition only", () => {
+  const handler = previewPartition.setPermissionRequestHandler.mock.calls.at(-1)?.[0];
+  expect(handler).toBeTypeOf("function");
+  const callback = vi.fn();
+
+  handler?.({} as never, "clipboard-sanitized-write", callback);
+  expect(callback).toHaveBeenLastCalledWith(true);
+
+  handler?.({} as never, "clipboard-read", callback);
+  expect(callback).toHaveBeenLastCalledWith(false);
+});
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1244,6 +1256,23 @@ describe("preview-browser", () => {
       for (const v of createdViews) {
         expect(v.webContents.close).not.toHaveBeenCalled();
       }
+    });
+
+    it("does not schedule hidden discard when renderer webview hides the native view", async () => {
+      const win = createWindow();
+      const ev = fakeEvent(win);
+
+      await showPreview(win, { threadId: "webview-owner" });
+      await ipcHandlers["preview:sync"]!(ev, {
+        visible: false,
+        bounds: VALID_BOUNDS,
+        threadId: "webview-owner",
+        hideReason: "renderer-webview",
+        workspaceId: "ws-1",
+      });
+
+      const s = sessions.get(win.id)!;
+      expect(s.discardHiddenTimer).toBeNull();
     });
   });
 

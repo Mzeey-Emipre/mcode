@@ -131,6 +131,7 @@ export function registerNavigationHandlers(): void {
         bounds: Bounds | null;
         threadId?: string | null;
         resumeUrlHint?: string | null;
+        hideReason?: "renderer-webview" | null;
         workspaceId?: string | null;
       },
     ) => {
@@ -168,7 +169,9 @@ export function registerNavigationHandlers(): void {
       }
       if (!payload.visible || !incomingBounds) {
         hidePreview(win, s);
-        onPreviewHidden(win, s);
+        if (payload.hideReason !== "renderer-webview") {
+          onPreviewHidden(win, s);
+        }
         return;
       }
 

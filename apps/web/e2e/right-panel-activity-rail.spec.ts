@@ -153,21 +153,21 @@ test.describe("Right panel activity rail", () => {
     await expect(page.locator('[data-rail-tab="terminal"]')).toHaveCount(0);
     await expect(page.locator('[data-rail-tab="preview"]')).toHaveClass(/text-primary/);
 
-    // Closing the last tab returns to the empty-state tool list; maximize stays on the rail.
+    // Closing the last tab returns to the empty-state tool list; the panel toggle stays on the rail.
     await page.locator('[data-rail-tab="preview"]').hover();
     await page.getByRole("button", { name: "Close Browser" }).click();
     await expect(page.getByTestId("panel-empty-state")).toBeVisible();
-    await expect(page.getByTestId("rail-maximize-toggle")).toBeVisible();
+    await expect(page.getByTestId("rail-panel-toggle")).toBeVisible();
   });
 
-  test("maximize button is visible in the empty state", async ({ page }) => {
+  test("panel toggle is visible in the empty state", async ({ page }) => {
     await seed(page);
 
     await expect(page.getByTestId("panel-empty-state")).toBeVisible();
-    await expect(page.getByTestId("rail-maximize-toggle")).toBeVisible();
-    await expect(page.getByTestId("rail-maximize-toggle")).toHaveAttribute(
+    await expect(page.getByTestId("rail-panel-toggle")).toBeVisible();
+    await expect(page.getByTestId("rail-panel-toggle")).toHaveAttribute(
       "aria-label",
-      "Maximize panel",
+      "Toggle panel",
     );
   });
 
@@ -211,24 +211,29 @@ test.describe("Right panel activity rail", () => {
     await expect(page.locator('[data-rail-tab="terminal"]')).toHaveClass(/text-primary/);
   });
 
-  test("maximize button fills the content area and restores on second click", async ({ page }) => {
+  test("rail panel toggle hides the panel and mod+alt+b reopens it", async ({ page }) => {
     await seed(page, { tabs: ["terminal"] });
 
     const chatMain = page.locator("main").filter({ has: page.getByText("Message Mcode...") });
     const projectTree = page.getByRole("button", { name: "Activity Rail Delete Activity Rail" });
-    const maximize = page.getByTestId("rail-maximize-toggle");
+    const railToggle = page.getByTestId("rail-panel-toggle");
 
     await expect(chatMain).toBeVisible();
     await expect(projectTree).toBeVisible();
-    await expect(maximize).toBeVisible();
+    await expect(railToggle).toBeVisible();
 
-    await maximize.click();
-    await expect(chatMain).toBeHidden();
-    await expect(projectTree).toBeVisible();
-    await expect(maximize).toHaveAttribute("aria-label", "Restore panel");
-
-    await maximize.click();
+    await railToggle.click();
+    await expect(page.getByTestId("right-panel")).toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("right-panel")).toHaveCSS("width", "0px");
     await expect(chatMain).toBeVisible();
-    await expect(maximize).toHaveAttribute("aria-label", "Maximize panel");
+    await expect(projectTree).toBeVisible();
+
+    await page.keyboard.press("Control+Alt+b");
+    await expect(page.getByTestId("right-panel")).toHaveAttribute("aria-hidden", "false");
+    await expect(page.getByTestId("activity-rail")).toBeVisible();
+    await expect(page.getByTestId("rail-panel-toggle")).toHaveAttribute(
+      "aria-label",
+      "Toggle panel",
+    );
   });
 });

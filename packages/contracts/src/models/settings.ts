@@ -456,8 +456,8 @@ export const SettingsSchema = lazySchema(() =>
         /** Browser preview rendering host. */
         rendering: z
           .object({
-            /** Hidden switch for the renderer-hosted webview path. */
-            engine: PreviewRenderingEngineSchema.default("webContentsView"),
+            /** Hidden legacy switch; preview rendering now uses webview. */
+            engine: PreviewRenderingEngineSchema.default("webview"),
           })
           .default({}),
         /**

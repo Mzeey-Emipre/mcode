@@ -40,9 +40,9 @@ describe("preview.memorySaver", () => {
 });
 
 describe("preview.rendering", () => {
-  it("defaults the rendering engine to WebContentsView", () => {
-    expect(SettingsSchema().parse({}).preview.rendering.engine).toBe("webContentsView");
-    expect(getDefaultSettings().preview.rendering.engine).toBe("webContentsView");
+  it("defaults the rendering engine to webview", () => {
+    expect(SettingsSchema().parse({}).preview.rendering.engine).toBe("webview");
+    expect(getDefaultSettings().preview.rendering.engine).toBe("webview");
   });
 
   it("accepts supported rendering engines", () => {

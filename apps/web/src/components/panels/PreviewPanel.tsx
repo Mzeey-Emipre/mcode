@@ -1505,11 +1505,11 @@ function draftFromSaved(
 export const PREVIEW_WEBVIEW_FALLBACK_TAB_ID =
   "__mcode_webview_active_fallback__";
 
-/** Returns whether the flagged webview renderer should replace the native preview surface. */
+/** Returns whether the webview renderer should own the preview surface. */
 export function shouldRenderWebviewPreview(
-  engine: string | undefined,
+  _engine: string | undefined,
 ): boolean {
-  return engine === "webview";
+  return true;
 }
 
 export interface PreviewPanelProps {
@@ -1531,7 +1531,7 @@ export interface PreviewPanelProps {
  */
 export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const webviewRef = useRef<PreviewWebviewHandle | null>(null);
+  const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
 
   const designModeActive = usePreviewDesignModeStore(
     (s) => s.modes[threadId] === true,
@@ -1674,11 +1674,11 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     surfaceRef,
     forceHidden: showWebviewPreview,
   });
-  const [webviewSrc, setWebviewSrc] = useState<string | null>(null);
+  const [webviewSrcByTab, setWebviewSrcByTab] = useState<Record<string, string | null>>({});
   const webviewSrcRef = useRef<string | null>(null);
-  const setTrackedWebviewSrc = useCallback((nextSrc: string | null): void => {
+  const setTrackedWebviewSrc = useCallback((tabId: string, nextSrc: string | null): void => {
     webviewSrcRef.current = nextSrc;
-    setWebviewSrc(nextSrc);
+    setWebviewSrcByTab((prev) => ({ ...prev, [tabId]: nextSrc }));
   }, []);
   const [webviewNavError, setWebviewNavError] = useState<string | null>(null);
   const [webviewCanBack, setWebviewCanBack] = useState(false);
@@ -1729,16 +1729,89 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const tabs = usePreviewTabs(threadId);
   const activeWebviewTabId =
     tabs.tabSet?.activeTabId ?? PREVIEW_WEBVIEW_FALLBACK_TAB_ID;
+  const activeWebviewTab = tabs.tabSet?.tabs.find(
+    (tab) => tab.id === activeWebviewTabId,
+  );
+  const activeWebviewTabUrl = activeWebviewTab?.url ?? null;
+  const activeWebviewTabTitle = activeWebviewTab?.title ?? null;
+  const activeWebviewTabFavicon = activeWebviewTab?.faviconUrl ?? null;
+  const activeWebviewSrc =
+    webviewSrcByTab[activeWebviewTabId] ?? activeWebviewTabUrl;
+  const warmWebviewTabs = useMemo(() => {
+    const sourceTabs =
+      tabs.tabSet?.tabs.length
+        ? tabs.tabSet.tabs
+        : activeWebviewSrc
+          ? [
+              {
+                id: activeWebviewTabId,
+                url: activeWebviewSrc,
+              },
+            ]
+          : [];
+    return sourceTabs
+      .map((tab) => ({
+        id: tab.id,
+        src: webviewSrcByTab[tab.id] ?? tab.url ?? null,
+      }))
+      .filter((tab): tab is { id: string; src: string } => !!tab.src);
+  }, [activeWebviewSrc, activeWebviewTabId, tabs.tabSet, webviewSrcByTab]);
+  const activeWebviewRef = useCallback(
+    (): PreviewWebviewHandle | null =>
+      webviewRefs.current[activeWebviewTabId] ?? null,
+    [activeWebviewTabId],
+  );
 
   useEffect(() => {
-    webviewSrcRef.current = webviewSrc;
-  }, [webviewSrc]);
+    webviewSrcRef.current = activeWebviewSrc;
+  }, [activeWebviewSrc]);
+
+  useEffect(() => {
+    if (!showWebviewPreview) return;
+    if (!activeWebviewTabUrl) return;
+    const active = activeWebviewRef();
+    const nextUrl = active?.getUrl() || activeWebviewSrc || activeWebviewTabUrl;
+    const nextCanBack = active?.canGoBack() ?? false;
+    const nextCanFwd = active?.canGoForward() ?? false;
+    setWebviewPageStatus((status) => {
+      if (
+        status.phase === "error" &&
+        (status.url === nextUrl || status.url === activeWebviewTabUrl)
+      ) {
+        return status;
+      }
+      if (
+        status.url === nextUrl &&
+        status.title === activeWebviewTabTitle &&
+        status.favicon === activeWebviewTabFavicon &&
+        status.phase === "loaded" &&
+        status.error === undefined
+      ) {
+        return status;
+      }
+      return {
+        url: nextUrl,
+        title: activeWebviewTabTitle,
+        favicon: activeWebviewTabFavicon,
+        phase: "loaded",
+      };
+    });
+    setWebviewCanBack((value) => (value === nextCanBack ? value : nextCanBack));
+    setWebviewCanFwd((value) => (value === nextCanFwd ? value : nextCanFwd));
+  }, [
+    activeWebviewRef,
+    activeWebviewSrc,
+    activeWebviewTabFavicon,
+    activeWebviewTabTitle,
+    activeWebviewTabUrl,
+    showWebviewPreview,
+  ]);
 
   useEffect(() => {
     if (!showWebviewPreview) return;
     const stored = bridge.storedUrl.trim();
     if (!stored) {
-      setTrackedWebviewSrc(null);
+      setTrackedWebviewSrc(activeWebviewTabId, null);
       setWebviewPageStatus({
         url: null,
         title: null,
@@ -1747,10 +1820,17 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       });
       return;
     }
-    if (webviewRef.current?.getUrl() === stored) return;
+    if (activeWebviewRef()?.getUrl() === stored) return;
     if (webviewSrcRef.current === stored) return;
-    setTrackedWebviewSrc(stored);
-  }, [bridge.storedUrl, setTrackedWebviewSrc, showWebviewPreview, threadId]);
+    setTrackedWebviewSrc(activeWebviewTabId, stored);
+  }, [
+    activeWebviewRef,
+    activeWebviewTabId,
+    bridge.storedUrl,
+    setTrackedWebviewSrc,
+    showWebviewPreview,
+    threadId,
+  ]);
 
   const onWebviewPageStatus = useCallback(
     (status: PreviewPageStatus): void => {
@@ -1779,43 +1859,44 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
           favicon: null,
           phase: "loading",
         });
-        const liveUrl = webviewRef.current?.getUrl();
+        const active = activeWebviewRef();
+        const liveUrl = active?.getUrl();
         const mountedSrc = webviewSrcRef.current;
         if (liveUrl === result.url) {
-          webviewRef.current?.reload();
+          active?.reload();
           return;
         }
         if (mountedSrc === result.url) {
-          webviewRef.current?.navigate(result.url);
+          active?.navigate(result.url);
           return;
         }
-        setTrackedWebviewSrc(result.url);
+        setTrackedWebviewSrc(activeWebviewTabId, result.url);
       });
     },
-    [bridge, setTrackedWebviewSrc, threadId],
+    [activeWebviewRef, activeWebviewTabId, bridge, setTrackedWebviewSrc, threadId],
   );
 
   const onWebviewOpenExternal = useCallback((): void => {
-    const url = webviewRef.current?.getUrl() || webviewSrc;
+    const url = activeWebviewRef()?.getUrl() || activeWebviewSrc;
     if (url) void window.desktopBridge?.openExternalUrl(url);
-  }, [webviewSrc]);
+  }, [activeWebviewRef, activeWebviewSrc]);
 
   const onWebviewGetZoom = useCallback(async (): Promise<number> => {
-    return (await webviewRef.current?.getZoom()) ?? 1;
-  }, []);
+    return (await activeWebviewRef()?.getZoom()) ?? 1;
+  }, [activeWebviewRef]);
 
   const onWebviewSetZoom = useCallback(
     async (factor: number): Promise<number> => {
-      return (await webviewRef.current?.setZoom(factor)) ?? factor;
+      return (await activeWebviewRef()?.setZoom(factor)) ?? factor;
     },
-    [],
+    [activeWebviewRef],
   );
 
   const effectivePageStatus = showWebviewPreview
     ? webviewPageStatus
     : bridge.pageStatus;
   const effectiveInputUrl = showWebviewPreview
-    ? (webviewPageStatus.url ?? webviewSrc ?? "")
+    ? (webviewPageStatus.url ?? activeWebviewSrc ?? "")
     : bridge.inputUrl;
   const effectivePageTitle = showWebviewPreview
     ? webviewPageStatus.title
@@ -1835,16 +1916,16 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     ? onWebviewNavigate
     : bridge.onNavigate;
   const effectiveGoBack = showWebviewPreview
-    ? () => webviewRef.current?.goBack()
+    ? () => activeWebviewRef()?.goBack()
     : bridge.onGoBack;
   const effectiveGoForward = showWebviewPreview
-    ? () => webviewRef.current?.goForward()
+    ? () => activeWebviewRef()?.goForward()
     : bridge.onGoForward;
   const effectiveReload = showWebviewPreview
-    ? () => webviewRef.current?.reload()
+    ? () => activeWebviewRef()?.reload()
     : bridge.onReload;
   const effectiveForceReload = showWebviewPreview
-    ? () => webviewRef.current?.forceReload()
+    ? () => activeWebviewRef()?.forceReload()
     : bridge.onForceReload;
   const effectiveOpenExternal = showWebviewPreview
     ? onWebviewOpenExternal
@@ -2207,7 +2288,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   }
 
   const hasLoadedPage = showWebviewPreview
-    ? !!(webviewSrc ?? webviewPageStatus.url)
+    ? !!(activeWebviewSrc ?? webviewPageStatus.url)
     : bridge.storedUrl.trim().length > 0;
   const pageError =
     effectivePageStatus.phase === "error"
@@ -2215,6 +2296,8 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       : undefined;
   const showLocalPorts =
     !hasLoadedPage && !effectivePreviewLoading && !pageError;
+  const hasWebviewLayer = showWebviewPreview && warmWebviewTabs.length > 0;
+  const webviewLayerInteractive = hasWebviewLayer && !showLocalPorts && !pageError;
   const requestComposerSubmit = (): void => {
     window.dispatchEvent(
       new CustomEvent("mcode:submit-composer", {
@@ -2350,7 +2433,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   return (
     <div
       data-testid="preview-panel"
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      className="flex h-full min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden"
     >
       <div className={cn(showWebviewPreview && "relative z-20")}>
         {showAnnotationCommandBar ? (
@@ -2422,7 +2505,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
         aria-label="Page preview"
         data-testid="preview-surface"
         className={cn(
-          "relative min-h-[min(40vh,20rem)] min-w-0 flex-1",
+          "relative min-h-[min(40vh,20rem)] min-w-0 flex-1 basis-0",
           showWebviewPreview
             ? "z-0 overflow-hidden rounded-tl-md"
             : "mx-2 mb-2 mt-1 rounded-md border border-border/40 bg-muted/10",
@@ -2468,25 +2551,45 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             <span>{CAPTURE_KIND_LABEL[lastCapture]}</span>
           </div>
         ) : null}
-        {showWebviewPreview ? (
+        {hasWebviewLayer ? (
           <div
             data-testid="preview-webview-surface"
-            className="absolute inset-0 z-0 overflow-hidden rounded-tl-md"
+            className={cn(
+              "absolute inset-0 z-0 overflow-hidden rounded-tl-md",
+              !webviewLayerInteractive && "pointer-events-none",
+            )}
           >
-            {webviewSrc ? (
+            {warmWebviewTabs.map((tab) => (
               <PreviewWebview
-                ref={webviewRef}
+                key={tab.id}
+                ref={(handle) => {
+                  webviewRefs.current[tab.id] = handle;
+                }}
                 threadId={threadId}
-                tabId={activeWebviewTabId}
-                src={webviewSrc}
-                className="relative z-0 h-full w-full"
-                onPageStatus={onWebviewPageStatus}
+                tabId={tab.id}
+                src={tab.src}
+                className={cn(
+                  "absolute inset-0 h-full w-full",
+                  tab.id === activeWebviewTabId
+                    ? "z-0 block"
+                    : "pointer-events-none -z-10 opacity-0",
+                )}
+                onPageStatus={(status) => {
+                  usePreviewTabsStore.getState().updateTabChrome(threadId, tab.id, {
+                    title: status.title,
+                    url: status.url,
+                    favicon: status.favicon,
+                  });
+                  if (tab.id !== activeWebviewTabId) return;
+                  onWebviewPageStatus(status);
+                }}
                 onNavigationStateChange={(state) => {
+                  if (tab.id !== activeWebviewTabId) return;
                   setWebviewCanBack(state.canGoBack);
                   setWebviewCanFwd(state.canGoForward);
                 }}
               />
-            ) : null}
+            ))}
           </div>
         ) : null}
         {visiblePageAnnotations.map((annotation) => {

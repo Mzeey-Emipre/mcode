@@ -22,8 +22,8 @@ import { registerDesignModeHandlers } from "./preview-design-mode.js";
 /** Registers all preview:* IPC handlers. Call once at app startup. */
 export function registerPreviewBrowserHandlers(): void {
   const previewPartition = session.fromPartition("persist:mcode-preview");
-  previewPartition.setPermissionRequestHandler((_wc, _permission, callback) => {
-    callback(false);
+  previewPartition.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === "clipboard-sanitized-write");
   });
 
   registerNavigationHandlers();

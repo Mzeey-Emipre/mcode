@@ -1,4 +1,4 @@
-import { Globe, Maximize2, Minimize2, Plus, X } from "lucide-react";
+import { Globe, PanelRight, Plus, X } from "lucide-react";
 import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import {
@@ -394,11 +394,10 @@ function RailAddControl({
 }
 
 /**
- * Vertical activity rail for the right panel: maximize/restore at the head, then
+ * Vertical activity rail for the right panel: panel toggle at the head, then
  * open singleton tabs (active lamp, hover-× close, add control when tabs exist).
- * With no tabs open the rail is only the maximize toggle beside the empty-state
- * list. The panel itself is opened and closed from the chat-header toggle.
- * See ADR-0004 / issue #611.
+ * With no tabs open the rail is only the panel toggle beside the empty-state
+ * list. The rail toggle mirrors the chat-header toggle and right-panel shortcut.
  */
 export function ActivityRail({
   openTabs,
@@ -408,8 +407,7 @@ export function ActivityRail({
   changesCount,
   changesFresh,
   browserTabSet,
-  maximized,
-  onToggleMaximized,
+  onTogglePanel,
   onSelect,
   onClose,
   onCreate,
@@ -424,9 +422,7 @@ export function ActivityRail({
   readonly changesFresh: boolean;
   /** The Browser tab's open pages, or null when none are known (web build / not yet loaded). */
   readonly browserTabSet: BrowserTabSet | null;
-  /** Whether the panel is maximized (fills content area beside the project tree). */
-  readonly maximized: boolean;
-  onToggleMaximized: () => void;
+  onTogglePanel: () => void;
   onSelect: (id: RightPanelTab) => void;
   onClose: (id: RightPanelTab) => void;
   onCreate: (id: RightPanelTab) => void;
@@ -438,19 +434,20 @@ export function ActivityRail({
       data-testid="activity-rail"
       className="flex w-12 flex-none flex-col items-center gap-1 bg-background py-2"
     >
-      {/* Maximize / restore sits at the rail head (not the foot) so it stays in
+      {/* The panel toggle sits at the rail head (not the foot) so it stays in
           the first tab stop and never scrolls off-screen on short viewports. */}
       <Button
         variant="ghost"
         size="icon-xs"
-        onClick={onToggleMaximized}
+        onClick={onTogglePanel}
         className="shrink-0 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
-        aria-label={maximized ? "Restore panel" : "Maximize panel"}
-        title={maximized ? "Restore panel" : "Maximize panel"}
-        data-testid="rail-maximize-toggle"
+        aria-label="Toggle panel"
+        aria-pressed={true}
+        title="Toggle panel"
+        data-testid="rail-panel-toggle"
         data-preview-design-keep-open="true"
       >
-        {maximized ? <Minimize2 /> : <Maximize2 />}
+        <PanelRight />
       </Button>
 
       {openTabs.map((id) => {
