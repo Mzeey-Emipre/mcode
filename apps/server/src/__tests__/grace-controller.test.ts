@@ -41,6 +41,26 @@ describe("createGraceController", () => {
     expect(shutdown).toHaveBeenCalledOnce();
   });
 
+  it("keeps a supervised agent runtime alive after its browser disconnects", () => {
+    let wallClock = 0;
+    const shutdown = vi.fn();
+    const ctrl = createGraceController({
+      graceMs: GRACE_MS,
+      sessionCount: vi.fn(() => 0),
+      isBusy: vi.fn(() => false),
+      shutdownOnIdle: false,
+      shutdown,
+      logger: makeLogger(),
+      now: () => wallClock,
+    });
+
+    ctrl.handleSessionChange(0);
+    wallClock += GRACE_MS;
+    vi.advanceTimersByTime(GRACE_MS);
+
+    expect(shutdown).not.toHaveBeenCalled();
+  });
+
   it("cancels the timer when a session reconnects", () => {
     const shutdown = vi.fn();
     const ctrl = createGraceController({
