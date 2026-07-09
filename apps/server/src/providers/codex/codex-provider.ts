@@ -30,7 +30,6 @@ import type {
   SessionForker,
   TurnRequest,
   ProviderId,
-  ReasoningLevel,
   AgentEvent,
   AttachmentMeta,
   GoalState,
@@ -55,11 +54,11 @@ import type {
   CodexRateLimitWindow,
   CodexRateLimitsPayload,
   CodexTurnOptions,
-  ReasoningEffort,
   CodexSkillMetadata,
   CompletedItem,
   ThreadGoal,
 } from "./codex-types.js";
+import { toCodexEffort } from "./codex-types.js";
 import {
   mapDecisionToCodexResponse,
   synthesizeCodexPermissionRequest,
@@ -388,13 +387,6 @@ function mapNativeCodexSkill(skill: CodexSkillMetadata): SkillInfo {
     nativeName: skill.name,
     path: skill.path,
   };
-}
-
-/** Maps mcode ReasoningLevel to the codex app-server `effort` field value. */
-function toCodexEffort(level?: ReasoningLevel): ReasoningEffort | undefined {
-  if (!level) return undefined;
-  if (level === "max" || level === "ultrathink") return "high";
-  return level as ReasoningEffort;
 }
 
 /** Return the generated image path from an app-server imageGeneration item. */

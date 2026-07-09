@@ -247,7 +247,7 @@ const ATTACHMENT_INPUT_ACCEPT = attachmentAcceptAttribute();
 
 /** ReasoningLevel values as a Set for O(1) membership checks in the Codex level filter. */
 const VALID_REASONING_LEVELS_SET = new Set<string>([
-  "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultrathink",
+  "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "ultrathink",
 ]);
 
 /** Display label for a reasoning level value. */

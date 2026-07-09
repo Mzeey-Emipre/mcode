@@ -5,6 +5,8 @@
  * in https://github.com/openai/codex
  */
 
+import type { ReasoningLevel } from "@mcode/contracts";
+
 // JSON-RPC base shapes
 
 /** A JSON-RPC 2.0 request message sent to the codex app-server. */
@@ -31,7 +33,14 @@ export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access"
 export type AskForApproval = "untrusted" | "on-failure" | "on-request" | "never";
 
 /** Reasoning effort levels for the codex app-server. */
-export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+
+/** Maps mcode reasoning levels to the Codex app-server effort field. */
+export function toCodexEffort(level?: ReasoningLevel): ReasoningEffort | undefined {
+  if (!level) return undefined;
+  if (level === "ultrathink") return "high";
+  return level;
+}
 
 /** Parameters for the `thread/start` RPC method. */
 export interface ThreadStartParams {

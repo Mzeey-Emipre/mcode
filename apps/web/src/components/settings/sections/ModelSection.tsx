@@ -13,6 +13,7 @@ import {
   supportsThinkingToggle,
   normalizeReasoningLevelForModel,
   getCodexReasoningLevels,
+  getCodexDefaultReasoningLevel,
   pickProviderModelsForSettings,
   providerSupportsReasoningLevels,
   type ModelDefinition,
@@ -60,6 +61,8 @@ const CODEX_REASONING_LABELS: Record<string, string> = {
   medium: "Medium",
   high: "High",
   xhigh: "X-High",
+  max: "Max",
+  ultra: "Ultra",
 };
 
 /**
@@ -328,8 +331,8 @@ export function ModelSection() {
 
   const reasoningHint = useMemo(() => {
     if (codexLevels) {
-      return codexLevels.includes("xhigh")
-        ? "Reasoning effort for Codex models. X-High is the maximum tier."
+      return codexLevels.includes("ultra")
+        ? "Reasoning effort for Codex models. Ultra uses automatic task delegation."
         : "Reasoning effort for Codex models.";
     }
     if (provider === "copilot") {
@@ -348,7 +351,9 @@ export function ModelSection() {
       if (firstModel) {
         const codexLevels = getCodexReasoningLevels(firstModel.id);
         if (codexLevels) {
-          newReasoning = codexLevels.includes(reasoning as never) ? reasoning : "medium";
+          newReasoning = codexLevels.includes(reasoning as never)
+            ? reasoning
+            : (getCodexDefaultReasoningLevel(firstModel.id) ?? "medium");
         } else {
           newReasoning = normalizeReasoningLevelForModel(firstModel.id, reasoning);
         }
@@ -371,7 +376,7 @@ export function ModelSection() {
     if (codexLevels) {
       // For Codex models: if the stored level isn't valid for this model, use its default
       if (!codexLevels.includes(reasoning as never)) {
-        newReasoning = "medium";
+        newReasoning = getCodexDefaultReasoningLevel(v) ?? "medium";
       }
     } else {
       newReasoning = normalizeReasoningLevelForModel(v, reasoning);
