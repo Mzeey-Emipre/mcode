@@ -27,6 +27,7 @@ const TIER_LADDER: readonly ReasoningLevel[] = [
   "high",
   "xhigh",
   "max",
+  "ultra",
   "ultrathink",
 ];
 
@@ -110,11 +111,26 @@ function isCodexCatalogModelId(modelId: string): boolean {
 }
 
 /**
- * Normalize reasoning level for OpenAI Codex GPT-5 models. Mirrors `supportedReasoningLevels`
- * in the web model registry (mini / codex-mini variants omit xhigh).
+ * Normalizes reasoning levels for OpenAI Codex GPT-5 models.
+ * GPT-5.6 variants expose model-specific effort tiers, including automatic delegation.
  */
 function normalizeCodexReasoningLevel(modelId: string, level: ReasoningLevel): ReasoningLevel {
   const id = normalizeModelId(modelId);
+  if (id.startsWith("gpt-5.6-")) {
+    const allowed = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh", "max"]);
+    if (id === "gpt-5.6-sol" || id === "gpt-5.6-terra") allowed.add("ultra");
+    const requested = level === "ultrathink" ? "max" : level;
+
+    if (allowed.has(requested)) return requested;
+
+    const idx = TIER_LADDER.indexOf(requested);
+    for (let i = idx - 1; i >= 0; i--) {
+      const tier = TIER_LADDER[i];
+      if (allowed.has(tier)) return tier;
+    }
+    return id === "gpt-5.6-sol" ? "low" : "medium";
+  }
+
   const base = new Set<ReasoningLevel>(["none", "minimal", "low", "medium", "high"]);
   const withXhigh = new Set<ReasoningLevel>([...base, "xhigh", "max", "ultrathink"]);
   const isMini =

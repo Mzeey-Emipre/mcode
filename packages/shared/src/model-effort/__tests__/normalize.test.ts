@@ -213,6 +213,20 @@ describe("normalizeReasoningLevelForModel", () => {
   });
 
   describe("OpenAI Codex GPT-5 static catalog models", () => {
+    it("preserves max and ultra on GPT-5.6 Sol", () => {
+      expect(normalizeReasoningLevelForModel("gpt-5.6-sol", "max")).toBe("max");
+      expect(normalizeReasoningLevelForModel("gpt-5.6-sol", "ultra")).toBe("ultra");
+    });
+
+    it("uses GPT-5.6 defaults when switching from an unsupported lower tier", () => {
+      expect(normalizeReasoningLevelForModel("gpt-5.6-sol", "none")).toBe("low");
+      expect(normalizeReasoningLevelForModel("gpt-5.6-terra", "minimal")).toBe("medium");
+    });
+
+    it("clamps GPT-5.6 Luna ultra to max", () => {
+      expect(normalizeReasoningLevelForModel("gpt-5.6-luna", "ultra")).toBe("max");
+    });
+
     it("preserves xhigh on gpt-5.4", () => {
       expect(normalizeReasoningLevelForModel("gpt-5.4", "xhigh")).toBe("xhigh");
     });
@@ -221,8 +235,8 @@ describe("normalizeReasoningLevelForModel", () => {
       expect(normalizeReasoningLevelForModel("gpt-5.5", "none")).toBe("none");
     });
 
-    it("downgrades xhigh to high on gpt-5.1-codex-mini", () => {
-      expect(normalizeReasoningLevelForModel("gpt-5.1-codex-mini", "xhigh")).toBe("high");
+    it("downgrades xhigh to high on gpt-5.4-mini", () => {
+      expect(normalizeReasoningLevelForModel("gpt-5.4-mini", "xhigh")).toBe("high");
     });
   });
 });

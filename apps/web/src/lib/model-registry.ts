@@ -1,5 +1,5 @@
 import { useSettingsStore } from "@/stores/settingsStore";
-import { CURSOR_STATIC_MODEL_FALLBACK } from "@mcode/contracts";
+import { CODEX_STATIC_MODELS, CURSOR_STATIC_MODEL_FALLBACK } from "@mcode/contracts";
 import type { ContextWindowMode, ProviderId, ReasoningLevel } from "@mcode/contracts";
 import {
   MODEL_CONTEXT_WINDOWS_DEFAULT,
@@ -31,10 +31,9 @@ export interface ModelProvider {
 }
 
 /**
- * Reasoning effort level values accepted by the Codex SDK.
- * Distinct from mcode's internal ReasoningLevel which uses "max" for Claude.
+ * Reasoning effort level values accepted by the Codex app-server.
  */
-export type CodexReasoningLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type CodexReasoningLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 /** Metadata for a selectable model in the provider registry. */
 export interface ModelDefinition {
@@ -104,52 +103,15 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     id: "codex",
     name: "Codex",
     comingSoon: false,
-    models: [
-      {
-        id: "gpt-5.5",
-        label: "GPT-5.5",
-        providerId: "codex",
-        supportedReasoningLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
-        defaultReasoningLevel: "medium",
-      },
-      {
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-        providerId: "codex",
-        supportedReasoningLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
-        defaultReasoningLevel: "medium",
-      },
-      {
-        id: "gpt-5.4-mini",
-        label: "GPT-5.4 Mini",
-        providerId: "codex",
-        // Not yet in models.json catalog; assume same range as gpt-5.4
-        supportedReasoningLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
-        defaultReasoningLevel: "medium",
-      },
-      {
-        id: "gpt-5.3-codex",
-        label: "GPT-5.3 Codex",
-        providerId: "codex",
-        supportedReasoningLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
-        defaultReasoningLevel: "medium",
-      },
-      {
-        id: "gpt-5.2-codex",
-        label: "GPT-5.2 Codex",
-        providerId: "codex",
-        supportedReasoningLevels: ["none", "minimal", "low", "medium", "high", "xhigh"],
-        defaultReasoningLevel: "medium",
-      },
-      {
-        id: "gpt-5.1-codex-mini",
-        label: "GPT-5.1 Codex Mini",
-        providerId: "codex",
-        // gpt-5.1-codex-mini treated same as gpt-5.1-codex: up to high, no xhigh
-        supportedReasoningLevels: ["none", "minimal", "low", "medium", "high"],
-        defaultReasoningLevel: "medium",
-      },
-    ],
+    models: CODEX_STATIC_MODELS.map((model) => ({
+      id: model.id,
+      label: model.name,
+      providerId: "codex",
+      group: model.group,
+      contextWindow: model.contextWindow,
+      supportedReasoningLevels: model.supportedReasoningEfforts,
+      defaultReasoningLevel: model.defaultReasoningEffort,
+    })),
   },
   {
     id: "copilot",
@@ -268,6 +230,11 @@ export function getDefaultModel(): ModelDefinition {
   return claude.models.find((m) => isModelAvailable(m)) ?? claude.models[0];
 }
 
+const RETIRED_CODEX_MODEL_IDS: ReadonlySet<string> = new Set([
+  "gpt-5.2-codex",
+  "gpt-5.1-codex-mini",
+]);
+
 /**
  * Return the default model ID from user settings. Empty or invalid values
  * resolve to a model that belongs to the configured provider (never a Claude
@@ -299,10 +266,13 @@ export function getDefaultModelId(): string {
   }
 
   // Dynamic provider models are valid persisted IDs even when not in the static registry,
-  // but only if findModelById didn't find the ID under a different provider.
+  // but only if the provider supports dynamic discovery and findModelById did not
+  // find the ID under a different provider.
   // If it matched a different provider, the saved ID is stale from a provider switch.
   if (!def) {
-    return id;
+    return providerId === "codex" && RETIRED_CODEX_MODEL_IDS.has(id)
+      ? providerStaticFallback
+      : id;
   }
   return providerStaticFallback;
 }
@@ -319,7 +289,7 @@ export function getDefaultProviderId(): string {
 
 /** Valid reasoning levels for fallback validation. */
 const VALID_REASONING_LEVELS: readonly string[] = [
-  "none", "minimal", "low", "medium", "high", "max", "xhigh", "ultrathink",
+  "none", "minimal", "low", "medium", "high", "max", "xhigh", "ultra", "ultrathink",
 ];
 
 /**
@@ -401,6 +371,11 @@ export function providerSupportsSendNow(provider: ProviderId | string | undefine
  */
 export function getCodexReasoningLevels(modelId: string): readonly CodexReasoningLevel[] | null {
   return findModelById(modelId)?.supportedReasoningLevels ?? null;
+}
+
+/** Returns the Codex model's default reasoning level, or null for non-Codex models. */
+export function getCodexDefaultReasoningLevel(modelId: string): CodexReasoningLevel | null {
+  return findModelById(modelId)?.defaultReasoningLevel ?? null;
 }
 
 /**

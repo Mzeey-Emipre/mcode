@@ -20,9 +20,9 @@ export const ProviderModelInfoSchema = lazySchema(() =>
     /** Whether the model supports reasoning effort configuration. */
     supportsReasoning: z.boolean().optional(),
     /** Reasoning effort levels the model accepts. */
-    supportedReasoningEfforts: z.array(z.enum(["low", "medium", "high", "xhigh"])).optional(),
+    supportedReasoningEfforts: z.array(z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])).optional(),
     /** Default reasoning effort when none is specified. */
-    defaultReasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
+    defaultReasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
     /** Org/enterprise policy state. Absent when no policy is configured. */
     policy: z.object({ state: ModelPolicyStateSchema }).optional(),
     /** Billing rate multiplier relative to base plan (e.g. 1, 0.33, 3, 30). */

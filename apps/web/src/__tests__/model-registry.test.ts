@@ -8,6 +8,8 @@ import {
   getDefaultModel,
   getDefaultModelId,
   getDefaultReasoningLevel,
+  getCodexDefaultReasoningLevel,
+  getCodexReasoningLevels,
   isMaxEffortModel,
   isModelAvailable,
   isXhighEffortModel,
@@ -204,8 +206,69 @@ describe("ReasoningLevelSchema", () => {
     expect(ReasoningLevelSchema.parse("xhigh")).toBe("xhigh");
   });
 
+  it("accepts the Codex ultra tier", () => {
+    expect(ReasoningLevelSchema.parse("ultra")).toBe("ultra");
+  });
+
   it("rejects unknown values", () => {
     expect(() => ReasoningLevelSchema.parse("extreme")).toThrow();
+  });
+});
+
+describe("GPT-5.6 Codex catalog", () => {
+  it("lists Sol, Terra, and Luna before older Codex models", () => {
+    const codex = MODEL_PROVIDERS.find((provider) => provider.id === "codex");
+    expect(codex?.models.slice(0, 3).map((model) => model.id)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+    ]);
+  });
+
+  it("uses the Codex model catalog reasoning levels and defaults", () => {
+    expect(getCodexReasoningLevels("gpt-5.6-sol")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
+    expect(getCodexDefaultReasoningLevel("gpt-5.6-sol")).toBe("low");
+    expect(getCodexReasoningLevels("gpt-5.6-luna")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  it("omits inaccessible GPT-5.2 and GPT-5.1 Codex models", () => {
+    const codex = MODEL_PROVIDERS.find((provider) => provider.id === "codex");
+    expect(codex?.models.map((model) => model.id)).not.toContain("gpt-5.2-codex");
+    expect(codex?.models.map((model) => model.id)).not.toContain("gpt-5.1-codex-mini");
+  });
+
+  it("replaces a retired Codex default with the first supported model", () => {
+    useSettingsStore.setState({
+      settings: {
+        ...getDefaultSettings(),
+        model: {
+          defaults: {
+            provider: "codex",
+            id: "gpt-5.2-codex",
+            reasoning: "medium",
+            fallbackId: "",
+            contextWindow: "200k",
+            thinking: false,
+          },
+          utility: { provider: "", id: "" },
+        },
+      },
+    });
+
+    expect(getDefaultModelId()).toBe("gpt-5.6-sol");
   });
 });
 
