@@ -7,6 +7,7 @@ import { UpdateIndicator } from "./UpdateIndicator";
 import { PanelCollapseIcon } from "./SidebarRevealButton";
 import { useUiStore } from "@/stores/uiStore";
 import { McodeLogo } from "@/components/brand/McodeLogo";
+import { cn } from "@/lib/utils";
 
 /** True when running inside the Electron shell. */
 const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
@@ -41,7 +42,14 @@ export function Sidebar({
   };
 
   return (
-    <div className="flex h-full w-72 max-w-[55vw] flex-col bg-page md:max-w-none">
+    <div
+      className={cn(
+        "flex h-full flex-col bg-page",
+        settingsOpen
+          ? "w-40 max-w-[42vw] sm:w-56 md:w-72 md:max-w-none"
+          : "w-72 max-w-[55vw] md:max-w-none",
+      )}
+    >
       {/* Header */}
       <div className="flex h-11 items-center justify-between border-b border-border/40 pl-2 pr-2.5">
         {settingsOpen ? (

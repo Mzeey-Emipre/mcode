@@ -64,7 +64,7 @@ function ToolCallWrapperInner({
       <button
         type="button"
         onClick={() => hasContent && setExpanded((p) => !p)}
-        className={`flex w-full flex-col gap-0.5 pl-3 pr-1 py-1.5 text-left text-xs ${
+        className={`flex w-full flex-col gap-0.5 pl-3 pr-1 py-1.5 text-left text-sm ${
           hasContent ? "cursor-pointer hover:bg-muted/30" : "cursor-default"
         }`}
       >
@@ -95,7 +95,7 @@ function ToolCallWrapperInner({
         </div>
 
         {badge && (
-          <span className="truncate pl-[21px] text-xs text-muted-foreground/50 font-mono">
+          <span className="truncate pl-[21px] text-sm text-muted-foreground/50 font-mono">
             {badge}
           </span>
         )}

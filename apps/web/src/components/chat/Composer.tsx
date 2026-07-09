@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import { isWindows } from "@/lib/platform";
 import { isCursorPermissionLockedToFull } from "@/lib/cursor-permission";
 import { isGoalControlCommand } from "@/lib/goal-command";
+import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
 import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supportsUltrathink, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
@@ -885,10 +886,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   // token-count badge + send button fit comfortably on one row with the
   // standard gaps and breathing room. Below this the row collapses to a
   // single "Composer options" trigger so the send button never gets clipped.
-  // With 32px small controls, the 1280px shell still has room for inline
-  // options after the sidebar and right rail are reserved. Keep the collapse
-  // point below that shell width while preserving the 600px overflow behavior.
-  const COMPOSER_INLINE_OPTIONS_THRESHOLD = 560;
+  // Keep the compact 600px layout behind the overflow trigger while allowing
+  // the widened desktop rail to keep its inline controls.
+  const COMPOSER_INLINE_OPTIONS_THRESHOLD = 640;
   // Default to inline before the first measurement lands so the first frame
   // doesn't briefly render the popover trigger and snap to inline buttons.
   const showInlineComposerOptions =
@@ -2690,7 +2690,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const showComposerStatusBar = isNewThread === true || !!branchFromMessageId;
 
   return (
-    <div className="relative px-8 py-4">
+    <div className="relative px-4 py-4 sm:px-8">
       {/* Soft gradient hint above the composer — short enough that it doesn't
           bury the last line of content (e.g. the turn footer) when the chat is
           scrolled to its tail. Reduced from h-5/opaque to h-3/70% so the band
@@ -2705,7 +2705,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       )}
 
       {/* Max-width wrapper to align with message list column */}
-      <div className="mx-auto w-full max-w-4xl">
+      <div className={PRIMARY_CONTENT_RAIL_CLASS}>
       {threadId && workspaceId && planPreview && !planPanelOpen && !branchFromMessageId && !isNewThread && (
         <div className="mb-2">
           <PlanPreview workspaceId={workspaceId} threadId={threadId} preview={planPreview} />

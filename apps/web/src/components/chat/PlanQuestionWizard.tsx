@@ -5,6 +5,7 @@ import { OptionTile } from "./plan-questions/OptionTile";
 import { AcceptRecommended } from "./plan-questions/AcceptRecommended";
 import { useWizardKeyboard } from "./plan-questions/useWizardKeyboard";
 import { cn } from "@/lib/utils";
+import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import type { PlanAnswer, PlanQuestionOption } from "@mcode/contracts";
 
 /** Sentinel ID for the user-written "Other" option. */
@@ -250,7 +251,8 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
       aria-label="Plan questions"
       data-direction={slideDirection}
       className={cn(
-        "mx-auto mb-1.5 w-full max-w-4xl",
+        PRIMARY_CONTENT_RAIL_CLASS,
+        "mb-1.5",
         "rounded-xl border border-border bg-card",
         "px-5 pt-4 pb-3",
         "animate-wizard-float-rise",

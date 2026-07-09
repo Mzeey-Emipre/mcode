@@ -12,7 +12,7 @@ import {
 } from "@/components/chat/virtual-items";
 import type { ChatVirtualItem } from "@/components/chat/virtual-items";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
-import type { Message, ToolCall, HookExecution } from "@/transport/types";
+import type { Message, ToolCall, HookExecution, ToolCallRecord, HookExecutionRecord } from "@/transport/types";
 
 function makeMessage(overrides: Partial<Message> = {}): Message {
   return {
@@ -43,6 +43,39 @@ function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
   };
 }
 
+function makeToolRecord(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
+  return {
+    id: "record-tool-1",
+    message_id: "a1",
+    parent_tool_call_id: null,
+    tool_name: "Read",
+    input_summary: "",
+    output_summary: "",
+    status: "completed",
+    started_at: "2026-01-01T00:00:00Z",
+    completed_at: "2026-01-01T00:00:01Z",
+    sort_order: 1,
+    ...overrides,
+  };
+}
+
+function makeHookRecord(overrides: Partial<HookExecutionRecord> = {}): HookExecutionRecord {
+  return {
+    id: "hook-1",
+    message_id: "a1",
+    hook_name: "PreToolUse",
+    tool_name: "Bash",
+    phase: "permission",
+    payload: "{}",
+    duration_ms: 12,
+    did_block: false,
+    started_at: "2026-01-01T00:00:00Z",
+    ended_at: "2026-01-01T00:00:00.012Z",
+    sort_order: 1,
+    ...overrides,
+  };
+}
+
 /** Helper: build virtual items from raw inputs using the 3-function API. */
 function buildAll(
   messages: readonly Message[],
@@ -57,29 +90,50 @@ function buildAll(
 }
 
 describe("buildStableItems", () => {
-  it("returns message items plus a persisted-narrative placeholder before each assistant message", () => {
+  it("does not emit empty persisted chrome before records are loaded", () => {
     const messages: Message[] = [
       makeMessage({ id: "u1", role: "user", content: "hi" }),
       makeMessage({ id: "a1", role: "assistant", content: "hello" }),
     ];
     const items = buildStableItems(messages);
-    // user msg, persisted-narrative(a1), assistant msg, persisted-late-hooks(a1), persisted-turn-footer(a1)
-    expect(items.map((i) => i.type)).toEqual([
-      "message",
-      "persisted-narrative",
-      "message",
-      "persisted-late-hooks",
-      "persisted-turn-footer",
-    ]);
+    expect(items.map((i) => i.type)).toEqual(["message", "message"]);
   });
 
-  it("includes one persisted-narrative placeholder per assistant message", () => {
+  it("emits persisted chrome only for visible loaded rows", () => {
     const messages: Message[] = [
       makeMessage({ id: "u1", role: "user", content: "hi" }),
       makeMessage({ id: "a1", role: "assistant", content: "hello" }),
     ];
-    const items = buildStableItems(messages);
+    const items = buildStableItems(messages, undefined, undefined, undefined, {
+      a1: {
+        tools: [makeToolRecord({ message_id: "a1" })],
+        thoughts: [],
+        hooks: [makeHookRecord({ message_id: "a1", phase: "stop", sort_order: 2 })],
+      },
+    });
     expect(items.filter((i) => i.type === "persisted-narrative")).toHaveLength(1);
+    expect(items.filter((i) => i.type === "persisted-late-hooks")).toHaveLength(1);
+    expect(items.filter((i) => i.type === "persisted-turn-footer")).toHaveLength(1);
+  });
+
+  it("renders stop-only persisted hooks after the assistant message", () => {
+    const messages: Message[] = [
+      makeMessage({ id: "u1", role: "user", content: "hi" }),
+      makeMessage({ id: "a1", role: "assistant", content: "hello" }),
+    ];
+    const items = buildStableItems(messages, undefined, undefined, undefined, {
+      a1: {
+        tools: [],
+        thoughts: [],
+        hooks: [makeHookRecord({ message_id: "a1", phase: "stop" })],
+      },
+    });
+
+    expect(items.map((i) => i.type)).toEqual([
+      "message",
+      "message",
+      "persisted-late-hooks",
+    ]);
   });
 });
 
@@ -331,22 +385,15 @@ describe("buildVirtualItems (combined)", () => {
     expect(result).toEqual([]);
   });
 
-  it("messages only: one 'message' item per message, plus persisted-narrative before each assistant", () => {
+  it("messages only: one 'message' item per message when persisted records are missing", () => {
     const messages = [
       makeMessage({ id: "msg-1", sequence: 1 }), // assistant by default
       makeMessage({ id: "msg-2", sequence: 2, role: "user", content: "Hi" }),
     ];
     const result = buildAll(messages, [], undefined, false, undefined);
-    // persisted-narrative(msg-1), msg-1, persisted-late-hooks(msg-1), persisted-turn-footer(msg-1), msg-2
-    expect(result.map((i) => i.type)).toEqual([
-      "persisted-narrative",
-      "message",
-      "persisted-late-hooks",
-      "persisted-turn-footer",
-      "message",
-    ]);
-    expect(result[1]).toMatchObject({ type: "message", key: "msg-1" });
-    expect(result[4]).toMatchObject({ type: "message", key: "msg-2" });
+    expect(result.map((i) => i.type)).toEqual(["message", "message"]);
+    expect(result[0]).toMatchObject({ type: "message", key: "msg-1" });
+    expect(result[1]).toMatchObject({ type: "message", key: "msg-2" });
   });
 
   it("active tool calls split the last assistant message after the narrative-flow item", () => {
@@ -358,21 +405,15 @@ describe("buildVirtualItems (combined)", () => {
     const result = buildAll(messages, toolCalls, undefined, false, undefined);
 
     const types = result.map((item) => item.type);
-    // msg-1, narrative-flow, msg-2, narrative-indicator,
-    // persisted-late-hooks(msg-2), persisted-turn-footer(msg-2). The
-    // persisted-narrative for msg-2 is filtered out (live narrative-flow
-    // above the bubble owns the timeline), but the persisted-turn-footer is
-    // NOT filtered — it sits AFTER the bubble and owns the post-response
-    // summary that closes the turn. The narrative-indicator lingers after the
-    // turn (isAgentRunning=false, tool calls still volatile) so it can play
-    // its exit transition, and sits right after the bubble.
+    // Persisted chrome is absent until records load and contain visible rows.
+    // The narrative-indicator lingers after the turn (isAgentRunning=false,
+    // tool calls still volatile) so it can play its exit transition, and sits
+    // right after the bubble.
     expect(types).toEqual([
       "message",
       "narrative-flow",
       "message",
       "narrative-indicator",
-      "persisted-late-hooks",
-      "persisted-turn-footer",
     ]);
     expect(result[0]).toMatchObject({ type: "message", key: "msg-1" });
     expect(result[1]).toMatchObject({ type: "narrative-flow" });
@@ -580,20 +621,13 @@ describe("buildVirtualItems (combined)", () => {
     expect(indicatorItem.startTime).toBe(startTime);
   });
 
-  it("emits persisted-narrative placeholder before each assistant message", () => {
+  it("omits persisted chrome for unloaded assistant narrative records", () => {
     const messages = [
       makeMessage({ id: "msg-1", sequence: 1, role: "user", content: "hi" }),
       makeMessage({ id: "msg-2", sequence: 2, role: "assistant", content: "done" }),
     ];
     const result = buildAll(messages, [], undefined, false, undefined);
-    // user, persisted-narrative(msg-2), assistant, persisted-late-hooks(msg-2), persisted-turn-footer(msg-2)
-    expect(result.map((item) => item.type)).toEqual([
-      "message",
-      "persisted-narrative",
-      "message",
-      "persisted-late-hooks",
-      "persisted-turn-footer",
-    ]);
+    expect(result.map((item) => item.type)).toEqual(["message", "message"]);
   });
 
   it("includes narrative-flow with both streaming and running state when agent running and streaming", () => {
@@ -615,17 +649,12 @@ describe("buildVirtualItems (combined)", () => {
     const toolCalls = [makeToolCall({ id: "tc-1" })];
     const result = buildAll(messages, toolCalls, undefined, false, undefined);
 
-    // Persisted-narrative(msg-1) precedes the assistant message, then
-    // persisted-late-hooks(msg-1) and persisted-turn-footer(msg-1) follow it,
-    // then user, then narrative-flow and the lingering narrative-indicator
-    // appended at the tail (no split because the trailing message isn't an
-    // assistant).
+    // Persisted chrome is absent until loaded records contain visible rows.
+    // The live narrative is appended at the tail because the trailing message
+    // is not an assistant.
     const types = result.map((item) => item.type);
     expect(types).toEqual([
-      "persisted-narrative",
       "message",
-      "persisted-late-hooks",
-      "persisted-turn-footer",
       "message",
       "narrative-flow",
       "narrative-indicator",
@@ -647,7 +676,7 @@ describe("buildVirtualItems (combined)", () => {
     // user msg, narrative-flow (before split assistant msg), split assistant
     // msg, narrative-indicator (status footer below the response — it stays
     // under the bubble through the persist swap so its exit transition plays
-    // in place), persisted-late-hooks(msg-2), persisted-turn-footer(msg-2).
+    // in place). Persisted chrome is absent until records load.
     // live assistant response is suppressed because a tool is still running —
     // `computeLiveStreamingText` returns "" while any top-level tool is in
     // flight, since the model isn't streaming user-facing text during tool
@@ -659,8 +688,6 @@ describe("buildVirtualItems (combined)", () => {
       "narrative-flow",
       "message",
       "narrative-indicator",
-      "persisted-late-hooks",
-      "persisted-turn-footer",
     ]);
     expect(result[0]).toMatchObject({ key: "msg-1" });
     expect(result[2]).toMatchObject({ key: "msg-2" });

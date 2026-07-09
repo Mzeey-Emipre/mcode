@@ -75,7 +75,7 @@ export function ProjectRow({ workspace, isActive, onSelect, onPin, onRemove, hom
         }
       }}
       className={cn(
-        "group flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-sm px-3 py-2 text-[13px] transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "group flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-sm px-3 py-2 text-[13px] transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring max-[520px]:flex-col max-[520px]:items-stretch max-[520px]:gap-1.5",
         // group-aria-selected/cmd responds to parent CommandItem keyboard focus in the palette.
         // has no effect in landing page context (no parent with group/cmd).
         "hover:bg-accent/60 data-[active=true]:bg-accent group-aria-selected/cmd:bg-accent",
@@ -113,7 +113,7 @@ export function ProjectRow({ workspace, isActive, onSelect, onPin, onRemove, hom
           Cap the column fraction so the project title + path keep priority; inner
           layout uses a grid so the branch absorbs remaining width inside that cap
           instead of an arbitrary 10rem clip (impeccable: information-dense, mono meta). */}
-      <div className="flex shrink-0 min-w-0 max-w-[52%] flex-col items-end gap-0.5 font-mono text-[11px] text-muted-foreground/60">
+      <div className="flex shrink-0 min-w-0 max-w-[52%] flex-col items-end gap-0.5 font-mono text-[11px] text-muted-foreground/60 max-[520px]:max-w-none max-[520px]:flex-row max-[520px]:items-center max-[520px]:justify-between">
         {enrichment ? (
           <>
             <div className="grid w-full min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-1.5">
@@ -150,13 +150,13 @@ export function ProjectRow({ workspace, isActive, onSelect, onPin, onRemove, hom
               )}
             </div>
             {lastOpenedLabel && (
-              <span className="tabular-nums">{lastOpenedLabel}</span>
+              <span className="whitespace-nowrap tabular-nums">{lastOpenedLabel}</span>
             )}
           </>
         ) : (
           // Show timestamp as skeleton while enrichment is loading
           lastOpenedLabel && (
-            <span className="tabular-nums">{lastOpenedLabel}</span>
+            <span className="whitespace-nowrap tabular-nums">{lastOpenedLabel}</span>
           )
         )}
       </div>

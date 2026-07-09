@@ -34,6 +34,7 @@ import { PersistedLateHooks } from "./PersistedLateHooks";
 import { StickyUserMessage, STICKY_USER_MESSAGE_ESTIMATED_HEIGHT } from "./StickyUserMessage";
 import { registerCommand } from "@/lib/command-registry";
 import { isGoalStatusNotice } from "@/lib/goal-message";
+import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { shouldShowStickyUserMessage, type StickyVisibilityVirtualizer } from "./sticky-user-message-visibility";
 import { resolveUserMessagePreview } from "./user-message-preview";
 
@@ -317,6 +318,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const permissions = useActiveThreadRecord((r) => r.permissions);
   const hooks = useActiveThreadRecord((r) => r.hooks);
   const thoughtSegments = useActiveThreadRecord((r) => r.thoughtSegments);
+  const persistedNarrativeByMessage = useActiveThreadRecord((r) => r.narrativeByMessage);
+  const loadNarrativeForMessage = useThreadStore((s) => s.loadNarrativeForMessage);
   const currentTurnMessageId = useActiveThreadRecord((r) => r.currentTurnMessageId);
   const currentTurnResponseKey = useActiveThreadRecord((r) => r.currentTurnResponseKey);
   const assistantResponseKeys = useActiveThreadRecord((r) => r.assistantResponseKeys);
@@ -458,13 +461,21 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     prevScrollTopRef.current = el.scrollTop;
   }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages, syncStickyUserMessageVisibility]);
 
+  useEffect(() => {
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      if (persistedNarrativeByMessage[message.id] !== undefined) continue;
+      void loadNarrativeForMessage(message.id);
+    }
+  }, [messages, persistedNarrativeByMessage, loadNarrativeForMessage]);
+
   const stableItems = useMemo(
     () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges, {
       threadId: currentThreadId ?? "",
       messageId: currentTurnMessageId || undefined,
       responseKey: currentTurnResponseKey || undefined,
       responseKeysByMessageId: assistantResponseKeys,
-    }),
+    }, persistedNarrativeByMessage),
     [
       messages,
       persistedFilesChanged,
@@ -473,6 +484,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       currentTurnMessageId,
       currentTurnResponseKey,
       assistantResponseKeys,
+      persistedNarrativeByMessage,
     ],
   );
 
@@ -1161,10 +1173,10 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
                 key={vi.key}
                 ref={virtualizer.measureElement}
                 data-index={vi.index}
-                className="absolute left-0 w-full px-8 py-2"
+                className="absolute left-0 w-full px-4 py-2 sm:px-8"
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
-                <div className="mx-auto w-full min-w-0 max-w-4xl overflow-x-hidden">
+                <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
                   <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} />
                 </div>
               </div>
@@ -1177,8 +1189,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
           Conditions: handoff still generating and only the initial user message has been submitted
           (no assistant reply yet), so the user sees something happening rather than an empty thread. */}
       {handoffStatus === "generating" && messages.filter((m) => m.role !== "system").length <= 1 && (
-        <div className="px-8 py-4">
-          <div className="mx-auto w-full max-w-4xl space-y-2">
+        <div className="px-4 py-4 sm:px-8">
+          <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "space-y-2")}>
             <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted" />
             <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted" />
             <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted" />

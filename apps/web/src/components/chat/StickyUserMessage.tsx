@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { ArrowUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -118,10 +119,10 @@ export function StickyUserMessage({
   return (
     <div
       ref={rootRef}
-      className="pointer-events-none absolute inset-x-0 top-0 z-10 border-b border-border/25 bg-background/90 px-8 pb-2 pt-1 backdrop-blur-sm"
+      className="pointer-events-none absolute inset-x-0 top-0 z-10 border-b border-border/25 bg-background/90 px-4 pb-2 pt-1 backdrop-blur-sm sm:px-8"
       data-testid="sticky-user-message"
     >
-      <div className="mx-auto w-full min-w-0 max-w-4xl">
+      <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0")}>
         <div className="pointer-events-auto flex items-start gap-0.5 overflow-hidden rounded-lg border border-border/60 bg-accent text-sm text-accent-foreground shadow-sm">
           <Button
             type="button"
