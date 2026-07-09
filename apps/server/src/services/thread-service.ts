@@ -177,7 +177,7 @@ export class ThreadService {
     return this.threadRepo.listRecent(limit);
   }
 
-  /** Search threads across all workspaces by title, status, and provider. */
+  /** Search threads across all workspaces by display and checkout metadata. */
   search(opts: {
     query: string;
     filters?: { status?: string[]; provider?: string[] };

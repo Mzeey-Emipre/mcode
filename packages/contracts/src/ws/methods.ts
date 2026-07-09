@@ -298,7 +298,7 @@ export const WS_METHODS = lazySchema(() => ({
       prStatus: z.string().nullable(),
     })),
   },
-  /** Search threads across all workspaces by title substring, with optional status/provider filters and sort order. */
+  /** Search threads across title, project, provider, branch, and worktree metadata. */
   "thread.search": {
     params: z.object({
       query: z.string().max(500),

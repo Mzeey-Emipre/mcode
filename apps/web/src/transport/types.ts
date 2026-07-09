@@ -180,7 +180,7 @@ export interface McodeTransport {
   listThreads(workspaceId: string): Promise<Thread[]>;
   /** List the most recently active threads across all workspaces, joined with workspace name + path. */
   listRecentThreads(limit?: number): Promise<RecentThread[]>;
-  /** Search threads across all workspaces by title, with optional status/provider filters. */
+  /** Search threads across all workspaces by display and checkout metadata. */
   searchThreads(opts: {
     query: string;
     filters?: { status?: string[]; provider?: string[] };
