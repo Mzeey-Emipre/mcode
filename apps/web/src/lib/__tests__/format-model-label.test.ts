@@ -31,11 +31,11 @@ describe("formatModelLabel", () => {
   });
 
   it("trims whitespace before registry lookup", () => {
-    expect(formatModelLabel("  gpt-5.2-codex  ")).toBe("GPT-5.2 Codex");
+    expect(formatModelLabel("  gpt-5.6-sol  ")).toBe("GPT-5.6 Sol");
   });
 
   it("uses registry labels for known Codex models", () => {
-    expect(formatModelLabel("gpt-5.2-codex")).toBe("GPT-5.2 Codex");
+    expect(formatModelLabel("gpt-5.6-sol")).toBe("GPT-5.6 Sol");
     expect(formatModelLabel("gpt-5.3-codex")).toBe("GPT-5.3 Codex");
   });
 

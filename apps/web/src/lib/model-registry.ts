@@ -230,6 +230,11 @@ export function getDefaultModel(): ModelDefinition {
   return claude.models.find((m) => isModelAvailable(m)) ?? claude.models[0];
 }
 
+const RETIRED_CODEX_MODEL_IDS: ReadonlySet<string> = new Set([
+  "gpt-5.2-codex",
+  "gpt-5.1-codex-mini",
+]);
+
 /**
  * Return the default model ID from user settings. Empty or invalid values
  * resolve to a model that belongs to the configured provider (never a Claude
@@ -265,7 +270,9 @@ export function getDefaultModelId(): string {
   // find the ID under a different provider.
   // If it matched a different provider, the saved ID is stale from a provider switch.
   if (!def) {
-    return providerId === "codex" ? providerStaticFallback : id;
+    return providerId === "codex" && RETIRED_CODEX_MODEL_IDS.has(id)
+      ? providerStaticFallback
+      : id;
   }
   return providerStaticFallback;
 }

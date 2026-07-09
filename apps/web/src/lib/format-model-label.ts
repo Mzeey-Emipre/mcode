@@ -11,7 +11,7 @@ import { formatCursorCliModelId, isCursorCliModelId } from "./format-cursor-mode
  * Examples:
  *   formatModelLabel("claude-opus-4-7")               // "Claude Opus 4.7"
  *   formatModelLabel("claude-sonnet-4-6")             // "Claude Sonnet 4.6"
- *   formatModelLabel("gpt-5.2-codex")                 // "GPT-5.2 Codex"
+ *   formatModelLabel("gpt-5.6-sol")                   // "GPT-5.6 Sol"
  *   formatModelLabel("composer-2.5-fast")              // "Composer 2.5 Fast"
  *   formatModelLabel("cursor-agent")                  // "Cursor"
  *   formatModelLabel("codex")                         // "Codex"
@@ -89,7 +89,7 @@ export function formatModelLabel(modelId: string): string {
     return `Composer ${version}`;
   }
 
-  // OpenAI-style ids (gpt-5.2-codex) — avoid truncating to "Gpt" via first-segment logic
+  // OpenAI-style ids (gpt-5.9-future) avoid truncating to "Gpt" via first-segment logic.
   if (/^gpt[-_]/i.test(id)) {
     return `GPT-${id.replace(/^gpt[-_]/i, "")}`;
   }
