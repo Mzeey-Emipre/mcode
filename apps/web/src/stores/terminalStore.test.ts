@@ -54,4 +54,32 @@ describe("terminalStore pause/resume wiring", () => {
     store.toggleTerminalPanel("thread-2");
     expect(terminalResume).toHaveBeenCalledOnce();
   });
+
+  it("reconciles stale client PTYs when the restarted server reports none", () => {
+    const store = useTerminalStore.getState();
+    store.addTerminal("thread-1", "stale-pty");
+
+    store.reconcileActiveSessions([]);
+
+    expect(useTerminalStore.getState().terminals["thread-1"]).toBeUndefined();
+    expect(useTerminalStore.getState().ptyToThread["stale-pty"]).toBeUndefined();
+  });
+
+  it("restores server-only PTYs and removes client-only PTYs on reconnect", () => {
+    const store = useTerminalStore.getState();
+    store.addTerminal("thread-1", "client-only");
+
+    store.reconcileActiveSessions([
+      { ptyId: "server-pty", threadId: "thread-2" },
+    ]);
+
+    const next = useTerminalStore.getState();
+    expect(next.terminals["thread-1"]).toBeUndefined();
+    expect(next.terminals["thread-2"]?.map((terminal) => terminal.id)).toEqual([
+      "server-pty",
+    ]);
+    expect(next.terminalPanelByThread["thread-2"]?.activeTerminalId).toBe(
+      "server-pty",
+    );
+  });
 });

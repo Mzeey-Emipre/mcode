@@ -9,6 +9,12 @@ export interface TerminalInstance {
   readonly label: string;
 }
 
+/** Server-authoritative PTY identity returned during reconnect. */
+export interface ActiveTerminalSession {
+  readonly ptyId: string;
+  readonly threadId: string;
+}
+
 /** Per-thread terminal panel state (visibility, height, active terminal). */
 export type TerminalPanelState = {
   readonly visible: boolean;
@@ -37,6 +43,8 @@ interface TerminalState {
   setTerminalPanelHeight: (threadId: string, height: number) => void;
   setActiveTerminal: (threadId: string, ptyId: string | null) => void;
   addTerminal: (threadId: string, ptyId: string, shell?: string) => void;
+  /** Replaces stale client identities with the server's active PTY set. */
+  reconcileActiveSessions: (sessions: readonly ActiveTerminalSession[]) => void;
   removeTerminal: (ptyId: string) => void;
   removeAllTerminals: (threadId: string) => void;
   clearThread: (threadId: string) => void;
@@ -156,6 +164,50 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           [threadId]: { ...currentPanel, visible: true, activeTerminalId: ptyId },
         },
       };
+    }),
+
+  reconcileActiveSessions: (sessions) =>
+    set((state) => {
+      const existingById = new Map(
+        Object.values(state.terminals)
+          .flat()
+          .map((terminal) => [terminal.id, terminal] as const),
+      );
+      const terminals: Record<string, readonly TerminalInstance[]> = {};
+      const ptyToThread: Record<string, string> = {};
+
+      for (const session of sessions) {
+        const existing = existingById.get(session.ptyId);
+        const scopeTerminals = terminals[session.threadId] ?? [];
+        const terminal: TerminalInstance = existing
+          ? { ...existing, threadId: session.threadId }
+          : {
+              id: session.ptyId,
+              threadId: session.threadId,
+              label: generateLabel(scopeTerminals),
+            };
+        terminals[session.threadId] = [...scopeTerminals, terminal];
+        ptyToThread[session.ptyId] = session.threadId;
+      }
+
+      const terminalPanelByThread = { ...state.terminalPanelByThread };
+      const allScopes = new Set([
+        ...Object.keys(state.terminals),
+        ...Object.keys(terminals),
+      ]);
+      for (const scopeId of allScopes) {
+        const current =
+          terminalPanelByThread[scopeId] ?? TERMINAL_PANEL_DEFAULTS;
+        const active = terminals[scopeId] ?? [];
+        const activeTerminalId = active.some(
+          (terminal) => terminal.id === current.activeTerminalId,
+        )
+          ? current.activeTerminalId
+          : (active[0]?.id ?? null);
+        terminalPanelByThread[scopeId] = { ...current, activeTerminalId };
+      }
+
+      return { terminals, ptyToThread, terminalPanelByThread };
     }),
 
   removeTerminal: (ptyId) =>

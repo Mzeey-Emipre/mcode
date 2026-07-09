@@ -208,6 +208,10 @@ export class TerminalService {
         rows: DEFAULT_ROWS,
         cwd,
         env: this.envService.getEnv(),
+        // The bundled ConPTY DLL closes the pseudo console directly. Native
+        // Windows ConPTY makes node-pty fork a console-list helper on kill;
+        // that helper can fail AttachConsole and crash the server process.
+        ...(process.platform === "win32" ? { useConptyDll: true } : {}),
       });
     } catch (err) {
       logger.error("PTY spawn failed", {
@@ -496,12 +500,13 @@ export class TerminalService {
         error: describeError(err),
       });
     }
-    // Kill the PTY first so node-pty's conpty cleanup agent (conpty_console_list_agent)
-    // can AttachConsole while the shell process is still alive. If we run
-    // killProcessTree first, the shell is already dead when the agent forks and
-    // AttachConsole fails with "AttachConsole failed".
+    // node-pty owns the ConPTY process-tree shutdown on Windows. Windows PTYs
+    // are spawned with useConptyDll so this call closes the pseudo console
+    // directly without launching node-pty's fragile console-list helper.
+    let ptyKillSucceeded = false;
     try {
       session.pty.kill();
+      ptyKillSucceeded = true;
     } catch (err) {
       logger.warn("Failed to kill PTY process", {
         id: session.id,
@@ -512,9 +517,10 @@ export class TerminalService {
         error: describeError(err),
       });
     }
-    // Kill any grandchildren (git, npm, etc.) that were not attached to the
-    // console and therefore missed by node-pty's process list enumeration.
-    // Best-effort: the shell may already be dead at this point.
+    if (process.platform === "win32" && ptyKillSucceeded) return;
+
+    // Unix uses the existing process-tree fallback. Windows reaches this path
+    // only when node-pty could not begin its own process-tree shutdown.
     if (this.useGracefulKill) {
       await gracefulKillProcessTree(session.pty.pid);
     } else {

@@ -36,7 +36,7 @@ export function summonTab(tab: RightPanelTab, onFocus?: () => void): void {
     showRightPanelAdaptive(wid, tid);
     setRightPanelTab(wid, tid, tab);
     onFocus?.();
-  } else if (panel.activeTab !== tab) {
+  } else if (!panel.openTabs.includes(tab) || panel.activeTab !== tab) {
     setRightPanelTab(wid, tid, tab);
     onFocus?.();
   } else {

@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { emitPtyData } from "@/components/terminal/ptyDataRegistry";
+import { emitPtyData, emitPtyExit } from "@/components/terminal/ptyDataRegistry";
 import { dropRemountAnchor } from "@/components/terminal/terminalRemountScroll";
 
 // jsdom doesn't implement ResizeObserver; TerminalView instantiates one in
@@ -20,8 +20,10 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 // runs in a trailing write callback) is exercised.
 const bufferActive = { viewportY: 42, length: 100 };
 
+let onDataListener: ((data: string) => void) | null = null;
+
 const term = {
-  options: { scrollback: 0 },
+  options: { scrollback: 0, disableStdin: false },
   buffer: { active: bufferActive },
   cols: 80,
   rows: 24,
@@ -29,7 +31,10 @@ const term = {
   open: vi.fn(),
   attachCustomKeyEventHandler: vi.fn(),
   getSelection: vi.fn(() => ""),
-  onData: vi.fn(() => ({ dispose: vi.fn() })),
+  onData: vi.fn((listener: (data: string) => void) => {
+    onDataListener = listener;
+    return { dispose: vi.fn() };
+  }),
   onScroll: vi.fn(() => ({ dispose: vi.fn() })),
   write: vi.fn((_data: string | Uint8Array, cb?: () => void) => cb?.()),
   paste: vi.fn(),
@@ -44,6 +49,7 @@ const term = {
 const transport = {
   terminalWrite: vi.fn(() => Promise.resolve()),
   terminalResize: vi.fn(() => Promise.resolve()),
+  terminalPause: vi.fn(() => Promise.resolve()),
   terminalResume: vi.fn(() => Promise.resolve()),
   terminalReattach: vi.fn(() => Promise.resolve({ gapped: false })),
   ptySetLastSeq: vi.fn(),
@@ -90,12 +96,24 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
   beforeEach(() => {
     bufferActive.viewportY = 42;
     bufferActive.length = 100;
+    term.options.disableStdin = false;
     vi.clearAllMocks();
+    onDataListener = null;
+    term.write.mockImplementation((_data: string | Uint8Array, cb?: () => void) => cb?.());
     // clearAllMocks resets call history but keeps implementations.
     transport.terminalReattach.mockResolvedValue({ gapped: false });
     // The remount-scroll anchor store is module-global; React Testing Library's
     // per-test unmount captures one, so clear it for deterministic mounts.
-    for (const id of ["pty-1", "pty-2", "pty-a", "pty-b", "pty-batch"]) {
+    for (const id of [
+      "pty-1",
+      "pty-2",
+      "pty-a",
+      "pty-b",
+      "pty-batch",
+      "pty-cold",
+      "pty-exit",
+      "pty-warm",
+    ]) {
       dropRemountAnchor(id);
     }
   });
@@ -223,5 +241,83 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     );
     expect(dataWrites.length).toBe(1);
     expect(Array.from(dataWrites[0][0] as Uint8Array)).toEqual([65, 66]);
+  });
+
+  it("keeps a cold view hidden until replay has painted", async () => {
+    let resolveReattach: (value: { gapped: boolean }) => void = () => {};
+    let finishReplayWrite: (() => void) | undefined;
+    transport.terminalReattach.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveReattach = resolve;
+      }),
+    );
+    term.write.mockImplementation((data: string | Uint8Array, cb?: () => void) => {
+      if (data instanceof Uint8Array) {
+        finishReplayWrite = cb;
+        return;
+      }
+      cb?.();
+    });
+
+    const { container } = render(
+      <TerminalView ptyId="pty-cold" visible={true} threadActive={true} />,
+    );
+    await settle();
+
+    await act(async () => {
+      emitPtyData({ ptyId: "pty-cold", seq: 0, payload: new Uint8Array([65]) });
+      resolveReattach({ gapped: false });
+    });
+    await settle();
+
+    const terminalRoot = container.firstElementChild as HTMLElement;
+    expect(terminalRoot.dataset.terminalHydrated).toBe("false");
+    expect(terminalRoot.style.visibility).toBe("hidden");
+
+    await act(async () => {
+      finishReplayWrite?.();
+    });
+    await settle();
+
+    expect(terminalRoot.dataset.terminalHydrated).toBe("true");
+    expect(terminalRoot.style.visibility).toBe("visible");
+  });
+
+  it("stops forwarding input as soon as the PTY exits", async () => {
+    render(<TerminalView ptyId="pty-exit" visible={true} threadActive={true} />);
+    await settle();
+    transport.terminalWrite.mockClear();
+
+    await act(async () => {
+      emitPtyExit({ ptyId: "pty-exit", code: 1 });
+      onDataListener?.("echo after exit\r");
+    });
+
+    expect(transport.terminalWrite).not.toHaveBeenCalled();
+    expect(term.options.disableStdin).toBe(true);
+  });
+
+  it("keeps the warm view and requests only output after its last sequence", async () => {
+    const { rerender } = render(
+      <TerminalView ptyId="pty-warm" visible={true} threadActive={true} />,
+    );
+    await settle();
+
+    await act(async () => {
+      emitPtyData({ ptyId: "pty-warm", seq: 5, payload: new Uint8Array([65]) });
+    });
+    rerender(
+      <TerminalView ptyId="pty-warm" visible={false} threadActive={false} />,
+    );
+    await settle();
+    expect(transport.terminalPause).toHaveBeenCalledWith("pty-warm");
+
+    rerender(
+      <TerminalView ptyId="pty-warm" visible={true} threadActive={true} />,
+    );
+    await settle();
+
+    expect(transport.terminalReattach).toHaveBeenLastCalledWith("pty-warm", 5);
+    expect(term.dispose).not.toHaveBeenCalled();
   });
 });

@@ -17,7 +17,8 @@ The server already had `terminal.reattach` and a replay buffer, but the
 `terminal.scrollback` setting applied only to the client xterm buffer.
 
 ADR-0002 established discard semantics for browser preview tabs. The terminal
-needed an equivalent split: kill the expensive view, keep the cheap session.
+needed an equivalent split: dispose inactive views, retain one warm view, and
+keep every cheap shell session.
 
 ## Decision
 
@@ -26,19 +27,26 @@ Split **shell session** (server PTY, long-lived) from **terminal view**
 
 - **Shell sessions** survive thread switches, tab hides, and view disposal.
   Output always drains into server-side scrollback, even with no mounted view.
-  Pause/resume applies only to client backpressure when a view is mounted and
-  cannot keep up, not to "nobody is watching."
-- **Terminal views** mount for at most one shell at a time: the active shell
-  on the active terminal scope, while the Terminal tab and right panel are
-  open. All other shells run headless.
+  Hiding the warm view pauses client delivery, not the shell or server-side
+  retention. Reopening requests the buffered delta before delivery resumes.
+- **Terminal views** mount for at most one shell at a time. The active shell's
+  view stays warm when the Terminal tab or right panel is hidden. Switching
+  shells or terminal scopes replaces that view. All other shells run headless.
 - **Scrollback** uses one knob: `terminal.scrollback` drives both server
   retention (for reattach replay) and the mounted view's buffer. Output
   beyond the limit is dropped oldest-first.
-- **Remount** replays retained scrollback via `terminal.reattach` and opens
-  at the latest output (follow). Smart scroll-position restore is a planned
-  follow-up, not v1.
-- **Mount/unmount speed** is a first-class requirement: remount must feel
-  instant; optimize replay and xterm init accordingly.
+- **Return to the same shell** reveals the warm view and requests only output
+  after its last processed sequence. The view follows new output when the user
+  was at the tail, or restores the same retained content when the user was
+  reading history.
+- **Switch to another shell** hydrates a new view while hidden. It applies a
+  bounded scrollback replay or checkpoint plus delta, restores the viewport,
+  then reveals the completed frame. Users never watch history paint from top
+  to bottom.
+- **Performance** keeps the terminal module lazy until first use, retains no
+  more than one view, and releases rendering acceleration while the warm view
+  is hidden. This follows the lazy-loading and bounded-renderer guidance in the
+  [performance audit](../guides/performance-audit.md).
 
 ## Considered Options
 
@@ -50,19 +58,24 @@ Split **shell session** (server PTY, long-lived) from **terminal view**
   one setting should mean one retention policy.
 - **Mount all shells for the active scope (rejected).** Up to four xterm
   instances per thread; still too heavy for the idle-memory target.
-- **Detach views, persist scrollback server-side, max one mounted view
-  (chosen).** Mirrors ADR-0002's discard pattern; reuses existing reattach
-  infrastructure once the replay buffer is sized from `terminal.scrollback`.
+- **Dispose every hidden view (rejected).** Keeps renderer memory lowest, but
+  pays xterm creation, replay, parsing, layout, and viewport restoration on
+  every reopen.
+- **Persist scrollback server-side with one warm view (chosen).** Preserves the
+  strict one-renderer bound while making the most recently used terminal fast
+  to reopen. Cold shell switches hydrate before becoming visible.
 
 ## Consequences
 
-- `TerminalPoolHost`'s always-mounted pool is replaced by mount-on-demand
-  for the active shell only. Background shell tabs remount on select.
+- `TerminalPoolHost`'s many-view pool is replaced by one lazy terminal view.
+  The view moves between the visible terminal surface and an offscreen host.
+  Background shell tabs stay server-side only.
 - Server replay buffer capacity must derive from `terminal.scrollback`, not
   the fixed 512 KB default.
-- Tab switches within a thread trigger remount + replay; this must be fast
-  enough to feel seamless.
-- Smart follow (restore scroll position when the user had scrolled up) is
-  deferred; v1 always follows latest output on remount.
+- Closing and reopening the terminal surface keeps the active view and viewport
+  intact. Shell or scope switches use hidden hydration and restore the saved
+  tail or history anchor before reveal.
+- Warm views process bounded output deltas. Cold views replay bounded retained
+  scrollback without exposing intermediate render frames.
 - E2E specs that assume all terminals stay mounted (`__mcodeLiveTerminals`,
   scroll-on-thread-switch harness) need updating for the new lifecycle.
