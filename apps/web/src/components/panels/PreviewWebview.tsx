@@ -97,6 +97,8 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     forwardedRef,
   ) {
   const ref = useRef<ElectronWebviewElement | null>(null);
+  const domReadyRef = useRef(false);
+  const pendingReloadRef = useRef(false);
   const faviconRef = useRef<string | null>(null);
 
   const readUrl = useCallback((): string | null => {
@@ -119,6 +121,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
 
   const emitNavigationState = useCallback(() => {
     const el = ref.current;
+    if (!domReadyRef.current || !el) {
+      onNavigationStateChange?.({ canGoBack: false, canGoForward: false });
+      return;
+    }
     onNavigationStateChange?.({
       canGoBack: !!el?.canGoBack?.(),
       canGoForward: !!el?.canGoForward?.(),
@@ -162,9 +168,15 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         }
       },
       reload() {
+        if (!domReadyRef.current) {
+          pendingReloadRef.current = true;
+          return;
+        }
+        pendingReloadRef.current = false;
         ref.current?.reload?.();
       },
       forceReload() {
+        if (!domReadyRef.current) return;
         const el = ref.current;
         if (el?.reloadIgnoringCache) {
           el.reloadIgnoringCache();
@@ -173,24 +185,28 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         }
       },
       goBack() {
-        if (ref.current?.canGoBack?.()) ref.current.goBack?.();
+        if (domReadyRef.current && ref.current?.canGoBack?.()) ref.current.goBack?.();
       },
       goForward() {
-        if (ref.current?.canGoForward?.()) ref.current.goForward?.();
+        if (domReadyRef.current && ref.current?.canGoForward?.()) ref.current.goForward?.();
       },
       canGoBack() {
+        if (!domReadyRef.current) return false;
         return !!ref.current?.canGoBack?.();
       },
       canGoForward() {
+        if (!domReadyRef.current) return false;
         return !!ref.current?.canGoForward?.();
       },
       getUrl() {
         return readUrl() ?? "";
       },
       async getZoom() {
+        if (!domReadyRef.current) return 1;
         return (await Promise.resolve(ref.current?.getZoomFactor?.())) ?? 1;
       },
       async setZoom(factor: number) {
+        if (!domReadyRef.current) return factor;
         await Promise.resolve(ref.current?.setZoomFactor?.(factor));
         return (await Promise.resolve(ref.current?.getZoomFactor?.())) ?? factor;
       },
@@ -237,6 +253,14 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     if (!el) return;
 
     const onStart = () => emitStatus("loading");
+    const onDomReady = () => {
+      domReadyRef.current = true;
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        el.reload?.();
+      }
+      emitNavigationState();
+    };
     const onStop = () => emitStatus("loaded");
     const onNavigate = (ev: WebviewEvent) => {
       onPageStatus?.({
@@ -277,6 +301,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     };
 
     el.addEventListener("did-start-loading", onStart);
+    el.addEventListener("dom-ready", onDomReady);
     el.addEventListener("did-stop-loading", onStop);
     el.addEventListener("did-navigate", onNavigate);
     el.addEventListener("did-navigate-in-page", onNavigate);
@@ -285,6 +310,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     el.addEventListener("did-fail-load", onFail);
     return () => {
       el.removeEventListener("did-start-loading", onStart);
+      el.removeEventListener("dom-ready", onDomReady);
       el.removeEventListener("did-stop-loading", onStop);
       el.removeEventListener("did-navigate", onNavigate);
       el.removeEventListener("did-navigate-in-page", onNavigate);
@@ -292,7 +318,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       el.removeEventListener("page-favicon-updated", onFavicon);
       el.removeEventListener("did-fail-load", onFail);
     };
-  }, [onPageStatus, onNavigationStateChange]);
+  }, [emitNavigationState, emitStatus, onPageStatus, readTitle, readUrl]);
 
   // Use createElement via React JSX since <webview> is a custom Chromium
   // element; React 19 will pass unknown attributes through unchanged.
@@ -308,6 +334,13 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       data-tab-id={tabId}
       partition="persist:mcode-preview"
       className={className}
+      style={{
+        display: "inline-flex",
+        width: "100%",
+        height: "100%",
+        minWidth: 0,
+        minHeight: 0,
+      }}
     />
   );
 });

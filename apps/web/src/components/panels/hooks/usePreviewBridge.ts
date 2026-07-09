@@ -174,6 +174,7 @@ export function usePreviewBridge({
           bounds: null,
           threadId,
           resumeUrlHint: hint,
+          ...(forceHidden ? { hideReason: "renderer-webview" as const } : {}),
           workspaceId: workspaceId ?? null,
         });
         return;
@@ -191,6 +192,7 @@ export function usePreviewBridge({
           bounds,
           threadId,
           resumeUrlHint: hint,
+          ...(forceHidden ? { hideReason: "renderer-webview" as const } : {}),
           workspaceId: workspaceId ?? null,
         });
         return;

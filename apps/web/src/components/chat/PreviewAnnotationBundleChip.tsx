@@ -1,11 +1,12 @@
 import type { PreviewAnnotationBundle, PreviewAnnotationPayload } from "@mcode/contracts";
-import { MessageCircle, X } from "lucide-react";
+import { ImageIcon, MessageCircle, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { buildStoredAttachmentImageSrc } from "@/lib/attachment-url";
 import { cn } from "@/lib/utils";
+import { useRetriableAttachmentImage } from "./useRetriableAttachmentImage";
 
 const MAX_DETAIL_LENGTH = 220;
 
@@ -29,6 +30,40 @@ function annotationDetail(annotation: PreviewAnnotationPayload): string {
   return text.length <= MAX_DETAIL_LENGTH
     ? text
     : `${text.slice(0, MAX_DETAIL_LENGTH - 3).trimEnd()}...`;
+}
+
+function AnnotationSnapshotThumbnail({ src }: { readonly src: string }) {
+  const image = useRetriableAttachmentImage(src);
+
+  return (
+    <span className="relative block h-14 overflow-hidden rounded-md border border-border/60 bg-muted/30">
+      {image.failed ? (
+        <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+          <ImageIcon size={16} aria-hidden />
+        </span>
+      ) : (
+        <>
+          <img
+            src={image.src}
+            alt=""
+            className={cn(
+              "h-full w-full object-cover transition-opacity",
+              image.retrying ? "opacity-0" : "opacity-100",
+            )}
+            loading="lazy"
+            data-testid="preview-annotation-hover-thumbnail"
+            onError={image.onError}
+            onLoad={image.onLoad}
+          />
+          {image.retrying ? (
+            <span className="absolute inset-0 flex items-center justify-center text-muted-foreground/70">
+              <ImageIcon size={14} className="animate-pulse" aria-hidden />
+            </span>
+          ) : null}
+        </>
+      )}
+    </span>
+  );
 }
 
 /** Props for the compact annotation chip shown in composer and transcript surfaces. */
@@ -67,7 +102,7 @@ export function PreviewAnnotationBundleChip({
             tabIndex={0}
             aria-label={`${label}. Annotation details available.`}
             className={cn(
-              "group inline-flex max-w-full items-center gap-2 rounded-lg border border-accent-foreground/10 bg-accent px-2 py-1 text-xs font-medium text-accent-foreground shadow-sm transition-colors hover:border-accent-foreground/15 hover:bg-accent/90 focus-visible:border-accent-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-foreground/20",
+              "group relative inline-flex max-w-full items-center gap-2 rounded-lg border border-accent-foreground/10 bg-accent px-2 py-1 text-xs font-medium text-accent-foreground shadow-sm transition-colors hover:border-accent-foreground/15 hover:bg-accent/90 focus-visible:border-accent-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-foreground/20",
               className,
             )}
           >
@@ -83,7 +118,7 @@ export function PreviewAnnotationBundleChip({
                   event.stopPropagation();
                   onRemove();
                 }}
-                className="pointer-events-none -ml-1 text-accent-foreground/70 opacity-0 transition-opacity hover:bg-accent-foreground/10 hover:text-accent-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+                className="pointer-events-none absolute -right-2 -top-2 size-5 rounded-full border border-accent-foreground/10 bg-accent text-accent-foreground/70 opacity-0 shadow-sm transition-opacity hover:bg-accent-foreground/10 hover:text-accent-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
               >
                 <X size={12} aria-hidden />
               </Button>
@@ -129,17 +164,7 @@ export function PreviewAnnotationBundleChip({
                     {annotationDetail(annotation)}
                   </p>
                 </div>
-                {snapshotSrc ? (
-                  <span className="block h-14 overflow-hidden rounded-md border border-border/60 bg-muted/30">
-                    <img
-                      src={snapshotSrc}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                      data-testid="preview-annotation-hover-thumbnail"
-                    />
-                  </span>
-                ) : null}
+                {snapshotSrc ? <AnnotationSnapshotThumbnail src={snapshotSrc} /> : null}
               </div>
             );
           })}

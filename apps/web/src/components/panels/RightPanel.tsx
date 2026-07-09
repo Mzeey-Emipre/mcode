@@ -22,6 +22,7 @@ import { usePreviewDisplayTabSet, usePreviewTabsStore } from "@/stores/previewTa
 import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
 import { ensureTerminalForScope } from "@/lib/ensure-terminal";
+import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -67,7 +68,6 @@ export function RightPanel() {
   // chat/composer (App.tsx suppresses the chat pane). A transient view toggle,
   // not a stored width — the panel keeps its width so restoring drops back inline.
   const maximized = useUiStore((s) => s.rightPanelMaximized);
-  const toggleMaximized = useUiStore((s) => s.toggleRightPanelMaximized);
 
   // Read the scope's effective panel record: the active thread's own once it has
   // diverged, otherwise the workspace fallback (ADR-0012 copy-on-write). Both
@@ -350,8 +350,7 @@ export function RightPanel() {
           changesCount={changesCount}
           changesFresh={changesFresh}
           browserTabSet={browserTabSet}
-          maximized={maximized}
-          onToggleMaximized={toggleMaximized}
+          onTogglePanel={() => toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId)}
           onSelect={(id) => setRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
           onClose={(id) => closeRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
           onCreate={(id) => setRightPanelTab(activeWorkspaceId!, activeThreadId, id)}

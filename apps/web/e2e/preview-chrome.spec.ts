@@ -94,17 +94,26 @@ async function injectPreviewBridge(
     const captureFail = (): Promise<{ ok: false; error: string }> =>
       Promise.resolve({ ok: false, error: "no-preview" });
     const unsub = (): (() => void) => () => undefined;
-    const emptyTabSet = (threadId: string): unknown => ({
+    const tabSet = (threadId: string): unknown => ({
       threadId,
-      activeTabId: null,
-      tabs: [],
+      activeTabId: loaded ? "mock-tab" : null,
+      tabs: loaded
+        ? [
+            {
+              id: "mock-tab",
+              url: "https://example.com",
+              title: "Example",
+              faviconUrl: null,
+            },
+          ]
+        : [],
     });
     const tabOk = (threadId: string): Promise<unknown> =>
-      Promise.resolve({ ok: true, data: emptyTabSet(threadId) });
+      Promise.resolve({ ok: true, data: tabSet(threadId) });
     const tabCreateOk = (threadId: string): Promise<unknown> =>
       Promise.resolve({
         ok: true,
-        data: { tabSet: emptyTabSet(threadId), createdTabId: "mock-tab" },
+        data: { tabSet: tabSet(threadId), createdTabId: "mock-tab" },
       });
 
     // The pick promise stays pending until something explicitly cancels it,
@@ -122,6 +131,13 @@ async function injectPreviewBridge(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (window as any).__mcodeNav.push(url);
         return Promise.resolve({ ok: true } as const);
+      },
+      resolveNavigation: (url: string) => {
+        const trimmed = url.trim();
+        const resolved = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+          ? trimmed
+          : `https://${trimmed}`;
+        return Promise.resolve({ ok: true, url: resolved } as const);
       },
       detectLocalPorts: () => Promise.resolve(ports),
       goBack: () => Promise.resolve(false),
@@ -317,6 +333,69 @@ async function openPreviewTab(page: Page): Promise<void> {
     "[data-testid='preview-panel'], [data-testid='preview-panel-unavailable']",
     { timeout: 5000 },
   );
+}
+
+/** Emit the Electron webview title event that Chromium's custom-element stand-in lacks. */
+async function emitMockWebviewTitle(page: Page, title: string): Promise<void> {
+  await page.waitForSelector("[data-testid='preview-webview']", {
+    state: "attached",
+    timeout: 5000,
+  });
+  await page.waitForTimeout(50);
+  await page.evaluate((title) => {
+    const webview = document.querySelector("[data-testid='preview-webview']");
+    if (!webview) throw new Error("Missing preview webview");
+    const event = new Event("page-title-updated") as Event & {
+      title?: string;
+    };
+    Object.defineProperty(event, "title", { value: title });
+    webview.dispatchEvent(event);
+  }, title);
+}
+
+/** Emit the Electron webview load-failure event that drives webview-mode errors. */
+async function emitMockWebviewFailure(
+  page: Page,
+  opts: { url: string; canGoBack: boolean },
+): Promise<void> {
+  await page.waitForSelector("[data-testid='preview-webview']", {
+    state: "attached",
+    timeout: 5000,
+  });
+  await page.waitForTimeout(50);
+  await page.evaluate(({ url, canGoBack }) => {
+    const webview = document.querySelector("[data-testid='preview-webview']");
+    if (!webview) throw new Error("Missing preview webview");
+    Object.defineProperty(webview, "canGoBack", {
+      configurable: true,
+      value: () => canGoBack,
+    });
+    Object.defineProperty(webview, "canGoForward", {
+      configurable: true,
+      value: () => false,
+    });
+    Object.defineProperty(webview, "reload", {
+      configurable: true,
+      value: () => {
+        const w = window as unknown as {
+          __mcodePreview?: { reload: number };
+        };
+        if (w.__mcodePreview) w.__mcodePreview.reload += 1;
+      },
+    });
+    webview.dispatchEvent(new Event("dom-ready"));
+    const event = new Event("did-fail-load") as Event & {
+      errorCode?: number;
+      errorDescription?: string;
+      validatedURL?: string;
+    };
+    Object.defineProperties(event, {
+      errorCode: { value: -105 },
+      errorDescription: { value: "ERR_NAME_NOT_RESOLVED" },
+      validatedURL: { value: url },
+    });
+    webview.dispatchEvent(event);
+  }, opts);
 }
 
 async function waitForAnnotationStores(page: Page): Promise<void> {
@@ -515,6 +594,7 @@ test.describe("PreviewPanel: loaded header", () => {
     await injectPreviewBridge(page, { loaded: true });
     await openAppAtThread(page);
     await openPreviewTab(page);
+    await emitMockWebviewTitle(page, "Example");
     // Opening via mod+shift+b drops focus into the URL field (the focused
     // state) via a deferred rAF. Blur, let any queued re-focus rAF fire, then
     // assert the bar has settled into the loaded-title state (input shows the
@@ -549,6 +629,38 @@ test.describe("PreviewPanel: loaded header", () => {
       header.evaluate((el) => getComputedStyle(el).backgroundColor),
     ]);
     expect(railBackground).toBe(headerBackground);
+  });
+
+  test("webview stretches to the preview surface bottom", async ({ page }) => {
+    await expect(page.getByTestId("preview-webview-surface")).toBeVisible();
+    await expect(page.getByTestId("preview-webview")).toBeVisible();
+
+    const geometry = await page.evaluate(() => {
+      const rectFor = (selector: string) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Missing ${selector}`);
+        const rect = el.getBoundingClientRect();
+        return {
+          top: rect.top,
+          bottom: rect.bottom,
+          height: rect.height,
+        };
+      };
+
+      return {
+        panel: rectFor("[data-testid='preview-panel']"),
+        surface: rectFor("[data-testid='preview-surface']"),
+        webviewSurface: rectFor("[data-testid='preview-webview-surface']"),
+        webview: rectFor("[data-testid='preview-webview']"),
+      };
+    });
+
+    expect(geometry.surface.height).toBeGreaterThan(400);
+    expect(Math.abs(geometry.webviewSurface.top - geometry.surface.top)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.webviewSurface.bottom - geometry.surface.bottom)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.webview.top - geometry.surface.top)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.webview.bottom - geometry.surface.bottom)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.panel.bottom - geometry.surface.bottom)).toBeLessThanOrEqual(1);
   });
 
   test("chat and right panel meet at the draggable split line", async ({ page }) => {
@@ -746,13 +858,10 @@ test.describe("PreviewPanel: empty localhost ports", () => {
     await openPreviewTab(page);
 
     await page.getByTestId("browser-local-port").first().click();
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => (window as unknown as { __mcodeNav: string[] }).__mcodeNav,
-        ),
-      )
-      .toContain("http://localhost:5173");
+    await expect(page.getByTestId("preview-webview")).toHaveAttribute(
+      "src",
+      "http://localhost:5173",
+    );
   });
 });
 
@@ -881,11 +990,15 @@ test.describe("PreviewPanel: error states", () => {
     await injectErrorBridge(page, { url: "https://nope.test", canGoBack: true });
     await openAppAtThread(page);
     await openPreviewTab(page);
+    await emitMockWebviewFailure(page, {
+      url: "https://nope.test",
+      canGoBack: true,
+    });
 
     const panel = page.getByTestId("preview-error-panel");
     await expect(panel).toBeVisible();
     await expect(page.getByTestId("preview-error-headline")).toHaveText(
-      "Can't reach this site",
+      "ERR_NAME_NOT_RESOLVED",
     );
     // Distilled to the essentials: Retry (primary) + Go back (history exists).
     await expect(panel.getByRole("button", { name: "Retry" })).toBeVisible();
@@ -903,6 +1016,10 @@ test.describe("PreviewPanel: error states", () => {
     await injectErrorBridge(page, { url: "https://nope.test", canGoBack: true });
     await openAppAtThread(page);
     await openPreviewTab(page);
+    await emitMockWebviewFailure(page, {
+      url: "https://nope.test",
+      canGoBack: true,
+    });
 
     await page.getByTestId("preview-error-retry").click();
     await expect
@@ -915,6 +1032,10 @@ test.describe("PreviewPanel: error states", () => {
     await injectErrorBridge(page, { url: "https://nope.test", canGoBack: false });
     await openAppAtThread(page);
     await openPreviewTab(page);
+    await emitMockWebviewFailure(page, {
+      url: "https://nope.test",
+      canGoBack: false,
+    });
 
     const panel = page.getByTestId("preview-error-panel");
     await expect(panel.getByRole("button", { name: "Retry" })).toBeVisible();
@@ -926,6 +1047,10 @@ test.describe("PreviewPanel: error states", () => {
     await injectErrorBridge(page, { url: "file:///gone.html", canGoBack: false });
     await openAppAtThread(page);
     await openPreviewTab(page);
+    await emitMockWebviewFailure(page, {
+      url: "file:///gone.html",
+      canGoBack: false,
+    });
 
     const panel = page.getByTestId("preview-error-panel");
     await expect(panel).toBeVisible();

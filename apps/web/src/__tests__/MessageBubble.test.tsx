@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Message, StoredAttachment } from "@/transport";
 import type { PreviewAnnotationBundle } from "@mcode/contracts";
@@ -154,6 +154,44 @@ describe("MessageBubble user messages", () => {
       `mcode-attachment://${threadUuid}/a1.png`,
     );
     expect(lb?.getAttribute("data-active-title")).toBe("shot.png");
+  });
+
+  it("retries a sent image attachment before replacing it with the broken-image fallback", async () => {
+    vi.useFakeTimers();
+    try {
+      const threadUuid = "550e8400-e29b-41d4-a716-446655440000";
+      const message: Message = {
+        ...makeMessage(""),
+        thread_id: threadUuid,
+        attachments: [
+          {
+            id: "a1",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 128,
+          },
+        ],
+      };
+
+      const { container } = render(<MessageBubble message={message} />);
+      const img = container.querySelector('img[alt="shot.png"]');
+      expect(img).toHaveAttribute("src", `mcode-attachment://${threadUuid}/a1.png`);
+
+      fireEvent.error(img!);
+
+      expect(container.querySelector('img[alt="shot.png"]')).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+      });
+
+      expect(container.querySelector('img[alt="shot.png"]')).toHaveAttribute(
+        "src",
+        `mcode-attachment://${threadUuid}/a1.png?mcodeRetry=1`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("passes full slide tray and clicked index when several images attach", async () => {

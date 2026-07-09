@@ -160,6 +160,51 @@ describe("previewTabsStore", () => {
     expect(usePreviewTabsStore.getState().liveChromeByScope).not.toBe(first);
   });
 
+  it("updateTabChrome persists renderer-observed favicon for inactive tabs", () => {
+    const { setTabSet, updateTabChrome } = usePreviewTabsStore.getState();
+    setTabSet(
+      SCOPE,
+      set("a", [
+        page("a", { title: "A", faviconUrl: "https://a.test/favicon.ico" }),
+        page("b", { title: "B", url: "https://b.test" }),
+      ]),
+    );
+
+    updateTabChrome(SCOPE, "b", {
+      title: "B updated",
+      url: "https://b.test/path",
+      favicon: "https://b.test/favicon.ico",
+    });
+
+    const tabSet = usePreviewTabsStore.getState().tabSetByScope[SCOPE]!;
+    expect(tabSet.tabs[0]!.faviconUrl).toBe("https://a.test/favicon.ico");
+    expect(tabSet.tabs[1]).toMatchObject({
+      title: "B updated",
+      url: "https://b.test/path",
+      faviconUrl: "https://b.test/favicon.ico",
+    });
+  });
+
+  it("updateTabChrome keeps the same tab set reference when chrome is unchanged", () => {
+    const { setTabSet, updateTabChrome } = usePreviewTabsStore.getState();
+    const tabSet = set("a", [
+      page("a", {
+        title: "A",
+        url: "https://a.test",
+        faviconUrl: "https://a.test/favicon.ico",
+      }),
+    ]);
+    setTabSet(SCOPE, tabSet);
+
+    updateTabChrome(SCOPE, "a", {
+      title: "A",
+      url: "https://a.test",
+      favicon: "https://a.test/favicon.ico",
+    });
+
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBe(tabSet);
+  });
+
   it("page actions are no-ops without a desktop bridge", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;

@@ -18,6 +18,7 @@ import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 import { DeltaBlock } from "./narrative/DeltaBlock";
 import { parseGoalStatusNotice } from "@/lib/goal-message";
 import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
+import { useRetriableAttachmentImage } from "./useRetriableAttachmentImage";
 
 /**
  * Returns true when the assistant message body collapses to nothing visible
@@ -279,15 +280,14 @@ function ImageThumbnail({
   single: boolean;
   onOpenPreview?: () => void;
 }) {
-  const [failed, setFailed] = useState(false);
-  const handleError = useCallback(() => setFailed(true), []);
+  const image = useRetriableAttachmentImage(src);
 
   const frame = cn(
-    "overflow-hidden rounded-xl ring-1 ring-border/40",
+    "relative overflow-hidden rounded-xl bg-muted/40 ring-1 ring-border/40",
     single ? "max-w-[240px]" : "max-w-[140px]",
   );
 
-  if (failed) {
+  if (image.failed) {
     return (
       <div className={frame}>
         <div className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-2.5">
@@ -299,14 +299,25 @@ function ImageThumbnail({
   }
 
   const imgEl = (
-    <img
-      src={src}
-      alt={name}
-      className="block h-auto max-h-[160px] w-full bg-muted/40 object-contain"
-      loading="lazy"
-      onError={handleError}
-      style={{ imageOrientation: "from-image" }}
-    />
+    <>
+      <img
+        src={image.src}
+        alt={name}
+        className={cn(
+          "block h-auto max-h-[160px] w-full object-contain transition-opacity",
+          image.retrying ? "min-h-16 min-w-24 opacity-0" : "opacity-100",
+        )}
+        loading="lazy"
+        onError={image.onError}
+        onLoad={image.onLoad}
+        style={{ imageOrientation: "from-image" }}
+      />
+      {image.retrying ? (
+        <span className="absolute inset-0 flex items-center justify-center text-muted-foreground/70">
+          <ImageIcon size={14} className="animate-pulse" aria-hidden />
+        </span>
+      ) : null}
+    </>
   );
 
   if (onOpenPreview) {

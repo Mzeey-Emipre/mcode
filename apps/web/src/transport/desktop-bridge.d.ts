@@ -107,6 +107,8 @@ interface PreviewBridge {
     bounds: PreviewShellBounds | null;
     threadId?: string | null;
     resumeUrlHint?: string | null;
+    /** Why a visible panel is asking the native host to hide its BrowserView. */
+    hideReason?: "renderer-webview";
     /** Active workspace id; scopes preview spill files under the Mcode app data directory. */
     workspaceId?: string | null;
   }): Promise<void>;

@@ -12,11 +12,23 @@ import { getDefaultSettings } from "@mcode/contracts";
 
 const {
   mockUsePreviewBridge,
+  mockUsePreviewTabs,
   mockOnAddElementAnnotation,
   mockCaptureAnnotationSnapshot,
   mockListSkills,
 } = vi.hoisted(() => ({
   mockUsePreviewBridge: vi.fn(),
+  mockUsePreviewTabs: vi.fn<() => {
+    tabSet: unknown;
+    newTab: () => unknown;
+    activateTab: () => unknown;
+    closeTab: () => unknown;
+  }>(() => ({
+    tabSet: null,
+    newTab: vi.fn(),
+    activateTab: vi.fn(),
+    closeTab: vi.fn(),
+  })),
   mockOnAddElementAnnotation: vi.fn(),
   mockCaptureAnnotationSnapshot: vi.fn(),
   mockListSkills: vi.fn().mockResolvedValue([
@@ -41,12 +53,7 @@ vi.mock("@/transport", () => ({
 // The panel only consumes usePreviewTabs for the header's "New page" action and
 // the store subscription; page switching/closing lives in the activity rail.
 vi.mock("../hooks/usePreviewTabs", () => ({
-  usePreviewTabs: () => ({
-    tabSet: null,
-    newTab: vi.fn(),
-    activateTab: vi.fn(),
-    closeTab: vi.fn(),
-  }),
+  usePreviewTabs: mockUsePreviewTabs,
 }));
 
 vi.mock("../hooks/usePreviewCapture", () => ({
@@ -78,6 +85,7 @@ import {
 } from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { useSkillsStore } from "@/stores/skillsStore";
+import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -324,8 +332,15 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewSuppressionStore.setState({ count: 0 });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
+    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
     useSkillsStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: null,
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
   });
 
   afterEach(() => {
@@ -336,8 +351,10 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewSuppressionStore.setState({ count: 0 });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
+    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
     useSkillsStore.getState().reset();
     mockUsePreviewBridge.mockClear();
+    mockUsePreviewTabs.mockClear();
     mockOnAddElementAnnotation.mockClear();
     mockCaptureAnnotationSnapshot.mockClear();
   });
@@ -384,17 +401,17 @@ describe("PreviewPanel: full panel state", () => {
     expect(screen.queryByTestId("preview-tab-bar")).not.toBeInTheDocument();
   });
 
-  it("uses the native preview path by default", () => {
+  it("uses the webview preview path by default", () => {
     render(<PreviewPanel threadId="thread-1" />);
     expect(screen.queryByTestId("preview-webview-surface")).not.toBeInTheDocument();
     expect(screen.getByTestId("browser-local-ports")).toBeInTheDocument();
     expect(screen.getByTestId("preview-surface")).toHaveClass(
-      "mx-2",
-      "mb-2",
-      "mt-1",
-      "rounded-md",
-      "border",
-      "bg-muted/10",
+      "z-0",
+      "overflow-hidden",
+      "rounded-tl-md",
+    );
+    expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
+      expect.objectContaining({ forceHidden: true }),
     );
   });
 
@@ -409,7 +426,7 @@ describe("PreviewPanel: full panel state", () => {
 
     render(<PreviewPanel threadId="thread-1" />);
 
-    expect(screen.getByTestId("preview-webview-surface")).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-webview-surface")).not.toBeInTheDocument();
     expect(screen.queryByTestId("preview-webview")).not.toBeInTheDocument();
     expect(screen.getByTestId("browser-local-ports")).toBeInTheDocument();
     expect(screen.getByTestId("preview-surface")).toHaveClass(
@@ -451,11 +468,189 @@ describe("PreviewPanel: full panel state", () => {
     const webview = screen.getByTestId("preview-webview");
     expect(webview).toHaveAttribute("data-tab-id", PREVIEW_WEBVIEW_FALLBACK_TAB_ID);
     expect(webview).toHaveAttribute("src", "https://example.com");
-    expect(webview).toHaveClass("relative", "z-0", "h-full", "w-full");
+    expect(webview).toHaveClass("absolute", "inset-0", "z-0", "h-full", "w-full");
     expect(screen.queryByTestId("browser-local-ports")).not.toBeInTheDocument();
     expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
       expect.objectContaining({ forceHidden: true }),
     );
+  });
+
+  it("keeps warm webview pages mounted while switching the active tab", () => {
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "tab-a",
+        tabs: [
+          {
+            id: "tab-a",
+            threadId: "thread-1",
+            title: "A",
+            url: "https://a.example",
+            faviconUrl: null,
+            warm: true,
+            active: true,
+          },
+          {
+            id: "tab-b",
+            threadId: "thread-1",
+            title: "B",
+            url: "https://b.example",
+            faviconUrl: null,
+            warm: true,
+            active: false,
+          },
+        ],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+
+    const { rerender } = render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.getAllByTestId("preview-webview")).toHaveLength(2);
+    expect(screen.getByTestId("preview-webview-surface")).toContainElement(
+      screen.getAllByTestId("preview-webview")[0]!,
+    );
+
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "tab-b",
+        tabs: [
+          {
+            id: "tab-a",
+            threadId: "thread-1",
+            title: "A",
+            url: "https://a.example",
+            faviconUrl: null,
+            warm: true,
+            active: false,
+          },
+          {
+            id: "tab-b",
+            threadId: "thread-1",
+            title: "B",
+            url: "https://b.example",
+            faviconUrl: null,
+            warm: true,
+            active: true,
+          },
+        ],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+
+    rerender(<PreviewPanel threadId="thread-1" />);
+
+    const webviews = screen.getAllByTestId("preview-webview");
+    expect(webviews).toHaveLength(2);
+    expect(webviews.map((node) => node.getAttribute("data-tab-id"))).toEqual([
+      "tab-a",
+      "tab-b",
+    ]);
+  });
+
+  it("persists favicon updates from inactive warm webview pages", () => {
+    const tabSet = {
+      threadId: "thread-1",
+      activeTabId: "tab-a",
+      tabs: [
+        {
+          id: "tab-a",
+          threadId: "thread-1",
+          title: "A",
+          url: "https://a.example",
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        },
+        {
+          id: "tab-b",
+          threadId: "thread-1",
+          title: "B",
+          url: "https://b.example",
+          faviconUrl: null,
+          warm: true,
+          active: false,
+        },
+      ],
+    };
+    usePreviewTabsStore.getState().setTabSet("thread-1", tabSet);
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet,
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const inactiveWebview = screen
+      .getAllByTestId("preview-webview")
+      .find((node) => node.getAttribute("data-tab-id") === "tab-b")!;
+    fireEvent(
+      inactiveWebview,
+      Object.assign(new Event("page-favicon-updated"), {
+        favicons: ["https://b.example/favicon.ico"],
+      }),
+    );
+
+    const updatedTabSet = usePreviewTabsStore.getState().tabSetByScope["thread-1"]!;
+    expect(updatedTabSet.tabs.find((tab) => tab.id === "tab-b")?.faviconUrl).toBe(
+      "https://b.example/favicon.ico",
+    );
+  });
+
+  it("does not loop when equivalent active webview tab data is republished", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => "https://a.example",
+    });
+    const setEquivalentTabs = () => {
+      mockUsePreviewTabs.mockReturnValue({
+        tabSet: {
+          threadId: "thread-1",
+          activeTabId: "tab-a",
+          tabs: [
+            {
+              id: "tab-a",
+              threadId: "thread-1",
+              title: "A",
+              url: "https://a.example",
+              faviconUrl: null,
+              warm: true,
+              active: true,
+            },
+          ],
+        },
+        newTab: vi.fn(),
+        activateTab: vi.fn(),
+        closeTab: vi.fn(),
+      });
+    };
+
+    try {
+      setEquivalentTabs();
+      const { rerender } = render(<PreviewPanel threadId="thread-1" />);
+
+      setEquivalentTabs();
+      rerender(<PreviewPanel threadId="thread-1" />);
+      setEquivalentTabs();
+      rerender(<PreviewPanel threadId="thread-1" />);
+
+      expect(screen.getByTestId("preview-webview")).toHaveAttribute(
+        "src",
+        "https://a.example",
+      );
+      expect(consoleError).not.toHaveBeenCalledWith(
+        expect.stringContaining("Maximum update depth exceeded"),
+      );
+    } finally {
+      restoreWebviewMethods();
+      consoleError.mockRestore();
+    }
   });
 
   it("navigates changed webview URLs through src without an extra loadURL call", async () => {
@@ -484,6 +679,13 @@ describe("PreviewPanel: full panel state", () => {
 
     try {
       render(<PreviewPanel threadId="thread-1" />);
+      await waitFor(() => {
+        expect(screen.getByTestId("preview-webview")).toHaveAttribute(
+          "src",
+          "https://google.com/",
+        );
+      });
+      fireEvent(screen.getByTestId("preview-webview"), new Event("dom-ready"));
 
       const input = screen.getByLabelText("Preview URL");
       fireEvent.focus(input);
@@ -579,6 +781,7 @@ describe("PreviewPanel: full panel state", () => {
       await waitFor(() => {
         expect(resolveNavigation).toHaveBeenCalledWith("https://google.com/");
       });
+      fireEvent(screen.getByTestId("preview-webview"), new Event("dom-ready"));
       await waitFor(() => {
         expect(reload).toHaveBeenCalledTimes(1);
       });
@@ -613,8 +816,8 @@ describe("PreviewPanel: full panel state", () => {
 
   it("honors the webview engine in built and dev renderers", () => {
     expect(shouldRenderWebviewPreview("webview")).toBe(true);
-    expect(shouldRenderWebviewPreview("webContentsView")).toBe(false);
-    expect(shouldRenderWebviewPreview(undefined)).toBe(false);
+    expect(shouldRenderWebviewPreview("webContentsView")).toBe(true);
+    expect(shouldRenderWebviewPreview(undefined)).toBe(true);
   });
 
   it("keeps browser chrome visible while design mode has no saved annotations", () => {
