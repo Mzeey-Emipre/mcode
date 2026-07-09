@@ -17,6 +17,8 @@ import { emitPtyData, emitPtyExit } from "@/components/terminal/ptyDataRegistry"
 
 /** Unsubscribe handles for all push listeners. */
 let unsubs: (() => void)[] = [];
+let skillsInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
+const SKILLS_INVALIDATION_DEBOUNCE_MS = 100;
 
 /** Encoder reused across all legacy JSON terminal.data frames. */
 const _legacyEncoder = new TextEncoder();
@@ -326,7 +328,13 @@ export function startPushListeners(): void {
   // skills.changed: invalidate skill cache so the popup re-fetches on next open
   unsubs.push(
     pushEmitter.on("skills.changed", () => {
-      useSkillsStore.getState().invalidate();
+      if (skillsInvalidationTimer !== null) {
+        clearTimeout(skillsInvalidationTimer);
+      }
+      skillsInvalidationTimer = setTimeout(() => {
+        skillsInvalidationTimer = null;
+        useSkillsStore.getState().invalidate();
+      }, SKILLS_INVALIDATION_DEBOUNCE_MS);
     }),
   );
 
@@ -547,6 +555,10 @@ export function startPushListeners(): void {
 
 /** Remove all push channel listeners. Safe to call multiple times. */
 export function stopPushListeners(): void {
+  if (skillsInvalidationTimer !== null) {
+    clearTimeout(skillsInvalidationTimer);
+    skillsInvalidationTimer = null;
+  }
   for (const unsub of unsubs) {
     unsub();
   }

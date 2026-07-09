@@ -1,5 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useSkillsStore } from "@/stores/skillsStore";
+import {
+  EMPTY_SKILLS_CACHE_ENTRY,
+  skillsCacheKey,
+  useSkillsStore,
+} from "@/stores/skillsStore";
 import type { SkillInfo } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 
@@ -171,11 +175,11 @@ export function useSlashCommand({
   // always appending to the end (which breaks mid-text trigger detection).
   const lastCursorRef = useRef<number | undefined>(undefined);
 
-  const skills = useSkillsStore((s) => s.skills);
-  const cachedCwd = useSkillsStore((s) => s.cwd);
-  const cachedProviderId = useSkillsStore((s) => s.providerId);
-  const isLoading = useSkillsStore((s) => s.isLoading);
-  const error = useSkillsStore((s) => s.error);
+  const cacheKey = skillsCacheKey(cwd, providerId);
+  const cacheEntry = useSkillsStore(
+    (state) => state.entries[cacheKey] ?? EMPTY_SKILLS_CACHE_ENTRY,
+  );
+  const { skills, isLoading, isStale, error } = cacheEntry;
   const load = useSkillsStore((s) => s.load);
 
   // Build the full command list (memoize via skills identity, providerId, and
@@ -234,24 +238,18 @@ export function useSlashCommand({
   // user types `/`, so the popup renders the full list on first paint and
   // the loading skeleton is never visible.
   //
-  // Conditions to trigger a load:
-  //   - cwd differs from the cached cwd (workspace switch)
-  //   - providerId differs (provider switch)
-  //   - skills are null and no prior error (cold start)
+  // Each cwd and provider pair has its own cache entry. Load when that entry
+  // is cold or stale, while retaining old rows during background refresh.
   //
-  // The `!error` gate prevents an infinite retry loop on persistent
-  // failures: when cwd is unchanged, recovery happens via `onRetry`.
-  // When cwd changes, we always load (treating it as a fresh workspace,
-  // ignoring any prior error from the old one).
+  // The error gate prevents an infinite retry loop on persistent failures.
+  // A different cwd or provider selects a different entry with its own error.
   useEffect(() => {
     if (isLoading) return;
-    const cwdChanged = cachedCwd !== cwd;
-    const providerChanged = cachedProviderId !== providerId;
     const noSkills = skills === null;
-    if (cwdChanged || providerChanged || (noSkills && !error)) {
+    if (!error && (isStale || noSkills)) {
       load(cwd, providerId).catch(() => { /* surfaced via `error` */ });
     }
-  }, [skills, cachedCwd, cachedProviderId, cwd, providerId, isLoading, error, load]);
+  }, [skills, cwd, providerId, isLoading, isStale, error, load]);
 
   const onInputChange = useCallback(
     (value: string, cursorPos?: number) => {
