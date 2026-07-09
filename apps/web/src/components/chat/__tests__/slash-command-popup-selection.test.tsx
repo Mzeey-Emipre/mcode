@@ -14,6 +14,10 @@ import type { Command } from "../useSlashCommand";
 // tests that share the same jsdom instance.
 const originalResizeObserver = globalThis.ResizeObserver;
 const originalScrollIntoView = Element.prototype.scrollIntoView;
+const originalVisualViewport = Object.getOwnPropertyDescriptor(
+  window,
+  "visualViewport",
+);
 
 beforeAll(() => {
   if (typeof window.ResizeObserver === "undefined") {
@@ -24,6 +28,10 @@ beforeAll(() => {
     };
   }
   Element.prototype.scrollIntoView = () => {};
+  Object.defineProperty(window, "visualViewport", {
+    configurable: true,
+    value: { width: 1024, height: 768 },
+  });
 });
 
 afterAll(() => {
@@ -34,6 +42,12 @@ afterAll(() => {
     globalThis.ResizeObserver = originalResizeObserver;
   }
   Element.prototype.scrollIntoView = originalScrollIntoView;
+  if (originalVisualViewport) {
+    Object.defineProperty(window, "visualViewport", originalVisualViewport);
+  } else {
+    // @ts-expect-error -- intentional cleanup of the test viewport
+    delete window.visualViewport;
+  }
 });
 
 /** Minimal DOMRect-like object for anchorRect. */
@@ -158,6 +172,6 @@ describe("SlashCommandPopup selection indicator", () => {
     if (row === null) throw new Error(`${state} popup row not found`);
     const popup = row.closest("[data-slash-popup]") as HTMLElement;
 
-    expect(popup.style.top).toBe("352px");
+    expect(popup.style.bottom).toBe("372px");
   });
 });

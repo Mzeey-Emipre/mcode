@@ -153,6 +153,28 @@ test.describe("Slash command popup", () => {
     });
   });
 
+  test("popup stays above the composer text", async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 400 });
+    await bootApp(page, { "skill.list": LONG_PLUGIN_SKILLS });
+    await openPopup(page, "/");
+
+    const popup = page.locator("[data-slash-popup]");
+    const editor = page.locator("[contenteditable='true']").first();
+    const [popupBox, editorBox] = await Promise.all([
+      popup.boundingBox(),
+      editor.boundingBox(),
+    ]);
+
+    expect(popupBox).not.toBeNull();
+    expect(editorBox).not.toBeNull();
+    expect(popupBox!.y + popupBox!.height).toBeLessThanOrEqual(editorBox!.y);
+
+    await page.screenshot({
+      path: "e2e/screenshots/slash-command/02b-popup-small-viewport.png",
+      fullPage: true,
+    });
+  });
+
   test("03 - error response surfaces ErrorRow with Retry button", async ({ page }) => {
     // Mirror the shared helper's defaults but force `skill.list` to return a
     // JSON-RPC error. The shared mock helper only supports successful result
