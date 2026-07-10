@@ -84,8 +84,6 @@ import { SlashCommandPopup } from "./SlashCommandPopup";
 import {
   type LexicalEditor,
   $getRoot,
-  $getSelection,
-  $isRangeSelection,
   $createParagraphNode,
   $createTextNode,
 } from "lexical";
@@ -1413,31 +1411,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
     setFilePopupAnchorRect(editorContainerRef.current?.getBoundingClientRect() ?? null);
   }, [fileAutocomplete.isOpen]);
-
-  const insertComposerText = useCallback((text: string) => {
-    const editor = editorRef.current;
-    if (!editor) return;
-
-    editor.focus();
-    editor.update(() => {
-      const selection = $getSelection();
-      if ($isRangeSelection(selection)) {
-        selection.insertText(text);
-        return;
-      }
-      $getRoot().selectEnd().insertText(text);
-    });
-  }, []);
-
-  const handleInsertGoal = useCallback(() => {
-    const prefix = input.length > 0 && !/\s$/.test(input) ? " " : "";
-    insertComposerText(`${prefix}/goal `);
-  }, [input, insertComposerText]);
-
-  const handleOpenMentionSearch = useCallback(() => {
-    const prefix = input.length > 0 && !/\s$/.test(input) ? " " : "";
-    insertComposerText(`${prefix}@`);
-  }, [input, insertComposerText]);
 
   const toggleInteractionMode = useCallback(() => {
     const next =
@@ -3120,12 +3093,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           />
           <ComposerAddMenu
             disabled={planPending || isStaleWorktree || !!providerReason}
-            planActive={mode === INTERACTION_MODES.PLAN}
-            supportsGoals={effectiveProviderId === "claude" || effectiveProviderId === "codex"}
             onAttachFiles={handleAttachPick}
-            onInsertGoal={handleInsertGoal}
-            onTogglePlan={toggleInteractionMode}
-            onMention={handleOpenMentionSearch}
           />
           {/* Model picker */}
           <ModelSelector

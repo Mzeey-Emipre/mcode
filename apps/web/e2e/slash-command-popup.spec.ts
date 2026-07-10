@@ -104,11 +104,8 @@ async function bootApp(page: Page, extra: RpcOverrides = {}): Promise<void> {
 async function openPopup(page: Page, prefix: string): Promise<void> {
   await page.goto("/");
   await page.waitForLoadState("networkidle");
-  // Workspaces in the sidebar are collapsed by default; expand to reveal threads.
-  await page
-    .locator('[role="button"][aria-expanded]')
-    .filter({ hasText: "Test Workspace" })
-    .click();
+  // Projects and their thread lists have independent controls in the sidebar.
+  await page.getByRole("button", { name: "Toggle threads for Test Workspace", exact: true }).click();
   await page.waitForSelector("[data-testid='thread-item']");
   await page.locator("[data-testid='thread-item']").first().click();
 
@@ -130,6 +127,8 @@ test.describe("Slash command popup", () => {
     await expect(popup.getByText("/compact")).toBeVisible();
     await expect(popup.getByText("/superpowers:brainstorming")).toBeVisible();
     await expect(popup.getByText("/hookify:hookify")).toBeVisible();
+    await expect(popup.getByTestId("slash-command-group-mcode")).toContainText("Mcode");
+    await expect(popup.getByTestId("slash-command-group-plugin")).toContainText("Plugins");
 
     await page.screenshot({
       path: "e2e/screenshots/slash-command/01-popup-open.png",

@@ -2,17 +2,43 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { Terminal, Zap, Puzzle, Sparkles, RefreshCw } from "lucide-react";
-import { NAMESPACE_BADGE_STYLES } from "@/lib/slash-command-styles";
 import type { Command, PopupState } from "./useSlashCommand";
 import { computeFixedPopupPosition } from "./popup-position";
 
 const ITEM_HEIGHT = 44; // px per row
 const VISIBLE_ITEMS = 8;
+const GROUP_HEADER_HEIGHT = 24;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
 // Footer (Refresh row) intrinsic height: border-t (1px) + py-1 (8px) + icon
 // button height (~20px). Used to estimate popup height for the above/below
 // placement calculation; the rendered footer remains naturally sized.
 const FOOTER_HEIGHT = 28;
+
+const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
+  mcode: "Mcode",
+  command: "Commands",
+  skill: "Skills",
+  plugin: "Plugins",
+};
+
+/** Preserve command ordering while exposing the source context of each command. */
+function groupCommands(
+  items: Command[],
+): Array<{ namespace: Command["namespace"]; items: Array<{ command: Command; index: number }> }> {
+  const groups: Array<{
+    namespace: Command["namespace"];
+    items: Array<{ command: Command; index: number }>;
+  }> = [];
+  for (const [index, command] of items.entries()) {
+    const current = groups.at(-1);
+    if (current?.namespace === command.namespace) {
+      current.items.push({ command, index });
+      continue;
+    }
+    groups.push({ namespace: command.namespace, items: [{ command, index }] });
+  }
+  return groups;
+}
 
 /** Props for the {@link SlashCommandPopup} component. */
 interface SlashCommandPopupProps {
@@ -59,6 +85,7 @@ export function SlashCommandPopup({
   // The list-bearing states carry the items; all others render no list.
   const items: Command[] =
     state.kind === "ready" || state.kind === "staleRevalidating" ? state.items : [];
+  const commandGroups = groupCommands(items);
   const isOpen = state.kind !== "closed";
 
   // Scroll selected item into view
@@ -84,7 +111,9 @@ export function SlashCommandPopup({
 
   // Cap the scrollable list at VISIBLE_ITEMS rows; shorter lists size to
   // their natural content so a popup with two items isn't truncated.
-  const listMaxHeight = VISIBLE_ITEMS * ITEM_HEIGHT;
+  const listMaxHeight =
+    VISIBLE_ITEMS * ITEM_HEIGHT +
+    Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT;
 
   // Estimate the rendered popup height for the above/below placement
   // decision. Only the list branch renders a footer (Refresh row); error,
@@ -93,7 +122,10 @@ export function SlashCommandPopup({
   const willRenderList = state.kind === "ready" || state.kind === "staleRevalidating";
   const estimatedHeight =
     (willRenderList
-      ? Math.min(items.length, VISIBLE_ITEMS) * ITEM_HEIGHT
+      ? Math.min(
+          items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT,
+          listMaxHeight,
+        )
       : STATUS_ROW_HEIGHT) +
     (willRenderList ? FOOTER_HEIGHT : 0);
   const style = computeFixedPopupPosition({
@@ -148,14 +180,35 @@ export function SlashCommandPopup({
                   className="min-h-0 flex-1"
                   style={{ maxHeight: listMaxHeight, overflowY: "auto" }}
                 >
-                  {items.map((cmd, i) => (
-                    <div key={cmd.name} role="presentation" data-index={i}>
-                      <CommandRow
-                        cmd={cmd}
-                        selected={i === selectedIndex}
-                        onSelect={onSelect}
-                        tone={tone}
-                      />
+                  {commandGroups.map(({ namespace, items: groupItems }) => (
+                    <div
+                      key={namespace}
+                      role="group"
+                      aria-label={NAMESPACE_LABELS[namespace]}
+                      data-testid={`slash-command-group-${namespace}`}
+                    >
+                      <div
+                        data-slash-group-heading
+                        role="presentation"
+                        className={cn(
+                          "sticky top-0 z-10 bg-inherit px-3 py-1.5 text-xs font-medium",
+                          tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
+                        )}
+                      >
+                        {NAMESPACE_LABELS[namespace]}
+                      </div>
+                      {groupItems.map(({ command: cmd, index }) => {
+                        return (
+                          <div key={cmd.name} role="presentation" data-index={index}>
+                            <CommandRow
+                              cmd={cmd}
+                              selected={index === selectedIndex}
+                              onSelect={onSelect}
+                              tone={tone}
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   ))}
                 </div>
@@ -255,16 +308,6 @@ function CommandRow({
         )}>
           {cmd.description}
         </span>
-      </span>
-
-      {/* Namespace badge */}
-      <span
-        className={cn(
-          "ml-auto flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-          NAMESPACE_BADGE_STYLES[cmd.namespace],
-        )}
-      >
-        {cmd.namespace}
       </span>
     </button>
   );

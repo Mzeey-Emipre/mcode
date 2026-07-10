@@ -1,9 +1,4 @@
-/**
- * Tests for icon and badge style correctness in SlashCommandPopup.
- *
- * - command namespace: amber (primary) badge, Terminal icon
- * - skill namespace: Sparkles icon (not Terminal)
- */
+/** Tests for source grouping and icon correctness in SlashCommandPopup. */
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, beforeAll } from "vitest";
 import { SlashCommandPopup } from "../SlashCommandPopup";
@@ -55,20 +50,19 @@ function renderPopup() {
   );
 }
 
-describe("SlashCommandPopup namespace badge colors", () => {
-  it("command badge does NOT contain sky-500", () => {
+describe("SlashCommandPopup source groups", () => {
+  it("places commands under the Commands heading", () => {
     renderPopup();
-    const commandRow = screen.getByRole("option", { name: /deploy/ });
-    // The badge is the direct last span child of the button (ml-auto class)
-    const badge = commandRow.querySelector(":scope > span:last-child");
-    expect(badge?.className).not.toMatch(/sky-500/);
+    const group = screen.getByTestId("slash-command-group-command");
+    expect(group).toHaveTextContent("Commands");
+    expect(group).toContainElement(screen.getByRole("option", { name: /deploy/ }));
   });
 
-  it("command badge contains text-primary (amber brand color)", () => {
+  it("places skills under the Skills heading", () => {
     renderPopup();
-    const commandRow = screen.getByRole("option", { name: /deploy/ });
-    const badge = commandRow.querySelector(":scope > span:last-child");
-    expect(badge?.className).toContain("text-primary");
+    const group = screen.getByTestId("slash-command-group-skill");
+    expect(group).toHaveTextContent("Skills");
+    expect(group).toContainElement(screen.getByRole("option", { name: /my-skill/ }));
   });
 });
 

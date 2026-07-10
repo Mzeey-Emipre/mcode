@@ -97,12 +97,10 @@ test.describe("Composer toolbar", () => {
     const menu = page.getByTestId("composer-add-menu");
     await expect(menu).toBeVisible();
     await expect(menu.getByRole("button", { name: /Files/ })).toBeVisible();
-    await expect(menu.getByRole("button", { name: /Goal/ })).toBeVisible();
-    await expect(menu.getByRole("button", { name: /Plan mode/ })).toBeVisible();
-    await expect(menu.getByRole("button", { name: /Mention an agent or file/ })).toBeVisible();
-    await menu.getByRole("button", { name: /Mention an agent or file/ }).click();
-    await expect(menu).toHaveCount(0);
-    await expect(page.locator('[contenteditable="true"]')).toContainText("@");
+    await expect(menu.getByText("Images, PDFs, documents, and code")).toBeVisible();
+    await expect(menu.getByRole("button", { name: /Goal/ })).toHaveCount(0);
+    await expect(menu.getByRole("button", { name: /Plan mode/ })).toHaveCount(0);
+    await expect(menu.getByRole("button", { name: /Mention an agent or file/ })).toHaveCount(0);
     await page.screenshot({
       path: "e2e/screenshots/composer-toolbar-add-menu.png",
       fullPage: true,
