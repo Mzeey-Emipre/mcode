@@ -398,7 +398,7 @@ export function App() {
               )}
             </main>
             )}
-            {!settingsOpen && !showNewThreadCanvas && (
+            {!settingsOpen && !showProjectlessCanvas && (
               <Suspense fallback={null}>
                 <LazyRightPanel />
               </Suspense>

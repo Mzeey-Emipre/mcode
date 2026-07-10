@@ -1110,7 +1110,7 @@ function VirtualizedThreadList({
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
             )}
-            style={{ paddingLeft: `${36 + depth * 12}px` }}
+            style={{ paddingLeft: `${38 + depth * 12}px` }}
           >
             {prable && thread.pr_number != null ? (() => {
               const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
@@ -1130,7 +1130,7 @@ function VirtualizedThreadList({
                 providerMeta.color,
                 scaffoldDim,
               )}
-              style={{ left: `${16 + depth * 12}px` }}
+              style={{ left: `${22 + depth * 12}px` }}
             >
               <RowProviderIcon size={12} />
             </span>

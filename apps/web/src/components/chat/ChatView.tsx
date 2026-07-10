@@ -296,7 +296,10 @@ export function ChatView() {
   const connectionStatus = useConnectionStore((s) => s.status);
   const sendMessage = useThreadStore((s) => s.sendMessage);
   const chatPaneRef = useRef<HTMLDivElement>(null);
-  const threadPaneWidth = useElementWidth(chatPaneRef);
+  // ChatView also renders the projectless/new-thread canvas, where the measured
+  // chat pane does not exist yet. Reattach the observer when a thread becomes
+  // active so responsive Overview state uses the real pane width.
+  const threadPaneWidth = useElementWidth(chatPaneRef, activeThreadId);
   const reserveOverviewSpace = useOverviewStore((s) => s.reserveSpace);
   const overviewPaddingRight = reserveOverviewSpace ? overviewResponsivePaddingRight() : undefined;
 

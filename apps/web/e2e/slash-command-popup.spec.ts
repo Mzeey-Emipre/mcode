@@ -172,6 +172,7 @@ test.describe("Slash command popup", () => {
 
     const popup = page.locator("[data-slash-popup]");
     const editor = page.locator("[contenteditable='true']").first();
+    await expect(popup).toHaveCSS("transform", "none");
     const [popupBox, editorBox] = await Promise.all([
       popup.boundingBox(),
       editor.boundingBox(),
