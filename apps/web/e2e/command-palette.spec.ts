@@ -228,6 +228,20 @@ test.describe("Command palette", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
   });
 
+  test("does not report a folder as invalid when validation is missing", async ({ page }) => {
+    const staleBrowseResult: Partial<typeof MOCK_BROWSE_RESULT> = { ...MOCK_BROWSE_RESULT };
+    delete staleBrowseResult.isExactDirectory;
+    await setupPage(page, staleBrowseResult as typeof MOCK_BROWSE_RESULT);
+    await page.keyboard.press("Control+k");
+    const input = page.locator('[data-slot="palette-input"]');
+    await input.fill("~/");
+
+    await expect(page.getByTestId("browse-resolution-warning")).not.toBeVisible();
+    await expect(page.getByTestId("palette-add-folder")).toBeDisabled();
+    await page.keyboard.press("Control+Enter");
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
   test("Alt+Up navigates to the parent folder", async ({ page }) => {
     await setupPage(page);
     await page.keyboard.press("Control+k");

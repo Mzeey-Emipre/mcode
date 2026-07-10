@@ -186,7 +186,7 @@ export function BrowseView() {
       <CommandList className="max-h-[360px] overflow-y-auto py-2">
         {loading && !result && <CommandEmpty>Loading…</CommandEmpty>}
         {error && <CommandEmpty>{error}</CommandEmpty>}
-        {!loading && !error && result && !result.isExactDirectory && !isDrivesMode && (
+        {!loading && !error && result?.isExactDirectory === false && !isDrivesMode && (
           <div data-testid="browse-resolution-warning" className="mx-3 mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200" role="alert">
             This path is not a folder. Choose a listed folder or revise the path.
           </div>
