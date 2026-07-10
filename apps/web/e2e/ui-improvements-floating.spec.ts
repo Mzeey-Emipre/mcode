@@ -136,6 +136,45 @@ test.describe("Composer options — narrow viewport (below md)", () => {
   });
 });
 
+test.describe("Floating sidebar resize", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
+    await interceptZustandStores(page);
+    await page.setViewportSize({ width: 600, height: 800 });
+  });
+
+  test("docks a floating sidebar when a selected project gains space", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await activateWorkspace(page);
+
+    await page.evaluate(() => {
+      const stores =
+        (window as unknown as {
+          __mcodeStores?: Array<{
+            getState: () => Record<string, unknown>;
+            setState: (patch: Record<string, unknown>) => void;
+          }>;
+        }).__mcodeStores ?? [];
+      const uiStore = stores.find((store) => "sidebarFloating" in store.getState());
+      if (!uiStore) throw new Error("[E2E] UI store not found");
+      uiStore.setState({
+        sidebarCollapsed: true,
+        sidebarCollapsedByLayout: false,
+        sidebarFloating: false,
+      });
+    });
+
+    await page.getByRole("button", { name: "Expand sidebar" }).click();
+    await expect(page.getByTestId("sidebar-floating")).toBeVisible();
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    await expect(page.getByTestId("sidebar-floating")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-docked")).toBeVisible();
+  });
+});
+
 test.describe("Docked shell surfaces", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);

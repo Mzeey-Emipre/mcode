@@ -64,7 +64,7 @@ export function App() {
 
   useComposerLayoutGuard(outerRowRef, contentRowRef, {
     settingsOpen,
-    showLanding: showNewThreadCanvas,
+    showLanding: showProjectlessCanvas,
     activeWorkspaceId,
     activeThreadId,
   });

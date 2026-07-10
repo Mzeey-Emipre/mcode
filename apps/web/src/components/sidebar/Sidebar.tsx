@@ -100,7 +100,7 @@ export function Sidebar({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-foreground/90 shadow-none hover:text-foreground"
+                className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-muted-foreground shadow-none hover:text-foreground"
                 onClick={() => useWorkspaceStore.getState().beginNewThread()}
               >
                 <SquarePen size={15} aria-hidden />
@@ -109,7 +109,7 @@ export function Sidebar({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-foreground/90 hover:text-foreground"
+                className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-muted-foreground hover:text-foreground"
                 onClick={() =>
                   useCommandPaletteStore.getState().open({ intent: "threadSearch" })
                 }

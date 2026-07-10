@@ -1353,8 +1353,9 @@ const ProjectNode = memo(function ProjectNode({
         tabIndex={0}
         aria-label={`${workspace.name} project`}
         data-testid={`project-row-${workspace.id}`}
+        onClick={handleToggle}
         className={cn(
-          "group/ws relative flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-[13px] transition-colors touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+          "group/ws relative flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-[13px] transition-colors touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
           isProjectDragging && "cursor-grabbing",
           isActive
             ? "text-foreground"
@@ -1391,6 +1392,22 @@ const ProjectNode = memo(function ProjectNode({
           </Tooltip>
         )}
 
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Toggle threads for ${workspace.name}`}
+          aria-expanded={isExpanded}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleToggle();
+          }}
+          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+        >
+          <ChevronRight size={14} className={cn("transition-transform duration-150 motion-reduce:transition-none", isExpanded && "rotate-90")} />
+        </Button>
+
         <span className="flex-1" />
 
         <WorkspaceCiRollupChip threads={threads} checksById={checksById} />
@@ -1416,22 +1433,6 @@ const ProjectNode = memo(function ProjectNode({
             {threads.length}
           </span>
         )}
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Toggle threads for ${workspace.name}`}
-          aria-expanded={isExpanded}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            handleToggle();
-          }}
-          className="size-6 shrink-0 text-muted-foreground hover:bg-background/60 hover:text-foreground"
-        >
-          <ChevronRight size={14} className={cn("transition-transform duration-150 motion-reduce:transition-none", isExpanded && "rotate-90")} />
-        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger

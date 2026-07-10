@@ -146,6 +146,46 @@ test.describe("Sidebar thread actions", () => {
     expect(Math.abs(actionBox!.x - projectBox!.x)).toBeLessThanOrEqual(1);
   });
 
+  test("top actions use the same idle tone as project rows", async ({ page }) => {
+    await page.goto("/");
+    const newThread = page.getByRole("button", { name: "New thread", exact: true });
+    const searchThreads = page.getByRole("button", { name: "Search threads" });
+    const projectRow = page.getByTestId("project-row-ws-1");
+    const [newThreadColor, searchThreadsColor, projectRowColor] = await Promise.all([
+      newThread.evaluate((element) => getComputedStyle(element).color),
+      searchThreads.evaluate((element) => getComputedStyle(element).color),
+      projectRow.evaluate((element) => getComputedStyle(element).color),
+    ]);
+
+    expect(newThreadColor).toBe(projectRowColor);
+    expect(searchThreadsColor).toBe(projectRowColor);
+  });
+
+  test("project row whitespace toggles its threads and reveals the nearby chevron", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+    });
+    await page.goto("/");
+
+    const projectRow = page.getByTestId("project-row-ws-1");
+    const toggleThreads = projectRow.getByRole("button", {
+      name: "Toggle threads for Test Workspace",
+    });
+    await expect(toggleThreads).toHaveAttribute("aria-expanded", "false");
+    await expect(toggleThreads).toHaveCSS("opacity", "0");
+
+    await projectRow.hover();
+    await expect(toggleThreads).toHaveCSS("opacity", "1");
+
+    const projectBox = await projectRow.boundingBox();
+    expect(projectBox).not.toBeNull();
+    await projectRow.click({ position: { x: projectBox!.width / 2, y: projectBox!.height / 2 } });
+    await expect(toggleThreads).toHaveAttribute("aria-expanded", "true");
+
+    await projectRow.focus();
+    await expect(toggleThreads).toHaveCSS("opacity", "1");
+  });
+
   test("project controls appear only when the project row is hovered", async ({ page }) => {
     await page.goto("/");
     const projectRow = page.getByTestId("project-row-ws-1");
