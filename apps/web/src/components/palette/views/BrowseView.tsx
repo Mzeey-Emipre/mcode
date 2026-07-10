@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Folder, ArrowUp } from "lucide-react";
 import { CommandGroup, CommandItem, CommandList, CommandEmpty } from "@/components/ui/command";
+import { Button } from "@/components/ui/button";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getTransport } from "@/transport";
@@ -16,6 +17,7 @@ interface BrowseResult {
   path: string;
   parent: string | null;
   entries: { name: string; isDir: boolean }[];
+  isExactDirectory: boolean;
 }
 
 /**
@@ -25,16 +27,16 @@ interface BrowseResult {
  * Behavior:
  * - The query is split into a directory portion and a leaf filter via
  *   `splitBrowseQuery`. The directory is fetched server-side; the leaf is a
- *   client-side prefix filter against the returned entries.
+ *   client-side substring filter against the returned entries.
  * - `Enter` on a highlighted folder appends its name + a trailing `/` to the
  *   query, descending into it.
- * - `Cmd/Ctrl+Enter` adds the current directory path as a project, regardless
- *   of which entry is highlighted.
+ * - `Cmd/Ctrl+Enter` adds an exact, explicitly chosen directory as a project.
  */
 export function BrowseView() {
   const query = useCommandPaletteStore((s) => s.query);
   const setQuery = useCommandPaletteStore((s) => s.setQuery);
   const setPendingConfirm = useCommandPaletteStore((s) => s.setPendingConfirm);
+  const setPendingBack = useCommandPaletteStore((s) => s.setPendingBack);
   const close = useCommandPaletteStore((s) => s.close);
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
   const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
@@ -51,6 +53,9 @@ export function BrowseView() {
   const [result, setResult] = useState<BrowseResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [browseAttempt, setBrowseAttempt] = useState(0);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
 
   // Cache the most recent in-flight request key so that a stale response
   // (e.g. from a directory the user has already typed past) cannot overwrite
@@ -77,7 +82,11 @@ export function BrowseView() {
         if (inflightRef.current === reqKey) setLoading(false);
       }
     })();
-  }, [directoryPath]);
+  }, [directoryPath, browseAttempt]);
+
+  useEffect(() => {
+    setAddError(null);
+  }, [query]);
 
   // Folders only — files are pointless when picking a project root.
   const filteredEntries = useMemo(() => {
@@ -85,38 +94,45 @@ export function BrowseView() {
     return filterBrowseEntries(result.entries, leafFilter);
   }, [result, leafFilter]);
 
+  const isHomeRoot = query === "~" || query === "~/" || query === "~\\";
+  const canAddCurrentDirectory = Boolean(
+    !isDrivesMode
+      && !isHomeRoot
+      && !loading
+      && !error
+      && !isAdding
+      && leafFilter === ""
+      && result?.isExactDirectory,
+  );
+  const canAscend = Boolean(!isDrivesMode && leafFilter === "" && result?.parent);
+
   /**
    * Add the currently-typed directory as a workspace.
    * The path used is the resolved server `result.path`, not the raw query —
    * this guarantees ~ and relative paths are expanded.
    */
   const handleAdd = useCallback(async () => {
-    const target = isDrivesMode ? null : result?.path;
-    if (!target) return;
+    if (!canAddCurrentDirectory || !result) return;
+    const target = result.path;
     const name = target.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Untitled";
+    setAddError(null);
+    setIsAdding(true);
     try {
       const ws = await createWorkspace(name, target);
       beginNewThread(ws.id);
       close();
-    } catch (err) {
-      console.error("Failed to create workspace:", err);
+    } catch {
+      setAddError("Could not add this folder. Try again.");
+    } finally {
+      setIsAdding(false);
     }
   }, [
     result,
-    isDrivesMode,
+    canAddCurrentDirectory,
     createWorkspace,
     beginNewThread,
     close,
   ]);
-
-  // Register the confirm handler so Cmd/Ctrl+Enter in the shell adds the folder.
-  // Pass `handleAdd` directly — Zustand's setter does a shallow merge, not a
-  // functional update, so wrapping it in `() => handleAdd` would store a thunk
-  // that *returns* handleAdd instead of being it.
-  useEffect(() => {
-    setPendingConfirm(handleAdd);
-    return () => setPendingConfirm(null);
-  }, [handleAdd, setPendingConfirm]);
 
   /**
    * Handle a click on a directory entry: append its name + `/` to the query,
@@ -134,7 +150,8 @@ export function BrowseView() {
         setQuery(rooted);
         return;
       }
-      const newQuery = directoryPath + entryName + "/";
+      const separator = directoryPath.includes("\\") && !directoryPath.includes("/") ? "\\" : "/";
+      const newQuery = directoryPath + entryName + separator;
       setQuery(newQuery);
     },
     [directoryPath, isDrivesMode, setQuery],
@@ -152,11 +169,28 @@ export function BrowseView() {
     setQuery(tail);
   }, [result, setQuery]);
 
+  // Register only viable palette actions. This prevents Ctrl/Cmd+Enter from
+  // adding a loading, filtered, or ancestor-fallback path.
+  useEffect(() => {
+    setPendingConfirm(canAddCurrentDirectory ? handleAdd : null);
+    return () => setPendingConfirm(null);
+  }, [canAddCurrentDirectory, handleAdd, setPendingConfirm]);
+
+  useEffect(() => {
+    setPendingBack(canAscend ? handleAscend : null);
+    return () => setPendingBack(null);
+  }, [canAscend, handleAscend, setPendingBack]);
+
   return (
     <>
       <CommandList className="max-h-[360px] overflow-y-auto py-2">
         {loading && !result && <CommandEmpty>Loading…</CommandEmpty>}
         {error && <CommandEmpty>{error}</CommandEmpty>}
+        {!loading && !error && result && !result.isExactDirectory && !isDrivesMode && (
+          <div data-testid="browse-resolution-warning" className="mx-3 mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200" role="alert">
+            This path is not a folder. Choose a listed folder or revise the path.
+          </div>
+        )}
         {!loading && !error && filteredEntries.length === 0 && !isDrivesMode && (
           <CommandEmpty>
             {leafFilter ? `No folders match "${leafFilter}".` : "No subfolders here."}
@@ -195,15 +229,37 @@ export function BrowseView() {
         )}
       </CommandList>
 
+      {error && (
+        <div className="flex items-center justify-between gap-3 border-t border-border/60 px-4 py-2 text-xs" role="alert">
+          <span className="text-muted-foreground">Check the path or retry the folder listing.</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => setBrowseAttempt((attempt) => attempt + 1)}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {addError && (
+        <div data-testid="browse-add-error" className="flex items-center justify-between gap-3 border-t border-border/60 px-4 py-2 text-xs" role="alert">
+          <span className="text-destructive">{addError}</span>
+          <Button type="button" size="sm" variant="ghost" onClick={handleAdd}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       <div
         data-testid="browse-shortcuts"
-        className="hidden min-h-[44px] shrink-0 items-center gap-6 border-t border-border/60 bg-muted/20 px-[16px] py-[10px] text-[12px] text-muted-foreground/65 sm:flex"
+        className="hidden min-h-[44px] shrink-0 items-center justify-between gap-3 border-t border-border/60 bg-muted/20 px-[16px] py-[10px] text-[12px] text-muted-foreground/75 sm:flex"
       >
-        <span className="flex items-center gap-1.5"><Kbd>Enter</Kbd> Open folder</span>
-        <span className="flex items-center gap-1.5"><Kbd>⌫</Kbd> Back</span>
-        <span className="ml-auto flex items-center gap-1.5">
-          <Kbd>{isMac ? "⌘+Enter" : "Ctrl+Enter"}</Kbd> Add project
-        </span>
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex shrink-0 items-center gap-1.5"><Kbd>Enter</Kbd> Open folder</span>
+          {canAscend && <span className="flex shrink-0 items-center gap-1.5"><Kbd>Alt+↑</Kbd> Back</span>}
+        </div>
+        {canAddCurrentDirectory && (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <Kbd>{isMac ? "⌘+Enter" : "Ctrl+Enter"}</Kbd> Add project
+          </span>
+        )}
       </div>
     </>
   );

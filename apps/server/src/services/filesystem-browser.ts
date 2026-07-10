@@ -60,11 +60,18 @@ export class FilesystemBrowser {
     path: string;
     parent: string | null;
     entries: { name: string; isDir: boolean }[];
+    /** Whether the requested path resolved to an existing directory without fallback. */
+    isExactDirectory: boolean;
   }> {
     // Drive enumeration (Windows): bare `/` is a UI affordance to surface drives,
     // since drives have no common parent in the Windows filesystem model.
     if (input === "/" && platform() === "win32") {
-      return { path: "/", parent: null, entries: listWindowsDrives() };
+      return {
+        path: "/",
+        parent: null,
+        entries: listWindowsDrives(),
+        isExactDirectory: false,
+      };
     }
 
     // Expand ~ to home directory, then resolve to an absolute path.
@@ -75,11 +82,13 @@ export class FilesystemBrowser {
 
     // Walk up to the nearest existing path (handles ghost paths from stale state).
     let attempts = 0;
+    let resolvedToAncestor = false;
     while (target && attempts++ < 50) {
       try {
         await stat(target);
         break;
       } catch {
+        resolvedToAncestor = true;
         const parent = dirname(target);
         if (parent === target) break; // reached filesystem root
         target = parent;
@@ -94,8 +103,14 @@ export class FilesystemBrowser {
     try {
       s = await stat(target);
     } catch {
+      resolvedToAncestor = true;
       if (platform() === "win32") {
-        return { path: "/", parent: null, entries: listWindowsDrives() };
+        return {
+          path: "/",
+          parent: null,
+          entries: listWindowsDrives(),
+          isExactDirectory: false,
+        };
       }
       target = "/";
       s = await stat(target);
@@ -118,6 +133,7 @@ export class FilesystemBrowser {
       path: dir,
       parent: parentDir === dir ? null : parentDir,
       entries,
+      isExactDirectory: !resolvedToAncestor && s.isDirectory(),
     };
   }
 }

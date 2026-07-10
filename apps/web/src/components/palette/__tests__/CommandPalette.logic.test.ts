@@ -190,6 +190,7 @@ describe("filterBrowseEntries", () => {
   const entries = [
     { name: "Documents", isDir: true },
     { name: "Downloads", isDir: true },
+    { name: "Desktop", isDir: true },
     { name: ".bashrc", isDir: false },
     { name: ".config", isDir: true },
     { name: "Projects", isDir: true },
@@ -197,11 +198,15 @@ describe("filterBrowseEntries", () => {
 
   it("returns all non-dotfile dirs when filter is empty", () => {
     const out = filterBrowseEntries(entries, "");
-    expect(out.map((e) => e.name)).toEqual(["Documents", "Downloads", "Projects"]);
+    expect(out.map((e) => e.name)).toEqual(["Documents", "Downloads", "Desktop", "Projects"]);
   });
-  it("filters by case-insensitive prefix", () => {
+  it("filters by case-insensitive substring", () => {
     const out = filterBrowseEntries(entries, "do");
     expect(out.map((e) => e.name)).toEqual(["Documents", "Downloads"]);
+  });
+  it("matches text after the beginning of a folder name", () => {
+    const out = filterBrowseEntries(entries, "top");
+    expect(out.map((e) => e.name)).toEqual(["Desktop"]);
   });
   it("shows hidden directories only when filter starts with '.'", () => {
     const out = filterBrowseEntries(entries, ".c");

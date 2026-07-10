@@ -26,6 +26,8 @@ interface State {
    * "Add this folder" handler). Called when the user presses Ctrl/Cmd+Enter.
    */
   pendingConfirm: (() => void) | null;
+  /** Optional parent-directory action for the active browse view. */
+  pendingBack: (() => void) | null;
   /**
    * Open the palette, optionally at a specific intent.
    * - `projects`: open at the projects view.
@@ -47,6 +49,8 @@ interface State {
   setQuery: (q: string) => void;
   /** Register a confirm action for the current view. Pass null to clear. */
   setPendingConfirm: (fn: (() => void) | null) => void;
+  /** Register the parent-directory action for the current view. Pass null to clear. */
+  setPendingBack: (fn: (() => void) | null) => void;
 }
 
 /**
@@ -59,6 +63,7 @@ export const useCommandPaletteStore = create<State>((set, get) => ({
   viewStack: [],
   query: "",
   pendingConfirm: null,
+  pendingBack: null,
   open: (opts) => {
     const intent = opts?.intent;
     const view: View =
@@ -70,18 +75,24 @@ export const useCommandPaletteStore = create<State>((set, get) => ({
     // The addProject intent stays on the root view but seeds the query with `~/`
     // so the unified shell renders in browse mode immediately.
     const query = intent === "addProject" ? "~/" : "";
-    set({ isOpen: true, viewStack: [view], query, pendingConfirm: null });
+    set({ isOpen: true, viewStack: [view], query, pendingConfirm: null, pendingBack: null });
   },
-  push: (view) => set({ viewStack: [...get().viewStack, view], query: "", pendingConfirm: null }),
+  push: (view) => set({
+    viewStack: [...get().viewStack, view],
+    query: "",
+    pendingConfirm: null,
+    pendingBack: null,
+  }),
   pop: () => {
     const next = get().viewStack.slice(0, -1);
     if (next.length === 0) {
-      set({ isOpen: false, viewStack: [], query: "", pendingConfirm: null });
+      set({ isOpen: false, viewStack: [], query: "", pendingConfirm: null, pendingBack: null });
     } else {
-      set({ viewStack: next, query: "", pendingConfirm: null });
+      set({ viewStack: next, query: "", pendingConfirm: null, pendingBack: null });
     }
   },
-  close: () => set({ isOpen: false, viewStack: [], query: "", pendingConfirm: null }),
+  close: () => set({ isOpen: false, viewStack: [], query: "", pendingConfirm: null, pendingBack: null }),
   setQuery: (q) => set({ query: q }),
   setPendingConfirm: (fn) => set({ pendingConfirm: fn }),
+  setPendingBack: (fn) => set({ pendingBack: fn }),
 }));

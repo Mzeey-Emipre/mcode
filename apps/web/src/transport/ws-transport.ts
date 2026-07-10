@@ -488,7 +488,12 @@ export function createWsTransport(
     enrichWorkspaces: (ids) =>
       rpc<{ items: WorkspaceEnrichment[] }>("workspace.enrich", { ids }),
     filesystemBrowse: (path) =>
-      rpc<{ path: string; parent: string | null; entries: { name: string; isDir: boolean }[] }>(
+      rpc<{
+        path: string;
+        parent: string | null;
+        entries: { name: string; isDir: boolean }[];
+        isExactDirectory: boolean;
+      }>(
         "filesystem.browse",
         { path },
       ),

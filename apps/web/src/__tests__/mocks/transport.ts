@@ -100,7 +100,7 @@ export const mockTransport: McodeTransport = {
   pinWorkspace: vi.fn().mockResolvedValue(undefined),
   removeRecent: vi.fn().mockResolvedValue(undefined),
   enrichWorkspaces: vi.fn().mockResolvedValue({ items: [] }),
-  filesystemBrowse: vi.fn().mockResolvedValue({ path: "/", parent: null, entries: [] }),
+  filesystemBrowse: vi.fn().mockResolvedValue({ path: "/", parent: null, entries: [], isExactDirectory: true }),
   createThread: vi.fn(),
   listThreads: vi.fn().mockResolvedValue([]),
   listRecentThreads: vi.fn().mockResolvedValue([]),

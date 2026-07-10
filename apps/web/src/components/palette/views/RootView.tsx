@@ -24,6 +24,15 @@ const HIDDEN_COMMANDS = new Set([
   "commandPalette.toggle",
 ]);
 
+const QUICK_ACTION_IDS = new Set([
+  "thread.new",
+  "thread.search",
+  "workspace.new",
+  "terminal.toggle",
+  "settings.open",
+  "shortcuts.help",
+]);
+
 /**
  * Default root view of the command palette.
  * Shows three sections: Actions, Recent Threads, Recent Projects.
@@ -54,7 +63,11 @@ export function RootView() {
   const groups = useMemo<PaletteGroup[]>(() => {
     const commands = getAllCommands().filter((c) => !HIDDEN_COMMANDS.has(c.id));
 
-    const actionItems = commands.map((cmd) => {
+    const visibleCommands = actionOnly || effectiveQuery
+      ? commands
+      : commands.filter((cmd) => QUICK_ACTION_IDS.has(cmd.id));
+
+    const actionItems = visibleCommands.map((cmd) => {
       const binding = getKeybindingForCommand(cmd.id);
       return {
         value: `cmd:${cmd.id}`,
@@ -64,7 +77,10 @@ export function RootView() {
       };
     });
 
-    const result: PaletteGroup[] = [{ heading: "Actions", items: actionItems }];
+    const result: PaletteGroup[] = [{
+      heading: actionOnly || effectiveQuery ? "Actions" : "Quick actions",
+      items: actionItems,
+    }];
 
     if (!actionOnly) {
       // Recent threads — the store already returns the cross-workspace list
@@ -143,7 +159,7 @@ export function RootView() {
   };
 
   const footer = (
-    <div className="flex items-center justify-between gap-3 border-t border-border/50 px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/55">
+    <div className="flex items-center justify-between gap-3 border-t border-border/50 px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/70">
       <div className="flex items-center gap-3">
         <span>
           <Kbd>&gt;</Kbd> <span className="ml-1">Actions only</span>

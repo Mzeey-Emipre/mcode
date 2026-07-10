@@ -25,7 +25,7 @@ vi.mock("@/transport", async () => ({
     pinWorkspace: vi.fn().mockResolvedValue(undefined),
     removeRecent: vi.fn().mockResolvedValue(undefined),
     enrichWorkspaces: vi.fn().mockResolvedValue({ items: [] }),
-    filesystemBrowse: vi.fn().mockResolvedValue({ path: "/", parent: null, entries: [] }),
+    filesystemBrowse: vi.fn().mockResolvedValue({ path: "/", parent: null, entries: [], isExactDirectory: true }),
     getSettings: vi.fn().mockResolvedValue({}),
   }),
 }));

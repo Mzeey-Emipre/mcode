@@ -213,7 +213,7 @@ export function splitBrowseQuery(query: string): BrowseQueryParts {
 
 /**
  * Filter a list of directory entries to directories only, by a case-insensitive
- * prefix match against the leaf filter. Hidden entries (name starts with `.`)
+ * substring match against the leaf filter. Hidden entries (name starts with `.`)
  * are included only when the filter itself starts with `.`.
  */
 export function filterBrowseEntries(
@@ -226,7 +226,7 @@ export function filterBrowseEntries(
     if (!entry.isDir) return false;
     if (!showHidden && entry.name.startsWith(".")) return false;
     if (lower === "") return true;
-    return entry.name.toLowerCase().startsWith(lower);
+    return entry.name.toLowerCase().includes(lower);
   });
 }
 

@@ -217,6 +217,7 @@ export const WS_METHODS = lazySchema(() => ({
       path: z.string(),
       parent: z.string().nullable(),
       entries: z.array(z.object({ name: z.string(), isDir: z.boolean() })),
+      isExactDirectory: z.boolean(),
     }),
   },
   "thread.list": {

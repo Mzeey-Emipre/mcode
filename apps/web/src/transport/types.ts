@@ -170,6 +170,8 @@ export interface McodeTransport {
     path: string;
     parent: string | null;
     entries: { name: string; isDir: boolean }[];
+    /** True only when the requested path resolved to an existing directory. */
+    isExactDirectory: boolean;
   }>;
 
   // Thread commands

@@ -42,6 +42,7 @@ async function setupProjectlessWorkbench(page: Page, workspaces = MOCK_WORKSPACE
     "filesystem.browse": {
       path: "/home/user",
       parent: "/home",
+      isExactDirectory: true,
       entries: [{ name: "my-app", isDir: true }],
     },
   });
