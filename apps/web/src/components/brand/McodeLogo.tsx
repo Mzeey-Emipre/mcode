@@ -6,12 +6,12 @@ const LOGO_SRC = `${import.meta.env.BASE_URL}brand/mcode-layered-route-cutout.sv
 export const MCODE_LOGO_SCALES = {
   sidebar: {
     root: "gap-1.5",
-    mark: "h-9 w-9",
+    mark: "h-8 w-8",
     wordmark: "text-sm",
   },
   newThread: {
     root: "",
-    mark: "h-12 w-12 opacity-60",
+    mark: "h-14 w-14 opacity-60",
     wordmark: "text-sm",
   },
 } as const;
