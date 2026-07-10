@@ -172,6 +172,6 @@ describe("SlashCommandPopup selection indicator", () => {
     if (row === null) throw new Error(`${state} popup row not found`);
     const popup = row.closest("[data-slash-popup]") as HTMLElement;
 
-    expect(popup.style.top).toBe("356px");
+    expect(popup.style.bottom).toBe("368px");
   });
 });
