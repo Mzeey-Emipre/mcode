@@ -13,6 +13,8 @@ interface ComposerOverlaySurfaceProps
   minWidth?: number;
   /** Optional cap for compact non-composer contexts. */
   maxWidth?: number;
+  /** Whether the overlay should join the composer as a context rail. */
+  attached?: boolean;
   /** Visual palette used when the overlay appears in a preview annotation. */
   tone?: "default" | "dark";
   /** Additional surface classes for the owning autocomplete. */
@@ -29,6 +31,7 @@ export const ComposerOverlaySurface = forwardRef<HTMLDivElement, ComposerOverlay
       estimatedHeight,
       minWidth = 0,
       maxWidth,
+      attached = false,
       tone = "default",
       className,
       children,
@@ -36,12 +39,21 @@ export const ComposerOverlaySurface = forwardRef<HTMLDivElement, ComposerOverlay
     },
     ref,
   ) {
+    const overlayAnchorRect = attached
+      ? new DOMRect(
+          anchorRect.left + 14,
+          anchorRect.top,
+          Math.max(anchorRect.width - 28, 0),
+          anchorRect.height,
+        )
+      : anchorRect;
     const style = computeFixedPopupPosition({
-      anchorRect,
+      anchorRect: overlayAnchorRect,
       estimatedHeight,
       minWidth,
       maxWidth,
       preferredPlacement: "above",
+      gap: attached ? 0 : undefined,
     });
 
     return createPortal(
@@ -51,10 +63,15 @@ export const ComposerOverlaySurface = forwardRef<HTMLDivElement, ComposerOverlay
         data-composer-autocomplete="true"
         style={style}
         className={cn(
-          "composer-autocomplete-surface overflow-hidden rounded-xl border border-border/70 animate-composer-popup-enter",
+          "composer-autocomplete-surface overflow-hidden animate-composer-popup-enter",
+          attached
+            ? "rounded-t-xl bg-muted/45 ring-1 ring-inset ring-border/60"
+            : "rounded-xl border border-border/70",
           tone === "dark"
             ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
-            : "bg-popover text-popover-foreground",
+            : attached
+              ? "text-popover-foreground"
+              : "bg-popover text-popover-foreground",
           className,
         )}
       >

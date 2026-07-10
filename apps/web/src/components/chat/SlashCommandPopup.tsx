@@ -136,6 +136,7 @@ export function SlashCommandPopup({
       data-slash-popup
       anchorRect={anchorRect}
       estimatedHeight={estimatedHeight}
+      attached
       tone={tone}
       className={className}
     >

@@ -280,6 +280,7 @@ export function FileTagPopup({
         estimatedHeight={maxHeight}
         minWidth={presentation === "composer" ? 0 : 260}
         maxWidth={presentation === "composer" ? undefined : 360}
+        attached={presentation === "composer"}
         tone={tone}
         className={className}
       >

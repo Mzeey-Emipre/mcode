@@ -131,8 +131,11 @@ test.describe("Slash command popup", () => {
     ]);
     expect(popupBox).not.toBeNull();
     expect(composerBox).not.toBeNull();
-    expect(popupBox?.width).toBeCloseTo(composerBox?.width ?? 0, 0);
-    expect((popupBox?.y ?? 0) + (popupBox?.height ?? 0)).toBeLessThanOrEqual(composerBox?.y ?? 0);
+    expect(popupBox?.x).toBeCloseTo((composerBox?.x ?? 0) + 14, 0);
+    expect(popupBox?.width).toBeCloseTo((composerBox?.width ?? 0) - 28, 0);
+    expect(
+      Math.abs((popupBox?.y ?? 0) + (popupBox?.height ?? 0) - (composerBox?.y ?? 0)),
+    ).toBeLessThanOrEqual(2);
     await expect(popup.getByText("/compact")).toBeVisible();
     await expect(popup.getByText("/superpowers:brainstorming")).toBeVisible();
     await expect(popup.getByText("/hookify:hookify")).toBeVisible();

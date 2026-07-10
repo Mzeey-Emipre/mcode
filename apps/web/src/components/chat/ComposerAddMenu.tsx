@@ -9,7 +9,7 @@ interface ComposerAddMenuProps {
   getComposerRect: () => DOMRect | null;
 }
 
-const ADD_MENU_HEIGHT = 96;
+const ADD_MENU_HEIGHT = 80;
 
 /**
  * Compact attachment menu for adding files to the current composer message.
@@ -89,6 +89,7 @@ export function ComposerAddMenu({
           aria-label="Add attachment"
           anchorRect={anchorRect}
           estimatedHeight={ADD_MENU_HEIGHT}
+          attached
         >
           <div className="p-1">
             <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">Attach</div>

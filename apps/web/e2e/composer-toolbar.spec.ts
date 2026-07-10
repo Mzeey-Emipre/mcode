@@ -109,8 +109,11 @@ test.describe("Composer toolbar", () => {
     ]);
     expect(menuBox).not.toBeNull();
     expect(composerBox).not.toBeNull();
-    expect(menuBox?.width).toBeCloseTo(composerBox?.width ?? 0, 0);
-    expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(composerBox?.y ?? 0);
+    expect(menuBox?.x).toBeCloseTo((composerBox?.x ?? 0) + 14, 0);
+    expect(menuBox?.width).toBeCloseTo((composerBox?.width ?? 0) - 28, 0);
+    expect(
+      Math.abs((menuBox?.y ?? 0) + (menuBox?.height ?? 0) - (composerBox?.y ?? 0)),
+    ).toBeLessThanOrEqual(2);
     await page.screenshot({
       path: "e2e/screenshots/composer-toolbar-add-menu.png",
       fullPage: true,
