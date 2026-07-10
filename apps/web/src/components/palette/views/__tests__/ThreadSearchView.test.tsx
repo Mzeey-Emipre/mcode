@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "@/components/ui/command";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { createMockThread, createMockWorkspace } from "@/__tests__/mocks/transport";
+import type { RecentThread } from "@/transport/types";
 
 const hoisted = vi.hoisted(() => ({
   setActiveWorkspace: vi.fn(),
@@ -61,7 +62,7 @@ vi.mock("@/stores/workspaceStore", () => ({
     }),
 }));
 
-import { ThreadSearchView } from "../ThreadSearchView";
+import { filterAndSortRecentThreads, ThreadSearchView } from "../ThreadSearchView";
 
 beforeAll(() => {
   if (typeof window.ResizeObserver === "undefined") {
@@ -109,5 +110,46 @@ describe("ThreadSearchView", () => {
     expect(hoisted.setActiveWorkspace).toHaveBeenCalledWith("ws-search");
     expect(hoisted.setActiveThread).toHaveBeenCalledWith("thread-search");
     expect(useCommandPaletteStore.getState().isOpen).toBe(false);
+  });
+
+  it("applies the active filters and sort order to recent threads", () => {
+    const recentThreads: RecentThread[] = [
+      {
+        ...thread,
+        id: "recent-zulu",
+        title: "Zulu",
+        status: "completed",
+        workspace_name: "Caravan",
+        workspace_path: "C:/src/Caravan",
+      },
+      {
+        ...thread,
+        id: "recent-alpha",
+        title: "Alpha",
+        status: "active",
+        workspace_name: "Caravan",
+        workspace_path: "C:/src/Caravan",
+      },
+      {
+        ...thread,
+        id: "recent-beta",
+        title: "Beta",
+        status: "active",
+        workspace_name: "Caravan",
+        workspace_path: "C:/src/Caravan",
+      },
+    ];
+
+    const rows = filterAndSortRecentThreads(
+      recentThreads,
+      { status: ["active"], provider: [] },
+      "title",
+      "asc",
+    );
+
+    expect(rows.map((recentThread) => recentThread.title)).toEqual([
+      "Alpha",
+      "Beta",
+    ]);
   });
 });

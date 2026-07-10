@@ -82,10 +82,15 @@ export function CommandPalette() {
     : top?.kind === "projects"
       ? "Search projects…"
       : top?.kind === "threadSearch"
-        ? "Search thread title, project, provider, branch, or worktree…"
+        ? "Search threads, projects, branches, worktrees…"
       : top?.kind === "selectionList"
         ? `Search ${top.title.toLowerCase()}…`
         : "Search commands, type ~/ to browse, > for actions only…";
+  const inputLabel = browseMode
+    ? "Folder path or folder filter"
+    : top?.kind === "threadSearch"
+      ? "Search threads"
+      : "Command palette search";
 
   return (
     <DialogPrimitive.Root open={isOpen} onOpenChange={(o) => !o && close()} modal="trap-focus">
@@ -119,6 +124,7 @@ export function CommandPalette() {
               setQuery={setQuery}
               browseMode={browseMode}
               canAdd={pendingConfirm != null}
+              inputLabel={inputLabel}
               modeLabel={browseMode ? "browse" : top?.kind === "projects" ? "projects" : top?.kind === "threadSearch" ? "threads" : getPaletteMode(query)}
               onKeyDown={(e) => {
                 // Backspace on empty input pops the view stack.
@@ -158,6 +164,7 @@ function PaletteInput({
   setQuery,
   browseMode,
   canAdd,
+  inputLabel,
   modeLabel,
   onKeyDown,
   onAddClick,
@@ -167,6 +174,7 @@ function PaletteInput({
   setQuery: (q: string) => void;
   browseMode: boolean;
   canAdd: boolean;
+  inputLabel: string;
   modeLabel: string;
   onKeyDown: KeyboardEventHandler<HTMLInputElement>;
   onAddClick: () => void;
@@ -186,7 +194,7 @@ function PaletteInput({
         data-slot="palette-input"
         placeholder={placeholder}
         value={query}
-        aria-label={browseMode ? "Folder path or folder filter" : "Command palette search"}
+        aria-label={inputLabel}
         onValueChange={setQuery}
         onKeyDownCapture={onKeyDown}
         className={cn(

@@ -4,6 +4,34 @@ import { mockWebSocketServer } from "./helpers/e2e-helpers";
 test.describe("Sidebar thread actions", () => {
   test.beforeEach(async ({ page }) => {
     const now = new Date().toISOString();
+    const thread = {
+      id: "thread-1",
+      workspace_id: "ws-1",
+      title: "Test Thread",
+      status: "active",
+      mode: "direct",
+      worktree_path: null,
+      branch: "main",
+      worktree_managed: false,
+      issue_number: null,
+      pr_number: null,
+      pr_status: null,
+      sdk_session_id: null,
+      created_at: now,
+      updated_at: now,
+      model: "claude-3-5-sonnet",
+      provider: "claude",
+      deleted_at: null,
+      last_context_tokens: null,
+      context_window: null,
+      reasoning_level: null,
+      interaction_mode: null,
+      permission_mode: null,
+      parent_thread_id: null,
+      forked_from_message_id: null,
+      copilot_agent: null,
+      last_compact_summary: null,
+    };
     await mockWebSocketServer(page, {
       "workspace.list": [
         {
@@ -31,34 +59,28 @@ test.describe("Sidebar thread actions", () => {
         created_at: now,
         updated_at: now,
       },
-      "thread.list": [
+      "thread.list": [thread],
+      "thread.recent": [
         {
-          id: "thread-1",
-          workspace_id: "ws-1",
-          title: "Test Thread",
-          status: "active",
-          mode: "direct",
-          worktree_path: null,
-          branch: "main",
-          worktree_managed: false,
-          issue_number: null,
-          pr_number: null,
-          pr_status: null,
-          sdk_session_id: null,
-          created_at: now,
-          updated_at: now,
-          model: "claude-3-5-sonnet",
-          provider: "claude",
-          deleted_at: null,
-          last_context_tokens: null,
-          context_window: null,
-          reasoning_level: null,
-          interaction_mode: null,
-          permission_mode: null,
-          parent_thread_id: null,
-          forked_from_message_id: null,
-          copilot_agent: null,
-          last_compact_summary: null,
+          ...thread,
+          workspace_name: "Test Workspace",
+          workspace_path: "/test/path",
+        },
+        {
+          ...thread,
+          id: "thread-2",
+          title: "Alpha thread",
+          status: "completed",
+          workspace_name: "Test Workspace",
+          workspace_path: "/test/path",
+        },
+        {
+          ...thread,
+          id: "thread-3",
+          title: "Beta thread",
+          status: "paused",
+          workspace_name: "Test Workspace",
+          workspace_path: "/test/path",
         },
       ],
       "git.listBranches": [
@@ -81,9 +103,11 @@ test.describe("Sidebar thread actions", () => {
     await expect(searchInput).toBeVisible();
     await expect(searchInput).toHaveAttribute(
       "placeholder",
-      "Search thread title, project, provider, branch, or worktree…",
+      "Search threads, projects, branches, worktrees…",
     );
-    await expect(page.getByText("Recent activity", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("thread-search-toolbar")).toContainText(
+      "3 recent threads",
+    );
   });
 
   test("Ctrl+Shift+F opens and focuses the thread finder", async ({ page }) => {
@@ -244,5 +268,33 @@ test.describe("Sidebar thread actions", () => {
     await expect(sortButton).toBeVisible();
     const filterButton = page.getByLabel("Filter threads");
     await expect(filterButton).toBeVisible();
+  });
+
+  test("the finder applies filters to recent threads", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Search threads" }).click();
+    await expect(page.getByTestId("thread-search-toolbar")).toContainText(
+      "3 recent threads",
+    );
+
+    const filterButton = page.getByLabel("Filter threads");
+    await filterButton.click();
+    await expect(
+      page.getByRole("checkbox", { name: "Action required" }),
+    ).toHaveCount(0);
+    await page.getByRole("checkbox", { name: "Completed" }).click();
+
+    await expect(page.getByTestId("thread-search-toolbar")).toContainText(
+      "1 recent thread",
+    );
+    await expect(
+      page.getByTestId("thread-search-result-thread-2"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("thread-search-result-thread-2"),
+    ).toContainText("Completed");
+    await expect(page.getByTestId("thread-search-result-thread-1")).toHaveCount(
+      0,
+    );
   });
 });

@@ -1,8 +1,12 @@
-import { useEffect, useMemo, type ComponentType } from "react";
+import { useEffect, useLayoutEffect, useMemo, type ComponentType } from "react";
 import { Activity, Folder, GitBranch } from "lucide-react";
-import { CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
+import {
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
   ClaudeIcon,
@@ -16,7 +20,12 @@ import { ThreadFilterDropdown } from "@/components/sidebar/ThreadFilterDropdown"
 import { ThreadSortControl } from "@/components/sidebar/ThreadSortControl";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useRecentThreadsStore } from "@/stores/recentThreadsStore";
-import { useSidebarSearchStore } from "@/stores/sidebarSearchStore";
+import {
+  useSidebarSearchStore,
+  type SortDirection,
+  type ThreadFilters,
+  type ThreadSortField,
+} from "@/stores/sidebarSearchStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { RecentThread, Thread } from "@/transport/types";
 import { cn } from "@/lib/utils";
@@ -43,8 +52,49 @@ function worktreeName(path: string | null): string | null {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }
 
+function statusLabel(status: Thread["status"]): string {
+  return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
+}
+
+function statusTone(status: Thread["status"]): string {
+  if (status === "errored") return "bg-destructive";
+  if (status === "completed") return "bg-[var(--diff-add-strong)]";
+  if (status === "active") return "bg-primary";
+  return "bg-muted-foreground/50";
+}
+
+/** Applies the thread finder's active filters and sort order to recent threads. */
+export function filterAndSortRecentThreads(
+  threads: RecentThread[],
+  filters: ThreadFilters,
+  sortField: ThreadSortField,
+  sortDirection: SortDirection,
+): RecentThread[] {
+  return [...threads]
+    .filter(
+      (thread) =>
+        (filters.status.length === 0 ||
+          filters.status.includes(thread.status)) &&
+        (filters.provider.length === 0 ||
+          filters.provider.includes(thread.provider)),
+    )
+    .sort((left, right) => {
+      const order =
+        sortField === "title"
+          ? left.title.localeCompare(right.title)
+          : left[sortField].localeCompare(right[sortField]);
+      return sortDirection === "asc" ? order : -order;
+    });
+}
+
 /** One metadata-rich result in the cross-project thread finder. */
-function ThreadSearchResult({ row, onSelect }: { row: SearchRow; onSelect: () => void }) {
+function ThreadSearchResult({
+  row,
+  onSelect,
+}: {
+  row: SearchRow;
+  onSelect: () => void;
+}) {
   const { thread } = row;
   const Provider = PROVIDER_ICONS[thread.provider] ?? Activity;
   const worktree = worktreeName(thread.worktree_path);
@@ -53,52 +103,59 @@ function ThreadSearchResult({ row, onSelect }: { row: SearchRow; onSelect: () =>
     <CommandItem
       value={thread.id}
       onSelect={onSelect}
-      className="group min-h-14 items-start gap-3 rounded-md px-3 py-2.5"
+      className="group min-h-16 items-start gap-2.5 rounded-md px-3 py-2.5"
       data-testid={`thread-search-result-${thread.id}`}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-accent/70 text-muted-foreground group-aria-selected:text-foreground"
-              aria-label={`Provider, ${thread.provider}`}
-            >
-              <Provider size={14} />
-            </span>
-          }
-        />
-        <TooltipContent side="left">{thread.provider}</TooltipContent>
-      </Tooltip>
+      <span
+        className="mt-0.5 flex size-7 shrink-0 items-center justify-center text-muted-foreground group-aria-selected:text-foreground"
+        aria-label={`Provider, ${thread.provider}`}
+      >
+        <Provider size={14} />
+      </span>
 
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium text-foreground">{thread.title}</div>
-        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span className="inline-flex min-w-0 items-center gap-1" title={row.workspacePath}>
+        <div className="truncate text-sm font-medium text-foreground">
+          {thread.title}
+        </div>
+        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
+          <span
+            className="inline-flex min-w-0 items-center gap-1"
+            title={row.workspacePath}
+          >
             <Folder size={12} aria-hidden />
             <span className="max-w-40 truncate">{row.workspaceName}</span>
           </span>
-          <span className="inline-flex min-w-0 items-center gap-1" title={thread.branch}>
+          <span
+            className="inline-flex min-w-0 items-center gap-1"
+            title={thread.branch}
+          >
             <GitBranch size={12} aria-hidden />
             <span className="max-w-44 truncate font-mono">{thread.branch}</span>
           </span>
           {worktree && (
-            <span className="inline-flex min-w-0 items-center gap-1" title={thread.worktree_path ?? undefined}>
+            <span
+              className="inline-flex min-w-0 items-center gap-1"
+              title={thread.worktree_path ?? undefined}
+            >
               <WorktreeModeIcon size={12} aria-hidden />
               <span className="max-w-40 truncate font-mono">{worktree}</span>
             </span>
           )}
+          <span
+            className="inline-flex items-center gap-1.5"
+            aria-label={`Status: ${statusLabel(thread.status)}`}
+          >
+            <span
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                statusTone(thread.status),
+              )}
+              aria-hidden
+            />
+            <span>{statusLabel(thread.status)}</span>
+          </span>
         </div>
       </div>
-
-      <span
-        className={cn(
-          "mt-1 size-1.5 shrink-0 rounded-full bg-muted-foreground/35",
-          thread.status === "errored" && "bg-destructive",
-          thread.status === "completed" && "bg-[var(--diff-add-strong)]",
-        )}
-        aria-label={thread.status}
-        title={thread.status}
-      />
     </CommandItem>
   );
 }
@@ -111,21 +168,28 @@ export function ThreadSearchView() {
   const recentLoading = useRecentThreadsStore((state) => state.loading);
   const fetchRecent = useRecentThreadsStore((state) => state.fetch);
   const serverResults = useSidebarSearchStore((state) => state.serverResults);
-  const serverWorkspaces = useSidebarSearchStore((state) => state.serverWorkspaces);
+  const serverWorkspaces = useSidebarSearchStore(
+    (state) => state.serverWorkspaces,
+  );
   const isSearching = useSidebarSearchStore((state) => state.isSearching);
   const searchError = useSidebarSearchStore((state) => state.searchError);
+  const filters = useSidebarSearchStore((state) => state.filters);
+  const sortField = useSidebarSearchStore((state) => state.sortField);
+  const sortDirection = useSidebarSearchStore((state) => state.sortDirection);
   const setSearchQuery = useSidebarSearchStore((state) => state.setQuery);
   const clearSearchQuery = useSidebarSearchStore((state) => state.clearQuery);
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const projectThreads = useWorkspaceStore((state) => state.threads);
-  const setActiveWorkspace = useWorkspaceStore((state) => state.setActiveWorkspace);
+  const setActiveWorkspace = useWorkspaceStore(
+    (state) => state.setActiveWorkspace,
+  );
   const setActiveThread = useWorkspaceStore((state) => state.setActiveThread);
 
   useEffect(() => {
     void fetchRecent(20);
   }, [fetchRecent]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSearchQuery(query);
   }, [query, setSearchQuery]);
 
@@ -142,9 +206,20 @@ export function ThreadSearchView() {
     return map;
   }, [serverWorkspaces, workspaces]);
 
+  const sortedRecentThreads = useMemo(
+    () =>
+      filterAndSortRecentThreads(
+        recentThreads,
+        filters,
+        sortField,
+        sortDirection,
+      ),
+    [filters, recentThreads, sortDirection, sortField],
+  );
+
   const rows = useMemo<SearchRow[]>(() => {
     if (!query.trim()) {
-      return recentThreads.map((thread) => ({
+      return sortedRecentThreads.map((thread) => ({
         thread,
         workspaceName: thread.workspace_name,
         workspacePath: thread.workspace_path,
@@ -158,7 +233,7 @@ export function ThreadSearchView() {
         workspacePath: workspace?.path ?? "",
       };
     });
-  }, [query, recentThreads, serverResults, workspaceById]);
+  }, [query, serverResults, sortedRecentThreads, workspaceById]);
 
   const providers = useMemo(
     () =>
@@ -179,14 +254,43 @@ export function ThreadSearchView() {
   };
 
   const loading = query.trim() ? isSearching : recentLoading;
+  const resultLabel = loading
+    ? "Searching…"
+    : query.trim()
+      ? `${rows.length} ${rows.length === 1 ? "result" : "results"}`
+      : `${rows.length} ${rows.length === 1 ? "recent thread" : "recent threads"}`;
 
   return (
     <>
+      <div
+        data-testid="thread-search-toolbar"
+        className="flex min-h-11 items-center justify-between gap-3 border-b border-border/60 px-3 py-1.5"
+      >
+        <div
+          aria-live="polite"
+          className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground"
+        >
+          {loading && <Spinner size={12} aria-hidden />}
+          <span>{resultLabel}</span>
+        </div>
+        <div
+          className="flex shrink-0 items-center gap-1"
+          role="toolbar"
+          aria-label="Thread search controls"
+        >
+          <ThreadSortControl showLabel />
+          <ThreadFilterDropdown providers={providers} showLabel />
+        </div>
+      </div>
+
       <CommandList className="max-h-[28rem] overflow-y-auto p-1.5">
         {loading && rows.length === 0 ? (
           <div className="grid gap-1 px-1 py-2" aria-label="Loading threads">
             {[0, 1, 2].map((item) => (
-              <div key={item} className="flex h-14 animate-pulse items-center gap-3 rounded-md px-3">
+              <div
+                key={item}
+                className="flex h-14 animate-pulse items-center gap-3 rounded-md px-3"
+              >
                 <span className="size-7 rounded-md bg-accent" />
                 <span className="grid flex-1 gap-2">
                   <span className="h-3 w-2/5 rounded bg-accent" />
@@ -197,7 +301,11 @@ export function ThreadSearchView() {
           </div>
         ) : rows.length === 0 ? (
           <CommandEmpty>
-            {searchError ? "Thread search is unavailable." : query.trim() ? "No matching threads." : "No recent threads."}
+            {searchError
+              ? "Thread search is unavailable."
+              : query.trim()
+                ? "No matching threads."
+                : "No recent threads."}
           </CommandEmpty>
         ) : (
           <CommandGroup heading={query.trim() ? "Threads" : "Recent threads"}>
@@ -211,16 +319,6 @@ export function ThreadSearchView() {
           </CommandGroup>
         )}
       </CommandList>
-
-      <div className="flex min-h-10 items-center gap-2 border-t border-border/60 px-3 py-1.5">
-        {isSearching && <Spinner size={12} className="text-muted-foreground" />}
-        <span className="text-xs text-muted-foreground">
-          {query.trim() ? `${rows.length} results` : "Recent activity"}
-        </span>
-        <span className="flex-1" />
-        <ThreadSortControl />
-        <ThreadFilterDropdown providers={providers} />
-      </div>
     </>
   );
 }

@@ -11,9 +11,9 @@ const SORT_OPTIONS: { field: ThreadSortField; label: string }[] = [
 ];
 
 const SORT_LABELS: Record<ThreadSortField, string> = {
-  updated_at: "recent",
-  created_at: "created",
-  title: "name",
+  updated_at: "Recent",
+  created_at: "Created",
+  title: "Name",
 };
 
 /** Direction label shown at the bottom of the sort dropdown. */
@@ -22,8 +22,12 @@ function directionLabel(field: ThreadSortField, dir: "asc" | "desc"): string {
   return dir === "desc" ? "↓ Newest first" : "↑ Oldest first";
 }
 
-/** Persistent sort label + dropdown for the sidebar PROJECTS header. */
-export function ThreadSortControl() {
+/** Persistent sort control shared by thread-list surfaces. */
+export function ThreadSortControl({
+  showLabel = false,
+}: {
+  showLabel?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const sortField = useSidebarSearchStore((s) => s.sortField);
   const sortDirection = useSidebarSearchStore((s) => s.sortDirection);
@@ -41,10 +45,17 @@ export function ThreadSortControl() {
             type="button"
             variant="ghost"
             size="xs"
-            className={isNonDefault ? "h-7 gap-1 px-2 text-xs text-primary" : "h-7 gap-1 px-2 text-xs text-muted-foreground"}
-            aria-label="Sort threads"
+            className={
+              isNonDefault
+                ? "h-8 gap-1.5 px-2 text-primary"
+                : "h-8 gap-1.5 px-2 text-muted-foreground"
+            }
+            aria-label={`Sort threads: ${SORT_LABELS[sortField]}, ${directionLabel(sortField, sortDirection)}`}
           >
-            {SORT_LABELS[sortField]} {arrow}
+            {showLabel && <span className="text-xs">Sort</span>}
+            <span className="text-xs">
+              {SORT_LABELS[sortField]} {arrow}
+            </span>
           </Button>
         }
       />
@@ -54,7 +65,7 @@ export function ThreadSortControl() {
         sideOffset={4}
         className="w-44 rounded-md border border-border bg-popover p-1 shadow-lg"
       >
-        <div className="px-2 pb-1 pt-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/50">
+        <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">
           Sort threads by
         </div>
         {SORT_OPTIONS.map((opt) => (
@@ -63,7 +74,7 @@ export function ThreadSortControl() {
             variant="ghost"
             size="xs"
             key={opt.field}
-            className={`h-7 w-full justify-between px-2 text-xs font-normal ${
+            className={`h-8 w-full justify-between px-2 text-sm font-normal ${
               sortField === opt.field ? "text-primary" : "text-muted-foreground"
             }`}
             onClick={() => {
@@ -72,7 +83,9 @@ export function ThreadSortControl() {
             }}
           >
             {opt.label}
-            {sortField === opt.field && <Check size={11} className="text-primary" />}
+            {sortField === opt.field && (
+              <Check size={11} className="text-primary" />
+            )}
           </Button>
         ))}
         <div className="mx-1 my-1 h-px bg-border/50" />
@@ -80,13 +93,10 @@ export function ThreadSortControl() {
           type="button"
           variant="ghost"
           size="xs"
-          className="h-7 w-full justify-start gap-1.5 px-2 text-xs font-normal text-muted-foreground"
+          className="h-8 w-full justify-start gap-1.5 px-2 text-sm font-normal text-muted-foreground"
           onClick={toggleSortDirection}
         >
           {directionLabel(sortField, sortDirection)}
-          <span className="ml-auto font-mono text-[9px] text-muted-foreground/40">
-            click to flip
-          </span>
         </Button>
       </PopoverContent>
     </Popover>

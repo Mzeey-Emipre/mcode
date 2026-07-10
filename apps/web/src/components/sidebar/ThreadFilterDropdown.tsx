@@ -3,6 +3,7 @@ import { useSidebarSearchStore } from "@/stores/sidebarSearchStore";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Check, ListFilter } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const STATUS_OPTIONS = [
@@ -11,7 +12,6 @@ const STATUS_OPTIONS = [
   { value: "errored", label: "Errored" },
   { value: "interrupted", label: "Interrupted" },
   { value: "paused", label: "Paused" },
-  { value: "action_required", label: "Action required" },
 ];
 
 /** Checkbox row inside the filter dropdown. */
@@ -31,7 +31,7 @@ function FilterCheckbox({
       size="xs"
       role="checkbox"
       aria-checked={checked}
-      className="h-7 w-full justify-start gap-2 px-2 text-xs font-normal text-muted-foreground"
+      className="h-8 w-full justify-start gap-2 px-2 text-sm font-normal text-muted-foreground"
       onClick={onChange}
     >
       <span
@@ -48,14 +48,21 @@ function FilterCheckbox({
   );
 }
 
-/** Filter popover triggered from the search bar's filter icon. */
-export function ThreadFilterDropdown({ providers }: { providers: string[] }) {
+/** Filter popover for thread-list controls. */
+export function ThreadFilterDropdown({
+  providers,
+  showLabel = false,
+}: {
+  providers: string[];
+  showLabel?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const filters = useSidebarSearchStore((s) => s.filters);
   const toggleFilter = useSidebarSearchStore((s) => s.toggleFilter);
   const clearFilters = useSidebarSearchStore((s) => s.clearFilters);
 
   const hasActiveFilters = filters.status.length > 0 || filters.provider.length > 0;
+  const activeFilterCount = filters.status.length + filters.provider.length;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -64,14 +71,26 @@ export function ThreadFilterDropdown({ providers }: { providers: string[] }) {
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
+            size={showLabel ? "xs" : "icon-xs"}
             className={cn(
-              "text-muted-foreground",
-              hasActiveFilters ? "bg-primary/10 text-primary" : "hover:text-foreground",
+              "h-8 gap-1.5 text-muted-foreground",
+              hasActiveFilters
+                ? "bg-primary/10 text-primary"
+                : "hover:text-foreground",
             )}
-            aria-label="Filter threads"
+            aria-label={
+              hasActiveFilters
+                ? `Filter threads, ${activeFilterCount} active`
+                : "Filter threads"
+            }
           >
             <ListFilter size={12} />
+            {showLabel && <span className="text-xs">Filter</span>}
+            {hasActiveFilters && (
+              <Badge variant="secondary" size="sm">
+                {activeFilterCount}
+              </Badge>
+            )}
           </Button>
         }
       />
@@ -81,7 +100,7 @@ export function ThreadFilterDropdown({ providers }: { providers: string[] }) {
         sideOffset={4}
         className="w-44 rounded-md border border-border bg-popover p-1 shadow-lg"
       >
-        <div className="px-2 pb-1 pt-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/50">
+        <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">
           Status
         </div>
         {STATUS_OPTIONS.map((opt) => (
@@ -95,7 +114,7 @@ export function ThreadFilterDropdown({ providers }: { providers: string[] }) {
         {providers.length > 0 && (
           <>
             <div className="mx-1 my-1 h-px bg-border/50" />
-            <div className="px-2 pb-1 pt-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/50">
+            <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">
               Provider
             </div>
             {providers.map((p) => (
@@ -115,7 +134,7 @@ export function ThreadFilterDropdown({ providers }: { providers: string[] }) {
               type="button"
               variant="ghost"
               size="xs"
-              className="h-7 w-full justify-start px-2 text-xs font-normal text-muted-foreground"
+              className="h-8 w-full justify-start px-2 text-sm font-normal text-muted-foreground"
               onClick={() => {
                 clearFilters();
                 setOpen(false);
