@@ -1406,10 +1406,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const setNewThreadMode = useWorkspaceStore((s) => s.setNewThreadMode);
   const setNewThreadBranch = useWorkspaceStore((s) => s.setNewThreadBranch);
   const setNewThreadBranchFromPr = useWorkspaceStore((s) => s.setNewThreadBranchFromPr);
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
 
   const activeWorkspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId),
   );
+  const clearActiveProject = useCallback(() => {
+    setActiveWorkspace(null);
+  }, [setActiveWorkspace]);
   const isGitRepo = activeWorkspace?.is_git_repo ?? false;
   const needsWorkspace = Boolean(isNewThread && !workspaceId);
 
@@ -2827,13 +2831,25 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         >
           {activeWorkspace ? (
             <>
-              <span
-                className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none text-foreground/90"
-                title={activeWorkspace.path}
+              <div
+                className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md pl-[10px] text-[12px] font-medium leading-none text-foreground/90"
               >
                 <Folder size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-                <span className="max-w-40 truncate">{activeWorkspace.name}</span>
-              </span>
+                <span className="max-w-40 truncate" title={activeWorkspace.path}>
+                  {activeWorkspace.name}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Clear ${activeWorkspace.name} project`}
+                  title="Clear project"
+                  onClick={clearActiveProject}
+                  className="-mr-0.5 size-7 rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
+                >
+                  <X className="size-3.5" aria-hidden />
+                </Button>
+              </div>
               <ModeSelector
                 mode={composerMode}
                 onModeChange={setComposerMode}

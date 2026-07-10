@@ -85,6 +85,20 @@ test.describe("Projectless new-thread workbench", () => {
     await expect(editor).toHaveText("Keep this draft");
   });
 
+  test("clears selected project context without losing the draft", async ({ page }) => {
+    await setupProjectlessWorkbench(page);
+    const editor = page.locator('[aria-placeholder="Do anything"]');
+    await editor.fill("Keep this draft");
+    await page.getByTestId("new-thread-project-picker").click();
+    await page.locator('[data-slot="popover-content"]').getByText("pinned-app", { exact: true }).click();
+
+    await page.getByRole("button", { name: "Clear pinned-app project" }).click();
+
+    await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
+    await expect(page.getByTestId("new-thread-project-picker")).toBeVisible();
+    await expect(editor).toHaveText("Keep this draft");
+  });
+
   test("New project opens the existing folder workflow", async ({ page }) => {
     await setupProjectlessWorkbench(page);
     await page.getByTestId("new-thread-project-picker").click();

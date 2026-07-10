@@ -316,6 +316,18 @@ describe("Composer checkout confirmation", () => {
     expect(within(strip).getByTestId("branch-picker")).toHaveTextContent("feature/base");
   });
 
+  it("clears the selected project without deleting it", async () => {
+    const workspace = seedComposerState("direct");
+    render(<Composer isNewThread workspaceId="ws-1" />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: `Clear ${workspace.name} project` }),
+    );
+
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
+    expect(useWorkspaceStore.getState().workspaces).toContainEqual(workspace);
+  });
+
   it("confirms Direct branch checkout in an app dialog before sending", async () => {
     seedComposerState("direct");
     render(<Composer isNewThread workspaceId="ws-1" />);
