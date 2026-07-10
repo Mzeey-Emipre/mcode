@@ -9,6 +9,7 @@ const VISIBLE_ITEMS = 8;
 const GROUP_HEADER_HEIGHT = 28;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
 const LIST_SURFACE_PADDING = 8;
+const LIST_BOTTOM_FADE_HEIGHT = 20;
 
 const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
   mcode: "Mcode",
@@ -107,13 +108,14 @@ export function SlashCommandPopup({
 
   const listMaxHeight =
     VISIBLE_ITEMS * ITEM_HEIGHT +
-    Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT;
+    Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT +
+    LIST_BOTTOM_FADE_HEIGHT;
 
   // Estimate the rendered popup height before positioning. The scrollport is
   // inset from the surface so its native scrollbar clears the rounded corner.
   const willRenderList = state.kind === "ready" || state.kind === "staleRevalidating";
   const renderedListHeight = Math.min(
-    items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT,
+    items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT + LIST_BOTTOM_FADE_HEIGHT,
     listMaxHeight,
   );
   const estimatedHeight =
@@ -151,7 +153,7 @@ export function SlashCommandPopup({
           case "staleRevalidating":
             return (
               <>
-                <div className="p-1">
+                <div className="relative p-1">
                   <div
                     ref={scrollRef}
                     role="listbox"
@@ -160,38 +162,47 @@ export function SlashCommandPopup({
                     className="overflow-y-auto"
                     style={{ maxHeight: listMaxHeight, scrollbarGutter: "stable" }}
                   >
-                    {commandGroups.map(({ namespace, items: groupItems }) => (
-                      <div
-                        key={namespace}
-                        role="group"
-                        aria-label={NAMESPACE_LABELS[namespace]}
-                        data-testid={`slash-command-group-${namespace}`}
-                      >
+                    <div className="pb-5">
+                      {commandGroups.map(({ namespace, items: groupItems }) => (
                         <div
-                          data-slash-group-heading
-                          role="presentation"
-                          className={cn(
-                            "sticky top-0 z-10 bg-inherit px-2 py-1.5 text-xs font-medium",
-                            tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
-                          )}
+                          key={namespace}
+                          role="group"
+                          aria-label={NAMESPACE_LABELS[namespace]}
+                          data-testid={`slash-command-group-${namespace}`}
                         >
-                          {NAMESPACE_LABELS[namespace]}
+                          <div
+                            data-slash-group-heading
+                            role="presentation"
+                            className={cn(
+                              "bg-popover px-2 py-1.5 text-xs font-medium text-foreground",
+                              tone === "dark" && "bg-[#1e1e1e] text-neutral-100",
+                            )}
+                          >
+                            {NAMESPACE_LABELS[namespace]}
+                          </div>
+                          {groupItems.map(({ command: cmd, index }) => {
+                            return (
+                              <div key={cmd.name} role="presentation" data-index={index}>
+                                <CommandRow
+                                  cmd={cmd}
+                                  selected={index === selectedIndex}
+                                  onSelect={onSelect}
+                                  tone={tone}
+                                />
+                              </div>
+                            );
+                          })}
                         </div>
-                        {groupItems.map(({ command: cmd, index }) => {
-                          return (
-                            <div key={cmd.name} role="presentation" data-index={index}>
-                              <CommandRow
-                                cmd={cmd}
-                                selected={index === selectedIndex}
-                                onSelect={onSelect}
-                                tone={tone}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
+                  <div
+                    aria-hidden="true"
+                    className={cn(
+                      "pointer-events-none absolute inset-x-1 bottom-1 h-5 bg-gradient-to-t from-popover via-popover/90 to-transparent",
+                      tone === "dark" && "from-[#1e1e1e] via-[#1e1e1e]/90",
+                    )}
+                  />
                 </div>
               </>
             );
