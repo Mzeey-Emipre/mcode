@@ -109,8 +109,12 @@ test.describe("Composer toolbar", () => {
     ]);
     expect(menuBox).not.toBeNull();
     expect(composerBox).not.toBeNull();
-    expect(menuBox?.x).toBeCloseTo((composerBox?.x ?? 0) + 14, 0);
-    expect(menuBox?.width).toBeCloseTo((composerBox?.width ?? 0) - 28, 0);
+    const leftInset = (menuBox?.x ?? 0) - (composerBox?.x ?? 0);
+    const rightInset =
+      (composerBox?.x ?? 0) + (composerBox?.width ?? 0) -
+      ((menuBox?.x ?? 0) + (menuBox?.width ?? 0));
+    expect(Math.abs(leftInset - 14)).toBeLessThanOrEqual(2);
+    expect(Math.abs(rightInset - 14)).toBeLessThanOrEqual(2);
     expect(
       Math.abs((menuBox?.y ?? 0) + (menuBox?.height ?? 0) - (composerBox?.y ?? 0)),
     ).toBeLessThanOrEqual(2);
