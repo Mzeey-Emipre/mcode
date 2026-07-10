@@ -83,18 +83,28 @@ test.describe("Composer toolbar", () => {
     });
     await interceptZustandStores(page);
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(() => (window as unknown as { __mcodeHydrationComplete?: boolean }).__mcodeHydrationComplete === true);
     await setupChat(page);
 
     await page.waitForSelector('[contenteditable="true"]', { timeout: 30_000 });
   });
 
-  test("shows attach control and hidden file input", async ({ page }) => {
-    await expect(page.getByTestId("composer-attach")).toBeVisible({ timeout: 15_000 });
+  test("opens the add menu and keeps the file input available", async ({ page }) => {
+    await expect(page.getByTestId("composer-add")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("composer-attachment-input")).toBeAttached();
+    await page.getByTestId("composer-add").click();
+    const menu = page.getByTestId("composer-add-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("button", { name: /Files/ })).toBeVisible();
+    await expect(menu.getByRole("button", { name: /Goal/ })).toBeVisible();
+    await expect(menu.getByRole("button", { name: /Plan mode/ })).toBeVisible();
+    await expect(menu.getByRole("button", { name: /Mention an agent or file/ })).toBeVisible();
+    await menu.getByRole("button", { name: /Mention an agent or file/ }).click();
+    await expect(menu).toHaveCount(0);
+    await expect(page.locator('[contenteditable="true"]')).toContainText("@");
     await page.screenshot({
-      path: "e2e/screenshots/composer-toolbar-attach.png",
+      path: "e2e/screenshots/composer-toolbar-add-menu.png",
       fullPage: true,
     });
   });

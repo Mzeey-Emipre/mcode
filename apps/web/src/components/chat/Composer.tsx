@@ -17,7 +17,6 @@ import {
   Check,
   ListChecks,
   MoreHorizontal,
-  Paperclip,
   Target,
   Info,
   Trash2,
@@ -58,6 +57,7 @@ import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache, type MentionSuggestion } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
+import { ComposerAddMenu } from "./ComposerAddMenu";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import {
   ComposerEditor,
@@ -81,7 +81,14 @@ import {
 import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
 import { SlashCommandPopup } from "./SlashCommandPopup";
-import { type LexicalEditor, $getRoot, $createParagraphNode, $createTextNode } from "lexical";
+import {
+  type LexicalEditor,
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  $createParagraphNode,
+  $createTextNode,
+} from "lexical";
 import { PrDetectedCard } from "./PrDetectedCard";
 import type { PrDetail } from "@/transport/types";
 import { ComposerQueueList } from "./ComposerQueueList";
@@ -999,6 +1006,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const editorRef = useRef<LexicalEditor | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [filePopupAnchorRect, setFilePopupAnchorRect] = useState<DOMRect | null>(null);
 
   const prevThreadIdRef = useRef<string | undefined>(threadId);
   const draftRef = useRef<{
@@ -1398,6 +1406,48 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     onDismiss: fileAutocomplete.dismiss,
   });
 
+  useEffect(() => {
+    if (!fileAutocomplete.isOpen) {
+      setFilePopupAnchorRect(null);
+      return;
+    }
+    setFilePopupAnchorRect(editorContainerRef.current?.getBoundingClientRect() ?? null);
+  }, [fileAutocomplete.isOpen]);
+
+  const insertComposerText = useCallback((text: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    editor.focus();
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        selection.insertText(text);
+        return;
+      }
+      $getRoot().selectEnd().insertText(text);
+    });
+  }, []);
+
+  const handleInsertGoal = useCallback(() => {
+    const prefix = input.length > 0 && !/\s$/.test(input) ? " " : "";
+    insertComposerText(`${prefix}/goal `);
+  }, [input, insertComposerText]);
+
+  const handleOpenMentionSearch = useCallback(() => {
+    const prefix = input.length > 0 && !/\s$/.test(input) ? " " : "";
+    insertComposerText(`${prefix}@`);
+  }, [input, insertComposerText]);
+
+  const toggleInteractionMode = useCallback(() => {
+    const next =
+      mode === INTERACTION_MODES.PLAN
+        ? INTERACTION_MODES.BUILD
+        : INTERACTION_MODES.PLAN;
+    setMode(next);
+    if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+  }, [mode, setMode, threadId, setThreadSettings]);
+
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
   const newThreadMode = useWorkspaceStore((s) => s.newThreadMode);
@@ -1428,12 +1478,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     providerId: effectiveProviderId,
     onMcodeCommand: (action) => {
       if (action === "toggle-plan") {
-        const next =
-          mode === INTERACTION_MODES.PLAN
-            ? INTERACTION_MODES.BUILD
-            : INTERACTION_MODES.PLAN;
-        setMode(next);
-        if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+        toggleInteractionMode();
       }
     },
   });
@@ -3026,6 +3071,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             onSelect={handleMentionSelect}
             listRef={filePopup.listRef}
             selectedIndex={filePopup.selectedIndex}
+            anchorRect={filePopupAnchorRect}
           />
           <SpellcheckContextMenu editorRef={editorContainerRef} />
         </div>
@@ -3072,25 +3118,15 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             data-testid="composer-attachment-input"
             onChange={handleAttachmentInputChange}
           />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Attach files"
-                  data-testid="composer-attach"
-                  onClick={handleAttachPick}
-                  className="text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                  disabled={planPending || isStaleWorktree || !!providerReason}
-                >
-                  <Paperclip size={14} />
-                </Button>
-              }
-            />
-            <TooltipContent>Attach files</TooltipContent>
-          </Tooltip>
+          <ComposerAddMenu
+            disabled={planPending || isStaleWorktree || !!providerReason}
+            planActive={mode === INTERACTION_MODES.PLAN}
+            supportsGoals={effectiveProviderId === "claude" || effectiveProviderId === "codex"}
+            onAttachFiles={handleAttachPick}
+            onInsertGoal={handleInsertGoal}
+            onTogglePlan={toggleInteractionMode}
+            onMention={handleOpenMentionSearch}
+          />
           {/* Model picker */}
           <ModelSelector
             selectedModelId={modelId}

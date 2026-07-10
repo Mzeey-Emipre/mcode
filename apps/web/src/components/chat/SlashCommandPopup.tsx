@@ -111,11 +111,10 @@ export function SlashCommandPopup({
       data-slash-popup
       style={style}
       className={cn(
-        "z-50 flex flex-col overflow-hidden rounded-lg border shadow-lg",
-        "animate-in fade-in-0 zoom-in-95 duration-[120ms]",
+        "composer-autocomplete-surface z-50 flex flex-col overflow-hidden rounded-xl border border-border/70 shadow-lg animate-composer-popup-enter",
         tone === "dark"
           ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
-          : "border-border bg-card",
+          : "bg-popover text-popover-foreground",
         className,
       )}
     >

@@ -250,10 +250,10 @@ export function FileTagPopup({
       aria-label="Mention suggestions"
       style={fixedStyle}
       className={cn(
-        "z-50 flex flex-col overflow-hidden rounded-lg border shadow-lg",
+        "composer-autocomplete-surface z-50 flex flex-col overflow-hidden rounded-xl border border-border/70 shadow-lg animate-composer-popup-enter",
         tone === "dark"
           ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
-          : "border-border bg-popover",
+          : "bg-popover text-popover-foreground",
         // Absolute placement only when not in fixed mode.
         !anchorRect && "absolute bottom-full left-0 mb-1 w-full",
         className,
