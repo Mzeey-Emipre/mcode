@@ -35,9 +35,9 @@ export function NewThreadProjectPicker() {
             size="sm"
             data-testid="new-thread-project-picker"
             aria-expanded={open}
-            className="h-7 gap-1.5 rounded-md px-2 text-xs font-normal text-foreground/90 hover:bg-accent/70"
+            className="h-[28px] gap-[6px] rounded-md px-[10px] text-[12px] font-normal text-foreground/90 hover:bg-accent/70"
           >
-            <Folder size={13} className="text-muted-foreground" aria-hidden />
+            <Folder size={14} className="text-muted-foreground" aria-hidden />
             Choose project
           </Button>
         }

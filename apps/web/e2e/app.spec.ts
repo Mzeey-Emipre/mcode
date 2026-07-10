@@ -128,6 +128,24 @@ test.describe("Projectless new-thread workbench", () => {
     await expect(page.locator('[aria-placeholder="Do anything"]')).toBeVisible();
     await expect(page.getByRole("button", { name: "Choose a project" })).toBeDisabled();
   });
+
+  test("raises project context above the new-thread composer surface", async ({ page }) => {
+    const contextRail = page.getByTestId("new-thread-context-strip");
+    const composerSurface = page.getByTestId("composer-surface");
+    await expect(contextRail).toBeVisible();
+    await expect(composerSurface).toBeVisible();
+
+    const [railBox, composerBox] = await Promise.all([
+      contextRail.boundingBox(),
+      composerSurface.boundingBox(),
+    ]);
+
+    expect(railBox).not.toBeNull();
+    expect(composerBox).not.toBeNull();
+    expect(railBox!.x - composerBox!.x).toBeGreaterThanOrEqual(12);
+    expect(composerBox!.x + composerBox!.width - (railBox!.x + railBox!.width)).toBeGreaterThanOrEqual(12);
+    expect(Math.abs(railBox!.y + railBox!.height - composerBox!.y)).toBeLessThanOrEqual(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

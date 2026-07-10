@@ -2820,7 +2820,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       {isNewThread && (
         <div
           data-testid="new-thread-context-strip"
-          className="relative z-10 flex min-h-9 min-w-0 items-center gap-1 overflow-x-auto rounded-t-xl bg-muted/30 px-2 py-1 ring-1 ring-inset ring-border/60"
+          className="relative z-0 mx-[14px] flex h-[40px] min-w-0 items-center gap-1 overflow-x-auto rounded-t-xl bg-muted/45 px-[16px] ring-1 ring-inset ring-border/60"
         >
           {activeWorkspace ? (
             <>
@@ -2890,10 +2890,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       {/* Main composer container - dark bg, rounded */}
       <div
         ref={composerContainerRef}
+        data-testid="composer-surface"
         className={cn(
-          "relative bg-muted/50 ring-1 ring-inset ring-border/60 focus-within:ring-2 focus-within:ring-primary/70",
+          "relative z-10 bg-muted/50 ring-1 ring-inset ring-border/60 focus-within:ring-2 focus-within:ring-primary/70",
           isNewThread
-            ? "-mt-px rounded-b-xl rounded-t-lg shadow-none"
+            ? "-mt-px rounded-xl shadow-none"
             : "rounded-xl shadow-lg shadow-black/20",
           isDragOver && "ring-2 ring-primary"
         )}

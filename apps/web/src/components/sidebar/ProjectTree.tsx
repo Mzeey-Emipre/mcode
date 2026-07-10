@@ -1419,16 +1419,6 @@ const ProjectNode = memo(function ProjectNode({
           </span>
         )}
 
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`New thread in ${workspace.name}`}
-          title={`New thread in ${workspace.name}`}
-          onClick={handleCreateThreadClick}
-          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
-        >
-          <SquarePen size={13} />
-        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label={`Project options for ${workspace.name}`}
@@ -1447,6 +1437,16 @@ const ProjectNode = memo(function ProjectNode({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`New thread in ${workspace.name}`}
+          title={`New thread in ${workspace.name}`}
+          onClick={handleCreateThreadClick}
+          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+        >
+          <SquarePen size={13} />
+        </Button>
       </div>
 
       {/* Threads (when expanded) — indented, no guide rail. */}

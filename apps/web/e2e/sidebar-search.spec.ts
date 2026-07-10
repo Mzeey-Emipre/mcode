@@ -108,6 +108,14 @@ test.describe("Sidebar thread actions", () => {
     await projectRow.hover();
     await expect(newThread).toHaveCSS("opacity", "1");
     await expect(options).toHaveCSS("opacity", "1");
+
+    const [optionsBox, newThreadBox] = await Promise.all([
+      options.boundingBox(),
+      newThread.boundingBox(),
+    ]);
+    expect(optionsBox).not.toBeNull();
+    expect(newThreadBox).not.toBeNull();
+    expect(optionsBox!.x).toBeLessThan(newThreadBox!.x);
   });
 
   test("the finder keeps sort and filter controls with its results", async ({ page }) => {
