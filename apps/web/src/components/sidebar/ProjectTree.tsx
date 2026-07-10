@@ -15,7 +15,7 @@ import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, FolderPlus, Folder, Activity, MoreHorizontal, Plus, SquarePen } from "lucide-react";
+import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, ChevronRight, FolderPlus, Folder, Activity, MoreHorizontal, Plus, SquarePen } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
@@ -1349,31 +1349,29 @@ const ProjectNode = memo(function ProjectNode({
     <div>
       {/* Workspace row keeps project controls quiet until the row is engaged. */}
       <div
-        role="button"
+        role="group"
         tabIndex={0}
-        aria-expanded={isExpanded}
+        aria-label={`${workspace.name} project`}
         data-testid={`project-row-${workspace.id}`}
         className={cn(
-          "group/ws relative flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-[13px] cursor-pointer transition-colors touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+          "group/ws relative flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-[13px] transition-colors touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
           isProjectDragging && "cursor-grabbing",
           isActive
             ? "text-foreground"
             : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
         )}
         {...sortableListeners}
-        onKeyDown={(e) => {
-          sortableListeners?.onKeyDown?.(e);
-          if (e.defaultPrevented) return;
-          if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
-            e.preventDefault();
-            handleToggle();
-          }
-        }}
-        onClick={handleToggle}
       >
-        <Folder size={14} className="shrink-0 text-muted-foreground/80" aria-hidden />
-
-        <span className="truncate font-medium tracking-tight">{workspace.name}</span>
+        <button
+          type="button"
+          aria-label={`Select project ${workspace.name}`}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={handleCreateThread}
+          className="flex min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+        >
+          <Folder size={14} className="shrink-0 text-muted-foreground/80" aria-hidden />
+          <span className="truncate font-medium tracking-tight">{workspace.name}</span>
+        </button>
 
         {!workspace.is_git_repo && (
           <Tooltip>
@@ -1418,6 +1416,22 @@ const ProjectNode = memo(function ProjectNode({
             {threads.length}
           </span>
         )}
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Toggle threads for ${workspace.name}`}
+          aria-expanded={isExpanded}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleToggle();
+          }}
+          className="size-6 shrink-0 text-muted-foreground hover:bg-background/60 hover:text-foreground"
+        >
+          <ChevronRight size={14} className={cn("transition-transform duration-150 motion-reduce:transition-none", isExpanded && "rotate-90")} />
+        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger

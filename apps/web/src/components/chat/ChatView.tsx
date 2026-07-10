@@ -122,7 +122,11 @@ function NewThreadWelcome({
 }) {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-10">
-      <div className="flex w-full max-w-3xl flex-col items-center gap-7 text-center">
+      <div
+        key={projectName ?? "projectless"}
+        data-testid="new-thread-welcome"
+        className="animate-fade-up-in flex w-full max-w-3xl flex-col items-center gap-7 text-center"
+      >
         <McodeLogo variant="newThread" markOnly />
         <h1 className="text-balance text-2xl font-medium tracking-[-0.025em] text-foreground sm:text-[28px]">
           {projectName ? (

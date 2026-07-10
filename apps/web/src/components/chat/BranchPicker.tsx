@@ -20,6 +20,10 @@ interface BranchPickerProps {
   prsLoading?: boolean;
   fetchingBranch?: string | null;
   onFetchAndSelect?: (branch: string, prNumber: number) => void;
+  /** Optional trigger styling for compact context rails. */
+  triggerClassName?: string;
+  /** Primary glyph size for the trigger. */
+  iconSize?: number;
 }
 
 /**
@@ -37,6 +41,8 @@ export function BranchPicker({
   prsLoading,
   fetchingBranch,
   onFetchAndSelect,
+  triggerClassName,
+  iconSize = 12,
 }: BranchPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -92,8 +98,8 @@ export function BranchPicker({
 
   if (locked) {
     return (
-      <span className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
-        <GitBranch size={12} />
+      <span className={cn("flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground", triggerClassName)}>
+        <GitBranch size={iconSize} className={triggerClassName ? "size-3.5" : undefined} />
         {selectedBranch}
       </span>
     );
@@ -177,10 +183,10 @@ export function BranchPicker({
 
   return (
     <div ref={containerRef} className="relative">
-      <Button variant="ghost" size="xs" onClick={() => setOpen(!open)} className="text-muted-foreground">
-        <GitBranch size={12} />
+      <Button variant="ghost" size="xs" onClick={() => setOpen(!open)} className={cn("text-muted-foreground", triggerClassName)}>
+        <GitBranch size={iconSize} className={triggerClassName ? "size-3.5" : undefined} />
         <span>From {selectedBranch}</span>
-        <ChevronDown size={10} />
+        <ChevronDown size={Math.max(10, iconSize - 2)} className={triggerClassName ? "size-3" : undefined} />
       </Button>
 
       {open && (

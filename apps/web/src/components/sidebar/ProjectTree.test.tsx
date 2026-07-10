@@ -219,6 +219,30 @@ describe("ProjectTree thread interactions", () => {
     expect(state.loadThreads).not.toHaveBeenCalled();
   });
 
+  it("selects a project from its name without expanding it", () => {
+    localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+    const beginNewThread = vi.fn();
+    const state = setupStoreMocks({ beginNewThread });
+
+    render(<ProjectTree />);
+    fireEvent.click(screen.getByRole("button", { name: "Select project Test Project" }));
+
+    expect(beginNewThread).toHaveBeenCalledWith("ws-1");
+    expect(state.loadThreads).not.toHaveBeenCalled();
+  });
+
+  it("keeps thread disclosure separate from project selection", () => {
+    localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+    const beginNewThread = vi.fn();
+    const state = setupStoreMocks({ beginNewThread });
+
+    render(<ProjectTree />);
+    fireEvent.click(screen.getByRole("button", { name: "Toggle threads for Test Project" }));
+
+    expect(beginNewThread).not.toHaveBeenCalled();
+    expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
+  });
+
   it("reveals project actions when the project row is hovered or focused", () => {
     setupStoreMocks();
 

@@ -35,10 +35,21 @@ interface ModeSelectorProps {
   locked: boolean;
   /** Subset of modes to show. Defaults to ALL_MODE_OPTIONS. */
   options?: ModeOption[];
+  /** Optional trigger styling for compact context rails. */
+  className?: string;
+  /** Primary glyph size for the trigger. */
+  iconSize?: number;
 }
 
 /** Dropdown for choosing how a new thread runs (local, new worktree, existing worktree). */
-export function ModeSelector({ mode, onModeChange, locked, options = ALL_MODE_OPTIONS }: ModeSelectorProps) {
+export function ModeSelector({
+  mode,
+  onModeChange,
+  locked,
+  options = ALL_MODE_OPTIONS,
+  className,
+  iconSize = 12,
+}: ModeSelectorProps) {
   if (options.length === 0) {
     return null;
   }
@@ -50,8 +61,8 @@ export function ModeSelector({ mode, onModeChange, locked, options = ALL_MODE_OP
     const lockedLabel =
       mode === "worktree" || mode === "existing-worktree" ? "Worktree" : "Local";
     return (
-      <span className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground/70">
-        <Icon size={11} />
+      <span className={cn("flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground/70", className)}>
+        <Icon size={iconSize} />
         {lockedLabel}
       </span>
     );
@@ -60,11 +71,11 @@ export function ModeSelector({ mode, onModeChange, locked, options = ALL_MODE_OP
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+        className={cn("flex h-6 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground", className)}
       >
-        <Icon size={12} />
+        <Icon size={iconSize} />
         {selected.label}
-        <ChevronDown size={10} />
+        <ChevronDown size={Math.max(10, iconSize - 2)} />
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="start" sideOffset={4} className="min-w-[160px]">

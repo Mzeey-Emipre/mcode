@@ -83,6 +83,14 @@ test.describe("Sidebar thread actions", () => {
     await expect(page.getByTestId("command-palette")).toHaveCount(0);
   });
 
+  test("selecting a project opens its new-thread workspace", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Select project Test Workspace" }).click();
+
+    await expect(page.getByRole("heading", { name: "What should we build in Test Workspace?" })).toBeVisible();
+    await expect(page.getByTestId("new-thread-context-strip")).toContainText("Test Workspace");
+  });
+
   test("top actions and project rows share one left alignment", async ({ page }) => {
     await page.goto("/");
     const actionIcon = page.getByRole("button", { name: "New thread", exact: true }).locator("svg");

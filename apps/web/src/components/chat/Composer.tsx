@@ -70,6 +70,9 @@ import {
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
 import { useTaskStore, type TaskItem } from "@/stores/taskStore";
 import { usePlanStore } from "@/stores/planStore";
+
+const NEW_THREAD_CONTEXT_CONTROL_CLASS =
+  "h-[28px] gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none";
 import { useDiffStore } from "@/stores/diffStore";
 import {
   hideRightPanelAdaptive,
@@ -2825,10 +2828,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           {activeWorkspace ? (
             <>
               <span
-                className="inline-flex h-7 min-w-0 shrink items-center gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/90"
+                className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none text-foreground/90"
                 title={activeWorkspace.path}
               >
-                <Folder size={13} className="shrink-0 text-muted-foreground" aria-hidden />
+                <Folder size={14} className="shrink-0 text-muted-foreground" aria-hidden />
                 <span className="max-w-40 truncate">{activeWorkspace.name}</span>
               </span>
               <ModeSelector
@@ -2836,6 +2839,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                 onModeChange={setComposerMode}
                 locked={!isGitRepo}
                 options={modeOptions}
+                className={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                iconSize={14}
               />
               {isGitRepo && composerMode === "direct" && (
                 <BranchPicker
@@ -2844,6 +2849,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                   onSelect={setNewThreadBranch}
                   loading={branchesLoading}
                   locked={false}
+                  triggerClassName={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                  iconSize={14}
                 />
               )}
               {isGitRepo && composerMode === "worktree" && (
@@ -2857,6 +2864,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                   prsLoading={openPrsLoading}
                   fetchingBranch={fetchingBranch}
                   onFetchAndSelect={handleFetchAndSelect}
+                  triggerClassName={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                  iconSize={14}
                 />
               )}
               {isGitRepo && composerMode === "existing-worktree" && (
@@ -2868,6 +2877,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                       onSelect={setNewThreadBranch}
                       loading={branchesLoading}
                       locked={false}
+                      triggerClassName={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                      iconSize={14}
                     />
                   )}
                   <Suspense fallback={<div className="h-7 w-28 animate-pulse rounded-md bg-accent" />}>
@@ -2876,6 +2887,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                       selectedPath={selectedWorktree?.path ?? ""}
                       onSelect={setSelectedWorktree}
                       loading={worktreesLoading}
+                      triggerClassName={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                      iconSize={14}
                     />
                   </Suspense>
                 </>

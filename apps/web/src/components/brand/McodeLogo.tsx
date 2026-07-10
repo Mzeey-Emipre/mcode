@@ -11,7 +11,7 @@ export const MCODE_LOGO_SCALES = {
   },
   newThread: {
     root: "",
-    mark: "h-12 w-12 opacity-45",
+    mark: "h-12 w-12 opacity-60",
     wordmark: "text-sm",
   },
 } as const;
