@@ -62,7 +62,11 @@ export function CommandPalette() {
           data-testid="command-palette"
           className={cn(
             "fixed left-1/2 top-[clamp(4rem,14vh,8rem)] z-50 w-full -translate-x-1/2 px-4 outline-none duration-150 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 motion-reduce:animate-none",
-            top?.kind === "projects" || top?.kind === "threadSearch" ? "max-w-2xl" : "max-w-xl",
+            browseMode
+              ? "max-w-[680px]"
+              : top?.kind === "projects" || top?.kind === "threadSearch"
+                ? "max-w-2xl"
+                : "max-w-xl",
           )}
         >
           <Command
@@ -144,9 +148,12 @@ function PaletteInput({
     <div
       data-slot="palette-input-wrapper"
       data-palette-mode={modeLabel}
-      className="relative flex h-12 items-center border-b border-border/60 px-4"
+      className={cn(
+        "relative flex items-center border-b border-border/60",
+        browseMode ? "h-[60px] px-[20px]" : "h-12 px-4",
+      )}
     >
-      <SearchIcon className="mr-2.5 size-4 shrink-0 text-muted-foreground/75" />
+      <SearchIcon className={cn("size-4 shrink-0 text-muted-foreground/75", browseMode ? "mr-3" : "mr-2.5")} />
       <CommandPrimitive.Input
         autoFocus
         data-slot="palette-input"
@@ -154,12 +161,12 @@ function PaletteInput({
         value={query}
         onValueChange={setQuery}
         onKeyDown={onKeyDown}
-        className={
+        className={cn(
           // Reserve right padding for the browse action so the typed path
           // remains visible beneath long folder names.
-          "flex h-12 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed disabled:opacity-50 " +
-          (browseMode ? "pe-28 font-mono" : "")
-        }
+          "flex w-full bg-transparent outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed disabled:opacity-50",
+          browseMode ? "h-[60px] pe-[148px] font-mono text-[14px]" : "h-12 text-sm",
+        )}
       />
       {browseMode && (
         <Button
@@ -173,7 +180,7 @@ function PaletteInput({
           }}
           onClick={onAddClick}
           title="Add this folder as a project"
-          className="absolute end-3 top-1/2 h-7 -translate-y-1/2 gap-1.5 px-2.5 text-xs"
+          className="absolute end-[16px] top-1/2 h-[32px] -translate-y-1/2 gap-2 px-[12px] text-[13px]"
         >
           <Plus size={13} />
           Add project

@@ -125,6 +125,25 @@ test.describe("Command palette", () => {
     );
   });
 
+  test("folder browser stays wide and uncluttered at 600px", async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 800 });
+    await setupPage(page);
+    await page.keyboard.press("Control+k");
+    await page.locator('[data-slot="palette-input"]').fill("~/");
+
+    const palette = page.getByTestId("command-palette");
+    await expect(palette).toBeVisible();
+    await expect(palette).toHaveCSS("max-width", "680px");
+    await expect(page.getByTestId("browse-shortcuts")).toBeHidden();
+
+    const paletteBox = await palette.boundingBox();
+    expect(paletteBox?.width).toBeGreaterThanOrEqual(590);
+    const hasHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
+  });
+
   test("Backspace on empty input pops from projects view to root", async ({ page }) => {
     await setupPage(page);
     await page.keyboard.press("Control+k");

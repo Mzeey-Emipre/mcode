@@ -154,7 +154,7 @@ export function BrowseView() {
 
   return (
     <>
-      <CommandList className="max-h-80 overflow-y-auto py-1">
+      <CommandList className="max-h-[360px] overflow-y-auto py-2">
         {loading && !result && <CommandEmpty>Loading…</CommandEmpty>}
         {error && <CommandEmpty>{error}</CommandEmpty>}
         {!loading && !error && filteredEntries.length === 0 && !isDrivesMode && (
@@ -164,18 +164,18 @@ export function BrowseView() {
         )}
 
         {!error && (
-          <CommandGroup heading={isDrivesMode ? "Drives" : "Folders"} className="px-1.5 pb-1">
+          <CommandGroup heading={isDrivesMode ? "Drives" : "Folders"} className="px-2 pb-1">
             {!isDrivesMode && result?.parent && leafFilter === "" && (
               <CommandItem
                 key="__parent__"
                 value="__parent__"
                 keywords={[".."]}
                 onSelect={handleAscend}
-                className="h-9 gap-2.5 px-3 text-sm text-foreground/85"
+                className="h-[40px] gap-3 px-[12px] text-[14px] text-foreground/85"
               >
                 <ArrowUp size={14} strokeWidth={2.25} className="shrink-0 text-primary/80" />
                 <span className="font-mono">..</span>
-                <span className="ml-auto text-xs text-muted-foreground/55">Parent folder</span>
+                <span className="ml-auto text-[12px] text-muted-foreground/55">Parent folder</span>
               </CommandItem>
             )}
 
@@ -185,7 +185,7 @@ export function BrowseView() {
                 value={entry.name}
                 keywords={[entry.name]}
                 onSelect={() => handleSelect(entry.name)}
-                className="h-9 gap-2.5 px-3 text-sm"
+                className="h-[40px] gap-3 px-[12px] text-[14px]"
               >
                 <Folder size={15} strokeWidth={1.8} className="shrink-0 text-muted-foreground/70" />
                 <span className="truncate text-foreground">{entry.name}</span>
@@ -195,7 +195,10 @@ export function BrowseView() {
         )}
       </CommandList>
 
-      <div className="flex shrink-0 items-center gap-4 border-t border-border/60 bg-muted/20 px-4 py-2 text-xs text-muted-foreground/65">
+      <div
+        data-testid="browse-shortcuts"
+        className="hidden min-h-[44px] shrink-0 items-center gap-6 border-t border-border/60 bg-muted/20 px-[16px] py-[10px] text-[12px] text-muted-foreground/65 sm:flex"
+      >
         <span className="flex items-center gap-1.5"><Kbd>Enter</Kbd> Open folder</span>
         <span className="flex items-center gap-1.5"><Kbd>⌫</Kbd> Back</span>
         <span className="ml-auto flex items-center gap-1.5">
