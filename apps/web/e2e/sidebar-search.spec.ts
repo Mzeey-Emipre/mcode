@@ -290,9 +290,6 @@ test.describe("Sidebar thread actions", () => {
     await expect(
       page.getByTestId("thread-search-result-thread-2"),
     ).toBeVisible();
-    await expect(
-      page.getByTestId("thread-search-result-thread-2"),
-    ).toContainText("Completed");
     await expect(page.getByTestId("thread-search-result-thread-1")).toHaveCount(
       0,
     );

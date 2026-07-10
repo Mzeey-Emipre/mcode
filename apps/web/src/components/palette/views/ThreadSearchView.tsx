@@ -28,7 +28,6 @@ import {
 } from "@/stores/sidebarSearchStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { RecentThread, Thread } from "@/transport/types";
-import { cn } from "@/lib/utils";
 
 type ProviderIcon = ComponentType<{ size?: number; className?: string }>;
 
@@ -50,17 +49,6 @@ interface SearchRow {
 function worktreeName(path: string | null): string | null {
   if (!path) return null;
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-}
-
-function statusLabel(status: Thread["status"]): string {
-  return status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
-}
-
-function statusTone(status: Thread["status"]): string {
-  if (status === "errored") return "bg-destructive";
-  if (status === "completed") return "bg-[var(--diff-add-strong)]";
-  if (status === "active") return "bg-primary";
-  return "bg-muted-foreground/50";
 }
 
 /** Applies the thread finder's active filters and sort order to recent threads. */
@@ -141,19 +129,6 @@ function ThreadSearchResult({
               <span className="max-w-40 truncate font-mono">{worktree}</span>
             </span>
           )}
-          <span
-            className="inline-flex items-center gap-1.5"
-            aria-label={`Status: ${statusLabel(thread.status)}`}
-          >
-            <span
-              className={cn(
-                "size-1.5 shrink-0 rounded-full",
-                statusTone(thread.status),
-              )}
-              aria-hidden
-            />
-            <span>{statusLabel(thread.status)}</span>
-          </span>
         </div>
       </div>
     </CommandItem>
