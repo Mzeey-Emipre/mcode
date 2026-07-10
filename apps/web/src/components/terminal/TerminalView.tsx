@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Terminal, IDisposable } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { getTransport } from "@/transport";
@@ -279,8 +279,8 @@ interface TerminalViewProps {
   readonly visible: boolean;
   /**
    * Whether this terminal's owning thread is the active workspace thread.
-   * When false, incoming PTY output is not written to xterm; the renderer
-   * stays attached so scroll position is preserved across thread switches.
+   * When false, the server pauses delivery after any in-flight output and the
+   * renderer stays attached so scroll position survives a return to the thread.
    */
   readonly threadActive: boolean;
 }
@@ -296,6 +296,7 @@ export const TerminalView = memo(function TerminalView({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const flushResizeRpcRef = useRef<(() => void) | null>(null);
+  const resumeWarmViewRef = useRef<(() => void) | null>(null);
   const rendererRef = useRef<IDisposable | null>(null);
   /** Cancels in-flight {@link loadRenderer} when the thread goes dormant or the effect cleans up. */
   const rendererInitCancelledRef = useRef(false);
@@ -306,6 +307,7 @@ export const TerminalView = memo(function TerminalView({
   threadActiveRef.current = threadActive;
 
   const prevShownRef = useRef(shown);
+  const [hydrated, setHydrated] = useState(false);
 
   const scrollback = useSettingsStore((s) => s.settings.terminal.scrollback);
   const scrollbackRef = useRef(scrollback);
@@ -363,6 +365,7 @@ export const TerminalView = memo(function TerminalView({
       registerTerminalScrollHarness(ptyId, term);
 
       const transport = getTransport();
+      let exited = false;
 
       const flowSettings =
         useSettingsStore.getState().settings.terminal.flowControl;
@@ -378,6 +381,7 @@ export const TerminalView = memo(function TerminalView({
       // paste mode when the shell requests it, preventing embedded newlines from auto-executing commands.
       const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
+        if (exited) return;
         navigator.clipboard
           .readText()
           .then((text) => {
@@ -391,6 +395,7 @@ export const TerminalView = memo(function TerminalView({
 
       // Forward keystrokes to the backend via WS RPC
       const dataDisposable = term.onData((data) => {
+        if (exited) return;
         transport.terminalWrite(ptyId, data).catch(() => {});
       });
 
@@ -411,6 +416,7 @@ export const TerminalView = memo(function TerminalView({
       // until the replay completes, then write in seq order so the viewport
       // shows scrollback-then-tail, not a garbled tail-then-scrollback.
       let replaying = true;
+      let replayMode: "cold" | "warm" = "cold";
       const replayPending: PtyDataPayload[] = [];
       // Highest seq actually written. seq is monotonic per PTY, so anything not
       // strictly newer has already been painted. Guards against double delivery:
@@ -452,7 +458,12 @@ export const TerminalView = memo(function TerminalView({
         // before unmount; otherwise follow the tail. Record remount latency once
         // the replay paints.
         const follow = () => {
-          applyRemountAnchor(ptyId, term);
+          if (replayMode === "cold") {
+            applyRemountAnchor(ptyId, term);
+          } else {
+            terminalScroll.restore(ptyId, term);
+          }
+          setHydrated(true);
           recordMountTiming(performance.now() - mountStart);
         };
 
@@ -492,6 +503,8 @@ export const TerminalView = memo(function TerminalView({
       // pre-renderer for the same reason as pty-data: an early exit should
       // not be silently lost).
       const unsubPtyExit = onPtyExit(ptyId, (detail) => {
+        exited = true;
+        term.options.disableStdin = true;
         term.write(
           `\r\n\x1b[90m[Process exited with code ${detail.code}]\x1b[0m\r\n`,
         );
@@ -524,7 +537,7 @@ export const TerminalView = memo(function TerminalView({
           clearTimeout(rpcTimer);
           rpcTimer = null;
         }
-        if (disposed || terminalScroll.shouldDeferFitRefresh(ptyId)) return;
+        if (disposed || exited || terminalScroll.shouldDeferFitRefresh(ptyId)) return;
         const dims = fitAddonRef.current?.proposeDimensions();
         if (!isSafeTerminalDimensions(dims)) return;
         if (dims.cols === lastSentCols && dims.rows === lastSentRows) return;
@@ -567,6 +580,7 @@ export const TerminalView = memo(function TerminalView({
         if (rafId !== null) cancelAnimationFrame(rafId);
         if (rpcTimer !== null) clearTimeout(rpcTimer);
         flushResizeRpcRef.current = null;
+        resumeWarmViewRef.current = null;
         dataDisposable.dispose();
         scrollDisposable.dispose();
         el.removeEventListener("wheel", onWheel);
@@ -613,8 +627,11 @@ export const TerminalView = memo(function TerminalView({
       // tail. The reattach resolves after all replay frames have been sent (WS
       // ordering puts the data frames ahead of the RPC response), at which point
       // the gate flushes. lastSeq = -1 requests the full retained window.
-      transport
-        .terminalReattach(ptyId, -1)
+      const reattach = (lastSeq: number, mode: "cold" | "warm") => {
+        replaying = true;
+        replayMode = mode;
+        return transport
+          .terminalReattach(ptyId, lastSeq)
         .then(({ gapped }) => {
           if (disposed) return;
           if (gapped) {
@@ -631,12 +648,23 @@ export const TerminalView = memo(function TerminalView({
           // any buffered live frames still paint.
           if (disposed) return;
           flushReplayGate();
+        })
+        .finally(() => {
+          if (!disposed && !exited && shownRef.current) {
+            transport.terminalResume(ptyId).catch(() => {});
+          }
         });
+      };
 
-      // Newly created PTYs are paused server-side so their first prompt waits
-      // for a consumer. Release now that the listeners above are attached; for
-      // an already-running session this is a harmless no-op.
-      transport.terminalResume(ptyId).catch(() => {});
+      resumeWarmViewRef.current = () => {
+        if (disposed || exited || replaying) return;
+        const lastSeq = Number.isFinite(lastWrittenSeq) ? lastWrittenSeq : -1;
+        void reattach(lastSeq, "warm");
+      };
+
+      // Newly created PTYs begin paused. Reattach first so retained output and
+      // any paused live frames share one sequence gate, then resume.
+      void reattach(-1, "cold");
 
       // DOM renderer only at init; WebGL loads when this terminal becomes shown
       // (see shown effect) so the pool never holds multiple GL contexts.
@@ -681,10 +709,12 @@ export const TerminalView = memo(function TerminalView({
     if (term && prevShownRef.current && !shown) {
       terminalScroll.onHide(ptyId, term);
       releaseWebglSlot(ptyId);
+      getTransport().terminalPause(ptyId).catch(() => {});
     }
 
     if (term && shown && !prevShownRef.current) {
       terminalScroll.onShow(ptyId);
+      resumeWarmViewRef.current?.();
     }
 
     prevShownRef.current = shown;
@@ -829,6 +859,11 @@ export const TerminalView = memo(function TerminalView({
   }, [shown, threadActive, ptyId]);
 
   return (
-    <div ref={containerRef} className="h-full min-h-0 w-full" />
+    <div
+      ref={containerRef}
+      className="h-full min-h-0 w-full"
+      data-terminal-hydrated={hydrated}
+      style={{ visibility: shown && hydrated ? "visible" : "hidden" }}
+    />
   );
 });

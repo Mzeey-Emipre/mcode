@@ -712,17 +712,18 @@ _Avoid_: PTY (implementation term), terminal instance (ambiguous with the view).
 
 ### Active shell
 The one shell session whose terminal view is mounted. At most one terminal
-view exists in the app: the active shell on the active terminal scope, while
-the Terminal tab and right panel are open.
+view exists in the app. Its view may stay warm while the Terminal tab or right
+panel is hidden; all other shells run without a view.
 _Avoid_: Mounting a view for every open shell (background shells stay
 server-side only).
 
 ### Terminal view
 The in-app rendering of one shell session's output in the Terminal tab.
-Only the **active shell** has a view; others keep running without one.
-Remounting replays retained scrollback and opens at the latest output
-(follow). Restoring the prior scroll position within scrollback is a
-planned follow-up, not v1.
+Only the **active shell** has a view; others keep running without one. Hiding
+the terminal surface preserves that view for a fast return. Switching shells
+replaces it. A returning view follows the latest output when the user was at
+the tail, or restores the same retained content when the user was reading
+history.
 _Avoid_: xterm (implementation term), conflating with shell session.
 
 ### Scrollback

@@ -250,7 +250,7 @@ export function FileTagPopup({
       aria-label="Mention suggestions"
       style={fixedStyle}
       className={cn(
-        "z-50 overflow-hidden rounded-lg border shadow-lg",
+        "z-50 flex flex-col overflow-hidden rounded-lg border shadow-lg",
         tone === "dark"
           ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
           : "border-border bg-popover",
@@ -261,7 +261,7 @@ export function FileTagPopup({
     >
       <div
         ref={scrollRef}
-        className="p-1"
+        className="min-h-0 flex-1 p-1"
         style={{ maxHeight, overflowY: "auto" }}
       >
         {items.map((item) => {

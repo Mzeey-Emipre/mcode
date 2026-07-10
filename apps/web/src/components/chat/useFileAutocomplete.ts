@@ -31,7 +31,7 @@ interface UseFileAutocompleteResult {
   suggestions: MentionSuggestion[];
   query: string;
   triggerStart: number;
-  handleInputChange: (text: string, cursorPos: number) => void;
+  handleInputChange: (text: string, cursorPos: number) => Promise<void>;
   selectSuggestion: (suggestion: MentionSuggestion) => MentionSuggestion;
   dismiss: () => void;
 }
@@ -53,6 +53,9 @@ const codexAgentCache = new Map<string, MentionSuggestion[]>();
 /** In-flight Codex agent fetches keyed by scope. */
 const inFlightAgentFetches = new Map<string, Promise<MentionSuggestion[]>>();
 
+/** Mounted hooks that must discard local data after a cache invalidation. */
+const cacheInvalidationListeners = new Set<(key?: string) => void>();
+
 /**
  * Clear the cached file list for a scope.
  * Pass workspaceId (and optionally threadId) to clear a specific scope,
@@ -63,9 +66,11 @@ export function clearFileListCache(workspaceId?: string, threadId?: string): voi
     const key = scopeKey(workspaceId, threadId);
     fileListCache.delete(key);
     codexAgentCache.delete(key);
+    for (const listener of cacheInvalidationListeners) listener(key);
   } else {
     fileListCache.clear();
     codexAgentCache.clear();
+    for (const listener of cacheInvalidationListeners) listener();
   }
 }
 
@@ -87,17 +92,37 @@ export function useFileAutocomplete({
   const [suggestions, setSuggestions] = useState<MentionSuggestion[]>([]);
   const [query, setQuery] = useState("");
   const [triggerStart, setTriggerStart] = useState(-1);
+  const requestEpochRef = useRef(0);
 
   // Reset local state when scope changes so stale data isn't used.
   const prevScopeRef = useRef<string>("");
   useEffect(() => {
     const key = workspaceId ? scopeKey(workspaceId, threadId) : "";
     if (key !== prevScopeRef.current) {
+      requestEpochRef.current += 1;
       prevScopeRef.current = key;
       setAllFiles([]);
       setAllAgents([]);
+      setSuggestions([]);
+      setIsOpen(false);
     }
   }, [workspaceId, threadId]);
+
+  useEffect(() => {
+    const listener = (invalidatedKey?: string) => {
+      if (invalidatedKey && invalidatedKey !== prevScopeRef.current) return;
+      requestEpochRef.current += 1;
+      setAllFiles([]);
+      setAllAgents([]);
+      setSuggestions([]);
+      setIsOpen(false);
+    };
+    cacheInvalidationListeners.add(listener);
+    return () => {
+      requestEpochRef.current += 1;
+      cacheInvalidationListeners.delete(listener);
+    };
+  }, []);
 
   const loadFiles = useCallback(async (): Promise<string[] | undefined> => {
     if (!workspaceId) return;
@@ -138,8 +163,7 @@ export function useFileAutocomplete({
 
     const files = await fetchPromise;
     // Only update state if scope hasn't changed during the async gap.
-    const currentKey = scopeKey(workspaceId, threadId);
-    if (currentKey === key) {
+    if (prevScopeRef.current === key) {
       setAllFiles(files);
     }
     return files;
@@ -191,8 +215,7 @@ export function useFileAutocomplete({
     inFlightAgentFetches.set(key, fetchPromise);
 
     const agents = await fetchPromise;
-    const currentKey = scopeKey(workspaceId, threadId);
-    if (currentKey === key) {
+    if (prevScopeRef.current === key) {
       setAllAgents(agents);
     }
     return agents;
@@ -200,6 +223,8 @@ export function useFileAutocomplete({
 
   const handleInputChange = useCallback(
     async (text: string, cursorPos: number) => {
+      const requestEpoch = ++requestEpochRef.current;
+      const requestScope = workspaceId ? scopeKey(workspaceId, threadId) : "";
       // Find the @ trigger: scan backwards from cursor
       let atPos = -1;
       for (let i = cursorPos - 1; i >= 0; i--) {
@@ -216,11 +241,10 @@ export function useFileAutocomplete({
       }
 
       if (atPos === -1) {
-        if (isOpen) {
-          setIsOpen(false);
-          setQuery("");
-          setTriggerStart(-1);
-        }
+        setIsOpen(false);
+        setSuggestions([]);
+        setQuery("");
+        setTriggerStart(-1);
         return;
       }
 
@@ -238,6 +262,13 @@ export function useFileAutocomplete({
       const loaded = loadedFiles;
       const files = loaded ?? allFiles;
       const agents = providerId === "codex" ? (loadedAgents ?? allAgents) : [];
+
+      if (
+        requestEpochRef.current !== requestEpoch ||
+        prevScopeRef.current !== requestScope
+      ) {
+        return;
+      }
 
       const fileSuggestions: MentionSuggestion[] = files.map((filePath) => ({
         id: `file:${filePath}`,
@@ -264,18 +295,22 @@ export function useFileAutocomplete({
       setSuggestions(filtered);
       setIsOpen(true);
     },
-    [isOpen, allFiles, allAgents, loadFiles, loadAgents, providerId],
+    [workspaceId, threadId, allFiles, allAgents, loadFiles, loadAgents, providerId],
   );
 
   const selectSuggestion = useCallback((suggestion: MentionSuggestion): MentionSuggestion => {
+    requestEpochRef.current += 1;
     setIsOpen(false);
+    setSuggestions([]);
     setQuery("");
     setTriggerStart(-1);
     return suggestion;
   }, []);
 
   const dismiss = useCallback(() => {
+    requestEpochRef.current += 1;
     setIsOpen(false);
+    setSuggestions([]);
     setQuery("");
     setTriggerStart(-1);
   }, []);

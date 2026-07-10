@@ -174,4 +174,15 @@ describe("provider-scoped caching", () => {
     expect(p1).not.toBe(p2); // different providers = different in-flight promises
     await Promise.all([p1, p2]);
   });
+
+  it("retains concurrent provider caches without making either consumer refetch", async () => {
+    const claude = useSkillsStore.getState().load("/foo", "claude");
+    const unscoped = useSkillsStore.getState().load("/foo", undefined);
+    await Promise.all([claude, unscoped]);
+
+    await useSkillsStore.getState().load("/foo", "claude");
+    await useSkillsStore.getState().load("/foo", undefined);
+
+    expect(listSkillsMock).toHaveBeenCalledTimes(2);
+  });
 });

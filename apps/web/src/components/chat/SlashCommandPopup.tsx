@@ -111,7 +111,7 @@ export function SlashCommandPopup({
       data-slash-popup
       style={style}
       className={cn(
-        "z-50 overflow-hidden rounded-lg border shadow-lg",
+        "z-50 flex flex-col overflow-hidden rounded-lg border shadow-lg",
         "animate-in fade-in-0 zoom-in-95 duration-[120ms]",
         tone === "dark"
           ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
@@ -146,6 +146,7 @@ export function SlashCommandPopup({
                   role="listbox"
                   aria-label="Slash commands"
                   aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
+                  className="min-h-0 flex-1"
                   style={{ maxHeight: listMaxHeight, overflowY: "auto" }}
                 >
                   {items.map((cmd, i) => (
@@ -160,7 +161,7 @@ export function SlashCommandPopup({
                   ))}
                 </div>
                 <div className={cn(
-                  "flex items-center justify-end border-t px-2 py-1",
+                  "flex shrink-0 items-center justify-end border-t px-2 py-1",
                   tone === "dark" ? "border-white/[0.08]" : "border-border",
                 )}>
                   <button

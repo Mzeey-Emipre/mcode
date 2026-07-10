@@ -1,10 +1,11 @@
 /**
  * Terminal remount lifecycle — ADR-0010
  *
- * Verifies the new single-view-on-demand model:
- *  - At most one xterm is mounted at any time (0 or 1 in the DOM).
- *  - Switching thread/shell disposes the old view and mounts a fresh one.
- *  - terminal.reattach is called on remount so the server replays scrollback.
+ * Verifies the bounded warm-view model:
+ *  - At most one xterm is mounted at any time.
+ *  - Closing the terminal moves that view offscreen without disposing it.
+ *  - Switching thread or shell replaces the warm view after hidden hydration.
+ *  - terminal.reattach requests only output after the last processed sequence.
  *  - The terminal tab still shows an xterm after switching away and back.
  *  - Rendering works when activeTerminalId was null but terminals exist (store
  *    auto-selects the first one — behaviour still valid in the new model).
@@ -420,7 +421,7 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
     }
   });
 
-  test("closing and reopening the terminal tab disposes only the view", async ({
+  test("closing and reopening keeps one warm view and requests only the delta", async ({
     page,
   }) => {
     const calls: {
@@ -428,13 +429,10 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
       kill: number;
       killByThread: number;
     } = { reattach: [], kill: 0, killByThread: 0 };
-    let replaySeq = 0;
-
     const wsController = await mockWebSocketServer(page, {
       ...BASE_OVERRIDES,
       "terminal.reattach": (params: unknown) => {
         calls.reattach.push(params as { ptyId?: string; lastSeq?: number });
-        replaySeq += 1;
         return { gapped: false };
       },
       "terminal.kill": () => {
@@ -459,6 +457,36 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
 
     await seedAndOpenTerminal(page, "thread-a", "pty-thread-a");
     await expect(page.locator(".xterm").first()).toBeVisible({ timeout: 20_000 });
+    const initialBufferLength = await page.evaluate(() => {
+      const harness = (window as unknown as {
+        __mcodeTerminalScrollHarness?: {
+          getViewport: (ptyId: string) => { length: number } | null;
+        };
+      }).__mcodeTerminalScrollHarness;
+      return harness?.getViewport("pty-thread-a")?.length ?? 0;
+    });
+    await wsController.sendPush("terminal.data", {
+      ptyId: "pty-thread-a",
+      data: Array.from(
+        { length: 80 },
+        (_, index) => `before-close-${index + 1}\r\n`,
+      ).join(""),
+      seq: 10,
+    });
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const harness = (window as unknown as {
+              __mcodeTerminalScrollHarness?: {
+                getViewport: (ptyId: string) => { length: number } | null;
+              };
+            }).__mcodeTerminalScrollHarness;
+            return harness?.getViewport("pty-thread-a")?.length ?? 0;
+          }),
+        { timeout: 10_000 },
+      )
+      .toBeGreaterThan(initialBufferLength);
 
     const originalPty = await page.evaluate(() => {
       const stores: unknown[] =
@@ -500,11 +528,11 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
     });
 
     await closeTerminalTab(page, WS_ID, "thread-a");
-    await expect(page.locator(".xterm")).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.locator("[aria-hidden='true'] .xterm")).toHaveCount(0);
+    await expect(page.locator(".xterm")).toHaveCount(1, { timeout: 10_000 });
+    await expect(page.locator("[aria-hidden='true'] .xterm")).toHaveCount(1);
     await expect
       .poll(() => liveTerminalCounter(page), { timeout: 10_000 })
-      .toBe(0);
+      .toBe(1);
 
     const afterClose = await page.evaluate(() => {
       const stores: unknown[] =
@@ -542,18 +570,9 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
     expect(calls.reattach.length).toBeGreaterThanOrEqual(2);
     expect(calls.reattach.at(-1)).toEqual({
       ptyId: "pty-thread-a",
-      lastSeq: -1,
+      lastSeq: 10,
     });
 
-    await wsController.sendPush("terminal.data", {
-      ptyId: "pty-thread-a",
-      data: `scrollback-after-reopen-${replaySeq}\r\n`,
-      seq: replaySeq + 100,
-    });
-    await expect(page.locator(".xterm")).toContainText(
-      /scrollback-after-reopen-/,
-      { timeout: 10_000 },
-    );
   });
 
   // --- Scenario still valid in the new model ---

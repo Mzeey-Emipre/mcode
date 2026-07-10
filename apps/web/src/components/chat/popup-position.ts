@@ -38,21 +38,26 @@ export function computeFixedPopupPosition({
     Math.max(anchorRect.left, viewportPadding),
     viewportWidth - width - viewportPadding,
   );
-  const canPlaceAbove = anchorRect.top > estimatedHeight + gap + viewportPadding;
+  const spaceAbove = Math.max(0, anchorRect.top - gap - viewportPadding);
+  const spaceBelow = Math.max(
+    0,
+    viewportHeight - anchorRect.bottom - gap - viewportPadding,
+  );
+  const canPlaceAbove = spaceAbove >= estimatedHeight;
+  const canPlaceBelow = spaceBelow >= estimatedHeight;
   const placeAbove =
     preferredPlacement === "above" ||
-    (preferredPlacement === "auto" && canPlaceAbove);
-  const top = placeAbove
-    ? Math.max(viewportPadding, anchorRect.top - estimatedHeight - gap)
-    : Math.min(
-        anchorRect.bottom + gap,
-        viewportHeight - estimatedHeight - viewportPadding,
-      );
+    (preferredPlacement === "auto" &&
+      (canPlaceAbove || (!canPlaceBelow && spaceAbove >= spaceBelow)));
+  const verticalPosition = placeAbove
+    ? { bottom: viewportHeight - anchorRect.top + gap }
+    : { top: anchorRect.bottom + gap };
 
   return {
     position: "fixed",
     left,
-    top,
     width,
+    maxHeight: placeAbove ? spaceAbove : spaceBelow,
+    ...verticalPosition,
   };
 }

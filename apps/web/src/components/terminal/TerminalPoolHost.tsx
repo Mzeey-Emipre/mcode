@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import {
@@ -16,15 +16,21 @@ import { resolveActiveTerminalId } from "./resolveActiveTerminalId";
  * Mounts at most one terminal view (ADR-0010): the active shell on the active
  * scope, portaled into the right-panel slot while the Terminal tab is open.
  *
- * Background shells — other tabs, other threads — keep running server-side with
- * their output draining into the server scrollback buffer; their views are
- * disposed and remounted via `terminal.reattach` (see {@link TerminalView}).
- * This replaces the former persistent pool that kept every shell's xterm
- * mounted and hidden, which scaled memory and main-thread cost with every
- * long-running shell.
+ * The last active view stays warm offscreen when the panel closes. Switching
+ * terminals replaces that view only after the next terminal has hydrated from
+ * server scrollback. Other shells keep running without renderer instances.
  */
 export function TerminalPoolHost() {
-  const { slotEl } = useTerminalPoolSlot();
+  const { slotEl, offScreenEl } = useTerminalPoolSlot();
+  const [mountEl] = useState(() => {
+    const element = document.createElement("div");
+    element.className = "relative h-full min-h-0 w-full overflow-hidden";
+    return element;
+  });
+  const [warmTarget, setWarmTarget] = useState<{
+    readonly scopeId: string;
+    readonly ptyId: string;
+  } | null>(null);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   // The terminal binds to the active thread, or to the workspace itself in the
@@ -84,25 +90,70 @@ export function TerminalPoolHost() {
     }
   }, [terminalScopeId, activeTerminalId, terminalTabVisible, slotEl]);
 
-  // The single shell whose view should be mounted right now, or undefined when
-  // the terminal tab is hidden or the scope has no terminals.
-  const activeTerm =
+  const visibleTerm =
     terminalTabVisible && terminalScopeId && activeTerminalId
       ? terminals[terminalScopeId]?.find((t) => t.id === activeTerminalId)
       : undefined;
 
-  // Mount only into the in-panel slot. When it is absent (panel closed/tab
-  // hidden) the view stays unmounted and the shell keeps draining server-side.
-  if (!slotEl || !activeTerm) return null;
+  useLayoutEffect(() => {
+    if (visibleTerm && terminalScopeId) {
+      if (
+        warmTarget?.scopeId !== terminalScopeId ||
+        warmTarget.ptyId !== visibleTerm.id
+      ) {
+        setWarmTarget({ scopeId: terminalScopeId, ptyId: visibleTerm.id });
+      }
+      return;
+    }
+    if (
+      warmTarget &&
+      !terminals[warmTarget.scopeId]?.some(
+        (terminal) => terminal.id === warmTarget.ptyId,
+      )
+    ) {
+      setWarmTarget(null);
+    }
+  }, [visibleTerm, terminalScopeId, terminals, warmTarget]);
+
+  const target = visibleTerm && terminalScopeId
+    ? { scopeId: terminalScopeId, ptyId: visibleTerm.id }
+    : warmTarget;
+  const mountedTerm = target
+    ? terminals[target.scopeId]?.find((terminal) => terminal.id === target.ptyId)
+    : undefined;
+  const shown = Boolean(
+    visibleTerm &&
+      target &&
+      visibleTerm.id === target.ptyId &&
+      terminalScopeId === target.scopeId,
+  );
+  const displayed = shown && Boolean(slotEl);
+  const portalTarget = displayed ? slotEl : offScreenEl;
+
+  useLayoutEffect(() => {
+    if (portalTarget && mountEl.parentElement !== portalTarget) {
+      portalTarget.appendChild(mountEl);
+    }
+  }, [mountEl, portalTarget]);
+
+  useEffect(
+    () => () => {
+      mountEl.remove();
+    },
+    [mountEl],
+  );
+
+  if (!portalTarget || !mountedTerm) return null;
 
   return createPortal(
-    <div className="relative h-full min-h-0 w-full overflow-hidden">
-      <div className="absolute inset-0 flex min-h-0 flex-col">
-        {/* key by ptyId so switching shell/thread disposes the old view and
-            mounts a fresh one that reattaches at the latest output. */}
-        <TerminalView key={activeTerm.id} ptyId={activeTerm.id} visible threadActive />
-      </div>
+    <div className="absolute inset-0 flex min-h-0 flex-col">
+      <TerminalView
+        key={mountedTerm.id}
+        ptyId={mountedTerm.id}
+        visible={displayed}
+        threadActive={displayed}
+      />
     </div>,
-    slotEl,
+    mountEl,
   );
 }

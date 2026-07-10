@@ -887,12 +887,25 @@ async function seedSkillsStore(page: Page): Promise<void> {
       return "skills" in state && "isLoading" in state && "load" in state;
     });
     if (!skillsStore) throw new Error("[E2E] skillsStore not found");
-    // Inject two skills so the popup renders a listbox with items.
+    const skills = [
+      { name: "commit", description: "Create a git commit" },
+      { name: "review-pr", description: "Review a pull request" },
+    ];
+    const cacheKey = JSON.stringify(["/test/path", "claude"]);
+    // Inject the provider-scoped cache entry used by the annotation bubble.
     skillsStore.setState({
-      skills: [
-        { name: "commit", description: "Create a git commit" },
-        { name: "review-pr", description: "Review a pull request" },
-      ],
+      entries: {
+        [cacheKey]: {
+          skills,
+          isLoading: false,
+          isStale: false,
+          error: null,
+          inflight: null,
+          loadEpoch: 1,
+          lastFetchedAt: Date.now(),
+        },
+      },
+      skills,
       isLoading: false,
       error: null,
     });

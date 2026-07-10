@@ -71,15 +71,15 @@ export async function mockWebSocketServer(
       : getDefaultSettings();
 
   let resolveWs: (ws: WebSocketRoute) => void;
+  let wsResolved = false;
   const wsReady = new Promise<WebSocketRoute>((r) => {
     resolveWs = r;
   });
 
-  // Match 5-digit ports (19400-19800 mcode range) to avoid intercepting Vite's
-  // HMR socket at port 5173 (4 digits), which would trigger a page reload.
-  await page.routeWebSocket(/ws:\/\/localhost:\d{5}/, (ws) => {
-    resolveWs(ws);
-
+  // The normal test server uses a four-digit Vite port, while agent runtimes
+  // use five-digit ports for both Vite and Mcode. Resolve the controller only
+  // after the socket sends an RPC method so pushes target Mcode, not HMR.
+  await page.routeWebSocket(/ws:\/\/(?:localhost|127\.0\.0\.1):\d{5}/, (ws) => {
     ws.onMessage(async (data) => {
       let msg: Record<string, unknown>;
       try {
@@ -94,6 +94,10 @@ export async function mockWebSocketServer(
         return;
       }
       const method = msg.method as string;
+      if (!wsResolved && typeof method === "string") {
+        wsResolved = true;
+        resolveWs(ws);
+      }
       // Check overrides first
       if (method in overrides) {
         const handler = overrides[method];

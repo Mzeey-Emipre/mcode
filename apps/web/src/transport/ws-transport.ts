@@ -267,7 +267,7 @@ export function createWsTransport(
             "terminal.listActive",
             {},
           );
-          if (activePtys.length === 0) return;
+          useTerminalStore.getState().reconcileActiveSessions(activePtys);
 
           const clientPtyIds = new Set(
             Object.values(useTerminalStore.getState().terminals)

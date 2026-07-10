@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "@/transport";
 
 vi.mock("@/transport", () => ({
@@ -8,6 +8,7 @@ vi.mock("@/transport", () => ({
 import { pushEmitter } from "./ws-transport";
 import { startPushListeners, stopPushListeners } from "./ws-events";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useSkillsStore } from "@/stores/skillsStore";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -86,5 +87,26 @@ describe("ws-events thread.checkoutChanged", () => {
     expect(state.checksById).toEqual({
       other: { aggregate: "no_checks", runs: [], fetchedAt: 2 },
     });
+  });
+});
+
+describe("ws-events skills.changed", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("coalesces a burst of provider invalidations into one cache refresh", () => {
+    vi.useFakeTimers();
+    const invalidate = vi.spyOn(useSkillsStore.getState(), "invalidate");
+    startPushListeners();
+
+    pushEmitter.emit("skills.changed", {});
+    pushEmitter.emit("skills.changed", {});
+    pushEmitter.emit("skills.changed", {});
+    vi.advanceTimersByTime(100);
+
+    expect(invalidate).toHaveBeenCalledOnce();
   });
 });

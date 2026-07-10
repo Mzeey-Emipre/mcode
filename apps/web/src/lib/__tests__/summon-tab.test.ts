@@ -59,6 +59,24 @@ describe("summonTab", () => {
       // No tab was closed — both remain open.
       expect(panel().openTabs).toEqual(["preview", "terminal"]);
     });
+
+    it("recreates a closed active tab instead of hiding the empty panel", () => {
+      summonTab("terminal");
+      useDiffStore.getState().closeRightPanelTab(WID, TID, "terminal");
+      expect(panel()).toMatchObject({
+        visible: true,
+        activeTab: "terminal",
+        openTabs: [],
+      });
+
+      summonTab("terminal");
+
+      expect(panel()).toMatchObject({
+        visible: true,
+        activeTab: "terminal",
+        openTabs: ["terminal"],
+      });
+    });
   });
 
   describe("hide-when-active", () => {

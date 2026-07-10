@@ -347,6 +347,33 @@ describe("provider-scoped commands", () => {
     expect(mockListSkills).toHaveBeenCalledWith("/my/project", "codex");
   });
 
+  it("settles two mounted consumers with different provider scopes", async () => {
+    const mockListSkills = vi.fn().mockResolvedValue([]);
+    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    const composerAnchor = makeAnchor();
+    const previewAnchor = makeAnchor();
+
+    renderHook(() => {
+      useSlashCommand({
+        anchorRef: composerAnchor,
+        cwd: "/my/project",
+        providerId: "claude",
+      });
+      useSlashCommand({
+        anchorRef: previewAnchor,
+        cwd: "/my/project",
+        providerId: undefined,
+        includeBuiltins: false,
+      });
+    });
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(mockListSkills).toHaveBeenCalledTimes(2);
+    expect(mockListSkills).toHaveBeenCalledWith("/my/project", "claude");
+    expect(mockListSkills).toHaveBeenCalledWith("/my/project", undefined);
+  });
+
   it("hides /m:plan for copilot provider", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
