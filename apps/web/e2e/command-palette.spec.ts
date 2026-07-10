@@ -113,8 +113,11 @@ test.describe("Command palette", () => {
     await page.keyboard.press("Control+k");
     const input = page.locator('[data-slot="palette-input"]');
     await input.fill("~/");
-    // The Add chip is the unmistakable signal that browse mode is active.
-    await expect(page.getByTestId("palette-add-folder")).toBeVisible();
+    // The focused folder action is the unmistakable signal that browse mode is active.
+    const addProject = page.getByTestId("palette-add-folder");
+    await expect(addProject).toBeVisible();
+    await expect(addProject).toHaveText("Add project");
+    await expect(addProject).toHaveAttribute("title", "Add this folder as a project");
     // The mode label is exposed on the wrapper for diagnostics.
     await expect(page.locator('[data-slot="palette-input-wrapper"]')).toHaveAttribute(
       "data-palette-mode",

@@ -83,7 +83,9 @@ test.describe("Sidebar", () => {
   });
 
   test("plus button to add a project is visible", async ({ page }) => {
-    await expect(page.getByRole("button", { name: "Add project" })).toBeVisible();
+    const addProject = page.getByRole("button", { name: "Add project" });
+    await expect(addProject).toBeVisible();
+    await expect(addProject.locator("svg")).toHaveClass(/(^|\s)lucide-plus(\s|$)/);
   });
 
   test("collapses and expands when toggle button is clicked", async ({

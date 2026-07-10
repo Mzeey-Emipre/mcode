@@ -15,7 +15,7 @@ import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, FolderPlus, Folder, Activity, MoreHorizontal, SquarePen } from "lucide-react";
+import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, FolderPlus, Folder, Activity, MoreHorizontal, Plus, SquarePen } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
@@ -484,7 +484,7 @@ export function ProjectTree() {
           <TooltipTrigger
             render={
               <Button variant="ghost" size="icon-xs" onClick={handleOpenFolder} aria-label="Add project" className="text-muted-foreground hover:text-foreground">
-                <FolderPlus size={14} />
+                <Plus size={15} />
               </Button>
             }
           />
