@@ -49,9 +49,8 @@
     "agentFixtureRepo": ".dev/fixture-repo",
     "agentLogs": ".dev/logs",
     "agentPids": ".dev/pids",
-    "agentPlaywrightScratch": ".dev/playwright-scratch",
-    "agentElectronUserData": ".dev/electron",
-    "screenshots": "apps/web/e2e/screenshots"
+    "agentVerification": ".dev/verification",
+    "agentElectronUserData": ".dev/electron"
   },
   "agentRuntime": {
     "start": "bun run --shell system agent:up",

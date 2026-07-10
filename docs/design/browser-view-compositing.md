@@ -234,9 +234,9 @@ Run `bun run dev:desktop` and capture evidence for both engines:
 - `cd apps/desktop && bunx vitest run src/main/__tests__/preview-browser.test.ts src/main/__tests__/preview-webview-adopt.test.ts src/main/__tests__/browser-use-router.test.ts`
 - `cd apps/web && bunx vitest run src/components/panels/hooks/__tests__/usePreviewBridge.test.ts src/components/panels/hooks/__tests__/usePreviewCapture.test.ts src/stores/__tests__/previewTabsStore.test.ts src/stores/__tests__/previewSuppressionStore.test.ts`
 - `cd packages/contracts && bun run test -- src/models/__tests__/settings.test.ts src/models/__tests__/browser-preview-clamp.test.ts`
-- `cd apps/web && bunx playwright test e2e/preview-chrome.spec.ts e2e/right-panel-browser-pages.spec.ts e2e/right-panel-preview-threadless.spec.ts`
-- Add and run a flagged webview desktop e2e spec that saves overlay-order screenshots.
-- Regression floor: `bun run verify`, `bun run verify:e2e`, and `cd apps/desktop && bun run e2e`.
+- Exercise the web preview with browser use and capture relevant runtime, layout, and annotation evidence under `.dev/verification/`.
+- Exercise webview-only behavior in the desktop runtime with computer use.
+- Regression floor: focused Vitest coverage followed by `bun run verify`.
 
 ## Alternatives Considered
 

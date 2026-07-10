@@ -14,29 +14,26 @@ verification; you cannot finish a turn with failing checks.
 digraph workflow {
     rankdir=TB;
     "Implement per plan" [shape=box];
+    "Behavior change?" [shape=diamond];
+    "Exercise the running app" [shape=box];
+    "Behavior correct?" [shape=diamond];
+    "Add or update regular test" [shape=box];
     "Run bun run verify" [shape=box];
     "Passes?" [shape=diamond];
     "Fix errors" [shape=box];
-    "UI change?" [shape=diamond];
-    "Visual verify with Playwright MCP" [shape=box];
-    "Visual OK?" [shape=diamond];
-    "E2E needed?" [shape=diamond];
-    "Write spec + run bun run verify:e2e" [shape=box];
     "Commit + show results" [shape=box];
 
-    "Implement per plan" -> "Run bun run verify";
+    "Implement per plan" -> "Behavior change?";
+    "Behavior change?" -> "Exercise the running app" [label="yes"];
+    "Behavior change?" -> "Run bun run verify" [label="no"];
+    "Exercise the running app" -> "Behavior correct?";
+    "Behavior correct?" -> "Fix errors" [label="no"];
+    "Behavior correct?" -> "Add or update regular test" [label="yes"];
+    "Add or update regular test" -> "Run bun run verify";
     "Run bun run verify" -> "Passes?";
     "Passes?" -> "Fix errors" [label="no"];
-    "Fix errors" -> "Run bun run verify";
-    "Passes?" -> "UI change?" [label="yes"];
-    "UI change?" -> "Visual verify with Playwright MCP" [label="yes"];
-    "UI change?" -> "E2E needed?" [label="no"];
-    "Visual verify with Playwright MCP" -> "Visual OK?";
-    "Visual OK?" -> "Fix errors" [label="no"];
-    "Visual OK?" -> "E2E needed?" [label="yes"];
-    "E2E needed?" -> "Write spec + run bun run verify:e2e" [label="yes"];
-    "E2E needed?" -> "Commit + show results" [label="no"];
-    "Write spec + run bun run verify:e2e" -> "Commit + show results";
+    "Fix errors" -> "Behavior change?";
+    "Passes?" -> "Commit + show results" [label="yes"];
 }
 ```
 
@@ -72,34 +69,38 @@ each workspace's vitest run to tests related to the changed files
 those packages are imported across the repo and vitest's related-file import
 graph is per-project.
 
-## Visual Verify (when UI changes + Playwright MCP available)
+## Live Verification
 
-If Playwright MCP is connected and the change affects UI:
+Run the affected app and exercise the changed path as a user or client would.
+Prefer browser use for web surfaces and computer use for Electron-only surfaces.
+These tools can inspect runtime state, console output, accessibility state, layout,
+and screenshots without adding a permanent browser test harness to the repository.
 
-| Step | Tool | Purpose |
-|------|------|---------|
-| 1 | Check `localhost:5173` is up (or run `bun run dev:web`) | Dev server |
-| 2 | `browser_navigate` | Open affected page |
-| 3 | `browser_snapshot` | Read accessibility tree |
-| 4 | `browser_take_screenshot` | Capture visual state |
-| 5 | `browser_console_messages` | Check for errors |
+For web work, start the runtime with `bun run dev:web`. When the isolated agent
+runtime is present, read its URL from `.dev/ports.json`. For Electron-only work,
+start the normal desktop development runtime and inspect it with computer use.
 
-If visual issues found, fix and re-run `bun run verify` before retrying.
+Record the action, the observed result, and relevant errors or measurements in
+the final report. UI changes require a screenshot or equivalent visual evidence.
+If live verification is blocked, state the blocker and the manual check required.
 
-If Playwright MCP is not connected, skip and note it.
+## Disposable Verification Code
 
-## E2E Tests
+Agents may write one-off scripts, fixtures, benchmarks, annotations, logs, or
+screenshots under `.dev/verification/`. Create subdirectories only when useful.
+Everything in this directory is ignored and disposable. Do not promote these
+artifacts into tracked tests or agent commands.
 
-Write E2E tests when the change involves any of these triggers:
-interactive components, keyboard navigation, focus trapping, responsive
-layout, accessibility semantics, floating overlays, or persisted state.
+Playwright may be used from an external agent or system installation when it is
+the best probe for a task. The repository does not install or configure it as a
+default verification engine.
 
-"If applicable" is not a loophole. A dropdown with keyboard navigation
-needs an E2E spec. A color change does not. When in doubt, write the spec.
+## Maintained Behavior Tests
 
-1. Write a Playwright spec in `apps/web/e2e/`
-2. Run `bun run verify:e2e`
-3. Fix any failures
+Keep durable regression coverage close to the behavior it protects. Use Vitest
+or Testing Library in the closest `__tests__/` directory for components, stores,
+services, IPC boundaries, and product rules. If live verification exposes a
+regression, add the smallest regular test that would have caught it.
 
 ## Deliver
 
@@ -109,12 +110,13 @@ evidence that checks passed.
 ## Before You Declare Done
 
 - [ ] `bun run verify` (the full gate, including unit tests) passes
-- [ ] UI changes verified visually (if Playwright MCP available)
-- [ ] E2E tests pass (if applicable)
-- [ ] No browser console errors on affected pages
+- [ ] Behavior changes exercised against the running app
+- [ ] UI changes inspected visually with browser use or computer use
+- [ ] Durable behavior protected by a focused regular test
+- [ ] No relevant runtime or browser console errors
 
 The fast gate that the stop hook ran during the turn is not sufficient on
-its own — it skips the unit test phase. Run `bun run verify` explicitly
+its own because it skips the unit test phase. Run `bun run verify` explicitly
 before committing.
 
 ## Enforcement
@@ -126,12 +128,6 @@ before committing.
 | Codex | `.codex/hooks.json` | JSON `{"decision":"block"}` via `scripts/agent/hooks/codex-stop.mjs` |
 
 PreToolUse hooks also block direct `.env` file edits across all agents.
-
-## Playwright MCP
-
-- **Claude Code:** reads `.mcp.json` automatically
-- **Cursor:** reads `.cursor/mcp.json` automatically
-- **Other agents:** run `npx @playwright/mcp@latest` and connect via MCP
 
 ## One-time cleanup
 

@@ -200,15 +200,13 @@ Frontend:
 
 For implementation work, verify in this order:
 
-1. Start the app with `node scripts/agent/demo.mjs` and open the printed URL.
+1. Start the app with `bun run dev:web` and open it with browser use.
 2. Seed or use a thread with Claude categories and observe `5-hour` or `weekly` usage in Overview.
 3. Seed or use a thread with Cursor percentage categories and observe API and Auto usage in Overview.
 4. Confirm dollar amounts render only for provider-proven API-key session cost.
 5. Confirm no browser console errors.
 6. Run `bun run verify`.
-7. Run focused E2E when changed:
-   - `cd apps/web`
-   - `PLAYWRIGHT_REUSE_WEB_SERVER=1 bunx playwright test e2e/chat-header-consolidated.spec.ts --workers=1`
+7. Run focused Vitest or Testing Library coverage for the changed behavior.
 
 ## PR Body Note
 
