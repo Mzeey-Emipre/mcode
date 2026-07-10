@@ -36,7 +36,7 @@ type IconComponent = ComponentType<{ size?: number; className?: string }>;
 
 const PROVIDER_META: Record<string, { icon: IconComponent; color: string }> = {
   claude: { icon: ClaudeIcon, color: "text-orange-500 dark:text-orange-400" },
-  codex: { icon: CodexIcon, color: "text-emerald-400" },
+  codex: { icon: CodexIcon, color: "text-foreground" },
   copilot: { icon: CopilotIcon, color: "text-violet-400 dark:text-violet-300" },
   cursor: { icon: CursorProviderIcon, color: "" },
   opencode: { icon: OpenCodeIcon, color: "text-violet-400" },

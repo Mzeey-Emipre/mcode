@@ -899,7 +899,7 @@ type IconComponent = ComponentType<{ size?: number; className?: string }>;
 
 const PROVIDER_META: Record<string, { icon: IconComponent; label: string; color: string }> = {
   claude: { icon: ClaudeIcon, label: "Claude", color: "text-orange-500 dark:text-orange-400" },
-  codex: { icon: CodexIcon, label: "Codex", color: "text-emerald-400" },
+  codex: { icon: CodexIcon, label: "Codex", color: "text-foreground" },
   copilot: { icon: CopilotIcon, label: "GitHub Copilot", color: "text-violet-400 dark:text-violet-300" },
   cursor: { icon: CursorProviderIcon, label: "Cursor", color: "" },
   gemini: { icon: GeminiIcon, label: "Gemini", color: "text-sky-400" },
