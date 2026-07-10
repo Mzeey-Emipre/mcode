@@ -415,6 +415,8 @@ async function dispatch(
       }
       return workspace;
     }
+    case "workspace.rename":
+      return deps.workspaceService.rename(params.id, params.name);
     case "workspace.delete": {
       await teardownWorkspaceThreads(deps, params.id);
       const result = deps.workspaceService.delete(params.id);

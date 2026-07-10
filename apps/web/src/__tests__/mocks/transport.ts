@@ -93,6 +93,7 @@ export function createMockMessage(overrides?: Partial<Message>): Message {
 export const mockTransport: McodeTransport = {
   createWorkspace: vi.fn(),
   listWorkspaces: vi.fn().mockResolvedValue([]),
+  renameWorkspace: vi.fn().mockResolvedValue(createMockWorkspace()),
   deleteWorkspace: vi.fn().mockResolvedValue(true),
   touchLastOpened: vi.fn().mockResolvedValue(undefined),
   reorderWorkspace: vi.fn().mockResolvedValue(undefined),

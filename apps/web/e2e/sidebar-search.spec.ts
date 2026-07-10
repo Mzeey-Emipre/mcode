@@ -19,6 +19,18 @@ test.describe("Sidebar thread actions", () => {
           updated_at: now,
         },
       ],
+      "workspace.rename": {
+        id: "ws-1",
+        name: "Renamed Workspace",
+        path: "/test/path",
+        provider_config: {},
+        is_git_repo: true,
+        pinned: false,
+        last_opened_at: Date.now() - 3600_000,
+        sort_order: 0,
+        created_at: now,
+        updated_at: now,
+      },
       "thread.list": [
         {
           id: "thread-1",
@@ -205,6 +217,24 @@ test.describe("Sidebar thread actions", () => {
     expect(optionsBox).not.toBeNull();
     expect(newThreadBox).not.toBeNull();
     expect(optionsBox!.x).toBeLessThan(newThreadBox!.x);
+  });
+
+  test("project options include Explorer and rename", async ({ page }) => {
+    await page.goto("/");
+    const options = page.getByRole("button", { name: "Project options for Test Workspace" });
+    await options.click();
+
+    await expect(page.getByText("Open in Explorer", { exact: true })).toBeVisible();
+    await page.getByText("Rename project", { exact: true }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: "Rename project" })).toBeVisible();
+    await dialog.getByLabel("Project name").fill("Renamed Workspace");
+    await dialog.getByRole("button", { name: "Rename", exact: true }).click();
+
+    await expect(
+      page.getByRole("button", { name: "Select project Renamed Workspace" }),
+    ).toBeVisible();
   });
 
   test("the finder keeps sort and filter controls with its results", async ({ page }) => {

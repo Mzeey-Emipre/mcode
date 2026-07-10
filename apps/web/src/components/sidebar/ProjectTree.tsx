@@ -15,7 +15,7 @@ import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, ChevronRight, FolderPlus, Folder, Activity, MoreHorizontal, Plus, SquarePen } from "lucide-react";
+import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, ChevronRight, FolderPlus, Folder, FolderOpen, Activity, MoreHorizontal, Pencil, Plus, SquarePen } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
@@ -39,11 +39,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { relativeTime } from "@/lib/time";
@@ -51,6 +53,9 @@ import { schedulePrefetch, cancelPrefetch } from "@/lib/thread-hydrator/prefetch
 import { isPrable } from "@/lib/is-prable";
 import { getCiVisual, CI_ICON_STROKE, getCiOverviewSummaryLabel } from "@/lib/ci-status";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
+import { FILE_EXPLORER_ID } from "@/lib/resolveDefaultOpenInApp";
+import { getTransport } from "@/transport";
+import { useToastStore } from "@/stores/toastStore";
 import type { ChecksStatus } from "@mcode/contracts";
 import type { Workspace, Thread } from "@/transport/types";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
@@ -139,6 +144,12 @@ interface WorkspaceDeleteDialogState {
   workspaceName: string;
 }
 
+/** State for the workspace rename dialog. */
+interface WorkspaceRenameDialogState {
+  workspaceId: string;
+  workspaceName: string;
+}
+
 interface InlineEditState {
   threadId: string;
   title: string;
@@ -197,6 +208,7 @@ export function ProjectTree() {
   const loadWorktrees = useWorkspaceStore((s) => s.loadWorktrees);
   const worktreesLoadedForWorkspace = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
@@ -241,6 +253,9 @@ export function ProjectTree() {
   const [deleteWorktree, setDeleteWorktree] = useState(false);
   const [wsDeleteDialog, setWsDeleteDialog] = useState<WorkspaceDeleteDialogState | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [wsRenameDialog, setWsRenameDialog] = useState<WorkspaceRenameDialogState | null>(null);
+  const [workspaceRenameValue, setWorkspaceRenameValue] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
   const workspaceIds = useMemo(() => workspaces.map((w) => w.id), [workspaces]);
@@ -377,6 +392,11 @@ export function ProjectTree() {
     }
   }, []);
 
+  const handleRenameWorkspace = useCallback((workspace: Workspace) => {
+    setWorkspaceRenameValue(workspace.name);
+    setWsRenameDialog({ workspaceId: workspace.id, workspaceName: workspace.name });
+  }, []);
+
   const handleInlineEditChange = useCallback((title: string) => {
     setInlineEdit((prev) => prev ? { ...prev, title } : null);
   }, []);
@@ -423,6 +443,27 @@ export function ProjectTree() {
       // Error shown via store.error; keep dialog open so user can retry
     }
   }, [wsDeleteDialog, deleteWorkspace]);
+
+  const handleWorkspaceRenameConfirm = useCallback(async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!wsRenameDialog || isRenaming) return;
+
+    const name = workspaceRenameValue.trim();
+    if (!name || name === wsRenameDialog.workspaceName) {
+      setWsRenameDialog(null);
+      return;
+    }
+
+    setIsRenaming(true);
+    try {
+      await renameWorkspace(wsRenameDialog.workspaceId, name);
+      setWsRenameDialog(null);
+    } catch {
+      // The workspace store retains the failure message for the sidebar error rail.
+    } finally {
+      setIsRenaming(false);
+    }
+  }, [isRenaming, renameWorkspace, workspaceRenameValue, wsRenameDialog]);
 
   const handleStartInlineEdit = useCallback((threadId: string, title: string) => {
     setInlineEdit({ threadId, title, originalTitle: title });
@@ -535,6 +576,7 @@ export function ProjectTree() {
                   onSelectThread={handleSelectThread}
                   onCreateThread={handleCreateThread}
                   onDelete={handleDeleteWorkspace}
+                  onRename={handleRenameWorkspace}
                   onThreadContextMenu={handleThreadContextMenu}
                 />
                 );
@@ -712,6 +754,52 @@ export function ProjectTree() {
               Delete
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={wsRenameDialog !== null}
+        onOpenChange={(open) => {
+          if (!open && !isRenaming) setWsRenameDialog(null);
+        }}
+      >
+        <DialogContent showCloseButton={false} className="sm:max-w-md overflow-hidden">
+          <form onSubmit={handleWorkspaceRenameConfirm} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <DialogTitle>Rename project</DialogTitle>
+              <DialogDescription>
+                Choose a new name for {wsRenameDialog?.workspaceName}.
+              </DialogDescription>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="workspace-rename">Project name</Label>
+              <Input
+                id="workspace-rename"
+                value={workspaceRenameValue}
+                onChange={(event) => setWorkspaceRenameValue(event.target.value)}
+                maxLength={120}
+                autoFocus
+                disabled={isRenaming}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isRenaming}
+                onClick={() => setWsRenameDialog(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isRenaming || workspaceRenameValue.trim().length === 0}
+              >
+                {isRenaming && <Spinner size={14} className="text-current" />}
+                {isRenaming ? "Renaming..." : "Rename"}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -1280,6 +1368,7 @@ interface ProjectNodeProps {
   onSelectThread: (wsId: string, threadId: string) => void;
   onCreateThread: (wsId: string) => void;
   onDelete: (wsId: string) => void;
+  onRename: (workspace: Workspace) => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread, workspacePath: string) => void;
   /** When set, forwards drag-handle listeners from `@dnd-kit/sortable` onto the project row. */
   sortableListeners?: DraggableSyntheticListeners;
@@ -1309,6 +1398,7 @@ const ProjectNode = memo(function ProjectNode({
   onSelectThread,
   onCreateThread,
   onDelete,
+  onRename,
   onThreadContextMenu,
   sortableListeners,
   isProjectDragging = false,
@@ -1339,6 +1429,20 @@ const ProjectNode = memo(function ProjectNode({
     e.stopPropagation();
     onDelete(wsId);
   }, [onDelete, wsId]);
+  const handleRename = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    onRename(workspace);
+  }, [onRename, workspace]);
+  const handleOpenInExplorer = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    getTransport().openIn(FILE_EXPLORER_ID, workspace.path).catch((error: unknown) => {
+      useToastStore.getState().show(
+        "error",
+        "Couldn't open File Explorer",
+        String((error as { message?: string })?.message ?? error),
+      );
+    });
+  }, [workspace.path]);
   const handleSelectThread = useCallback((threadId: string) => onSelectThread(wsId, threadId), [onSelectThread, wsId]);
   const handleThreadContextMenu = useCallback(
     (e: React.MouseEvent, thread: Thread) => onThreadContextMenu(e, thread, workspace.path),
@@ -1443,6 +1547,21 @@ const ProjectNode = memo(function ProjectNode({
             <MoreHorizontal size={13} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={4} className="min-w-40">
+            <DropdownMenuItem
+              onClick={handleOpenInExplorer}
+              className="flex cursor-pointer items-center gap-2"
+            >
+              <FolderOpen size={13} />
+              Open in Explorer
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={handleRename}
+              className="flex cursor-pointer items-center gap-2"
+            >
+              <Pencil size={13} />
+              Rename project
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={handleDelete}
               className="flex cursor-pointer items-center gap-2 text-destructive focus:text-destructive"

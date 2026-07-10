@@ -178,6 +178,8 @@ interface WorkspaceState {
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
   createWorkspace: (name: string, path: string) => Promise<Workspace>;
+  /** Rename a workspace and refresh its local record. */
+  renameWorkspace: (id: string, name: string) => Promise<void>;
   deleteWorkspace: (id: string) => Promise<void>;
   /** Remove a workspace from local state immediately (used by push channel handlers). */
   removeWorkspaceFromState: (id: string) => void;
@@ -458,6 +460,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ],
       }));
       return workspace;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  renameWorkspace: async (id, name) => {
+    set({ error: null });
+    try {
+      const workspace = await getTransport().renameWorkspace(id, name);
+      set((state) => ({
+        workspaces: state.workspaces.map((item) =>
+          item.id === id ? workspace : item,
+        ),
+      }));
     } catch (e) {
       set({ error: String(e) });
       throw e;

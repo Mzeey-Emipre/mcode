@@ -168,6 +168,14 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ name: z.string(), path: z.string() }),
     result: WorkspaceSchema(),
   },
+  /** Rename a workspace without changing its filesystem path. */
+  "workspace.rename": {
+    params: z.object({
+      id: z.string(),
+      name: z.string().trim().min(1).max(120),
+    }),
+    result: WorkspaceSchema(),
+  },
   "workspace.delete": {
     params: z.object({ id: z.string() }),
     result: z.boolean(),

@@ -16,6 +16,7 @@ vi.mock("@/stores/workspaceStore", () => ({
       loadWorkspaces: vi.fn(),
       loadThreads: vi.fn(),
       setActiveWorkspace: vi.fn(),
+      renameWorkspace: vi.fn(),
       setActiveThread: vi.fn(),
       createWorkspace: vi.fn(),
       deleteWorkspace: vi.fn(),
@@ -169,6 +170,7 @@ function setupStoreMocks({
     loadWorkspaces: vi.fn(),
     loadThreads: vi.fn(),
     setActiveWorkspace,
+    renameWorkspace: vi.fn(),
     setActiveThread,
     createWorkspace: vi.fn(),
     deleteWorkspace: vi.fn(),
@@ -258,6 +260,16 @@ describe("ProjectTree thread interactions", () => {
       "group-hover/ws:opacity-100",
       "group-focus-within/ws:opacity-100",
     );
+  });
+
+  it("offers Explorer and rename actions from the project menu", () => {
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+    fireEvent.click(screen.getByRole("button", { name: "Project options for Test Project" }));
+
+    expect(screen.getByText("Open in Explorer", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Rename project", { exact: true })).toBeInTheDocument();
   });
 
   it("labels an expanded project with no threads", () => {

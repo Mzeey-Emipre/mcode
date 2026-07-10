@@ -152,6 +152,8 @@ export interface McodeTransport {
   // Workspace commands
   createWorkspace(name: string, path: string): Promise<Workspace>;
   listWorkspaces(): Promise<Workspace[]>;
+  /** Rename a workspace without changing its filesystem path. */
+  renameWorkspace(id: string, name: string): Promise<Workspace>;
   deleteWorkspace(id: string): Promise<boolean>;
   /** Record workspace as last-opened for recency ordering in the project selector. */
   touchLastOpened(id: string): Promise<void>;
