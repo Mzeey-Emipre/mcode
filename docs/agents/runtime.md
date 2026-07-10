@@ -60,7 +60,6 @@ After cross-package changes (function signatures, shared interfaces), typecheck 
 | `bun` | Package manager + runtime | https://bun.sh |
 | `git` | Version control | https://git-scm.com |
 | `node` | Script execution | https://nodejs.org |
-| Playwright | E2E tests | `cd apps/web && bun x playwright install` |
 
 > **Note:** Electron bundles its own Node.js binary for the renderer/server process.
 > The system `node` is only needed for running scripts at the repo root.
@@ -121,7 +120,7 @@ Use `bun run state:paths` to print all resolved paths for the current environmen
 | Data directory | `MCODE_DATA_DIR` (see above) |
 | Database | `MCODE_DB_PATH`, or `<toplevel>/.mcode-local/mcode.db` in a dev linked worktree, else dev `dbs/dev-*.db`, else default under data dir (see env table) |
 | Log files | `$MCODE_DATA_DIR/logs/mcode.log.YYYY-MM-DD` |
-| Playwright screenshots | `apps/web/e2e/screenshots/` |
+| Disposable verification | `.dev/verification/` |
 
 Log files rotate daily and are retained for 14 days.
 
@@ -261,15 +260,12 @@ Slash commands are first-class in Claude Code. Other harnesses (Cursor, Codex, O
 | Workflow | Claude command | Equivalent shell |
 |----------|----------------|------------------|
 | Typecheck + lint + unit tests | `/verify` | `bun run verify` |
-| Playwright E2E (web) | `/verify-e2e` | `bun run verify:e2e` |
-| Playwright E2E (Electron) | `/verify-e2e-desktop` | `cd apps/desktop && bun run e2e` |
-| Boot dev web app for live demo | `/demo <feature>` | `node scripts/agent/demo.mjs` |
-| Launch Electron app for live demo | `/demo-desktop <feature>` | `node scripts/agent/demo-desktop.mjs` |
-| 4-parallel-subagent PR review | `/review-pr <ref>` | (Claude Code only — see `.claude/commands/review-pr.md`) |
+| Start web runtime | Shared agent guidance | `bun run dev:web` |
+| Launch desktop runtime | Shared agent guidance | `bun run dev:desktop` |
 
-## Demoing a Feature
+## Verifying a Feature Live
 
-The `/demo` flow (or `node scripts/agent/demo.mjs` from other harnesses) boots `bun run dev:web`, waits for the Vite dev URL, then prints a Playwright MCP entry point. See [docs/agents/demo.md](demo.md) for the full runbook — driving the app via Playwright MCP, capturing screenshots, and reporting back.
+Start the web runtime with `bun run dev:web`. When it writes `.dev/ports.json`, use the URL recorded there and inspect the feature with browser use. For Electron-only behavior, launch `bun run dev:desktop` and inspect it with computer use. Put any task-specific scripts, fixtures, screenshots, annotations, or logs under `.dev/verification/`; the directory is ignored and disposable.
 
 ---
 

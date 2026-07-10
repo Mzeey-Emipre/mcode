@@ -25,7 +25,7 @@ Key architectural rules:
 | Contracts | Zod (schemas + type inference) |
 | Database | SQLite (WAL mode, better-sqlite3) |
 | Communication | WebSocket (JSON RPC + push events) |
-| Testing | Vitest (unit), Playwright (E2E) |
+| Testing | Vitest and Testing Library |
 | CI/CD | GitHub Actions, release-please, electron-builder |
 
 ## 3. Package Structure
@@ -660,11 +660,10 @@ bun run dev:web
 
 | Type | Command | Framework |
 |------|---------|-----------|
-| Unit | `bun run test` | Vitest |
-| E2E | `cd apps/web && bun run e2e` | Playwright |
-| E2E (headed) | `cd apps/web && bun run e2e:headed` | Playwright |
+| Unit, component, and integration | `bun run test` | Vitest and Testing Library |
+| Full regression gate | `bun run verify` | Typecheck, lint, and maintained tests |
 
-E2E tests save screenshots to `apps/web/e2e/screenshots/` for visual verification.
+Behavior changes are also exercised against the running app. Agents prefer browser use for web surfaces and computer use for Electron-only surfaces. Disposable verification scripts and artifacts belong under `.dev/verification/`.
 
 ## 15. Performance Budgets
 

@@ -81,7 +81,7 @@ in doubt, bound the work first, optimize second.
 
 When working on frontend code, follow the component registry and rules in **[docs/guides/ui-components.md](docs/guides/ui-components.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
 
-That guide's **Testing UI Changes** section lists the triggers that require a Playwright run (interactive components, responsive layout, accessibility semantics, theme tokens, `data-testid` changes, floating overlays, persisted first-paint state). Run `cd apps/web && bun run e2e` and report pass counts before claiming a UI change is done.
+That guide's **Testing UI Changes** section defines the live checks required for interactive components, responsive layout, accessibility semantics, theme tokens, floating overlays, and persisted first-paint state. Use browser use or computer use against the running app, report the observed result, and keep any task-specific scripts or artifacts under `.dev/verification/`.
 
 ## Narrative Timeline
 
@@ -145,11 +145,11 @@ UI behavior, IPC handlers, server endpoints, stores, and agent-service behavior.
    `bun run dev:server`, or `bun run dev:desktop`. Exercise the changed path as a
    user or client would. Observe the rendered UI, response body, IPC result, or
    persisted data. This live run is the main verification step.
-2. Lock it in. Add or update a Playwright spec, desktop e2e spec, or focused test
-   that asserts the observed outcome.
-3. Run the regression floor. Run `bun run verify` and the relevant e2e suite,
-   such as `bun run e2e`, `bun run verify:e2e`, or desktop e2e as needed.
+2. Lock it in. Add or update a focused Vitest or Testing Library test in the
+   closest `__tests__/` directory that asserts the observed behavior. Do not
+   commit task-specific browser-driving or screenshot scripts.
+3. Run the regression floor with `bun run verify`.
 
-Report all three: the live action and observed outcome, the assertion that
-protects it, and the suite result. If the environment blocks live verification,
-state that explicitly and list the manual check instead.
+Report all three: the live action and observed outcome, the regular test that
+protects it, and the `bun run verify` result. If the environment blocks live
+verification, state that explicitly and list the manual check instead.
