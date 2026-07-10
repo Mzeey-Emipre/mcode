@@ -1,14 +1,15 @@
 import { useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { Terminal, Zap, Puzzle, Sparkles, RefreshCw } from "lucide-react";
 import type { Command, PopupState } from "./useSlashCommand";
-import { computeFixedPopupPosition } from "./popup-position";
+import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 
 const ITEM_HEIGHT = 44; // px per row
+const VISIBLE_ITEMS = 8;
 const GROUP_HEADER_HEIGHT = 24;
-const LIST_MAX_HEIGHT = 256;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
+// Placement is calculated before layout, so account for the list padding and borders here.
+const LIST_SURFACE_CHROME = 12;
 // Footer (Refresh row) intrinsic height: border-t (1px) + py-1 (8px) + icon
 // button height (~20px). Used to estimate popup height for the above/below
 // placement calculation; the rendered footer remains naturally sized.
@@ -109,9 +110,9 @@ export function SlashCommandPopup({
 
   if (state.kind === "closed" || !anchorRect) return null;
 
-  // Match the project picker: the popup stays compact and scrolls beyond the
-  // first few commands instead of expanding across the composer.
-  const listMaxHeight = LIST_MAX_HEIGHT;
+  const listMaxHeight =
+    VISIBLE_ITEMS * ITEM_HEIGHT +
+    Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT;
 
   // Estimate the rendered popup height for the above/below placement
   // decision. Only the list branch renders a footer (Refresh row); error,
@@ -122,32 +123,21 @@ export function SlashCommandPopup({
     (willRenderList
       ? Math.min(
           items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT,
-          LIST_MAX_HEIGHT,
+          listMaxHeight,
         )
       : STATUS_ROW_HEIGHT) +
-    (willRenderList ? FOOTER_HEIGHT : 0);
-  const style = computeFixedPopupPosition({
-    anchorRect,
-    estimatedHeight,
-    minWidth: 256,
-    maxWidth: 256,
-  });
-
+    (willRenderList ? FOOTER_HEIGHT + LIST_SURFACE_CHROME : 0);
   const popup = (
     // role="listbox" is intentionally NOT on this outer wrapper: the
     // Refresh footer button and the ErrorRow's Retry button live inside
     // and would be invalid descendants of a listbox per WAI-ARIA. The
     // role is moved down to the options container only.
-    <div
+    <ComposerOverlaySurface
       data-slash-popup
-      style={style}
-      className={cn(
-        "composer-autocomplete-surface z-50 flex flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 shadow-lg animate-composer-popup-enter",
-        tone === "dark"
-          ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
-          : "bg-popover text-popover-foreground",
-        className,
-      )}
+      anchorRect={anchorRect}
+      estimatedHeight={estimatedHeight}
+      tone={tone}
+      className={className}
     >
       {/*
         Render priority (stale-while-revalidate) is encoded by PopupState:
@@ -240,9 +230,9 @@ export function SlashCommandPopup({
             return <EmptyState tone={tone} />;
         }
       })()}
-    </div>
+    </ComposerOverlaySurface>
   );
-  return createPortal(popup, document.body);
+  return popup;
 }
 
 function CommandRow({

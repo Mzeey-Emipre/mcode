@@ -1409,7 +1409,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       setFilePopupAnchorRect(null);
       return;
     }
-    setFilePopupAnchorRect(editorContainerRef.current?.getBoundingClientRect() ?? null);
+    setFilePopupAnchorRect(composerContainerRef.current?.getBoundingClientRect() ?? null);
   }, [fileAutocomplete.isOpen]);
 
   const toggleInteractionMode = useCallback(() => {
@@ -1446,7 +1446,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   );
 
   const slashCommand = useSlashCommand({
-    anchorRef: editorContainerRef,
+    anchorRef: composerContainerRef,
     cwd: workspacePath,
     providerId: effectiveProviderId,
     onMcodeCommand: (action) => {
@@ -3045,6 +3045,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             listRef={filePopup.listRef}
             selectedIndex={filePopup.selectedIndex}
             anchorRect={filePopupAnchorRect}
+            presentation="composer"
           />
           <SpellcheckContextMenu editorRef={editorContainerRef} />
         </div>
@@ -3094,6 +3095,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           <ComposerAddMenu
             disabled={planPending || isStaleWorktree || !!providerReason}
             onAttachFiles={handleAttachPick}
+            getComposerRect={() => composerContainerRef.current?.getBoundingClientRect() ?? null}
           />
           {/* Model picker */}
           <ModelSelector

@@ -101,10 +101,22 @@ test.describe("Composer toolbar", () => {
     await expect(menu.getByRole("button", { name: /Goal/ })).toHaveCount(0);
     await expect(menu.getByRole("button", { name: /Plan mode/ })).toHaveCount(0);
     await expect(menu.getByRole("button", { name: /Mention an agent or file/ })).toHaveCount(0);
+    await expect(menu).toHaveAttribute("data-composer-autocomplete", "true");
+
+    const [menuBox, composerBox] = await Promise.all([
+      menu.boundingBox(),
+      page.getByTestId("composer-surface").boundingBox(),
+    ]);
+    expect(menuBox).not.toBeNull();
+    expect(composerBox).not.toBeNull();
+    expect(menuBox?.width).toBeCloseTo(composerBox?.width ?? 0, 0);
+    expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(composerBox?.y ?? 0);
     await page.screenshot({
       path: "e2e/screenshots/composer-toolbar-add-menu.png",
       fullPage: true,
     });
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
   });
 
   test("locked-provider model search filters RPC-backed models", async ({ page }) => {

@@ -124,6 +124,15 @@ test.describe("Slash command popup", () => {
 
     const popup = page.locator("[data-slash-popup]");
     await expect(popup).toBeVisible();
+    await expect(popup).toHaveAttribute("data-composer-autocomplete", "true");
+    const [popupBox, composerBox] = await Promise.all([
+      popup.boundingBox(),
+      page.getByTestId("composer-surface").boundingBox(),
+    ]);
+    expect(popupBox).not.toBeNull();
+    expect(composerBox).not.toBeNull();
+    expect(popupBox?.width).toBeCloseTo(composerBox?.width ?? 0, 0);
+    expect((popupBox?.y ?? 0) + (popupBox?.height ?? 0)).toBeLessThanOrEqual(composerBox?.y ?? 0);
     await expect(popup.getByText("/compact")).toBeVisible();
     await expect(popup.getByText("/superpowers:brainstorming")).toBeVisible();
     await expect(popup.getByText("/hookify:hookify")).toBeVisible();
