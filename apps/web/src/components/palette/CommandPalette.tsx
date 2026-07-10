@@ -180,9 +180,9 @@ function PaletteInput({
           }}
           onClick={onAddClick}
           title="Add this folder as a project"
-          className="absolute end-[16px] top-1/2 h-[32px] -translate-y-1/2 gap-2 px-[12px] text-[13px]"
+          className="absolute end-[16px] top-1/2 h-[36px] min-w-[132px] -translate-y-1/2 gap-[8px] px-[16px] text-[14px] leading-none"
         >
-          <Plus size={13} />
+          <Plus size={14} />
           Add project
         </Button>
       )}

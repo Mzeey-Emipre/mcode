@@ -118,6 +118,11 @@ test.describe("Command palette", () => {
     await expect(addProject).toBeVisible();
     await expect(addProject).toHaveText("Add project");
     await expect(addProject).toHaveAttribute("title", "Add this folder as a project");
+    await expect(addProject).toHaveCSS("height", "36px");
+    await expect(addProject).toHaveCSS("padding-left", "16px");
+    await expect(addProject).toHaveCSS("padding-right", "16px");
+    await expect(addProject).toHaveCSS("align-items", "center");
+    await expect(addProject).toHaveCSS("justify-content", "center");
     // The mode label is exposed on the wrapper for diagnostics.
     await expect(page.locator('[data-slot="palette-input-wrapper"]')).toHaveAttribute(
       "data-palette-mode",
