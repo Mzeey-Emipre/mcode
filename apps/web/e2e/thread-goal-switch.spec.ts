@@ -120,8 +120,7 @@ test("thread switch A/B/A renders active goal for only the matching thread", asy
   });
 
   await page.goto("/");
-  await page.getByRole("option", { name: /Goal Switch Workspace/ }).click();
-  await page.getByRole("button", { name: /Goal Switch Workspace 2/ }).click();
+  await page.getByRole("group", { name: "Goal Switch Workspace project" }).click();
   await page.waitForSelector("[data-testid='thread-item']");
 
   const threadItems = page.locator("[data-testid='thread-item']");

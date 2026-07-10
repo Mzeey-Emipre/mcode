@@ -38,7 +38,7 @@ test.describe("Mcode App", () => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     // When no workspace is active, the full-screen landing shows with "mcode" wordmark
-    await expect(page.getByText("mcode", { exact: true })).toBeVisible();
+    await expect(page.getByText("What should we work on?", { exact: true })).toBeVisible();
   });
 
   test("settings button is visible", async ({ page }) => {

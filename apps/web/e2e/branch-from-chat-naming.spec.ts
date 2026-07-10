@@ -17,6 +17,7 @@ const FAKE_WORKSPACE = {
   provider_config: {},
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
+  is_git_repo: true,
 };
 
 const FAKE_THREAD: Thread = {

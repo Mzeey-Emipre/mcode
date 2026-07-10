@@ -122,8 +122,7 @@ test("thread switch cache miss hydrates messages and narrative through conversat
   });
 
   await page.goto("/");
-  await page.getByRole("option", { name: /Conversation Page Workspace/ }).click();
-  await page.getByRole("button", { name: /Conversation Page Workspace 2/ }).click();
+  await page.getByRole("group", { name: "Conversation Page Workspace project" }).click();
   await page.waitForSelector("[data-testid='thread-item']");
 
   const threadItems = page.locator("[data-testid='thread-item']");
