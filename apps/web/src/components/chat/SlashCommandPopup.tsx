@@ -1,19 +1,14 @@
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { Terminal, Zap, Puzzle, Sparkles, RefreshCw } from "lucide-react";
+import { Terminal, Zap, Puzzle, Sparkles } from "lucide-react";
 import type { Command, PopupState } from "./useSlashCommand";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 
 const ITEM_HEIGHT = 44; // px per row
 const VISIBLE_ITEMS = 8;
-const GROUP_HEADER_HEIGHT = 24;
+const GROUP_HEADER_HEIGHT = 28;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
-// Placement is calculated before layout, so account for the list padding and borders here.
-const LIST_SURFACE_CHROME = 12;
-// Footer (Refresh row) intrinsic height: border-t (1px) + py-1 (8px) + icon
-// button height (~20px). Used to estimate popup height for the above/below
-// placement calculation; the rendered footer remains naturally sized.
-const FOOTER_HEIGHT = 28;
+const LIST_SURFACE_PADDING = 8;
 
 const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
   mcode: "Mcode",
@@ -114,24 +109,18 @@ export function SlashCommandPopup({
     VISIBLE_ITEMS * ITEM_HEIGHT +
     Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT;
 
-  // Estimate the rendered popup height for the above/below placement
-  // decision. Only the list branch renders a footer (Refresh row); error,
-  // inline-loading, and empty branches do not. Including FOOTER_HEIGHT in
-  // those cases would cause unnecessary above-placement flips.
+  // Estimate the rendered popup height before positioning. The scrollport is
+  // inset from the surface so its native scrollbar clears the rounded corner.
   const willRenderList = state.kind === "ready" || state.kind === "staleRevalidating";
+  const renderedListHeight = Math.min(
+    items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT,
+    listMaxHeight,
+  );
   const estimatedHeight =
-    (willRenderList
-      ? Math.min(
-          items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT,
-          listMaxHeight,
-        )
-      : STATUS_ROW_HEIGHT) +
-    (willRenderList ? FOOTER_HEIGHT + LIST_SURFACE_CHROME : 0);
+    willRenderList ? renderedListHeight + LIST_SURFACE_PADDING : STATUS_ROW_HEIGHT;
   const popup = (
-    // role="listbox" is intentionally NOT on this outer wrapper: the
-    // Refresh footer button and the ErrorRow's Retry button live inside
-    // and would be invalid descendants of a listbox per WAI-ARIA. The
-    // role is moved down to the options container only.
+    // The listbox role belongs to the scrolling options container. The error
+    // branch renders its Retry control outside that semantic container.
     <ComposerOverlaySurface
       data-slash-popup
       anchorRect={anchorRect}
@@ -162,66 +151,47 @@ export function SlashCommandPopup({
           case "staleRevalidating":
             return (
               <>
-                <div
-                  ref={scrollRef}
-                  role="listbox"
-                  aria-label="Slash commands"
-                  aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
-                  className="min-h-0 flex-1 p-1"
-                  style={{ maxHeight: listMaxHeight, overflowY: "auto" }}
-                >
-                  {commandGroups.map(({ namespace, items: groupItems }) => (
-                    <div
-                      key={namespace}
-                      role="group"
-                      aria-label={NAMESPACE_LABELS[namespace]}
-                      data-testid={`slash-command-group-${namespace}`}
-                    >
-                      <div
-                        data-slash-group-heading
-                        role="presentation"
-                        className={cn(
-                          "sticky top-0 z-10 bg-inherit px-2 py-1.5 text-xs font-medium",
-                          tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
-                        )}
-                      >
-                        {NAMESPACE_LABELS[namespace]}
-                      </div>
-                      {groupItems.map(({ command: cmd, index }) => {
-                        return (
-                          <div key={cmd.name} role="presentation" data-index={index}>
-                            <CommandRow
-                              cmd={cmd}
-                              selected={index === selectedIndex}
-                              onSelect={onSelect}
-                              tone={tone}
-                            />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
-                <div className={cn(
-                  "flex shrink-0 items-center justify-end border-t p-1",
-                  tone === "dark" ? "border-white/[0.08]" : "border-border",
-                )}>
-                  <button
-                    type="button"
-                    aria-label="Refresh commands"
-                    // onMouseDown preventDefault keeps editor focus on pointer use;
-                    // onClick fires on both pointer and keyboard activation (Enter/Space).
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={onRetry}
-                    className={cn(
-                      "size-8 rounded-md",
-                      tone === "dark"
-                        ? "text-neutral-400 hover:bg-white/10 hover:text-neutral-100"
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                    )}
+                <div className="p-1">
+                  <div
+                    ref={scrollRef}
+                    role="listbox"
+                    aria-label="Slash commands"
+                    aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
+                    className="overflow-y-auto"
+                    style={{ maxHeight: listMaxHeight, scrollbarGutter: "stable" }}
                   >
-                    <RefreshCw size={12} />
-                  </button>
+                    {commandGroups.map(({ namespace, items: groupItems }) => (
+                      <div
+                        key={namespace}
+                        role="group"
+                        aria-label={NAMESPACE_LABELS[namespace]}
+                        data-testid={`slash-command-group-${namespace}`}
+                      >
+                        <div
+                          data-slash-group-heading
+                          role="presentation"
+                          className={cn(
+                            "sticky top-0 z-10 bg-inherit px-2 py-1.5 text-xs font-medium",
+                            tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
+                          )}
+                        >
+                          {NAMESPACE_LABELS[namespace]}
+                        </div>
+                        {groupItems.map(({ command: cmd, index }) => {
+                          return (
+                            <div key={cmd.name} role="presentation" data-index={index}>
+                              <CommandRow
+                                cmd={cmd}
+                                selected={index === selectedIndex}
+                                onSelect={onSelect}
+                                tone={tone}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </>
             );

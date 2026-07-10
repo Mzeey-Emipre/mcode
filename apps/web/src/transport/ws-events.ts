@@ -325,7 +325,8 @@ export function startPushListeners(): void {
     }),
   );
 
-  // skills.changed: invalidate skill cache so the popup re-fetches on next open
+  // skills.changed: invalidate the cache. An open picker retains its snapshot
+  // until the user closes it, avoiding a mid-navigation list replacement.
   unsubs.push(
     pushEmitter.on("skills.changed", () => {
       if (skillsInvalidationTimer !== null) {

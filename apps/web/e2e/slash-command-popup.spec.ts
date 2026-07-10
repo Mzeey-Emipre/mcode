@@ -8,7 +8,7 @@ import { mockWebSocketServer, type RpcOverrides } from "./helpers/e2e-helpers";
  *  - the popup renders the full mixed command list (built-ins + skills + commands)
  *  - typing further filters the list
  *  - a server-side error surfaces an ErrorRow with a Retry button
- *  - a Refresh button is rendered in the popup footer
+ *  - the popup has no manual reload control
  *
  * Each test captures a full-page screenshot to
  * `apps/web/e2e/screenshots/slash-command/` for visual verification.
@@ -129,10 +129,11 @@ test.describe("Slash command popup", () => {
       popup.boundingBox(),
       page.getByTestId("composer-surface").boundingBox(),
     ]);
+    const popupWidth = await popup.evaluate((element) => Number.parseFloat(getComputedStyle(element).width));
     expect(popupBox).not.toBeNull();
     expect(composerBox).not.toBeNull();
     expect(popupBox?.x).toBeCloseTo((composerBox?.x ?? 0) + 14, 0);
-    expect(popupBox?.width).toBeCloseTo((composerBox?.width ?? 0) - 28, 0);
+    expect(popupWidth).toBeCloseTo((composerBox?.width ?? 0) - 28, 0);
     expect(
       Math.abs((popupBox?.y ?? 0) + (popupBox?.height ?? 0) - (composerBox?.y ?? 0)),
     ).toBeLessThanOrEqual(2);
@@ -238,19 +239,13 @@ test.describe("Slash command popup", () => {
     });
   });
 
-  test("04 - footer renders the Refresh button", async ({ page }) => {
+  test("04 - popup omits a manual reload control", async ({ page }) => {
     await bootApp(page, { "skill.list": FIXTURE_SKILLS });
     await openPopup(page, "/");
 
     const popup = page.locator("[data-slash-popup]");
     await expect(popup).toBeVisible();
-    const refresh = popup.getByRole("button", { name: "Refresh commands" });
-    await expect(refresh).toBeVisible();
-
-    await page.screenshot({
-      path: "e2e/screenshots/slash-command/04-refresh-button.png",
-      fullPage: true,
-    });
+    await expect(popup.getByRole("button", { name: "Refresh commands" })).toHaveCount(0);
   });
 
   test("05 - cursor provider thread scopes skill.list to providerId cursor", async ({ page }) => {
