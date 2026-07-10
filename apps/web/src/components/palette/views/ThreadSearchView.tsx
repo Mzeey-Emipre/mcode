@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, type ComponentType } from "react";
-import { Activity, Folder, GitBranch } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 import {
   CommandEmpty,
   CommandGroup,
@@ -7,17 +6,9 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Spinner } from "@/components/ui/spinner";
-import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
-import {
-  ClaudeIcon,
-  CodexIcon,
-  CopilotIcon,
-  CursorProviderIcon,
-  GeminiIcon,
-  OpenCodeIcon,
-} from "@/components/chat/ProviderIcons";
 import { ThreadFilterDropdown } from "@/components/sidebar/ThreadFilterDropdown";
 import { ThreadSortControl } from "@/components/sidebar/ThreadSortControl";
+import { getThreadStateMarker, ThreadStateMarker } from "@/components/sidebar/ThreadStateMarker";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useRecentThreadsStore } from "@/stores/recentThreadsStore";
 import {
@@ -27,28 +18,15 @@ import {
   type ThreadSortField,
 } from "@/stores/sidebarSearchStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useThreadStore } from "@/stores/threadStore";
+import { useShallow } from "zustand/shallow";
+import type { ChecksStatus } from "@mcode/contracts";
 import type { RecentThread, Thread } from "@/transport/types";
-
-type ProviderIcon = ComponentType<{ size?: number; className?: string }>;
-
-const PROVIDER_ICONS: Record<string, ProviderIcon> = {
-  claude: ClaudeIcon,
-  codex: CodexIcon,
-  copilot: CopilotIcon,
-  cursor: CursorProviderIcon,
-  gemini: GeminiIcon,
-  opencode: OpenCodeIcon,
-};
 
 interface SearchRow {
   thread: Thread | RecentThread;
   workspaceName: string;
   workspacePath: string;
-}
-
-function worktreeName(path: string | null): string | null {
-  if (!path) return null;
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
 }
 
 /** Applies the thread finder's active filters and sort order to recent threads. */
@@ -75,61 +53,47 @@ export function filterAndSortRecentThreads(
     });
 }
 
-/** One metadata-rich result in the cross-project thread finder. */
+/** One compact thread record in the cross-project finder. */
 function ThreadSearchResult({
   row,
+  isRunning,
+  hasPendingPermission,
+  checks,
   onSelect,
 }: {
   row: SearchRow;
+  isRunning: boolean;
+  hasPendingPermission: boolean;
+  checks: ChecksStatus | undefined;
   onSelect: () => void;
 }) {
   const { thread } = row;
-  const Provider = PROVIDER_ICONS[thread.provider] ?? Activity;
-  const worktree = worktreeName(thread.worktree_path);
+  const marker = getThreadStateMarker({
+    thread,
+    checks,
+    isRunning,
+    hasPendingPermission,
+  });
 
   return (
     <CommandItem
       value={thread.id}
       onSelect={onSelect}
-      className="group min-h-16 items-start gap-2.5 rounded-md px-3 py-2.5"
+      className="group min-h-9 gap-3 rounded-md px-3 py-1.5"
       data-testid={`thread-search-result-${thread.id}`}
     >
-      <span
-        className="mt-0.5 flex size-7 shrink-0 items-center justify-center text-muted-foreground group-aria-selected:text-foreground"
-        aria-label={`Provider, ${thread.provider}`}
-      >
-        <Provider size={14} />
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+        {thread.title}
       </span>
-
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-foreground">
-          {thread.title}
-        </div>
-        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-muted-foreground">
-          <span
-            className="inline-flex min-w-0 items-center gap-1"
-            title={row.workspacePath}
-          >
-            <Folder size={12} aria-hidden />
-            <span className="max-w-40 truncate">{row.workspaceName}</span>
-          </span>
-          <span
-            className="inline-flex min-w-0 items-center gap-1"
-            title={thread.branch}
-          >
-            <GitBranch size={12} aria-hidden />
-            <span className="max-w-44 truncate font-mono">{thread.branch}</span>
-          </span>
-          {worktree && (
-            <span
-              className="inline-flex min-w-0 items-center gap-1"
-              title={thread.worktree_path ?? undefined}
-            >
-              <WorktreeModeIcon size={12} aria-hidden />
-              <span className="max-w-40 truncate font-mono">{worktree}</span>
-            </span>
-          )}
-        </div>
+      <div className="flex min-w-0 shrink items-center justify-end gap-2 whitespace-nowrap text-xs text-muted-foreground">
+        <span className="max-w-44 truncate text-right" title={row.workspacePath} aria-label={`Project, ${row.workspaceName}`}>
+          {row.workspaceName}
+        </span>
+        <span aria-hidden className="text-muted-foreground/35">·</span>
+        <span className="max-w-40 truncate font-mono" title={thread.branch} aria-label={`Branch, ${thread.branch}`}>
+          {thread.branch}
+        </span>
+        <ThreadStateMarker marker={marker} />
       </div>
     </CommandItem>
   );
@@ -159,6 +123,21 @@ export function ThreadSearchView() {
     (state) => state.setActiveWorkspace,
   );
   const setActiveThread = useWorkspaceStore((state) => state.setActiveThread);
+  const checksById = useWorkspaceStore((state) => state.checksById);
+  const runningThreadIds = useThreadStore((state) => state.runningThreadIds);
+  const pendingPermissionIds = useThreadStore(
+    useShallow((state) => {
+      const ids: string[] = [];
+      for (const [threadId, record] of state.records) {
+        if (record.permissions.some((permission) => !permission.settled)) ids.push(threadId);
+      }
+      return ids;
+    }),
+  );
+  const pendingPermissionThreadIds = useMemo(
+    () => new Set(pendingPermissionIds),
+    [pendingPermissionIds],
+  );
 
   useEffect(() => {
     void fetchRecent(20);
@@ -288,6 +267,9 @@ export function ThreadSearchView() {
               <ThreadSearchResult
                 key={row.thread.id}
                 row={row}
+                isRunning={runningThreadIds.has(row.thread.id)}
+                hasPendingPermission={pendingPermissionThreadIds.has(row.thread.id)}
+                checks={checksById[row.thread.id]}
                 onSelect={() => handleSelect(row.thread)}
               />
             ))}

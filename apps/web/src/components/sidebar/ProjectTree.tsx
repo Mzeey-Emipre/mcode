@@ -48,10 +48,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { relativeTime } from "@/lib/time";
 import { schedulePrefetch, cancelPrefetch } from "@/lib/thread-hydrator/prefetch-scheduler";
 import { isPrable } from "@/lib/is-prable";
-import { getCiVisual, CI_ICON_STROKE, getCiOverviewSummaryLabel } from "@/lib/ci-status";
+import { getCiVisual, CI_ICON_STROKE } from "@/lib/ci-status";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
 import { FILE_EXPLORER_ID } from "@/lib/resolveDefaultOpenInApp";
 import { getTransport } from "@/transport";
@@ -59,6 +58,7 @@ import { useToastStore } from "@/stores/toastStore";
 import type { ChecksStatus } from "@mcode/contracts";
 import type { Workspace, Thread } from "@/transport/types";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
+import { getThreadStateMarker, ThreadStateMarker } from "./ThreadStateMarker";
 import {
   DndContext,
   closestCenter,
@@ -906,114 +906,12 @@ const PROVIDER_META: Record<string, { icon: IconComponent; label: string; color:
   opencode: { icon: OpenCodeIcon, label: "OpenCode", color: "text-violet-400" },
 };
 
-type SidebarThreadMarker =
-  | { kind: "action"; label: "Action required" }
-  | { kind: "running"; label: "Running" }
-  | { kind: "ci"; label: string; aggregate: "failing" | "pending" }
-  | { kind: "completed"; label: "Completed" }
-  | { kind: "errored"; label: "Errored" }
-  | { kind: "interrupted"; label: "Interrupted" }
-  | { kind: "time"; label: string };
-
 function getProviderMeta(provider: string) {
   return PROVIDER_META[provider] ?? {
     icon: Activity,
     label: provider || "Provider",
     color: "text-muted-foreground",
   };
-}
-
-function getSidebarThreadMarker({
-  thread,
-  checks,
-  isRunning,
-  hasPendingPermission,
-}: {
-  thread: WorkspaceThread;
-  checks: ChecksStatus | undefined;
-  isRunning: boolean;
-  hasPendingPermission: boolean;
-}): SidebarThreadMarker {
-  if (hasPendingPermission) return { kind: "action", label: "Action required" };
-  if (isRunning) return { kind: "running", label: "Running" };
-  if (checks?.aggregate === "failing" || checks?.aggregate === "pending") {
-    return {
-      kind: "ci",
-      label: getCiOverviewSummaryLabel(checks),
-      aggregate: checks.aggregate,
-    };
-  }
-  switch (thread.status) {
-    case "completed":
-      return { kind: "completed", label: "Completed" };
-    case "errored":
-      return { kind: "errored", label: "Errored" };
-    case "interrupted":
-      return { kind: "interrupted", label: "Interrupted" };
-    default:
-      return { kind: "time", label: relativeTime(thread.updated_at) };
-  }
-}
-
-function SidebarThreadMarker({ marker, dim }: { marker: SidebarThreadMarker; dim: boolean }) {
-  if (marker.kind === "time") {
-    return (
-      <span className={cn("shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/45", dim && "opacity-[0.72]")}>
-        {marker.label}
-      </span>
-    );
-  }
-
-  if (marker.kind === "running") {
-    return (
-      <Spinner
-        aria-label={marker.label}
-        className={cn("text-primary", dim && "opacity-[0.72]")}
-      />
-    );
-  }
-
-  if (marker.kind === "ci") {
-    const { icon: Icon, color } = getCiVisual(marker.aggregate);
-    if (marker.aggregate === "pending") {
-      return (
-        <Spinner
-          size={13}
-          aria-label={marker.label}
-          className={cn(color, dim && "opacity-[0.72]")}
-        />
-      );
-    }
-    return (
-      <Icon
-        size={13}
-        strokeWidth={CI_ICON_STROKE}
-        aria-label={marker.label}
-        className={cn("shrink-0", color, dim && "opacity-[0.72]")}
-      />
-    );
-  }
-
-  const markerClass =
-    marker.kind === "action"
-      ? "ring-2 ring-inset ring-amber-500 bg-transparent status-pulse"
-      : marker.kind === "completed"
-        ? "bg-[var(--diff-add-strong)]/80"
-        : marker.kind === "errored"
-          ? "bg-[var(--diff-remove-strong)]/85"
-          : "bg-amber-500/85 status-pulse";
-
-  return (
-    <span
-      aria-label={marker.label}
-      className={cn(
-        "shrink-0 rounded-full",
-        marker.kind === "action" ? "h-2 w-2" : "h-1.5 w-1.5",
-        markerClass,
-        dim && "opacity-[0.72]",
-      )}
-    />
-  );
 }
 
 function SidebarThreadPreview({
@@ -1148,7 +1046,7 @@ function VirtualizedThreadList({
         const isRunning = runningThreadIds.has(thread.id);
         const hasPendingPermission = pendingPermissionThreadIds.has(thread.id);
         const checks = checksById[thread.id];
-        const marker = getSidebarThreadMarker({
+        const marker = getThreadStateMarker({
           thread,
           checks,
           isRunning,
@@ -1304,7 +1202,7 @@ function VirtualizedThreadList({
             )}
             </div>
             {!isEditing && showEndMarker && (
-              <SidebarThreadMarker marker={marker} dim={Boolean(scaffoldDim)} />
+              <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
             )}
           </div>
         );

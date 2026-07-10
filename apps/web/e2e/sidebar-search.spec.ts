@@ -108,6 +108,24 @@ test.describe("Sidebar thread actions", () => {
     await expect(page.getByTestId("thread-search-toolbar")).toContainText(
       "3 recent threads",
     );
+
+    const palette = page.getByTestId("command-palette");
+    const result = page.getByTestId("thread-search-result-thread-1");
+    const [paletteBox, titleBox, projectBox, branchBox] = await Promise.all([
+      palette.boundingBox(),
+      result.getByText("Test Thread", { exact: true }).boundingBox(),
+      result.getByLabel("Project, Test Workspace").boundingBox(),
+      result.getByLabel("Branch, main").boundingBox(),
+    ]);
+    expect(paletteBox).not.toBeNull();
+    await expect(palette).toHaveClass(/max-w-3xl/);
+    expect(titleBox).not.toBeNull();
+    expect(projectBox).not.toBeNull();
+    expect(branchBox).not.toBeNull();
+    const titleCenter = titleBox!.y + titleBox!.height / 2;
+    expect(Math.abs(titleCenter - (projectBox!.y + projectBox!.height / 2))).toBeLessThanOrEqual(1);
+    expect(Math.abs(titleCenter - (branchBox!.y + branchBox!.height / 2))).toBeLessThanOrEqual(1);
+    await expect(result.getByLabel(/Provider/)).toHaveCount(0);
   });
 
   test("Ctrl+Shift+F opens and focuses the thread finder", async ({ page }) => {

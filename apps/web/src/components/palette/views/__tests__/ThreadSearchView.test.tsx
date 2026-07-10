@@ -26,6 +26,7 @@ const thread = createMockThread({
   branch: "feature/sidebar",
   mode: "worktree",
   worktree_path: "C:/worktrees/quiet-lantern",
+  updated_at: new Date().toISOString(),
 });
 
 vi.mock("@/stores/recentThreadsStore", () => ({
@@ -57,6 +58,7 @@ vi.mock("@/stores/workspaceStore", () => ({
     selector({
       workspaces: [workspace],
       threads: [thread],
+      checksById: {},
       setActiveWorkspace: hoisted.setActiveWorkspace,
       setActiveThread: hoisted.setActiveThread,
     }),
@@ -84,7 +86,7 @@ beforeEach(() => {
 });
 
 describe("ThreadSearchView", () => {
-  it("shows project, provider, branch, and worktree metadata", () => {
+  it("shows a compact provider-free record with project, branch, and state", () => {
     render(
       <Command shouldFilter={false}>
         <ThreadSearchView />
@@ -94,8 +96,10 @@ describe("ThreadSearchView", () => {
     expect(screen.getByText("Premium sidebar")).toBeInTheDocument();
     expect(screen.getByText("Caravan")).toBeInTheDocument();
     expect(screen.getByText("feature/sidebar")).toBeInTheDocument();
-    expect(screen.getByText("quiet-lantern")).toBeInTheDocument();
-    expect(screen.getByLabelText("Provider, codex")).toBeInTheDocument();
+    expect(screen.getByText("now")).toBeInTheDocument();
+    expect(screen.queryByText("quiet-lantern")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Provider, codex")).not.toBeInTheDocument();
+    expect(screen.getByTestId("thread-search-result-thread-search")).toHaveClass("min-h-9");
   });
 
   it("opens the selected thread inside its project", () => {

@@ -103,8 +103,10 @@ export function CommandPalette() {
             "fixed left-1/2 top-[clamp(4rem,14vh,8rem)] z-50 w-full -translate-x-1/2 px-4 outline-none duration-150 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 motion-reduce:animate-none",
             browseMode
               ? "max-w-[680px]"
-              : top?.kind === "projects" || top?.kind === "threadSearch"
-                ? "max-w-2xl"
+              : top?.kind === "threadSearch"
+                ? "max-w-3xl"
+                : top?.kind === "projects"
+                  ? "max-w-2xl"
                 : "max-w-xl",
           )}
         >
