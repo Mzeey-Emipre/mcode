@@ -145,7 +145,7 @@ function NewThreadWelcome({
                     size="sm"
                     data-testid="new-thread-active-project-picker"
                     title="Change project"
-                    className="h-auto min-h-0 gap-0 rounded-sm px-0 py-0 align-baseline text-[inherit] font-[inherit] leading-[inherit] text-primary no-underline hover:bg-transparent hover:text-primary/80 hover:no-underline focus-visible:ring-2 focus-visible:ring-ring/60"
+                    className="h-auto min-h-0 gap-0 rounded-sm px-0 py-0 align-baseline !text-2xl font-[inherit] leading-[inherit] text-primary no-underline hover:bg-transparent hover:text-primary/80 hover:no-underline focus-visible:ring-2 focus-visible:ring-ring/60 sm:!text-[28px]"
                   >
                     {projectName}<span className="text-foreground">?</span>
                   </Button>

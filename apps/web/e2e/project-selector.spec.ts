@@ -82,6 +82,13 @@ test.describe("Projectless new-thread workbench", () => {
     await page.locator('[data-slot="popover-content"]').getByText("pinned-app", { exact: true }).click();
 
     await expect(page.getByRole("heading", { name: "What should we build in pinned-app?" })).toBeVisible();
+    const headingFontSize = await page
+      .getByRole("heading", { name: "What should we build in pinned-app?" })
+      .evaluate((element) => getComputedStyle(element).fontSize);
+    await expect(page.getByTestId("new-thread-active-project-picker")).toHaveCSS(
+      "font-size",
+      headingFontSize,
+    );
     await expect(page.getByTestId("new-thread-context-strip")).toContainText("pinned-app");
     await expect(editor).toHaveText("Keep this draft");
   });
