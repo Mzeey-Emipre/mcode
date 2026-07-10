@@ -1500,6 +1500,14 @@ const ProjectNode = memo(function ProjectNode({
 
         </div>
       )}
+      {isExpanded && threads.length === 0 && (
+        <p
+          data-testid={`project-empty-${workspace.id}`}
+          className="px-9 py-1 font-mono text-xs text-muted-foreground/70"
+        >
+          Empty
+        </p>
+      )}
     </div>
   );
 });

@@ -219,7 +219,7 @@ describe("ProjectTree thread interactions", () => {
     expect(state.loadThreads).not.toHaveBeenCalled();
   });
 
-  it("selects a project from its name without expanding it", () => {
+  it("selects a project and expands it from its name", () => {
     localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
     const beginNewThread = vi.fn();
     const state = setupStoreMocks({ beginNewThread });
@@ -228,7 +228,7 @@ describe("ProjectTree thread interactions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Select project Test Project" }));
 
     expect(beginNewThread).toHaveBeenCalledWith("ws-1");
-    expect(state.loadThreads).not.toHaveBeenCalled();
+    expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
   });
 
   it("keeps thread disclosure separate from project selection", () => {
@@ -260,12 +260,12 @@ describe("ProjectTree thread interactions", () => {
     );
   });
 
-  it("does not add a decorative row when an expanded project has no threads", () => {
+  it("labels an expanded project with no threads", () => {
     setupStoreMocks({ thread: null });
 
     render(<ProjectTree />);
 
-    expect(screen.queryByText("Empty")).not.toBeInTheDocument();
+    expect(screen.getByText("Empty", { exact: true })).toBeVisible();
   });
 
   it("single click navigates immediately with no delay", () => {

@@ -175,6 +175,27 @@ test.describe("Floating sidebar resize", () => {
   });
 });
 
+test.describe("Project tree empty state", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
+    await interceptZustandStores(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+  });
+
+  test("labels an expanded project with no threads", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-float-1": false }));
+    });
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await activateWorkspace(page);
+
+    await page.getByRole("button", { name: "Toggle threads for Test Workspace" }).click();
+
+    await expect(page.getByText("Empty", { exact: true })).toBeVisible();
+  });
+});
+
 test.describe("Docked shell surfaces", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);
