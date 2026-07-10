@@ -22,6 +22,15 @@ interface PersistedPrefs {
 }
 
 const STORAGE_KEY = "mcode-sidebar-search-prefs";
+const VALID_THREAD_STATUSES = new Set([
+  "active",
+  "paused",
+  "interrupted",
+  "errored",
+  "archived",
+  "completed",
+  "deleted",
+]);
 
 function loadPrefs(): PersistedPrefs {
   const defaults: PersistedPrefs = { sortField: "updated_at", sortDirection: "desc", filters: { status: [], provider: [] } };
@@ -35,8 +44,17 @@ function loadPrefs(): PersistedPrefs {
       sortField: validFields.has(parsed?.sortField) ? parsed.sortField : "updated_at",
       sortDirection: validDirs.has(parsed?.sortDirection) ? parsed.sortDirection : "desc",
       filters: {
-        status: Array.isArray(parsed?.filters?.status) ? parsed.filters.status : [],
-        provider: Array.isArray(parsed?.filters?.provider) ? parsed.filters.provider : [],
+        status: Array.isArray(parsed?.filters?.status)
+          ? parsed.filters.status.filter(
+              (status: unknown): status is string =>
+                typeof status === "string" && VALID_THREAD_STATUSES.has(status),
+            )
+          : [],
+        provider: Array.isArray(parsed?.filters?.provider)
+          ? parsed.filters.provider.filter(
+              (provider: unknown): provider is string => typeof provider === "string",
+            )
+          : [],
       },
     };
   } catch {
@@ -99,10 +117,16 @@ export const useSidebarSearchStore = create<SidebarSearchState>((set, get) => {
     searchError: false,
 
     setQuery: (query) => {
-      set({ query, searchError: false });
+      const hasQuery = Boolean(query.trim());
+      set({
+        query,
+        isSearching: hasQuery,
+        serverResults: [],
+        serverWorkspaces: [],
+        searchError: false,
+      });
       if (debounceTimer) clearTimeout(debounceTimer);
-      if (!query.trim()) {
-        set({ serverResults: [], serverWorkspaces: [], isSearching: false });
+      if (!hasQuery) {
         return;
       }
       debounceTimer = setTimeout(() => {
@@ -116,6 +140,12 @@ export const useSidebarSearchStore = create<SidebarSearchState>((set, get) => {
       savePrefs({ sortField: field, sortDirection, filters });
       if (get().query.trim()) {
         if (debounceTimer) clearTimeout(debounceTimer);
+        set({
+          serverResults: [],
+          serverWorkspaces: [],
+          isSearching: true,
+          searchError: false,
+        });
         get().executeServerSearch();
       }
     },
@@ -126,6 +156,12 @@ export const useSidebarSearchStore = create<SidebarSearchState>((set, get) => {
       savePrefs({ sortField, sortDirection: dir, filters });
       if (get().query.trim()) {
         if (debounceTimer) clearTimeout(debounceTimer);
+        set({
+          serverResults: [],
+          serverWorkspaces: [],
+          isSearching: true,
+          searchError: false,
+        });
         get().executeServerSearch();
       }
     },
@@ -147,6 +183,12 @@ export const useSidebarSearchStore = create<SidebarSearchState>((set, get) => {
       savePrefs({ sortField, sortDirection, filters });
       if (get().query.trim()) {
         if (debounceTimer) clearTimeout(debounceTimer);
+        set({
+          serverResults: [],
+          serverWorkspaces: [],
+          isSearching: true,
+          searchError: false,
+        });
         get().executeServerSearch();
       }
     },
@@ -158,6 +200,12 @@ export const useSidebarSearchStore = create<SidebarSearchState>((set, get) => {
       savePrefs({ sortField, sortDirection, filters });
       if (get().query.trim()) {
         if (debounceTimer) clearTimeout(debounceTimer);
+        set({
+          serverResults: [],
+          serverWorkspaces: [],
+          isSearching: true,
+          searchError: false,
+        });
         get().executeServerSearch();
       }
     },
@@ -202,20 +250,30 @@ export const useSidebarSearchStore = create<SidebarSearchState>((set, get) => {
         return;
       }
       set({ isSearching: true });
-      const requestFilters = JSON.stringify(filters);
-      // Strip pseudo-statuses that don't exist in the DB
-      const serverStatuses = filters.status.filter((s) => s !== "action_required");
+      const requestKey = JSON.stringify({
+        query: query.trim(),
+        filters,
+        sortField,
+        sortDirection,
+      });
       try {
         const result = await getTransport().searchThreads({
           query: query.trim(),
           filters: {
-            status: serverStatuses.length > 0 ? serverStatuses : undefined,
-            provider: filters.provider.length > 0 ? filters.provider : undefined,
+            status: filters.status.length > 0 ? filters.status : undefined,
+            provider:
+              filters.provider.length > 0 ? filters.provider : undefined,
           },
           sort: { field: sortField, direction: sortDirection },
         });
-        // Only apply results if query and filters haven't changed during the request
-        if (get().query.trim() === query.trim() && JSON.stringify(get().filters) === requestFilters) {
+        const current = get();
+        const currentKey = JSON.stringify({
+          query: current.query.trim(),
+          filters: current.filters,
+          sortField: current.sortField,
+          sortDirection: current.sortDirection,
+        });
+        if (currentKey === requestKey) {
           set({
             serverResults: result.threads,
             serverWorkspaces: result.workspaces,
@@ -224,7 +282,16 @@ export const useSidebarSearchStore = create<SidebarSearchState>((set, get) => {
           });
         }
       } catch {
-        set({ isSearching: false, searchError: true });
+        const current = get();
+        const currentKey = JSON.stringify({
+          query: current.query.trim(),
+          filters: current.filters,
+          sortField: current.sortField,
+          sortDirection: current.sortDirection,
+        });
+        if (currentKey === requestKey) {
+          set({ isSearching: false, searchError: true });
+        }
       }
     },
   };

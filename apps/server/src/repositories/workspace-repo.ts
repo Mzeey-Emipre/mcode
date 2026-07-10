@@ -176,6 +176,14 @@ export class WorkspaceRepo {
     return rows.map(rowToWorkspace);
   }
 
+  /** Rename a non-deleted workspace and return its updated record. */
+  rename(id: string, name: string): Workspace | null {
+    const result = this.db
+      .prepare("UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+      .run(name, new Date().toISOString(), id);
+    return result.changes > 0 ? this.findById(id) : null;
+  }
+
   /** Set the pinned flag for a workspace. Pinned workspaces always sort above recents. */
   setPinned(id: string, pinned: boolean): void {
     this.db.prepare("UPDATE workspaces SET pinned = ? WHERE id = ?").run(pinned ? 1 : 0, id);

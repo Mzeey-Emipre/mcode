@@ -83,20 +83,47 @@ test.describe("Composer toolbar", () => {
     });
     await interceptZustandStores(page);
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(() => (window as unknown as { __mcodeHydrationComplete?: boolean }).__mcodeHydrationComplete === true);
     await setupChat(page);
 
     await page.waitForSelector('[contenteditable="true"]', { timeout: 30_000 });
   });
 
-  test("shows attach control and hidden file input", async ({ page }) => {
-    await expect(page.getByTestId("composer-attach")).toBeVisible({ timeout: 15_000 });
+  test("opens the add menu and keeps the file input available", async ({ page }) => {
+    await expect(page.getByTestId("composer-add")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("composer-attachment-input")).toBeAttached();
+    await page.getByTestId("composer-add").click();
+    const menu = page.getByTestId("composer-add-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("button", { name: /Files/ })).toBeVisible();
+    await expect(menu.getByText("Images, PDFs, documents, and code")).toBeVisible();
+    await expect(menu.getByRole("button", { name: /Goal/ })).toHaveCount(0);
+    await expect(menu.getByRole("button", { name: /Plan mode/ })).toHaveCount(0);
+    await expect(menu.getByRole("button", { name: /Mention an agent or file/ })).toHaveCount(0);
+    await expect(menu).toHaveAttribute("data-composer-autocomplete", "true");
+
+    const [menuBox, composerBox] = await Promise.all([
+      menu.boundingBox(),
+      page.getByTestId("composer-surface").boundingBox(),
+    ]);
+    expect(menuBox).not.toBeNull();
+    expect(composerBox).not.toBeNull();
+    const leftInset = (menuBox?.x ?? 0) - (composerBox?.x ?? 0);
+    const rightInset =
+      (composerBox?.x ?? 0) + (composerBox?.width ?? 0) -
+      ((menuBox?.x ?? 0) + (menuBox?.width ?? 0));
+    expect(Math.abs(leftInset - 14)).toBeLessThanOrEqual(2);
+    expect(Math.abs(rightInset - 14)).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs((menuBox?.y ?? 0) + (menuBox?.height ?? 0) - (composerBox?.y ?? 0)),
+    ).toBeLessThanOrEqual(2);
     await page.screenshot({
-      path: "e2e/screenshots/composer-toolbar-attach.png",
+      path: "e2e/screenshots/composer-toolbar-add-menu.png",
       fullPage: true,
     });
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
   });
 
   test("locked-provider model search filters RPC-backed models", async ({ page }) => {

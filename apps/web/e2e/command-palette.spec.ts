@@ -32,6 +32,7 @@ const MOCK_WORKSPACES = [
 const MOCK_BROWSE_RESULT = {
   path: "/home/user",
   parent: "/home",
+  isExactDirectory: true,
   entries: [
     { name: "my-app", isDir: true },
     { name: "side-project", isDir: true },
@@ -41,12 +42,15 @@ const MOCK_BROWSE_RESULT = {
 
 const MOCK_SETTINGS = getDefaultSettings();
 
-async function setupPage(page: import("@playwright/test").Page) {
+async function setupPage(
+  page: import("@playwright/test").Page,
+  browseResult = MOCK_BROWSE_RESULT,
+) {
   await mockWebSocketServer(page, {
     "workspace.list": MOCK_WORKSPACES,
     "workspace.enrich": { items: [] },
     "workspace.touchLastOpened": null,
-    "filesystem.browse": MOCK_BROWSE_RESULT,
+    "filesystem.browse": browseResult,
     "workspace.create": {
       id: "ws-new",
       name: "new-project",
@@ -78,9 +82,10 @@ test.describe("Command palette", () => {
   test("opens with Ctrl+K", async ({ page }) => {
     await setupPage(page);
     await page.keyboard.press("Control+k");
-    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Command palette" })).toBeVisible();
     // Palette input should be focused
     await expect(page.locator('[data-slot="palette-input"]')).toBeFocused();
+    await expect(page.locator('[data-slot="palette-input"]')).toHaveAccessibleName("Command palette search");
   });
 
   test("opens with Ctrl+P (legacy keybinding)", async ({ page }) => {
@@ -108,18 +113,57 @@ test.describe("Command palette", () => {
     await expect(dialog.getByText("Recent Projects")).not.toBeVisible();
   });
 
+  test("keeps recent projects visible beside a concise default action list", async ({ page }) => {
+    await setupPage(page);
+    await page.keyboard.press("Control+k");
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Quick actions", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Recent Projects", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("option", { name: /Go to Thread 1/ })).toHaveCount(0);
+  });
+
   test("typing a path prefix flips the palette into browse mode", async ({ page }) => {
     await setupPage(page);
     await page.keyboard.press("Control+k");
     const input = page.locator('[data-slot="palette-input"]');
     await input.fill("~/");
-    // The Add chip is the unmistakable signal that browse mode is active.
-    await expect(page.getByTestId("palette-add-folder")).toBeVisible();
+    // The disabled folder action shows browse mode without allowing an accidental
+    // add of the default home directory.
+    const addProject = page.getByTestId("palette-add-folder");
+    await expect(addProject).toBeVisible();
+    await expect(addProject).toBeDisabled();
+    await expect(addProject).toHaveText("Add project");
+    await expect(addProject).toHaveAttribute("title", "Choose a folder before adding a project");
+    await expect(addProject).toHaveCSS("height", "36px");
+    await expect(addProject).toHaveCSS("padding-left", "16px");
+    await expect(addProject).toHaveCSS("padding-right", "16px");
+    await expect(addProject).toHaveCSS("align-items", "center");
+    await expect(addProject).toHaveCSS("justify-content", "center");
     // The mode label is exposed on the wrapper for diagnostics.
     await expect(page.locator('[data-slot="palette-input-wrapper"]')).toHaveAttribute(
       "data-palette-mode",
       "browse",
     );
+  });
+
+  test("folder browser stays wide and uncluttered at 600px", async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 800 });
+    await setupPage(page);
+    await page.keyboard.press("Control+k");
+    await page.locator('[data-slot="palette-input"]').fill("~/");
+
+    const palette = page.getByTestId("command-palette");
+    await expect(palette).toBeVisible();
+    await expect(palette).toHaveCSS("max-width", "680px");
+    await expect(page.getByTestId("browse-shortcuts")).toBeHidden();
+
+    const paletteBox = await palette.boundingBox();
+    expect(paletteBox?.width).toBeGreaterThanOrEqual(590);
+    const hasHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
   });
 
   test("Backspace on empty input pops from projects view to root", async ({ page }) => {
@@ -133,20 +177,20 @@ test.describe("Command palette", () => {
     const input = page.locator('[data-slot="palette-input"]');
     await expect(input).toHaveValue("");
     await page.keyboard.press("Backspace");
-    await expect(dialog.getByText("Actions", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("Quick actions", { exact: true })).toBeVisible();
   });
 
-  test("Ctrl+Enter in browse mode triggers the Add action", async ({ page }) => {
+  test("Ctrl+Enter adds an explicitly selected folder", async ({ page }) => {
     await setupPage(page);
     await page.keyboard.press("Control+k");
     const input = page.locator('[data-slot="palette-input"]');
     await input.fill("~/");
-    // The Add chip appears the instant browse mode flips on (purely query-based),
-    // but BrowseView's handleAdd needs the resolved server path from the
-    // filesystem.browse RPC before it can fire. Wait for entries to render.
     const dialog = page.getByRole("dialog");
     await expect(page.getByTestId("palette-add-folder")).toBeVisible();
-    await expect(dialog.locator('[data-slot="command-item"]').first()).toBeVisible();
+    await expect(page.getByTestId("palette-add-folder")).toBeDisabled();
+    await dialog.getByRole("option", { name: "my-app" }).click();
+    await expect(input).toHaveValue("~/my-app/");
+    await expect(page.getByTestId("palette-add-folder")).toBeEnabled();
     await page.keyboard.press("Control+Enter");
     // Successful add closes the palette.
     await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 3000 });
@@ -159,7 +203,8 @@ test.describe("Command palette", () => {
     await input.fill("~/");
     const dialog = page.getByRole("dialog");
     await expect(page.getByTestId("palette-add-folder")).toBeVisible();
-    await expect(dialog.locator('[data-slot="command-item"]').first()).toBeVisible();
+    await dialog.getByRole("option", { name: "my-app" }).click();
+    await expect(page.getByTestId("palette-add-folder")).toBeEnabled();
     await page.keyboard.press("Control+Enter");
     // The palette closes and we drop straight into the new-thread composer for
     // the just-added project — not back to the cold-start landing.
@@ -169,5 +214,42 @@ test.describe("Command palette", () => {
     await expect(page.getByText("new-project").first()).toBeVisible();
     // The landing wordmark is gone — exact match avoids matching "Mcode" in the sidebar.
     await expect(page.getByText("mcode", { exact: true })).not.toBeVisible();
+  });
+
+  test("does not add a filtered or ancestor-resolved folder", async ({ page }) => {
+    await setupPage(page, { ...MOCK_BROWSE_RESULT, isExactDirectory: false });
+    await page.keyboard.press("Control+k");
+    const input = page.locator('[data-slot="palette-input"]');
+    await input.fill("~/ghost/");
+
+    await expect(page.getByTestId("browse-resolution-warning")).toBeVisible();
+    await expect(page.getByTestId("palette-add-folder")).toBeDisabled();
+    await page.keyboard.press("Control+Enter");
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  test("does not report a folder as invalid when validation is missing", async ({ page }) => {
+    const staleBrowseResult: Partial<typeof MOCK_BROWSE_RESULT> = { ...MOCK_BROWSE_RESULT };
+    delete staleBrowseResult.isExactDirectory;
+    await setupPage(page, staleBrowseResult as typeof MOCK_BROWSE_RESULT);
+    await page.keyboard.press("Control+k");
+    const input = page.locator('[data-slot="palette-input"]');
+    await input.fill("~/");
+
+    await expect(page.getByTestId("browse-resolution-warning")).not.toBeVisible();
+    await expect(page.getByTestId("palette-add-folder")).toBeDisabled();
+    await page.keyboard.press("Control+Enter");
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  test("Alt+Up navigates to the parent folder", async ({ page }) => {
+    await setupPage(page);
+    await page.keyboard.press("Control+k");
+    const input = page.locator('[data-slot="palette-input"]');
+    await input.fill("~/my-app/");
+    await expect(page.getByRole("option", { name: "my-app" })).toBeVisible();
+
+    await page.keyboard.press("Alt+ArrowUp");
+    await expect(input).toHaveValue("/home/");
   });
 });

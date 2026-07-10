@@ -1,18 +1,41 @@
 import { useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import { Terminal, Zap, Puzzle, Sparkles, RefreshCw } from "lucide-react";
-import { NAMESPACE_BADGE_STYLES } from "@/lib/slash-command-styles";
+import { Terminal, Zap, Puzzle, Sparkles } from "lucide-react";
 import type { Command, PopupState } from "./useSlashCommand";
-import { computeFixedPopupPosition } from "./popup-position";
+import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 
 const ITEM_HEIGHT = 44; // px per row
 const VISIBLE_ITEMS = 8;
+const GROUP_HEADER_HEIGHT = 28;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
-// Footer (Refresh row) intrinsic height: border-t (1px) + py-1 (8px) + icon
-// button height (~20px). Used to estimate popup height for the above/below
-// placement calculation; the rendered footer remains naturally sized.
-const FOOTER_HEIGHT = 28;
+const LIST_SURFACE_PADDING = 8;
+const LIST_BOTTOM_FADE_HEIGHT = 20;
+
+const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
+  mcode: "Mcode",
+  command: "Commands",
+  skill: "Skills",
+  plugin: "Plugins",
+};
+
+/** Preserve command ordering while exposing the source context of each command. */
+function groupCommands(
+  items: Command[],
+): Array<{ namespace: Command["namespace"]; items: Array<{ command: Command; index: number }> }> {
+  const groups: Array<{
+    namespace: Command["namespace"];
+    items: Array<{ command: Command; index: number }>;
+  }> = [];
+  for (const [index, command] of items.entries()) {
+    const current = groups.at(-1);
+    if (current?.namespace === command.namespace) {
+      current.items.push({ command, index });
+      continue;
+    }
+    groups.push({ namespace: command.namespace, items: [{ command, index }] });
+  }
+  return groups;
+}
 
 /** Props for the {@link SlashCommandPopup} component. */
 interface SlashCommandPopupProps {
@@ -59,6 +82,7 @@ export function SlashCommandPopup({
   // The list-bearing states carry the items; all others render no list.
   const items: Command[] =
     state.kind === "ready" || state.kind === "staleRevalidating" ? state.items : [];
+  const commandGroups = groupCommands(items);
   const isOpen = state.kind !== "closed";
 
   // Scroll selected item into view
@@ -82,42 +106,30 @@ export function SlashCommandPopup({
 
   if (state.kind === "closed" || !anchorRect) return null;
 
-  // Cap the scrollable list at VISIBLE_ITEMS rows; shorter lists size to
-  // their natural content so a popup with two items isn't truncated.
-  const listMaxHeight = VISIBLE_ITEMS * ITEM_HEIGHT;
+  const listMaxHeight =
+    VISIBLE_ITEMS * ITEM_HEIGHT +
+    Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT +
+    LIST_BOTTOM_FADE_HEIGHT;
 
-  // Estimate the rendered popup height for the above/below placement
-  // decision. Only the list branch renders a footer (Refresh row); error,
-  // inline-loading, and empty branches do not. Including FOOTER_HEIGHT in
-  // those cases would cause unnecessary above-placement flips.
+  // Estimate the rendered popup height before positioning. The scrollport is
+  // inset from the surface so its native scrollbar clears the rounded corner.
   const willRenderList = state.kind === "ready" || state.kind === "staleRevalidating";
+  const renderedListHeight = Math.min(
+    items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT + LIST_BOTTOM_FADE_HEIGHT,
+    listMaxHeight,
+  );
   const estimatedHeight =
-    (willRenderList
-      ? Math.min(items.length, VISIBLE_ITEMS) * ITEM_HEIGHT
-      : STATUS_ROW_HEIGHT) +
-    (willRenderList ? FOOTER_HEIGHT : 0);
-  const style = computeFixedPopupPosition({
-    anchorRect,
-    estimatedHeight,
-    minWidth: 320,
-  });
-
+    willRenderList ? renderedListHeight + LIST_SURFACE_PADDING : STATUS_ROW_HEIGHT;
   const popup = (
-    // role="listbox" is intentionally NOT on this outer wrapper: the
-    // Refresh footer button and the ErrorRow's Retry button live inside
-    // and would be invalid descendants of a listbox per WAI-ARIA. The
-    // role is moved down to the options container only.
-    <div
+    // The listbox role belongs to the scrolling options container. The error
+    // branch renders its Retry control outside that semantic container.
+    <ComposerOverlaySurface
       data-slash-popup
-      style={style}
-      className={cn(
-        "z-50 flex flex-col overflow-hidden rounded-lg border shadow-lg",
-        "animate-in fade-in-0 zoom-in-95 duration-[120ms]",
-        tone === "dark"
-          ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
-          : "border-border bg-card",
-        className,
-      )}
+      anchorRect={anchorRect}
+      estimatedHeight={estimatedHeight}
+      attached
+      tone={tone}
+      className={className}
     >
       {/*
         Render priority (stale-while-revalidate) is encoded by PopupState:
@@ -141,45 +153,56 @@ export function SlashCommandPopup({
           case "staleRevalidating":
             return (
               <>
-                <div
-                  ref={scrollRef}
-                  role="listbox"
-                  aria-label="Slash commands"
-                  aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
-                  className="min-h-0 flex-1"
-                  style={{ maxHeight: listMaxHeight, overflowY: "auto" }}
-                >
-                  {items.map((cmd, i) => (
-                    <div key={cmd.name} role="presentation" data-index={i}>
-                      <CommandRow
-                        cmd={cmd}
-                        selected={i === selectedIndex}
-                        onSelect={onSelect}
-                        tone={tone}
-                      />
-                    </div>
-                  ))}
-                </div>
-                <div className={cn(
-                  "flex shrink-0 items-center justify-end border-t px-2 py-1",
-                  tone === "dark" ? "border-white/[0.08]" : "border-border",
-                )}>
-                  <button
-                    type="button"
-                    aria-label="Refresh commands"
-                    // onMouseDown preventDefault keeps editor focus on pointer use;
-                    // onClick fires on both pointer and keyboard activation (Enter/Space).
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={onRetry}
-                    className={cn(
-                      "rounded p-1",
-                      tone === "dark"
-                        ? "text-neutral-400 hover:bg-white/10 hover:text-neutral-100"
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                    )}
+                <div className="relative p-1">
+                  <div
+                    ref={scrollRef}
+                    role="listbox"
+                    aria-label="Slash commands"
+                    aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
+                    className="overflow-y-auto"
+                    style={{ maxHeight: listMaxHeight, scrollbarGutter: "stable" }}
                   >
-                    <RefreshCw size={12} />
-                  </button>
+                    <div className="pb-5">
+                      {commandGroups.map(({ namespace, items: groupItems }) => (
+                        <div
+                          key={namespace}
+                          role="group"
+                          aria-label={NAMESPACE_LABELS[namespace]}
+                          data-testid={`slash-command-group-${namespace}`}
+                        >
+                          <div
+                            data-slash-group-heading
+                            role="presentation"
+                            className={cn(
+                              "bg-popover px-2 py-1.5 text-xs font-medium text-foreground",
+                              tone === "dark" && "bg-[#1e1e1e] text-neutral-100",
+                            )}
+                          >
+                            {NAMESPACE_LABELS[namespace]}
+                          </div>
+                          {groupItems.map(({ command: cmd, index }) => {
+                            return (
+                              <div key={cmd.name} role="presentation" data-index={index}>
+                                <CommandRow
+                                  cmd={cmd}
+                                  selected={index === selectedIndex}
+                                  onSelect={onSelect}
+                                  tone={tone}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div
+                    aria-hidden="true"
+                    className={cn(
+                      "pointer-events-none absolute inset-x-1 bottom-1 h-5 bg-gradient-to-t from-popover via-popover/90 to-transparent",
+                      tone === "dark" && "from-[#1e1e1e] via-[#1e1e1e]/90",
+                    )}
+                  />
                 </div>
               </>
             );
@@ -189,9 +212,9 @@ export function SlashCommandPopup({
             return <EmptyState tone={tone} />;
         }
       })()}
-    </div>
+    </ComposerOverlaySurface>
   );
-  return createPortal(popup, document.body);
+  return popup;
 }
 
 function CommandRow({
@@ -216,7 +239,7 @@ function CommandRow({
         onSelect(cmd);
       }}
       className={cn(
-        "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors",
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
         tone === "dark"
           ? selected
             ? "bg-white/[0.12]"
@@ -228,44 +251,34 @@ function CommandRow({
     >
       {/* Icon column */}
       <span className={cn(
-        "flex h-5 w-5 flex-shrink-0 items-center justify-center",
+        "flex size-4 shrink-0 items-center justify-center",
         tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
       )}>
         {cmd.namespace === "mcode" ? (
-          <Zap size={12} />
+          <Zap size={13} />
         ) : cmd.namespace === "plugin" ? (
-          <Puzzle size={12} />
+          <Puzzle size={13} />
         ) : cmd.namespace === "skill" ? (
-          <Sparkles size={12} />
+          <Sparkles size={13} />
         ) : (
-          <Terminal size={12} />
+          <Terminal size={13} />
         )}
       </span>
 
       {/* Name + description */}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className={cn(
-          "truncate text-sm font-medium",
+          "truncate text-[13px] font-medium leading-4",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
           /{cmd.name}
         </span>
         <span className={cn(
-          "truncate text-xs",
+          "truncate text-[11px] leading-4",
           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
         )}>
           {cmd.description}
         </span>
-      </span>
-
-      {/* Namespace badge */}
-      <span
-        className={cn(
-          "ml-auto flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-          NAMESPACE_BADGE_STYLES[cmd.namespace],
-        )}
-      >
-        {cmd.namespace}
       </span>
     </button>
   );

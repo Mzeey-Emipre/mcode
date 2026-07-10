@@ -94,8 +94,7 @@ async function openThread(page: Page, sentMessages: string[] = []) {
   await interceptZustandStores(page);
 
   await page.goto("/");
-  await page.getByRole("option", { name: /Crash Reconnect/ }).click();
-  await page.getByRole("button", { name: /Crash Reconnect 1/ }).click();
+  await page.getByRole("group", { name: "Crash Reconnect project" }).click();
   await page.waitForSelector("[data-testid='thread-item']", { timeout: 30_000 });
   await page.locator("[data-testid='thread-item']").first().click();
   await page.waitForSelector("[data-testid='message-list']", { timeout: 30_000 });

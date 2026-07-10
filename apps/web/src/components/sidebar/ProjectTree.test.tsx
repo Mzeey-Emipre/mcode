@@ -16,11 +16,12 @@ vi.mock("@/stores/workspaceStore", () => ({
       loadWorkspaces: vi.fn(),
       loadThreads: vi.fn(),
       setActiveWorkspace: vi.fn(),
+      renameWorkspace: vi.fn(),
       setActiveThread: vi.fn(),
       createWorkspace: vi.fn(),
       deleteWorkspace: vi.fn(),
       deleteThread: vi.fn(),
-      setPendingNewThread: vi.fn(),
+      beginNewThread: vi.fn(),
       updateThreadTitle: vi.fn(),
       loadWorktrees: vi.fn(),
       worktrees: [],
@@ -84,12 +85,12 @@ vi.mock("@/stores/sidebarSearchStore", () => ({
 // renders every item directly.
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
-    getTotalSize: () => count * 28,
+    getTotalSize: () => count * 32,
     getVirtualItems: () =>
       Array.from({ length: count }, (_, i) => ({
         index: i,
-        start: i * 28,
-        size: 28,
+        start: i * 32,
+        size: 32,
         key: i,
       })),
   }),
@@ -152,26 +153,29 @@ function setupStoreMocks({
   thread = makeThread(),
   setActiveThread = vi.fn(),
   setActiveWorkspace = vi.fn(),
+  beginNewThread = vi.fn(),
   updateThreadTitle = vi.fn(),
 }: {
-  thread?: Thread;
+  thread?: Thread | null;
   setActiveThread?: ReturnType<typeof vi.fn>;
   setActiveWorkspace?: ReturnType<typeof vi.fn>;
+  beginNewThread?: ReturnType<typeof vi.fn>;
   updateThreadTitle?: ReturnType<typeof vi.fn>;
 } = {}) {
   const state = {
     workspaces: [WORKSPACE],
     activeWorkspaceId: "ws-1",
     activeThreadId: null,
-    threads: [thread],
+    threads: thread ? [thread] : [],
     loadWorkspaces: vi.fn(),
     loadThreads: vi.fn(),
     setActiveWorkspace,
+    renameWorkspace: vi.fn(),
     setActiveThread,
     createWorkspace: vi.fn(),
     deleteWorkspace: vi.fn(),
     deleteThread: vi.fn(),
-    setPendingNewThread: vi.fn(),
+    beginNewThread,
     updateThreadTitle,
     loadWorktrees: vi.fn(),
     worktrees: [],
@@ -203,6 +207,77 @@ describe("ProjectTree thread interactions", () => {
     vi.useRealTimers();
     vi.clearAllMocks();
     localStorage.clear();
+  });
+
+  it("starts a new thread from the project row without expanding it", () => {
+    localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+    const beginNewThread = vi.fn();
+    const state = setupStoreMocks({ beginNewThread });
+
+    render(<ProjectTree />);
+    fireEvent.click(screen.getByRole("button", { name: "New thread in Test Project" }));
+
+    expect(beginNewThread).toHaveBeenCalledWith("ws-1");
+    expect(state.loadThreads).not.toHaveBeenCalled();
+  });
+
+  it("selects a project and expands it from its name", () => {
+    localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+    const beginNewThread = vi.fn();
+    const state = setupStoreMocks({ beginNewThread });
+
+    render(<ProjectTree />);
+    fireEvent.click(screen.getByRole("button", { name: "Select project Test Project" }));
+
+    expect(beginNewThread).toHaveBeenCalledWith("ws-1");
+    expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
+  });
+
+  it("keeps thread disclosure separate from project selection", () => {
+    localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+    const beginNewThread = vi.fn();
+    const state = setupStoreMocks({ beginNewThread });
+
+    render(<ProjectTree />);
+    fireEvent.click(screen.getByRole("button", { name: "Toggle threads for Test Project" }));
+
+    expect(beginNewThread).not.toHaveBeenCalled();
+    expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
+  });
+
+  it("reveals project actions when the project row is hovered or focused", () => {
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+
+    expect(screen.getByRole("button", { name: "New thread in Test Project" })).toHaveClass(
+      "opacity-0",
+      "group-hover/ws:opacity-100",
+      "group-focus-within/ws:opacity-100",
+    );
+    expect(screen.getByRole("button", { name: "Project options for Test Project" })).toHaveClass(
+      "opacity-0",
+      "group-hover/ws:opacity-100",
+      "group-focus-within/ws:opacity-100",
+    );
+  });
+
+  it("offers Explorer and rename actions from the project menu", () => {
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+    fireEvent.click(screen.getByRole("button", { name: "Project options for Test Project" }));
+
+    expect(screen.getByText("Open in Explorer", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("Rename project", { exact: true })).toBeInTheDocument();
+  });
+
+  it("labels an expanded project with no threads", () => {
+    setupStoreMocks({ thread: null });
+
+    render(<ProjectTree />);
+
+    expect(screen.getByText("Empty", { exact: true })).toBeVisible();
   });
 
   it("single click navigates immediately with no delay", () => {
@@ -238,10 +313,7 @@ describe("ProjectTree thread interactions", () => {
     // Navigation count stays at 1 — the second click must NOT trigger another navigate.
     expect(setActiveThread).toHaveBeenCalledTimes(1);
 
-    // Inline edit input must be visible (search input is also a textbox, so check for 2).
-    const textboxes = screen.getAllByRole("textbox");
-    const renameInput = textboxes.find((el) => !el.hasAttribute("data-testid") || el.getAttribute("data-testid") !== "sidebar-search-input");
-    expect(renameInput).toBeDefined();
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
   it("two clicks beyond the double-click window navigate twice (no rename)", () => {
@@ -257,9 +329,7 @@ describe("ProjectTree thread interactions", () => {
     fireEvent.click(threadButton);
 
     expect(setActiveThread).toHaveBeenCalledTimes(2);
-    // No rename textbox — only the search input should be present.
-    const textboxes = screen.getAllByRole("textbox");
-    expect(textboxes.every((el) => el.getAttribute("data-testid") === "sidebar-search-input")).toBe(true);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it("clicking while editing does not navigate or re-enter edit", () => {
@@ -276,10 +346,7 @@ describe("ProjectTree thread interactions", () => {
     act(() => { vi.advanceTimersByTime(100); });
     fireEvent.click(threadButton);
 
-    // Confirm we're editing (rename input + search input = 2 textboxes).
-    const textboxes = screen.getAllByRole("textbox");
-    const renameInputs = textboxes.filter((el) => el.getAttribute("data-testid") !== "sidebar-search-input");
-    expect(renameInputs).toHaveLength(1);
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
     expect(setActiveThread).toHaveBeenCalledTimes(1);
 
     // Click the outer row button again while editing.
@@ -287,10 +354,7 @@ describe("ProjectTree thread interactions", () => {
 
     // No additional navigation.
     expect(setActiveThread).toHaveBeenCalledTimes(1);
-    // Still one rename textbox (not duplicated). Search input is separate.
-    const afterTextboxes = screen.getAllByRole("textbox");
-    const afterRenameInputs = afterTextboxes.filter((el) => el.getAttribute("data-testid") !== "sidebar-search-input");
-    expect(afterRenameInputs).toHaveLength(1);
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
   });
 
   it("pressing Enter on the thread row navigates immediately", () => {

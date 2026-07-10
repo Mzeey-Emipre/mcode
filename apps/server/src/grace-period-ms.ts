@@ -22,3 +22,10 @@ export function resolveGracePeriodMs(
 
   return seconds * 1000;
 }
+
+/** Returns whether this server process owns its idle lifecycle. */
+export function shouldShutdownOnIdle(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  return env.MCODE_AGENT_RUNTIME !== "1";
+}

@@ -1,9 +1,7 @@
 /**
  * Tests for the EmptyState component rendered inside ChatView.
  *
- * Verifies that the empty state shows Mcode-specific entry points that
- * communicate real product value (multi-agent, worktree isolation) rather than
- * generic prompt suggestions.
+ * Verifies the reference-led new-thread welcome and its real composer prefills.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -65,8 +63,8 @@ import { ChatView } from "../ChatView";
 function defaultWorkspaceState() {
   return {
     workspaces: [{ id: "ws-1", name: "Test Project", path: "/test", created_at: "", updated_at: "" }],
-    activeWorkspaceId: "ws-1",
-    activeThreadId: null,
+    activeWorkspaceId: "ws-1" as string | null,
+    activeThreadId: null as string | null,
     pendingNewThread: true,
     threads: [],
     loadWorkspaces: vi.fn(),
@@ -88,23 +86,36 @@ function setupWorkspaceMock(state: ReturnType<typeof defaultWorkspaceState>) {
   );
 }
 
-describe("EmptyState — Mcode-specific entry points", () => {
+describe("NewThreadWelcome", () => {
   beforeEach(() => {
     setPendingPrefillMock.mockClear();
     setupWorkspaceMock(defaultWorkspaceState());
   });
 
-  it("shows the typographic 'no messages yet' caption", () => {
+  it("names the active project in the heading", () => {
     render(<ChatView />);
-    expect(screen.getByText("no messages yet")).toBeInTheDocument();
+    expect(screen.getByText("Test Project")).toBeInTheDocument();
   });
 
-  it("renders all four Mcode-specific entry point labels", () => {
+  it("uses the projectless heading before a project is selected", () => {
+    setupWorkspaceMock({
+      ...defaultWorkspaceState(),
+      activeWorkspaceId: null,
+      pendingNewThread: false,
+    });
+
     render(<ChatView />);
-    expect(screen.getByText("Start agent in new worktree")).toBeInTheDocument();
-    expect(screen.getByText("Run agent on this branch")).toBeInTheDocument();
-    expect(screen.getByText("Orchestrate parallel tasks")).toBeInTheDocument();
-    expect(screen.getByText("Review open PRs")).toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: "What should we work on?" })).toBeInTheDocument();
+    expect(screen.queryByText("Test Project")).not.toBeInTheDocument();
+  });
+
+  it("renders all four starter actions", () => {
+    render(<ChatView />);
+    expect(screen.getByText("Explore and understand code")).toBeInTheDocument();
+    expect(screen.getByText("Build a new feature, app, or tool")).toBeInTheDocument();
+    expect(screen.getByText("Review code and suggest changes")).toBeInTheDocument();
+    expect(screen.getByText("Fix issues and failures")).toBeInTheDocument();
   });
 
   it("renders exactly 4 entry point buttons", () => {
@@ -114,48 +125,21 @@ describe("EmptyState — Mcode-specific entry points", () => {
     // Filter to only the entry point buttons (exclude any toolbar buttons)
     const entryPointButtons = buttons.filter((b) =>
       [
-        "Start agent in new worktree",
-        "Run agent on this branch",
-        "Orchestrate parallel tasks",
-        "Review open PRs",
+        "Explore and understand code",
+        "Build a new feature, app, or tool",
+        "Review code and suggest changes",
+        "Fix issues and failures",
       ].some((label) => b.textContent?.includes(label))
     );
     expect(entryPointButtons).toHaveLength(4);
   });
 
-  it("does not show generic old prompt chips", () => {
-    render(<ChatView />);
-    expect(screen.queryByText("Explain the current architecture")).not.toBeInTheDocument();
-    expect(screen.queryByText("Find and fix bugs in this codebase")).not.toBeInTheDocument();
-    expect(screen.queryByText("Write tests for the main module")).not.toBeInTheDocument();
-    expect(screen.queryByText("Refactor for better readability")).not.toBeInTheDocument();
-  });
-
-  it("clicking 'Start agent in new worktree' calls onPromptSelect with the correct prefill", async () => {
+  it("prefills the composer from a starter without submitting", async () => {
     const user = userEvent.setup();
     render(<ChatView />);
-    await user.click(screen.getByText("Start agent in new worktree"));
-    expect(setPendingPrefillMock).toHaveBeenCalledWith("Start a new worktree and run an agent to ");
-  });
-
-  it("clicking 'Run agent on this branch' calls onPromptSelect with the correct prefill", async () => {
-    const user = userEvent.setup();
-    render(<ChatView />);
-    await user.click(screen.getByText("Run agent on this branch"));
-    expect(setPendingPrefillMock).toHaveBeenCalledWith("On the current branch, ");
-  });
-
-  it("clicking 'Orchestrate parallel tasks' calls onPromptSelect with the correct prefill", async () => {
-    const user = userEvent.setup();
-    render(<ChatView />);
-    await user.click(screen.getByText("Orchestrate parallel tasks"));
-    expect(setPendingPrefillMock).toHaveBeenCalledWith("Spawn parallel agents to ");
-  });
-
-  it("clicking 'Review open PRs' calls onPromptSelect with the correct prefill", async () => {
-    const user = userEvent.setup();
-    render(<ChatView />);
-    await user.click(screen.getByText("Review open PRs"));
-    expect(setPendingPrefillMock).toHaveBeenCalledWith("List and summarize open pull requests in this repo");
+    await user.click(screen.getByText("Explore and understand code"));
+    expect(setPendingPrefillMock).toHaveBeenCalledWith(
+      "Explore this codebase and explain how it works.",
+    );
   });
 });

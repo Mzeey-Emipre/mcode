@@ -102,6 +102,21 @@ test("Codex @ autocomplete groups agents and files, then sends selected agent me
 
   const popup = page.getByRole("listbox", { name: "Mention suggestions" });
   await expect(popup).toBeVisible();
+  await expect(popup).toHaveClass(/composer-autocomplete-surface/);
+  await expect(popup).toHaveCSS("position", "fixed");
+  await expect(popup).toHaveAttribute("data-composer-autocomplete", "true");
+  const [mentionBox, composerBox] = await Promise.all([
+    popup.boundingBox(),
+    page.getByTestId("composer-surface").boundingBox(),
+  ]);
+  const mentionWidth = await popup.evaluate((element) => Number.parseFloat(getComputedStyle(element).width));
+  expect(mentionBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  expect(mentionBox?.x).toBeCloseTo((composerBox?.x ?? 0) + 14, 0);
+  expect(mentionWidth).toBeCloseTo((composerBox?.width ?? 0) - 28, 0);
+  expect(
+    Math.abs((mentionBox?.y ?? 0) + (mentionBox?.height ?? 0) - (composerBox?.y ?? 0)),
+  ).toBeLessThanOrEqual(2);
   await expect(popup.getByText("Agents", { exact: true })).toBeVisible();
   await expect(popup.getByText("Files", { exact: true })).toBeVisible();
   await expect(popup.getByRole("option", { name: /planner/ })).toBeVisible();

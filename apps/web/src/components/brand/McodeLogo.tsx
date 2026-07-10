@@ -6,13 +6,13 @@ const LOGO_SRC = `${import.meta.env.BASE_URL}brand/mcode-layered-route-cutout.sv
 export const MCODE_LOGO_SCALES = {
   sidebar: {
     root: "gap-1.5",
-    mark: "h-9 w-9",
+    mark: "h-8 w-8",
     wordmark: "text-sm",
   },
-  landing: {
-    root: "mb-10 flex-col gap-2.5",
-    mark: "h-28 w-28",
-    wordmark: "text-4xl",
+  newThread: {
+    root: "",
+    mark: "h-14 w-14 opacity-60",
+    wordmark: "text-sm",
   },
 } as const;
 
@@ -21,11 +21,12 @@ export type McodeLogoVariant = keyof typeof MCODE_LOGO_SCALES;
 
 interface McodeLogoProps {
   readonly variant?: McodeLogoVariant;
+  /** Hide the wordmark when the logo acts as a quiet screen marker. */
+  readonly markOnly?: boolean;
 }
 
 /** Renders the Mcode logo mark with the app wordmark. */
-export function McodeLogo({ variant = "sidebar" }: McodeLogoProps) {
-  const isLanding = variant === "landing";
+export function McodeLogo({ variant = "sidebar", markOnly = false }: McodeLogoProps) {
   const scale = MCODE_LOGO_SCALES[variant];
 
   return (
@@ -44,16 +45,17 @@ export function McodeLogo({ variant = "sidebar" }: McodeLogoProps) {
           scale.mark,
         )}
       />
-      <div
-        aria-hidden="true"
-        className={cn(
-          "flex items-baseline gap-1 font-mono font-semibold leading-none text-foreground",
-          scale.wordmark,
-        )}
-      >
-        <span>{isLanding ? "mcode" : "Mcode"}</span>
-        {isLanding && <span className="text-primary/80">_</span>}
-      </div>
+      {!markOnly && (
+        <div
+          aria-hidden="true"
+          className={cn(
+            "flex items-baseline gap-1 font-mono font-semibold leading-none text-foreground",
+            scale.wordmark,
+          )}
+        >
+          <span>Mcode</span>
+        </div>
+      )}
     </div>
   );
 }

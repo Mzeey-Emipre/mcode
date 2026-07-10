@@ -14,6 +14,10 @@ interface WorktreePickerProps {
   selectedPath: string;
   onSelect: (worktree: WorktreeInfo) => void;
   loading: boolean;
+  /** Optional trigger styling for compact context rails. */
+  triggerClassName?: string;
+  /** Primary glyph size for the trigger. */
+  iconSize?: number;
 }
 
 /** Searchable dropdown listing managed worktrees for attaching to an existing one. */
@@ -22,6 +26,8 @@ export function WorktreePicker({
   selectedPath,
   onSelect,
   loading,
+  triggerClassName,
+  iconSize = 12,
 }: WorktreePickerProps) {
   const [open, setOpen] = useState(false);
 
@@ -34,12 +40,12 @@ export function WorktreePicker({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={
-        <Button variant="ghost" size="xs" className="text-muted-foreground">
-          <GitFork size={12} />
+        <Button variant="ghost" size="xs" className={cn("text-muted-foreground", triggerClassName)}>
+          <GitFork size={iconSize} className={triggerClassName ? "size-3.5" : undefined} />
           {selectedName === null
             ? <Spinner size={11} className="text-current" />
             : <span>{selectedName}</span>}
-          <ChevronDown size={10} />
+          <ChevronDown size={Math.max(10, iconSize - 2)} className={triggerClassName ? "size-3" : undefined} />
         </Button>
       } />
 

@@ -48,17 +48,11 @@ async function activateWorkspace(page: Page): Promise<void> {
 }
 
 async function openComposerInNewThread(page: Page): Promise<void> {
+  await expect(page.getByText("No projects yet", { exact: true })).toBeVisible();
   await activateWorkspace(page);
-  const isMac = process.platform === "darwin";
-  await page.keyboard.press(isMac ? "Meta+n" : "Control+n");
-  await expect(page.getByPlaceholder("Search projects…")).toBeVisible();
-  // Palette content portals after the landing; scope rows to the palette shell so we do not
-  // collide with landing page project lists that reuse the same data-testid.
-  const palette = page.getByTestId("command-palette");
-  await expect(palette).toBeVisible();
-  const projectRow = palette.getByTestId("project-row").last();
-  await expect(projectRow).toBeVisible();
-  await projectRow.click();
+  await expect(
+    page.getByRole("heading", { name: "What should we build in Test Workspace?" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /^(Send message|Queue message|Stop agent)$/ })).toBeVisible();
 }
 
@@ -108,7 +102,7 @@ test.describe("Composer options — narrow viewport (below md)", () => {
     // Popover exposes grouped Mode + Permissions controls.
     await expect(page.getByText("Mode", { exact: true })).toBeVisible();
     await expect(page.getByText("Permissions", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Build" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Build", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Plan" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Full" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Supervised" })).toBeVisible();
@@ -120,8 +114,8 @@ test.describe("Composer options — narrow viewport (below md)", () => {
     await openComposerInNewThread(page);
 
     await page.getByRole("button", { name: "Composer options" }).click();
-    const planBtn = page.getByRole("button", { name: "Plan" });
-    const buildBtn = page.getByRole("button", { name: "Build" });
+    const planBtn = page.getByRole("button", { name: "Plan", exact: true });
+    const buildBtn = page.getByRole("button", { name: "Build", exact: true });
 
     await expect(buildBtn).toHaveAttribute("aria-pressed", "true");
     await expect(planBtn).toHaveAttribute("aria-pressed", "false");
@@ -139,6 +133,66 @@ test.describe("Composer options — narrow viewport (below md)", () => {
 
     await page.getByRole("button", { name: "Composer options" }).click();
     await expect(page.getByText("Tasks panel")).toHaveCount(0);
+  });
+});
+
+test.describe("Floating sidebar resize", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
+    await interceptZustandStores(page);
+    await page.setViewportSize({ width: 600, height: 800 });
+  });
+
+  test("docks a floating sidebar when a selected project gains space", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await activateWorkspace(page);
+
+    await page.evaluate(() => {
+      const stores =
+        (window as unknown as {
+          __mcodeStores?: Array<{
+            getState: () => Record<string, unknown>;
+            setState: (patch: Record<string, unknown>) => void;
+          }>;
+        }).__mcodeStores ?? [];
+      const uiStore = stores.find((store) => "sidebarFloating" in store.getState());
+      if (!uiStore) throw new Error("[E2E] UI store not found");
+      uiStore.setState({
+        sidebarCollapsed: true,
+        sidebarCollapsedByLayout: false,
+        sidebarFloating: false,
+      });
+    });
+
+    await page.getByRole("button", { name: "Expand sidebar" }).click();
+    await expect(page.getByTestId("sidebar-floating")).toBeVisible();
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    await expect(page.getByTestId("sidebar-floating")).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-docked")).toBeVisible();
+  });
+});
+
+test.describe("Project tree empty state", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockWebSocketServer(page);
+    await interceptZustandStores(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+  });
+
+  test("labels an expanded project with no threads", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-float-1": false }));
+    });
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await activateWorkspace(page);
+
+    await page.getByRole("button", { name: "Toggle threads for Test Workspace" }).click();
+
+    await expect(page.getByText("Empty", { exact: true })).toBeVisible();
   });
 });
 
@@ -257,7 +311,7 @@ test.describe("Visual regression — docked layout", () => {
   test("captures narrow-viewport screenshot (600×800)", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 600, height: 800 });
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath("docked-narrow.png"),
       fullPage: false,

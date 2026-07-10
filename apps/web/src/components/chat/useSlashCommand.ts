@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   EMPTY_SKILLS_CACHE_ENTRY,
   skillsCacheKey,
@@ -168,8 +168,11 @@ export function useSlashCommand({
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const [filter, setFilter] = useState("");
+  // The visible list is an interaction snapshot. Cache invalidations must not
+  // reorder a picker while the user is navigating it with the keyboard.
+  const [openCommands, setOpenCommands] = useState<Command[] | null>(null);
   const lastInputRef = useRef("");
-  const lastFilterRef = useRef("");
   // Tracks the cursor position supplied by the most recent onInputChange call
   // so onSelect can splice the replacement at the correct offset rather than
   // always appending to the end (which breaks mid-text trigger detection).
@@ -182,12 +185,9 @@ export function useSlashCommand({
   const { skills, isLoading, isStale, error } = cacheEntry;
   const load = useSkillsStore((s) => s.load);
 
-  // Build the full command list (memoize via skills identity, providerId, and
-  // includeBuiltins). The filter is inside the callback so `providerId` (a
-  // stable string) is the dep. If we filtered outside and put the resulting
-  // array in deps, every render would produce a new reference and break
-  // memoization.
-  const allCommands = useCallback(() => {
+  // Build the full command list only when its inputs change. Filtering stays
+  // separate so keyboard selection does not rebuild every command row.
+  const allCommands = useMemo(() => {
     // Strip the predicate so the rendered list holds plain Command objects;
     // availability has already been resolved here.
     const builtins: Command[] = includeBuiltins
@@ -205,15 +205,15 @@ export function useSlashCommand({
       ...((skills ?? []).map(toCommand)),
     ];
     return sortCommands(commands);
-  }, [skills, providerId, includeBuiltins])();
+  }, [skills, providerId, includeBuiltins]);
 
-  const filtered = (() => {
-    const f = lastFilterRef.current.toLowerCase();
+  const filtered = useMemo(() => {
+    const f = filter.toLowerCase();
     const matches = f
-      ? allCommands.filter((c) => c.name.toLowerCase().includes(f))
-      : allCommands;
+      ? (openCommands ?? allCommands).filter((c) => c.name.toLowerCase().includes(f))
+      : (openCommands ?? allCommands);
     return matches.slice(0, MAX_SLASH_COMMAND_ITEMS);
-  })();
+  }, [allCommands, filter, openCommands]);
 
   // Derive the typed popup state. Order encodes the stale-while-revalidate
   // priority that previously lived in a comment in SlashCommandPopup:
@@ -233,10 +233,8 @@ export function useSlashCommand({
           ? { kind: "loading" }
           : { kind: "empty" };
 
-  // Eager prefetch: load skills as soon as cwd/providerId are known, NOT
-  // when the popup opens. This ensures the cache is warm by the time the
-  // user types `/`, so the popup renders the full list on first paint and
-  // the loading skeleton is never visible.
+  // Eager prefetch runs while the picker is closed. This warms the cache for
+  // the next open without replacing commands while the user is navigating.
   //
   // Each cwd and provider pair has its own cache entry. Load when that entry
   // is cold or stale, while retaining old rows during background refresh.
@@ -244,12 +242,13 @@ export function useSlashCommand({
   // The error gate prevents an infinite retry loop on persistent failures.
   // A different cwd or provider selects a different entry with its own error.
   useEffect(() => {
+    if (isOpen) return;
     if (isLoading) return;
     const noSkills = skills === null;
     if (!error && (isStale || noSkills)) {
       load(cwd, providerId).catch(() => { /* surfaced via `error` */ });
     }
-  }, [skills, cwd, providerId, isLoading, isStale, error, load]);
+  }, [skills, cwd, providerId, isLoading, isStale, error, load, isOpen]);
 
   const onInputChange = useCallback(
     (value: string, cursorPos?: number) => {
@@ -263,17 +262,19 @@ export function useSlashCommand({
 
       if (!match) {
         setIsOpen(false);
+        setOpenCommands(null);
         return;
       }
 
       const anchor = anchorRef.current;
       if (anchor) setAnchorRect(anchor.getBoundingClientRect());
 
-      lastFilterRef.current = match[2].slice(1);
+      if (!isOpen && skills !== null) setOpenCommands(allCommands);
+      setFilter(match[2].slice(1));
       setIsOpen(true);
       setSelectedIndex(0);
     },
-    [anchorRef],
+    [anchorRef, allCommands, isOpen, skills],
   );
 
   const onKeyDown = useCallback(
@@ -298,6 +299,7 @@ export function useSlashCommand({
           e.preventDefault();
           e.stopPropagation();
           setIsOpen(false);
+          setOpenCommands(null);
           break;
       }
     },
@@ -323,11 +325,15 @@ export function useSlashCommand({
       }
       if (cmd.action && onMcodeCommand) onMcodeCommand(cmd.action);
       setIsOpen(false);
+      setOpenCommands(null);
     },
     [onMcodeCommand],
   );
 
-  const onDismiss = useCallback(() => setIsOpen(false), []);
+  const onDismiss = useCallback(() => {
+    setIsOpen(false);
+    setOpenCommands(null);
+  }, []);
   const onRetry = useCallback(() => {
     load(cwd, providerId, true).catch(() => { /* surfaced via `error` */ });
   }, [load, cwd, providerId]);

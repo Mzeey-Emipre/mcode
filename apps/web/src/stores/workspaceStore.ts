@@ -178,6 +178,8 @@ interface WorkspaceState {
   // Workspace actions
   loadWorkspaces: () => Promise<void>;
   createWorkspace: (name: string, path: string) => Promise<Workspace>;
+  /** Rename a workspace and refresh its local record. */
+  renameWorkspace: (id: string, name: string) => Promise<void>;
   deleteWorkspace: (id: string) => Promise<void>;
   /** Remove a workspace from local state immediately (used by push channel handlers). */
   removeWorkspaceFromState: (id: string) => void;
@@ -251,6 +253,8 @@ interface WorkspaceState {
   failPreparingThreadOnConnectionLost: (placeholderId: string) => void;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
   setActiveThread: (id: string | null) => void;
+  /** Enter a clean pending-thread composer, optionally selecting its workspace first. */
+  beginNewThread: (workspaceId?: string | null) => void;
   setPendingNewThread: (value: boolean) => void;
   updateThreadTitle: (threadId: string, title: string) => Promise<void>;
   /** Clear non-fatal warnings for a thread (user dismissed the warning banner). */
@@ -456,6 +460,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ],
       }));
       return workspace;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  renameWorkspace: async (id, name) => {
+    set({ error: null });
+    try {
+      const workspace = await getTransport().renameWorkspace(id, name);
+      set((state) => ({
+        workspaces: state.workspaces.map((item) =>
+          item.id === id ? workspace : item,
+        ),
+      }));
     } catch (e) {
       set({ error: String(e) });
       throw e;
@@ -1120,6 +1139,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     if (isCompleted && id) {
       scheduleMarkThreadViewed(id);
     }
+  },
+
+  beginNewThread: (workspaceId) => {
+    if (workspaceId && get().activeWorkspaceId !== workspaceId) {
+      get().setActiveWorkspace(workspaceId);
+    }
+    get().setActiveThread(null);
+    get().setPendingNewThread(true);
   },
 
   setPendingNewThread: (value) => {

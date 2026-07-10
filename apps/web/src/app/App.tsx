@@ -7,8 +7,6 @@ import { useToastStore } from "@/stores/toastStore";
 import { friendlyUpdateError } from "@/lib/update-error-message";
 import type { UpdateStatus } from "@/transport/desktop-bridge";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
-import { ProjectSelectorLanding } from "@/components/projects/ProjectSelectorLanding";
-import { SidebarRevealButton } from "@/components/sidebar/SidebarRevealButton";
 import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { resizeRecordCache } from "@/lib/thread-hydrator/record-cache";
@@ -60,16 +58,13 @@ export function App() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const outerRowRef = useRef<HTMLDivElement>(null);
   const contentRowRef = useRef<HTMLDivElement>(null);
-  const pendingNewThread = useWorkspaceStore((s) => s.pendingNewThread);
-  // Landing is the default whenever no thread is active. The new-thread composer
-  // takes precedence so the user can compose against an active workspace without
-  // bouncing back to the project list.
-  const showLanding = activeThreadId === null && !pendingNewThread;
+  const showNewThreadCanvas = activeThreadId === null;
+  const showProjectlessCanvas = showNewThreadCanvas && activeWorkspaceId === null;
   useIdleReclamation();
 
   useComposerLayoutGuard(outerRowRef, contentRowRef, {
     settingsOpen,
-    showLanding,
+    showLanding: showProjectlessCanvas,
     activeWorkspaceId,
     activeThreadId,
   });
@@ -134,11 +129,11 @@ export function App() {
     setContext("settingsOpen", settingsOpen);
   }, [settingsOpen]);
 
-  // Landing-only shortcuts (e.g. mod+Enter for new project) should not fire
-  // when settings covers the main pane or chat is visible.
+  // Keep the legacy context key scoped to the projectless canvas so the existing
+  // add-project shortcut remains available without bringing back the old landing.
   useEffect(() => {
-    setContext("showLanding", showLanding && !settingsOpen);
-  }, [showLanding, settingsOpen]);
+    setContext("showLanding", showProjectlessCanvas && !settingsOpen);
+  }, [showProjectlessCanvas, settingsOpen]);
 
   // Register all commands and initialize shortcuts
   useEffect(() => {
@@ -198,10 +193,15 @@ export function App() {
         title: "New Thread",
         category: "Thread",
         handler: () => {
-          useCommandPaletteStore.getState().open({
-            intent: "projects",
-            nextAction: "newThread",
-          });
+          useWorkspaceStore.getState().beginNewThread();
+        },
+      }),
+      registerCommand({
+        id: "thread.search",
+        title: "Search Threads",
+        category: "Thread",
+        handler: () => {
+          useCommandPaletteStore.getState().open({ intent: "threadSearch" });
         },
       }),
       registerCommand({
@@ -383,33 +383,22 @@ export function App() {
             data-testid="content-row"
             className="flex min-w-0 flex-1 overflow-hidden"
           >
-            {/* Chat / settings / landing: hidden when the right panel is maximized. */}
+            {/* Chat / settings: hidden when the right panel is maximized. */}
             {!rightPanelMaximized && (
             <main
               className="flex-1 overflow-hidden bg-background"
-              style={{ minWidth: showLanding || settingsOpen ? 0 : `min(100%, ${COMPOSER_MIN_WIDTH}px)` }}
+              style={{ minWidth: showNewThreadCanvas || settingsOpen ? 0 : `min(100%, ${COMPOSER_MIN_WIDTH}px)` }}
             >
               {settingsOpen ? (
                 <Suspense fallback={null}>
                   <LazySettingsView section={settingsSection} />
                 </Suspense>
-              ) : showLanding ? (
-                <div className="flex h-full flex-col">
-                  {/* When the sidebar is collapsed, show the reveal button so the
-                      user can re-expand it from the landing page. */}
-                  {sidebarCollapsed && (
-                    <div className="flex h-11 shrink-0 items-center px-2">
-                      <SidebarRevealButton />
-                    </div>
-                  )}
-                  <ProjectSelectorLanding />
-                </div>
               ) : (
                 <ChatView />
               )}
             </main>
             )}
-            {!settingsOpen && !showLanding && (
+            {!settingsOpen && !showProjectlessCanvas && (
               <Suspense fallback={null}>
                 <LazyRightPanel />
               </Suspense>

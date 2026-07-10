@@ -1,5 +1,5 @@
 import { ProjectTree } from "./ProjectTree";
-import { Settings, ArrowLeft, ExternalLink, Braces } from "lucide-react";
+import { Settings, ArrowLeft, ExternalLink, Braces, Search, SquarePen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import type { SettingsSection } from "@/components/settings/settings-nav";
@@ -8,6 +8,8 @@ import { PanelCollapseIcon } from "./SidebarRevealButton";
 import { useUiStore } from "@/stores/uiStore";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { cn } from "@/lib/utils";
+import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 /** True when running inside the Electron shell. */
 const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
@@ -93,7 +95,31 @@ export function Sidebar({
             <SettingsNav section={settingsSection} onSection={onSettingsSection} />
           </div>
         ) : (
-          <ProjectTree />
+          <>
+            <div className="grid shrink-0 gap-0.5 px-1.5 py-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-muted-foreground shadow-none hover:text-foreground"
+                onClick={() => useWorkspaceStore.getState().beginNewThread()}
+              >
+                <SquarePen size={15} aria-hidden />
+                New thread
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-muted-foreground hover:text-foreground"
+                onClick={() =>
+                  useCommandPaletteStore.getState().open({ intent: "threadSearch" })
+                }
+              >
+                <Search size={15} aria-hidden />
+                Search threads
+              </Button>
+            </div>
+            <ProjectTree />
+          </>
         )}
       </div>
 

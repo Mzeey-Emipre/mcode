@@ -478,6 +478,7 @@ export function createWsTransport(
     // Workspace
     listWorkspaces: () => rpc<Workspace[]>("workspace.list", {}),
     createWorkspace: (name, path) => rpc<Workspace>("workspace.create", { name, path }),
+    renameWorkspace: (id, name) => rpc<Workspace>("workspace.rename", { id, name }),
     deleteWorkspace: (id) => rpc<boolean>("workspace.delete", { id }),
     touchLastOpened: (id) => rpc<void>("workspace.touchLastOpened", { id }),
     reorderWorkspace: (id, newIndex) =>
@@ -487,7 +488,12 @@ export function createWsTransport(
     enrichWorkspaces: (ids) =>
       rpc<{ items: WorkspaceEnrichment[] }>("workspace.enrich", { ids }),
     filesystemBrowse: (path) =>
-      rpc<{ path: string; parent: string | null; entries: { name: string; isDir: boolean }[] }>(
+      rpc<{
+        path: string;
+        parent: string | null;
+        entries: { name: string; isDir: boolean }[];
+        isExactDirectory: boolean;
+      }>(
         "filesystem.browse",
         { path },
       ),

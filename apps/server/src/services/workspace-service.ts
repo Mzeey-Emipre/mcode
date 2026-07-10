@@ -15,7 +15,7 @@ import { AgentService } from "./agent-service.js";
 import { logger } from "@mcode/shared";
 import type { GitExecutor } from "./git-executor/index.js";
 
-/** Handles workspace creation, listing, and two-phase deletion. */
+/** Handles workspace creation, rename, listing, and two-phase deletion. */
 @injectable()
 export class WorkspaceService {
   constructor(
@@ -65,6 +65,15 @@ export class WorkspaceService {
   /** List all workspaces ordered by ascending sidebar `sort_order`. */
   list(): Workspace[] {
     return this.workspaceRepo.listAll();
+  }
+
+  /** Rename an existing workspace without changing its filesystem path. */
+  rename(id: string, name: string): Workspace {
+    const workspace = this.workspaceRepo.rename(id, name);
+    if (!workspace) {
+      throw new Error(`Workspace not found: ${id}`);
+    }
+    return workspace;
   }
 
   /**

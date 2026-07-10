@@ -10,14 +10,3 @@ export const NAMESPACE_CHIP_STYLES: Record<SlashCommandNamespace, string> = {
   plugin: "bg-orange-500/25 ring-1 ring-orange-500/40",
   command: "bg-primary/25 ring-1 ring-primary/40",
 };
-
-/**
- * Tailwind classes for namespace badges in the slash-command popup.
- * Background + text color per namespace.
- */
-export const NAMESPACE_BADGE_STYLES: Record<SlashCommandNamespace, string> = {
-  skill: "bg-muted text-muted-foreground",
-  mcode: "bg-primary/20 text-primary",
-  plugin: "bg-orange-500/20 text-orange-500",
-  command: "bg-primary/15 text-primary",
-};

@@ -152,6 +152,8 @@ export interface McodeTransport {
   // Workspace commands
   createWorkspace(name: string, path: string): Promise<Workspace>;
   listWorkspaces(): Promise<Workspace[]>;
+  /** Rename a workspace without changing its filesystem path. */
+  renameWorkspace(id: string, name: string): Promise<Workspace>;
   deleteWorkspace(id: string): Promise<boolean>;
   /** Record workspace as last-opened for recency ordering in the project selector. */
   touchLastOpened(id: string): Promise<void>;
@@ -168,6 +170,8 @@ export interface McodeTransport {
     path: string;
     parent: string | null;
     entries: { name: string; isDir: boolean }[];
+    /** True only when the requested path resolved to an existing directory. */
+    isExactDirectory: boolean;
   }>;
 
   // Thread commands
@@ -180,7 +184,7 @@ export interface McodeTransport {
   listThreads(workspaceId: string): Promise<Thread[]>;
   /** List the most recently active threads across all workspaces, joined with workspace name + path. */
   listRecentThreads(limit?: number): Promise<RecentThread[]>;
-  /** Search threads across all workspaces by title, with optional status/provider filters. */
+  /** Search threads across all workspaces by display and checkout metadata. */
   searchThreads(opts: {
     query: string;
     filters?: { status?: string[]; provider?: string[] };

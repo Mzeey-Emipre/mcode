@@ -214,8 +214,8 @@ test.describe("Right panel activity rail", () => {
   test("rail panel toggle hides the panel and mod+alt+b reopens it", async ({ page }) => {
     await seed(page, { tabs: ["terminal"] });
 
-    const chatMain = page.locator("main").filter({ has: page.getByText("Message Mcode...") });
-    const projectTree = page.getByRole("button", { name: "Activity Rail Delete Activity Rail" });
+    const chatMain = page.locator("main").filter({ has: page.getByTestId("new-thread-welcome") });
+    const projectTree = page.getByRole("button", { name: "Select project Activity Rail" });
     const railToggle = page.getByTestId("rail-panel-toggle");
 
     await expect(chatMain).toBeVisible();

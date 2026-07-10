@@ -17,12 +17,12 @@ import {
   Check,
   ListChecks,
   MoreHorizontal,
-  Paperclip,
   Target,
   Info,
   Trash2,
   X,
   Zap,
+  Folder,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -50,12 +50,14 @@ import { ModelSelector } from "./ModelSelector";
 import { ModeSelector, ALL_MODE_OPTIONS } from "./ModeSelector";
 import type { ComposerMode, ModeOption } from "./ModeSelector";
 import { BranchPicker } from "./BranchPicker";
+import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
 const LazyWorktreePicker = lazy(() => import("./WorktreePicker"));
 import { CopilotAgentSelector } from "./CopilotAgentSelector";
 import { AttachmentPreview } from "./AttachmentPreview";
 import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache, type MentionSuggestion } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
+import { ComposerAddMenu } from "./ComposerAddMenu";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import {
   ComposerEditor,
@@ -68,6 +70,9 @@ import {
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
 import { useTaskStore, type TaskItem } from "@/stores/taskStore";
 import { usePlanStore } from "@/stores/planStore";
+
+const NEW_THREAD_CONTEXT_CONTROL_CLASS =
+  "h-[28px] gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none";
 import { useDiffStore } from "@/stores/diffStore";
 import {
   hideRightPanelAdaptive,
@@ -76,7 +81,12 @@ import {
 import { useSlashCommand } from "./useSlashCommand";
 import type { Command } from "./useSlashCommand";
 import { SlashCommandPopup } from "./SlashCommandPopup";
-import { type LexicalEditor, $getRoot, $createParagraphNode, $createTextNode } from "lexical";
+import {
+  type LexicalEditor,
+  $getRoot,
+  $createParagraphNode,
+  $createTextNode,
+} from "lexical";
 import { PrDetectedCard } from "./PrDetectedCard";
 import type { PrDetail } from "@/transport/types";
 import { ComposerQueueList } from "./ComposerQueueList";
@@ -994,6 +1004,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const editorRef = useRef<LexicalEditor | null>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [filePopupAnchorRect, setFilePopupAnchorRect] = useState<DOMRect | null>(null);
 
   const prevThreadIdRef = useRef<string | undefined>(threadId);
   const draftRef = useRef<{
@@ -1393,6 +1404,23 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     onDismiss: fileAutocomplete.dismiss,
   });
 
+  useEffect(() => {
+    if (!fileAutocomplete.isOpen) {
+      setFilePopupAnchorRect(null);
+      return;
+    }
+    setFilePopupAnchorRect(composerContainerRef.current?.getBoundingClientRect() ?? null);
+  }, [fileAutocomplete.isOpen]);
+
+  const toggleInteractionMode = useCallback(() => {
+    const next =
+      mode === INTERACTION_MODES.PLAN
+        ? INTERACTION_MODES.BUILD
+        : INTERACTION_MODES.PLAN;
+    setMode(next);
+    if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+  }, [mode, setMode, threadId, setThreadSettings]);
+
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
   const newThreadMode = useWorkspaceStore((s) => s.newThreadMode);
@@ -1401,11 +1429,16 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const setNewThreadMode = useWorkspaceStore((s) => s.setNewThreadMode);
   const setNewThreadBranch = useWorkspaceStore((s) => s.setNewThreadBranch);
   const setNewThreadBranchFromPr = useWorkspaceStore((s) => s.setNewThreadBranchFromPr);
+  const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
 
   const activeWorkspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId),
   );
-  const isGitRepo = activeWorkspace?.is_git_repo ?? true;
+  const clearActiveProject = useCallback(() => {
+    setActiveWorkspace(null);
+  }, [setActiveWorkspace]);
+  const isGitRepo = activeWorkspace?.is_git_repo ?? false;
+  const needsWorkspace = Boolean(isNewThread && !workspaceId);
 
   const modeOptions = useMemo<ModeOption[]>(
     () => isGitRepo ? ALL_MODE_OPTIONS : ALL_MODE_OPTIONS.filter((o) => o.value === "direct"),
@@ -1413,17 +1446,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   );
 
   const slashCommand = useSlashCommand({
-    anchorRef: editorContainerRef,
+    anchorRef: composerContainerRef,
     cwd: workspacePath,
     providerId: effectiveProviderId,
     onMcodeCommand: (action) => {
       if (action === "toggle-plan") {
-        const next =
-          mode === INTERACTION_MODES.PLAN
-            ? INTERACTION_MODES.BUILD
-            : INTERACTION_MODES.PLAN;
-        setMode(next);
-        if (threadId) void setThreadSettings(threadId, { interactionMode: next });
+        toggleInteractionMode();
       }
     },
   });
@@ -2164,6 +2192,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   }, [attachments]);
 
   const handleSend = useCallback(async () => {
+    if (isNewThread && !workspaceId) return;
+
     const composerMessage = editorRef.current
       ? extractComposerMessage(editorRef.current)
       : { text: input, mentions };
@@ -2687,7 +2717,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
   }, [pendingCheckoutConfirmation, checkoutConfirming]);
 
-  const showComposerStatusBar = isNewThread === true || !!branchFromMessageId;
+  const showComposerStatusBar = !!branchFromMessageId;
 
   return (
     <div className="relative px-4 py-4 sm:px-8">
@@ -2695,7 +2725,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           bury the last line of content (e.g. the turn footer) when the chat is
           scrolled to its tail. Reduced from h-5/opaque to h-3/70% so the band
           reads as edge-softening rather than a mask. */}
-      <div className="pointer-events-none absolute inset-x-0 -top-3 h-3 bg-gradient-to-t from-background/70 to-transparent" />
+      {!isNewThread && (
+        <div className="pointer-events-none absolute inset-x-0 -top-3 h-3 bg-gradient-to-t from-background/70 to-transparent" />
+      )}
       {/* Queue toast */}
       {toast && (
         <div className="pointer-events-none absolute -top-8 right-4 z-20 flex items-center gap-1.5 rounded-full bg-card/90 px-3 py-1 text-xs text-muted-foreground shadow-sm ring-1 ring-border/50 backdrop-blur-sm animate-in fade-in-0 slide-in-from-bottom-1 duration-150">
@@ -2810,11 +2842,107 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         <ActiveGoalBar threadId={threadId} goal={activeGoal} />
       )}
 
+      {isNewThread && (
+        <div
+          data-testid="new-thread-context-strip"
+          className="relative z-0 mx-[14px] flex h-[40px] min-w-0 items-center gap-1 overflow-x-auto rounded-t-xl bg-muted/45 px-[16px] ring-1 ring-inset ring-border/60"
+        >
+          {activeWorkspace ? (
+            <>
+              <div
+                className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md pl-[10px] text-[12px] font-medium leading-none text-foreground/90"
+              >
+                <Folder size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+                <span className="max-w-40 truncate" title={activeWorkspace.path}>
+                  {activeWorkspace.name}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Clear ${activeWorkspace.name} project`}
+                  title="Clear project"
+                  onClick={clearActiveProject}
+                  className="-mr-0.5 size-7 rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
+                >
+                  <X className="size-3.5" aria-hidden />
+                </Button>
+              </div>
+              <ModeSelector
+                mode={composerMode}
+                onModeChange={setComposerMode}
+                locked={!isGitRepo}
+                options={modeOptions}
+                className={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                iconSize={14}
+              />
+              {isGitRepo && composerMode === "direct" && (
+                <BranchPicker
+                  branches={branches}
+                  selectedBranch={newThreadBranch || "main"}
+                  onSelect={setNewThreadBranch}
+                  loading={branchesLoading}
+                  locked={false}
+                  triggerClassName={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                  iconSize={14}
+                />
+              )}
+              {isGitRepo && composerMode === "worktree" && (
+                <BranchPicker
+                  branches={branches}
+                  selectedBranch={newThreadBranch || "main"}
+                  onSelect={setNewThreadBranch}
+                  loading={branchesLoading}
+                  locked={false}
+                  pullRequests={openPrs}
+                  prsLoading={openPrsLoading}
+                  fetchingBranch={fetchingBranch}
+                  onFetchAndSelect={handleFetchAndSelect}
+                  triggerClassName={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                  iconSize={14}
+                />
+              )}
+              {isGitRepo && composerMode === "existing-worktree" && (
+                <>
+                  {selectedWorktreeIsDetached && (
+                    <BranchPicker
+                      branches={branches}
+                      selectedBranch={newThreadBranch || "main"}
+                      onSelect={setNewThreadBranch}
+                      loading={branchesLoading}
+                      locked={false}
+                      triggerClassName={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                      iconSize={14}
+                    />
+                  )}
+                  <Suspense fallback={<div className="h-7 w-28 animate-pulse rounded-md bg-accent" />}>
+                    <LazyWorktreePicker
+                      worktrees={worktrees}
+                      selectedPath={selectedWorktree?.path ?? ""}
+                      onSelect={setSelectedWorktree}
+                      loading={worktreesLoading}
+                      triggerClassName={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                      iconSize={14}
+                    />
+                  </Suspense>
+                </>
+              )}
+            </>
+          ) : (
+            <NewThreadProjectPicker />
+          )}
+        </div>
+      )}
+
       {/* Main composer container - dark bg, rounded */}
       <div
         ref={composerContainerRef}
+        data-testid="composer-surface"
         className={cn(
-          "relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 shadow-lg shadow-black/20 focus-within:ring-2 focus-within:ring-primary/70",
+          "relative z-10 bg-muted/50 ring-1 ring-inset ring-border/60 focus-within:ring-2 focus-within:ring-primary/70",
+          isNewThread
+            ? "-mt-px rounded-xl shadow-none"
+            : "rounded-xl shadow-lg shadow-black/20",
           isDragOver && "ring-2 ring-primary"
         )}
         onDragEnter={handleDragEnter}
@@ -2908,7 +3036,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             disabled={planPending || isStaleWorktree || !!providerReason}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : "Message Mcode..."}
+            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : isNewThread ? "Do anything" : "Message Mcode..."}
           />
           <FileTagPopup
             items={fileAutocomplete.suggestions}
@@ -2916,6 +3044,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             onSelect={handleMentionSelect}
             listRef={filePopup.listRef}
             selectedIndex={filePopup.selectedIndex}
+            anchorRect={filePopupAnchorRect}
+            presentation="composer"
           />
           <SpellcheckContextMenu editorRef={editorContainerRef} />
         </div>
@@ -2962,25 +3092,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             data-testid="composer-attachment-input"
             onChange={handleAttachmentInputChange}
           />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Attach files"
-                  data-testid="composer-attach"
-                  onClick={handleAttachPick}
-                  className="text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-                  disabled={planPending || isStaleWorktree || !!providerReason}
-                >
-                  <Paperclip size={14} />
-                </Button>
-              }
-            />
-            <TooltipContent>Attach files</TooltipContent>
-          </Tooltip>
+          <ComposerAddMenu
+            disabled={planPending || isStaleWorktree || !!providerReason}
+            onAttachFiles={handleAttachPick}
+            getComposerRect={() => composerContainerRef.current?.getBoundingClientRect() ?? null}
+          />
           {/* Model picker */}
           <ModelSelector
             selectedModelId={modelId}
@@ -3317,6 +3433,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                     : handleSend
             }
             disabled={
+              needsWorkspace ||
               !!providerReason ||
               isStaleWorktree ||
               planPending ||
@@ -3336,7 +3453,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                       : "bg-muted text-muted-foreground opacity-40"
             )}
             title={
-              isThreadScaffold
+              needsWorkspace
+                ? "Choose a project"
+                : isThreadScaffold
                 ? "Starting thread"
                 : isAgentRunning && hasContent
                   ? "Queue message"
@@ -3345,7 +3464,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                     : "Send message"
             }
             aria-label={
-              isThreadScaffold
+              needsWorkspace
+                ? "Choose a project"
+                : isThreadScaffold
                 ? "Starting thread"
                 : isAgentRunning && hasContent
                   ? "Queue message"
@@ -3383,7 +3504,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         aria-hidden={!showComposerStatusBar}
         inert={showComposerStatusBar ? undefined : true}
       >
-        <div className="min-h-0">
+        {showComposerStatusBar && <div className="min-h-0">
           <div className="flex items-center justify-between px-1 pt-1.5">
             {!isGitRepo && isNewThread ? (
               <span className="flex h-6 items-center rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground/40">
@@ -3487,7 +3608,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               ) : null}
             </div>
           </div>
-        </div>
+        </div>}
       </div>
       </div>{/* end max-width wrapper */}
 

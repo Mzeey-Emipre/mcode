@@ -23,8 +23,6 @@ const hoisted = vi.hoisted(() => {
   return {
     pinnedWorkspace,
     setActiveWorkspace: vi.fn(),
-    setActiveThread: vi.fn(),
-    setPendingNewThread: vi.fn(),
     enrich: vi.fn(),
   };
 });
@@ -45,8 +43,6 @@ vi.mock("@/stores/workspaceStore", () => ({
     selector({
       workspaces: [hoisted.pinnedWorkspace],
       setActiveWorkspace: hoisted.setActiveWorkspace,
-      setActiveThread: hoisted.setActiveThread,
-      setPendingNewThread: hoisted.setPendingNewThread,
       pinWorkspace: vi.fn(),
     }),
 }));
@@ -73,43 +69,13 @@ function renderWithCommandPaletteShell(ui: ReactElement) {
 describe("ProjectsView", () => {
   beforeEach(() => {
     hoisted.setActiveWorkspace.mockClear();
-    hoisted.setActiveThread.mockClear();
-    hoisted.setPendingNewThread.mockClear();
     hoisted.enrich.mockClear();
     act(() => {
       useCommandPaletteStore.getState().close();
     });
   });
 
-  it("clears the active thread and sets pending new thread when choosing a project after New Thread", async () => {
-    const user = userEvent.setup();
-    act(() => {
-      useCommandPaletteStore.getState().open({
-        intent: "projects",
-        nextAction: "newThread",
-      });
-    });
-
-    renderWithCommandPaletteShell(<ProjectsView />);
-
-    await user.click(screen.getByTestId("project-row"));
-
-    expect(hoisted.setActiveWorkspace).toHaveBeenCalledWith("ws-1");
-    // cmdk's CommandItem and ProjectRow's onClick both call handleSelect on mouse pick.
-    expect(hoisted.setActiveThread).toHaveBeenCalledWith(null);
-    expect(hoisted.setPendingNewThread).toHaveBeenCalledWith(true);
-
-    expect(hoisted.setActiveWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
-      hoisted.setActiveThread.mock.invocationCallOrder[0]!,
-    );
-    expect(hoisted.setActiveThread.mock.invocationCallOrder[0]).toBeLessThan(
-      hoisted.setPendingNewThread.mock.invocationCallOrder[0]!,
-    );
-
-    expect(useCommandPaletteStore.getState().isOpen).toBe(false);
-  });
-
-  it("only switches workspace when the projects view has no newThread follow-up", async () => {
+  it("switches workspace and closes after project selection", async () => {
     const user = userEvent.setup();
     act(() => {
       useCommandPaletteStore.getState().open({ intent: "projects" });
@@ -120,7 +86,6 @@ describe("ProjectsView", () => {
     await user.click(screen.getByTestId("project-row"));
 
     expect(hoisted.setActiveWorkspace).toHaveBeenCalledWith("ws-1");
-    expect(hoisted.setActiveThread).not.toHaveBeenCalled();
-    expect(hoisted.setPendingNewThread).not.toHaveBeenCalled();
+    expect(useCommandPaletteStore.getState().isOpen).toBe(false);
   });
 });

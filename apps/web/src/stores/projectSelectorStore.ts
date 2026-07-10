@@ -64,7 +64,7 @@ async function enrichImpl(
 
 /**
  * Single source of truth for workspace enrichment data (branch, clean state, thread count).
- * Both the palette ProjectsView and the cold-start ProjectSelectorLanding subscribe here.
+ * The palette ProjectsView subscribes here.
  * Enrichment is fetched lazily and cached so repeated renders don't trigger duplicate RPCs.
  */
 export const useProjectSelectorStore = create<State>(() => ({

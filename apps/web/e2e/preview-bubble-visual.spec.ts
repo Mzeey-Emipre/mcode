@@ -377,7 +377,9 @@ test.describe("Bubble dark-tone visual cohesion", () => {
     await expect(listbox).toBeVisible({ timeout: 6000 });
 
     // Semantic: dark popup surface, bg-[#1e1e1e] = rgb(30, 30, 30)
-    const popupBg = await listbox.locator("..").evaluate((el) => getComputedStyle(el).backgroundColor);
+    const popupBg = await listbox
+      .locator("xpath=ancestor::div[@data-composer-autocomplete='true']")
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(popupBg).toBe("rgb(30, 30, 30)");
 
     // Semantic: seeded skills are present, mcode builtins are absent

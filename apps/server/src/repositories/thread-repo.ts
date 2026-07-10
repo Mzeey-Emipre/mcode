@@ -222,10 +222,7 @@ export class ThreadRepo {
     }));
   }
 
-  /**
-   * Search non-deleted threads across all workspaces by title substring,
-   * with optional status/provider filters and sort order.
-   */
+  /** Search non-deleted threads across title, project, provider, and checkout metadata. */
   search(opts: {
     query: string;
     filters?: { status?: string[]; provider?: string[] };
@@ -238,8 +235,16 @@ export class ThreadRepo {
 
     if (opts.query) {
       const escapedQuery = opts.query.replace(/[%_]/g, "\\$&");
-      conditions.push("t.title LIKE ? ESCAPE '\\' COLLATE NOCASE");
-      params.push(`%${escapedQuery}%`);
+      const pattern = `%${escapedQuery}%`;
+      conditions.push(`(
+        t.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+        w.name LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+        w.path LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+        t.provider LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+        t.branch LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+        COALESCE(t.worktree_path, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
+      )`);
+      params.push(pattern, pattern, pattern, pattern, pattern, pattern);
     }
 
     if (opts.filters?.status?.length) {

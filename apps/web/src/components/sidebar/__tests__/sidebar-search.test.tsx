@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { createMockThread } from "@/__tests__/mocks/transport";
 import { useSidebarSearchStore } from "@/stores/sidebarSearchStore";
 
 beforeEach(() => {
@@ -17,8 +18,15 @@ beforeEach(() => {
 
 describe("sidebarSearchStore", () => {
   it("sets and clears query", () => {
+    useSidebarSearchStore.setState({
+      serverResults: [createMockThread({ id: "stale-result" })],
+      serverWorkspaces: [{ id: "ws-stale", name: "Stale", path: "/stale" }],
+    });
     useSidebarSearchStore.getState().setQuery("test");
     expect(useSidebarSearchStore.getState().query).toBe("test");
+    expect(useSidebarSearchStore.getState().isSearching).toBe(true);
+    expect(useSidebarSearchStore.getState().serverResults).toEqual([]);
+    expect(useSidebarSearchStore.getState().serverWorkspaces).toEqual([]);
 
     useSidebarSearchStore.getState().clearAll();
     expect(useSidebarSearchStore.getState().query).toBe("");

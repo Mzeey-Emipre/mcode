@@ -237,10 +237,9 @@ test.describe("Architecture: App initialization", () => {
   }) => {
 
     await expect(page.locator("html")).toHaveClass(/dark/);
-    // exact: true avoids strict-mode violation when both sidebar "Mcode" and landing "mcode" are visible
+    // The projectless new-thread canvas replaces the legacy project landing.
     await expect(page.getByText("Mcode", { exact: true })).toBeVisible();
-    // When no workspace is active the full-screen landing replaces the chat empty state
-    await expect(page.getByText("mcode", { exact: true })).toBeVisible();
+    await expect(page.getByText("What should we work on?", { exact: true })).toBeVisible();
   });
 
   test("transport module initializes without crashing", async ({ page }) => {
@@ -291,7 +290,7 @@ test.describe("Architecture: Workspace management", () => {
       activeWorkspaceId: WORKSPACE_A.id,
     });
 
-    await expect(page.locator("text=Architecture Test")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Select project Architecture Test" })).toBeVisible();
 
     await page.screenshot({
       path: "e2e/screenshots/arch-workspace-injected.png",
@@ -306,8 +305,8 @@ test.describe("Architecture: Workspace management", () => {
       activeWorkspaceId: WORKSPACE_A.id,
     });
 
-    await expect(page.locator("text=Architecture Test")).toBeVisible();
-    await expect(page.locator("text=Second Project")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Select project Architecture Test" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Select project Second Project" })).toBeVisible();
   });
 
   test("empty state shows Open a folder when no workspaces", async ({
@@ -346,7 +345,7 @@ test.describe("Architecture: Thread lifecycle", () => {
     expect(threadCount).toBe(3);
 
     // Verify workspace is shown and active
-    await expect(page.locator("text=Architecture Test")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Select project Architecture Test" })).toBeVisible();
 
     await page.screenshot({
       path: "e2e/screenshots/arch-thread-list.png",

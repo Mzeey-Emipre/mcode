@@ -1,11 +1,10 @@
 // apps/web/src/components/chat/FileTagPopup.tsx
 import { useRef, useEffect, useCallback, useState, memo } from "react";
-import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
 import type { MentionSuggestion } from "./useFileAutocomplete";
 import { StackedLayersIcon } from "./narrative/StackedLayersIcon";
-import { computeFixedPopupPosition } from "./popup-position";
+import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 
 const ITEM_HEIGHT = 28; // px per row (py-1.5 + 14px icon)
 const VISIBLE_ITEMS = 8;
@@ -46,6 +45,8 @@ interface FileTagPopupProps {
   tone?: "default" | "dark";
   /** Extra class names for border/positioning overrides that don't belong in tone. */
   className?: string;
+  /** Whether the popup occupies the full composer width or a compact preview-bubble width. */
+  presentation?: "composer" | "compact";
 }
 
 /** Split a file path into directory + filename for styled rendering. */
@@ -204,6 +205,7 @@ export function FileTagPopup({
   anchorRect,
   tone = "default",
   className,
+  presentation = "compact",
 }: FileTagPopupProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -226,74 +228,82 @@ export function FileTagPopup({
   let renderedIndex = 0;
   let currentGroup: MentionSuggestion["group"] | null = null;
 
-  // When anchorRect is provided, escape overflow-hidden ancestors through a
-  // body portal with fixed positioning.
-  const fixedStyle: React.CSSProperties | undefined = anchorRect
-    ? computeFixedPopupPosition({
-        anchorRect,
-        estimatedHeight: maxHeight,
-        minWidth: 260,
-        maxWidth: 360,
-        preferredPlacement: "above",
-      })
-    : undefined;
-
   // The group header uses bg-inherit so it always matches the popup surface.
   // When tone="dark" the wrapper's explicit bg sets the inherited value; no
   // separate groupHeaderClassName is needed.
 
-  const popup = (
+  const list = (
+    <div
+      ref={scrollRef}
+      className="p-1"
+      style={{ maxHeight, overflowY: "auto" }}
+    >
+      {items.map((item) => {
+        const index = renderedIndex++;
+        const showGroup = item.group !== currentGroup;
+        currentGroup = item.group;
+        return (
+          <div key={item.id} role="presentation">
+            {showGroup ? (
+              <div
+                data-group-header
+                className={cn(
+                  "sticky top-0 z-10 bg-inherit px-2 py-1 text-xs font-medium",
+                  tone === "dark" ? "text-neutral-400" : "text-muted-foreground/70",
+                )}
+              >
+                {item.group}
+              </div>
+            ) : null}
+            <div role="presentation" data-index={index}>
+              <SuggestionRow
+                item={item}
+                selected={index === selectedIndex}
+                onSelect={onSelect}
+                tone={tone}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  if (anchorRect) {
+    return (
+      <ComposerOverlaySurface
+        data-file-popup
+        ref={listRef}
+        role="listbox"
+        aria-label="Mention suggestions"
+        anchorRect={anchorRect}
+        estimatedHeight={maxHeight}
+        minWidth={presentation === "composer" ? 0 : 260}
+        maxWidth={presentation === "composer" ? undefined : 360}
+        attached={presentation === "composer"}
+        tone={tone}
+        className={className}
+      >
+        {list}
+      </ComposerOverlaySurface>
+    );
+  }
+
+  return (
     <div
       data-file-popup
       ref={listRef}
       role="listbox"
       aria-label="Mention suggestions"
-      style={fixedStyle}
       className={cn(
-        "z-50 flex flex-col overflow-hidden rounded-lg border shadow-lg",
+        "composer-autocomplete-surface absolute bottom-full left-0 mb-1 w-full overflow-hidden rounded-xl border border-border/70 animate-composer-popup-enter",
         tone === "dark"
           ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
-          : "border-border bg-popover",
-        // Absolute placement only when not in fixed mode.
-        !anchorRect && "absolute bottom-full left-0 mb-1 w-full",
+          : "bg-popover text-popover-foreground",
         className,
       )}
     >
-      <div
-        ref={scrollRef}
-        className="min-h-0 flex-1 p-1"
-        style={{ maxHeight, overflowY: "auto" }}
-      >
-        {items.map((item) => {
-          const index = renderedIndex++;
-          const showGroup = item.group !== currentGroup;
-          currentGroup = item.group;
-          return (
-            <div key={item.id} role="presentation">
-              {showGroup ? (
-                <div
-                  data-group-header
-                  className={cn(
-                    "sticky top-0 z-10 bg-inherit px-2 py-1 text-xs font-medium",
-                    tone === "dark" ? "text-neutral-400" : "text-muted-foreground/70",
-                  )}
-                >
-                  {item.group}
-                </div>
-              ) : null}
-              <div role="presentation" data-index={index}>
-                <SuggestionRow
-                  item={item}
-                  selected={index === selectedIndex}
-                  onSelect={onSelect}
-                  tone={tone}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {list}
     </div>
   );
-  return anchorRect ? createPortal(popup, document.body) : popup;
 }

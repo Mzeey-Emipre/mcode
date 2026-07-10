@@ -82,6 +82,18 @@ describe("WorkspaceRepo sort_order", () => {
     expect(after).toEqual(before);
   });
 
+  it("renames an active workspace without changing its identity or path", () => {
+    const workspace = repo.create("before", "/workspace", true);
+
+    const renamed = repo.rename(workspace.id, "after");
+
+    expect(renamed).toMatchObject({
+      id: workspace.id,
+      name: "after",
+      path: "/workspace",
+    });
+  });
+
   it("reorderToIndex succeeds when all sort_order values are duplicates", () => {
     // Simulate legacy databases where schema patch gave all rows sort_order=0
     const a = repo.create("a", "/a", true);

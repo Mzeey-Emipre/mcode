@@ -168,6 +168,14 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ name: z.string(), path: z.string() }),
     result: WorkspaceSchema(),
   },
+  /** Rename a workspace without changing its filesystem path. */
+  "workspace.rename": {
+    params: z.object({
+      id: z.string(),
+      name: z.string().trim().min(1).max(120),
+    }),
+    result: WorkspaceSchema(),
+  },
   "workspace.delete": {
     params: z.object({ id: z.string() }),
     result: z.boolean(),
@@ -209,6 +217,7 @@ export const WS_METHODS = lazySchema(() => ({
       path: z.string(),
       parent: z.string().nullable(),
       entries: z.array(z.object({ name: z.string(), isDir: z.boolean() })),
+      isExactDirectory: z.boolean(),
     }),
   },
   "thread.list": {
@@ -298,7 +307,7 @@ export const WS_METHODS = lazySchema(() => ({
       prStatus: z.string().nullable(),
     })),
   },
-  /** Search threads across all workspaces by title substring, with optional status/provider filters and sort order. */
+  /** Search threads across title, project, provider, branch, and worktree metadata. */
   "thread.search": {
     params: z.object({
       query: z.string().max(500),

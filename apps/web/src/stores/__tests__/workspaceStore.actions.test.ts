@@ -95,6 +95,43 @@ describe("workspaceStore reorderWorkspace", () => {
 });
 
 describe("workspaceStore new-thread panel transition", () => {
+  it("opens the projectless composer without inventing a workspace", () => {
+    useWorkspaceStore.setState({
+      activeWorkspaceId: null,
+      activeThreadId: "thread-1",
+      pendingNewThread: false,
+    });
+
+    useWorkspaceStore.getState().beginNewThread();
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      activeWorkspaceId: null,
+      activeThreadId: null,
+      pendingNewThread: true,
+    });
+  });
+
+  it("enters a clean pending composer for the selected workspace", () => {
+    useWorkspaceStore.setState({
+      workspaces: [makeWs(), makeWs({ id: "ws-2", name: "second" })],
+      activeWorkspaceId: "ws-2",
+      activeThreadId: "thread-1",
+      pendingNewThread: false,
+      newThreadMode: "worktree",
+      newThreadBranch: "feature/old",
+    });
+
+    useWorkspaceStore.getState().beginNewThread("ws-2");
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      activeWorkspaceId: "ws-2",
+      activeThreadId: null,
+      pendingNewThread: true,
+      newThreadMode: "direct",
+      newThreadBranch: "",
+    });
+  });
+
   it("closes the threadless right panel without clearing the active thread panel", () => {
     useWorkspaceStore.setState({
       workspaces: [makeWs()],

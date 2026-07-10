@@ -17,6 +17,8 @@ export interface GraceLogger {
 export interface GraceDeps {
   /** Grace period length in milliseconds. */
   graceMs: number;
+  /** Whether losing every client should start the idle-shutdown countdown. */
+  shutdownOnIdle?: boolean;
   /** Returns the current number of active WebSocket sessions. */
   sessionCount(): number;
   /**
@@ -64,6 +66,7 @@ export interface GraceController {
  */
 export function createGraceController(deps: GraceDeps): GraceController {
   const { graceMs, sessionCount, isBusy, shutdown, logger } = deps;
+  const shutdownOnIdle = deps.shutdownOnIdle ?? true;
   const now = deps.now ?? Date.now;
 
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -127,6 +130,7 @@ export function createGraceController(deps: GraceDeps): GraceController {
 
   return {
     handleSessionChange(count: number): void {
+      if (!shutdownOnIdle) return;
       if (count === 0 && timer === null) {
         arm();
       } else if (count > 0 && timer !== null) {

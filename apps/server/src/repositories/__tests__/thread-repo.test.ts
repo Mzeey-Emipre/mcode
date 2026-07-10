@@ -142,6 +142,53 @@ describe("ThreadRepo.updateCheckoutFromHead", () => {
   });
 });
 
+describe("ThreadRepo.search", () => {
+  let db: Database.Database;
+  let threadRepo: ThreadRepo;
+  let workspaceRepo: WorkspaceRepo;
+
+  beforeEach(() => {
+    db = openMemoryDatabase();
+    container.reset();
+    container.registerInstance("Database", db);
+    threadRepo = container.resolve(ThreadRepo);
+    workspaceRepo = container.resolve(WorkspaceRepo);
+  });
+
+  it.each([
+    ["title", "audit cache"],
+    ["project name", "Caravan"],
+    ["project path", "client-app"],
+    ["provider", "codex"],
+    ["branch", "sidebar-polish"],
+    ["worktree path", "quiet-lantern"],
+  ])("matches a term present only in %s", (_field, query) => {
+    const workspace = workspaceRepo.create("Caravan", "/src/client-app", true);
+    const thread = threadRepo.create(
+      workspace.id,
+      "Audit cache",
+      "worktree",
+      "feature/sidebar-polish",
+      true,
+      "codex",
+    );
+    threadRepo.updateWorktreePath(thread.id, "/worktrees/quiet-lantern");
+
+    expect(threadRepo.search({ query }).threads.map((item) => item.id)).toEqual([thread.id]);
+  });
+
+  it("treats SQL wildcard characters as literal search text", () => {
+    const workspace = workspaceRepo.create("percent_100%", "/src/literal", true);
+    const matching = threadRepo.create(workspace.id, "Literal marker", "direct", "main");
+    const otherWorkspace = workspaceRepo.create("plain", "/src/plain", true);
+    threadRepo.create(otherWorkspace.id, "Other", "direct", "main");
+
+    expect(threadRepo.search({ query: "_100%" }).threads.map((item) => item.id)).toEqual([
+      matching.id,
+    ]);
+  });
+});
+
 describe("Migration 019 backfill", () => {
   it("backfills has_file_changes = 1 for threads with non-empty file changes in any snapshot", () => {
     const db = openMemoryDatabase();

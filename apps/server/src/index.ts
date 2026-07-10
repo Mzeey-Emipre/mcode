@@ -59,7 +59,7 @@ import { ThreadTeardownService } from "./services/thread-teardown-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage";
 import { seedAgentRuntimeWorkspace } from "./dev-agent-seed";
 import { WebSocket } from "ws";
-import { resolveGracePeriodMs } from "./grace-period-ms";
+import { resolveGracePeriodMs, shouldShutdownOnIdle } from "./grace-period-ms";
 import { createGraceController } from "./grace-controller";
 import { AgentEventType, isSkillCatalogCapable } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
@@ -662,6 +662,9 @@ function startServerAndSubscribe(): void {
 
   graceController = createGraceController({
     graceMs: GRACE_PERIOD_MS,
+    // Agent runtimes have an owning supervisor. Browser disconnects during
+    // reloads or inspection must not terminate the whole worktree runtime.
+    shutdownOnIdle: shouldShutdownOnIdle(process.env),
     sessionCount,
     isBusy,
     shutdown: requestShutdown,

@@ -29,7 +29,7 @@ export function CommandPaletteResults({ groups, onSelect, footer }: Props) {
         <CommandGroup
           key={group.heading}
           heading={
-            <span className="px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
+            <span className="px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/70">
               {group.heading}
             </span>
           }

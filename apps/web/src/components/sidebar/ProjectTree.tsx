@@ -15,7 +15,7 @@ import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { Plus, Trash2, ChevronRight, ChevronDown, GitBranch, GitBranchMinus, AlertTriangle, FolderPlus, Folder, Activity } from "lucide-react";
+import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, ChevronRight, FolderPlus, Folder, FolderOpen, Activity, MoreHorizontal, Pencil, Plus, SquarePen } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
@@ -39,15 +39,26 @@ import {
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { relativeTime } from "@/lib/time";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { schedulePrefetch, cancelPrefetch } from "@/lib/thread-hydrator/prefetch-scheduler";
 import { isPrable } from "@/lib/is-prable";
-import { getCiVisual, CI_ICON_STROKE, getCiOverviewSummaryLabel } from "@/lib/ci-status";
+import { getCiVisual, CI_ICON_STROKE } from "@/lib/ci-status";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
+import { FILE_EXPLORER_ID } from "@/lib/resolveDefaultOpenInApp";
+import { getTransport } from "@/transport";
+import { useToastStore } from "@/stores/toastStore";
 import type { ChecksStatus } from "@mcode/contracts";
 import type { Workspace, Thread } from "@/transport/types";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
+import { getThreadStateMarker, ThreadStateMarker } from "./ThreadStateMarker";
 import {
   DndContext,
   closestCenter,
@@ -68,8 +79,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import { ThreadSearchBar } from "./ThreadSearchBar";
-import { useSidebarSearchStore, type ThreadSortField } from "@/stores/sidebarSearchStore";
 
 // Persist expand/collapse in localStorage
 function getExpandedState(): Record<string, boolean> {
@@ -90,28 +99,12 @@ const THREAD_LIST_CAP = 6;
 /** Stable empty array used as default when a workspace has no threads. */
 const EMPTY_THREADS: WorkspaceThread[] = [];
 
-/** Stable empty Set used as a sentinel when status filters don't need running/permission state. */
-const EMPTY_ID_SET = new Set<string>();
 const PROJECT_DND_MODIFIERS = [restrictToVerticalAxis];
 const PROJECT_DND_MEASURING = {
   droppable: {
     strategy: MeasuringStrategy.BeforeDragging,
   },
 } as const;
-
-/**
- * Returns `prev` if it contains the same elements in the same order as `next`
- * (by reference equality). Avoids new array references when content hasn't changed,
- * which preserves React.memo effectiveness on child components.
- */
-function stableArray<T>(prev: T[] | undefined, next: T[]): T[] {
-  if (prev === next) return prev;
-  if (!prev || prev.length !== next.length) return next;
-  for (let i = 0; i < next.length; i++) {
-    if (prev[i] !== next[i]) return next;
-  }
-  return prev;
-}
 
 /** Time window in ms during which a second click on the same thread row is treated as a double-click. */
 const DOUBLE_CLICK_THRESHOLD_MS = 250;
@@ -128,17 +121,6 @@ function getThreadListExpanded(): Record<string, boolean> {
 /** Persist per-workspace "show all threads" state to localStorage. */
 function setThreadListExpanded(state: Record<string, boolean>) {
   localStorage.setItem("mcode-expanded-thread-lists", JSON.stringify(state));
-}
-
-/**
- * Returns the parent directory name from an absolute path, or null if there isn't one
- * worth showing (e.g., the path is at the filesystem root).
- */
-function parentDirName(path: string): string | null {
-  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  const segments = normalized.split("/").filter(Boolean);
-  if (segments.length < 2) return null;
-  return segments[segments.length - 2];
 }
 
 interface ContextMenuState {
@@ -158,6 +140,12 @@ interface DeleteDialogState {
 
 /** State for the workspace (project) delete confirmation dialog. */
 interface WorkspaceDeleteDialogState {
+  workspaceId: string;
+  workspaceName: string;
+}
+
+/** State for the workspace rename dialog. */
+interface WorkspaceRenameDialogState {
   workspaceId: string;
   workspaceName: string;
 }
@@ -209,73 +197,6 @@ function buildThreadTree(threads: WorkspaceThread[]): ThreadTreeItem[] {
   return result;
 }
 
-/** Filter and sort threads based on sidebar search state. */
-function filterAndSortThreads(
-  threads: WorkspaceThread[],
-  query: string,
-  filters: { status: string[]; provider: string[] },
-  sortField: ThreadSortField,
-  sortDirection: "asc" | "desc",
-  runningThreadIds: Set<string>,
-  pendingPermissionThreadIds: Set<string>,
-): WorkspaceThread[] {
-  let result = threads;
-
-  // Text search filter
-  if (query) {
-    const q = query.toLowerCase();
-    result = result.filter((t) => t.title.toLowerCase().includes(q));
-  }
-
-  // Status filter
-  if (filters.status.length > 0) {
-    result = result.filter((t) => {
-      // "action_required" is a client-side pseudo-status
-      if (filters.status.includes("action_required") && pendingPermissionThreadIds.has(t.id)) {
-        return true;
-      }
-      // "active" means currently running
-      if (filters.status.includes("active") && t.status === "active" && runningThreadIds.has(t.id)) {
-        return true;
-      }
-      // "paused" means status is active but NOT running
-      if (filters.status.includes("paused") && t.status === "active" && !runningThreadIds.has(t.id)) {
-        return true;
-      }
-      // For DB-level statuses (completed, errored, interrupted), match directly
-      // but exclude "active" from fallthrough since it's handled above
-      if (t.status === "active") return false;
-      return filters.status.includes(t.status);
-    });
-  }
-
-  // Provider filter
-  if (filters.provider.length > 0) {
-    result = result.filter((t) => filters.provider.includes(t.provider));
-  }
-
-  // Sort
-  const dir = sortDirection === "asc" ? 1 : -1;
-  result = [...result].sort((a, b) => {
-    let cmp: number;
-    switch (sortField) {
-      case "title":
-        cmp = a.title.localeCompare(b.title);
-        break;
-      case "created_at":
-        cmp = a.created_at.localeCompare(b.created_at);
-        break;
-      case "updated_at":
-      default:
-        cmp = a.updated_at.localeCompare(b.updated_at);
-        break;
-    }
-    return cmp * dir;
-  });
-
-  return result;
-}
-
 /** Sidebar tree listing workspaces and their threads with CRUD actions. */
 export function ProjectTree() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
@@ -287,10 +208,11 @@ export function ProjectTree() {
   const loadWorktrees = useWorkspaceStore((s) => s.loadWorktrees);
   const worktreesLoadedForWorkspace = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
-  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
+  const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const reorderWorkspace = useWorkspaceStore((s) => s.reorderWorkspace);
   const error = useWorkspaceStore((s) => s.error);
@@ -312,21 +234,6 @@ export function ProjectTree() {
     [pendingPermissionIds],
   );
 
-  const searchQuery = useSidebarSearchStore((s) => s.query);
-  const searchFilters = useSidebarSearchStore((s) => s.filters);
-  const sortField = useSidebarSearchStore((s) => s.sortField);
-  const sortDirection = useSidebarSearchStore((s) => s.sortDirection);
-  const isSearching = useSidebarSearchStore((s) => s.isSearching);
-  const serverResults = useSidebarSearchStore((s) => s.serverResults);
-  const setExpandedSnapshot = useSidebarSearchStore((s) => s.setExpandedSnapshot);
-  const expandedSnapshot = useSidebarSearchStore((s) => s.expandedSnapshot);
-  const isSearchActive = searchQuery.trim().length > 0 || searchFilters.status.length > 0 || searchFilters.provider.length > 0;
-
-  const availableProviders = useMemo(
-    () => [...new Set(threads.map((t) => t.provider))].sort(),
-    [threads],
-  );
-
   // Pre-group threads by workspace in one pass instead of filtering all threads per workspace.
   const threadsByWorkspace = useMemo(() => {
     const map = new Map<string, WorkspaceThread[]>();
@@ -338,39 +245,7 @@ export function ProjectTree() {
     return map;
   }, [threads]);
 
-  // Only include running/permission IDs as dependencies when status filters actually
-  // consult them. This prevents the entire filteredThreadsByWorkspace map from being
-  // recomputed every time an agent starts/stops (which creates new Set references).
-  const statusNeedsRunning = searchFilters.status.length > 0
-    && searchFilters.status.some((s) => s === "active" || s === "paused" || s === "action_required");
-  const effectiveRunning = statusNeedsRunning ? runningThreadIds : EMPTY_ID_SET;
-  const effectivePending = statusNeedsRunning ? pendingPermissionThreadIds : EMPTY_ID_SET;
-
-  const prevFilteredRef = useRef<Map<string, WorkspaceThread[]>>(new Map());
-
-  const filteredThreadsByWorkspace = useMemo(() => {
-    const map = new Map<string, WorkspaceThread[]>();
-    const prev = prevFilteredRef.current;
-    for (const ws of workspaces) {
-      const wsThreads = threadsByWorkspace.get(ws.id) ?? EMPTY_THREADS;
-      const filtered = isSearchActive
-        ? filterAndSortThreads(wsThreads, searchQuery, searchFilters, sortField, sortDirection, effectiveRunning, effectivePending)
-        : sortField !== "updated_at" || sortDirection !== "desc"
-          ? filterAndSortThreads(wsThreads, "", { status: [], provider: [] }, sortField, sortDirection, effectiveRunning, effectivePending)
-          : wsThreads;
-      // Reuse the previous array reference when elements haven't changed.
-      // Prevents downstream React.memo children from re-rendering when the
-      // map recomputes but a workspace's thread list is structurally identical.
-      map.set(ws.id, stableArray(prev.get(ws.id), filtered));
-    }
-    prevFilteredRef.current = map;
-    return map;
-  }, [workspaces, threadsByWorkspace, isSearchActive, searchQuery, searchFilters, sortField, sortDirection, effectiveRunning, effectivePending]);
-
   const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
-  /** Ref mirror of `expanded` so effects can read current state without re-triggering. */
-  const expandedRef = useRef(expanded);
-  expandedRef.current = expanded;
   const [threadListExpanded, setThreadListExpandedState] = useState<Record<string, boolean>>(getThreadListExpanded);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -378,6 +253,9 @@ export function ProjectTree() {
   const [deleteWorktree, setDeleteWorktree] = useState(false);
   const [wsDeleteDialog, setWsDeleteDialog] = useState<WorkspaceDeleteDialogState | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [wsRenameDialog, setWsRenameDialog] = useState<WorkspaceRenameDialogState | null>(null);
+  const [workspaceRenameValue, setWorkspaceRenameValue] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
   const workspaceIds = useMemo(() => workspaces.map((w) => w.id), [workspaces]);
@@ -411,57 +289,6 @@ export function ProjectTree() {
   useEffect(() => {
     setThreadListExpanded(threadListExpanded);
   }, [threadListExpanded]);
-
-  // Snapshot expanded state when search begins, restore when cleared
-  useEffect(() => {
-    if (isSearchActive && !expandedSnapshot) {
-      setExpandedSnapshot({ ...expandedRef.current });
-    }
-    if (!isSearchActive && expandedSnapshot) {
-      setExpanded(expandedSnapshot);
-      useSidebarSearchStore.setState({ expandedSnapshot: null });
-    }
-  }, [isSearchActive, expandedSnapshot, setExpandedSnapshot]);
-
-  // Auto-expand projects with matching threads during search
-  useEffect(() => {
-    if (!isSearchActive) return;
-    const workspaceIdsWithMatches = new Set<string>();
-
-    for (const ws of workspaces) {
-      const wsThreads = filteredThreadsByWorkspace.get(ws.id) ?? [];
-      if (wsThreads.length > 0) workspaceIdsWithMatches.add(ws.id);
-    }
-
-    for (const t of serverResults) {
-      workspaceIdsWithMatches.add(t.workspace_id);
-    }
-
-    const prev = expandedRef.current;
-    const next: Record<string, boolean> = {};
-    const workspacesToLoad: string[] = [];
-
-    for (const ws of workspaces) {
-      if (workspaceIdsWithMatches.has(ws.id)) {
-        next[ws.id] = true;
-        if (!prev[ws.id]) workspacesToLoad.push(ws.id);
-      } else {
-        next[ws.id] = false;
-      }
-    }
-
-    // Only update state if expanded values actually changed (prevents infinite loop)
-    const changed = workspaces.some(
-      (ws) => (prev[ws.id] ?? false) !== (next[ws.id] ?? false),
-    );
-    if (changed) {
-      setExpanded(next);
-    }
-
-    for (const wsId of workspacesToLoad) {
-      loadThreads(wsId);
-    }
-  }, [isSearchActive, filteredThreadsByWorkspace, serverResults, workspaces, loadThreads]);
 
   const checksById = useWorkspaceStore(useShallow((s) => s.checksById));
 
@@ -555,16 +382,19 @@ export function ProjectTree() {
   }, [setActiveWorkspace, setActiveThread]);
 
   const handleCreateThread = useCallback((wsId: string) => {
-    setActiveWorkspace(wsId);
-    setPendingNewThread(true);
-    setActiveThread(null);
-  }, [setActiveWorkspace, setPendingNewThread, setActiveThread]);
+    beginNewThread(wsId);
+  }, [beginNewThread]);
 
   const handleDeleteWorkspace = useCallback((wsId: string) => {
     const ws = useWorkspaceStore.getState().workspaces.find((w) => w.id === wsId);
     if (ws) {
       setWsDeleteDialog({ workspaceId: ws.id, workspaceName: ws.name });
     }
+  }, []);
+
+  const handleRenameWorkspace = useCallback((workspace: Workspace) => {
+    setWorkspaceRenameValue(workspace.name);
+    setWsRenameDialog({ workspaceId: workspace.id, workspaceName: workspace.name });
   }, []);
 
   const handleInlineEditChange = useCallback((title: string) => {
@@ -613,6 +443,27 @@ export function ProjectTree() {
       // Error shown via store.error; keep dialog open so user can retry
     }
   }, [wsDeleteDialog, deleteWorkspace]);
+
+  const handleWorkspaceRenameConfirm = useCallback(async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!wsRenameDialog || isRenaming) return;
+
+    const name = workspaceRenameValue.trim();
+    if (!name || name === wsRenameDialog.workspaceName) {
+      setWsRenameDialog(null);
+      return;
+    }
+
+    setIsRenaming(true);
+    try {
+      await renameWorkspace(wsRenameDialog.workspaceId, name);
+      setWsRenameDialog(null);
+    } catch {
+      // The workspace store retains the failure message for the sidebar error rail.
+    } finally {
+      setIsRenaming(false);
+    }
+  }, [isRenaming, renameWorkspace, workspaceRenameValue, wsRenameDialog]);
 
   const handleStartInlineEdit = useCallback((threadId: string, title: string) => {
     setInlineEdit({ threadId, title, originalTitle: title });
@@ -666,23 +517,20 @@ export function ProjectTree() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Search bar */}
-      <ThreadSearchBar providers={availableProviders} />
-
-      <div className="mb-0.5 flex items-center justify-between px-2.5 py-1.5">
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/55">
+      <div className="mb-1 flex items-center justify-between px-3 py-1.5">
+        <span className="text-xs font-medium text-muted-foreground">
           Projects
         </span>
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button variant="ghost" size="icon-xs" onClick={handleOpenFolder} aria-label="Open project folder" className="text-muted-foreground/60 hover:text-foreground">
-                <Plus size={14} />
+              <Button variant="ghost" size="icon-xs" onClick={handleOpenFolder} aria-label="Add project" className="text-muted-foreground hover:text-foreground">
+                <Plus size={15} />
               </Button>
             }
           />
           <TooltipContent side="right" className="text-xs">
-            Open project folder
+            Add project
           </TooltipContent>
         </Tooltip>
       </div>
@@ -701,10 +549,7 @@ export function ProjectTree() {
           >
             <SortableContext items={workspaceIds} strategy={verticalListSortingStrategy}>
               {workspaces.map((ws) => {
-                const wsThreads = filteredThreadsByWorkspace.get(ws.id) ?? [];
-
-                // Hide projects with zero matches during active search
-                if (isSearchActive && wsThreads.length === 0) return null;
+                const wsThreads = threadsByWorkspace.get(ws.id) ?? EMPTY_THREADS;
 
                 return (
                 <SortableProjectShell
@@ -731,34 +576,13 @@ export function ProjectTree() {
                   onSelectThread={handleSelectThread}
                   onCreateThread={handleCreateThread}
                   onDelete={handleDeleteWorkspace}
+                  onRename={handleRenameWorkspace}
                   onThreadContextMenu={handleThreadContextMenu}
                 />
                 );
               })}
             </SortableContext>
           </DndContext>
-
-          {/* Loading more results from server */}
-          {isSearching && (
-            <div className="flex items-center gap-1.5 px-4 py-2">
-              <Spinner size={10} className="text-muted-foreground/30" />
-              <span className="font-mono text-[10px] text-muted-foreground/30">
-                loading more...
-              </span>
-            </div>
-          )}
-
-          {/* No results empty state */}
-          {isSearchActive && !isSearching && workspaces.every((ws) => {
-            return (filteredThreadsByWorkspace.get(ws.id) ?? []).length === 0;
-          }) && serverResults.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-2 px-4 py-8">
-              <span className="font-mono text-2xl text-muted-foreground/15" aria-hidden>&#x2298;</span>
-              <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/40">
-                No matching threads
-              </p>
-            </div>
-          )}
 
           {workspaces.length === 0 && (
             <div className="flex flex-col items-center justify-center gap-3 px-4 py-12">
@@ -933,6 +757,52 @@ export function ProjectTree() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={wsRenameDialog !== null}
+        onOpenChange={(open) => {
+          if (!open && !isRenaming) setWsRenameDialog(null);
+        }}
+      >
+        <DialogContent showCloseButton={false} className="sm:max-w-md overflow-hidden">
+          <form onSubmit={handleWorkspaceRenameConfirm} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <DialogTitle>Rename project</DialogTitle>
+              <DialogDescription>
+                Choose a new name for {wsRenameDialog?.workspaceName}.
+              </DialogDescription>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="workspace-rename">Project name</Label>
+              <Input
+                id="workspace-rename"
+                value={workspaceRenameValue}
+                onChange={(event) => setWorkspaceRenameValue(event.target.value)}
+                maxLength={120}
+                autoFocus
+                disabled={isRenaming}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isRenaming}
+                onClick={() => setWsRenameDialog(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isRenaming || workspaceRenameValue.trim().length === 0}
+              >
+                {isRenaming && <Spinner size={14} className="text-current" />}
+                {isRenaming ? "Renaming..." : "Rename"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
@@ -1028,22 +898,13 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
 type IconComponent = ComponentType<{ size?: number; className?: string }>;
 
 const PROVIDER_META: Record<string, { icon: IconComponent; label: string; color: string }> = {
-  claude: { icon: ClaudeIcon, label: "Claude", color: "text-orange-500 dark:text-orange-400" },
-  codex: { icon: CodexIcon, label: "Codex", color: "text-emerald-400" },
+  claude: { icon: ClaudeIcon, label: "Claude", color: "" },
+  codex: { icon: CodexIcon, label: "Codex", color: "text-foreground" },
   copilot: { icon: CopilotIcon, label: "GitHub Copilot", color: "text-violet-400 dark:text-violet-300" },
   cursor: { icon: CursorProviderIcon, label: "Cursor", color: "" },
   gemini: { icon: GeminiIcon, label: "Gemini", color: "text-sky-400" },
   opencode: { icon: OpenCodeIcon, label: "OpenCode", color: "text-violet-400" },
 };
-
-type SidebarThreadMarker =
-  | { kind: "action"; label: "Action required" }
-  | { kind: "running"; label: "Running" }
-  | { kind: "ci"; label: string; aggregate: "failing" | "pending" }
-  | { kind: "completed"; label: "Completed" }
-  | { kind: "errored"; label: "Errored" }
-  | { kind: "interrupted"; label: "Interrupted" }
-  | { kind: "time"; label: string };
 
 function getProviderMeta(provider: string) {
   return PROVIDER_META[provider] ?? {
@@ -1051,99 +912,6 @@ function getProviderMeta(provider: string) {
     label: provider || "Provider",
     color: "text-muted-foreground",
   };
-}
-
-function getSidebarThreadMarker({
-  thread,
-  checks,
-  isRunning,
-  hasPendingPermission,
-}: {
-  thread: WorkspaceThread;
-  checks: ChecksStatus | undefined;
-  isRunning: boolean;
-  hasPendingPermission: boolean;
-}): SidebarThreadMarker {
-  if (hasPendingPermission) return { kind: "action", label: "Action required" };
-  if (isRunning) return { kind: "running", label: "Running" };
-  if (checks?.aggregate === "failing" || checks?.aggregate === "pending") {
-    return {
-      kind: "ci",
-      label: getCiOverviewSummaryLabel(checks),
-      aggregate: checks.aggregate,
-    };
-  }
-  switch (thread.status) {
-    case "completed":
-      return { kind: "completed", label: "Completed" };
-    case "errored":
-      return { kind: "errored", label: "Errored" };
-    case "interrupted":
-      return { kind: "interrupted", label: "Interrupted" };
-    default:
-      return { kind: "time", label: relativeTime(thread.updated_at) };
-  }
-}
-
-function SidebarThreadMarker({ marker, dim }: { marker: SidebarThreadMarker; dim: boolean }) {
-  if (marker.kind === "time") {
-    return (
-      <span className={cn("shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/45", dim && "opacity-[0.72]")}>
-        {marker.label}
-      </span>
-    );
-  }
-
-  if (marker.kind === "running") {
-    return (
-      <Spinner
-        aria-label={marker.label}
-        className={cn("text-primary", dim && "opacity-[0.72]")}
-      />
-    );
-  }
-
-  if (marker.kind === "ci") {
-    const { icon: Icon, color } = getCiVisual(marker.aggregate);
-    if (marker.aggregate === "pending") {
-      return (
-        <Spinner
-          size={13}
-          aria-label={marker.label}
-          className={cn(color, dim && "opacity-[0.72]")}
-        />
-      );
-    }
-    return (
-      <Icon
-        size={13}
-        strokeWidth={CI_ICON_STROKE}
-        aria-label={marker.label}
-        className={cn("shrink-0", color, dim && "opacity-[0.72]")}
-      />
-    );
-  }
-
-  const markerClass =
-    marker.kind === "action"
-      ? "ring-2 ring-inset ring-amber-500 bg-transparent status-pulse"
-      : marker.kind === "completed"
-        ? "bg-[var(--diff-add-strong)]/80"
-        : marker.kind === "errored"
-          ? "bg-[var(--diff-remove-strong)]/85"
-          : "bg-amber-500/85 status-pulse";
-
-  return (
-    <span
-      aria-label={marker.label}
-      className={cn(
-        "shrink-0 rounded-full",
-        marker.kind === "action" ? "h-2 w-2" : "h-1.5 w-1.5",
-        markerClass,
-        dim && "opacity-[0.72]",
-      )}
-    />
-  );
 }
 
 function SidebarThreadPreview({
@@ -1258,7 +1026,7 @@ function VirtualizedThreadList({
   const virtualizer = useVirtualizer({
     count: treeItems.length,
     getScrollElement: () => scrollElementRef.current,
-    estimateSize: () => 28,
+    estimateSize: () => 32,
     overscan: 5,
     scrollMargin,
     // Opt out of react-virtual's flushSync(rerender) on sync measurement; it
@@ -1278,7 +1046,7 @@ function VirtualizedThreadList({
         const isRunning = runningThreadIds.has(thread.id);
         const hasPendingPermission = pendingPermissionThreadIds.has(thread.id);
         const checks = checksById[thread.id];
-        const marker = getSidebarThreadMarker({
+        const marker = getThreadStateMarker({
           thread,
           checks,
           isRunning,
@@ -1337,12 +1105,12 @@ function VirtualizedThreadList({
             }}
             onMouseLeave={cancelPrefetch}
             className={cn(
-              "group/row relative flex items-center gap-2 rounded-md pr-2 py-1 text-[13px] cursor-pointer transition-colors",
+              "group/row relative flex min-h-8 items-center gap-2 rounded-md pr-2 text-[13px] cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
               activeThreadId === thread.id
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
             )}
-            style={{ paddingLeft: `${42 + depth * 12}px` }}
+            style={{ paddingLeft: `${38 + depth * 12}px` }}
           >
             {prable && thread.pr_number != null ? (() => {
               const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
@@ -1434,7 +1202,7 @@ function VirtualizedThreadList({
             )}
             </div>
             {!isEditing && showEndMarker && (
-              <SidebarThreadMarker marker={marker} dim={Boolean(scaffoldDim)} />
+              <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
             )}
           </div>
         );
@@ -1498,6 +1266,7 @@ interface ProjectNodeProps {
   onSelectThread: (wsId: string, threadId: string) => void;
   onCreateThread: (wsId: string) => void;
   onDelete: (wsId: string) => void;
+  onRename: (workspace: Workspace) => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread, workspacePath: string) => void;
   /** When set, forwards drag-handle listeners from `@dnd-kit/sortable` onto the project row. */
   sortableListeners?: DraggableSyntheticListeners;
@@ -1527,11 +1296,11 @@ const ProjectNode = memo(function ProjectNode({
   onSelectThread,
   onCreateThread,
   onDelete,
+  onRename,
   onThreadContextMenu,
   sortableListeners,
   isProjectDragging = false,
 }: ProjectNodeProps) {
-  const parentDir = useMemo(() => parentDirName(workspace.path), [workspace.path]);
   const hasRunning = useMemo(
     () => threads.some((t) => runningThreadIds.has(t.id)),
     [threads, runningThreadIds],
@@ -1550,10 +1319,28 @@ const ProjectNode = memo(function ProjectNode({
   const handleToggle = useCallback(() => onToggle(wsId), [onToggle, wsId]);
   const handleToggleThreadList = useCallback(() => onToggleThreadList(wsId), [onToggleThreadList, wsId]);
   const handleCreateThread = useCallback(() => onCreateThread(wsId), [onCreateThread, wsId]);
+  const handleCreateThreadClick = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    handleCreateThread();
+  }, [handleCreateThread]);
   const handleDelete = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     onDelete(wsId);
   }, [onDelete, wsId]);
+  const handleRename = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    onRename(workspace);
+  }, [onRename, workspace]);
+  const handleOpenInExplorer = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    getTransport().openIn(FILE_EXPLORER_ID, workspace.path).catch((error: unknown) => {
+      useToastStore.getState().show(
+        "error",
+        "Couldn't open File Explorer",
+        String((error as { message?: string })?.message ?? error),
+      );
+    });
+  }, [workspace.path]);
   const handleSelectThread = useCallback((threadId: string) => onSelectThread(wsId, threadId), [onSelectThread, wsId]);
   const handleThreadContextMenu = useCallback(
     (e: React.MouseEvent, thread: Thread) => onThreadContextMenu(e, thread, workspace.path),
@@ -1562,37 +1349,32 @@ const ProjectNode = memo(function ProjectNode({
 
   return (
     <div>
-      {/* Workspace row — typographic anchor. No folder icon; a quiet caret + name + parent caption. */}
+      {/* Workspace row keeps project controls quiet until the row is engaged. */}
       <div
-        role="button"
+        role="group"
         tabIndex={0}
-        aria-expanded={isExpanded}
+        aria-label={`${workspace.name} project`}
         data-testid={`project-row-${workspace.id}`}
+        onClick={handleToggle}
         className={cn(
-          "group/ws relative flex items-center gap-1.5 rounded-md px-1.5 py-1.5 text-[12.5px] cursor-pointer transition-colors touch-none",
+          "group/ws relative flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-[13px] transition-colors touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
           isProjectDragging && "cursor-grabbing",
           isActive
             ? "text-foreground"
-            : "text-muted-foreground/85 hover:text-foreground",
+            : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
         )}
         {...sortableListeners}
-        onKeyDown={(e) => {
-          sortableListeners?.onKeyDown?.(e);
-          if (e.defaultPrevented) return;
-          if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
-            e.preventDefault();
-            handleToggle();
-          }
-        }}
-        onClick={handleToggle}
       >
-        {isExpanded ? (
-          <ChevronDown size={12} className="shrink-0 text-muted-foreground/55 transition-transform" />
-        ) : (
-          <ChevronRight size={12} className="shrink-0 text-muted-foreground/55 transition-transform" />
-        )}
-
-        <span className="truncate font-medium tracking-tight">{workspace.name}</span>
+        <button
+          type="button"
+          aria-label={`Select project ${workspace.name}`}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={handleCreateThread}
+          className="flex min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+        >
+          <Folder size={14} className="shrink-0 text-muted-foreground/80" aria-hidden />
+          <span className="truncate font-medium tracking-tight">{workspace.name}</span>
+        </button>
 
         {!workspace.is_git_repo && (
           <Tooltip>
@@ -1612,15 +1394,21 @@ const ProjectNode = memo(function ProjectNode({
           </Tooltip>
         )}
 
-        {parentDir && (
-          <span
-            aria-hidden="true"
-            className="hidden min-w-0 truncate font-mono text-[9.5px] tracking-tight text-muted-foreground/35 group-hover/ws:inline"
-            title={workspace.path}
-          >
-            · {parentDir}
-          </span>
-        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Toggle threads for ${workspace.name}`}
+          aria-expanded={isExpanded}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleToggle();
+          }}
+          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+        >
+          <ChevronRight size={14} className={cn("transition-transform duration-150 motion-reduce:transition-none", isExpanded && "rotate-90")} />
+        </Button>
 
         <span className="flex-1" />
 
@@ -1648,48 +1436,71 @@ const ProjectNode = memo(function ProjectNode({
           </span>
         )}
 
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={`Project options for ${workspace.name}`}
+            onClick={(event) => event.stopPropagation()}
+            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100"
+          >
+            <MoreHorizontal size={13} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={4} className="min-w-40">
+            <DropdownMenuItem
+              onClick={handleOpenInExplorer}
+              className="flex cursor-pointer items-center gap-2"
+            >
+              <FolderOpen size={13} />
+              Open in Explorer
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={handleRename}
+              className="flex cursor-pointer items-center gap-2"
+            >
+              <Pencil size={13} />
+              Rename project
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={handleDelete}
+              className="flex cursor-pointer items-center gap-2 text-destructive focus:text-destructive"
+            >
+              <Trash2 size={13} />
+              Delete project
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label={`Delete ${workspace.name}`}
-          onClick={handleDelete}
-          className="opacity-0 text-muted-foreground/60 hover:text-destructive group-hover/ws:opacity-100 focus:opacity-100"
+          aria-label={`New thread in ${workspace.name}`}
+          title={`New thread in ${workspace.name}`}
+          onClick={handleCreateThreadClick}
+          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
-          <Trash2 size={11} />
+          <SquarePen size={13} />
         </Button>
       </div>
 
       {/* Threads (when expanded) — indented, no guide rail. */}
-      {isExpanded && (
-        <div className="pl-2">
-          {threads.length === 0 ? (
-            <div className="flex items-center gap-2 px-2 py-2">
-              <span aria-hidden="true" className="font-mono text-xs leading-none text-muted-foreground/25">
-                ◌
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/40">
-                Empty
-              </span>
-            </div>
-          ) : (
-            <VirtualizedThreadList
-              workspaceName={workspace.name}
-              treeItems={treeItems}
-              maxVisible={maxVisible}
-              activeThreadId={activeThreadId}
-              runningThreadIds={runningThreadIds}
-              pendingPermissionThreadIds={pendingPermissionThreadIds}
-              checksById={checksById}
-              scrollElementRef={scrollElementRef}
-              inlineEdit={inlineEdit}
-              onInlineEditChange={onInlineEditChange}
-              onInlineEditCommit={onInlineEditCommit}
-              onInlineEditCancel={onInlineEditCancel}
-              onStartInlineEdit={onStartInlineEdit}
-              onSelectThread={handleSelectThread}
-              onThreadContextMenu={handleThreadContextMenu}
-            />
-          )}
+      {isExpanded && threads.length > 0 && (
+        <div>
+          <VirtualizedThreadList
+            workspaceName={workspace.name}
+            treeItems={treeItems}
+            maxVisible={maxVisible}
+            activeThreadId={activeThreadId}
+            runningThreadIds={runningThreadIds}
+            pendingPermissionThreadIds={pendingPermissionThreadIds}
+            checksById={checksById}
+            scrollElementRef={scrollElementRef}
+            inlineEdit={inlineEdit}
+            onInlineEditChange={onInlineEditChange}
+            onInlineEditCommit={onInlineEditCommit}
+            onInlineEditCancel={onInlineEditCancel}
+            onStartInlineEdit={onStartInlineEdit}
+            onSelectThread={handleSelectThread}
+            onThreadContextMenu={handleThreadContextMenu}
+          />
 
           {needsCap && !forceExpand && (
             <Button
@@ -1704,17 +1515,15 @@ const ProjectNode = memo(function ProjectNode({
             </Button>
           )}
 
-          {/* New thread action — quiet typographic button, not a filled CTA. */}
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={handleCreateThread}
-            className="mt-0.5 h-auto w-full justify-start gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-normal text-muted-foreground/55 hover:bg-accent/40 hover:text-foreground"
-          >
-            <Plus size={11} className="opacity-70" />
-            New thread
-          </Button>
         </div>
+      )}
+      {isExpanded && threads.length === 0 && (
+        <p
+          data-testid={`project-empty-${workspace.id}`}
+          className="px-9 py-1 font-mono text-xs text-muted-foreground/70"
+        >
+          Empty
+        </p>
       )}
     </div>
   );
@@ -1735,9 +1544,7 @@ const SortableProjectShell = memo(function SortableProjectShell(
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    ...(isDragging
-      ? { opacity: 0.92, zIndex: 2, boxShadow: "0 2px 10px rgba(0,0,0,0.08)" }
-      : {}),
+    ...(isDragging ? { opacity: 0.92, zIndex: 2 } : {}),
   };
   // useSortable sets role/tabIndex on the activator; this outer div uses explicit group semantics.
   const { role, tabIndex, ...sortableA11y } = attributes;

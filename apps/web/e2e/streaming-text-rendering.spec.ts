@@ -72,8 +72,7 @@ test("streaming assistant text uses plain text, then settled text uses markdown"
   });
 
   await page.goto("/");
-  await page.getByRole("option", { name: /Streaming Text Workspace/ }).click();
-  await page.getByRole("button", { name: /Streaming Text Workspace 1/ }).click();
+  await page.getByRole("group", { name: "Streaming Text Workspace project" }).click();
   await page.waitForSelector("[data-testid='thread-item']");
   await page.locator("[data-testid='thread-item']").first().click();
   await page.waitForSelector("[data-testid=message-list]");

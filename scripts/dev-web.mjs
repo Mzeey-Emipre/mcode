@@ -176,7 +176,7 @@ try {
 const webPort = process.env.MCODE_WEB_PORT
   ? Number.parseInt(process.env.MCODE_WEB_PORT, 10)
   : contract.webPort;
-const viteArgs = ["run", "dev"];
+const viteArgs = ["run", "dev", "--host", "127.0.0.1"];
 if (Number.isInteger(webPort) && webPort > 0) {
   viteArgs.push("--port", String(webPort), "--strictPort");
 }

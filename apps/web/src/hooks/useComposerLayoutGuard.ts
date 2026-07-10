@@ -54,6 +54,9 @@ export function useComposerLayoutGuard(
       const panelWidth = diff.getRightPanel(activeWorkspaceId, activeThreadId).width;
       const panelInline = panelVisible && !ui.rightPanelMaximized;
       const sidebarDocked = !ui.sidebarCollapsed && !ui.sidebarFloating;
+      const contentNeed = panelInline
+        ? minContentWidthForSideBySidePanel(panelWidth)
+        : COMPOSER_MIN_WIDTH;
 
       if (
         panelVisible &&
@@ -66,13 +69,19 @@ export function useComposerLayoutGuard(
       }
 
       if (ui.sidebarCollapsedByLayout) {
-        const contentNeed = panelInline
-          ? minContentWidthForSideBySidePanel(panelWidth)
-          : COMPOSER_MIN_WIDTH;
         if (canFitInlineSidebar(outerWidth, contentNeed) && contentWidth >= contentNeed) {
           ui.restoreSidebarFromLayoutCollapse();
           return;
         }
+      }
+
+      if (
+        ui.sidebarFloating &&
+        canFitInlineSidebar(outerWidth, contentNeed) &&
+        contentWidth >= contentNeed
+      ) {
+        ui.expandSidebar();
+        return;
       }
 
       if (panelInline && sidebarDocked) {
@@ -92,10 +101,6 @@ export function useComposerLayoutGuard(
       }
 
       if (!sidebarDocked) return;
-
-      const contentNeed = panelInline
-        ? minContentWidthForSideBySidePanel(panelWidth)
-        : COMPOSER_MIN_WIDTH;
 
       if (contentWidth < contentNeed || !canFitInlineSidebar(outerWidth, contentNeed)) {
         ui.collapseSidebar("layout");

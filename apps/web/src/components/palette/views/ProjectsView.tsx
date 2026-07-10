@@ -15,15 +15,8 @@ export function ProjectsView() {
   const query = useCommandPaletteStore((s) => s.query);
   const close = useCommandPaletteStore((s) => s.close);
   const setQuery = useCommandPaletteStore((s) => s.setQuery);
-  // Read the current view to pick up any post-selection follow-up (e.g. dropping
-  // straight into the new-thread composer once a project is chosen).
-  const viewStack = useCommandPaletteStore((s) => s.viewStack);
-  const currentView = viewStack[viewStack.length - 1];
-  const nextAction = currentView?.kind === "projects" ? currentView.nextAction : undefined;
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
-  const setPendingNewThread = useWorkspaceStore((s) => s.setPendingNewThread);
   const pinWorkspace = useWorkspaceStore((s) => s.pinWorkspace);
 
   const q = query.trim().toLowerCase();
@@ -54,15 +47,6 @@ export function ProjectsView() {
 
   const handleSelect = (id: string) => {
     setActiveWorkspace(id);
-    // setActiveWorkspace clears `pendingNewThread`, so re-set it AFTER activation
-    // when the caller asked us to chain into the new-thread state.
-    // Clear the active thread even when staying on the same workspace; otherwise
-    // `ChatView` stays on the old thread (same-workspace early-return + keep thread
-    // when thread belongs to selected workspace).
-    if (nextAction === "newThread") {
-      setActiveThread(null);
-      setPendingNewThread(true);
-    }
     close();
   };
 

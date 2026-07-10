@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../Composer";
@@ -304,6 +304,28 @@ describe("Composer checkout confirmation", () => {
     (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
       createMockThread({ id: "thread-created", workspace_id: "ws-1", branch: "feature/base" }),
     );
+  });
+
+  it("shows project, checkout mode, and branch in the new-thread context strip", () => {
+    const workspace = seedComposerState("direct");
+    render(<Composer isNewThread workspaceId="ws-1" />);
+
+    const strip = screen.getByTestId("new-thread-context-strip");
+    expect(within(strip).getByText(workspace.name)).toBeInTheDocument();
+    expect(within(strip).getByTestId("mode-selector")).toHaveTextContent("direct");
+    expect(within(strip).getByTestId("branch-picker")).toHaveTextContent("feature/base");
+  });
+
+  it("clears the selected project without deleting it", async () => {
+    const workspace = seedComposerState("direct");
+    render(<Composer isNewThread workspaceId="ws-1" />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: `Clear ${workspace.name} project` }),
+    );
+
+    expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull();
+    expect(useWorkspaceStore.getState().workspaces).toContainEqual(workspace);
   });
 
   it("confirms Direct branch checkout in an app dialog before sending", async () => {

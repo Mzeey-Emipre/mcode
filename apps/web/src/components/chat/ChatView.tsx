@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { GitFork } from "lucide-react";
+import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   useActiveWorkspaceThread,
@@ -31,6 +31,9 @@ import { useReplyStore } from "@/stores/replyStore";
 import { getTransport } from "@/transport";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
+import { Button } from "@/components/ui/button";
+import { McodeLogo } from "@/components/brand/McodeLogo";
+import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -53,6 +56,29 @@ const ENTRY_POINTS = [
     label: "Review open PRs",
     description: "Diff + summary for each",
     prompt: "List and summarize open pull requests in this repo",
+  },
+] as const;
+
+const NEW_THREAD_STARTERS = [
+  {
+    label: "Explore and understand code",
+    prompt: "Explore this codebase and explain how it works.",
+    icon: ScanSearch,
+  },
+  {
+    label: "Build a new feature, app, or tool",
+    prompt: "Build a new feature, app, or tool in this project.",
+    icon: Hammer,
+  },
+  {
+    label: "Review code and suggest changes",
+    prompt: "Review this codebase and suggest concrete improvements.",
+    icon: SearchCode,
+  },
+  {
+    label: "Fix issues and failures",
+    prompt: "Find and fix issues or failures in this project.",
+    icon: Bug,
   },
 ] as const;
 
@@ -82,6 +108,70 @@ function EmptyState({ onPromptSelect }: EmptyStateProps) {
             <span className="text-[11px] text-muted-foreground/60">{ep.description}</span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** Premium blank-thread welcome that turns common coding tasks into composer prefills. */
+function NewThreadWelcome({
+  projectName,
+  onPromptSelect,
+}: {
+  projectName?: string;
+  onPromptSelect: (text: string) => void;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-10">
+      <div
+        key={projectName ?? "projectless"}
+        data-testid="new-thread-welcome"
+        className="animate-fade-up-in flex w-full max-w-3xl flex-col items-center gap-7 text-center"
+      >
+        <McodeLogo variant="newThread" markOnly />
+        <h1
+          aria-label={projectName ? `What should we build in ${projectName}?` : undefined}
+          className="text-balance text-2xl font-medium tracking-[-0.025em] text-foreground sm:text-[28px]"
+        >
+          {projectName ? (
+            <>
+              What should we build in{" "}
+              <NewThreadProjectPicker
+                placement="bottom"
+                trigger={
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    data-testid="new-thread-active-project-picker"
+                    title="Change project"
+                    className="h-auto min-h-0 gap-0 rounded-sm px-0 py-0 align-baseline !text-2xl font-[inherit] leading-[inherit] text-primary no-underline hover:bg-transparent hover:text-primary/80 hover:no-underline focus-visible:ring-2 focus-visible:ring-ring/60 sm:!text-[28px]"
+                  >
+                    {projectName}<span className="text-foreground">?</span>
+                  </Button>
+                }
+              />
+            </>
+          ) : (
+            "What should we work on?"
+          )}
+        </h1>
+        <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+          {NEW_THREAD_STARTERS.map(({ label, prompt, icon: Icon }) => (
+            <Button
+              key={label}
+              type="button"
+              variant="outline"
+              onClick={() => onPromptSelect(prompt)}
+              className="group h-auto min-h-24 flex-col items-start justify-between rounded-xl border-border/70 bg-transparent px-4 py-3.5 text-left shadow-none hover:border-primary/35 hover:bg-accent/45"
+            >
+              <Icon size={15} className="text-primary transition-transform duration-200 group-hover:-translate-y-0.5 motion-reduce:transform-none" aria-hidden />
+              <span className="max-w-32 text-wrap text-[13px] font-medium leading-5 text-foreground/90">
+                {label}
+              </span>
+            </Button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -178,7 +268,6 @@ const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024; // 20 MB
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
-  const pendingNewThread = useWorkspaceStore((s) => s.pendingNewThread);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
@@ -207,7 +296,10 @@ export function ChatView() {
   const connectionStatus = useConnectionStore((s) => s.status);
   const sendMessage = useThreadStore((s) => s.sendMessage);
   const chatPaneRef = useRef<HTMLDivElement>(null);
-  const threadPaneWidth = useElementWidth(chatPaneRef);
+  // ChatView also renders the projectless/new-thread canvas, where the measured
+  // chat pane does not exist yet. Reattach the observer when a thread becomes
+  // active so responsive Overview state uses the real pane width.
+  const threadPaneWidth = useElementWidth(chatPaneRef, activeThreadId);
   const reserveOverviewSpace = useOverviewStore((s) => s.reserveSpace);
   const overviewPaddingRight = reserveOverviewSpace ? overviewResponsivePaddingRight() : undefined;
 
@@ -371,29 +463,20 @@ export function ChatView() {
     prevThreadIdRef.current = activeThreadId;
   }, [activeThreadId, loadMessages, clearMessages]);
 
-  // New thread state: show empty composer when pending
-  if (pendingNewThread && !activeThreadId) {
+  // A threadless workspace is always the new-thread workbench. This also covers
+  // cold start before the user has chosen a project.
+  if (!activeThreadId) {
     return (
-      <div className="flex h-full flex-col bg-background">
-        {/* Header */}
-        <div className="flex h-11 items-center justify-between border-b border-border/40 pr-4 pl-2">
-          <div className="flex items-center gap-2">
-            {sidebarCollapsed && <SidebarRevealButton />}
-            <span className="text-sm text-muted-foreground">New thread</span>
-            {activeWorkspaceId && (
-              <Badge variant="secondary">
-                {activeWorkspaceName}
-              </Badge>
-            )}
+      <div className="relative flex h-full min-h-0 flex-col bg-background">
+        {sidebarCollapsed && (
+          <div className="absolute left-2 top-2 z-10">
+            <SidebarRevealButton />
           </div>
-        </div>
-
-        {/* Empty state */}
-        <div className="flex flex-1 items-center justify-center">
-          <EmptyState onPromptSelect={setPendingPrefill} />
-        </div>
-
-        {/* Composer for new thread */}
+        )}
+        <NewThreadWelcome
+          projectName={activeWorkspaceName || undefined}
+          onPromptSelect={setPendingPrefill}
+        />
         <Composer isNewThread workspaceId={activeWorkspaceId ?? undefined} />
       </div>
     );

@@ -12,7 +12,10 @@ import { useEffect, useState, type RefObject } from "react";
  * Updates are throttled with `requestAnimationFrame` so a flurry of resize
  * notifications collapses into one state update per frame.
  */
-export function useElementWidth<T extends HTMLElement>(ref: RefObject<T | null>): number {
+export function useElementWidth<T extends HTMLElement>(
+  ref: RefObject<T | null>,
+  observeKey?: unknown,
+): number {
   const [width, setWidth] = useState(0);
 
   useEffect(() => {
@@ -58,7 +61,7 @@ export function useElementWidth<T extends HTMLElement>(ref: RefObject<T | null>)
       observer.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [ref]);
+  }, [ref, observeKey]);
 
   return width;
 }
