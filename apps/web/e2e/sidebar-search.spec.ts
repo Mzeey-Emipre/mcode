@@ -49,6 +49,15 @@ test.describe("Sidebar thread actions", () => {
           last_compact_summary: null,
         },
       ],
+      "git.listBranches": [
+        { name: "main", shortSha: "abc1234", type: "local", isCurrent: true },
+        {
+          name: "feature/canary",
+          shortSha: "def5678",
+          type: "local",
+          isCurrent: false,
+        },
+      ],
     });
   });
 
@@ -89,6 +98,38 @@ test.describe("Sidebar thread actions", () => {
 
     await expect(page.getByRole("heading", { name: "What should we build in Test Workspace?" })).toBeVisible();
     await expect(page.getByTestId("new-thread-context-strip")).toContainText("Test Workspace");
+  });
+
+  test("branch choices stay clickable above the new-thread context rail", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page
+      .getByRole("button", { name: "Select project Test Workspace" })
+      .click();
+
+    const branchTrigger = page.getByRole("button", { name: "From main" });
+    await branchTrigger.click();
+
+    const branchChoice = page.getByRole("button", { name: "feature/canary" });
+    await expect(branchChoice).toBeVisible();
+    const branchBox = await branchChoice.boundingBox();
+    expect(branchBox).not.toBeNull();
+
+    const branchHitText = await page.evaluate(
+      ({ x, y }) =>
+        document.elementFromPoint(x, y)?.textContent?.trim() ?? null,
+      {
+        x: branchBox!.x + branchBox!.width / 2,
+        y: branchBox!.y + branchBox!.height / 2,
+      },
+    );
+    expect(branchHitText).toContain("feature/canary");
+
+    await branchChoice.click();
+    await expect(
+      page.getByRole("button", { name: "From feature/canary" }),
+    ).toBeVisible();
   });
 
   test("top actions and project rows share one left alignment", async ({ page }) => {

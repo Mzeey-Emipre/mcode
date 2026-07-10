@@ -1,10 +1,15 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { GitBranch, ChevronDown, GitPullRequest } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import type { GitBranch as GitBranchType, PrDetail } from "@/transport/types";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
@@ -47,26 +52,6 @@ export function BranchPicker({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("local");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  useEffect(() => {
-    if (open) {
-      setSearch("");
-      setActiveTab("local");
-      requestAnimationFrame(() => searchRef.current?.focus());
-    }
-  }, [open]);
 
   const q = search.toLowerCase();
 
@@ -182,73 +167,82 @@ export function BranchPicker({
   };
 
   return (
-    <div ref={containerRef} className="relative">
-      <Button variant="ghost" size="xs" onClick={() => setOpen(!open)} className={cn("text-muted-foreground", triggerClassName)}>
-        <GitBranch size={iconSize} className={triggerClassName ? "size-3.5" : undefined} />
-        <span>From {selectedBranch}</span>
-        <ChevronDown size={Math.max(10, iconSize - 2)} className={triggerClassName ? "size-3" : undefined} />
-      </Button>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) {
+          setSearch("");
+          setActiveTab("local");
+        }
+      }}
+    >
+      <PopoverTrigger render={
+        <Button variant="ghost" size="xs" className={cn("text-muted-foreground", triggerClassName)}>
+          <GitBranch size={iconSize} className={triggerClassName ? "size-3.5" : undefined} />
+          <span>From {selectedBranch}</span>
+          <ChevronDown size={Math.max(10, iconSize - 2)} className={triggerClassName ? "size-3" : undefined} />
+        </Button>
+      } />
 
-      {open && (
-        <div className="absolute bottom-full right-0 z-50 mb-1 w-[280px] rounded-md border border-border bg-popover shadow-lg">
-          {/* Search */}
-          <div className="p-1.5 pb-0">
-            <Input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." size="sm" className="text-popover-foreground" />
-          </div>
+      <PopoverContent align="end" side="top" sideOffset={4} className="w-[280px] p-0">
+        {/* Search */}
+        <div className="p-1.5 pb-0">
+          <Input autoFocus value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." size="sm" className="text-popover-foreground" />
+        </div>
 
-          {/* Tabs */}
-          <div className="flex border-b border-border px-1.5 pt-1.5">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "flex items-center gap-1 rounded-t px-2.5 py-1 text-xs font-medium transition-colors",
-                  activeTab === tab.id
-                    ? "border-b-2 border-primary text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {tab.label}
-                <Badge size="sm" className={cn("rounded-full", activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
-                  {tab.count}
-                </Badge>
-              </button>
-            ))}
-          </div>
+        {/* Tabs */}
+        <div className="flex border-b border-border px-1.5 pt-1.5">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "flex items-center gap-1 rounded-t px-2.5 py-1 text-xs font-medium transition-colors",
+                activeTab === tab.id
+                  ? "border-b-2 border-primary text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tab.label}
+              <Badge size="sm" className={cn("rounded-full", activeTab === tab.id ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
+                {tab.count}
+              </Badge>
+            </button>
+          ))}
+        </div>
 
-          {/* Content */}
-          <div className="max-h-[250px] overflow-y-auto p-1">
-            {loading ? (
+        {/* Content */}
+        <div className="max-h-[250px] overflow-y-auto p-1">
+          {loading ? (
+            <div className="flex items-center justify-center py-4">
+              <Spinner size={16} className="text-muted-foreground" />
+            </div>
+          ) : activeTab === "local" ? (
+            localBranches.length === 0 ? (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">No local branches match</p>
+            ) : (
+              localBranches.map(renderBranchItem)
+            )
+          ) : activeTab === "remote" ? (
+            remoteBranches.length === 0 ? (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">No remote branches match</p>
+            ) : (
+              remoteBranches.map(renderBranchItem)
+            )
+          ) : activeTab === "prs" ? (
+            prsLoading ? (
               <div className="flex items-center justify-center py-4">
                 <Spinner size={16} className="text-muted-foreground" />
               </div>
-            ) : activeTab === "local" ? (
-              localBranches.length === 0 ? (
-                <p className="px-2 py-3 text-center text-xs text-muted-foreground">No local branches match</p>
-              ) : (
-                localBranches.map(renderBranchItem)
-              )
-            ) : activeTab === "remote" ? (
-              remoteBranches.length === 0 ? (
-                <p className="px-2 py-3 text-center text-xs text-muted-foreground">No remote branches match</p>
-              ) : (
-                remoteBranches.map(renderBranchItem)
-              )
-            ) : activeTab === "prs" ? (
-              prsLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <Spinner size={16} className="text-muted-foreground" />
-                </div>
-              ) : filteredPrs.length === 0 ? (
-                <p className="px-2 py-3 text-center text-xs text-muted-foreground">No pull requests match</p>
-              ) : (
-                filteredPrs.map(renderPrItem)
-              )
-            ) : null}
-          </div>
+            ) : filteredPrs.length === 0 ? (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">No pull requests match</p>
+            ) : (
+              filteredPrs.map(renderPrItem)
+            )
+          ) : null}
         </div>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
