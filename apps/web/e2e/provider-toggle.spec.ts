@@ -176,7 +176,38 @@ test.describe("provider toggle", () => {
     await page.screenshot({ path: SS("01-settings-default.png"), fullPage: false });
   });
 
-  // ── Test 2: toggle non-default provider off — no dialog ───────────────────
+  // ── Test 2: available provider configuration uses disclosures ─────────────
+
+  test("discloses stable configuration and keeps disabled Beta configuration editable", async ({ page }) => {
+    const availability = makeAvailabilityFixture({
+      copilot: { enabled: false },
+    });
+
+    await mockWebSocketServer(page, {
+      "providers.listAvailability": availability,
+    });
+
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await openProviderSettings(page);
+
+    // Stable providers stay compact until the user asks to edit their path.
+    await expect(page.getByTestId("provider-cli-path-claude")).not.toBeVisible();
+    await page.getByTestId("provider-config-trigger-claude").click();
+    await expect(page.getByTestId("provider-cli-path-claude")).toBeVisible();
+
+    // Beta paths remain visible and editable even before the provider is enabled.
+    const copilotPath = page.getByTestId("provider-cli-path-copilot");
+    await expect(copilotPath).toBeVisible();
+    await expect(copilotPath).toBeEditable();
+
+    // Coming-soon providers remain static until they become available.
+    await expect(page.getByTestId("provider-config-trigger-gemini")).toHaveCount(0);
+
+    await page.screenshot({ path: SS("02-provider-disclosures.png"), fullPage: false });
+  });
+
+  // ── Test 3: toggle non-default provider off — no dialog ───────────────────
 
   test("toggling a non-default provider off does not show a dialog", async ({ page }) => {
     const availability = makeAvailabilityFixture();

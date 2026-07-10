@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { getDefaultSettings } from "@mcode/contracts";
@@ -94,10 +95,39 @@ describe("ProviderSection", () => {
     expect(screen.getByTestId("provider-switch-gemini")).toBeDisabled();
   });
 
-  it("shows CLI path input only for enabled providers with an adapter", async () => {
+  it("keeps stable provider configuration collapsed and opens Beta configuration by default", () => {
     render(<ProviderSection />);
-    expect(screen.getByTestId("provider-cli-path-claude")).toBeInTheDocument();
-    expect(screen.queryByTestId("provider-cli-path-copilot")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("provider-cli-path-claude")).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-cli-path-copilot")).toBeEnabled();
     expect(screen.queryByTestId("provider-cli-path-gemini")).not.toBeInTheDocument();
+  });
+
+  it("updates a disabled Beta provider's CLI path", () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    useSettingsStore.setState({ settings: getDefaultSettings(), update });
+    render(<ProviderSection />);
+
+    fireEvent.change(screen.getByTestId("provider-cli-path-copilot"), {
+      target: { value: "/custom/copilot" },
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      provider: { cli: { copilot: "/custom/copilot" } },
+    });
+  });
+
+  it("expands a stable provider's CLI path on request", async () => {
+    const user = userEvent.setup();
+    render(<ProviderSection />);
+
+    await user.click(screen.getByTestId("provider-config-trigger-claude"));
+
+    expect(screen.getByTestId("provider-cli-path-claude")).toBeVisible();
+  });
+
+  it("does not expose a disclosure trigger for coming-soon providers", () => {
+    render(<ProviderSection />);
+
+    expect(screen.queryByTestId("provider-config-trigger-gemini")).not.toBeInTheDocument();
   });
 });
