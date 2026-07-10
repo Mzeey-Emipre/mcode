@@ -6,8 +6,8 @@ import type { Command, PopupState } from "./useSlashCommand";
 import { computeFixedPopupPosition } from "./popup-position";
 
 const ITEM_HEIGHT = 44; // px per row
-const VISIBLE_ITEMS = 8;
 const GROUP_HEADER_HEIGHT = 24;
+const LIST_MAX_HEIGHT = 256;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
 // Footer (Refresh row) intrinsic height: border-t (1px) + py-1 (8px) + icon
 // button height (~20px). Used to estimate popup height for the above/below
@@ -109,11 +109,9 @@ export function SlashCommandPopup({
 
   if (state.kind === "closed" || !anchorRect) return null;
 
-  // Cap the scrollable list at VISIBLE_ITEMS rows; shorter lists size to
-  // their natural content so a popup with two items isn't truncated.
-  const listMaxHeight =
-    VISIBLE_ITEMS * ITEM_HEIGHT +
-    Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT;
+  // Match the project picker: the popup stays compact and scrolls beyond the
+  // first few commands instead of expanding across the composer.
+  const listMaxHeight = LIST_MAX_HEIGHT;
 
   // Estimate the rendered popup height for the above/below placement
   // decision. Only the list branch renders a footer (Refresh row); error,
@@ -124,14 +122,15 @@ export function SlashCommandPopup({
     (willRenderList
       ? Math.min(
           items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT,
-          listMaxHeight,
+          LIST_MAX_HEIGHT,
         )
       : STATUS_ROW_HEIGHT) +
     (willRenderList ? FOOTER_HEIGHT : 0);
   const style = computeFixedPopupPosition({
     anchorRect,
     estimatedHeight,
-    minWidth: 320,
+    minWidth: 256,
+    maxWidth: 256,
   });
 
   const popup = (
@@ -143,7 +142,7 @@ export function SlashCommandPopup({
       data-slash-popup
       style={style}
       className={cn(
-        "composer-autocomplete-surface z-50 flex flex-col overflow-hidden rounded-xl border border-border/70 shadow-lg animate-composer-popup-enter",
+        "composer-autocomplete-surface z-50 flex flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 shadow-lg animate-composer-popup-enter",
         tone === "dark"
           ? "border-white/10 bg-[#1e1e1e] text-neutral-100"
           : "bg-popover text-popover-foreground",
@@ -177,7 +176,7 @@ export function SlashCommandPopup({
                   role="listbox"
                   aria-label="Slash commands"
                   aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
-                  className="min-h-0 flex-1"
+                  className="min-h-0 flex-1 p-1"
                   style={{ maxHeight: listMaxHeight, overflowY: "auto" }}
                 >
                   {commandGroups.map(({ namespace, items: groupItems }) => (
@@ -191,7 +190,7 @@ export function SlashCommandPopup({
                         data-slash-group-heading
                         role="presentation"
                         className={cn(
-                          "sticky top-0 z-10 bg-inherit px-3 py-1.5 text-xs font-medium",
+                          "sticky top-0 z-10 bg-inherit px-2 py-1.5 text-xs font-medium",
                           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
                         )}
                       >
@@ -213,7 +212,7 @@ export function SlashCommandPopup({
                   ))}
                 </div>
                 <div className={cn(
-                  "flex shrink-0 items-center justify-end border-t px-2 py-1",
+                  "flex shrink-0 items-center justify-end border-t p-1",
                   tone === "dark" ? "border-white/[0.08]" : "border-border",
                 )}>
                   <button
@@ -224,7 +223,7 @@ export function SlashCommandPopup({
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={onRetry}
                     className={cn(
-                      "rounded p-1",
+                      "size-8 rounded-md",
                       tone === "dark"
                         ? "text-neutral-400 hover:bg-white/10 hover:text-neutral-100"
                         : "text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -268,7 +267,7 @@ function CommandRow({
         onSelect(cmd);
       }}
       className={cn(
-        "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors",
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
         tone === "dark"
           ? selected
             ? "bg-white/[0.12]"
@@ -280,30 +279,30 @@ function CommandRow({
     >
       {/* Icon column */}
       <span className={cn(
-        "flex h-5 w-5 flex-shrink-0 items-center justify-center",
+        "flex size-4 shrink-0 items-center justify-center",
         tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
       )}>
         {cmd.namespace === "mcode" ? (
-          <Zap size={12} />
+          <Zap size={13} />
         ) : cmd.namespace === "plugin" ? (
-          <Puzzle size={12} />
+          <Puzzle size={13} />
         ) : cmd.namespace === "skill" ? (
-          <Sparkles size={12} />
+          <Sparkles size={13} />
         ) : (
-          <Terminal size={12} />
+          <Terminal size={13} />
         )}
       </span>
 
       {/* Name + description */}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className={cn(
-          "truncate text-sm font-medium",
+          "truncate text-[13px] font-medium leading-4",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
           /{cmd.name}
         </span>
         <span className={cn(
-          "truncate text-xs",
+          "truncate text-[11px] leading-4",
           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
         )}>
           {cmd.description}
