@@ -33,6 +33,7 @@ import { useElementWidth } from "@/hooks/useElementWidth";
 import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
 import { Button } from "@/components/ui/button";
 import { McodeLogo } from "@/components/brand/McodeLogo";
+import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -128,10 +129,28 @@ function NewThreadWelcome({
         className="animate-fade-up-in flex w-full max-w-3xl flex-col items-center gap-7 text-center"
       >
         <McodeLogo variant="newThread" markOnly />
-        <h1 className="text-balance text-2xl font-medium tracking-[-0.025em] text-foreground sm:text-[28px]">
+        <h1
+          aria-label={projectName ? `What should we build in ${projectName}?` : undefined}
+          className="text-balance text-2xl font-medium tracking-[-0.025em] text-foreground sm:text-[28px]"
+        >
           {projectName ? (
             <>
-              What should we build in <span className="text-primary">{projectName}</span>?
+              What should we build in{" "}
+              <NewThreadProjectPicker
+                placement="bottom"
+                trigger={
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    data-testid="new-thread-active-project-picker"
+                    title="Change project"
+                    className="h-auto min-h-0 gap-0 rounded-sm px-0 py-0 align-baseline text-[inherit] font-[inherit] leading-[inherit] text-primary no-underline hover:bg-transparent hover:text-primary/80 hover:no-underline focus-visible:ring-2 focus-visible:ring-ring/60"
+                  >
+                    {projectName}<span className="text-foreground">?</span>
+                  </Button>
+                }
+              />
             </>
           ) : (
             "What should we work on?"

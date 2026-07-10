@@ -85,6 +85,21 @@ test.describe("Projectless new-thread workbench", () => {
     await expect(editor).toHaveText("Keep this draft");
   });
 
+  test("switches projects from the welcome heading without losing the draft", async ({ page }) => {
+    await setupProjectlessWorkbench(page);
+    const editor = page.locator('[aria-placeholder="Do anything"]');
+    await editor.fill("Keep this draft");
+    await page.getByTestId("new-thread-project-picker").click();
+    await page.locator('[data-slot="popover-content"]').getByText("pinned-app", { exact: true }).click();
+
+    await page.getByTestId("new-thread-active-project-picker").click();
+    await page.locator('[data-slot="popover-content"]').getByText("recent-app", { exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "What should we build in recent-app?" })).toBeVisible();
+    await expect(page.getByTestId("new-thread-context-strip")).toContainText("recent-app");
+    await expect(editor).toHaveText("Keep this draft");
+  });
+
   test("clears selected project context without losing the draft", async ({ page }) => {
     await setupProjectlessWorkbench(page);
     const editor = page.locator('[aria-placeholder="Do anything"]');

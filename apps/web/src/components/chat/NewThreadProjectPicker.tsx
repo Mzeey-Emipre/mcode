@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { Folder, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,8 +12,19 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
-/** Project chooser shown in the new-thread context rail before a project is selected. */
-export function NewThreadProjectPicker() {
+/** Props for {@link NewThreadProjectPicker}. */
+interface NewThreadProjectPickerProps {
+  /** Optional trigger for invoking the project chooser from another surface. */
+  readonly trigger?: ReactElement;
+  /** Placement for the chooser relative to its trigger. */
+  readonly placement?: "top" | "bottom";
+}
+
+/** Project chooser used by the new-thread context rail and welcome heading. */
+export function NewThreadProjectPicker({
+  trigger,
+  placement = "top",
+}: NewThreadProjectPickerProps) {
   const [open, setOpen] = useState(false);
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const beginNewThread = useWorkspaceStore((state) => state.beginNewThread);
@@ -29,22 +40,24 @@ export function NewThreadProjectPicker() {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-testid="new-thread-project-picker"
-            aria-expanded={open}
-            className="h-[28px] gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none text-foreground/90 hover:bg-accent/70"
-          >
-            <Folder size={14} className="size-3.5 text-muted-foreground" aria-hidden />
-            Choose project
-          </Button>
+          trigger ?? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="new-thread-project-picker"
+              aria-expanded={open}
+              className="h-[28px] gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none text-foreground/90 hover:bg-accent/70"
+            >
+              <Folder size={14} className="size-3.5 text-muted-foreground" aria-hidden />
+              Choose project
+            </Button>
+          )
         }
       />
       <PopoverContent
-        side="top"
-        align="start"
+        side={placement}
+        align={trigger ? "center" : "start"}
         sideOffset={8}
         className="w-64 overflow-hidden p-0 shadow-lg"
       >
