@@ -2,11 +2,10 @@ import type {
   PullRequestBoundedDataMarker,
   PullRequestCapability,
   PullRequestDetail,
-  PullRequestFileChangeType,
   PullRequestIdentity,
   PullRequestReviewThread,
 } from "@mcode/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlignJustify,
   AlertCircle,
@@ -14,14 +13,9 @@ import {
   ChevronsDownUp,
   Columns2,
   Files,
-  PanelLeftClose,
   PanelLeftOpen,
-  Search,
-  SlidersHorizontal,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -43,31 +37,16 @@ import type { PullRequestTransport } from "@/transport/pull-requests";
 import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
 import { cn } from "@/lib/utils";
 import { useShallow } from "zustand/shallow";
+import { PullRequestChangedFilesPane } from "./PullRequestChangedFilesPane";
 import { PullRequestDiffViewport } from "./PullRequestDiffViewport";
-import { PullRequestFileTree } from "./PullRequestFileTree";
 import { PullRequestSubmitReviewDialog } from "./PullRequestSubmitReviewDialog";
 import { pullRequestCapabilityReason } from "./PullRequestMutationError";
-
-const FILE_SEARCH_DEBOUNCE_MS = 250;
 
 interface ReviewThreadPaginationRun {
   generation: number | null;
   pendingAppend: { cursor: string; generation: number } | null;
   successfulAppendCursors: Set<string>;
 }
-
-const changeTypeOptions: Array<{
-  value: PullRequestFileChangeType;
-  label: string;
-}> = [
-  { value: "added", label: "Added" },
-  { value: "modified", label: "Modified" },
-  { value: "deleted", label: "Deleted" },
-  { value: "renamed", label: "Renamed" },
-  { value: "copied", label: "Copied" },
-  { value: "changed", label: "Changed" },
-  { value: "unchanged", label: "Unchanged" },
-];
 
 /** Props for the lazy pull request Code panel. */
 export interface PullRequestCodeProps {
@@ -145,7 +124,6 @@ export function PullRequestCode({
       };
     }),
   );
-  const [searchInput, setSearchInput] = useState("");
   const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [submitReviewOpen, setSubmitReviewOpen] = useState(false);
   const commentPaginationRunRef = useRef<ReviewThreadPaginationRun>({
@@ -240,16 +218,6 @@ export function PullRequestCode({
   }, [code.entry, code.filesLane, transport]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      if (searchInput.trim() === view.query.search) return;
-      usePullRequestCodeStore
-        .getState()
-        .setFileQuery({ ...view.query, search: searchInput }, transport);
-    }, FILE_SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timeoutId);
-  }, [searchInput, transport, view.query]);
-
-  useEffect(() => {
     const run = commentPaginationRunRef.current;
     run.generation = null;
     run.pendingAppend = null;
@@ -325,14 +293,12 @@ export function PullRequestCode({
     setFilePickerOpen(false);
   };
 
-  const toggleChangeType = (changeType: PullRequestFileChangeType): void => {
-    const changeTypes = view.query.changeTypes.includes(changeType)
-      ? view.query.changeTypes.filter((item) => item !== changeType)
-      : [...view.query.changeTypes, changeType];
-    usePullRequestCodeStore
-      .getState()
-      .setFileQuery({ ...view.query, changeTypes }, transport);
-  };
+  const updateFileQuery = useCallback(
+    (query: typeof view.query): void => {
+      usePullRequestCodeStore.getState().setFileQuery(query, transport);
+    },
+    [transport],
+  );
 
   if (!viewerNodeId) {
     return (
@@ -408,13 +374,14 @@ export function PullRequestCode({
                   sideOffset={6}
                   className="h-80 w-[min(22rem,calc(100vw-2rem))] rounded-none p-0"
                 >
-                  <PullRequestFileTree
+                  <PullRequestChangedFilesPane
                     files={displayedFiles}
                     activePath={view.activePath}
-                    searchActive={filtersActive}
+                    query={view.query}
                     className="h-full"
                     ariaLabel="Choose a changed file"
                     onActivate={activateFile}
+                    onQueryChange={updateFileQuery}
                   />
                 </PopoverContent>
               </Popover>
@@ -425,92 +392,14 @@ export function PullRequestCode({
             data-testid={isNarrow ? "pull-request-code-actions-row" : undefined}
             className={cn(
               isNarrow
-                ? "flex h-10 min-w-0 items-center gap-1 px-3"
+                ? "flex h-10 min-w-0 items-center justify-end gap-1 px-3"
                 : "contents",
             )}
           >
             <div
-              className={cn("relative", isNarrow ? "min-w-0 flex-1" : "w-64")}
-            >
-              <Search
-                size={13}
-                aria-hidden
-                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/70"
-              />
-              <Input
-                size="sm"
-                value={searchInput}
-                maxLength={200}
-                aria-label="Search changed files"
-                placeholder="Find changed files"
-                className="rounded-none bg-page pl-8 font-mono text-xs"
-                onChange={(event) => setSearchInput(event.target.value)}
-              />
-            </div>
-
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="gap-1 rounded-none px-2 text-xs text-muted-foreground"
-                    aria-label="Filter changed files by status"
-                  >
-                    <SlidersHorizontal size={12} aria-hidden />
-                    {!isNarrow && "Status"}
-                    {view.query.changeTypes.length > 0 && (
-                      <Badge
-                        variant="secondary"
-                        size="sm"
-                        className="font-mono tabular-nums"
-                      >
-                        {view.query.changeTypes.length}
-                      </Badge>
-                    )}
-                  </Button>
-                }
-              />
-              <PopoverContent
-                align="start"
-                sideOffset={6}
-                className="w-56 rounded-none p-2"
-              >
-                <div
-                  role="group"
-                  aria-label="Changed file statuses"
-                  className="grid grid-cols-2 gap-1"
-                >
-                  {changeTypeOptions.map((option) => {
-                    const pressed = view.query.changeTypes.includes(
-                      option.value,
-                    );
-                    return (
-                      <Button
-                        key={option.value}
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        aria-pressed={pressed}
-                        className={cn(
-                          "justify-start rounded-none px-2 text-xs font-normal",
-                          pressed && "bg-primary/9 text-foreground",
-                        )}
-                        onClick={() => toggleChangeType(option.value)}
-                      >
-                        {option.label}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            <div
               role="group"
               aria-label="Diff layout"
-              className="ml-auto flex items-center"
+              className={cn("flex items-center", !isNarrow && "ml-auto")}
             >
               <Button
                 type="button"
@@ -546,29 +435,20 @@ export function PullRequestCode({
               </Button>
             </div>
 
-            {!isNarrow && (
+            {!isNarrow && !view.fileTreeVisible && (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-xs"
                 className="rounded-none text-muted-foreground"
-                aria-label={
-                  view.fileTreeVisible
-                    ? "Hide Change stack"
-                    : "Show Change stack"
-                }
-                aria-pressed={view.fileTreeVisible}
+                aria-label="Show changed files"
                 onClick={() =>
                   usePullRequestCodeStore
                     .getState()
-                    .setFileTreeVisible(!view.fileTreeVisible)
+                    .setFileTreeVisible(true)
                 }
               >
-                {view.fileTreeVisible ? (
-                  <PanelLeftClose size={13} aria-hidden />
-                ) : (
-                  <PanelLeftOpen size={13} aria-hidden />
-                )}
+                <PanelLeftOpen size={13} aria-hidden />
               </Button>
             )}
 
@@ -625,26 +505,17 @@ export function PullRequestCode({
 
         <div className="flex min-h-0 flex-1">
           {!isNarrow && view.fileTreeVisible && (
-            <aside
-              className="flex w-64 shrink-0 flex-col bg-background"
-              aria-label="Change stack"
-            >
-              <div className="flex h-8 shrink-0 items-center px-3">
-                <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  Change stack
-                </span>
-                <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/75">
-                  {code.files.length}
-                </span>
-              </div>
-              <PullRequestFileTree
-                files={displayedFiles}
-                activePath={view.activePath}
-                searchActive={filtersActive}
-                className="min-h-0 flex-1"
-                onActivate={activateFile}
-              />
-            </aside>
+            <PullRequestChangedFilesPane
+              files={displayedFiles}
+              activePath={view.activePath}
+              query={view.query}
+              className="w-64 shrink-0"
+              onActivate={activateFile}
+              onQueryChange={updateFileQuery}
+              onClose={() =>
+                usePullRequestCodeStore.getState().setFileTreeVisible(false)
+              }
+            />
           )}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-page">

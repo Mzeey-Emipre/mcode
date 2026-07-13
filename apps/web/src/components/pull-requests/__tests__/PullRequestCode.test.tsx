@@ -367,7 +367,7 @@ describe("PullRequestCode", () => {
     expect(get).toHaveBeenCalledTimes(4);
   });
 
-  it("hides and restores the desktop Change stack rail", async () => {
+  it("keeps the changed-files navigator left of the diff and restores it", async () => {
     const transport = fakeTransport();
     renderCode(transport);
     await screen.findByTestId("code-viewport-seam");
@@ -376,15 +376,21 @@ describe("PullRequestCode", () => {
       "data-layout",
       "wide",
     );
-    expect(screen.getByLabelText("Change stack")).toBeVisible();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Hide Change stack" }),
+    const navigator = screen.getByTestId("pull-request-changed-files-pane");
+    const viewport = screen.getByTestId("code-viewport-seam");
+    expect(navigator.compareDocumentPosition(viewport)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(screen.queryByLabelText("Change stack")).not.toBeInTheDocument();
     await userEvent.click(
-      screen.getByRole("button", { name: "Show Change stack" }),
+      screen.getByRole("button", { name: "Hide changed files" }),
     );
-    expect(screen.getByLabelText("Change stack")).toBeVisible();
+    expect(
+      screen.queryByTestId("pull-request-changed-files-pane"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Show changed files" }),
+    );
+    expect(screen.getByTestId("pull-request-changed-files-pane")).toBeVisible();
   });
 
   it("replaces the persistent tree rail with a narrow file picker", async () => {
@@ -403,12 +409,6 @@ describe("PullRequestCode", () => {
       screen.getByRole("button", { name: "Choose a changed file" }),
     );
     expect(actionsRow).toContainElement(
-      screen.getByRole("textbox", { name: "Search changed files" }),
-    );
-    expect(actionsRow).toContainElement(
-      screen.getByRole("button", { name: "Filter changed files by status" }),
-    );
-    expect(actionsRow).toContainElement(
       screen.getByRole("button", { name: "Collapse all file diffs" }),
     );
     const footer = screen.getByTestId("pull-request-review-footer");
@@ -417,10 +417,18 @@ describe("PullRequestCode", () => {
     expect(footer).toContainElement(
       screen.getByRole("button", { name: "Submit review" }),
     );
-    expect(screen.queryByLabelText("Change stack")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("pull-request-changed-files-pane"),
+    ).not.toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Choose a changed file" }),
     );
+    expect(
+      screen.getByRole("textbox", { name: "Search changed files" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Filter changed files by status" }),
+    ).toBeVisible();
     expect(
       await screen.findByRole("tree", { name: "Choose a changed file" }),
     ).toBeVisible();
