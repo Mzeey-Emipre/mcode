@@ -1,4 +1,3 @@
-import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -18,12 +17,16 @@ import { ActivityRail, type ScopeProgress } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
 import { PreviewPanel } from "@/components/panels/PreviewPanel";
-import { usePreviewDisplayTabSet, usePreviewTabsStore } from "@/stores/previewTabsStore";
+import {
+  usePreviewDisplayTabSet,
+  usePreviewTabsStore,
+} from "@/stores/previewTabsStore";
 import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
 import { ensureTerminalForScope } from "@/lib/ensure-terminal";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { cn } from "@/lib/utils";
+import { ResizableRightPanel } from "./ResizableRightPanel";
 
 /**
  * Tracks whether the Changes tab has unreviewed new files for the active
@@ -74,8 +77,8 @@ export function RightPanel() {
   // branches return a stable store reference, so the selector does not allocate.
   const storedPanel = useDiffStore((s) =>
     activeWorkspaceId
-      ? (activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
-        s.rightPanelFallbackByWorkspace[activeWorkspaceId]
+      ? ((activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
+        s.rightPanelFallbackByWorkspace[activeWorkspaceId])
       : undefined,
   );
   /** Avoid a Zustand selector that allocates a fresh default object every evaluation. */
@@ -95,7 +98,9 @@ export function RightPanel() {
   // the workspace record for the threadless shell and uncustomized threads. See
   // ADR-0012.
   const panelVisible = useDiffStore((s) =>
-    activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId) : false,
+    activeWorkspaceId
+      ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId)
+      : false,
   );
 
   // The Terminal and Preview tabs bind to the active thread, or to the
@@ -138,10 +143,15 @@ export function RightPanel() {
   // the card-grid empty state when its type is not in the open set.
   const changesActive = activeTab === "changes" && openTabs.includes("changes");
   const previewActive = activeTab === "preview" && openTabs.includes("preview");
-  const terminalActive = activeTab === "terminal" && openTabs.includes("terminal");
+  const terminalActive =
+    activeTab === "terminal" && openTabs.includes("terminal");
 
   const isChangesActive = panelVisible && changesActive;
-  const changesFresh = useChangesFreshness(activeThreadId, changesCount, isChangesActive);
+  const changesFresh = useChangesFreshness(
+    activeThreadId,
+    changesCount,
+    isChangesActive,
+  );
 
   // Anticipate the next step: opening the Terminal tab spawns a shell when the
   // thread has none, so the user lands in a ready terminal instead of an empty
@@ -161,97 +171,20 @@ export function RightPanel() {
     if (maximized && !panelVisible) setMaximized(false);
   }, [maximized, panelVisible, setMaximized]);
 
-  const draggingRef = useRef(false);
-  const dragListenersRef = useRef<{ move: (e: globalThis.MouseEvent) => void; up: () => void } | null>(null);
-  const panelRootRef = useRef<HTMLDivElement>(null);
-  // Ref keeps the latest panelWidth readable inside the resize handler without
-  // the handler needing to be re-registered on every width change.
-  const panelWidthRef = useRef(panelWidth);
-  useEffect(() => { panelWidthRef.current = panelWidth; }, [panelWidth]);
-
   /** Max panel width that still leaves {@link COMPOSER_MIN_WIDTH}px for the chat. */
-  const getMaxPanelWidth = useCallback((): number => {
-    const split = panelRootRef.current?.parentElement;
-    if (!split) {
-      return Math.max(PANEL_MIN_WIDTH, window.innerWidth - COMPOSER_MIN_WIDTH);
-    }
-    return maxPanelWidthInSplit(split.clientWidth);
-  }, []);
-
-  // Re-clamp stored width when the split row shrinks (window resize, sidebar
-  // toggle, etc.) so the panel never eats the composer's minimum width.
-  useEffect(() => {
-    if (!activeWorkspaceId || !panelVisible || maximized) return;
-    const split = panelRootRef.current?.parentElement;
-    if (!split) return;
-
-    const clampToSplit = () => {
-      const max = maxPanelWidthInSplit(split.clientWidth);
-      if (panelWidthRef.current > max) {
-        setRightPanelWidth(activeWorkspaceId, activeThreadId, max, "preserve");
-      }
-    };
-
-    clampToSplit();
-
-    let rafId: number | null = null;
-    const ro = new ResizeObserver(() => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        clampToSplit();
-      });
-    });
-    ro.observe(split);
-    return () => {
-      ro.disconnect();
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    };
-  }, [activeWorkspaceId, activeThreadId, panelVisible, maximized]);
-
-  const onDragStart = useCallback(
-    (e: ReactMouseEvent) => {
-      e.preventDefault();
-      draggingRef.current = true;
-      const startX = e.clientX;
-      const startWidth = panelWidth;
-
-      const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
-        if (!draggingRef.current) return;
-        const delta = startX - moveEvent.clientX;
-        const maxWidth = getMaxPanelWidth();
-        setRightPanelWidth(
-          activeWorkspaceId!,
-          activeThreadId,
-          Math.max(PANEL_MIN_WIDTH, Math.min(startWidth + delta, maxWidth)),
-          "user",
+  const getMaxPanelWidth = useCallback(
+    (panel: HTMLDivElement | null): number => {
+      const split = panel?.parentElement;
+      if (!split) {
+        return Math.max(
+          PANEL_MIN_WIDTH,
+          window.innerWidth - COMPOSER_MIN_WIDTH,
         );
-      };
-
-      const onMouseUp = () => {
-        draggingRef.current = false;
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-        dragListenersRef.current = null;
-      };
-
-      dragListenersRef.current = { move: onMouseMove, up: onMouseUp };
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-    },
-    [panelWidth, activeWorkspaceId, activeThreadId, getMaxPanelWidth],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (dragListenersRef.current) {
-        document.removeEventListener("mousemove", dragListenersRef.current.move);
-        document.removeEventListener("mouseup", dragListenersRef.current.up);
-        dragListenersRef.current = null;
       }
-      draggingRef.current = false;
-    };
-  }, []);
+      return maxPanelWidthInSplit(split.clientWidth);
+    },
+    [],
+  );
 
   // Keep the panel (and terminal pool) mounted when hidden so xterm instances
   // and scroll anchors survive thread switches; a hidden panel collapses to zero
@@ -261,9 +194,24 @@ export function RightPanel() {
   if (!activeWorkspaceId) return null;
 
   return (
-    <div
-      ref={panelRootRef}
-      data-testid="right-panel"
+    <ResizableRightPanel
+      testId="right-panel"
+      width={panelWidth}
+      minWidth={PANEL_MIN_WIDTH}
+      maxWidth={`calc(100% - ${COMPOSER_MIN_WIDTH}px - ${PANEL_SPLIT_GAP_PX}px)`}
+      getMaxWidth={getMaxPanelWidth}
+      defaultWidth={getDefaultPanelWidthPx()}
+      wideWidth={PANEL_WIDE_WIDTH}
+      separatorLabel="Resize panel"
+      resizeEnabled={panelVisible && !maximized}
+      onWidthChange={(nextWidth, source) =>
+        setRightPanelWidth(
+          activeWorkspaceId!,
+          activeThreadId,
+          nextWidth,
+          source,
+        )
+      }
       style={
         !panelVisible
           ? {
@@ -271,13 +219,7 @@ export function RightPanel() {
               minWidth: 0,
               maxWidth: 0,
             }
-          : maximized
-          ? undefined
-          : {
-              width: panelWidth,
-              minWidth: PANEL_MIN_WIDTH,
-              maxWidth: `calc(100% - ${COMPOSER_MIN_WIDTH}px - ${PANEL_SPLIT_GAP_PX}px)`,
-            }
+          : undefined
       }
       className={cn(
         "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background focus:outline-none",
@@ -296,48 +238,6 @@ export function RightPanel() {
       aria-hidden={!panelVisible}
       inert={!panelVisible ? true : undefined}
     >
-      {/* Drag handle (left edge) — double-click snaps between default and wide.
-          Hidden while maximized: the panel owns the full content area, so there
-          is nothing to resize against. */}
-      {!maximized && (
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize panel"
-        tabIndex={0}
-        className="group absolute inset-y-0 left-0 z-20 flex w-2 cursor-col-resize items-stretch justify-start focus:outline-none"
-        onMouseDown={onDragStart}
-        onDoubleClick={() => {
-          const maxWidth = getMaxPanelWidth();
-          const narrow = getDefaultPanelWidthPx();
-          const target =
-            panelWidth >= PANEL_WIDE_WIDTH
-              ? narrow
-              : Math.min(PANEL_WIDE_WIDTH, maxWidth);
-          setRightPanelWidth(activeWorkspaceId!, activeThreadId, Math.max(PANEL_MIN_WIDTH, target), "user");
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            const maxWidth = getMaxPanelWidth();
-            const narrow = getDefaultPanelWidthPx();
-            const target =
-              panelWidth >= PANEL_WIDE_WIDTH
-                ? narrow
-                : Math.min(PANEL_WIDE_WIDTH, maxWidth);
-            setRightPanelWidth(activeWorkspaceId!, activeThreadId, Math.max(PANEL_MIN_WIDTH, target), "user");
-          }
-        }}
-      >
-        {/* The split line is the resize affordance; keep it visible so the
-            docked panes separate by line, not by gap. */}
-        <span
-          aria-hidden
-          className="pointer-events-none w-px shrink-0 bg-border/45 transition-colors group-hover:bg-border group-focus-visible:w-0.5 group-focus-visible:bg-ring group-active:w-0.5 group-active:bg-muted-foreground/60"
-        />
-      </div>
-      )}
-
       {/* Rail + content. The activity rail carries the maximize toggle and, once
           tabs are open, tab navigation and the add control. With no tabs the rail
           is just the maximize button beside the empty-state create list. */}
@@ -350,24 +250,41 @@ export function RightPanel() {
           changesCount={changesCount}
           changesFresh={changesFresh}
           browserTabSet={browserTabSet}
-          onTogglePanel={() => toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId)}
-          onSelect={(id) => setRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
-          onClose={(id) => closeRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
-          onCreate={(id) => setRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
+          onTogglePanel={() =>
+            toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId)
+          }
+          onSelect={(id) =>
+            setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+          }
+          onClose={(id) =>
+            closeRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+          }
+          onCreate={(id) =>
+            setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+          }
           onSelectBrowserPage={(pageId) => {
             // Focus the Browser tab and switch the guest to that page.
             setRightPanelTab(activeWorkspaceId!, activeThreadId, "preview");
             if (panelScopeId) {
-              void usePreviewTabsStore.getState().activatePage(panelScopeId, pageId);
+              void usePreviewTabsStore
+                .getState()
+                .activatePage(panelScopeId, pageId);
             }
           }}
           onCloseBrowserPage={(pageId) => {
             if (!panelScopeId) return;
             // Closing the last page closes the Browser tab entirely (the rail is
             // the page switcher, so an empty browser has nothing to show).
-            void usePreviewTabsStore.getState().closePage(panelScopeId, pageId, {
-              onLastClose: () => closeRightPanelTab(activeWorkspaceId!, activeThreadId, "preview"),
-            });
+            void usePreviewTabsStore
+              .getState()
+              .closePage(panelScopeId, pageId, {
+                onLastClose: () =>
+                  closeRightPanelTab(
+                    activeWorkspaceId!,
+                    activeThreadId,
+                    "preview",
+                  ),
+              });
           }}
         />
 
@@ -380,12 +297,14 @@ export function RightPanel() {
             <PanelEmptyState
               scope={panelScope}
               openTabs={openTabs}
-              onOpen={(id) => setRightPanelTab(activeWorkspaceId!, activeThreadId, id)}
+              onOpen={(id) =>
+                setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+              }
             />
           )}
-          {activeTab === "tasks" && openTabs.includes("tasks") && activeThreadId && (
-            <PlanPanel threadId={activeThreadId} />
-          )}
+          {activeTab === "tasks" &&
+            openTabs.includes("tasks") &&
+            activeThreadId && <PlanPanel threadId={activeThreadId} />}
           <div
             className={
               changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"
@@ -394,7 +313,10 @@ export function RightPanel() {
             <DiffPanel />
           </div>
           {previewActive && panelScopeId && (
-            <PreviewPanel threadId={panelScopeId} workspaceId={activeWorkspaceId} />
+            <PreviewPanel
+              threadId={panelScopeId}
+              workspaceId={activeWorkspaceId}
+            />
           )}
           <div
             className={cn(
@@ -412,6 +334,6 @@ export function RightPanel() {
           </div>
         </div>
       </div>
-    </div>
+    </ResizableRightPanel>
   );
 }

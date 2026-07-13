@@ -49,7 +49,11 @@ vi.mock("@/components/ui/scroll-area", () => ({
     className?: string;
     viewportRef?: React.Ref<HTMLDivElement>;
   }) => (
-    <div ref={viewportRef} className={className} data-testid="summary-resource-viewport">
+    <div
+      ref={viewportRef}
+      className={className}
+      data-testid="summary-resource-viewport"
+    >
       {children}
     </div>
   ),
@@ -236,20 +240,29 @@ describe("PullRequestSummary", () => {
     virtualizerProbe.measureElement.mockClear();
   });
 
-  it("shows orientation data and renders the remote description", async () => {
+  it("renders the remote description without repeating header metadata", async () => {
     render(
-      <PullRequestSummary detail={detail()} checks={checks()} comments={comments()} />,
+      <PullRequestSummary
+        detail={detail()}
+        checks={checks()}
+        comments={comments()}
+      />,
     );
 
-    const summary = screen.getByRole("region", { name: "Pull request summary" });
-    expect(within(summary).getByText("Ready for review")).toBeVisible();
-    expect(within(summary).getByLabelText("Base branch main")).toBeVisible();
-    expect(within(summary).getByLabelText("Head branch feature/detail")).toBeVisible();
-    expect(within(summary).getByText("reviewer")).toBeVisible();
-    expect(within(summary).getByText("Mzeey-Empire/maintainers")).toBeVisible();
-    expect(within(summary).getByText(/Passing, 4 checks/)).toBeVisible();
-    expect(within(summary).getByText("3 comments")).toBeVisible();
-    expect(within(summary).getByText("1 review thread")).toBeVisible();
+    const summary = screen.getByRole("region", {
+      name: "Pull request summary",
+    });
+    expect(
+      within(summary).queryByText("Ready for review"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(summary).queryByLabelText("Base branch main"),
+    ).not.toBeInTheDocument();
+    expect(within(summary).queryByText("reviewer")).not.toBeInTheDocument();
+    expect(
+      within(summary).queryByText(/Passing, 4 checks/),
+    ).not.toBeInTheDocument();
+    expect(within(summary).queryByText("3 comments")).not.toBeInTheDocument();
     expect(
       await within(summary).findByRole(
         "heading",
@@ -281,7 +294,8 @@ describe("PullRequestSummary", () => {
     const linkedComments = comments();
     const issueComment = linkedComments[0];
     if (issueComment?.kind === "issue_comment") {
-      issueComment.url = "https://github.com/Mzeey-Empire/mcode/pull/42#issuecomment-1";
+      issueComment.url =
+        "https://github.com/Mzeey-Empire/mcode/pull/42#issuecomment-1";
     }
     const reviewThread = linkedComments[1];
     if (reviewThread?.kind === "review_thread" && reviewThread.comments[0]) {
@@ -334,18 +348,34 @@ describe("PullRequestSummary", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Checks, 2 loaded of 4" }));
+    await user.click(
+      screen.getByRole("button", { name: "Checks, 2 loaded of 4" }),
+    );
     expect(screen.getByText("Web verification")).toBeVisible();
     expect(screen.getByText("Required")).toBeVisible();
-    expect(screen.getByText("Record limit reached. Additional check records are not shown.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Load more checks" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Record limit reached. Additional check records are not shown.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Load more checks" }),
+    ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Comments, 2 loaded of 4" }));
+    await user.click(
+      screen.getByRole("button", { name: "Comments, 2 loaded of 4" }),
+    );
     expect(await screen.findByText("Please verify")).toBeVisible();
     expect(screen.getByText("apps/web/src/app/App.tsx:42")).toBeVisible();
     expect(screen.getByText("Showing 1 of 3 thread comments.")).toBeVisible();
-    expect(screen.getByText("Data limit reached. Additional comments are not shown.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Load more comments" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Data limit reached. Additional comments are not shown.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Load more comments" }),
+    ).not.toBeInTheDocument();
   });
 
   it("delegates unbounded continuation to the parent", async () => {
@@ -364,10 +394,16 @@ describe("PullRequestSummary", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Checks, 2 loaded of 4" }));
+    await user.click(
+      screen.getByRole("button", { name: "Checks, 2 loaded of 4" }),
+    );
     await user.click(screen.getByRole("button", { name: "Load more checks" }));
-    await user.click(screen.getByRole("button", { name: "Comments, 2 loaded of 4" }));
-    await user.click(screen.getByRole("button", { name: "Load more comments" }));
+    await user.click(
+      screen.getByRole("button", { name: "Comments, 2 loaded of 4" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Load more comments" }),
+    );
 
     expect(onLoadMoreChecks).toHaveBeenCalledOnce();
     expect(onLoadMoreComments).toHaveBeenCalledOnce();
@@ -390,14 +426,18 @@ describe("PullRequestSummary", () => {
     expect(onChecksFirstOpen).not.toHaveBeenCalled();
     expect(onCommentsFirstOpen).not.toHaveBeenCalled();
 
-    const checksTrigger = screen.getByRole("button", { name: "Checks, 0 loaded of 4" });
+    const checksTrigger = screen.getByRole("button", {
+      name: "Checks, 0 loaded of 4",
+    });
     await user.click(checksTrigger);
     expect(onChecksFirstOpen).toHaveBeenCalledOnce();
     await user.click(checksTrigger);
     await user.click(checksTrigger);
     expect(onChecksFirstOpen).toHaveBeenCalledOnce();
 
-    const commentsTrigger = screen.getByRole("button", { name: "Comments, 0 loaded of 4" });
+    const commentsTrigger = screen.getByRole("button", {
+      name: "Comments, 0 loaded of 4",
+    });
     await user.click(commentsTrigger);
     expect(onCommentsFirstOpen).toHaveBeenCalledOnce();
     await user.click(commentsTrigger);
@@ -415,8 +455,12 @@ describe("PullRequestSummary", () => {
         onCommentsFirstOpen={onCommentsFirstOpen}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Checks, 0 loaded of 4" }));
-    await user.click(screen.getByRole("button", { name: "Comments, 0 loaded of 4" }));
+    await user.click(
+      screen.getByRole("button", { name: "Checks, 0 loaded of 4" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Comments, 0 loaded of 4" }),
+    );
     expect(onChecksFirstOpen).toHaveBeenCalledTimes(2);
     expect(onCommentsFirstOpen).toHaveBeenCalledTimes(2);
   });
@@ -433,7 +477,9 @@ describe("PullRequestSummary", () => {
         onChecksFirstOpen={onChecksFirstOpen}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Checks, 0 loaded of 4" }));
+    await user.click(
+      screen.getByRole("button", { name: "Checks, 0 loaded of 4" }),
+    );
     expect(onChecksFirstOpen).toHaveBeenCalledOnce();
 
     rerender(
@@ -463,8 +509,12 @@ describe("PullRequestSummary", () => {
         commentsLoading
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Checks, 0 loaded of 4" }));
-    await user.click(screen.getByRole("button", { name: "Comments, 0 loaded of 4" }));
+    await user.click(
+      screen.getByRole("button", { name: "Checks, 0 loaded of 4" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Comments, 0 loaded of 4" }),
+    );
     expect(screen.getAllByRole("status")).toHaveLength(2);
     expect(screen.getByText("Loading checks")).toBeVisible();
     expect(screen.getByText("Loading comments")).toBeVisible();
@@ -539,11 +589,15 @@ describe("PullRequestSummary", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Checks, 1000 loaded of 1000" }));
+    await user.click(
+      screen.getByRole("button", { name: "Checks, 1000 loaded of 1000" }),
+    );
 
     const list = screen.getByRole("list", { name: "Loaded checks" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(12);
-    expect(virtualizerProbe.options.find((option) => option.count === 1_000)).toMatchObject({
+    expect(
+      virtualizerProbe.options.find((option) => option.count === 1_000),
+    ).toMatchObject({
       count: 1_000,
       overscan: 4,
     });
@@ -567,7 +621,9 @@ describe("PullRequestSummary", () => {
 
     const list = screen.getByRole("list", { name: "Loaded comments" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(12);
-    expect(virtualizerProbe.options.find((option) => option.count === 1_000)).toMatchObject({
+    expect(
+      virtualizerProbe.options.find((option) => option.count === 1_000),
+    ).toMatchObject({
       count: 1_000,
       overscan: 4,
     });

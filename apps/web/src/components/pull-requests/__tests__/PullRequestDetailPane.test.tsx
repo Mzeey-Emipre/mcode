@@ -4,7 +4,13 @@ import type {
   PullRequestIdentity,
   PullRequestSummary,
 } from "@mcode/contracts";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -102,7 +108,9 @@ function freshness() {
   } as const;
 }
 
-function detailResult(headOid: string | null = "a".repeat(40)): PullRequestGetResult {
+function detailResult(
+  headOid: string | null = "a".repeat(40),
+): PullRequestGetResult {
   return {
     ok: true,
     resource: "detail",
@@ -111,7 +119,9 @@ function detailResult(headOid: string | null = "a".repeat(40)): PullRequestGetRe
   };
 }
 
-function fakeTransport(overrides: Partial<PullRequestTransport> = {}): PullRequestTransport {
+function fakeTransport(
+  overrides: Partial<PullRequestTransport> = {},
+): PullRequestTransport {
   return {
     getCapabilities: vi.fn().mockResolvedValue({ ok: false }),
     list: vi.fn().mockResolvedValue({ ok: false }),
@@ -185,14 +195,17 @@ describe("PullRequestDetailPane", () => {
     let resolveDetail!: (result: PullRequestGetResult) => void;
     const transport = fakeTransport({
       get: vi.fn().mockImplementation(
-        () => new Promise<PullRequestGetResult>((resolve) => {
-          resolveDetail = resolve;
-        }),
+        () =>
+          new Promise<PullRequestGetResult>((resolve) => {
+            resolveDetail = resolve;
+          }),
       ),
     });
     renderPane(transport);
 
-    expect(screen.getByRole("heading", { name: "Persistent summary header" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Persistent summary header" }),
+    ).toBeVisible();
     expect(screen.getByLabelText("Loading pull request detail")).toBeVisible();
     resolveDetail({
       ok: false,
@@ -200,7 +213,9 @@ describe("PullRequestDetailPane", () => {
     });
 
     expect(await screen.findByText("Detail failed")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Persistent summary header" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Persistent summary header" }),
+    ).toBeVisible();
   });
 
   it("surfaces a bounded description marker from the detail lane", async () => {
@@ -213,7 +228,9 @@ describe("PullRequestDetailPane", () => {
     renderPane(transport);
 
     expect(
-      await screen.findByText("Description truncated at the remote data limit."),
+      await screen.findByText(
+        "Description truncated at the remote data limit.",
+      ),
     ).toBeVisible();
   });
 
@@ -221,7 +238,8 @@ describe("PullRequestDetailPane", () => {
     let resolveChecks!: (result: PullRequestGetResult) => void;
     const transport = fakeTransport({
       get: vi.fn().mockImplementation((request) => {
-        if (request.resource === "detail") return Promise.resolve(detailResult());
+        if (request.resource === "detail")
+          return Promise.resolve(detailResult());
         if (request.resource === "checks") {
           return new Promise<PullRequestGetResult>((resolve) => {
             resolveChecks = resolve;
@@ -232,18 +250,29 @@ describe("PullRequestDetailPane", () => {
     });
     renderPane(transport);
     await waitFor(() =>
-      expect(vi.mocked(transport.get).mock.calls.some(([request]) => request.resource === "detail"))
-        .toBe(true),
+      expect(
+        vi
+          .mocked(transport.get)
+          .mock.calls.some(([request]) => request.resource === "detail"),
+      ).toBe(true),
     );
-    expect(vi.mocked(transport.get).mock.calls.some(([request]) => request.resource === "checks"))
-      .toBe(false);
+    expect(
+      vi
+        .mocked(transport.get)
+        .mock.calls.some(([request]) => request.resource === "checks"),
+    ).toBe(false);
 
     const user = userEvent.setup();
-    const trigger = await screen.findByRole("button", { name: "Checks, 0 loaded of 2" });
+    const trigger = await screen.findByRole("button", {
+      name: "Checks, 0 loaded of 2",
+    });
     await user.click(trigger);
     expect(await screen.findByText("Loading checks")).toBeVisible();
-    expect(vi.mocked(transport.get).mock.calls.filter(([request]) => request.resource === "checks"))
-      .toHaveLength(1);
+    expect(
+      vi
+        .mocked(transport.get)
+        .mock.calls.filter(([request]) => request.resource === "checks"),
+    ).toHaveLength(1);
 
     resolveChecks({
       ok: true,
@@ -255,8 +284,11 @@ describe("PullRequestDetailPane", () => {
     expect(await screen.findByText("No checks reported.")).toBeVisible();
     await user.click(trigger);
     await user.click(trigger);
-    expect(vi.mocked(transport.get).mock.calls.filter(([request]) => request.resource === "checks"))
-      .toHaveLength(1);
+    expect(
+      vi
+        .mocked(transport.get)
+        .mock.calls.filter(([request]) => request.resource === "checks"),
+    ).toHaveLength(1);
   });
 
   it("uses roving detail tabs and loads Timeline on keyboard activation", async () => {
@@ -278,6 +310,25 @@ describe("PullRequestDetailPane", () => {
     expect(summaryTab).toHaveAttribute("aria-selected", "true");
   });
 
+  it("places page tabs before Summary content and exposes an icon-only browser action", async () => {
+    const transport = fakeTransport();
+    renderPane(transport);
+
+    const tabs = await screen.findByRole("tablist", {
+      name: "Pull request detail views",
+    });
+    const heading = screen.getByRole("heading", {
+      name: "Persistent summary header",
+    });
+    expect(tabs.compareDocumentPosition(heading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+
+    const browserAction = screen.getByRole("link", { name: "Open in browser" });
+    expect(browserAction).not.toHaveTextContent("Open in browser");
+    expect(screen.getAllByLabelText("Base branch main")).toHaveLength(1);
+  });
+
   it("lazy-loads Code with the immutable base and head snapshot", async () => {
     const transport = fakeTransport();
     renderPane(transport);
@@ -285,16 +336,18 @@ describe("PullRequestDetailPane", () => {
 
     await userEvent.click(codeTab);
 
-    expect(await screen.findByTestId("pull-request-code-panel")).toHaveTextContent(
-      "bbbb:aaaa",
-    );
+    expect(
+      await screen.findByTestId("pull-request-code-panel"),
+    ).toHaveTextContent("bbbb:aaaa");
     expect(codeTab).toHaveAttribute("aria-selected", "true");
   });
 
   it("reloads an active Timeline after a detail refresh advances the head", async () => {
     let headOid = "a".repeat(40);
     const transport = fakeTransport({
-      get: vi.fn().mockImplementation(() => Promise.resolve(detailResult(headOid))),
+      get: vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(detailResult(headOid))),
     });
     renderPane(transport);
     const user = userEvent.setup();
@@ -307,9 +360,10 @@ describe("PullRequestDetailPane", () => {
     });
 
     await waitFor(() => expect(transport.timeline).toHaveBeenCalledTimes(2));
-    const entry = usePullRequestDetailStore.getState().entries[
-      getPullRequestDetailKey(identity)
-    ];
+    const entry =
+      usePullRequestDetailStore.getState().entries[
+        getPullRequestDetailKey(identity)
+      ];
     expect(entry?.detail?.head.oid).toBe(headOid);
     expect(entry?.lanes.timelineInitial.fetchedAt).not.toBeNull();
   });
@@ -319,13 +373,18 @@ describe("PullRequestDetailPane", () => {
     const reviewTaskTransport: PullRequestReviewTaskTransport = {
       createReviewTask: vi.fn().mockResolvedValue({
         ok: false,
-        error: { code: "workspace_mapping_missing", message: "No matching project" },
+        error: {
+          code: "workspace_mapping_missing",
+          message: "No matching project",
+        },
       }),
       reviewLink: vi.fn().mockResolvedValue(null),
     };
     const view = renderPane(transport, reviewTaskTransport);
     await screen.findByText("Read-only detail body");
-    expect(screen.queryByRole("button", { name: "Review Change Stack" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Review Change Stack" }),
+    ).toBeNull();
 
     act(() => {
       usePullRequestStore.setState({
@@ -342,11 +401,15 @@ describe("PullRequestDetailPane", () => {
       });
     });
 
-    const action = await screen.findByRole("button", { name: "Review Change Stack" });
+    const action = await screen.findByRole("button", {
+      name: "Review Change Stack",
+    });
     expect(action).toBeEnabled();
     expect(getCommand("pullRequests.reviewChangeStack")).toBeDefined();
     act(() => getCommand("pullRequests.reviewChangeStack")?.handler());
-    await waitFor(() => expect(reviewTaskTransport.createReviewTask).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(reviewTaskTransport.createReviewTask).toHaveBeenCalledOnce(),
+    );
     view.unmount();
     expect(getCommand("pullRequests.reviewChangeStack")).toBeUndefined();
   });
@@ -372,7 +435,9 @@ describe("PullRequestDetailPane", () => {
     expect(
       await screen.findByText("The pull request head commit is unavailable."),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Review Change Stack" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Review Change Stack" }),
+    ).toBeDisabled();
     expect(getCommand("pullRequests.reviewChangeStack")).toBeUndefined();
   });
 
@@ -398,7 +463,9 @@ describe("PullRequestDetailPane", () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
     expect(transport.get).toHaveBeenCalledTimes(2);
-    expect(usePullRequestMutationStore.getState().lanes[receiptKey]).toBeDefined();
+    expect(
+      usePullRequestMutationStore.getState().lanes[receiptKey],
+    ).toBeDefined();
 
     focused = false;
     fireEvent.blur(window);
@@ -413,7 +480,9 @@ describe("PullRequestDetailPane", () => {
       await Promise.resolve();
     });
     expect(transport.get).toHaveBeenCalledTimes(3);
-    expect(usePullRequestMutationStore.getState().lanes[receiptKey]).toBeDefined();
+    expect(
+      usePullRequestMutationStore.getState().lanes[receiptKey],
+    ).toBeDefined();
   });
 
   it("acknowledges an unknown outcome only after a successful header refresh", async () => {
@@ -431,16 +500,22 @@ describe("PullRequestDetailPane", () => {
     const receiptKey = getPullRequestMutationLaneKey(identity, "comment");
     const receipt = outcomeUnknownLane();
     usePullRequestMutationStore.setState({ lanes: { [receiptKey]: receipt } });
-    const refresh = screen.getByRole("button", { name: "Refresh pull request detail" });
+    const refresh = screen.getByRole("button", {
+      name: "Refresh pull request detail",
+    });
 
     await userEvent.click(refresh);
     await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
-    expect(usePullRequestMutationStore.getState().lanes[receiptKey]).toEqual(receipt);
+    expect(usePullRequestMutationStore.getState().lanes[receiptKey]).toEqual(
+      receipt,
+    );
 
     await userEvent.click(refresh);
     await vi.waitFor(() => {
       expect(get).toHaveBeenCalledTimes(3);
-      expect(usePullRequestMutationStore.getState().lanes[receiptKey]).toBeUndefined();
+      expect(
+        usePullRequestMutationStore.getState().lanes[receiptKey],
+      ).toBeUndefined();
     });
   });
 });

@@ -4,14 +4,12 @@ import type {
   PullRequestCheckState,
   PullRequestConversationItem,
   PullRequestDetail,
-  PullRequestReviewer,
 } from "@mcode/contracts";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertCircle,
   ChevronDown,
   CircleDot,
-  GitBranch,
   MessageSquare,
 } from "lucide-react";
 import {
@@ -80,23 +78,11 @@ function titleCase(value: string): string {
     .join(" ");
 }
 
-function reviewerLabel(reviewer: PullRequestReviewer): string {
-  if (reviewer.target.kind === "user") return reviewer.target.actor.login;
-  return `${reviewer.target.organization}/${reviewer.target.slug}`;
-}
-
 function checkTone(state: PullRequestCheckState): string {
   if (state === "passing") return "bg-[var(--diff-add-strong)]";
   if (state === "failing" || state === "cancelled") return "bg-destructive";
   if (state === "pending") return "bg-primary";
   return "bg-muted-foreground/45";
-}
-
-function checkSummaryTone(state: PullRequestCheckState): string {
-  if (state === "passing") return "text-[var(--diff-add-strong)]";
-  if (state === "failing" || state === "cancelled") return "text-destructive";
-  if (state === "pending") return "text-primary";
-  return "text-muted-foreground";
 }
 
 function boundedMessage(
@@ -127,7 +113,8 @@ function useFirstOpenTrigger(
         open: state.current.open,
       };
     }
-    if ((!defaultOpen && !state.current.open) || state.current.triggered) return;
+    if ((!defaultOpen && !state.current.open) || state.current.triggered)
+      return;
     state.current.triggered = true;
     onFirstOpen?.();
   }, [defaultOpen, identity, onFirstOpen]);
@@ -157,7 +144,11 @@ function BoundedDataNotice({
       data-bounded-reason={marker.reason}
       className="mt-2 flex items-start gap-2 bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground"
     >
-      <AlertCircle size={13} aria-hidden className="mt-0.5 shrink-0 text-primary/80" />
+      <AlertCircle
+        size={13}
+        aria-hidden
+        className="mt-0.5 shrink-0 text-primary/80"
+      />
       {boundedMessage(marker, subject)}
     </p>
   );
@@ -257,7 +248,11 @@ function ResourceList<T>({
   );
 }
 
-const CheckRow = memo(function CheckRow({ check }: { check: PullRequestCheck }) {
+const CheckRow = memo(function CheckRow({
+  check,
+}: {
+  check: PullRequestCheck;
+}) {
   return (
     <>
       <span
@@ -281,7 +276,11 @@ const CheckRow = memo(function CheckRow({ check }: { check: PullRequestCheck }) 
 
 CheckRow.displayName = "CheckRow";
 
-const CheckList = memo(function CheckList({ checks }: { checks: readonly PullRequestCheck[] }) {
+const CheckList = memo(function CheckList({
+  checks,
+}: {
+  checks: readonly PullRequestCheck[];
+}) {
   return (
     <ResourceList
       items={checks}
@@ -333,7 +332,9 @@ const ConversationRow = memo(function ConversationRow({
   return (
     <>
       <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
-        <span className="truncate font-mono text-foreground/85">{location}</span>
+        <span className="truncate font-mono text-foreground/85">
+          {location}
+        </span>
         <Badge variant="ghost" size="sm" className="text-muted-foreground">
           {item.isResolved ? "Resolved" : "Unresolved"}
         </Badge>
@@ -345,12 +346,17 @@ const ConversationRow = memo(function ConversationRow({
       </div>
       <div className="mt-2 space-y-2 pl-3">
         {item.comments.map((comment) => {
-          const commentUrl = comment.url ? safePullRequestHttpUrl(comment.url) : null;
+          const commentUrl = comment.url
+            ? safePullRequestHttpUrl(comment.url)
+            : null;
           return (
             <div key={comment.providerNodeId}>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>{comment.author?.login ?? "Unknown actor"}</span>
-                <time dateTime={comment.createdAt} className="font-mono tabular-nums">
+                <time
+                  dateTime={comment.createdAt}
+                  className="font-mono tabular-nums"
+                >
                   {formatRelative(comment.createdAt)}
                 </time>
                 {commentUrl && (
@@ -424,7 +430,6 @@ function PullRequestSummaryComponent({
   reviewChangeStackUnavailableReason = null,
 }: PullRequestSummaryProps) {
   const conversationCount = detail.commentCount + detail.reviewThreadCount;
-  const readiness = detail.readiness === "ready" ? "Ready for review" : "Draft";
   const handleChecksOpenChange = useFirstOpenTrigger(
     `${detail.providerNodeId}:${detail.head.oid ?? "unknown"}:checks`,
     defaultChecksOpen,
@@ -439,10 +444,10 @@ function PullRequestSummaryComponent({
   return (
     <section
       aria-label="Pull request summary"
-      className="min-w-0 space-y-4 bg-background px-4 py-4"
+      className="mx-auto min-w-0 w-full max-w-5xl space-y-8 bg-background px-6 pb-10 pt-2"
     >
       {onReviewChangeStack ? (
-        <div className="flex flex-col gap-3 bg-page/55 px-3 py-3 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-3 border-b border-t border-b-border/45 border-t-primary py-4 sm:flex-row sm:items-center">
           <div className="min-w-0 flex-1">
             <p className="font-mono text-xs font-semibold uppercase tracking-wider text-foreground/85">
               Review Change Stack
@@ -469,88 +474,10 @@ function PullRequestSummaryComponent({
         </div>
       ) : null}
 
-      <dl className="flex flex-wrap gap-x-8 gap-y-3 bg-page/55 px-3 py-3 text-xs">
-        <div>
-          <dt className="font-mono uppercase tracking-wider text-muted-foreground/70">
-            Readiness
-          </dt>
-          <dd className="mt-1 text-foreground/90">{readiness}</dd>
-        </div>
-        <div className="min-w-48">
-          <dt className="font-mono uppercase tracking-wider text-muted-foreground/70">
-            Branches
-          </dt>
-          <dd className="mt-1 flex min-w-0 items-center gap-1.5 font-mono text-foreground/90">
-            <GitBranch size={12} aria-hidden className="shrink-0 text-muted-foreground" />
-            <span aria-label={`Base branch ${detail.base.name}`} className="truncate">
-              {detail.base.name}
-            </span>
-            <span aria-hidden className="text-muted-foreground/45">←</span>
-            <span aria-label={`Head branch ${detail.head.name}`} className="truncate">
-              {detail.head.name}
-            </span>
-          </dd>
-        </div>
-        <div>
-          <dt className="font-mono uppercase tracking-wider text-muted-foreground/70">
-            Checks
-          </dt>
-          <dd className="mt-1 flex items-center gap-1.5 text-foreground/90">
-            <CircleDot
-              size={12}
-              aria-hidden
-              className={checkSummaryTone(detail.checks.state)}
-            />
-            {titleCase(detail.checks.state)}, {detail.checkCount} checks
-          </dd>
-        </div>
-        <div>
-          <dt className="font-mono uppercase tracking-wider text-muted-foreground/70">
-            Conversation
-          </dt>
-          <dd className="mt-1 flex flex-wrap items-center gap-x-2 text-foreground/90">
-            <span>{detail.commentCount} comments</span>
-            <span>
-              {detail.reviewThreadCount} review {detail.reviewThreadCount === 1 ? "thread" : "threads"}
-            </span>
-          </dd>
-        </div>
-      </dl>
-
-      <section aria-labelledby="pull-request-reviewers-title">
-        <h3
-          id="pull-request-reviewers-title"
-          className="font-mono text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-        >
-          Reviewers
-        </h3>
-        {detail.reviewers.length === 0 ? (
-          <p className="mt-2 text-xs text-muted-foreground">No reviewers</p>
-        ) : (
-          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
-            {detail.reviewers.map((reviewer) => (
-              <li
-                key={
-                  reviewer.target.kind === "user"
-                    ? reviewer.target.actor.providerNodeId
-                    : reviewer.target.providerNodeId
-                }
-                className="flex items-center gap-2 text-xs"
-              >
-                <span className="text-foreground/90">{reviewerLabel(reviewer)}</span>
-                <Badge variant="ghost" size="sm" className="text-muted-foreground">
-                  {titleCase(reviewer.state)}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
       <section aria-labelledby="pull-request-description-title">
         <h3
           id="pull-request-description-title"
-          className="font-mono text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+          className="text-sm font-semibold text-foreground"
         >
           Description
         </h3>
@@ -565,7 +492,11 @@ function PullRequestSummaryComponent({
             data-bounded-reason={detailBoundedData.reason}
             className="mt-2 flex items-start gap-2 bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground"
           >
-            <AlertCircle size={13} aria-hidden className="mt-0.5 shrink-0 text-primary/80" />
+            <AlertCircle
+              size={13}
+              aria-hidden
+              className="mt-0.5 shrink-0 text-primary/80"
+            />
             Description truncated at the remote data limit.
           </p>
         )}
@@ -574,18 +505,26 @@ function PullRequestSummaryComponent({
       <Collapsible
         defaultOpen={defaultChecksOpen}
         onOpenChange={handleChecksOpenChange}
-        className="bg-page/55"
+        className="border-t border-border/45"
       >
         <CollapsibleTrigger asChild>
           <Button
             type="button"
             variant="ghost"
-            className="group h-9 w-full justify-start rounded-none px-3 text-xs"
+            className="group h-10 w-full justify-start rounded-none px-0 text-xs"
             aria-label={`Checks, ${checks.length} loaded of ${detail.checkCount}`}
           >
-            <CircleDot size={13} aria-hidden className="text-muted-foreground" />
+            <CircleDot
+              size={13}
+              aria-hidden
+              className="text-muted-foreground"
+            />
             <span>Checks</span>
-            <Badge variant="ghost" size="sm" className="ml-auto text-muted-foreground">
+            <Badge
+              variant="ghost"
+              size="sm"
+              className="ml-auto text-muted-foreground"
+            >
               {detail.checkCount}
             </Badge>
             <ChevronDown
@@ -597,17 +536,25 @@ function PullRequestSummaryComponent({
         </CollapsibleTrigger>
         <CollapsibleContent className="px-3 pb-3">
           {checksLoading && checks.length === 0 ? (
-            <p role="status" className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+            <p
+              role="status"
+              className="flex items-center gap-2 py-3 text-xs text-muted-foreground"
+            >
               <Spinner size="xs" aria-hidden />
               Loading checks
             </p>
           ) : checksLoaded && checks.length === 0 ? (
-            <p className="py-3 text-xs text-muted-foreground">No checks reported.</p>
+            <p className="py-3 text-xs text-muted-foreground">
+              No checks reported.
+            </p>
           ) : (
             <CheckList checks={checks} />
           )}
           {checksBoundedData ? (
-            <BoundedDataNotice marker={checksBoundedData} subject="check records" />
+            <BoundedDataNotice
+              marker={checksBoundedData}
+              subject="check records"
+            />
           ) : checksHasMore && onLoadMoreChecks ? (
             <Button
               type="button"
@@ -626,18 +573,26 @@ function PullRequestSummaryComponent({
       <Collapsible
         defaultOpen={defaultCommentsOpen}
         onOpenChange={handleCommentsOpenChange}
-        className="bg-page/55"
+        className="border-t border-border/45"
       >
         <CollapsibleTrigger asChild>
           <Button
             type="button"
             variant="ghost"
-            className="group h-9 w-full justify-start rounded-none px-3 text-xs"
+            className="group h-10 w-full justify-start rounded-none px-0 text-xs"
             aria-label={`Comments, ${comments.length} loaded of ${conversationCount}`}
           >
-            <MessageSquare size={13} aria-hidden className="text-muted-foreground" />
+            <MessageSquare
+              size={13}
+              aria-hidden
+              className="text-muted-foreground"
+            />
             <span>Comments</span>
-            <Badge variant="ghost" size="sm" className="ml-auto text-muted-foreground">
+            <Badge
+              variant="ghost"
+              size="sm"
+              className="ml-auto text-muted-foreground"
+            >
               {conversationCount}
             </Badge>
             <ChevronDown
@@ -649,17 +604,25 @@ function PullRequestSummaryComponent({
         </CollapsibleTrigger>
         <CollapsibleContent className="px-3 pb-3">
           {commentsLoading && comments.length === 0 ? (
-            <p role="status" className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+            <p
+              role="status"
+              className="flex items-center gap-2 py-3 text-xs text-muted-foreground"
+            >
               <Spinner size="xs" aria-hidden />
               Loading comments
             </p>
           ) : commentsLoaded && comments.length === 0 ? (
-            <p className="py-3 text-xs text-muted-foreground">No comments yet.</p>
+            <p className="py-3 text-xs text-muted-foreground">
+              No comments yet.
+            </p>
           ) : (
             <ConversationList comments={comments} />
           )}
           {commentsBoundedData ? (
-            <BoundedDataNotice marker={commentsBoundedData} subject="comments" />
+            <BoundedDataNotice
+              marker={commentsBoundedData}
+              subject="comments"
+            />
           ) : commentsHasMore && onLoadMoreComments ? (
             <Button
               type="button"

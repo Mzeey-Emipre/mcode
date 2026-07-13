@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ResizableRightPanel } from "@/components/panels/ResizableRightPanel";
 import { SidebarRevealButton } from "@/components/sidebar/SidebarRevealButton";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { cn } from "@/lib/utils";
@@ -10,6 +11,9 @@ import { PullRequestDetailPane } from "./PullRequestDetailPane";
 import { PullRequestInbox } from "./PullRequestInbox";
 
 const MASTER_DETAIL_MIN_WIDTH = 880;
+const INBOX_MIN_WIDTH = 360;
+const INBOX_DEFAULT_WIDTH = 480;
+const DETAIL_MIN_WIDTH = 520;
 
 /** Props for the pull request master-detail surface. */
 export interface PullRequestSurfaceProps {
@@ -27,9 +31,21 @@ export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
   const listboxRef = useRef<HTMLDivElement>(null);
   const detailBackButtonRef = useRef<HTMLButtonElement>(null);
   const originScrollTopRef = useRef(0);
+  const [detailWidthOverride, setDetailWidthOverride] = useState<number | null>(
+    null,
+  );
   const width = useElementWidth(surfaceRef);
   const isWide = width >= MASTER_DETAIL_MIN_WIDTH;
   const isNarrow = !isWide;
+  const detailMaxWidth = Math.max(DETAIL_MIN_WIDTH, width - INBOX_MIN_WIDTH);
+  const defaultDetailWidth = Math.min(
+    detailMaxWidth,
+    Math.max(DETAIL_MIN_WIDTH, width - INBOX_DEFAULT_WIDTH),
+  );
+  const detailWidth = Math.min(
+    detailMaxWidth,
+    Math.max(DETAIL_MIN_WIDTH, detailWidthOverride ?? defaultDetailWidth),
+  );
 
   useEffect(() => {
     usePullRequestDetailStore.getState().close(transport);
@@ -59,6 +75,23 @@ export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
     });
   }, [transport]);
 
+  const getDetailMaxWidth = useCallback(
+    () => Math.max(DETAIL_MIN_WIDTH, width - INBOX_MIN_WIDTH),
+    [width],
+  );
+
+  const detailPane = activeKey ? (
+    <PullRequestDetailPane
+      identityKey={activeKey}
+      summaryFallback={activeSummary}
+      isNarrow={isNarrow}
+      reserveSidebarReveal={sidebarCollapsed && isNarrow}
+      onClose={closeDetail}
+      backButtonRef={detailBackButtonRef}
+      transport={transport}
+    />
+  ) : null;
+
   return (
     <section
       ref={surfaceRef}
@@ -79,15 +112,10 @@ export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
           className={cn(
             "flex min-h-0 min-w-0 flex-col bg-page",
             !activeKey && isWide && "w-full",
-            activeKey && isWide && "min-w-[360px] max-w-[520px] shrink-0",
+            activeKey && isWide && "min-w-[360px] flex-1",
             isNarrow && "flex-1",
             isNarrow && activeKey && "hidden",
           )}
-          style={
-            activeKey && isWide
-              ? { flexBasis: "calc(100% - 540px)" }
-              : undefined
-          }
         >
           <PullRequestInbox
             transport={transport}
@@ -98,21 +126,35 @@ export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
           />
         </div>
 
-        {activeKey ? (
+        {activeKey && isWide ? (
+          <ResizableRightPanel
+            key={activeKey}
+            testId="pull-request-detail-panel"
+            width={detailWidth}
+            minWidth={DETAIL_MIN_WIDTH}
+            maxWidth={`calc(100% - ${INBOX_MIN_WIDTH}px)`}
+            getMaxWidth={getDetailMaxWidth}
+            defaultWidth={defaultDetailWidth}
+            wideWidth={detailMaxWidth}
+            separatorLabel="Resize pull request detail"
+            onWidthChange={setDetailWidthOverride}
+            className="flex shrink-0 overflow-hidden"
+          >
+            <div
+              key={activeKey}
+              data-testid="pull-request-detail-reveal"
+              className="pull-request-detail-enter flex min-w-0 flex-1"
+            >
+              {detailPane}
+            </div>
+          </ResizableRightPanel>
+        ) : activeKey ? (
           <div
             key={activeKey}
             data-testid="pull-request-detail-reveal"
             className="pull-request-detail-enter flex min-w-0 flex-1"
           >
-            <PullRequestDetailPane
-              identityKey={activeKey}
-              summaryFallback={activeSummary}
-              isNarrow={isNarrow}
-              reserveSidebarReveal={sidebarCollapsed && isNarrow}
-              onClose={closeDetail}
-              backButtonRef={detailBackButtonRef}
-              transport={transport}
-            />
+            {detailPane}
           </div>
         ) : null}
       </div>

@@ -1,45 +1,26 @@
 import type {
+  PullRequestCheckState,
   PullRequestDetail,
-  PullRequestCapabilities,
   PullRequestMergeability,
-  PullRequestRef,
+  PullRequestReviewer,
   PullRequestSummary as PullRequestSummaryRecord,
 } from "@mcode/contracts";
-import { ArrowLeft, ExternalLink, GitBranch, X } from "lucide-react";
-import { memo, type Ref } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  CheckCircle2,
+  ChevronRight,
+  GitBranch,
+  MessageSquare,
+  Users,
+} from "lucide-react";
+import { memo } from "react";
 import { formatRelative } from "@/lib/format-relative";
 import { cn } from "@/lib/utils";
-import { safePullRequestHttpUrl } from "./safePullRequestHttpUrl";
-import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
-import type { PullRequestTransport } from "@/transport/pull-requests";
-import { PullRequestLifecycleActions } from "./PullRequestLifecycleActions";
 
-/** Props for the persistent pull request detail header. */
+/** Props for the pull request identity block rendered inside Summary. */
 export interface PullRequestDetailHeaderProps {
-  /** Provider-neutral detail record displayed across every detail tab. */
   detail?: PullRequestDetail | null;
-  /** Selected inbox record retained while full detail is loading or unavailable. */
   summaryFallback?: PullRequestSummaryRecord | null;
-  /** Uses the compact header treatment for narrow detail surfaces. */
   isNarrow?: boolean;
-  /** Reserves the compact header slot occupied by the collapsed-sidebar control. */
-  reserveSidebarReveal?: boolean;
-  /** Shows the optional back action when a callback is available. */
-  showBack?: boolean;
-  /** Returns a narrow detail surface to the pull request inbox. */
-  onBack?: () => void;
-  /** Optional focus target for the narrow back action. */
-  backButtonRef?: Ref<HTMLButtonElement>;
-  /** Closes the pull request detail surface. */
-  onClose?: () => void;
-  /** Independently gated remote actions shown only after capabilities resolve. */
-  capabilities?: PullRequestCapabilities | null;
-  mutationTransport?: PullRequestMutationTransport;
-  readTransport?: PullRequestTransport;
-  /** Refreshes the selected remote state before a stale confirmation is rebuilt. */
-  onRefresh?: () => Promise<boolean> | boolean;
 }
 
 function titleCase(value: string): string {
@@ -49,223 +30,161 @@ function titleCase(value: string): string {
     .join(" ");
 }
 
-function refLabel(ref: PullRequestRef): string {
-  return ref.owner ? `${ref.owner}:${ref.name}` : ref.name;
-}
-
 function mergeabilityTone(mergeability: PullRequestMergeability): string {
   if (mergeability === "mergeable") return "text-[var(--diff-add-strong)]";
   if (mergeability === "conflicting") return "text-destructive";
   return "text-muted-foreground";
 }
 
+function checkTone(state: PullRequestCheckState): string {
+  if (state === "passing") return "text-[var(--diff-add-strong)]";
+  if (state === "failing" || state === "cancelled") return "text-destructive";
+  if (state === "pending") return "text-primary";
+  return "text-muted-foreground";
+}
+
+function checkLabel(state: PullRequestCheckState): string {
+  return state === "passing"
+    ? "Checks successful"
+    : `${titleCase(state)} checks`;
+}
+
+function reviewerLabel(reviewer: PullRequestReviewer): string {
+  if (reviewer.target.kind === "user") return reviewer.target.actor.login;
+  return `${reviewer.target.organization}/${reviewer.target.slug}`;
+}
+
 function PullRequestDetailHeaderComponent({
   detail,
   summaryFallback = null,
   isNarrow = false,
-  reserveSidebarReveal = false,
-  showBack = false,
-  onBack,
-  backButtonRef,
-  onClose,
-  capabilities,
-  mutationTransport,
-  readTransport,
-  onRefresh,
 }: PullRequestDetailHeaderProps) {
   const model = detail ?? summaryFallback;
   if (!model) return null;
 
-  const repository = `${model.identity.owner}/${model.identity.repository}`;
   const actor = model.author ? `@${model.author.login}` : "Unknown author";
-  const browserUrl = safePullRequestHttpUrl(model.url);
+  const readiness = model.readiness === "ready" ? "Ready for review" : "Draft";
+  const reviewers = detail?.reviewers ?? [];
+  const conversationCount =
+    model.commentCount + (detail?.reviewThreadCount ?? 0);
 
   return (
     <header
-      aria-label="Pull request detail"
-      className={cn("shrink-0 bg-page px-4 py-3", isNarrow && "px-3 py-2")}
+      aria-label="Pull request summary identity"
+      className="bg-background"
     >
       <div
-        className={cn("flex min-w-0 items-center gap-2", isNarrow && "min-h-8")}
+        className={cn(
+          "mx-auto w-full max-w-5xl",
+          isNarrow ? "px-4 pb-5 pt-6" : "px-6 pb-6 pt-8",
+        )}
       >
-        {isNarrow && reserveSidebarReveal && (
-          <span
-            aria-hidden
-            data-testid="pull-request-sidebar-reveal-spacer"
-            className="w-8 shrink-0"
-          />
-        )}
-        {showBack && onBack && (
-          <Button
-            ref={backButtonRef}
-            type="button"
-            variant="ghost"
-            size="xs"
-            className="-ml-2 gap-1.5 px-2 font-medium text-foreground/85 hover:text-foreground"
-            aria-label="Back to pull requests"
-            onClick={onBack}
-          >
-            <ArrowLeft size={14} aria-hidden />
-            <span>Pull requests</span>
-          </Button>
-        )}
-        {!isNarrow && (
-          <>
-            <span className="truncate font-mono text-xs text-muted-foreground">
-              {repository}
-            </span>
-            <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground/70">
-              #{model.identity.number}
-            </span>
-          </>
-        )}
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          {detail && capabilities !== undefined && onRefresh ? (
-            <PullRequestLifecycleActions
-              detail={detail}
-              capabilities={capabilities}
-              isNarrow={isNarrow}
-              mutationTransport={mutationTransport}
-              readTransport={readTransport}
-              onRefresh={onRefresh}
-            />
+        <h2 className="break-words text-xl font-semibold leading-tight text-foreground [text-wrap:pretty]">
+          {model.title}
+        </h2>
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>{actor}</span>
+          <span aria-hidden>·</span>
+          <time dateTime={model.updatedAt} className="tabular-nums">
+            {formatRelative(model.updatedAt)}
+          </time>
+          <span aria-hidden>·</span>
+          <span>{readiness}</span>
+          {detail ? (
+            <>
+              <span aria-hidden>·</span>
+              <span className={mergeabilityTone(detail.mergeability)}>
+                {titleCase(detail.mergeability)}
+              </span>
+            </>
           ) : null}
-          {browserUrl && (
-            <a
-              href={browserUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open in browser"
-              className={cn(
-                buttonVariants({
-                  variant: "ghost",
-                  size: isNarrow ? "icon-xs" : "xs",
-                }),
-                "text-xs text-muted-foreground",
-                !isNarrow && "px-2",
-              )}
-            >
-              {!isNarrow && <span>Open in browser</span>}
-              <ExternalLink size={12} aria-hidden />
-            </a>
-          )}
-          {onClose && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="text-muted-foreground"
-              aria-label="Close pull request detail"
-              onClick={onClose}
-            >
-              <X size={14} aria-hidden />
-            </Button>
-          )}
         </div>
-      </div>
 
-      {isNarrow && (
-        <div
-          data-testid="pull-request-detail-context"
-          className="mt-1 flex min-w-0 items-center gap-2"
-        >
-          <span className="truncate font-mono text-xs text-muted-foreground">
-            {repository}
-          </span>
-          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground/70">
-            #{model.identity.number}
-          </span>
-        </div>
-      )}
+        <dl className="mt-7 space-y-3 text-xs">
+          <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3">
+            <dt className="flex items-center gap-2 text-muted-foreground">
+              <GitBranch size={14} aria-hidden />
+              Branch
+            </dt>
+            <dd className="flex min-w-0 items-center gap-2 font-mono">
+              <span
+                aria-label={`Head branch ${model.head.name}`}
+                className="min-w-0 truncate text-foreground/90"
+              >
+                {model.head.name}
+              </span>
+              <ChevronRight
+                size={13}
+                aria-hidden
+                className="shrink-0 text-muted-foreground/55"
+              />
+              <span
+                aria-label={`Base branch ${model.base.name}`}
+                className="min-w-0 truncate text-foreground/90"
+              >
+                {model.base.name}
+              </span>
+              <span
+                aria-label={`${model.additions} additions`}
+                className="ml-1 shrink-0 text-[var(--diff-add-strong)]"
+              >
+                +{model.additions}
+              </span>
+              <span
+                aria-label={`${model.deletions} deletions`}
+                className="shrink-0 text-[var(--diff-remove-strong)]"
+              >
+                −{model.deletions}
+              </span>
+            </dd>
+          </div>
 
-      <h2
-        className={cn(
-          "max-w-4xl break-words font-semibold leading-tight text-foreground [text-wrap:pretty]",
-          isNarrow ? "mt-2 text-lg" : "mt-1.5 text-lg",
-        )}
-      >
-        {model.title}
-      </h2>
+          <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3">
+            <dt className="flex items-center gap-2 text-muted-foreground">
+              <Users size={14} aria-hidden />
+              Reviewers
+            </dt>
+            <dd className="truncate text-foreground/90">
+              {!detail
+                ? "Loading"
+                : reviewers.length > 0
+                ? reviewers.map(reviewerLabel).join(" · ")
+                : "No reviewers"}
+            </dd>
+          </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>{actor}</span>
-        <time dateTime={model.updatedAt} className="font-mono tabular-nums">
-          {formatRelative(model.updatedAt)}
-        </time>
-        <Badge variant="ghost" size="sm" className="capitalize">
-          {titleCase(model.state)}
-        </Badge>
-        <Badge variant="ghost" size="sm" className="capitalize">
-          {titleCase(model.readiness)}
-        </Badge>
-        {detail && (
-          <Badge
-            variant="ghost"
-            size="sm"
-            className={cn("capitalize", mergeabilityTone(detail.mergeability))}
-          >
-            {titleCase(detail.mergeability)}
-          </Badge>
-        )}
-      </div>
+          <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3">
+            <dt className="flex items-center gap-2 text-muted-foreground">
+              <MessageSquare size={14} aria-hidden />
+              Comments
+            </dt>
+            <dd className="text-foreground/90">
+              {conversationCount}{" "}
+              {conversationCount === 1 ? "comment" : "comments"}
+            </dd>
+          </div>
 
-      <div
-        className={cn(
-          "mt-3 flex bg-background/35 px-3 py-2 font-mono text-xs",
-          isNarrow
-            ? "flex-col items-stretch gap-2"
-            : "flex-wrap items-center gap-x-5 gap-y-2",
-        )}
-      >
-        <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-          <GitBranch size={13} aria-hidden className="shrink-0" />
-          <span
-            aria-label={`Base branch ${model.base.name}`}
-            className="min-w-0 flex-1 truncate"
-          >
-            {refLabel(model.base)}
-          </span>
-          <ArrowLeft size={12} aria-hidden className="shrink-0 opacity-45" />
-          <span
-            aria-label={`Head branch ${model.head.name}`}
-            className="min-w-0 flex-1 truncate text-foreground/85"
-          >
-            {refLabel(model.head)}
-          </span>
-        </span>
-        <span
-          className={cn(
-            "flex items-center gap-3 tabular-nums",
-            isNarrow ? "justify-end" : "ml-auto",
-          )}
-        >
-          <span
-            aria-label={`${model.additions} additions`}
-            className="text-[var(--diff-add-strong)]"
-          >
-            +{model.additions}
-          </span>
-          <span
-            aria-label={`${model.deletions} deletions`}
-            className="text-[var(--diff-remove-strong)]"
-          >
-            −{model.deletions}
-          </span>
-          {detail && (
-            <span
-              aria-label={`${detail.changedFiles} changed files`}
-              className="text-muted-foreground"
-            >
-              {detail.changedFiles} files
-            </span>
-          )}
-        </span>
+          <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3">
+            <dt className="flex items-center gap-2 text-muted-foreground">
+              <CheckCircle2
+                size={14}
+                aria-hidden
+                className={checkTone(model.checks.state)}
+              />
+              Checks
+            </dt>
+            <dd className="text-foreground/90">
+              {checkLabel(model.checks.state)}
+            </dd>
+          </div>
+        </dl>
       </div>
     </header>
   );
 }
 
-/** Persistent identity and merge context shared by pull request detail tabs. */
+/** Pull request identity and orientation shown once inside the Summary view. */
 export const PullRequestDetailHeader = memo(PullRequestDetailHeaderComponent);
 
 PullRequestDetailHeader.displayName = "PullRequestDetailHeader";

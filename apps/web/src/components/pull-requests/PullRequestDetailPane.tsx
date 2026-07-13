@@ -9,7 +9,7 @@ import {
   type KeyboardEvent,
   type Ref,
 } from "react";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import type {
   PullRequestBoundedDataMarker,
   PullRequestCapability,
@@ -37,6 +37,7 @@ import type { PullRequestReviewTaskTransport } from "@/transport/pull-request-re
 import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
 import { useShallow } from "zustand/shallow";
 import { PullRequestDetailHeader } from "./PullRequestDetailHeader";
+import { PullRequestDetailToolbar } from "./PullRequestDetailToolbar";
 import { PullRequestSummary } from "./PullRequestSummary";
 import { PullRequestTimeline } from "./PullRequestTimeline";
 import { PullRequestReviewTaskDialog } from "./PullRequestReviewTaskDialog";
@@ -92,6 +93,7 @@ interface PullRequestSummaryPanelProps {
   onReviewChangeStack?: () => void;
   reviewChangeStackAllowed: boolean;
   reviewChangeStackUnavailableReason: string | null;
+  isNarrow: boolean;
 }
 
 const PullRequestSummaryPanel = memo(function PullRequestSummaryPanel({
@@ -102,6 +104,7 @@ const PullRequestSummaryPanel = memo(function PullRequestSummaryPanel({
   onReviewChangeStack,
   reviewChangeStackAllowed,
   reviewChangeStackUnavailableReason,
+  isNarrow,
 }: PullRequestSummaryPanelProps) {
   const resources = usePullRequestDetailStore(
     useShallow(selectPullRequestSummaryResources(identityKey)),
@@ -114,6 +117,7 @@ const PullRequestSummaryPanel = memo(function PullRequestSummaryPanel({
 
   return (
     <ScrollArea className="min-h-0 flex-1">
+      <PullRequestDetailHeader detail={detail} isNarrow={isNarrow} />
       {summaryError && (
         <div
           role="status"
@@ -469,6 +473,42 @@ export function PullRequestDetailPane({
     tabRefs.current[nextIndex]?.focus();
   };
 
+  const detailTabs = (
+    <div
+      role="tablist"
+      aria-label="Pull request detail views"
+      className="flex h-full items-center gap-1"
+    >
+      {DETAIL_TABS.map((tab, index) => (
+        <Button
+          key={tab}
+          ref={(node) => {
+            tabRefs.current[index] = node;
+          }}
+          id={tabId(tab)}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === tab}
+          aria-controls="pull-request-detail-tabpanel"
+          tabIndex={activeTab === tab ? 0 : -1}
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "h-8 rounded-md px-3 text-xs font-medium capitalize",
+            activeTab === tab
+              ? "bg-muted text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          disabled={!core.detail && tab !== "summary"}
+          onClick={() => changeTab(tab)}
+          onKeyDown={(event) => handleTabKeyDown(event, index)}
+        >
+          {tab}
+        </Button>
+      ))}
+    </div>
+  );
+
   if (!core.exists || !core.lane) return null;
   const detailLane = core.lane;
   if (!core.detail) {
@@ -477,15 +517,19 @@ export function PullRequestDetailPane({
         aria-label="Pull request detail"
         className="flex min-h-0 flex-1 flex-col bg-page"
       >
+        <PullRequestDetailToolbar
+          model={summaryFallback}
+          tabs={detailTabs}
+          isNarrow={isNarrow}
+          reserveSidebarReveal={reserveSidebarReveal}
+          onBack={isNarrow ? onClose : undefined}
+          backButtonRef={backButtonRef}
+          onClose={isNarrow ? undefined : onClose}
+        />
         <PullRequestDetailHeader
           detail={null}
           summaryFallback={summaryFallback}
           isNarrow={isNarrow}
-          reserveSidebarReveal={reserveSidebarReveal}
-          showBack={isNarrow}
-          onBack={isNarrow ? onClose : undefined}
-          backButtonRef={backButtonRef}
-          onClose={isNarrow ? undefined : onClose}
         />
         <div className="flex min-h-0 flex-1 items-center justify-center">
           {detailLane.status === "error" ? (
@@ -539,12 +583,12 @@ export function PullRequestDetailPane({
           onClose();
         }}
       >
-        <PullRequestDetailHeader
+        <PullRequestDetailToolbar
+          model={core.detail}
           detail={core.detail}
-          summaryFallback={summaryFallback}
+          tabs={detailTabs}
           isNarrow={isNarrow}
           reserveSidebarReveal={reserveSidebarReveal}
-          showBack={isNarrow}
           onBack={isNarrow ? onClose : undefined}
           backButtonRef={backButtonRef}
           onClose={isNarrow ? undefined : onClose}
@@ -552,6 +596,15 @@ export function PullRequestDetailPane({
           mutationTransport={mutationTransport}
           readTransport={transport}
           onRefresh={refreshSelected}
+          onRefreshClick={() => {
+            void usePullRequestMutationStore
+              .getState()
+              .acknowledgeOutcomeUnknownAfterRefresh(
+                core.detail!.identity,
+                refreshSelected,
+              );
+          }}
+          refreshing={detailLane.status === "refreshing"}
         />
 
         {detailLane.stale && detailLane.error && (
@@ -573,66 +626,6 @@ export function PullRequestDetailPane({
         )}
 
         <div
-          role="tablist"
-          aria-label="Pull request detail views"
-          className={cn(
-            "flex h-10 shrink-0 items-end gap-1 bg-page",
-            isNarrow ? "px-3" : "px-4",
-          )}
-        >
-          {DETAIL_TABS.map((tab, index) => (
-            <Button
-              key={tab}
-              ref={(node) => {
-                tabRefs.current[index] = node;
-              }}
-              id={tabId(tab)}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === tab}
-              aria-controls="pull-request-detail-tabpanel"
-              tabIndex={activeTab === tab ? 0 : -1}
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "relative h-8 rounded-none px-2 text-xs font-medium capitalize",
-                activeTab === tab
-                  ? "text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-primary"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-              onClick={() => changeTab(tab)}
-              onKeyDown={(event) => handleTabKeyDown(event, index)}
-            >
-              {tab}
-            </Button>
-          ))}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Refresh pull request detail"
-            className="mb-1 ml-auto text-muted-foreground"
-            onClick={() => {
-              if (!core.detail) return;
-              void usePullRequestMutationStore
-                .getState()
-                .acknowledgeOutcomeUnknownAfterRefresh(
-                  core.detail.identity,
-                  refreshSelected,
-                );
-            }}
-          >
-            <RefreshCw
-              size={13}
-              aria-hidden
-              className={
-                detailLane.status === "refreshing" ? "animate-spin" : undefined
-              }
-            />
-          </Button>
-        </div>
-
-        <div
           id="pull-request-detail-tabpanel"
           role="tabpanel"
           aria-labelledby={tabId(activeTab)}
@@ -649,6 +642,7 @@ export function PullRequestDetailPane({
               }
               reviewChangeStackAllowed={reviewTaskAllowed}
               reviewChangeStackUnavailableReason={reviewTaskReason}
+              isNarrow={isNarrow}
             />
           ) : activeTab === "timeline" ? (
             <PullRequestTimelinePanel

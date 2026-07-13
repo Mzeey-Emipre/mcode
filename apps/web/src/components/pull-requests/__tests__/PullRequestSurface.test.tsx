@@ -192,7 +192,9 @@ describe("PullRequestSurface", () => {
     expect(
       await screen.findByTestId("pull-request-sidebar-reveal-spacer"),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Expand sidebar" }),
+    ).toBeVisible();
     expect(screen.getByRole("button", { name: "Back to inbox" })).toBeVisible();
   });
 
@@ -224,13 +226,11 @@ describe("PullRequestSurface", () => {
   it("keeps the wide inbox focused until the user explicitly activates a pull request", async () => {
     const transport = fakeTransport();
     seedSelection();
-    layout.width = 880;
+    layout.width = 1_000;
     const view = renderSurface(transport);
 
     expect(screen.queryByLabelText("Selected pull request")).toBeNull();
-    expect(screen.getByTestId("pull-request-inbox-pane")).toHaveClass(
-      "w-full",
-    );
+    expect(screen.getByTestId("pull-request-inbox-pane")).toHaveClass("w-full");
     expect(
       screen.getByRole("listbox", { name: "Pull requests" }).closest("section"),
     ).toHaveAttribute("data-layout", "master-detail");
@@ -241,13 +241,23 @@ describe("PullRequestSurface", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("Selected pull request")).toBeVisible(),
     );
-    expect(screen.getByTestId("pull-request-inbox-pane")).toHaveStyle({
-      flexBasis: "calc(100% - 540px)",
-    });
     expect(screen.getByTestId("pull-request-inbox-pane")).toHaveClass(
       "min-w-[360px]",
-      "max-w-[520px]",
+      "flex-1",
     );
+    expect(
+      screen.getByRole("separator", { name: "Resize pull request detail" }),
+    ).toBeVisible();
+
+    const detailPanel = screen.getByTestId("pull-request-detail-panel");
+    const initialWidth = Number.parseFloat(detailPanel.style.width);
+    fireEvent.mouseDown(
+      screen.getByRole("separator", { name: "Resize pull request detail" }),
+      { clientX: 540 },
+    );
+    fireEvent.mouseMove(document, { clientX: 500 });
+    fireEvent.mouseUp(document);
+    expect(Number.parseFloat(detailPanel.style.width)).toBe(initialWidth + 40);
 
     view.unmount();
   });
