@@ -1,6 +1,7 @@
 import { memo, useState, useEffect, useCallback, useRef, useId, useMemo } from "react";
 import { Copy, Check, Code2, GitGraph } from "lucide-react";
 import { useShikiTheme } from "@/hooks/useTheme";
+import { MermaidPreviewDialog } from "./MermaidPreviewDialog";
 
 /** Props for {@link MermaidBlock}. */
 interface MermaidBlockProps {
@@ -134,6 +135,7 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
 
   const [state, setState] = useState<RenderState>({ status: "loading" });
   const [view, setView] = useState<"diagram" | "code">("diagram");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -279,11 +281,30 @@ const MermaidBlock = memo(function MermaidBlock({ code, isStreaming }: MermaidBl
         </pre>
       )}
       {state.status === "success" && view === "diagram" && (
-        <div
-          className="p-3 overflow-x-auto bg-background"
-          // SVG is sanitized by mermaid's bundled DOMPurify with securityLevel "strict"
-          dangerouslySetInnerHTML={{ __html: state.svg }}
-        />
+        <>
+          <button
+            type="button"
+            aria-label="Open diagram preview"
+            className={[
+              "group/diagram block w-full cursor-zoom-in overflow-x-auto bg-background p-3 text-left",
+              "outline-none transition-colors hover:bg-muted/15",
+              "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              "motion-reduce:transition-none",
+            ].join(" ")}
+            onClick={() => setPreviewOpen(true)}
+          >
+            <span
+              className="block min-w-fit [&_svg]:mx-auto"
+              // SVG is sanitized by mermaid's bundled DOMPurify with securityLevel "strict"
+              dangerouslySetInnerHTML={{ __html: state.svg }}
+            />
+          </button>
+          <MermaidPreviewDialog
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
+            svg={state.svg}
+          />
+        </>
       )}
       {state.status === "success" && view === "code" && (
         <pre className="bg-muted text-foreground p-3 overflow-x-auto text-sm font-mono leading-relaxed">

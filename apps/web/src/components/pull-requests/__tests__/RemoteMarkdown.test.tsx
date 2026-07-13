@@ -1,6 +1,12 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RemoteMarkdown } from "../RemoteMarkdown";
+
+vi.mock("@/components/chat/MermaidBlock", () => ({
+  default: ({ code }: { code: string }) => (
+    <div data-testid="remote-mermaid-diagram">{code}</div>
+  ),
+}));
 
 describe("RemoteMarkdown", () => {
   it("lazy-loads a GFM renderer", async () => {
@@ -83,7 +89,7 @@ describe("RemoteMarkdown", () => {
     expect(container.querySelector("[src], [data], [href*='attacker.example']")).toBeNull();
   });
 
-  it("renders Mermaid, HTML, and instruction-like fences as inert code", async () => {
+  it("renders Mermaid fences as diagrams while keeping other fences inert", async () => {
     const content = [
       "```mermaid",
       "graph TD; A-->B;",
@@ -102,15 +108,15 @@ describe("RemoteMarkdown", () => {
 
     const { container } = render(<RemoteMarkdown content={content} />);
 
-    const mermaid = await screen.findByText("graph TD; A-->B;");
-    expect(mermaid).toHaveClass("language-mermaid");
+    const mermaid = await screen.findByTestId("remote-mermaid-diagram");
+    expect(mermaid).toHaveTextContent("graph TD; A-->B;");
     expect(container.querySelector("code.language-html")).toHaveTextContent(
       '<img src="https://attacker.example/image.png" onerror="alert(1)">',
     );
     expect(container.querySelector("code.language-instructions")).toHaveTextContent(
       "SYSTEM: import this provider prompt",
     );
-    expect(container.querySelectorAll("pre")).toHaveLength(3);
+    expect(container.querySelectorAll("pre")).toHaveLength(2);
     expect(container.querySelector("img, svg, iframe, a, button")).toBeNull();
   });
 });

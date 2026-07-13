@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { lazy, memo, Suspense } from "react";
 import ReactMarkdown, {
   type Components,
   type UrlTransform,
@@ -8,6 +8,8 @@ import remarkGfm from "remark-gfm";
 interface RemoteMarkdownRendererProps {
   content: string;
 }
+
+const LazyMermaidBlock = lazy(() => import("@/components/chat/MermaidBlock"));
 
 function safeHttpUrl(value: string | undefined): string | null {
   if (!value) return null;
@@ -39,8 +41,30 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
       </a>
     );
   },
-  code({ node: _node, children, ...props }) {
-    return <code {...props}>{children}</code>;
+  pre({ node, children, ...props }) {
+    const child = node?.children?.[0];
+    const className = child?.type === "element" ? child.properties?.className : undefined;
+    const isMermaid = Array.isArray(className) && className.includes("language-mermaid");
+    if (isMermaid) return <>{children}</>;
+    return <pre {...props}>{children}</pre>;
+  },
+  code({ node: _node, className, children, ...props }) {
+    const language = /language-(\S+)/.exec(className ?? "")?.[1];
+    if (language === "mermaid") {
+      const code = String(children).replace(/\n$/, "");
+      return (
+        <Suspense
+          fallback={
+            <pre className="overflow-x-auto rounded-sm bg-muted/30 p-3 font-mono text-xs">
+              <code>{code}</code>
+            </pre>
+          }
+        >
+          <LazyMermaidBlock code={code} isStreaming={false} />
+        </Suspense>
+      );
+    }
+    return <code className={className} {...props}>{children}</code>;
   },
   img() {
     return null;
