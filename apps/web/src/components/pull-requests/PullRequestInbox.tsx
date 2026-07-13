@@ -386,7 +386,7 @@ export function PullRequestInbox({
     <div
       className={cn(
         "flex min-h-0 flex-1 flex-col bg-page",
-        spacious && "lg:pl-6 xl:pl-12",
+        spacious && "items-center lg:px-6 xl:px-12",
       )}
     >
       <div
@@ -490,7 +490,7 @@ export function PullRequestInbox({
         id={RELATIONSHIP_PANEL_ID}
         role="tabpanel"
         aria-labelledby={relationshipTabId(relationship)}
-        className="flex min-h-0 flex-1 flex-col"
+        className="flex min-h-0 w-full max-w-[720px] flex-1 flex-col"
       >
         {teamLimitation && (
           <p className="mx-5 mb-2 flex max-w-[680px] items-start gap-2 bg-muted/35 px-2.5 py-2 text-xs text-muted-foreground">
