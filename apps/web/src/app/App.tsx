@@ -380,9 +380,10 @@ export function App() {
               />
               <div
                 data-testid="sidebar-floating"
-                className="fixed bottom-1.5 left-1.5 top-1.5 z-50 flex w-72 overflow-hidden rounded-lg shadow-xl ring-1 ring-border/40"
+                className="fixed bottom-1.5 left-1.5 top-1.5 z-50 flex w-72 overflow-hidden rounded-lg bg-page shadow-xl ring-1 ring-border/40"
               >
                 <Sidebar
+                  className="w-full max-w-none"
                   settingsOpen={false}
                   settingsSection={settingsSection}
                   onSettingsSection={setSettingsSection}

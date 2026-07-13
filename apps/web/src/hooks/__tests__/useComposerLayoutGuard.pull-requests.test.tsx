@@ -21,10 +21,14 @@ function LayoutHarness({
   outerWidth,
   contentWidth,
   showPullRequests = true,
+  showLanding = true,
+  activeWorkspaceId = null,
 }: {
   outerWidth: number;
   contentWidth: number;
   showPullRequests?: boolean;
+  showLanding?: boolean;
+  activeWorkspaceId?: string | null;
 }) {
   const outerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -41,9 +45,9 @@ function LayoutHarness({
 
   useComposerLayoutGuard(outerRef, contentRef, {
     settingsOpen: false,
-    showLanding: true,
+    showLanding,
     showPullRequests,
-    activeWorkspaceId: null,
+    activeWorkspaceId,
     activeThreadId: null,
   });
   return null;
@@ -58,7 +62,7 @@ function triggerResize(): void {
   });
 }
 
-describe("useComposerLayoutGuard Pull requests layout", () => {
+describe("useComposerLayoutGuard responsive sidebar", () => {
   beforeEach(() => {
     resizeCallback = null;
     frameCallback = null;
@@ -82,13 +86,14 @@ describe("useComposerLayoutGuard Pull requests layout", () => {
     vi.unstubAllGlobals();
   });
 
-  it("collapses a docked sidebar at narrow widths and restores it when room returns", async () => {
+  it("floats a docked sidebar at narrow widths and restores it inline when room returns", async () => {
     const view = render(<LayoutHarness outerWidth={420} contentWidth={188} />);
 
     await waitFor(() =>
       expect(useUiStore.getState()).toMatchObject({
-        sidebarCollapsed: true,
-        sidebarCollapsedByLayout: true,
+        sidebarCollapsed: false,
+        sidebarCollapsedByLayout: false,
+        sidebarFloating: true,
       }),
     );
 
@@ -119,7 +124,27 @@ describe("useComposerLayoutGuard Pull requests layout", () => {
     });
   });
 
-  it("preserves the existing landing guard outside Pull requests", () => {
+  it("floats the open sidebar when a new-thread canvas becomes narrow", async () => {
+    render(
+      <LayoutHarness
+        outerWidth={420}
+        contentWidth={188}
+        showPullRequests={false}
+        showLanding={false}
+        activeWorkspaceId="workspace-1"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(useUiStore.getState()).toMatchObject({
+        sidebarCollapsed: false,
+        sidebarCollapsedByLayout: false,
+        sidebarFloating: true,
+      }),
+    );
+  });
+
+  it("floats the open sidebar when the projectless landing canvas becomes narrow", async () => {
     render(
       <LayoutHarness
         outerWidth={420}
@@ -128,10 +153,13 @@ describe("useComposerLayoutGuard Pull requests layout", () => {
       />,
     );
 
-    expect(useUiStore.getState()).toMatchObject({
-      sidebarCollapsed: false,
-      sidebarCollapsedByLayout: false,
-    });
-    expect(resizeCallback).toBeNull();
+    await waitFor(() =>
+      expect(useUiStore.getState()).toMatchObject({
+        sidebarCollapsed: false,
+        sidebarCollapsedByLayout: false,
+        sidebarFloating: true,
+      }),
+    );
+    expect(resizeCallback).not.toBeNull();
   });
 });

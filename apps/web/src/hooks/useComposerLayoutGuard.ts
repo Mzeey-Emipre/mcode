@@ -21,7 +21,7 @@ export interface ComposerLayoutGuardOptions {
 
 /**
  * Composer-first responsive guard: on shrink, closes the inline right panel and
- * collapses the docked project tree before the chat/composer can fall below its
+ * floats the docked project tree before the chat/composer can fall below its
  * minimum width. Publishes live row measurements for adaptive open paths.
  */
 export function useComposerLayoutGuard(
@@ -35,12 +35,7 @@ export function useComposerLayoutGuard(
   const rightPanelMaximizedByLayout = useUiStore((s) => s.rightPanelMaximizedByLayout);
 
   useEffect(() => {
-    if (
-      opts.settingsOpen ||
-      (!opts.showPullRequests && (opts.showLanding || !opts.activeWorkspaceId))
-    ) {
-      return;
-    }
+    if (opts.settingsOpen) return;
 
     const outer = outerRowRef.current;
     const content = contentRowRef.current;
@@ -79,14 +74,33 @@ export function useComposerLayoutGuard(
           (contentWidth < COMPOSER_MIN_WIDTH ||
             !canFitInlineSidebar(outerWidth, COMPOSER_MIN_WIDTH))
         ) {
-          ui.collapseSidebar("layout");
+          ui.floatSidebar();
+        }
+        return;
+      }
+
+      const { activeWorkspaceId, activeThreadId } = opts;
+      if (opts.showLanding || !activeWorkspaceId) {
+        if (
+          ui.sidebarFloating &&
+          canFitInlineSidebar(outerWidth, COMPOSER_MIN_WIDTH) &&
+          contentWidth >= COMPOSER_MIN_WIDTH
+        ) {
+          ui.expandSidebar();
+          return;
+        }
+
+        if (
+          sidebarDocked &&
+          (contentWidth < COMPOSER_MIN_WIDTH ||
+            !canFitInlineSidebar(outerWidth, COMPOSER_MIN_WIDTH))
+        ) {
+          ui.floatSidebar();
         }
         return;
       }
 
       const diff = useDiffStore.getState();
-      const { activeWorkspaceId, activeThreadId } = opts;
-      if (!activeWorkspaceId) return;
 
       const panelVisible = diff.getRightPanelVisible(activeWorkspaceId, activeThreadId);
       const panelWidth = diff.getRightPanel(activeWorkspaceId, activeThreadId).width;
@@ -127,7 +141,7 @@ export function useComposerLayoutGuard(
         );
         if (outerWidth < needAll) {
           ui.setRightPanelMaximized(true, "layout");
-          ui.collapseSidebar("layout");
+          ui.floatSidebar();
           return;
         }
       }
@@ -140,7 +154,7 @@ export function useComposerLayoutGuard(
       if (!sidebarDocked) return;
 
       if (contentWidth < contentNeed || !canFitInlineSidebar(outerWidth, contentNeed)) {
-        ui.collapseSidebar("layout");
+        ui.floatSidebar();
       }
     };
 

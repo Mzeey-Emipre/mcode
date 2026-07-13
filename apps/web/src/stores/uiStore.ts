@@ -42,6 +42,8 @@ interface UiState {
   toggleSidebar: () => void;
   /** Expand the project tree inline when there is room, otherwise as a float. */
   expandSidebar: () => void;
+  /** Keep the open project tree visible as a floating panel. */
+  floatSidebar: () => void;
   /** Collapse the project tree and exit floating mode. */
   collapseSidebar: (source?: "user" | "layout") => void;
   /** Restore a sidebar that was collapsed only to protect the layout. */
@@ -100,6 +102,8 @@ export const useUiStore = create<UiState>((set, get) => ({
       getContentRowWidth() >= contentNeed;
     set({ sidebarCollapsed: false, sidebarCollapsedByLayout: false, sidebarFloating: !inline });
   },
+  floatSidebar: () =>
+    set({ sidebarCollapsed: false, sidebarCollapsedByLayout: false, sidebarFloating: true }),
   collapseSidebar: (source = "user") =>
     set({
       sidebarCollapsed: true,

@@ -23,6 +23,8 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;
 
 interface SidebarProps {
+  /** Optional sizing overrides supplied by the sidebar shell. */
+  className?: string;
   /** Whether the settings view is active. */
   settingsOpen?: boolean;
   /** Active settings section. */
@@ -37,6 +39,7 @@ interface SidebarProps {
 
 /** Sidebar component that renders app navigation, project tree, or settings nav. */
 export function Sidebar({
+  className,
   settingsOpen,
   settingsSection,
   onSettingsSection,
@@ -60,6 +63,7 @@ export function Sidebar({
         settingsOpen
           ? "w-40 max-w-[42vw] sm:w-56 md:w-72 md:max-w-none"
           : "w-72 max-w-[55vw] md:max-w-none",
+        className,
       )}
     >
       {/* Header */}

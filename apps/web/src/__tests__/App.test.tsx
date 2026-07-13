@@ -77,7 +77,9 @@ describe("App", () => {
   it("renders the sidebar logo", async () => {
     render(<App />);
     await waitFor(() => {
-      const sidebar = screen.getByTestId("sidebar-docked");
+      const sidebar =
+        screen.queryByTestId("sidebar-docked") ??
+        screen.getByTestId("sidebar-floating");
       expect(within(sidebar).getByRole("img", { name: "Mcode" })).toBeInTheDocument();
     });
   });
@@ -88,6 +90,20 @@ describe("App", () => {
       const main = screen.getByRole("main");
       expect(within(main).getByRole("img", { name: "Mcode" })).toBeInTheDocument();
     });
+  });
+
+  it("gives the floating sidebar an opaque page surface", () => {
+    useUiStore.setState({
+      sidebarCollapsed: false,
+      sidebarCollapsedByLayout: false,
+      sidebarFloating: true,
+    });
+
+    render(<App />);
+
+    const floatingSidebar = screen.getByTestId("sidebar-floating");
+    expect(floatingSidebar).toHaveClass("bg-page");
+    expect(floatingSidebar.firstElementChild).toHaveClass("w-full", "max-w-none");
   });
 
   it("opens the lazy Pull requests surface from primary navigation", async () => {
