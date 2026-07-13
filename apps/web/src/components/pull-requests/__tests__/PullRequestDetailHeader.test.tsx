@@ -22,7 +22,7 @@ function detail(): PullRequestDetail {
     author: {
       providerNodeId: "actor-node",
       login: "octocat",
-      avatarUrl: null,
+      avatarUrl: "https://avatars.githubusercontent.com/u/583231",
       profileUrl: "https://github.com/octocat",
     },
     state: "open",
@@ -85,7 +85,11 @@ describe("PullRequestDetailHeader", () => {
         name: "Keep pull request state legible across surfaces",
       }),
     ).toBeVisible();
-    expect(screen.getByText("@octocat")).toBeVisible();
+    expect(screen.getByText("octocat")).toBeVisible();
+    expect(screen.getByRole("img", { name: "octocat" })).toHaveAttribute(
+      "src",
+      "https://avatars.githubusercontent.com/u/583231",
+    );
     expect(screen.getByText("Ready for review")).toBeVisible();
     expect(screen.getByText("Mergeable")).toBeVisible();
     expect(screen.getByLabelText("Base branch main")).toBeVisible();
@@ -113,7 +117,7 @@ describe("PullRequestDetailHeader", () => {
         name: "Keep pull request state legible across surfaces",
       }),
     ).toBeVisible();
-    expect(screen.getByText("@octocat")).toBeVisible();
+    expect(screen.getByText("octocat")).toBeVisible();
     expect(screen.getByText("Ready for review")).toBeVisible();
     expect(screen.getByLabelText("Base branch main")).toBeVisible();
     expect(
@@ -125,6 +129,6 @@ describe("PullRequestDetailHeader", () => {
     expect(screen.getByText("Loading")).toBeVisible();
 
     rerender(<PullRequestDetailHeader summaryFallback={fallback} />);
-    expect(screen.getByText("@octocat")).toBeVisible();
+    expect(screen.getByText("octocat")).toBeVisible();
   });
 });

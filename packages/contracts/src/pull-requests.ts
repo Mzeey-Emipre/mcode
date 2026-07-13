@@ -793,6 +793,7 @@ export const PullRequestDetailSchema = lazySchema(() =>
       })
       .default(["merge"]),
     defaultMergeMethod: PullRequestMergeMethodSchema().default("merge"),
+    viewerCanBypassMergeRequirements: z.boolean().optional(),
     reviewDecision: PullRequestReviewDecisionSchema(),
     reviewers: z.array(PullRequestReviewerSchema()).max(PULL_REQUEST_REVIEWERS_MAX),
     checks: PullRequestChecksSummarySchema(),
@@ -1739,6 +1740,7 @@ export const PullRequestMergeRequestSchema = lazySchema(() =>
   z.object({
     ...pullRequestMutationRequestBase,
     method: PullRequestMergeMethodSchema(),
+    bypassRequirements: z.boolean().optional(),
     commitHeadline: z.string().trim().min(1).max(512).optional(),
     commitBody: pullRequestMutationBodySchema.optional(),
   }),

@@ -99,6 +99,23 @@ describe("PullRequestDetailToolbar", () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
+  it("keeps the loading spinner the same size as the refresh icon", () => {
+    render(
+      <TooltipProvider>
+        <PullRequestDetailToolbar
+          model={detail()}
+          tabs={<div />}
+          onRefresh={vi.fn()}
+          refreshing
+        />
+      </TooltipProvider>,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Refresh pull request detail" }).querySelector("span"),
+    ).toHaveStyle({ "--spinner-size": "13px" });
+  });
+
   it.each([
     "https://user:secret@github.com/Mzeey-Empire/mcode/pull/42",
     "javascript:alert(1)",

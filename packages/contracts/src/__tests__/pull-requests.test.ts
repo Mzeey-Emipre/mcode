@@ -1133,6 +1133,7 @@ describe("pull request mutation contracts", () => {
       idempotencyKey,
       expected,
       method: "squash",
+      bypassRequirements: true,
       commitHeadline: "feat: merge pull request writes",
     }).success).toBe(true);
     expect(PullRequestMutationErrorSchema().safeParse({

@@ -8,6 +8,7 @@ import type {
 import {
   CheckCircle2,
   ChevronRight,
+  CircleUserRound,
   GitBranch,
   MessageSquare,
   Users,
@@ -15,6 +16,7 @@ import {
 import { memo } from "react";
 import { formatRelative } from "@/lib/format-relative";
 import { cn } from "@/lib/utils";
+import { safePullRequestHttpUrl } from "./safePullRequestHttpUrl";
 
 /** Props for the pull request identity block rendered inside Summary. */
 export interface PullRequestDetailHeaderProps {
@@ -62,17 +64,17 @@ function PullRequestDetailHeaderComponent({
   const model = detail ?? summaryFallback;
   if (!model) return null;
 
-  const actor = model.author ? `@${model.author.login}` : "Unknown author";
+  const actor = model.author?.login ?? "Unknown author";
+  const avatarUrl = model.author?.avatarUrl
+    ? safePullRequestHttpUrl(model.author.avatarUrl)
+    : null;
   const readiness = model.readiness === "ready" ? "Ready for review" : "Draft";
   const reviewers = detail?.reviewers ?? [];
   const conversationCount =
     model.commentCount + (detail?.reviewThreadCount ?? 0);
 
   return (
-    <header
-      aria-label="Pull request summary identity"
-      className="bg-background"
-    >
+    <header aria-label="Pull request summary identity">
       <div
         className={cn(
           "mx-auto w-full max-w-5xl",
@@ -84,7 +86,18 @@ function PullRequestDetailHeaderComponent({
         </h2>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <span>{actor}</span>
+          <span className="flex items-center gap-1.5 text-foreground/80">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={actor}
+                className="size-4 rounded-full object-cover"
+              />
+            ) : (
+              <CircleUserRound size={15} aria-hidden className="text-muted-foreground" />
+            )}
+            <span>{actor}</span>
+          </span>
           <span aria-hidden>·</span>
           <time dateTime={model.updatedAt} className="tabular-nums">
             {formatRelative(model.updatedAt)}
@@ -102,11 +115,9 @@ function PullRequestDetailHeaderComponent({
         </div>
 
         <dl className="mt-7 space-y-3 text-xs">
-          <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3">
-            <dt className="flex items-center gap-2 text-muted-foreground">
-              <GitBranch size={14} aria-hidden />
-              Branch
-            </dt>
+          <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
+            <GitBranch size={14} aria-hidden className="text-muted-foreground/80" />
+            <dt className="text-muted-foreground">Branch</dt>
             <dd className="flex min-w-0 items-center gap-2 font-mono">
               <span
                 aria-label={`Head branch ${model.head.name}`}
@@ -140,11 +151,9 @@ function PullRequestDetailHeaderComponent({
             </dd>
           </div>
 
-          <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3">
-            <dt className="flex items-center gap-2 text-muted-foreground">
-              <Users size={14} aria-hidden />
-              Reviewers
-            </dt>
+          <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
+            <Users size={14} aria-hidden className="text-muted-foreground/80" />
+            <dt className="text-muted-foreground">Reviewers</dt>
             <dd className="truncate text-foreground/90">
               {!detail
                 ? "Loading"
@@ -154,26 +163,22 @@ function PullRequestDetailHeaderComponent({
             </dd>
           </div>
 
-          <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3">
-            <dt className="flex items-center gap-2 text-muted-foreground">
-              <MessageSquare size={14} aria-hidden />
-              Comments
-            </dt>
+          <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
+            <MessageSquare size={14} aria-hidden className="text-muted-foreground/80" />
+            <dt className="text-muted-foreground">Comments</dt>
             <dd className="text-foreground/90">
               {conversationCount}{" "}
               {conversationCount === 1 ? "comment" : "comments"}
             </dd>
           </div>
 
-          <div className="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-3">
-            <dt className="flex items-center gap-2 text-muted-foreground">
-              <CheckCircle2
-                size={14}
-                aria-hidden
-                className={checkTone(model.checks.state)}
-              />
-              Checks
-            </dt>
+          <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
+            <CheckCircle2
+              size={14}
+              aria-hidden
+              className={checkTone(model.checks.state)}
+            />
+            <dt className="text-muted-foreground">Checks</dt>
             <dd className="text-foreground/90">
               {checkLabel(model.checks.state)}
             </dd>

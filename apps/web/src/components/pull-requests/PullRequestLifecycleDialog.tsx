@@ -8,6 +8,7 @@ import {
 import { AlertCircle, GitBranch, GitMerge, GitPullRequest } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -57,6 +58,7 @@ export interface PullRequestLifecycleDialogProps {
   detail: PullRequestDetail;
   effect: LifecycleEffect;
   targetReadiness?: PullRequestReadiness;
+  initialMergeMethod?: PullRequestMergeMethod;
   capability: PullRequestCapability | null | undefined;
   mutationTransport?: PullRequestMutationTransport;
   readTransport?: PullRequestTransport;
@@ -99,6 +101,7 @@ export function PullRequestLifecycleDialog({
   detail,
   effect,
   targetReadiness,
+  initialMergeMethod,
   capability,
   mutationTransport,
   readTransport,
@@ -117,8 +120,9 @@ export function PullRequestLifecycleDialog({
   const outcomeUnknownLane = usePullRequestMutationStore(unknownSelector);
   const displayedError = outcomeUnknownLane?.error ?? lane.error;
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>(
-    detail.defaultMergeMethod,
+    initialMergeMethod ?? detail.defaultMergeMethod,
   );
+  const [bypassRequirements, setBypassRequirements] = useState(false);
   const [commitHeadline, setCommitHeadline] = useState("");
   const [commitBody, setCommitBody] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -136,12 +140,24 @@ export function PullRequestLifecycleDialog({
 
   useEffect(() => {
     if (!open) return;
-    setMergeMethod(detail.defaultMergeMethod);
+    setMergeMethod(
+      initialMergeMethod && detail.mergeMethods.includes(initialMergeMethod)
+        ? initialMergeMethod
+        : detail.defaultMergeMethod,
+    );
+    setBypassRequirements(false);
     setCommitHeadline("");
     setCommitBody("");
     setLocalError(null);
     usePullRequestMutationStore.getState().clearLane(detail.identity, effect);
-  }, [detail.defaultMergeMethod, effect, identityKey, open]);
+  }, [
+    detail.defaultMergeMethod,
+    detail.mergeMethods,
+    effect,
+    identityKey,
+    initialMergeMethod,
+    open,
+  ]);
 
   const close = (nextOpen: boolean): void => {
     if (submitting) return;
@@ -170,6 +186,7 @@ export function PullRequestLifecycleDialog({
                 identity: detail.identity,
                 expected,
                 method: mergeMethod,
+                ...(bypassRequirements ? { bypassRequirements: true } : {}),
                 ...(commitHeadline.trim() ? { commitHeadline: commitHeadline.trim() } : {}),
                 ...(commitBody ? { commitBody } : {}),
               },
@@ -318,6 +335,33 @@ export function PullRequestLifecycleDialog({
                     }}
                   />
                 </div>
+                {detail.viewerCanBypassMergeRequirements ? (
+                  <div className="flex items-start gap-3 border-t border-border/45 pt-4">
+                    <Checkbox
+                      id="pull-request-bypass-requirements"
+                      checked={bypassRequirements}
+                      disabled={mutationBlocked}
+                      aria-labelledby="pull-request-bypass-requirements-label"
+                      aria-describedby="pull-request-bypass-requirements-description"
+                      onCheckedChange={setBypassRequirements}
+                    />
+                    <span className="min-w-0">
+                      <label
+                        id="pull-request-bypass-requirements-label"
+                        htmlFor="pull-request-bypass-requirements"
+                        className="block cursor-pointer text-xs font-medium text-foreground/90"
+                      >
+                        Bypass merge requirements
+                      </label>
+                      <span
+                        id="pull-request-bypass-requirements-description"
+                        className="mt-0.5 block text-xs leading-5 text-muted-foreground"
+                      >
+                        Use administrator permission when requirements block the merge.
+                      </span>
+                    </span>
+                  </div>
+                ) : null}
               </>
             ) : null}
 

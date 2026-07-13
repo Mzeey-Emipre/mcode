@@ -103,7 +103,7 @@ describe("PullRequestLifecycleActions", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Merge" }));
+    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
     expect(screen.getByText("Mzeey-Empire/mcode #42")).toBeVisible();
     expect(screen.getByText("Effect:").parentElement).toHaveTextContent("Merge pull request");
     expect(screen.getByRole("combobox", { name: "Merge method" })).toHaveTextContent("Squash and merge");
@@ -135,6 +135,45 @@ describe("PullRequestLifecycleActions", () => {
       },
     });
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("selects an enabled merge method from the toolbar and submits an explicit admin bypass", async () => {
+    const user = userEvent.setup();
+    const merge = vi.fn().mockImplementation(async (request) => ({
+      ok: true,
+      effect: "merge",
+      idempotencyKey: request.idempotencyKey,
+      state: "merged",
+      mergeCommit: null,
+    }));
+    render(
+      <PullRequestLifecycleActions
+        detail={{
+          ...detail,
+          mergeMethods: ["merge", "squash", "rebase"],
+          viewerCanBypassMergeRequirements: true,
+        }}
+        capabilities={capabilities}
+        isNarrow={false}
+        mutationTransport={mutationTransport({ merge })}
+        readTransport={readTransport()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Select merge method" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Rebase and merge" }));
+    const dialog = screen.getByRole("dialog", { name: "Merge pull request" });
+    expect(within(dialog).getByRole("combobox", { name: "Merge method" })).toHaveTextContent(
+      "Rebase and merge",
+    );
+    await user.click(within(dialog).getByRole("checkbox", { name: "Bypass merge requirements" }));
+    await user.click(within(dialog).getByRole("button", { name: "Merge pull request" }));
+
+    expect(merge).toHaveBeenCalledWith(expect.objectContaining({
+      method: "rebase",
+      bypassRequirements: true,
+    }));
   });
 
   it("offers readiness through the keyboard-operable actions menu", async () => {
@@ -220,7 +259,7 @@ describe("PullRequestLifecycleActions", () => {
         onRefresh={vi.fn()}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Merge" }));
+    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
     const dialog = screen.getByRole("dialog", { name: "Merge pull request" });
     const confirm = within(dialog).getByRole("button", { name: "Merge pull request" });
     await user.click(confirm);
@@ -270,7 +309,7 @@ describe("PullRequestLifecycleActions", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Merge" }));
+    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
     const quarantinedDialog = screen.getByRole("dialog", { name: "Merge pull request" });
     expect(await within(quarantinedDialog).findByText(/outcome could not be confirmed/i)).toBeVisible();
     expect(within(quarantinedDialog).getByRole("combobox", { name: "Merge method" })).toBeDisabled();
@@ -282,7 +321,7 @@ describe("PullRequestLifecycleActions", () => {
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(usePullRequestMutationStore.getState().lanes[commentLaneKey]).toBeUndefined();
 
-    await user.click(screen.getByRole("button", { name: "Merge" }));
+    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
     await user.click(screen.getByRole("button", { name: "Merge pull request" }));
     await vi.waitFor(() => expect(merge).toHaveBeenCalledOnce());
   });

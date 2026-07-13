@@ -127,7 +127,7 @@ export function PullRequestDetailToolbar({
               }}
             >
               {refreshing ? (
-                <Spinner size="xs" aria-hidden />
+                <Spinner size={13} aria-hidden />
               ) : (
                 <RefreshCw size={13} aria-hidden />
               )}

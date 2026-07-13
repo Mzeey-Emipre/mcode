@@ -444,22 +444,27 @@ function PullRequestSummaryComponent({
   return (
     <section
       aria-label="Pull request summary"
-      className="mx-auto min-w-0 w-full max-w-5xl space-y-8 bg-background px-6 pb-10 pt-2"
+      className="mx-auto min-w-0 w-full max-w-5xl space-y-8 px-6 pb-10 pt-2"
     >
       {onReviewChangeStack ? (
-        <div className="flex flex-col gap-3 border-b border-t border-b-border/45 border-t-primary py-4 sm:flex-row sm:items-center">
-          <div className="min-w-0 flex-1">
-            <p className="font-mono text-xs font-semibold uppercase tracking-wider text-foreground/85">
-              Review Change Stack
-            </p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Create an isolated worktree and task from the pull request head.
-            </p>
-            {reviewChangeStackUnavailableReason ? (
-              <p className="mt-1 text-xs text-muted-foreground/75">
-                {reviewChangeStackUnavailableReason}
+        <div className="flex flex-col gap-4 border-y border-border/45 py-4 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/55 text-muted-foreground">
+              <WorktreeModeIcon size={15} aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium text-foreground/90">
+                Review Change Stack
+              </h3>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                Create an isolated task at the current pull request head.
               </p>
-            ) : null}
+              {reviewChangeStackUnavailableReason ? (
+                <p className="mt-1 text-xs text-muted-foreground/75">
+                  {reviewChangeStackUnavailableReason}
+                </p>
+              ) : null}
+            </div>
           </div>
           <Button
             type="button"
@@ -469,7 +474,7 @@ function PullRequestSummaryComponent({
             onClick={onReviewChangeStack}
           >
             <WorktreeModeIcon size={14} aria-hidden />
-            Review Change Stack
+            Start review
           </Button>
         </div>
       ) : null}

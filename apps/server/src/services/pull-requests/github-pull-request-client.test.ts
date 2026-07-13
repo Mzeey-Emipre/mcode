@@ -185,6 +185,7 @@ function detailNode(overrides: Record<string, unknown> = {}) {
     createdAt: "2026-07-11T11:00:00.000Z",
     updatedAt: "2026-07-11T12:00:00.000Z",
     mergeable: "MERGEABLE",
+    viewerCanMergeAsAdmin: true,
     reviewDecision: "REVIEW_REQUIRED",
     repository: {
       mergeCommitAllowed: true,
@@ -892,6 +893,7 @@ describe("GithubPullRequestClient", () => {
         mergeability: "mergeable",
         mergeMethods: ["merge", "squash"],
         defaultMergeMethod: "squash",
+        viewerCanBypassMergeRequirements: true,
         reviewDecision: "review_required",
         reviewers: [
           { target: { kind: "team" }, state: "requested" },

@@ -524,6 +524,50 @@ describe("PullRequestMutationService", () => {
     expect(disallowed.merge).not.toHaveBeenCalled();
   });
 
+  it("allows an explicit requirements bypass only for an admin-capable viewer", async () => {
+    const admin = fakeService({
+      preflight: preflight({
+        viewerCanMergeAsAdmin: true,
+        mergeStateStatus: "blocked",
+      }),
+    });
+    expect(await admin.service.merge({
+      identity,
+      idempotencyKey: "99999999-9999-4999-8999-999999999999",
+      expected,
+      method: "squash",
+      bypassRequirements: true,
+    })).toMatchObject({ ok: true, state: "merged" });
+    expect(admin.merge).toHaveBeenCalledOnce();
+
+    const contributor = fakeService({
+      preflight: preflight({ mergeStateStatus: "blocked" }),
+    });
+    expect(await contributor.service.merge({
+      identity,
+      idempotencyKey: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      expected,
+      method: "squash",
+      bypassRequirements: true,
+    })).toMatchObject({ error: { conflictReason: "permission_changed" } });
+    expect(contributor.merge).not.toHaveBeenCalled();
+
+    const conflicting = fakeService({
+      preflight: preflight({
+        viewerCanMergeAsAdmin: true,
+        mergeability: "conflicting",
+      }),
+    });
+    expect(await conflicting.service.merge({
+      identity,
+      idempotencyKey: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      expected,
+      method: "squash",
+      bypassRequirements: true,
+    })).toMatchObject({ error: { conflictReason: "merge_blocked" } });
+    expect(conflicting.merge).not.toHaveBeenCalled();
+  });
+
   it("invalidates exactly once for each of the five successful effects", async () => {
     const fake = fakeService();
     await fake.service.postComment(commentRequest());

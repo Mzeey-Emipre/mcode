@@ -627,10 +627,21 @@ export class PullRequestMutationService {
         preflight.snapshot,
       );
     }
+    if (request.bypassRequirements && !preflight.viewerCanMergeAsAdmin) {
+      return conflict(
+        "permission_changed",
+        "GitHub no longer permits this viewer to bypass merge requirements.",
+        preflight.snapshot,
+      );
+    }
     if (
       !preflight.allowedMergeMethods.includes(request.method)
       || preflight.mergeability === "conflicting"
-      || ["blocked", "dirty", "draft"].includes(preflight.mergeStateStatus)
+      || ["dirty", "draft"].includes(preflight.mergeStateStatus)
+      || (
+        preflight.mergeStateStatus === "blocked"
+        && !(request.bypassRequirements && preflight.viewerCanMergeAsAdmin)
+      )
     ) {
       return conflict(
         "merge_blocked",

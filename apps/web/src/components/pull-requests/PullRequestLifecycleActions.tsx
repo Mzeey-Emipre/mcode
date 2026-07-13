@@ -2,9 +2,16 @@ import type {
   PullRequestCapabilities,
   PullRequestCapability,
   PullRequestDetail,
+  PullRequestMergeMethod,
   PullRequestReadiness,
 } from "@mcode/contracts";
-import { CircleDot, EllipsisVertical, GitMerge, XCircle } from "lucide-react";
+import {
+  ChevronDown,
+  CircleDot,
+  EllipsisVertical,
+  GitMerge,
+  XCircle,
+} from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +29,12 @@ import { PullRequestLifecycleDialog } from "./PullRequestLifecycleDialog";
 import { pullRequestCapabilityReason } from "./PullRequestMutationError";
 
 type LifecycleEffect = "readiness" | "close" | "merge";
+
+function mergeMethodLabel(method: PullRequestMergeMethod): string {
+  if (method === "squash") return "Squash and merge";
+  if (method === "rebase") return "Rebase and merge";
+  return "Create a merge commit";
+}
 
 /** Props for lifecycle actions in the persistent pull request header. */
 export interface PullRequestLifecycleActionsProps {
@@ -61,6 +74,9 @@ export function PullRequestLifecycleActions({
 }: PullRequestLifecycleActionsProps) {
   const [activeEffect, setActiveEffect] = useState<LifecycleEffect | null>(null);
   const [targetReadiness, setTargetReadiness] = useState<PullRequestReadiness>();
+  const [targetMergeMethod, setTargetMergeMethod] = useState<PullRequestMergeMethod>(
+    detail.defaultMergeMethod,
+  );
   const readinessReason = unavailableReason(detail, capabilities?.readiness, "readiness");
   const closeReason = unavailableReason(detail, capabilities?.close, "close");
   const mergeReason = unavailableReason(detail, capabilities?.merge, "merge");
@@ -70,6 +86,11 @@ export function PullRequestLifecycleActions({
   const openReadiness = (): void => {
     setTargetReadiness(nextReadiness);
     setActiveEffect("readiness");
+  };
+
+  const openMerge = (method: PullRequestMergeMethod): void => {
+    setTargetMergeMethod(method);
+    setActiveEffect("merge");
   };
 
   const activeCapability =
@@ -82,14 +103,43 @@ export function PullRequestLifecycleActions({
   return (
     <>
       {!isNarrow && !mergeReason ? (
-        <Button
-          type="button"
-          size="xs"
-          onClick={() => setActiveEffect("merge")}
-        >
-          <GitMerge size={12} aria-hidden />
-          Merge
-        </Button>
+        <div className="flex items-center" role="group" aria-label="Merge pull request">
+          <Button
+            type="button"
+            size="xs"
+            className="rounded-r-none border-r border-primary-foreground/20 pr-2.5"
+            onClick={() => openMerge(detail.defaultMergeMethod)}
+          >
+            <GitMerge size={12} aria-hidden />
+            {mergeMethodLabel(detail.defaultMergeMethod)}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  className="rounded-l-none px-0"
+                  aria-label="Select merge method"
+                >
+                  <ChevronDown size={13} aria-hidden />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" sideOffset={4} className="min-w-52">
+              {detail.mergeMethods.map((method) => (
+                <DropdownMenuItem
+                  key={method}
+                  className="text-xs"
+                  onClick={() => openMerge(method)}
+                >
+                  <GitMerge size={13} aria-hidden />
+                  {mergeMethodLabel(method)}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -107,7 +157,7 @@ export function PullRequestLifecycleActions({
         />
         <DropdownMenuContent align="end" sideOffset={4} className="min-w-64">
           <DropdownMenuGroup>
-            <DropdownMenuLabel className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
+            <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
               Remote actions
             </DropdownMenuLabel>
             <DropdownMenuItem
@@ -118,14 +168,17 @@ export function PullRequestLifecycleActions({
               <CircleDot size={13} aria-hidden />
               {nextReadiness === "ready" ? "Mark ready for review" : "Convert to draft"}
             </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={Boolean(mergeReason)}
-              className="text-xs"
-              onClick={() => setActiveEffect("merge")}
-            >
-              <GitMerge size={13} aria-hidden />
-              Merge pull request
-            </DropdownMenuItem>
+            {detail.mergeMethods.map((method) => (
+              <DropdownMenuItem
+                key={method}
+                disabled={Boolean(mergeReason)}
+                className="text-xs"
+                onClick={() => openMerge(method)}
+              >
+                <GitMerge size={13} aria-hidden />
+                {mergeMethodLabel(method)}
+              </DropdownMenuItem>
+            ))}
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
@@ -155,6 +208,7 @@ export function PullRequestLifecycleActions({
           detail={detail}
           effect={activeEffect}
           targetReadiness={activeEffect === "readiness" ? targetReadiness : undefined}
+          initialMergeMethod={activeEffect === "merge" ? targetMergeMethod : undefined}
           capability={activeCapability}
           mutationTransport={mutationTransport}
           readTransport={readTransport}

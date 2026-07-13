@@ -358,6 +358,7 @@ const GITHUB_DETAIL_QUERY = `query PullRequestDetail($repositoryId: ID!, $number
         createdAt
         updatedAt
         mergeable
+        viewerCanMergeAsAdmin
         reviewDecision
         repository {
           mergeCommitAllowed

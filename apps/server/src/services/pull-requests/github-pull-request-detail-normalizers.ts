@@ -68,6 +68,7 @@ const githubDetailSchema = z.object({
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
   mergeable: z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]),
+  viewerCanMergeAsAdmin: z.boolean().optional().default(false),
   reviewDecision: z
     .enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"])
     .nullable(),
@@ -339,6 +340,7 @@ export function normalizeGithubPullRequestDetail(
         : "unknown" as const,
     mergeMethods,
     defaultMergeMethod,
+    viewerCanBypassMergeRequirements: node.viewerCanMergeAsAdmin,
     reviewDecision: node.reviewDecision === "APPROVED"
       ? "approved" as const
       : node.reviewDecision === "CHANGES_REQUESTED"
