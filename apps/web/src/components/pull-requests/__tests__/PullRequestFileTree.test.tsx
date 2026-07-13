@@ -79,17 +79,67 @@ describe("PullRequestFileTree", () => {
         onActivate={vi.fn()}
       />,
     );
-    const apps = screen.getByRole("treeitem", { name: "apps/web/" });
-    apps.focus();
-    await userEvent.keyboard("{ArrowRight}");
+    const apps = await screen.findByRole("treeitem", { name: "apps/web" });
     expect(
       screen.getByRole("treeitem", { name: "Modified apps/web/App.tsx" }),
     ).toBeInTheDocument();
-
+    apps.focus();
     await userEvent.keyboard("{ArrowLeft}");
     expect(
       screen.queryByRole("treeitem", { name: "Modified apps/web/App.tsx" }),
     ).not.toBeInTheDocument();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(
+      screen.getByRole("treeitem", { name: "Modified apps/web/App.tsx" }),
+    ).toBeInTheDocument();
+  });
+
+  it("uses a file icon while retaining the change type indicator", () => {
+    render(
+      <PullRequestFileTree
+        files={[file("App.tsx", 1)]}
+        activePath={null}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByRole("treeitem", { name: "Modified App.tsx" });
+    expect(row.querySelector('[data-file-icon="true"]')).toBeInTheDocument();
+    expect(
+      row.querySelector('[data-change-type="modified"]'),
+    ).toHaveTextContent("M");
+  });
+
+  it("expands newly loaded directories without reopening user-collapsed ones", async () => {
+    const view = render(
+      <PullRequestFileTree
+        files={[file("apps/web/App.tsx", 1)]}
+        activePath={null}
+        onActivate={vi.fn()}
+      />,
+    );
+    const apps = await screen.findByRole("treeitem", { name: "apps/web" });
+    apps.focus();
+    await userEvent.keyboard("{ArrowLeft}");
+
+    view.rerender(
+      <PullRequestFileTree
+        files={[
+          file("apps/web/App.tsx", 1),
+          file("docs/guide.md", 2),
+        ]}
+        activePath={null}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("treeitem", { name: "Modified apps/web/App.tsx" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("treeitem", { name: "Modified docs/guide.md" }),
+    ).toBeInTheDocument();
   });
 
   it("mounts a bounded row window for a large flat Change stack", () => {
@@ -105,8 +155,12 @@ describe("PullRequestFileTree", () => {
     );
 
     expect(screen.getAllByRole("treeitem")).toHaveLength(10);
-    expect(screen.getByRole("treeitem", { name: "Modified file-0.ts" })).toBeInTheDocument();
-    expect(screen.queryByRole("treeitem", { name: "Modified file-79.ts" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("treeitem", { name: "Modified file-0.ts" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("treeitem", { name: "Modified file-79.ts" }),
+    ).not.toBeInTheDocument();
     expect(virtualizerSpies.estimatedSizes.at(-1)).toBe(32);
     expect(virtualizerSpies.measureElement).not.toHaveBeenCalled();
   });
@@ -123,11 +177,15 @@ describe("PullRequestFileTree", () => {
       />,
     );
 
-    const tree = screen.getByRole("tree", { name: "Pull request changed files" });
+    const tree = screen.getByRole("tree", {
+      name: "Pull request changed files",
+    });
     expect(tree).toHaveAttribute("tabindex", "0");
     tree.focus();
     await waitFor(() =>
-      expect(screen.getByRole("treeitem", { name: "Modified file-0.ts" })).toHaveFocus(),
+      expect(
+        screen.getByRole("treeitem", { name: "Modified file-0.ts" }),
+      ).toHaveFocus(),
     );
   });
 });

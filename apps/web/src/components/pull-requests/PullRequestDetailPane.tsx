@@ -40,7 +40,10 @@ import { PullRequestDetailHeader } from "./PullRequestDetailHeader";
 import { PullRequestDetailToolbar } from "./PullRequestDetailToolbar";
 import { PullRequestSummary } from "./PullRequestSummary";
 import { PullRequestTimeline } from "./PullRequestTimeline";
-import { PullRequestReviewTaskDialog } from "./PullRequestReviewTaskDialog";
+import {
+  PullRequestForkDialog,
+  type PullRequestForkMode,
+} from "./PullRequestForkDialog";
 import { PullRequestIssueCommentComposer } from "./PullRequestIssueCommentComposer";
 import { pullRequestMutationExpected } from "./PullRequestMutationError";
 
@@ -324,14 +327,15 @@ export function PullRequestDetailPane({
   );
   const activeHeadOid = core.detail?.head.oid ?? null;
   const [activeTab, setActiveTab] = useState<PullRequestDetailTab>("summary");
-  const [reviewTaskOpen, setReviewTaskOpen] = useState(false);
+  const [forkMode, setForkMode] = useState<PullRequestForkMode | null>(null);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const capabilities = usePullRequestStore((state) => state.capabilities);
   const reviewWorktreeCapability = capabilities?.reviewWorktree ?? null;
   const reviewWorktreeCapabilityKnown = usePullRequestStore(
     (state) => state.capabilities !== null,
   );
-  const openReviewTask = useCallback(() => setReviewTaskOpen(true), []);
+  const openFork = useCallback(() => setForkMode("foreground"), []);
+  const openForkInBackground = useCallback(() => setForkMode("background"), []);
   const reviewTaskReason =
     core.detail && reviewWorktreeCapabilityKnown
       ? reviewTaskUnavailableReason(
@@ -366,9 +370,9 @@ export function PullRequestDetailPane({
       id: "pullRequests.reviewChangeStack",
       title: "Review Change Stack",
       category: "Pull requests",
-      handler: openReviewTask,
+      handler: openFork,
     });
-  }, [core.detail, openReviewTask, reviewTaskAllowed]);
+  }, [core.detail, openFork, reviewTaskAllowed]);
 
   useEffect(() => {
     const current = usePullRequestDetailStore.getState().entries[identityKey];
@@ -596,11 +600,12 @@ export function PullRequestDetailPane({
               );
           }}
           refreshing={detailLane.status === "refreshing"}
-          onOpenReviewTask={
-            reviewWorktreeCapabilityKnown ? openReviewTask : undefined
+          onFork={reviewWorktreeCapabilityKnown ? openFork : undefined}
+          onForkInBackground={
+            reviewWorktreeCapabilityKnown ? openForkInBackground : undefined
           }
-          reviewTaskAllowed={reviewTaskAllowed}
-          reviewTaskUnavailableReason={reviewTaskReason}
+          forkAllowed={reviewTaskAllowed}
+          forkUnavailableReason={reviewTaskReason}
         />
 
         {detailLane.stale && detailLane.error && (
@@ -681,13 +686,17 @@ export function PullRequestDetailPane({
           )}
         </div>
       </section>
-      <PullRequestReviewTaskDialog
-        open={reviewTaskOpen}
-        onOpenChange={setReviewTaskOpen}
-        identity={core.detail.identity}
-        currentHeadOid={core.detail.head.oid}
-        transport={reviewTaskTransport}
-      />
+      {forkMode ? (
+        <PullRequestForkDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setForkMode(null);
+          }}
+          detail={core.detail}
+          mode={forkMode}
+          transport={reviewTaskTransport}
+        />
+      ) : null}
     </>
   );
 }

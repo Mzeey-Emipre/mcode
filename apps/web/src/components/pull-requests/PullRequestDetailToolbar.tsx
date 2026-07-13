@@ -3,17 +3,9 @@ import type {
   PullRequestDetail,
   PullRequestSummary,
 } from "@mcode/contracts";
-import {
-  ArrowLeft,
-  ExternalLink,
-  GitPullRequest,
-  RefreshCw,
-  X,
-} from "lucide-react";
+import { ArrowLeft, ExternalLink, GitPullRequest, X } from "lucide-react";
 import { type ReactNode, type Ref } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
   TooltipContent,
@@ -41,12 +33,14 @@ export interface PullRequestDetailToolbarProps {
   onRefresh?: () => Promise<boolean> | boolean;
   onRefreshClick?: () => void;
   refreshing?: boolean;
-  /** Opens an isolated local task for reviewing the visible change stack. */
-  onOpenReviewTask?: () => void;
-  /** Whether a local review task can be created from the visible snapshot. */
-  reviewTaskAllowed?: boolean;
-  /** Explains why local review-task creation is unavailable. */
-  reviewTaskUnavailableReason?: string | null;
+  /** Opens a composer that forks the pull request into a task. */
+  onFork?: () => void;
+  /** Opens the same fork composer while keeping the pull request visible. */
+  onForkInBackground?: () => void;
+  /** Whether the pull request can be forked into a local task. */
+  forkAllowed?: boolean;
+  /** Explains why pull request forking is unavailable. */
+  forkUnavailableReason?: string | null;
 }
 
 /** Renders top-level pull request tabs and actions in one compact toolbar. */
@@ -65,9 +59,10 @@ export function PullRequestDetailToolbar({
   onRefresh,
   onRefreshClick,
   refreshing = false,
-  onOpenReviewTask,
-  reviewTaskAllowed = false,
-  reviewTaskUnavailableReason = null,
+  onFork,
+  onForkInBackground,
+  forkAllowed = false,
+  forkUnavailableReason = null,
 }: PullRequestDetailToolbarProps) {
   const browserUrl = model ? safePullRequestHttpUrl(model.url) : null;
 
@@ -110,60 +105,21 @@ export function PullRequestDetailToolbar({
 
         {tabs}
 
-        <div className="flex min-w-0 items-center justify-end gap-1">
+        <div className="flex min-w-0 items-center justify-end gap-0.5">
           {detail && capabilities !== undefined && onRefresh ? (
             <PullRequestLifecycleActions
               detail={detail}
               capabilities={capabilities}
-              isNarrow={isNarrow}
               mutationTransport={mutationTransport}
               readTransport={readTransport}
               onRefresh={onRefresh}
+              onRefreshClick={onRefreshClick}
+              refreshing={refreshing}
+              onFork={onFork}
+              onForkInBackground={onForkInBackground}
+              forkAllowed={forkAllowed}
+              forkUnavailableReason={forkUnavailableReason}
             />
-          ) : null}
-          {onOpenReviewTask ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="Open review task"
-                    className="text-muted-foreground"
-                    disabled={!reviewTaskAllowed}
-                    onClick={onOpenReviewTask}
-                  >
-                    <WorktreeModeIcon size={13} aria-hidden />
-                  </Button>
-                }
-              />
-              <TooltipContent>
-                {reviewTaskUnavailableReason ?? "Open an isolated review task"}
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-          {onRefresh ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Refresh pull request detail"
-              className="text-muted-foreground"
-              onClick={() => {
-                if (onRefreshClick) {
-                  onRefreshClick();
-                  return;
-                }
-                void onRefresh();
-              }}
-            >
-              {refreshing ? (
-                <Spinner size={13} aria-hidden />
-              ) : (
-                <RefreshCw size={13} aria-hidden />
-              )}
-            </Button>
           ) : null}
           {browserUrl ? (
             <Tooltip>

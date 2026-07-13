@@ -41,6 +41,14 @@ vi.mock("../PullRequestCode", () => ({
   ),
 }));
 
+vi.mock("../PullRequestForkDialog", () => ({
+  PullRequestForkDialog: ({ mode }: { mode: string }) => (
+    <div role="dialog" aria-label="Fork pull request">
+      {mode}
+    </div>
+  ),
+}));
+
 import { PullRequestDetailPane } from "../PullRequestDetailPane";
 
 const identity: PullRequestIdentity = {
@@ -234,7 +242,7 @@ describe("PullRequestDetailPane", () => {
     ).toBeVisible();
   });
 
-  it("loads checks only on first expansion and distinguishes loading from empty success", async () => {
+  it("loads checks when the default-open section mounts and reuses the result", async () => {
     let resolveChecks!: (result: PullRequestGetResult) => void;
     const transport = fakeTransport({
       get: vi.fn().mockImplementation((request) => {
@@ -256,17 +264,10 @@ describe("PullRequestDetailPane", () => {
           .mock.calls.some(([request]) => request.resource === "detail"),
       ).toBe(true),
     );
-    expect(
-      vi
-        .mocked(transport.get)
-        .mock.calls.some(([request]) => request.resource === "checks"),
-    ).toBe(false);
-
     const user = userEvent.setup();
     const trigger = await screen.findByRole("button", {
       name: "Checks, 0 loaded of 2",
     });
-    await user.click(trigger);
     expect(await screen.findByText("Loading checks")).toBeVisible();
     expect(
       vi
@@ -368,7 +369,7 @@ describe("PullRequestDetailPane", () => {
     expect(entry?.lanes.timelineInitial.fetchedAt).not.toBeNull();
   });
 
-  it("reveals the local Review-task action only after capability is known", async () => {
+  it("reveals fork actions only after the local worktree capability is known", async () => {
     const transport = fakeTransport();
     const reviewTaskTransport: PullRequestReviewTaskTransport = {
       createReviewTask: vi.fn().mockResolvedValue({
@@ -382,9 +383,15 @@ describe("PullRequestDetailPane", () => {
     };
     const view = renderPane(transport, reviewTaskTransport);
     await screen.findByText("Read-only detail body");
-    expect(
-      screen.queryByRole("button", { name: "Open review task" }),
-    ).toBeNull();
+    const actionsButton = screen.getByRole("button", {
+      name: "Pull request actions",
+    });
+    await userEvent.click(actionsButton);
+    expect(screen.queryByRole("menuitem", { name: "Fork" })).toBeNull();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(actionsButton).toHaveAttribute("aria-expanded", "false"),
+    );
 
     act(() => {
       usePullRequestStore.setState({
@@ -401,20 +408,29 @@ describe("PullRequestDetailPane", () => {
       });
     });
 
-    const action = await screen.findByRole("button", {
-      name: "Open review task",
+    await vi.waitFor(() => {
+      expect(getCommand("pullRequests.reviewChangeStack")).toBeDefined();
     });
-    expect(action).toBeEnabled();
+
+    await userEvent.click(actionsButton);
+    const action = await screen.findByRole(
+      "menuitem",
+      { name: "Fork" },
+      { timeout: 3_000 },
+    );
+    expect(action).not.toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(action);
+    expect(
+      screen.getByRole("dialog", { name: "Fork pull request" }),
+    ).toHaveTextContent("foreground");
     expect(getCommand("pullRequests.reviewChangeStack")).toBeDefined();
     act(() => getCommand("pullRequests.reviewChangeStack")?.handler());
-    await waitFor(() =>
-      expect(reviewTaskTransport.createReviewTask).toHaveBeenCalledOnce(),
-    );
+    expect(reviewTaskTransport.createReviewTask).not.toHaveBeenCalled();
     view.unmount();
     expect(getCommand("pullRequests.reviewChangeStack")).toBeUndefined();
   });
 
-  it("disables Review-task creation and omits its command when head OID is missing", async () => {
+  it("disables pull request forking and omits its command when head OID is missing", async () => {
     usePullRequestStore.setState({
       capabilities: {
         read: { allowed: true },
@@ -432,9 +448,13 @@ describe("PullRequestDetailPane", () => {
     });
     renderPane(transport);
 
+    await screen.findByText("Read-only detail body");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Pull request actions" }),
+    );
     expect(
-      await screen.findByRole("button", { name: "Open review task" }),
-    ).toBeDisabled();
+      await screen.findByRole("menuitem", { name: "Fork" }),
+    ).toHaveAttribute("aria-disabled", "true");
     expect(getCommand("pullRequests.reviewChangeStack")).toBeUndefined();
   });
 
@@ -450,7 +470,11 @@ describe("PullRequestDetailPane", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(transport.get).toHaveBeenCalledTimes(1);
+    const detailCalls = () =>
+      vi
+        .mocked(transport.get)
+        .mock.calls.filter(([request]) => request.resource === "detail");
+    expect(detailCalls()).toHaveLength(1);
     const receiptKey = getPullRequestMutationLaneKey(identity, "comment");
     usePullRequestMutationStore.setState({
       lanes: { [receiptKey]: outcomeUnknownLane() },
@@ -459,7 +483,7 @@ describe("PullRequestDetailPane", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
-    expect(transport.get).toHaveBeenCalledTimes(2);
+    expect(detailCalls()).toHaveLength(2);
     expect(
       usePullRequestMutationStore.getState().lanes[receiptKey],
     ).toBeDefined();
@@ -469,47 +493,62 @@ describe("PullRequestDetailPane", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
-    expect(transport.get).toHaveBeenCalledTimes(2);
+    expect(detailCalls()).toHaveLength(2);
 
     focused = true;
     fireEvent.focus(window);
     await act(async () => {
       await Promise.resolve();
     });
-    expect(transport.get).toHaveBeenCalledTimes(3);
+    expect(detailCalls()).toHaveLength(3);
     expect(
       usePullRequestMutationStore.getState().lanes[receiptKey],
     ).toBeDefined();
   });
 
   it("acknowledges an unknown outcome only after a successful header refresh", async () => {
-    const get = vi
-      .fn()
-      .mockResolvedValueOnce(detailResult())
-      .mockResolvedValueOnce({
-        ok: false,
-        error: { code: "remote_unavailable", message: "Refresh failed" },
-      })
-      .mockResolvedValueOnce(detailResult());
+    let detailAttempt = 0;
+    const get = vi.fn().mockImplementation((request) => {
+      if (request.resource !== "detail") return Promise.resolve({ ok: false });
+      detailAttempt += 1;
+      if (detailAttempt === 2) {
+        return Promise.resolve({
+          ok: false,
+          error: { code: "remote_unavailable", message: "Refresh failed" },
+        });
+      }
+      return Promise.resolve(detailResult());
+    });
     const transport = fakeTransport({ get });
     renderPane(transport);
     await screen.findByText("Read-only detail body");
     const receiptKey = getPullRequestMutationLaneKey(identity, "comment");
     const receipt = outcomeUnknownLane();
     usePullRequestMutationStore.setState({ lanes: { [receiptKey]: receipt } });
-    const refresh = screen.getByRole("button", {
-      name: "Refresh pull request detail",
-    });
+    const clickRefresh = async (): Promise<void> => {
+      await userEvent.click(
+        screen.getByRole("button", { name: "Pull request actions" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: "Refresh" }),
+      );
+    };
 
-    await userEvent.click(refresh);
-    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await clickRefresh();
+    await vi.waitFor(() =>
+      expect(
+        get.mock.calls.filter(([request]) => request.resource === "detail"),
+      ).toHaveLength(2),
+    );
     expect(usePullRequestMutationStore.getState().lanes[receiptKey]).toEqual(
       receipt,
     );
 
-    await userEvent.click(refresh);
+    await clickRefresh();
     await vi.waitFor(() => {
-      expect(get).toHaveBeenCalledTimes(3);
+      expect(
+        get.mock.calls.filter(([request]) => request.resource === "detail"),
+      ).toHaveLength(3);
       expect(
         usePullRequestMutationStore.getState().lanes[receiptKey],
       ).toBeUndefined();

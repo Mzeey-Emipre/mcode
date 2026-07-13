@@ -22,6 +22,23 @@ const VIRTUALIZATION_THRESHOLD = 30;
 const TREE_ROW_HEIGHT = 32;
 const TREE_OVERSCAN = 4;
 
+function collectDirectoryIds(
+  nodes: ReturnType<typeof buildPullRequestFileTree>,
+): Set<string> {
+  const ids = new Set<string>();
+  const visit = (
+    children: ReturnType<typeof buildPullRequestFileTree>,
+  ): void => {
+    for (const child of children) {
+      if (child.kind !== "directory") continue;
+      ids.add(child.id);
+      visit(child.children);
+    }
+  };
+  visit(nodes);
+  return ids;
+}
+
 /** Props for the virtual, keyboard-navigable pull request file tree. */
 export interface PullRequestFileTreeProps {
   files: readonly PullRequestFile[];
@@ -54,13 +71,9 @@ export function PullRequestFileTree({
   const [expandedDirectoryIds, setExpandedDirectoryIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const userCollapsedDirectoryIdsRef = useRef(new Set<string>());
   const rows = useMemo(
-    () =>
-      flattenPullRequestFileTree(
-        tree,
-        expandedDirectoryIds,
-        searchActive,
-      ),
+    () => flattenPullRequestFileTree(tree, expandedDirectoryIds, searchActive),
     [expandedDirectoryIds, searchActive, tree],
   );
   const activeRowId = activePath ? `file:${activePath}` : null;
@@ -82,6 +95,25 @@ export function PullRequestFileTree({
     : rows.some((row) => row.node.id === focusedId);
 
   useEffect(() => {
+    const directoryIds = collectDirectoryIds(tree);
+    setExpandedDirectoryIds((current) => {
+      const next = new Set(
+        [...current].filter((id) => directoryIds.has(id)),
+      );
+      for (const id of directoryIds) {
+        if (!userCollapsedDirectoryIdsRef.current.has(id)) next.add(id);
+      }
+      if (
+        next.size === current.size &&
+        [...next].every((id) => current.has(id))
+      ) {
+        return current;
+      }
+      return next;
+    });
+  }, [tree]);
+
+  useEffect(() => {
     if (focusedId && rows.some((row) => row.node.id === focusedId)) return;
     setFocusedId(activeRowId ?? rows[0]?.node.id ?? null);
   }, [activeRowId, focusedId, rows]);
@@ -93,7 +125,9 @@ export function PullRequestFileTree({
     setExpandedDirectoryIds((current) => {
       const next = new Set(current);
       for (let index = 1; index < segments.length; index += 1) {
-        next.add(`directory:${segments.slice(0, index).join("/")}`);
+        const id = `directory:${segments.slice(0, index).join("/")}`;
+        userCollapsedDirectoryIdsRef.current.delete(id);
+        next.add(id);
       }
       return next.size === current.size ? current : next;
     });
@@ -116,8 +150,13 @@ export function PullRequestFileTree({
   const toggleDirectory = (id: string): void => {
     setExpandedDirectoryIds((current) => {
       const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        userCollapsedDirectoryIdsRef.current.add(id);
+      } else {
+        next.add(id);
+        userCollapsedDirectoryIdsRef.current.delete(id);
+      }
       return next;
     });
   };
@@ -150,7 +189,8 @@ export function PullRequestFileTree({
     if (event.key === "ArrowRight") {
       if (row.node.kind === "directory") {
         event.preventDefault();
-        if (!expandedDirectoryIds.has(row.node.id)) toggleDirectory(row.node.id);
+        if (!expandedDirectoryIds.has(row.node.id))
+          toggleDirectory(row.node.id);
         else focusIndex(index + 1);
       } else {
         onActivate(row.node.path);
@@ -218,7 +258,7 @@ export function PullRequestFileTree({
           if (node) rowRefs.current.set(row.node.id, node);
           else rowRefs.current.delete(row.node.id);
         }}
-        className="h-8 w-full justify-start gap-1 rounded-none px-2 font-mono text-[11px] font-normal text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+        className="h-8 w-full justify-start gap-1 rounded-none px-2 font-mono text-xs font-normal text-muted-foreground hover:bg-muted/45 hover:text-foreground"
         style={{ paddingLeft: `${Math.max(8, row.depth * 12)}px` }}
         onClick={() => toggleDirectory(row.node.id)}
         onFocus={() => setFocusedId(row.node.id)}
@@ -234,7 +274,7 @@ export function PullRequestFileTree({
         ) : (
           <Folder size={12} aria-hidden />
         )}
-        <span className="min-w-0 truncate">{row.node.name}/</span>
+        <span className="min-w-0 truncate">{row.node.name}</span>
       </Button>
     );
   };
@@ -251,10 +291,12 @@ export function PullRequestFileTree({
           if (event.target !== event.currentTarget || rows.length === 0) return;
           const fallback = virtualized
             ? rows[virtualRows[0]?.index ?? 0]
-            : rows.find((row) => row.node.id === focusedId) ?? rows[0];
+            : (rows.find((row) => row.node.id === focusedId) ?? rows[0]);
           if (!fallback) return;
           setFocusedId(fallback.node.id);
-          requestAnimationFrame(() => rowRefs.current.get(fallback.node.id)?.focus());
+          requestAnimationFrame(() =>
+            rowRefs.current.get(fallback.node.id)?.focus(),
+          );
         },
       }}
     >
@@ -286,7 +328,11 @@ export function PullRequestFileTree({
           })}
         </div>
       ) : (
-        <div>{rows.map((row, index) => <div key={row.node.id}>{renderRow(row, index)}</div>)}</div>
+        <div>
+          {rows.map((row, index) => (
+            <div key={row.node.id}>{renderRow(row, index)}</div>
+          ))}
+        </div>
       )}
     </ScrollArea>
   );

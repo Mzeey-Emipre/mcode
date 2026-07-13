@@ -5,7 +5,7 @@ import { getThreadRecord } from "@/stores/thread-record";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useWorkspaceThread, readWorkspaceThread } from "@/stores/workspace-selectors";
 import { resolveComposerSession, snapshotComposerDraft } from "@/lib/composer-session";
-import type { PermissionMode, InteractionMode, AttachmentMeta } from "@/transport";
+import type { PermissionMode, InteractionMode, AttachmentMeta, Thread } from "@/transport";
 import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";
 import {
   ArrowUp,
@@ -279,6 +279,8 @@ interface ComposerProps {
   branchFromMessageContent?: string;
   /** Called when the user exits fork mode (X button or Escape). */
   onBranchModeExit?: () => void;
+  /** Called after a new-thread submission has created its durable thread. */
+  onThreadCreated?: (thread: Thread) => void;
 }
 
 interface PendingCheckoutConfirmation {
@@ -884,7 +886,7 @@ export function ActiveGoalBar({
  * - **Existing worktree:** `[Worktree v]` … `[Select worktree v]`
  * - **Locked (existing thread):** read-only branch badge
  */
-export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit }: ComposerProps) {
+export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit, onThreadCreated }: ComposerProps) {
   // Mode/permissions/tasks toggles render inline when the composer's own
   // container is wide enough; below the threshold they collapse behind a
   // single overflow trigger so the send button never wraps to a new row.
@@ -2425,7 +2427,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         } else {
           setNewThreadBranch(submittedNewThreadBranch);
         }
-        await useWorkspaceStore
+        const createdThread = await useWorkspaceStore
           .getState()
           .createAndSendMessage(
             messageContent,
@@ -2443,6 +2445,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             selectedMentions,
             effectivePreviewAnnotations,
           );
+        onThreadCreated?.(createdThread);
       } else if (branchFromMessageId && threadId) {
       // Branch mode: create a child thread from the quoted message instead of sending.
       let branchMode: "direct" | "worktree" | "existing-worktree" = "direct";
@@ -2546,7 +2549,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations]);
+  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations]);
 
   useEffect(() => {
     if (!annotationScopeId) return;

@@ -99,20 +99,30 @@ describe("PullRequestDetailToolbar", () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it("keeps the loading spinner the same size as the refresh icon", () => {
+  it("keeps the refresh spinner aligned inside the actions menu", async () => {
+    const user = userEvent.setup();
     render(
       <TooltipProvider>
         <PullRequestDetailToolbar
           model={detail()}
+          detail={detail()}
           tabs={<div />}
+          capabilities={null}
           onRefresh={vi.fn()}
           refreshing
         />
       </TooltipProvider>,
     );
 
+    const actions = screen.getByRole("button", {
+      name: "Pull request actions",
+    });
+    actions.focus();
+    await user.keyboard("{Enter}");
     expect(
-      screen.getByRole("button", { name: "Refresh pull request detail" }).querySelector("span"),
+      (await screen.findByRole("menuitem", { name: "Refresh" })).querySelector(
+        "span",
+      ),
     ).toHaveStyle({ "--spinner-size": "13px" });
   });
 

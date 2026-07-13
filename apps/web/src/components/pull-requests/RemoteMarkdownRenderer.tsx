@@ -4,6 +4,18 @@ import ReactMarkdown, {
   type UrlTransform,
 } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  CircleAlert,
+  Info,
+  Lightbulb,
+  MessageSquareWarning,
+  ShieldAlert,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  remarkGitHubAlerts,
+  type GitHubAlertKind,
+} from "@/lib/remark-github-alerts";
 
 interface RemoteMarkdownRendererProps {
   content: string;
@@ -25,6 +37,37 @@ function safeHttpUrl(value: string | undefined): string | null {
 
 const remoteUrlTransform: UrlTransform = (value, key) =>
   key === "href" ? safeHttpUrl(value) : null;
+
+const GITHUB_ALERTS: Record<
+  GitHubAlertKind,
+  { label: string; icon: LucideIcon; className: string }
+> = {
+  note: {
+    label: "Note",
+    icon: Info,
+    className: "border-sky-500/70 bg-sky-500/5 text-sky-400",
+  },
+  tip: {
+    label: "Tip",
+    icon: Lightbulb,
+    className: "border-emerald-500/70 bg-emerald-500/5 text-emerald-400",
+  },
+  important: {
+    label: "Important",
+    icon: MessageSquareWarning,
+    className: "border-violet-500/70 bg-violet-500/5 text-violet-400",
+  },
+  warning: {
+    label: "Warning",
+    icon: CircleAlert,
+    className: "border-amber-500/70 bg-amber-500/5 text-amber-400",
+  },
+  caution: {
+    label: "Caution",
+    icon: ShieldAlert,
+    className: "border-destructive/70 bg-destructive/5 text-destructive",
+  },
+};
 
 const REMOTE_MARKDOWN_COMPONENTS: Components = {
   a({ node: _node, href, children, ...props }) {
@@ -69,9 +112,34 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
   img() {
     return null;
   },
+  blockquote({ node, children, ...props }) {
+    const rawKind = node?.properties?.["data-github-alert"];
+    const kind =
+      typeof rawKind === "string" && rawKind in GITHUB_ALERTS
+        ? (rawKind as GitHubAlertKind)
+        : null;
+    if (!kind) return <blockquote {...props}>{children}</blockquote>;
+
+    const alert = GITHUB_ALERTS[kind];
+    const AlertIcon = alert.icon;
+    return (
+      <aside
+        role="note"
+        aria-label={`${alert.label} alert`}
+        data-github-alert={kind}
+        className={`border-l-2 px-4 py-3 ${alert.className}`}
+      >
+        <div className="flex items-center gap-2 text-xs font-semibold">
+          <AlertIcon size={14} aria-hidden />
+          <span>{alert.label}</span>
+        </div>
+        <div className="mt-3 space-y-3 text-foreground/90">{children}</div>
+      </aside>
+    );
+  },
 };
 
-const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS = [remarkGfm, remarkGitHubAlerts];
 
 /** Renders hostile provider Markdown without application-specific behaviors. */
 const RemoteMarkdownRenderer = memo(function RemoteMarkdownRenderer({

@@ -367,7 +367,7 @@ describe("PullRequestCode", () => {
     expect(get).toHaveBeenCalledTimes(4);
   });
 
-  it("keeps the changed-files navigator left of the diff and restores it", async () => {
+  it("keeps the changed-files navigator right of the diff and restores it", async () => {
     const transport = fakeTransport();
     renderCode(transport);
     await screen.findByTestId("code-viewport-seam");
@@ -378,7 +378,7 @@ describe("PullRequestCode", () => {
     );
     const navigator = screen.getByTestId("pull-request-changed-files-pane");
     const viewport = screen.getByTestId("code-viewport-seam");
-    expect(navigator.compareDocumentPosition(viewport)).toBe(
+    expect(viewport.compareDocumentPosition(navigator)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
     await userEvent.click(

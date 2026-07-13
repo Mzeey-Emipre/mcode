@@ -129,19 +129,24 @@ export function PullRequestDiffViewport({
   transport,
   onActivePathChange,
 }: PullRequestDiffViewportProps) {
-  const activeSnapshotKey = usePullRequestCodeStore((state) => state.activeSnapshotKey);
+  const activeSnapshotKey = usePullRequestCodeStore(
+    (state) => state.activeSnapshotKey,
+  );
   const activeEntry = usePullRequestCodeStore((state) =>
-    state.activeSnapshotKey ? state.entries[state.activeSnapshotKey] ?? null : null,
+    state.activeSnapshotKey
+      ? (state.entries[state.activeSnapshotKey] ?? null)
+      : null,
   );
   const viewMode = usePullRequestCodeStore((state) =>
     state.activeSnapshotKey
-      ? state.entries[state.activeSnapshotKey]?.viewMode ?? "unified"
+      ? (state.entries[state.activeSnapshotKey]?.viewMode ?? "unified")
       : "unified",
   );
   const expandedPaths = usePullRequestCodeStore(
     useShallow((state) =>
       state.activeSnapshotKey
-        ? state.entries[state.activeSnapshotKey]?.expandedPaths ?? EMPTY_EXPANDED_PATHS
+        ? (state.entries[state.activeSnapshotKey]?.expandedPaths ??
+          EMPTY_EXPANDED_PATHS)
         : EMPTY_EXPANDED_PATHS,
     ),
   );
@@ -167,7 +172,7 @@ export function PullRequestDiffViewport({
   );
   const patchLanes = useMemo(() => {
     const state = usePullRequestCodeStore.getState();
-    return patchKeys.map((key) => (key ? state.patches[key] ?? null : null));
+    return patchKeys.map((key) => (key ? (state.patches[key] ?? null) : null));
   }, [patchKeys, patchPresentationRevision]);
   const draftIdentityKey = activeEntry?.identityKey ?? identityKey;
   const draftPlacementRevision = usePullRequestReviewDraftStore(
@@ -177,20 +182,19 @@ export function PullRequestDiffViewport({
     const state = usePullRequestReviewDraftStore.getState();
     return state.order
       .map((localId) => state.drafts[localId])
-      .filter(
-        (draft): draft is PullRequestReviewDraft =>
-          Boolean(draft && draft.identityKey === draftIdentityKey),
+      .filter((draft): draft is PullRequestReviewDraft =>
+        Boolean(draft && draft.identityKey === draftIdentityKey),
       );
   }, [draftIdentityKey, draftPlacementRevision]);
-  const [memoryPausedPaths, setMemoryPausedPaths] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const [evictedPatchPaths, setEvictedPatchPaths] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const [parsedRejectedPaths, setParsedRejectedPaths] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
+  const [memoryPausedPaths, setMemoryPausedPaths] = useState<
+    ReadonlySet<string>
+  >(new Set());
+  const [evictedPatchPaths, setEvictedPatchPaths] = useState<
+    ReadonlySet<string>
+  >(new Set());
+  const [parsedRejectedPaths, setParsedRejectedPaths] = useState<
+    ReadonlySet<string>
+  >(new Set());
   const seenPatchKeysRef = useRef<Set<string>>(new Set());
   const [draftError, setDraftError] = useState<string | null>(null);
 
@@ -230,14 +234,6 @@ export function PullRequestDiffViewport({
     });
   }, [expandedPaths, files, patchKeys, patchLanes]);
 
-  useEffect(() => {
-    if (!entryMatches) return;
-    for (let index = 0; index < files.length; index += 1) {
-      if (!expandedPaths[files[index].path]) continue;
-      void usePullRequestCodeStore.getState().ensurePatch(files[index], transport);
-    }
-  }, [entryMatches, expandedPaths, files, transport]);
-
   const rowDrafts = useMemo<PullRequestDiffDraftLike[]>(
     () =>
       drafts.map((draft) => ({
@@ -260,7 +256,7 @@ export function PullRequestDiffViewport({
             : patchState(file, lane, evictedPatchPaths.has(file.path)),
           patchResult: parsedRejectedPaths.has(file.path)
             ? null
-            : lane?.result ?? null,
+            : (lane?.result ?? null),
           errorMessage: lane?.error?.message ?? null,
           threads: reviewThreads.filter(
             (thread) =>
@@ -284,68 +280,68 @@ export function PullRequestDiffViewport({
       rowDrafts,
     ],
   );
-  const rowModel = useMemo(
-    () => {
-      const codeState = usePullRequestCodeStore.getState();
-      const retainedBytes = Object.values(codeState.patches).reduce(
-        (total, lane) => total + lane.estimatedBytes,
-        0,
-      );
-      const reservedParsedBytesByLocator = new Map<string, number>();
-      const intrinsicParsedBytesByLocator = new Map<string, number>();
-      for (let index = 0; index < files.length; index += 1) {
-        const patchKey = patchKeys[index];
-        const lane = patchKey ? codeState.patches[patchKey] : null;
-        if (lane) {
-          reservedParsedBytesByLocator.set(files[index].locator, lane.parsedBytes);
-          intrinsicParsedBytesByLocator.set(
-            files[index].locator,
-            Math.max(
-              0,
-              PULL_REQUEST_CODE_CACHE_MAX_BYTES - lane.rawBytes - lane.tokenBytes,
-            ),
-          );
-        }
+  const rowModel = useMemo(() => {
+    const codeState = usePullRequestCodeStore.getState();
+    const retainedBytes = Object.values(codeState.patches).reduce(
+      (total, lane) => total + lane.estimatedBytes,
+      0,
+    );
+    const reservedParsedBytesByLocator = new Map<string, number>();
+    const intrinsicParsedBytesByLocator = new Map<string, number>();
+    for (let index = 0; index < files.length; index += 1) {
+      const patchKey = patchKeys[index];
+      const lane = patchKey ? codeState.patches[patchKey] : null;
+      if (lane) {
+        reservedParsedBytesByLocator.set(
+          files[index].locator,
+          lane.parsedBytes,
+        );
+        intrinsicParsedBytesByLocator.set(
+          files[index].locator,
+          Math.max(
+            0,
+            PULL_REQUEST_CODE_CACHE_MAX_BYTES - lane.rawBytes - lane.tokenBytes,
+          ),
+        );
       }
-      const built = buildPullRequestDiffRowModel({
-        snapshotKey: activeSnapshotKey ?? `${identityKey}:${baseOid}:${headOid}`,
-        headOid,
-        files: fileInputs,
-        parsedByteBudget: Math.max(
-          0,
-          PULL_REQUEST_CODE_CACHE_MAX_BYTES - retainedBytes,
-        ),
-        reservedParsedBytesByLocator,
-        intrinsicParsedBytesByLocator,
-      });
-      const knownPaths = new Set(
-        files.flatMap((file) =>
-          file.previousPath ? [file.path, file.previousPath] : [file.path],
-        ),
-      );
-      const orphanRows = buildPullRequestOrphanConversationRows({
-        snapshotKey: activeSnapshotKey ?? `${identityKey}:${baseOid}:${headOid}`,
-        threads: reviewThreads.filter(
-          (thread) => thread.isOutdated && !knownPaths.has(thread.path),
-        ),
-        drafts: rowDrafts.filter(
-          (draft) => draft.outdated && !knownPaths.has(draft.path),
-        ),
-      });
-      return { ...built, rows: [...built.rows, ...orphanRows] };
-    },
-    [
-      activeSnapshotKey,
-      baseOid,
-      fileInputs,
-      files,
+    }
+    const built = buildPullRequestDiffRowModel({
+      snapshotKey: activeSnapshotKey ?? `${identityKey}:${baseOid}:${headOid}`,
       headOid,
-      identityKey,
-      patchKeys,
-      reviewThreads,
-      rowDrafts,
-    ],
-  );
+      files: fileInputs,
+      parsedByteBudget: Math.max(
+        0,
+        PULL_REQUEST_CODE_CACHE_MAX_BYTES - retainedBytes,
+      ),
+      reservedParsedBytesByLocator,
+      intrinsicParsedBytesByLocator,
+    });
+    const knownPaths = new Set(
+      files.flatMap((file) =>
+        file.previousPath ? [file.path, file.previousPath] : [file.path],
+      ),
+    );
+    const orphanRows = buildPullRequestOrphanConversationRows({
+      snapshotKey: activeSnapshotKey ?? `${identityKey}:${baseOid}:${headOid}`,
+      threads: reviewThreads.filter(
+        (thread) => thread.isOutdated && !knownPaths.has(thread.path),
+      ),
+      drafts: rowDrafts.filter(
+        (draft) => draft.outdated && !knownPaths.has(draft.path),
+      ),
+    });
+    return { ...built, rows: [...built.rows, ...orphanRows] };
+  }, [
+    activeSnapshotKey,
+    baseOid,
+    fileInputs,
+    files,
+    headOid,
+    identityKey,
+    patchKeys,
+    reviewThreads,
+    rowDrafts,
+  ]);
 
   useEffect(() => {
     const rejected = new Set(parsedRejectedPaths);
@@ -353,7 +349,8 @@ export function PullRequestDiffViewport({
     for (let index = 0; index < files.length; index += 1) {
       const patchKey = patchKeys[index];
       const lane = patchLanes[index];
-      const parsedBytes = rowModel.parsedBytesByLocator.get(files[index].locator) ?? 0;
+      const parsedBytes =
+        rowModel.parsedBytesByLocator.get(files[index].locator) ?? 0;
       if (!patchKey || !lane || lane.status !== "ready") continue;
       if (rowModel.deferredPatchLocators.has(files[index].locator)) {
         releasePullRequestPatchRows(lane.result);
@@ -374,7 +371,8 @@ export function PullRequestDiffViewport({
         continue;
       }
       if (parsedBytes === 0) continue;
-      if (lane.parsedBytes === parsedBytes || rejected.has(files[index].path)) continue;
+      if (lane.parsedBytes === parsedBytes || rejected.has(files[index].path))
+        continue;
       const accepted = usePullRequestCodeStore
         .getState()
         .reportPatchDerivedBytes(patchKey, { parsedBytes });
@@ -433,10 +431,24 @@ export function PullRequestDiffViewport({
       usePullRequestCodeStore.getState().toggleFileExpanded(row.file.path);
       onActivePathChange(row.file.path);
       if (!wasExpanded) {
-        void usePullRequestCodeStore.getState().ensurePatch(row.file, transport);
+        void usePullRequestCodeStore
+          .getState()
+          .ensurePatch(row.file, transport);
       }
     },
     [expandedPaths, onActivePathChange, transport],
+  );
+
+  const loadVisiblePatches = useCallback(
+    (paths: readonly string[]): void => {
+      if (!entryMatches) return;
+      const visible = new Set(paths);
+      for (const file of files) {
+        if (!visible.has(file.path) || !expandedPaths[file.path]) continue;
+        void usePullRequestCodeStore.getState().ensurePatch(file, transport);
+      }
+    },
+    [entryMatches, expandedPaths, files, transport],
   );
 
   const snapshot = useMemo(
@@ -485,7 +497,9 @@ export function PullRequestDiffViewport({
   );
 
   const updateDraft = useCallback((localId: string, body: string): boolean => {
-    const result = usePullRequestReviewDraftStore.getState().updateDraft(localId, body);
+    const result = usePullRequestReviewDraftStore
+      .getState()
+      .updateDraft(localId, body);
     return result.ok;
   }, []);
 
@@ -495,7 +509,10 @@ export function PullRequestDiffViewport({
       className="flex min-h-0 flex-1 flex-col bg-background"
     >
       {!commentsComplete && (
-        <p role="status" className="flex items-center gap-2 bg-page/70 px-3 py-1.5 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="flex items-center gap-2 bg-page/70 px-3 py-1.5 text-xs text-muted-foreground"
+        >
           <MessageSquare size={12} aria-hidden className="text-primary/75" />
           {commentsBounded
             ? "Review threads are bounded. Some inline conversations may be missing."
@@ -503,13 +520,20 @@ export function PullRequestDiffViewport({
         </p>
       )}
       {memoryPausedPaths.size > 0 && (
-        <p role="status" className="flex items-center gap-2 bg-page/70 px-3 py-1.5 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="flex items-center gap-2 bg-page/70 px-3 py-1.5 text-xs text-muted-foreground"
+        >
           <AlertCircle size={12} aria-hidden className="text-primary/75" />
-          Syntax highlighting paused for memory. Plain-text diff remains available.
+          Syntax highlighting paused for memory. Plain-text diff remains
+          available.
         </p>
       )}
       {draftError && (
-        <p role="alert" className="bg-destructive/8 px-3 py-1.5 text-xs text-destructive">
+        <p
+          role="alert"
+          className="bg-destructive/8 px-3 py-1.5 text-xs text-destructive"
+        >
           {draftError}
         </p>
       )}
@@ -527,6 +551,7 @@ export function PullRequestDiffViewport({
           usePullRequestReviewDraftStore.getState().removeDraft(localId)
         }
         onTokenBytesChange={reportTokenBytes}
+        onVisiblePathsChange={loadVisiblePatches}
         onReloadPatch={(path) => {
           const file = files.find((candidate) => candidate.path === path);
           if (!file) return;

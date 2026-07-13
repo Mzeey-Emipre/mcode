@@ -56,6 +56,13 @@ function reviewerLabel(reviewer: PullRequestReviewer): string {
   return `${reviewer.target.organization}/${reviewer.target.slug}`;
 }
 
+function reviewerAvatarUrl(reviewer: PullRequestReviewer): string | null {
+  if (reviewer.target.kind !== "user" || !reviewer.target.actor.avatarUrl) {
+    return null;
+  }
+  return safePullRequestHttpUrl(reviewer.target.actor.avatarUrl);
+}
+
 function PullRequestDetailHeaderComponent({
   detail,
   summaryFallback = null,
@@ -94,7 +101,11 @@ function PullRequestDetailHeaderComponent({
                 className="size-4 rounded-full object-cover"
               />
             ) : (
-              <CircleUserRound size={15} aria-hidden className="text-muted-foreground" />
+              <CircleUserRound
+                size={15}
+                aria-hidden
+                className="text-muted-foreground"
+              />
             )}
             <span>{actor}</span>
           </span>
@@ -116,7 +127,11 @@ function PullRequestDetailHeaderComponent({
 
         <dl className="mt-7 space-y-3 text-xs">
           <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
-            <GitBranch size={14} aria-hidden className="text-muted-foreground/80" />
+            <GitBranch
+              size={14}
+              aria-hidden
+              className="text-muted-foreground/80"
+            />
             <dt className="text-muted-foreground">Branch</dt>
             <dd className="flex min-w-0 items-center gap-2 font-mono">
               <span
@@ -154,17 +169,48 @@ function PullRequestDetailHeaderComponent({
           <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
             <Users size={14} aria-hidden className="text-muted-foreground/80" />
             <dt className="text-muted-foreground">Reviewers</dt>
-            <dd className="truncate text-foreground/90">
-              {!detail
-                ? "Loading"
-                : reviewers.length > 0
-                ? reviewers.map(reviewerLabel).join(" · ")
-                : "No reviewers"}
+            <dd className="flex min-w-0 items-center gap-2 text-foreground/90">
+              {!detail ? (
+                "Loading"
+              ) : reviewers.length > 0 ? (
+                <>
+                  <span aria-hidden className="flex shrink-0 -space-x-1.5">
+                    {reviewers.slice(0, 4).map((reviewer) => {
+                      const label = reviewerLabel(reviewer);
+                      const reviewerAvatar = reviewerAvatarUrl(reviewer);
+                      return reviewerAvatar ? (
+                        <img
+                          key={label}
+                          src={reviewerAvatar}
+                          alt=""
+                          className="size-5 rounded-full border border-page object-cover"
+                        />
+                      ) : (
+                        <span
+                          key={label}
+                          className="inline-flex size-5 items-center justify-center rounded-full border border-page bg-muted text-xs font-medium uppercase text-muted-foreground"
+                        >
+                          {label.charAt(0)}
+                        </span>
+                      );
+                    })}
+                  </span>
+                  <span className="min-w-0 truncate">
+                    {reviewers.map(reviewerLabel).join(" · ")}
+                  </span>
+                </>
+              ) : (
+                "No reviewers"
+              )}
             </dd>
           </div>
 
           <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
-            <MessageSquare size={14} aria-hidden className="text-muted-foreground/80" />
+            <MessageSquare
+              size={14}
+              aria-hidden
+              className="text-muted-foreground/80"
+            />
             <dt className="text-muted-foreground">Comments</dt>
             <dd className="text-foreground/90">
               {conversationCount}{" "}

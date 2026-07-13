@@ -772,7 +772,7 @@ export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
           const latestState = usePullRequestCodeStore.getState();
           const latestEntry = ownedFilesEntry(started);
           if (!latestEntry) return;
-          const shouldSeedFirstFile =
+          const shouldSeedExpandedFiles =
             !started.append &&
             latestEntry.files.length === 0 &&
             Object.keys(latestEntry.expandedPaths).length === 0 &&
@@ -784,8 +784,8 @@ export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
                 ...latestEntry,
                 files,
                 activePath: latestEntry.activePath ?? files[0]?.path ?? null,
-                expandedPaths: shouldSeedFirstFile && files[0]
-                  ? { [files[0].path]: true }
+                expandedPaths: shouldSeedExpandedFiles
+                  ? Object.fromEntries(files.map((file) => [file.path, true] as const))
                   : latestEntry.expandedPaths,
                 filesLane: {
                   ...latestEntry.filesLane,

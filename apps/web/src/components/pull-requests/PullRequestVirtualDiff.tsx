@@ -41,15 +41,25 @@ export interface PullRequestVirtualDiffProps {
   activePath: string | null;
   onToggleFile: (fileRow: PullRequestDiffFileRow) => void;
   onActivePathChange: (path: string) => void;
-  onCreateDraft: (row: PullRequestDiffLineRow, cell: PullRequestDiffCell) => void;
-  onCreateReply: (thread: PullRequestReviewThread, originLineKey: string | null) => void;
+  onCreateDraft: (
+    row: PullRequestDiffLineRow,
+    cell: PullRequestDiffCell,
+  ) => void;
+  onCreateReply: (
+    thread: PullRequestReviewThread,
+    originLineKey: string | null,
+  ) => void;
   onUpdateDraft: (localId: string, body: string) => boolean;
   onRemoveDraft: (localId: string) => void;
   onTokenBytesChange: (path: string, bytes: number) => boolean;
   onReloadPatch: (path: string) => void;
+  /** Reports changed-file paths represented by the current virtual viewport. */
+  onVisiblePathsChange?: (paths: readonly string[]) => void;
 }
 
-function renderedUnifiedCells(row: PullRequestDiffLineRow): PullRequestDiffCell[] {
+function renderedUnifiedCells(
+  row: PullRequestDiffLineRow,
+): PullRequestDiffCell[] {
   const cells: PullRequestDiffCell[] = [];
   const left = getPullRequestDiffCell(row, "left");
   const right = getPullRequestDiffCell(row, "right");
@@ -111,9 +121,17 @@ function FileRow({
       onClick={() => onToggle(row)}
     >
       {row.expanded ? (
-        <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
+        <ChevronDown
+          size={13}
+          aria-hidden
+          className="shrink-0 text-muted-foreground"
+        />
       ) : (
-        <ChevronRight size={13} aria-hidden className="shrink-0 text-muted-foreground" />
+        <ChevronRight
+          size={13}
+          aria-hidden
+          className="shrink-0 text-muted-foreground"
+        />
       )}
       <FileTypeIcon filePath={row.file.path} size={14} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/90">
@@ -124,7 +142,11 @@ function FileRow({
           from {row.file.previousPath}
         </span>
       )}
-      <Badge variant="ghost" size="sm" className="shrink-0 capitalize text-muted-foreground">
+      <Badge
+        variant="ghost"
+        size="sm"
+        className="shrink-0 capitalize text-muted-foreground"
+      >
         {row.file.changeType}
       </Badge>
       <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--diff-add-strong)]">
@@ -156,7 +178,10 @@ interface DiffCellProps {
     row: PullRequestDiffLineRow,
     cell: PullRequestDiffCell,
   ) => void;
-  onCreateDraft: (row: PullRequestDiffLineRow, cell: PullRequestDiffCell) => void;
+  onCreateDraft: (
+    row: PullRequestDiffLineRow,
+    cell: PullRequestDiffCell,
+  ) => void;
 }
 
 const DiffCell = memo(function DiffCell({
@@ -172,10 +197,9 @@ const DiffCell = memo(function DiffCell({
   onCreateDraft,
 }: DiffCellProps) {
   const tokenSpans = getTokens(cell.key);
-  const highlightedLength = tokenSpans?.reduce(
-    (length, token) => length + token.content.length,
-    0,
-  ) ?? 0;
+  const highlightedLength =
+    tokenSpans?.reduce((length, token) => length + token.content.length, 0) ??
+    0;
   const trailingText = truncated ? cell.content.slice(highlightedLength) : "";
   const lineLabel =
     cell.lineNumber === null
@@ -183,7 +207,8 @@ const DiffCell = memo(function DiffCell({
       : `${cell.side === "left" ? "Original" : "Current"} line ${cell.lineNumber}`;
   const changeLabel =
     cell.type === "add" ? "Added" : cell.type === "remove" ? "Removed" : null;
-  const changeMarker = cell.type === "add" ? "+" : cell.type === "remove" ? "−" : "";
+  const changeMarker =
+    cell.type === "add" ? "+" : cell.type === "remove" ? "−" : "";
 
   return (
     <div
@@ -215,7 +240,10 @@ const DiffCell = memo(function DiffCell({
       <code className="min-w-0 flex-1 whitespace-pre px-2 py-0.5 leading-5">
         {tokenSpans
           ? tokenSpans.map((token, index) => (
-              <span key={`${token.content}:${index}`} style={{ color: token.color }}>
+              <span
+                key={`${token.content}:${index}`}
+                style={{ color: token.color }}
+              >
                 {token.content}
               </span>
             ))
@@ -265,6 +293,7 @@ function PullRequestVirtualDiffComponent({
   onRemoveDraft,
   onTokenBytesChange,
   onReloadPatch,
+  onVisiblePathsChange,
 }: PullRequestVirtualDiffProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const effectiveMode = isNarrow ? "unified" : mode;
@@ -303,6 +332,20 @@ function PullRequestVirtualDiffComponent({
     useFlushSync: false,
   });
   const virtualItems = virtualizer.getVirtualItems();
+  const visiblePaths = useMemo(() => {
+    const paths = new Set<string>();
+    for (const item of virtualItems) {
+      const row = rows[item.index];
+      if (!row) continue;
+      if (row.kind === "file") paths.add(row.file.path);
+      else if ("path" in row && typeof row.path === "string")
+        paths.add(row.path);
+    }
+    return [...paths];
+  }, [rows, virtualItems]);
+  useEffect(() => {
+    onVisiblePathsChange?.(visiblePaths);
+  }, [onVisiblePathsChange, visiblePaths]);
   const visibleRange = useMemo(() => {
     if (virtualItems.length === 0) return { startIndex: 0, endIndex: -1 };
     return {
@@ -333,7 +376,10 @@ function PullRequestVirtualDiffComponent({
       const row = rows[item.index];
       if (row?.kind === "file") keys.add(row.key);
       if (row?.kind === "line") {
-        for (const key of getPullRequestFocusableCellKeys([row], effectiveMode)) {
+        for (const key of getPullRequestFocusableCellKeys(
+          [row],
+          effectiveMode,
+        )) {
           keys.add(key);
         }
       }
@@ -365,7 +411,9 @@ function PullRequestVirtualDiffComponent({
             getPullRequestFocusableCellKeys([row], effectiveMode).length > 0,
         );
         if (pathRow?.kind === "line") {
-          return getPullRequestFocusableCellKeys([pathRow], effectiveMode)[0] ?? null;
+          return (
+            getPullRequestFocusableCellKeys([pathRow], effectiveMode)[0] ?? null
+          );
         }
         const fileRow = rows.find(
           (row) => row.kind === "file" && row.file.path === activePath,
@@ -381,7 +429,8 @@ function PullRequestVirtualDiffComponent({
       if (!focusKey) return;
       setActiveFocusKey(focusKey);
       const rowIndex =
-        cellRowIndex.get(focusKey) ?? rows.findIndex((row) => row.key === focusKey);
+        cellRowIndex.get(focusKey) ??
+        rows.findIndex((row) => row.key === focusKey);
       if (rowIndex >= 0) virtualizer.scrollToIndex(rowIndex, { align: "auto" });
       requestAnimationFrame(() => {
         const elements = viewportRef.current?.querySelectorAll<HTMLElement>(
@@ -425,7 +474,12 @@ function PullRequestVirtualDiffComponent({
       row: PullRequestDiffLineRow,
       cell: PullRequestDiffCell,
     ) => {
-      if (event.key.toLowerCase() === "c" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (
+        event.key.toLowerCase() === "c" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
         event.preventDefault();
         onCreateDraft(row, cell);
         return;
@@ -442,8 +496,12 @@ function PullRequestVirtualDiffComponent({
       const currentRowIndex = cellRowIndex.get(cell.key) ?? 0;
       const target =
         key === "j"
-          ? hunkTargets.find((candidate) => candidate.rowIndex > currentRowIndex)
-          : [...hunkTargets].reverse().find((candidate) => candidate.rowIndex < currentRowIndex);
+          ? hunkTargets.find(
+              (candidate) => candidate.rowIndex > currentRowIndex,
+            )
+          : [...hunkTargets]
+              .reverse()
+              .find((candidate) => candidate.rowIndex < currentRowIndex);
       if (target) focusItem(target.cellKey);
     },
     [cellRowIndex, focusItem, hunkTargets, moveFocus, onCreateDraft],
@@ -465,9 +523,13 @@ function PullRequestVirtualDiffComponent({
     if (row.kind === "hunk") {
       return gridCell(
         <div className="flex min-h-6 items-center gap-2 bg-page/55 px-3 font-mono text-xs text-muted-foreground">
-          <span className="min-w-0 truncate whitespace-nowrap">{row.label}</span>
+          <span className="min-w-0 truncate whitespace-nowrap">
+            {row.label}
+          </span>
           {row.hiddenLineCount > 0 && (
-            <span className="ml-auto shrink-0 tabular-nums">{row.hiddenLineCount} unchanged</span>
+            <span className="ml-auto shrink-0 tabular-nums">
+              {row.hiddenLineCount} unchanged
+            </span>
           )}
         </div>,
       );
@@ -557,9 +619,15 @@ function PullRequestVirtualDiffComponent({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background" data-view-mode={effectiveMode}>
+    <div
+      className="flex min-h-0 flex-1 flex-col bg-background"
+      data-view-mode={effectiveMode}
+    >
       {isNarrow && mode === "split" && (
-        <p role="status" className="bg-page/65 px-3 py-2 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="bg-page/65 px-3 py-2 text-xs text-muted-foreground"
+        >
           Split view needs a wider pane. Showing unified diff.
         </p>
       )}
@@ -577,8 +645,15 @@ function PullRequestVirtualDiffComponent({
       >
         {rows.length === 0 ? (
           <div className="px-4 py-12 text-center">
-            <span aria-hidden className="font-mono text-lg text-muted-foreground/40">∅</span>
-            <p className="mt-1 text-xs text-muted-foreground">No files selected</p>
+            <span
+              aria-hidden
+              className="font-mono text-lg text-muted-foreground/40"
+            >
+              ∅
+            </span>
+            <p className="mt-1 text-xs text-muted-foreground">
+              No files selected
+            </p>
           </div>
         ) : (
           <div

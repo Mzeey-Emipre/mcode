@@ -2,6 +2,7 @@ import type { PullRequestFile } from "@mcode/contracts";
 import type { KeyboardEvent, Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
 import { cn } from "@/lib/utils";
 
 const changeLabels: Record<PullRequestFile["changeType"], string> = {
@@ -58,6 +59,7 @@ export function PullRequestFileRow({
   onFocus,
   onKeyDown,
 }: PullRequestFileRowProps) {
+  const FileIcon = getFileIcon(file.path);
   const patchLabel = patchLabels[file.patchStatus];
   const fullLabel = file.previousPath
     ? `${changeLabels[file.changeType]} ${file.previousPath} to ${file.path}`
@@ -89,10 +91,30 @@ export function PullRequestFileRow({
       onFocus={onFocus}
       onKeyDown={onKeyDown}
     >
+      <FileIcon
+        data-file-icon="true"
+        size={13}
+        aria-hidden
+        className={cn("shrink-0", getFileIconColor(file.path))}
+      />
+      <span className="min-w-0 flex-1 truncate text-left font-mono text-xs">
+        {file.path.split("/").at(-1)}
+      </span>
+      {patchLabel && (
+        <Badge
+          variant={file.patchStatus === "too_large" ? "destructive" : "ghost"}
+          size="sm"
+          className="max-w-20 px-1 font-mono uppercase tracking-wide"
+        >
+          {patchLabel}
+        </Badge>
+      )}
       <span
         aria-hidden
+        data-change-type={file.changeType}
+        title={changeLabels[file.changeType]}
         className={cn(
-          "w-3 shrink-0 text-center font-mono text-[10px] font-semibold",
+          "w-3 shrink-0 text-center font-mono text-xs font-semibold",
           file.changeType === "added" && "text-primary",
           file.changeType === "deleted" && "text-destructive/80",
           file.changeType !== "added" &&
@@ -102,21 +124,9 @@ export function PullRequestFileRow({
       >
         {changeGlyphs[file.changeType]}
       </span>
-      <span className="min-w-0 flex-1 truncate text-left font-mono text-[11px]">
-        {file.path.split("/").at(-1)}
-      </span>
-      {patchLabel && (
-        <Badge
-          variant={file.patchStatus === "too_large" ? "destructive" : "ghost"}
-          size="sm"
-          className="max-w-20 px-1 font-mono text-[9px] uppercase tracking-wide"
-        >
-          {patchLabel}
-        </Badge>
-      )}
       <span
         aria-label={`${file.additions} additions and ${file.deletions} deletions`}
-        className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/75"
+        className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground/75"
       >
         <span className="text-primary/80">+{file.additions}</span>{" "}
         <span className="text-destructive/70">−{file.deletions}</span>

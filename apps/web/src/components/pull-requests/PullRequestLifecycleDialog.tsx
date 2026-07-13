@@ -77,15 +77,19 @@ function effectTitle(
 ): string {
   if (effect === "merge") return "Merge pull request";
   if (effect === "close") return "Close pull request";
-  return targetReadiness === "ready" ? "Mark ready for review" : "Convert to draft";
+  return targetReadiness === "ready"
+    ? "Mark ready for review"
+    : "Convert to draft";
 }
 
 function effectDescription(
   effect: LifecycleEffect,
   targetReadiness: PullRequestReadiness | undefined,
 ): string {
-  if (effect === "merge") return "Merge the confirmed head into the base branch on GitHub.";
-  if (effect === "close") return "Close this pull request on GitHub without deleting its local Review task.";
+  if (effect === "merge")
+    return "Merge the confirmed head into the base branch on GitHub.";
+  if (effect === "close")
+    return "Close this pull request on GitHub without deleting its local Review task.";
   return targetReadiness === "ready"
     ? "Publish this draft as ready for review on GitHub."
     : "Move this pull request back to draft state on GitHub.";
@@ -94,8 +98,11 @@ function effectDescription(
 function confirmLabel(
   effect: LifecycleEffect,
   targetReadiness: PullRequestReadiness | undefined,
+  bypassRequirements: boolean,
 ): string {
-  if (effect === "merge") return "Merge pull request";
+  if (effect === "merge") {
+    return bypassRequirements ? "Bypass and merge" : "Merge pull request";
+  }
   if (effect === "close") return "Close pull request";
   return targetReadiness === "ready" ? "Mark ready" : "Convert to draft";
 }
@@ -134,7 +141,8 @@ export function PullRequestLifecycleDialog({
   const [localError, setLocalError] = useState<string | null>(null);
   const expected = pullRequestMutationExpected(detail);
   const submitting = lane.status === "submitting";
-  const mutationBlocked = submitting || lane.status === "error" || Boolean(outcomeUnknownLane);
+  const mutationBlocked =
+    submitting || lane.status === "error" || Boolean(outcomeUnknownLane);
   const capabilityReason = pullRequestCapabilityReason(capability);
   const repository = `${detail.identity.owner}/${detail.identity.repository}`;
   const unavailableReason =
@@ -188,18 +196,27 @@ export function PullRequestLifecycleDialog({
     const result =
       effect === "readiness"
         ? await store.setReadiness(
-            { identity: detail.identity, expected, readiness: targetReadiness! },
+            {
+              identity: detail.identity,
+              expected,
+              readiness: targetReadiness!,
+            },
             dependencies,
           )
         : effect === "close"
-          ? await store.close({ identity: detail.identity, expected }, dependencies)
+          ? await store.close(
+              { identity: detail.identity, expected },
+              dependencies,
+            )
           : await store.merge(
               {
                 identity: detail.identity,
                 expected,
                 method: mergeMethod,
                 ...(bypassRequirements ? { bypassRequirements: true } : {}),
-                ...(commitHeadline.trim() ? { commitHeadline: commitHeadline.trim() } : {}),
+                ...(commitHeadline.trim()
+                  ? { commitHeadline: commitHeadline.trim() }
+                  : {}),
                 ...(commitBody ? { commitBody } : {}),
               },
               dependencies,
@@ -208,11 +225,9 @@ export function PullRequestLifecycleDialog({
   };
 
   const retry = async (): Promise<void> => {
-    const result = await usePullRequestMutationStore.getState().retry(
-      detail.identity,
-      effect,
-      { mutationTransport, readTransport },
-    );
+    const result = await usePullRequestMutationStore
+      .getState()
+      .retry(detail.identity, effect, { mutationTransport, readTransport });
     if (result?.ok) onOpenChange(false);
   };
 
@@ -239,9 +254,17 @@ export function PullRequestLifecycleDialog({
       >
         <header className="flex items-start gap-3 bg-page px-5 py-4 pr-12">
           {effect === "merge" ? (
-            <GitMerge size={18} aria-hidden className="mt-0.5 shrink-0 text-primary/85" />
+            <GitMerge
+              size={18}
+              aria-hidden
+              className="mt-0.5 shrink-0 text-primary/85"
+            />
           ) : (
-            <GitPullRequest size={18} aria-hidden className="mt-0.5 shrink-0 text-primary/85" />
+            <GitPullRequest
+              size={18}
+              aria-hidden
+              className="mt-0.5 shrink-0 text-primary/85"
+            />
           )}
           <div className="min-w-0">
             <DialogTitle className="text-sm">{title}</DialogTitle>
@@ -263,8 +286,12 @@ export function PullRequestLifecycleDialog({
               <div className="mt-2 flex min-w-0 items-center gap-2 font-mono text-xs text-muted-foreground">
                 <GitBranch size={13} aria-hidden />
                 <span className="truncate">{detail.base.name}</span>
-                <span aria-hidden className="opacity-45">←</span>
-                <span className="truncate text-foreground/85">{detail.head.name}</span>
+                <span aria-hidden className="opacity-45">
+                  ←
+                </span>
+                <span className="truncate text-foreground/85">
+                  {detail.head.name}
+                </span>
                 {detail.head.oid ? (
                   <span className="ml-auto shrink-0 tabular-nums">
                     {detail.head.oid.slice(0, 8)}
@@ -279,9 +306,13 @@ export function PullRequestLifecycleDialog({
             {effect === "readiness" ? (
               <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
                 <dt className="text-muted-foreground">Current</dt>
-                <dd className="capitalize text-foreground/85">{detail.readiness}</dd>
+                <dd className="capitalize text-foreground/85">
+                  {detail.readiness}
+                </dd>
                 <dt className="text-muted-foreground">After confirmation</dt>
-                <dd className="capitalize text-foreground/85">{targetReadiness}</dd>
+                <dd className="capitalize text-foreground/85">
+                  {targetReadiness}
+                </dd>
               </dl>
             ) : null}
 
@@ -289,34 +320,63 @@ export function PullRequestLifecycleDialog({
               <>
                 <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
                   <dt className="text-muted-foreground">Checks</dt>
-                  <dd className="capitalize text-foreground/85">{detail.checks.state}</dd>
+                  <dd className="capitalize text-foreground/85">
+                    {detail.checks.state}
+                  </dd>
                   <dt className="text-muted-foreground">Mergeability</dt>
-                  <dd className="capitalize text-foreground/85">{detail.mergeability}</dd>
+                  <dd className="capitalize text-foreground/85">
+                    {detail.mergeability}
+                  </dd>
                 </dl>
                 <div className="space-y-1.5">
-                  <label htmlFor="pull-request-merge-method" className="text-xs text-muted-foreground">
+                  <label
+                    htmlFor="pull-request-merge-method"
+                    className="text-xs text-muted-foreground"
+                  >
                     Merge method
                   </label>
                   <Select
                     value={mergeMethod}
-                    onValueChange={(value) => setMergeMethod(value as PullRequestMergeMethod)}
+                    onValueChange={(value) =>
+                      setMergeMethod(value as PullRequestMergeMethod)
+                    }
                     disabled={mutationBlocked}
                   >
-                    <SelectTrigger id="pull-request-merge-method" className="w-full">
-                      <SelectValue>{mergeMethod === "merge" ? "Merge commit" : mergeMethod === "squash" ? "Squash and merge" : "Rebase and merge"}</SelectValue>
+                    <SelectTrigger
+                      id="pull-request-merge-method"
+                      className="w-full"
+                    >
+                      <SelectValue>
+                        {mergeMethod === "merge"
+                          ? "Merge commit"
+                          : mergeMethod === "squash"
+                            ? "Squash and merge"
+                            : "Rebase and merge"}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {detail.mergeMethods.map((method) => (
                         <SelectItem key={method} value={method}>
-                          {method === "merge" ? "Merge commit" : method === "squash" ? "Squash and merge" : "Rebase and merge"}
+                          {method === "merge"
+                            ? "Merge commit"
+                            : method === "squash"
+                              ? "Squash and merge"
+                              : "Rebase and merge"}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 {unavailableReason ? (
-                  <p role="status" className="flex items-start gap-2 bg-primary/8 px-3 py-2.5 text-xs text-muted-foreground">
-                    <AlertCircle size={13} aria-hidden className="mt-0.5 shrink-0 text-primary/80" />
+                  <p
+                    role="status"
+                    className="flex items-start gap-2 bg-primary/8 px-3 py-2.5 text-xs text-muted-foreground"
+                  >
+                    <AlertCircle
+                      size={13}
+                      aria-hidden
+                      className="mt-0.5 shrink-0 text-primary/80"
+                    />
                     {unavailableReason}
                   </p>
                 ) : null}
@@ -336,31 +396,40 @@ export function PullRequestLifecycleDialog({
                         htmlFor="pull-request-bypass-requirements"
                         className="block cursor-pointer text-xs font-medium text-foreground/90"
                       >
-                        Bypass merge requirements
+                        Merge without waiting for requirements
                       </label>
                       <span
                         id="pull-request-bypass-requirements-description"
                         className="mt-0.5 block text-xs leading-5 text-muted-foreground"
                       >
-                        Use administrator permission when requirements block the merge.
+                        Use administrator permission to bypass branch protection
+                        rules.
                       </span>
                     </span>
                   </div>
                 ) : (
                   <div className="flex items-start gap-3 border-t border-border/45 pt-4 text-muted-foreground">
-                    <ShieldOff size={15} aria-hidden className="mt-0.5 shrink-0" />
+                    <ShieldOff
+                      size={15}
+                      aria-hidden
+                      className="mt-0.5 shrink-0"
+                    />
                     <span className="min-w-0">
                       <span className="block text-xs font-medium text-foreground/80">
                         Admin bypass unavailable
                       </span>
                       <span className="mt-0.5 block text-xs leading-5">
-                        GitHub does not allow this account to bypass merge requirements.
+                        GitHub does not allow this account to bypass merge
+                        requirements.
                       </span>
                     </span>
                   </div>
                 )}
                 <div className="space-y-1.5">
-                  <label htmlFor="pull-request-merge-headline" className="text-xs text-muted-foreground">
+                  <label
+                    htmlFor="pull-request-merge-headline"
+                    className="text-xs text-muted-foreground"
+                  >
                     Commit headline, optional
                   </label>
                   <Input
@@ -372,7 +441,10 @@ export function PullRequestLifecycleDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label htmlFor="pull-request-merge-body" className="text-xs text-muted-foreground">
+                  <label
+                    htmlFor="pull-request-merge-body"
+                    className="text-xs text-muted-foreground"
+                  >
                     Commit body, optional
                   </label>
                   <Textarea
@@ -383,8 +455,13 @@ export function PullRequestLifecycleDialog({
                     className="resize-y rounded-none"
                     onChange={(event) => {
                       const value = event.target.value;
-                      if (textEncoder.encode(value).byteLength > PULL_REQUEST_MUTATION_BODY_MAX_BYTES) {
-                        setLocalError("Commit body exceeds the 64 KiB UTF-8 limit.");
+                      if (
+                        textEncoder.encode(value).byteLength >
+                        PULL_REQUEST_MUTATION_BODY_MAX_BYTES
+                      ) {
+                        setLocalError(
+                          "Commit body exceeds the 64 KiB UTF-8 limit.",
+                        );
                         return;
                       }
                       setCommitBody(value);
@@ -396,13 +473,22 @@ export function PullRequestLifecycleDialog({
             ) : null}
 
             {effect !== "merge" && unavailableReason ? (
-              <p role="status" className="flex items-start gap-2 bg-primary/8 px-3 py-2.5 text-xs text-muted-foreground">
-                <AlertCircle size={13} aria-hidden className="mt-0.5 shrink-0 text-primary/80" />
+              <p
+                role="status"
+                className="flex items-start gap-2 bg-primary/8 px-3 py-2.5 text-xs text-muted-foreground"
+              >
+                <AlertCircle
+                  size={13}
+                  aria-hidden
+                  className="mt-0.5 shrink-0 text-primary/80"
+                />
                 {unavailableReason}
               </p>
             ) : null}
             {localError ? (
-              <p role="alert" className="text-xs text-destructive">{localError}</p>
+              <p role="alert" className="text-xs text-destructive">
+                {localError}
+              </p>
             ) : null}
             {displayedError ? (
               <PullRequestMutationError
@@ -416,13 +502,22 @@ export function PullRequestLifecycleDialog({
         </ScrollArea>
 
         <DialogFooter className="m-0 flex-row justify-end rounded-none bg-page/65 px-5 py-3.5">
-          <Button type="button" variant="ghost" disabled={submitting} onClick={() => close(false)}>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={submitting}
+            onClick={() => close(false)}
+          >
             Cancel
           </Button>
           <Button
             type="button"
             variant={effect === "close" ? "destructive" : "default"}
-            disabled={mutationBlocked || Boolean(unavailableReason) || Boolean(localError)}
+            disabled={
+              mutationBlocked ||
+              Boolean(unavailableReason) ||
+              Boolean(localError)
+            }
             onClick={() => void submit()}
           >
             {submitting ? (
@@ -431,7 +526,7 @@ export function PullRequestLifecycleDialog({
                 Applying effect
               </>
             ) : (
-              confirmLabel(effect, targetReadiness)
+              confirmLabel(effect, targetReadiness, bypassRequirements)
             )}
           </Button>
         </DialogFooter>

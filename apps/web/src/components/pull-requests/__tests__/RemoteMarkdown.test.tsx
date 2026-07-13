@@ -119,4 +119,31 @@ describe("RemoteMarkdown", () => {
     expect(container.querySelectorAll("pre")).toHaveLength(2);
     expect(container.querySelector("img, svg, iframe, a, button")).toBeNull();
   });
+
+  it("renders GitHub alert blockquotes as labeled callouts", async () => {
+    const content = [
+      "> [!IMPORTANT]",
+      "> Review skipped",
+      ">",
+      "> Too many files!",
+    ].join("\n");
+
+    render(<RemoteMarkdown content={content} />);
+
+    const alert = await screen.findByRole("note", { name: "Important alert" });
+    expect(alert).toHaveAttribute("data-github-alert", "important");
+    expect(alert).toHaveTextContent("Review skipped");
+    expect(alert).toHaveTextContent("Too many files!");
+    expect(alert).not.toHaveTextContent("[!IMPORTANT]");
+  });
+
+  it("keeps ordinary blockquotes semantically unchanged", async () => {
+    const { container } = render(
+      <RemoteMarkdown content="> A normal quoted review." />,
+    );
+
+    expect(await screen.findByText("A normal quoted review.")).toBeVisible();
+    expect(container.querySelector("blockquote")).not.toBeNull();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
 });

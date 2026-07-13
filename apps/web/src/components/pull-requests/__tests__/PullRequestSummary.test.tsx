@@ -276,13 +276,7 @@ describe("PullRequestSummary", () => {
   });
 
   it("keeps local task actions out of the summary content", () => {
-    render(
-      <PullRequestSummary
-        detail={detail()}
-        checks={[]}
-        comments={[]}
-      />,
-    );
+    render(<PullRequestSummary detail={detail()} checks={[]} comments={[]} />);
 
     expect(screen.getByRole("heading", { name: "Description" })).toBeVisible();
     expect(screen.queryByRole("button", { name: /review task/i })).toBeNull();
@@ -348,7 +342,6 @@ describe("PullRequestSummary", () => {
   });
 
   it("expands checks and comments with explicit bounded markers", async () => {
-    const user = userEvent.setup();
     render(
       <PullRequestSummary
         detail={detail()}
@@ -361,9 +354,6 @@ describe("PullRequestSummary", () => {
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: "Checks, 2 loaded of 4" }),
-    );
     expect(screen.getByText("Web verification")).toBeVisible();
     expect(screen.getByText("Required")).toBeVisible();
     expect(
@@ -375,9 +365,6 @@ describe("PullRequestSummary", () => {
       screen.queryByRole("button", { name: "Load more checks" }),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Comments, 2 loaded of 4" }),
-    );
     expect(await screen.findByText("Please verify")).toBeVisible();
     expect(screen.getByText("apps/web/src/app/App.tsx:42")).toBeVisible();
     expect(screen.getByText("Showing 1 of 3 thread comments.")).toBeVisible();
@@ -407,13 +394,7 @@ describe("PullRequestSummary", () => {
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: "Checks, 2 loaded of 4" }),
-    );
     await user.click(screen.getByRole("button", { name: "Load more checks" }));
-    await user.click(
-      screen.getByRole("button", { name: "Comments, 2 loaded of 4" }),
-    );
     await user.click(
       screen.getByRole("button", { name: "Load more comments" }),
     );
@@ -422,7 +403,7 @@ describe("PullRequestSummary", () => {
     expect(onLoadMoreComments).toHaveBeenCalledOnce();
   });
 
-  it("requests each resource exactly once on its first expansion", async () => {
+  it("requests each resource once when its default-open section mounts", async () => {
     const user = userEvent.setup();
     const onChecksFirstOpen = vi.fn();
     const onCommentsFirstOpen = vi.fn();
@@ -436,14 +417,12 @@ describe("PullRequestSummary", () => {
       />,
     );
 
-    expect(onChecksFirstOpen).not.toHaveBeenCalled();
-    expect(onCommentsFirstOpen).not.toHaveBeenCalled();
+    await waitFor(() => expect(onChecksFirstOpen).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onCommentsFirstOpen).toHaveBeenCalledOnce());
 
     const checksTrigger = screen.getByRole("button", {
       name: "Checks, 0 loaded of 4",
     });
-    await user.click(checksTrigger);
-    expect(onChecksFirstOpen).toHaveBeenCalledOnce();
     await user.click(checksTrigger);
     await user.click(checksTrigger);
     expect(onChecksFirstOpen).toHaveBeenCalledOnce();
@@ -452,13 +431,9 @@ describe("PullRequestSummary", () => {
       name: "Comments, 0 loaded of 4",
     });
     await user.click(commentsTrigger);
-    expect(onCommentsFirstOpen).toHaveBeenCalledOnce();
-    await user.click(commentsTrigger);
     await user.click(commentsTrigger);
     expect(onCommentsFirstOpen).toHaveBeenCalledOnce();
 
-    await user.click(checksTrigger);
-    await user.click(commentsTrigger);
     rerender(
       <PullRequestSummary
         detail={{ ...detail(), providerNodeId: "next-pull-request-node" }}
@@ -468,18 +443,11 @@ describe("PullRequestSummary", () => {
         onCommentsFirstOpen={onCommentsFirstOpen}
       />,
     );
-    await user.click(
-      screen.getByRole("button", { name: "Checks, 0 loaded of 4" }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Comments, 0 loaded of 4" }),
-    );
-    expect(onChecksFirstOpen).toHaveBeenCalledTimes(2);
-    expect(onCommentsFirstOpen).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(onChecksFirstOpen).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(onCommentsFirstOpen).toHaveBeenCalledTimes(2));
   });
 
   it("reloads an invalidated resource when the head changes while its section stays open", async () => {
-    const user = userEvent.setup();
     const onChecksFirstOpen = vi.fn();
     const firstDetail = detail();
     const { rerender } = render(
@@ -490,10 +458,7 @@ describe("PullRequestSummary", () => {
         onChecksFirstOpen={onChecksFirstOpen}
       />,
     );
-    await user.click(
-      screen.getByRole("button", { name: "Checks, 0 loaded of 4" }),
-    );
-    expect(onChecksFirstOpen).toHaveBeenCalledOnce();
+    await waitFor(() => expect(onChecksFirstOpen).toHaveBeenCalledOnce());
 
     rerender(
       <PullRequestSummary
@@ -511,7 +476,6 @@ describe("PullRequestSummary", () => {
   });
 
   it("distinguishes initial loading from a successful empty resource", async () => {
-    const user = userEvent.setup();
     const currentDetail = detail();
     const view = render(
       <PullRequestSummary
@@ -521,12 +485,6 @@ describe("PullRequestSummary", () => {
         checksLoading
         commentsLoading
       />,
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Checks, 0 loaded of 4" }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Comments, 0 loaded of 4" }),
     );
     expect(screen.getAllByRole("status")).toHaveLength(2);
     expect(screen.getByText("Loading checks")).toBeVisible();
@@ -593,17 +551,12 @@ describe("PullRequestSummary", () => {
   });
 
   it("virtualizes one thousand check records with a bounded DOM", async () => {
-    const user = userEvent.setup();
     render(
       <PullRequestSummary
         detail={{ ...detail(), checkCount: 1_000 }}
         checks={manyChecks(1_000)}
         comments={[]}
       />,
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "Checks, 1000 loaded of 1000" }),
     );
 
     const list = screen.getByRole("list", { name: "Loaded checks" });
@@ -619,17 +572,12 @@ describe("PullRequestSummary", () => {
   });
 
   it("virtualizes one thousand comments with a bounded DOM", async () => {
-    const user = userEvent.setup();
     render(
       <PullRequestSummary
         detail={{ ...detail(), commentCount: 1_000, reviewThreadCount: 0 }}
         checks={[]}
         comments={manyComments(1_000)}
       />,
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "Comments, 1000 loaded of 1000" }),
     );
 
     const list = screen.getByRole("list", { name: "Loaded comments" });

@@ -416,8 +416,8 @@ function PullRequestSummaryComponent({
   onLoadMoreComments,
   onChecksFirstOpen,
   onCommentsFirstOpen,
-  defaultChecksOpen = false,
-  defaultCommentsOpen = false,
+  defaultChecksOpen = true,
+  defaultCommentsOpen = true,
 }: PullRequestSummaryProps) {
   const conversationCount = detail.commentCount + detail.reviewThreadCount;
   const handleChecksOpenChange = useFirstOpenTrigger(

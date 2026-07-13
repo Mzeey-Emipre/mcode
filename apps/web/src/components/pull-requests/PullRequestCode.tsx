@@ -13,7 +13,7 @@ import {
   ChevronsDownUp,
   Columns2,
   Files,
-  PanelLeftOpen,
+  PanelRightOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,6 +41,11 @@ import { PullRequestChangedFilesPane } from "./PullRequestChangedFilesPane";
 import { PullRequestDiffViewport } from "./PullRequestDiffViewport";
 import { PullRequestSubmitReviewDialog } from "./PullRequestSubmitReviewDialog";
 import { pullRequestCapabilityReason } from "./PullRequestMutationError";
+
+const FILES_PANEL_MIN_WIDTH = 220;
+const FILES_PANEL_DEFAULT_WIDTH = 256;
+const FILES_PANEL_WIDE_WIDTH = 480;
+const DIFF_VIEWPORT_MIN_WIDTH = 440;
 
 interface ReviewThreadPaginationRun {
   generation: number | null;
@@ -125,6 +130,9 @@ export function PullRequestCode({
     }),
   );
   const [filePickerOpen, setFilePickerOpen] = useState(false);
+  const [filesPanelWidth, setFilesPanelWidth] = useState(
+    FILES_PANEL_DEFAULT_WIDTH,
+  );
   const [submitReviewOpen, setSubmitReviewOpen] = useState(false);
   const commentPaginationRunRef = useRef<ReviewThreadPaginationRun>({
     generation: null,
@@ -187,6 +195,15 @@ export function PullRequestCode({
     comments.nextCursor === null &&
     comments.boundedData === null &&
     comments.error === null;
+  const getFilesPanelMaxWidth = useCallback(
+    (panel: HTMLDivElement | null): number =>
+      Math.max(
+        FILES_PANEL_MIN_WIDTH,
+        (panel?.parentElement?.clientWidth ?? window.innerWidth) -
+          DIFF_VIEWPORT_MIN_WIDTH,
+      ),
+    [],
+  );
 
   useEffect(() => {
     if (viewerNodeId) return;
@@ -333,8 +350,7 @@ export function PullRequestCode({
           data-layout={isNarrow ? "compact" : "wide"}
           className={cn(
             "shrink-0 bg-background",
-            !isNarrow &&
-              "flex h-10 items-center gap-2 px-3",
+            !isNarrow && "flex h-10 items-center gap-2 px-3",
           )}
         >
           {isNarrow && (
@@ -443,12 +459,10 @@ export function PullRequestCode({
                 className="rounded-none text-muted-foreground"
                 aria-label="Show changed files"
                 onClick={() =>
-                  usePullRequestCodeStore
-                    .getState()
-                    .setFileTreeVisible(true)
+                  usePullRequestCodeStore.getState().setFileTreeVisible(true)
                 }
               >
-                <PanelLeftOpen size={13} aria-hidden />
+                <PanelRightOpen size={13} aria-hidden />
               </Button>
             )}
 
@@ -504,20 +518,6 @@ export function PullRequestCode({
         )}
 
         <div className="flex min-h-0 flex-1">
-          {!isNarrow && view.fileTreeVisible && (
-            <PullRequestChangedFilesPane
-              files={displayedFiles}
-              activePath={view.activePath}
-              query={view.query}
-              className="w-64 shrink-0"
-              onActivate={activateFile}
-              onQueryChange={updateFileQuery}
-              onClose={() =>
-                usePullRequestCodeStore.getState().setFileTreeVisible(false)
-              }
-            />
-          )}
-
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-page">
             {!code.entry ||
             (filesLane?.status === "loading" &&
@@ -575,13 +575,13 @@ export function PullRequestCode({
             {filesLane?.boundedData && (
               <p
                 role="status"
-                className="shrink-0 bg-primary/6 px-3 py-1.5 text-[11px] text-muted-foreground"
+                className="shrink-0 bg-primary/6 px-3 py-1.5 text-xs text-muted-foreground"
               >
                 {boundedFilesMessage(filesLane.boundedData)}
               </p>
             )}
             {filesLane?.nextCursor && (
-              <div className="flex min-h-8 shrink-0 items-center gap-2 bg-background px-3 text-[11px] text-muted-foreground">
+              <div className="flex min-h-8 shrink-0 items-center gap-2 bg-background px-3 text-xs text-muted-foreground">
                 <span className="min-w-0 flex-1 truncate">
                   {filtersActive
                     ? `${code.files.length} matching files loaded. More results remain.`
@@ -618,7 +618,8 @@ export function PullRequestCode({
                 </span>
               ) : activeDraftCount > 0 ? (
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                  {activeDraftCount} draft {activeDraftCount === 1 ? "comment" : "comments"}
+                  {activeDraftCount} draft{" "}
+                  {activeDraftCount === 1 ? "comment" : "comments"}
                 </span>
               ) : null}
               <Button
@@ -632,6 +633,26 @@ export function PullRequestCode({
               </Button>
             </div>
           </div>
+
+          {!isNarrow && view.fileTreeVisible && (
+            <PullRequestChangedFilesPane
+              files={displayedFiles}
+              activePath={view.activePath}
+              query={view.query}
+              width={filesPanelWidth}
+              minWidth={FILES_PANEL_MIN_WIDTH}
+              maxWidth={`calc(100% - ${DIFF_VIEWPORT_MIN_WIDTH}px)`}
+              defaultWidth={FILES_PANEL_DEFAULT_WIDTH}
+              wideWidth={FILES_PANEL_WIDE_WIDTH}
+              getMaxWidth={getFilesPanelMaxWidth}
+              onWidthChange={setFilesPanelWidth}
+              onActivate={activateFile}
+              onQueryChange={updateFileQuery}
+              onClose={() =>
+                usePullRequestCodeStore.getState().setFileTreeVisible(false)
+              }
+            />
+          )}
         </div>
       </section>
       {activeDraftIdentityKey ? (

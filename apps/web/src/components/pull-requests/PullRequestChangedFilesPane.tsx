@@ -1,6 +1,13 @@
-import type { PullRequestFile, PullRequestFileChangeType } from "@mcode/contracts";
-import { Search, SlidersHorizontal, X } from "lucide-react";
+import type {
+  PullRequestFile,
+  PullRequestFileChangeType,
+} from "@mcode/contracts";
+import { Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
+import {
+  FilesPanel,
+  type FilesPanelProps,
+} from "@/components/files/FilesPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +45,13 @@ export interface PullRequestChangedFilesPaneProps {
   onActivate: (path: string) => void;
   onQueryChange: (query: PullRequestFileQuery) => void;
   onClose?: () => void;
+  width?: FilesPanelProps["width"];
+  minWidth?: FilesPanelProps["minWidth"];
+  maxWidth?: FilesPanelProps["maxWidth"];
+  defaultWidth?: FilesPanelProps["defaultWidth"];
+  wideWidth?: FilesPanelProps["wideWidth"];
+  getMaxWidth?: FilesPanelProps["getMaxWidth"];
+  onWidthChange?: FilesPanelProps["onWidthChange"];
 }
 
 /** Renders a self-contained changed-files navigator with filtering and selection. */
@@ -50,6 +64,13 @@ export function PullRequestChangedFilesPane({
   onActivate,
   onQueryChange,
   onClose,
+  width,
+  minWidth,
+  maxWidth,
+  defaultWidth,
+  wideWidth,
+  getMaxWidth,
+  onWidthChange,
 }: PullRequestChangedFilesPaneProps) {
   const [searchInput, setSearchInput] = useState(query.search);
   const filtersActive = query.search.length > 0 || query.changeTypes.length > 0;
@@ -74,110 +95,97 @@ export function PullRequestChangedFilesPane({
   };
 
   return (
-    <aside
-      data-testid="pull-request-changed-files-pane"
-      aria-label={`${ariaLabel} navigator`}
-      className={cn(
-        "flex min-h-0 flex-col border-r border-border/70 bg-background",
-        className,
-      )}
-    >
-      <header className="flex h-9 shrink-0 items-center gap-2 px-2.5">
-        <span className="text-xs font-medium text-foreground/85">
-          Changed files
-        </span>
-        <span className="font-mono text-[10px] tabular-nums text-muted-foreground/75">
-          {files.length}
-        </span>
-        {onClose && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="ml-auto rounded-none text-muted-foreground"
-            aria-label="Hide changed files"
-            onClick={onClose}
-          >
-            <X size={13} aria-hidden />
-          </Button>
-        )}
-      </header>
+    <FilesPanel
+      title="Changed files"
+      count={files.length}
+      ariaLabel={ariaLabel}
+      testId="pull-request-changed-files-pane"
+      className={className}
+      onClose={onClose}
+      width={width}
+      minWidth={minWidth}
+      maxWidth={maxWidth}
+      defaultWidth={defaultWidth}
+      wideWidth={wideWidth}
+      getMaxWidth={getMaxWidth}
+      onWidthChange={onWidthChange}
+      controls={
+        <div className="flex h-9 shrink-0 items-center gap-1 px-2">
+          <div className="relative min-w-0 flex-1">
+            <Search
+              size={13}
+              aria-hidden
+              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground/70"
+            />
+            <Input
+              size="sm"
+              value={searchInput}
+              maxLength={200}
+              aria-label="Search changed files"
+              placeholder="Filter files"
+              className="h-7 rounded-none bg-page pl-7 font-mono text-xs"
+              onChange={(event) => setSearchInput(event.target.value)}
+            />
+          </div>
 
-      <div className="flex h-9 shrink-0 items-center gap-1 px-2">
-        <div className="relative min-w-0 flex-1">
-          <Search
-            size={13}
-            aria-hidden
-            className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground/70"
-          />
-          <Input
-            size="sm"
-            value={searchInput}
-            maxLength={200}
-            aria-label="Search changed files"
-            placeholder="Filter files"
-            className="h-7 rounded-none bg-page pl-7 font-mono text-xs"
-            onChange={(event) => setSearchInput(event.target.value)}
-          />
-        </div>
-
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="relative rounded-none text-muted-foreground"
-                aria-label="Filter changed files by status"
-              >
-                <SlidersHorizontal size={13} aria-hidden />
-                {query.changeTypes.length > 0 && (
-                  <Badge
-                    variant="secondary"
-                    size="sm"
-                    className="absolute -right-1 -top-1 min-w-3 justify-center px-0.5 font-mono text-[8px] tabular-nums"
-                  >
-                    {query.changeTypes.length}
-                  </Badge>
-                )}
-              </Button>
-            }
-          />
-          <PopoverContent
-            align="start"
-            sideOffset={6}
-            className="w-56 rounded-none p-2"
-          >
-            <div
-              role="group"
-              aria-label="Changed file statuses"
-              className="grid grid-cols-2 gap-1"
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="relative rounded-none text-muted-foreground"
+                  aria-label="Filter changed files by status"
+                >
+                  <SlidersHorizontal size={13} aria-hidden />
+                  {query.changeTypes.length > 0 && (
+                    <Badge
+                      variant="secondary"
+                      size="sm"
+                      className="absolute -right-1 -top-1 min-w-3 justify-center px-0.5 font-mono tabular-nums"
+                    >
+                      {query.changeTypes.length}
+                    </Badge>
+                  )}
+                </Button>
+              }
+            />
+            <PopoverContent
+              align="start"
+              sideOffset={6}
+              className="w-56 rounded-none p-2"
             >
-              {changeTypeOptions.map((option) => {
-                const pressed = query.changeTypes.includes(option.value);
-                return (
-                  <Button
-                    key={option.value}
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-pressed={pressed}
-                    className={cn(
-                      "justify-start rounded-none px-2 text-xs font-normal",
-                      pressed && "bg-primary/9 text-foreground",
-                    )}
-                    onClick={() => toggleChangeType(option.value)}
-                  >
-                    {option.label}
-                  </Button>
-                );
-              })}
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
-
+              <div
+                role="group"
+                aria-label="Changed file statuses"
+                className="grid grid-cols-2 gap-1"
+              >
+                {changeTypeOptions.map((option) => {
+                  const pressed = query.changeTypes.includes(option.value);
+                  return (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-pressed={pressed}
+                      className={cn(
+                        "justify-start rounded-none px-2 text-xs font-normal",
+                        pressed && "bg-primary/9 text-foreground",
+                      )}
+                      onClick={() => toggleChangeType(option.value)}
+                    >
+                      {option.label}
+                    </Button>
+                  );
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+      }
+    >
       <PullRequestFileTree
         files={files}
         activePath={activePath}
@@ -186,6 +194,6 @@ export function PullRequestChangedFilesPane({
         ariaLabel={ariaLabel}
         onActivate={onActivate}
       />
-    </aside>
+    </FilesPanel>
   );
 }
