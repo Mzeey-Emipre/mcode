@@ -99,7 +99,11 @@ export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
         </div>
 
         {activeKey ? (
-          <div className="flex min-w-0 flex-1 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200">
+          <div
+            key={activeKey}
+            data-testid="pull-request-detail-reveal"
+            className="pull-request-detail-enter flex min-w-0 flex-1"
+          >
             <PullRequestDetailPane
               identityKey={activeKey}
               summaryFallback={activeSummary}
