@@ -125,6 +125,9 @@ test.describe("Slash command popup", () => {
     const popup = page.locator("[data-slash-popup]");
     await expect(popup).toBeVisible();
     await expect(popup).toHaveAttribute("data-composer-autocomplete", "true");
+    await popup.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    });
     const [popupBox, composerBox] = await Promise.all([
       popup.boundingBox(),
       page.getByTestId("composer-surface").boundingBox(),

@@ -290,7 +290,7 @@ test.describe("Architecture: Workspace management", () => {
       activeWorkspaceId: WORKSPACE_A.id,
     });
 
-    await expect(page.getByRole("button", { name: "Select project Architecture Test" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open project Architecture Test" })).toBeVisible();
 
     await page.screenshot({
       path: "e2e/screenshots/arch-workspace-injected.png",
@@ -305,8 +305,8 @@ test.describe("Architecture: Workspace management", () => {
       activeWorkspaceId: WORKSPACE_A.id,
     });
 
-    await expect(page.getByRole("button", { name: "Select project Architecture Test" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Select project Second Project" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open project Architecture Test" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open project Second Project" })).toBeVisible();
   });
 
   test("empty state shows Open a folder when no workspaces", async ({
@@ -345,7 +345,7 @@ test.describe("Architecture: Thread lifecycle", () => {
     expect(threadCount).toBe(3);
 
     // Verify workspace is shown and active
-    await expect(page.getByRole("button", { name: "Select project Architecture Test" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open project Architecture Test" })).toBeVisible();
 
     await page.screenshot({
       path: "e2e/screenshots/arch-thread-list.png",

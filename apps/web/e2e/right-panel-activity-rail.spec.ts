@@ -215,7 +215,7 @@ test.describe("Right panel activity rail", () => {
     await seed(page, { tabs: ["terminal"] });
 
     const chatMain = page.locator("main").filter({ has: page.getByTestId("new-thread-welcome") });
-    const projectTree = page.getByRole("button", { name: "Select project Activity Rail" });
+    const projectTree = page.getByRole("button", { name: "Open project Activity Rail" });
     const railToggle = page.getByTestId("rail-panel-toggle");
 
     await expect(chatMain).toBeVisible();

@@ -146,9 +146,11 @@ test.describe("Sidebar thread actions", () => {
     await expect(page.getByTestId("command-palette")).toHaveCount(0);
   });
 
-  test("selecting a project opens its new-thread workspace", async ({ page }) => {
+  test("project new-thread action opens its workspace", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "Select project Test Workspace" }).click();
+    const projectRow = page.getByTestId("project-row-ws-1");
+    await projectRow.hover();
+    await projectRow.getByRole("button", { name: "New thread in Test Workspace" }).click();
 
     await expect(page.getByRole("heading", { name: "What should we build in Test Workspace?" })).toBeVisible();
     await expect(page.getByTestId("new-thread-context-strip")).toContainText("Test Workspace");
@@ -158,9 +160,9 @@ test.describe("Sidebar thread actions", () => {
     page,
   }) => {
     await page.goto("/");
-    await page
-      .getByRole("button", { name: "Select project Test Workspace" })
-      .click();
+    const projectRow = page.getByTestId("project-row-ws-1");
+    await projectRow.hover();
+    await projectRow.getByRole("button", { name: "New thread in Test Workspace" }).click();
 
     const branchTrigger = page.getByRole("button", { name: "From main" });
     await branchTrigger.click();
@@ -275,7 +277,7 @@ test.describe("Sidebar thread actions", () => {
     await dialog.getByRole("button", { name: "Rename", exact: true }).click();
 
     await expect(
-      page.getByRole("button", { name: "Select project Renamed Workspace" }),
+      page.getByRole("button", { name: "Open project Renamed Workspace" }),
     ).toBeVisible();
   });
 
