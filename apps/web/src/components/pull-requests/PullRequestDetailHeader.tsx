@@ -85,21 +85,14 @@ function PullRequestDetailHeaderComponent({
       <div
         className={cn(
           "mx-auto w-full max-w-5xl",
-          isNarrow ? "px-4 pb-4 pt-5" : "px-6 pb-5 pt-7",
+          isNarrow ? "px-4 pb-6 pt-6" : "px-6 pb-8 pt-8",
         )}
       >
-        <p className="font-mono text-[11px] text-muted-foreground">
-          {model.identity.owner}/{model.identity.repository}
-          <span className="ml-2 tabular-nums text-foreground/65">
-            #{model.identity.number}
-          </span>
-        </p>
-
-        <h2 className="mt-2 break-words text-xl font-semibold leading-tight tracking-[-0.015em] text-foreground [text-wrap:pretty]">
+        <h2 className="break-words text-xl font-semibold leading-tight text-foreground [text-wrap:pretty]">
           {model.title}
         </h2>
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5 text-foreground/80">
             {avatarUrl ? (
               <img
@@ -132,16 +125,14 @@ function PullRequestDetailHeaderComponent({
           ) : null}
         </div>
 
-        <dl className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3 border-y border-border/35 py-3 text-xs">
-          <div className="flex w-full min-w-0 items-center gap-2">
+        <dl className="mt-8 space-y-3 text-xs">
+          <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
             <GitBranch
               size={14}
               aria-hidden
               className="text-muted-foreground/80"
             />
-            <dt className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              Branch
-            </dt>
+            <dt className="text-muted-foreground">Branch</dt>
             <dd className="flex min-w-0 items-center gap-2 font-mono">
               <span
                 aria-label={`Head branch ${model.head.name}`}
@@ -160,18 +151,10 @@ function PullRequestDetailHeaderComponent({
               >
                 {model.base.name}
               </span>
-            </dd>
-          </div>
-
-          <div className="flex min-w-0 items-center gap-2">
-            <dt className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              Changes
-            </dt>
-            <dd className="flex items-center gap-1.5 font-mono tabular-nums">
               {model.additions > 0 ? (
                 <span
                   aria-label={`${model.additions} additions`}
-                  className="text-[var(--diff-add-strong)]"
+                  className="ml-1 shrink-0 text-[var(--diff-add-strong)]"
                 >
                   +{model.additions}
                 </span>
@@ -179,7 +162,7 @@ function PullRequestDetailHeaderComponent({
               {model.deletions > 0 ? (
                 <span
                   aria-label={`${model.deletions} deletions`}
-                  className="text-[var(--diff-remove-strong)]"
+                  className="shrink-0 text-[var(--diff-remove-strong)]"
                 >
                   −{model.deletions}
                 </span>
@@ -187,11 +170,9 @@ function PullRequestDetailHeaderComponent({
             </dd>
           </div>
 
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
             <Users size={14} aria-hidden className="text-muted-foreground/80" />
-            <dt className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              Reviewers
-            </dt>
+            <dt className="text-muted-foreground">Reviewers</dt>
             <dd className="flex min-w-0 items-center gap-2 text-foreground/90">
               {!detail ? (
                 "Loading"
@@ -228,29 +209,26 @@ function PullRequestDetailHeaderComponent({
             </dd>
           </div>
 
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
             <MessageSquare
               size={14}
               aria-hidden
               className="text-muted-foreground/80"
             />
-            <dt className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              Comments
-            </dt>
+            <dt className="text-muted-foreground">Comments</dt>
             <dd className="text-foreground/90">
-              {conversationCount} {conversationCount === 1 ? "comment" : "comments"}
+              {conversationCount}{" "}
+              {conversationCount === 1 ? "comment" : "comments"}
             </dd>
           </div>
 
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
             <CheckCircle2
               size={14}
               aria-hidden
               className={checkTone(model.checks.state)}
             />
-            <dt className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              Checks
-            </dt>
+            <dt className="text-muted-foreground">Checks</dt>
             <dd className="text-foreground/90">
               {checkLabel(model.checks.state)}
             </dd>

@@ -6,16 +6,19 @@ import ReactMarkdown, {
 import remarkGfm from "remark-gfm";
 import {
   CircleAlert,
+  ChevronRight,
   Info,
   Lightbulb,
   MessageSquareWarning,
   ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   remarkGitHubAlerts,
   type GitHubAlertKind,
 } from "@/lib/remark-github-alerts";
+import { remarkGitHubDisclosures } from "@/lib/remark-github-disclosures";
 
 interface RemoteMarkdownRendererProps {
   content: string;
@@ -45,27 +48,27 @@ const GITHUB_ALERTS: Record<
   note: {
     label: "Note",
     icon: Info,
-    className: "border-border/80 bg-muted/15 text-muted-foreground",
+    className: "border-border/60 bg-muted/15 text-muted-foreground",
   },
   tip: {
     label: "Tip",
     icon: Lightbulb,
-    className: "border-emerald-500/70 bg-emerald-500/5 text-emerald-400",
+    className: "border-emerald-500/25 bg-emerald-500/[0.035] text-emerald-400",
   },
   important: {
     label: "Important",
     icon: MessageSquareWarning,
-    className: "border-primary/60 bg-primary/5 text-primary",
+    className: "border-primary/25 bg-primary/[0.035] text-primary",
   },
   warning: {
     label: "Warning",
     icon: CircleAlert,
-    className: "border-amber-500/70 bg-amber-500/5 text-amber-400",
+    className: "border-amber-500/25 bg-amber-500/[0.035] text-amber-400",
   },
   caution: {
     label: "Caution",
     icon: ShieldAlert,
-    className: "border-destructive/70 bg-destructive/5 text-destructive",
+    className: "border-destructive/25 bg-destructive/[0.035] text-destructive",
   },
 };
 
@@ -113,13 +116,47 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
   img() {
     return null;
   },
+  details({ node: _node, children, ...props }) {
+    return (
+      <details
+        {...props}
+        className="group/disclosure my-3 overflow-hidden rounded-md border border-border/45 bg-background/25 [&>*:not(summary)]:mx-4 [&>*:not(summary)]:mb-3"
+      >
+        {children}
+      </details>
+    );
+  },
+  summary({ node: _node, children, ...props }) {
+    return (
+      <summary
+        {...props}
+        className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-foreground/90 transition-colors hover:bg-muted/20 [&::-webkit-details-marker]:hidden"
+      >
+        <ChevronRight
+          size={13}
+          aria-hidden
+          className="shrink-0 text-muted-foreground transition-transform group-open/disclosure:rotate-90"
+        />
+        <span>{children}</span>
+      </summary>
+    );
+  },
   blockquote({ node, children, ...props }) {
     const rawKind = node?.properties?.["data-github-alert"];
     const kind =
       typeof rawKind === "string" && rawKind in GITHUB_ALERTS
         ? (rawKind as GitHubAlertKind)
         : null;
-    if (!kind) return <blockquote {...props}>{children}</blockquote>;
+    if (!kind) {
+      return (
+        <blockquote
+          {...props}
+          className="rounded-md border border-border/50 bg-muted/15 px-4 py-3 text-muted-foreground"
+        >
+          {children}
+        </blockquote>
+      );
+    }
 
     const alert = GITHUB_ALERTS[kind];
     const AlertIcon = alert.icon;
@@ -128,7 +165,7 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
         role="note"
         aria-label={`${alert.label} alert`}
         data-github-alert={kind}
-        className={`border-l-2 px-4 py-3 ${alert.className}`}
+        className={cn("rounded-md border px-4 py-3", alert.className)}
       >
         <div className="flex items-center gap-2 text-xs font-semibold">
           <AlertIcon size={14} aria-hidden />
@@ -140,7 +177,7 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
   },
 };
 
-const REMARK_PLUGINS = [remarkGfm, remarkGitHubAlerts];
+const REMARK_PLUGINS = [remarkGfm, remarkGitHubAlerts, remarkGitHubDisclosures];
 
 /** Renders hostile provider Markdown without application-specific behaviors. */
 const RemoteMarkdownRenderer = memo(function RemoteMarkdownRenderer({
@@ -149,14 +186,14 @@ const RemoteMarkdownRenderer = memo(function RemoteMarkdownRenderer({
   return (
     <div
       className={[
-        "space-y-3",
-        "[&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold",
-        "[&_h2]:mt-4 [&_h2]:text-sm [&_h2]:font-semibold",
+        "space-y-4",
+        "[&_h1]:mt-5 [&_h1]:border-b [&_h1]:border-border/50 [&_h1]:pb-2 [&_h1]:text-base [&_h1]:font-semibold",
+        "[&_h2]:mt-5 [&_h2]:border-b [&_h2]:border-border/50 [&_h2]:pb-2 [&_h2]:text-base [&_h2]:font-semibold",
         "[&_h3]:mt-3 [&_h3]:text-sm [&_h3]:font-medium",
-        "[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5",
+        "[&_ul]:space-y-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:space-y-1 [&_ol]:list-decimal [&_ol]:pl-5",
         "[&_li]:my-1",
         "[&_a]:text-link [&_a]:underline [&_a]:underline-offset-2",
-        "[&_blockquote]:bg-muted/20 [&_blockquote]:px-3 [&_blockquote]:py-1 [&_blockquote]:text-muted-foreground",
+        "[&_hr]:my-5 [&_hr]:border-border/50",
         "[&_pre]:overflow-x-auto [&_pre]:rounded-sm [&_pre]:bg-muted/30 [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-xs",
         "[&_code]:rounded-sm [&_code]:bg-muted/35 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs",
         "[&_pre_code]:bg-transparent [&_pre_code]:p-0",

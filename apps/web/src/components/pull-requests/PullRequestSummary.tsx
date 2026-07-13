@@ -280,8 +280,8 @@ const CheckList = memo(function CheckList({
       label="Loaded checks"
       estimateSize={40}
       getItemKey={(check) => check.providerNodeId}
-      rowClassName="flex min-w-0 items-center gap-2 bg-background/30 px-2.5 py-2 text-xs"
-      listClassName="space-y-1.5"
+      rowClassName="flex min-w-0 items-center gap-2 bg-background/30 px-3 py-2 text-xs"
+      listClassName="space-y-1"
       renderItem={(check) => <CheckRow check={check} />}
     />
   );
@@ -296,16 +296,18 @@ const ConversationRow = memo(function ConversationRow({
 }) {
   if (item.kind === "issue_comment") {
     const commentUrl = item.url ? safePullRequestHttpUrl(item.url) : null;
+    const author = item.author?.login ?? "Unknown actor";
     return (
-      <>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="text-foreground/80">
-            {item.author?.login ?? "Unknown actor"}
-          </span>
+      <article
+        aria-label={`Comment from ${author}`}
+        className="overflow-hidden rounded-lg border border-border/50 bg-card"
+      >
+        <header className="flex min-h-10 items-center gap-2 border-b border-border/45 bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground/90">{author}</span>
           <time dateTime={item.createdAt} className="font-mono tabular-nums">
             {formatRelative(item.createdAt)}
           </time>
-          {commentUrl && (
+          {commentUrl ? (
             <a
               href={commentUrl}
               target="_blank"
@@ -314,17 +316,22 @@ const ConversationRow = memo(function ConversationRow({
             >
               Open comment
             </a>
-          )}
+          ) : null}
+        </header>
+        <div className="px-4 py-4">
+          <RemoteMarkdown content={item.body} className="max-w-[72ch]" />
         </div>
-        <RemoteMarkdown content={item.body} className="mt-2" />
-      </>
+      </article>
     );
   }
 
   const location = `${item.path}${item.line === null ? "" : `:${item.line}`}`;
   return (
-    <>
-      <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+    <article
+      aria-label={`Review thread on ${location}`}
+      className="overflow-hidden rounded-lg border border-border/50 bg-card"
+    >
+      <header className="flex min-h-10 min-w-0 flex-wrap items-center gap-2 border-b border-border/45 bg-muted/20 px-4 py-2 text-xs">
         <span className="truncate font-mono text-foreground/85">
           {location}
         </span>
@@ -336,16 +343,18 @@ const ConversationRow = memo(function ConversationRow({
             Outdated
           </Badge>
         )}
-      </div>
-      <div className="mt-2 space-y-2 pl-3">
+      </header>
+      <div className="divide-y divide-border/40">
         {item.comments.map((comment) => {
           const commentUrl = comment.url
             ? safePullRequestHttpUrl(comment.url)
             : null;
           return (
-            <div key={comment.providerNodeId}>
+            <section key={comment.providerNodeId} className="px-4 py-4">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{comment.author?.login ?? "Unknown actor"}</span>
+                <span className="font-medium text-foreground/90">
+                  {comment.author?.login ?? "Unknown actor"}
+                </span>
                 <time
                   dateTime={comment.createdAt}
                   className="font-mono tabular-nums"
@@ -363,17 +372,20 @@ const ConversationRow = memo(function ConversationRow({
                   </a>
                 )}
               </div>
-              <RemoteMarkdown content={comment.body} className="mt-1" />
-            </div>
+              <RemoteMarkdown
+                content={comment.body}
+                className="mt-3 max-w-[72ch]"
+              />
+            </section>
           );
         })}
       </div>
       {item.totalCount > item.comments.length && (
-        <p className="mt-2 font-mono text-xs text-muted-foreground">
+        <p className="border-t border-border/40 px-4 py-3 font-mono text-xs text-muted-foreground">
           Showing {item.comments.length} of {item.totalCount} thread comments.
         </p>
       )}
-    </>
+    </article>
   );
 });
 
@@ -388,10 +400,9 @@ const ConversationList = memo(function ConversationList({
     <ResourceList
       items={comments}
       label="Loaded comments"
-      estimateSize={176}
+      estimateSize={208}
       getItemKey={(item) => item.providerNodeId}
-      rowClassName="bg-background/30 px-3 py-2.5"
-      listClassName="space-y-3"
+      rowClassName="pb-6"
       renderItem={(item) => <ConversationRow item={item} />}
     />
   );
@@ -434,17 +445,17 @@ function PullRequestSummaryComponent({
   return (
     <section
       aria-label="Pull request summary"
-      className="mx-auto min-w-0 w-full max-w-5xl space-y-6 px-4 pb-10 pt-4 sm:px-6"
+      className="mx-auto min-w-0 w-full max-w-5xl space-y-10 px-4 pb-12 pt-6 sm:px-6"
     >
       <section aria-labelledby="pull-request-description-title">
         <h3
           id="pull-request-description-title"
-          className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
+          className="text-sm font-semibold text-foreground"
         >
           Description
         </h3>
         {detail.body ? (
-          <RemoteMarkdown content={detail.body} className="mt-3 max-w-4xl" />
+          <RemoteMarkdown content={detail.body} className="mt-4 max-w-[72ch]" />
         ) : (
           <p className="mt-2 text-xs text-muted-foreground">No description</p>
         )}
@@ -467,13 +478,13 @@ function PullRequestSummaryComponent({
       <Collapsible
         defaultOpen={defaultChecksOpen}
         onOpenChange={handleChecksOpenChange}
-        className="overflow-hidden rounded-lg bg-background/45"
+        className="overflow-hidden rounded-xl border border-border/40 bg-card/30"
       >
         <CollapsibleTrigger asChild>
           <Button
             type="button"
             variant="ghost"
-            className="group h-11 w-full justify-start rounded-none px-3 text-xs hover:bg-muted/20"
+            className="group h-12 w-full justify-start rounded-none px-4 text-xs hover:bg-muted/20"
             aria-label={`Checks, ${checks.length} loaded of ${detail.checkCount}`}
           >
             <CircleDot
@@ -496,7 +507,7 @@ function PullRequestSummaryComponent({
             />
           </Button>
         </CollapsibleTrigger>
-        <CollapsibleContent className="px-3 pb-3">
+        <CollapsibleContent className="px-4 pb-4">
           {checksLoading && checks.length === 0 ? (
             <p
               role="status"
@@ -535,13 +546,13 @@ function PullRequestSummaryComponent({
       <Collapsible
         defaultOpen={defaultCommentsOpen}
         onOpenChange={handleCommentsOpenChange}
-        className="overflow-hidden rounded-lg bg-background/45"
+        className="overflow-hidden rounded-xl border border-border/40 bg-card/30"
       >
         <CollapsibleTrigger asChild>
           <Button
             type="button"
             variant="ghost"
-            className="group h-11 w-full justify-start rounded-none px-3 text-xs hover:bg-muted/20"
+            className="group h-12 w-full justify-start rounded-none px-4 text-xs hover:bg-muted/20"
             aria-label={`Comments, ${comments.length} loaded of ${conversationCount}`}
           >
             <MessageSquare
@@ -564,7 +575,7 @@ function PullRequestSummaryComponent({
             />
           </Button>
         </CollapsibleTrigger>
-        <CollapsibleContent className="px-3 pb-3">
+        <CollapsibleContent className="px-4 pb-4">
           {commentsLoading && comments.length === 0 ? (
             <p
               role="status"

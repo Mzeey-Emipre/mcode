@@ -330,6 +330,14 @@ describe("PullRequestSummary", () => {
     );
 
     const links = await screen.findAllByRole("link", { name: "Open comment" });
+    expect(
+      screen.getByRole("article", { name: "Comment from commenter" }),
+    ).toContainElement(screen.getByText("Please verify"));
+    expect(
+      screen.getByRole("article", {
+        name: "Review thread on apps/web/src/app/App.tsx:42",
+      }),
+    ).toContainElement(screen.getByText("aria-posinset"));
     expect(links).toHaveLength(2);
     expect(links[0]).toHaveAttribute(
       "href",
