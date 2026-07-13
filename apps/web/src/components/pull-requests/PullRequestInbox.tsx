@@ -85,6 +85,7 @@ export function PullRequestInbox({
   const hasNextPage = usePullRequestStore(selectPullRequestHasNextPage);
   const teamLimitation = usePullRequestStore(selectTeamRequestLimitation);
   const [search, setSearch] = useState(storeSearch);
+  const [hasSwitchedRelationship, setHasSwitchedRelationship] = useState(false);
   const internalViewportRef = useRef<HTMLDivElement>(null);
   const viewportRef = listboxRef ?? internalViewportRef;
   const relationshipTabRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -269,6 +270,7 @@ export function PullRequestInbox({
   }, [autoLoad, transport]);
 
   const changeRelationship = (next: PullRequestInboxRelationship) => {
+    if (next !== relationship) setHasSwitchedRelationship(true);
     const store = usePullRequestStore.getState();
     const canReuseLoadedRows =
       store.loadedRelationship === "all" || store.loadedRelationship === next;
@@ -461,10 +463,10 @@ export function PullRequestInbox({
             onClick={() => changeRelationship(tab)}
             onKeyDown={(event) => handleRelationshipTabKeyDown(event, index)}
             className={cn(
-              "relative h-8 rounded-none px-2 text-xs font-medium capitalize",
+              "relative h-8 rounded-none px-2 text-xs font-medium capitalize after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:origin-center after:bg-primary after:transition-transform after:duration-200 after:ease-out motion-reduce:after:transition-none",
               relationship === tab
-                ? "text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-primary"
-                : "text-muted-foreground hover:text-foreground",
+                ? "text-foreground after:scale-x-100"
+                : "text-muted-foreground after:scale-x-0 hover:text-foreground",
             )}
           >
             {tab}
@@ -487,10 +489,14 @@ export function PullRequestInbox({
       </div>
 
       <div
+        key={relationship}
         id={RELATIONSHIP_PANEL_ID}
         role="tabpanel"
         aria-labelledby={relationshipTabId(relationship)}
-        className="flex min-h-0 w-full flex-1 flex-col"
+        className={cn(
+          "flex min-h-0 w-full flex-1 flex-col",
+          hasSwitchedRelationship && "pull-request-relationship-enter",
+        )}
       >
         {teamLimitation && (
           <div className="mx-auto w-full max-w-[720px] px-5">

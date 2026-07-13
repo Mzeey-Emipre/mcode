@@ -144,3 +144,71 @@ test("reveals each selected pull request and respects reduced motion", async ({
     )
     .toBe("none");
 });
+
+test("animates relationship switches and respects reduced motion", async ({
+  page,
+}) => {
+  const summaries = makePerformanceSummaries(2);
+  await mockWebSocketServer(page, {
+    "pullRequest.capabilities": PERFORMANCE_PULL_REQUEST_CAPABILITIES,
+    "pullRequest.list": (request) =>
+      makePerformanceListPage(summaries, request as PullRequestListRequest),
+    "pullRequest.cancel": { ok: true, cancelled: false },
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Pull requests" }).click();
+  await expect(
+    page.getByRole("listbox", { name: "Pull requests" }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    const state = window as typeof window & {
+      __pullRequestRelationshipAnimationStarts?: number;
+    };
+    state.__pullRequestRelationshipAnimationStarts = 0;
+    document.addEventListener("animationstart", (event) => {
+      if (event.animationName === "pull-request-relationship-enter") {
+        state.__pullRequestRelationshipAnimationStarts =
+          (state.__pullRequestRelationshipAnimationStarts ?? 0) + 1;
+      }
+    });
+  });
+
+  await page.getByRole("tab", { name: "reviewing" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __pullRequestRelationshipAnimationStarts?: number;
+            }
+          ).__pullRequestRelationshipAnimationStarts ?? 0,
+      ),
+    )
+    .toBe(1);
+
+  await page.getByRole("tab", { name: "authored" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __pullRequestRelationshipAnimationStarts?: number;
+            }
+          ).__pullRequestRelationshipAnimationStarts ?? 0,
+      ),
+    )
+    .toBe(2);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("tab", { name: "all" }).click();
+  await expect
+    .poll(() =>
+      page
+        .getByRole("tabpanel", { name: "all" })
+        .evaluate((element) => getComputedStyle(element).animationName),
+    )
+    .toBe("none");
+});
