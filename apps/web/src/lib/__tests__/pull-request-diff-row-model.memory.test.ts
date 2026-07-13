@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -8,14 +8,7 @@ describe("pull request diff row memory", () => {
   it("keeps a real 20,000-line V8 model within the 16 MiB cache", () => {
     const webRoot = process.cwd();
     const script = resolve(webRoot, "scripts/check-pull-request-code-memory.mts");
-    const bunPackages = resolve(webRoot, "../../node_modules/.bun");
-    const tsxPackage = readdirSync(bunPackages).find((entry) => entry.startsWith("tsx@"));
-    expect(tsxPackage).toBeDefined();
-    const tsxLoader = resolve(
-      bunPackages,
-      tsxPackage!,
-      "node_modules/tsx/dist/loader.mjs",
-    );
+    const tsxLoader = createRequire(import.meta.url).resolve("tsx");
     const result = spawnSync(
       process.execPath,
       ["--expose-gc", "--import", pathToFileURL(tsxLoader).href, script],
