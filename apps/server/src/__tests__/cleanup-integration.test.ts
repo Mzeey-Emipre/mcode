@@ -71,6 +71,23 @@ describe("Cleanup integration", () => {
       createWorktree: vi.fn().mockReturnValue({ path: join(WT_BASE, "test-wt") }),
       removeWorktree: vi.fn().mockResolvedValue(true),
       isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
+      withReviewWorktreeMutationLock: vi.fn(async (
+        _repoPath: string,
+        work: () => Promise<unknown>,
+      ) => work()),
+      assessWorktreeRemovalSafety: vi.fn(async (
+        worktreePath: string,
+        siblingPaths: readonly string[],
+        truncated: boolean,
+      ) => {
+        const normalize = (value: string) => value.replace(/\\/g, "/").toLowerCase();
+        if (truncated || siblingPaths.length > 512) {
+          return { safe: false, reason: "truncated" as const };
+        }
+        return siblingPaths.some((path) => normalize(path) === normalize(worktreePath))
+          ? { safe: false, reason: "shared" as const }
+          : { safe: true, reason: "exclusive" as const };
+      }),
     } as unknown as GitService;
 
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;

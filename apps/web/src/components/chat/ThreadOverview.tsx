@@ -42,6 +42,7 @@ import { PrSplitButton } from "./PrSplitButton";
 import { ChecksPopover } from "./ChecksPopover";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
+import { usePullRequestReviewLink } from "@/hooks/usePullRequestReviewLink";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
 import {
   getBreakdown,
@@ -1551,10 +1552,21 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const [open, setOpen] = useState(false);
   const autoManagedRef = useRef(true);
   const lastAutoValueRef = useRef<boolean | null>(null);
+  const openRequested = useOverviewStore(
+    (state) => state.requestedThreadId === thread.id,
+  );
 
   useEffect(() => {
     autoManagedRef.current = true;
   }, [thread.id]);
+
+  useEffect(() => {
+    if (!openRequested) return;
+    autoManagedRef.current = false;
+    lastAutoValueRef.current = true;
+    setOpen(true);
+    useOverviewStore.getState().consumeOpenRequest(thread.id);
+  }, [openRequested, thread.id]);
 
   useEffect(() => {
     setCreatedBranchForPr(null);
@@ -1620,6 +1632,19 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     handleCommitOrPush,
     handleOpenPr,
   } = useThreadGitActions(thread);
+  const reviewLink = usePullRequestReviewLink(thread.id, open);
+  const effectivePr = useMemo(
+    () =>
+      pr ??
+      (reviewLink
+        ? {
+            number: reviewLink.identity.number,
+            url: reviewLink.pullRequestUrl,
+            state: reviewLink.pullRequestState,
+          }
+        : null),
+    [pr, reviewLink],
+  );
   const branchlessCreatePr = canStartBranchlessCreatePr(thread);
   const canShowPrActions = prable;
   const createPrBranch = createdBranchForPr ?? thread.branch;
@@ -1798,7 +1823,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     [thread.id],
   );
 
-  const ciDot = useMemo(() => getThreadOverviewCiDot(pr, checks), [pr, checks]);
+  const ciDot = useMemo(
+    () => getThreadOverviewCiDot(effectivePr, checks),
+    [checks, effectivePr],
+  );
   const triggerStatus =
     ciDot === "red"
       ? "Thread overview, CI checks failing"
@@ -2017,7 +2045,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
 
             {canShowPrActions && (
               <ThreadOverviewPrRow
-                pr={pr}
+                pr={effectivePr}
                 hasCommitsAhead={hasCommitsAhead}
                 checks={checks}
                 openPrDetail={openPrDetail}

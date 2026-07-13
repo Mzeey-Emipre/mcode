@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "perf:chunks": "vite build && bun scripts/check-web-chunks.ts",
+    "perf:pull-requests": "vite build && bun scripts/check-web-chunks.ts && vitest run src/stores/__tests__/pull-request-performance.test.ts src/lib/__tests__/pull-request-performance-metrics.test.ts && bun scripts/run-pull-request-performance.ts",
     "lint": "eslint . --cache --cache-location node_modules/.cache/.eslintcache",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

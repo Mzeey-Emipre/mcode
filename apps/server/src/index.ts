@@ -56,6 +56,9 @@ import { ModelCacheService } from "./services/model-cache-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
 import { ThreadTeardownService } from "./services/thread-teardown-service";
+import { PullRequestService } from "./services/pull-requests/pull-request-service";
+import { PullRequestMutationService } from "./services/pull-requests/pull-request-mutation-service";
+import { ReviewWorktreeService } from "./services/pull-requests/review-worktree-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage";
 import { seedAgentRuntimeWorkspace } from "./dev-agent-seed";
 import { WebSocket } from "ws";
@@ -210,6 +213,9 @@ const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
 const gitService = container.resolve(GitService);
 const githubService = container.resolve(GithubService);
+const pullRequestService = container.resolve(PullRequestService);
+const pullRequestMutationService = container.resolve(PullRequestMutationService);
+const reviewWorktreeService = container.resolve(ReviewWorktreeService);
 const fileService = container.resolve(FileService);
 const configService = container.resolve(ConfigService);
 const skillService = container.resolve(SkillService);
@@ -571,6 +577,9 @@ const { httpServer, wss } = createWsServer({
   agentService,
   gitService,
   githubService,
+  pullRequestService,
+  pullRequestMutationService,
+  reviewWorktreeService,
   fileService,
   configService,
   skillService,

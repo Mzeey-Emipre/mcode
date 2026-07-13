@@ -1,0 +1,225 @@
+import type {
+  PullRequestIdentity,
+  PullRequestMutationExpected,
+  PullRequestPostCommentResult,
+} from "@mcode/contracts";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  getPullRequestMutationLaneKey,
+  usePullRequestMutationStore,
+  type PullRequestMutationLane,
+} from "@/stores/pullRequestMutationStore";
+import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
+import type { PullRequestTransport } from "@/transport/pull-requests";
+import { PullRequestIssueCommentComposer } from "../PullRequestIssueCommentComposer";
+
+const identity: PullRequestIdentity = {
+  provider: "github",
+  repositoryNodeId: "R_repo",
+  owner: "Mzeey-Empire",
+  repository: "mcode",
+  number: 42,
+};
+const expected: PullRequestMutationExpected = {
+  providerNodeId: "PR_42",
+  state: "open",
+  readiness: "ready",
+  baseOid: "a".repeat(40),
+  headOid: "b".repeat(40),
+};
+
+function readTransport(): PullRequestTransport {
+  return {
+    getCapabilities: vi.fn().mockResolvedValue({ ok: false }),
+    list: vi.fn().mockResolvedValue({ ok: false }),
+    get: vi.fn().mockResolvedValue({ ok: false }),
+    timeline: vi.fn().mockResolvedValue({ ok: false }),
+    files: vi.fn().mockResolvedValue({ ok: false }),
+    patch: vi.fn().mockResolvedValue({ ok: false }),
+    cancel: vi.fn().mockResolvedValue({ ok: true, cancelled: false }),
+  };
+}
+
+function transport(postComment: PullRequestMutationTransport["postComment"]): PullRequestMutationTransport {
+  const unavailable = vi.fn().mockResolvedValue({ ok: false, error: { code: "remote_unavailable", message: "offline" } });
+  return {
+    postComment,
+    submitReview: unavailable,
+    setReadiness: unavailable,
+    close: unavailable,
+    merge: unavailable,
+  };
+}
+
+describe("PullRequestIssueCommentComposer", () => {
+  beforeEach(() => {
+    usePullRequestMutationStore.setState({ lanes: {}, commentDrafts: {} });
+  });
+
+  it("does not write while drafting and exposes busy state after explicit Post comment", async () => {
+    const user = userEvent.setup();
+    let resolve!: (result: PullRequestPostCommentResult) => void;
+    const postComment = vi.fn().mockImplementation(
+      () => new Promise<PullRequestPostCommentResult>((done) => { resolve = done; }),
+    );
+    render(
+      <PullRequestIssueCommentComposer
+        identity={identity}
+        expected={expected}
+        capability={{ allowed: true }}
+        mutationTransport={transport(postComment)}
+        readTransport={readTransport()}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox", { name: /Comment for Mzeey-Empire\/mcode #42/ });
+    await user.type(textarea, "Check the retry boundary.");
+    expect(postComment).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Post comment" }));
+    expect(postComment).toHaveBeenCalledOnce();
+    expect(screen.getByRole("region", { name: "Issue comment" })).toHaveAttribute("aria-busy", "true");
+    const request = postComment.mock.calls[0]![0];
+    expect(request).toMatchObject({ identity, expected, body: "Check the retry boundary." });
+    expect(request.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i);
+
+    resolve({
+      ok: true,
+      effect: "comment",
+      idempotencyKey: request.idempotencyKey,
+      comment: {
+        providerNodeId: "COMMENT_1",
+        url: "https://github.com/Mzeey-Empire/mcode/pull/42#issuecomment-1",
+        createdAt: "2026-07-12T01:00:00.000Z",
+      },
+    });
+    expect(await screen.findByText("Comment posted.")).toBeVisible();
+    expect(textarea).toHaveValue("");
+  });
+
+  it("uses Mod+Enter as an explicit keyboard path", async () => {
+    const user = userEvent.setup();
+    const postComment = vi.fn().mockImplementation(async (request) => ({
+      ok: true,
+      effect: "comment",
+      idempotencyKey: request.idempotencyKey,
+      comment: {
+        providerNodeId: "COMMENT_1",
+        url: "https://github.com/Mzeey-Empire/mcode/pull/42#issuecomment-1",
+        createdAt: "2026-07-12T01:00:00.000Z",
+      },
+    }));
+    render(
+      <PullRequestIssueCommentComposer
+        identity={identity}
+        expected={expected}
+        capability={{ allowed: true }}
+        mutationTransport={transport(postComment)}
+        readTransport={readTransport()}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "Keyboard comment");
+    fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+    expect(postComment).toHaveBeenCalledOnce();
+  });
+
+  it("preserves text, retries the same key, and keeps outcome-unknown blocked after refresh", async () => {
+    const user = userEvent.setup();
+    const calls: Array<{ idempotencyKey: string }> = [];
+    const postComment = vi.fn().mockImplementation(async (request) => {
+      calls.push(request);
+      return {
+        ok: false,
+        error: calls.length === 1
+          ? { code: "rate_limited", message: "Slow down" }
+          : {
+              code: "conflict",
+              conflictReason: "outcome_unknown",
+              message: "Unknown",
+            },
+      } satisfies PullRequestPostCommentResult;
+    });
+    const onRefresh = vi.fn();
+    render(
+      <PullRequestIssueCommentComposer
+        identity={identity}
+        expected={expected}
+        capability={{ allowed: true }}
+        mutationTransport={transport(postComment)}
+        readTransport={readTransport()}
+        onRefresh={onRefresh}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+    await user.type(textarea, "Retain me");
+    await user.click(screen.getByRole("button", { name: "Post comment" }));
+    expect(textarea).toHaveValue("Retain me");
+    await user.click(screen.getByRole("button", { name: "Retry confirmed effect" }));
+    expect(calls[1]?.idempotencyKey).toBe(calls[0]?.idempotencyKey);
+    expect(await screen.findByText(/outcome could not be confirmed/i)).toBeVisible();
+    expect(textarea).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Check remote state" }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Post comment" })).toBeDisabled();
+    expect(textarea).toHaveValue("Retain me");
+  });
+
+  it("blocks comments for an unknown review outcome until a successful explicit refresh", async () => {
+    const user = userEvent.setup();
+    const postComment = vi.fn();
+    const unknownError = {
+      code: "conflict" as const,
+      conflictReason: "outcome_unknown" as const,
+      message: "The remote outcome could not be confirmed.",
+    };
+    const reviewLane: PullRequestMutationLane = {
+      effect: "review",
+      status: "error",
+      idempotencyKey: "review-receipt",
+      request: null,
+      error: unknownError,
+      result: { ok: false, error: unknownError },
+      draftSnapshotKey: null,
+      updatedAt: 1,
+    };
+    const reviewLaneKey = getPullRequestMutationLaneKey(identity, "review");
+    usePullRequestMutationStore.setState({ lanes: { [reviewLaneKey]: reviewLane } });
+    usePullRequestMutationStore.getState().setCommentDraft(identity, "Wait for certainty");
+    const onRefresh = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    render(
+      <PullRequestIssueCommentComposer
+        identity={identity}
+        expected={expected}
+        capability={{ allowed: true }}
+        mutationTransport={transport(postComment)}
+        readTransport={readTransport()}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox");
+    expect(await screen.findByText(/outcome could not be confirmed/i)).toBeVisible();
+    expect(textarea).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Post comment" })).toBeDisabled();
+    expect(postComment).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Check remote state" }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Check remote state" })).toBeVisible();
+    expect(usePullRequestMutationStore.getState().lanes[reviewLaneKey]).toEqual(reviewLane);
+
+    await user.click(screen.getByRole("button", { name: "Check remote state" }));
+    await vi.waitFor(() => {
+      expect(usePullRequestMutationStore.getState().lanes[reviewLaneKey]).toBeUndefined();
+    });
+    expect(textarea).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Post comment" })).toBeEnabled();
+    expect(postComment).not.toHaveBeenCalled();
+  });
+});

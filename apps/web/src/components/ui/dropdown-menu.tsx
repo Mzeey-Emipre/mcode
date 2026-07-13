@@ -56,7 +56,7 @@ function DropdownMenuItem({
     <MenuPrimitive.Item
       data-slot="dropdown-menu-item"
       className={cn(
-        "relative flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none transition-colors data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative flex cursor-pointer select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none transition-colors data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
@@ -74,7 +74,7 @@ function DropdownMenuCheckboxItem({
     <MenuPrimitive.CheckboxItem
       data-slot="dropdown-menu-checkbox-item"
       className={cn(
-        "relative flex cursor-default select-none items-center rounded-md py-1.5 pr-2 pl-8 text-sm outline-none transition-colors data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
+        "relative flex cursor-pointer select-none items-center rounded-md py-1.5 pr-2 pl-8 text-sm outline-none transition-colors data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50",
         className,
       )}
       checked={checked}
@@ -113,38 +113,62 @@ function DropdownMenuSeparator({ className, ...props }: React.ComponentProps<"di
   )
 }
 
-function DropdownMenuSub({ ...props }: MenuPrimitive.Root.Props) {
-  return <MenuPrimitive.Root data-slot="dropdown-menu-sub" {...props} />
+function DropdownMenuSub({ ...props }: MenuPrimitive.SubmenuRoot.Props) {
+  return <MenuPrimitive.SubmenuRoot data-slot="dropdown-menu-sub" {...props} />
 }
 
 function DropdownMenuSubTrigger({
   className,
   children,
+  delay = 0,
+  closeDelay = 100,
   ...props
-}: MenuPrimitive.Trigger.Props) {
+}: MenuPrimitive.SubmenuTrigger.Props) {
   return (
-    <MenuPrimitive.Trigger
+    <MenuPrimitive.SubmenuTrigger
       data-slot="dropdown-menu-sub-trigger"
       className={cn(
-        "flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none transition-colors data-highlighted:bg-accent data-highlighted:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "flex w-full min-w-0 cursor-pointer select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none transition-colors data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
+      delay={delay}
+      closeDelay={closeDelay}
       {...props}
     >
       {children}
-      <ChevronRightIcon className="ml-auto size-4" />
-    </MenuPrimitive.Trigger>
+      <ChevronRightIcon aria-hidden className="ml-auto size-4" />
+    </MenuPrimitive.SubmenuTrigger>
   )
 }
 
-function DropdownMenuSubContent({ className, ...props }: MenuPrimitive.Popup.Props) {
+const cascadingMenuCollisionAvoidance = {
+  side: "flip",
+  align: "shift",
+  fallbackAxisSide: "none",
+} as const
+
+function DropdownMenuSubContent({
+  className,
+  sideOffset = 4,
+  collisionPadding = 8,
+  ...props
+}: MenuPrimitive.Popup.Props &
+  Pick<MenuPrimitive.Positioner.Props, "sideOffset" | "collisionPadding">) {
   return (
     <MenuPrimitive.Portal>
-      <MenuPrimitive.Positioner className="pointer-events-none isolate z-50">
+      <MenuPrimitive.Positioner
+        side="inline-end"
+        align="start"
+        sideOffset={sideOffset}
+        positionMethod="fixed"
+        collisionPadding={collisionPadding}
+        collisionAvoidance={cascadingMenuCollisionAvoidance}
+        className="pointer-events-none isolate z-50"
+      >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-sub-content"
           className={cn(
-            "pointer-events-auto min-w-[8rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg",
+            "pointer-events-auto max-h-(--available-height) min-w-[8rem] overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg",
             className,
           )}
           {...props}

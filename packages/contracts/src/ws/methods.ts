@@ -34,6 +34,36 @@ import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copi
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
 import { GoalLookupResultSchema } from "../models/goal.js";
 import { PreviewAnnotationBundleSchema } from "../models/browser-preview.js";
+import {
+  PullRequestCapabilitiesRequestSchema,
+  PullRequestCapabilitiesResultSchema,
+  PullRequestListRequestSchema,
+  PullRequestListResultSchema,
+  PullRequestGetRequestSchema,
+  PullRequestGetResultSchema,
+  PullRequestTimelineRequestSchema,
+  PullRequestTimelineResultSchema,
+  PullRequestFilesRequestSchema,
+  PullRequestFilesResultSchema,
+  PullRequestPatchRequestSchema,
+  PullRequestPatchResultSchema,
+  PullRequestCancelRequestSchema,
+  PullRequestCancelResultSchema,
+  PullRequestCreateReviewTaskRequestSchema,
+  PullRequestCreateReviewTaskResultSchema,
+  PullRequestReviewLinkRequestSchema,
+  PullRequestReviewLinkResultSchema,
+  PullRequestPostCommentRequestSchema,
+  PullRequestPostCommentResultSchema,
+  PullRequestSubmitReviewRequestSchema,
+  PullRequestSubmitReviewResultSchema,
+  PullRequestSetReadinessRequestSchema,
+  PullRequestSetReadinessResultSchema,
+  PullRequestCloseRequestSchema,
+  PullRequestCloseResultSchema,
+  PullRequestMergeRequestSchema,
+  PullRequestMergeResultSchema,
+} from "../pull-requests.js";
 
 /** Maximum recap input messages accepted by recap.generate. */
 export const RECAP_MAX_MESSAGES = 80;
@@ -584,10 +614,68 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ url: z.string() }),
     result: PrDetailSchema().nullable(),
   },
+  "pullRequest.capabilities": {
+    params: PullRequestCapabilitiesRequestSchema(),
+    result: PullRequestCapabilitiesResultSchema(),
+  },
+  "pullRequest.list": {
+    params: PullRequestListRequestSchema(),
+    result: PullRequestListResultSchema(),
+  },
+  "pullRequest.get": {
+    params: PullRequestGetRequestSchema(),
+    result: PullRequestGetResultSchema(),
+  },
+  "pullRequest.timeline": {
+    params: PullRequestTimelineRequestSchema(),
+    result: PullRequestTimelineResultSchema(),
+  },
+  "pullRequest.files": {
+    params: PullRequestFilesRequestSchema(),
+    result: PullRequestFilesResultSchema(),
+  },
+  "pullRequest.patch": {
+    params: PullRequestPatchRequestSchema(),
+    result: PullRequestPatchResultSchema(),
+  },
+  "pullRequest.cancel": {
+    params: PullRequestCancelRequestSchema(),
+    result: PullRequestCancelResultSchema(),
+  },
+  "pullRequest.createReviewTask": {
+    params: PullRequestCreateReviewTaskRequestSchema(),
+    result: PullRequestCreateReviewTaskResultSchema(),
+  },
+  "pullRequest.reviewLink": {
+    params: PullRequestReviewLinkRequestSchema(),
+    result: PullRequestReviewLinkResultSchema(),
+  },
+  "pullRequest.postComment": {
+    params: PullRequestPostCommentRequestSchema(),
+    result: PullRequestPostCommentResultSchema(),
+  },
+  "pullRequest.submitReview": {
+    params: PullRequestSubmitReviewRequestSchema(),
+    result: PullRequestSubmitReviewResultSchema(),
+  },
+  "pullRequest.setReadiness": {
+    params: PullRequestSetReadinessRequestSchema(),
+    result: PullRequestSetReadinessResultSchema(),
+  },
+  "pullRequest.close": {
+    params: PullRequestCloseRequestSchema(),
+    result: PullRequestCloseResultSchema(),
+  },
+  "pullRequest.merge": {
+    params: PullRequestMergeRequestSchema(),
+    result: PullRequestMergeResultSchema(),
+  },
   "git.push": {
     params: z.object({
       workspaceId: z.string(),
       branch: GitRefSchema,
+      /** Active thread lets linked Review tasks use their persisted explicit push target. */
+      threadId: z.string().optional(),
     }),
     result: z.object({ success: z.boolean() }),
   },

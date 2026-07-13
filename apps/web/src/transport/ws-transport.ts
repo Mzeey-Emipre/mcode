@@ -22,7 +22,37 @@ import type {
   CodexAgentMentionInfo,
   GitRemoteUrl,
 } from "./types";
-import type { CreateAndSendResult } from "@mcode/contracts";
+import type {
+  CreateAndSendResult,
+  PullRequestCapabilitiesRequest,
+  PullRequestCapabilitiesResult,
+  PullRequestListRequest,
+  PullRequestListResult,
+  PullRequestGetRequest,
+  PullRequestGetResult,
+  PullRequestTimelineRequest,
+  PullRequestTimelineResult,
+  PullRequestFilesRequest,
+  PullRequestFilesResult,
+  PullRequestPatchRequest,
+  PullRequestPatchResult,
+  PullRequestCancelRequest,
+  PullRequestCancelResult,
+  PullRequestCreateReviewTaskRequest,
+  PullRequestCreateReviewTaskResult,
+  PullRequestReviewLinkRequest,
+  PullRequestReviewLinkResult,
+  PullRequestPostCommentRequest,
+  PullRequestPostCommentResult,
+  PullRequestSubmitReviewRequest,
+  PullRequestSubmitReviewResult,
+  PullRequestSetReadinessRequest,
+  PullRequestSetReadinessResult,
+  PullRequestCloseRequest,
+  PullRequestCloseResult,
+  PullRequestMergeRequest,
+  PullRequestMergeResult,
+} from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
 import type { PaginatedMessages, ConversationPage, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import type { ReasoningLevel } from "@mcode/contracts";
@@ -697,6 +727,34 @@ export function createWsTransport(
     // GitHub
     getBranchPr: (branch, cwd) =>
       rpc<PrInfo | null>("github.branchPr", { branch, cwd }),
+    getPullRequestCapabilities: (request: PullRequestCapabilitiesRequest) =>
+      rpc<PullRequestCapabilitiesResult>("pullRequest.capabilities", request),
+    listPullRequests: (request: PullRequestListRequest) =>
+      rpc<PullRequestListResult>("pullRequest.list", request),
+    getPullRequestResource: (request: PullRequestGetRequest) =>
+      rpc<PullRequestGetResult>("pullRequest.get", request),
+    getPullRequestTimeline: (request: PullRequestTimelineRequest) =>
+      rpc<PullRequestTimelineResult>("pullRequest.timeline", request),
+    getPullRequestFiles: (request: PullRequestFilesRequest) =>
+      rpc<PullRequestFilesResult>("pullRequest.files", request),
+    getPullRequestPatch: (request: PullRequestPatchRequest) =>
+      rpc<PullRequestPatchResult>("pullRequest.patch", request),
+    createPullRequestReviewTask: (request: PullRequestCreateReviewTaskRequest) =>
+      rpc<PullRequestCreateReviewTaskResult>("pullRequest.createReviewTask", request),
+    getPullRequestReviewLink: (request: PullRequestReviewLinkRequest) =>
+      rpc<PullRequestReviewLinkResult>("pullRequest.reviewLink", request),
+    postPullRequestComment: (request: PullRequestPostCommentRequest) =>
+      rpc<PullRequestPostCommentResult>("pullRequest.postComment", request),
+    submitPullRequestReview: (request: PullRequestSubmitReviewRequest) =>
+      rpc<PullRequestSubmitReviewResult>("pullRequest.submitReview", request),
+    setPullRequestReadiness: (request: PullRequestSetReadinessRequest) =>
+      rpc<PullRequestSetReadinessResult>("pullRequest.setReadiness", request),
+    closePullRequest: (request: PullRequestCloseRequest) =>
+      rpc<PullRequestCloseResult>("pullRequest.close", request),
+    mergePullRequest: (request: PullRequestMergeRequest) =>
+      rpc<PullRequestMergeResult>("pullRequest.merge", request),
+    cancelPullRequestOperation: (request: PullRequestCancelRequest) =>
+      rpc<PullRequestCancelResult>("pullRequest.cancel", request),
     listOpenPrs: (workspaceId) => rpc<PrDetail[]>("github.listOpenPrs", { workspaceId }),
     fetchBranch: (workspaceId, branch, prNumber?) =>
       rpc<void>("git.fetchBranch", { workspaceId, branch, prNumber }),
@@ -794,8 +852,8 @@ export function createWsTransport(
       rpc<{ additions: number; deletions: number }>("git.reviewDiffStats", params),
 
     // GitHub PR (advanced)
-    push: (workspaceId, branch) =>
-      rpc<{ success: boolean }>("git.push", { workspaceId, branch }),
+    push: (workspaceId, branch, threadId?) =>
+      rpc<{ success: boolean }>("git.push", { workspaceId, branch, threadId }),
 
     generatePrDraft: (workspaceId, threadId, baseBranch) =>
       rpc<PrDraft>("github.generatePrDraft", {

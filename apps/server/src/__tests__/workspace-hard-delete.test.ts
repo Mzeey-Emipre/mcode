@@ -24,6 +24,30 @@ vi.mock("../services/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
 }));
 
+function createCleanupGitServiceMock(): GitService {
+  return {
+    removeWorktree: vi.fn().mockResolvedValue(true),
+    isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
+    withReviewWorktreeMutationLock: vi.fn(async (
+      _repoPath: string,
+      work: () => Promise<unknown>,
+    ) => work()),
+    assessWorktreeRemovalSafety: vi.fn(async (
+      worktreePath: string,
+      siblingPaths: readonly string[],
+      truncated: boolean,
+    ) => {
+      const normalize = (value: string) => value.replace(/\\/g, "/").toLowerCase();
+      if (truncated || siblingPaths.length > 512) {
+        return { safe: false, reason: "truncated" as const };
+      }
+      return siblingPaths.some((path) => normalize(path) === normalize(worktreePath))
+        ? { safe: false, reason: "shared" as const }
+        : { safe: true, reason: "exclusive" as const };
+    }),
+  } as unknown as GitService;
+}
+
 describe("WorkspaceRepo - soft/hard delete", () => {
   let db: Database.Database;
   let workspaceRepo: WorkspaceRepo;
@@ -359,10 +383,7 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
       killByThread: vi.fn(),
     } as unknown as TerminalService;
 
-    mockGitService = {
-      removeWorktree: vi.fn().mockResolvedValue(true),
-      isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
-    } as unknown as GitService;
+    mockGitService = createCleanupGitServiceMock();
 
     mockAttachmentService = {
       removeForThread: vi.fn(),
@@ -484,10 +505,7 @@ describe("CleanupWorker - startup reconciliation", () => {
       killByThread: vi.fn(),
     } as unknown as TerminalService;
 
-    mockGitService = {
-      removeWorktree: vi.fn().mockResolvedValue(true),
-      isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
-    } as unknown as GitService;
+    mockGitService = createCleanupGitServiceMock();
 
     mockAttachmentService = {
       removeForThread: vi.fn(),
@@ -574,7 +592,7 @@ describe("CleanupWorker - shared branch protection", () => {
 
     mockClaudeProvider = { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider;
     mockTerminalService = { killByThread: vi.fn() } as unknown as TerminalService;
-    mockGitService = { removeWorktree: vi.fn().mockResolvedValue(true), isRegisteredWorktreePath: vi.fn().mockReturnValue(true) } as unknown as GitService;
+    mockGitService = createCleanupGitServiceMock();
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
@@ -821,7 +839,7 @@ describe("CleanupWorker - missing directory handling", () => {
 
     mockClaudeProvider = { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider;
     mockTerminalService = { killByThread: vi.fn() } as unknown as TerminalService;
-    mockGitService = { removeWorktree: vi.fn().mockResolvedValue(true), isRegisteredWorktreePath: vi.fn().mockReturnValue(true) } as unknown as GitService;
+    mockGitService = createCleanupGitServiceMock();
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
@@ -905,7 +923,7 @@ describe("CleanupWorker - idempotent retry", () => {
 
     mockClaudeProvider = { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider;
     mockTerminalService = { killByThread: vi.fn() } as unknown as TerminalService;
-    mockGitService = { removeWorktree: vi.fn().mockResolvedValue(true), isRegisteredWorktreePath: vi.fn().mockReturnValue(true) } as unknown as GitService;
+    mockGitService = createCleanupGitServiceMock();
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 

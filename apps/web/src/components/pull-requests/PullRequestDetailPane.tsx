@@ -1,0 +1,708 @@
+import {
+  useCallback,
+  useEffect,
+  lazy,
+  memo,
+  Suspense,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type Ref,
+} from "react";
+import { AlertCircle, RefreshCw } from "lucide-react";
+import type {
+  PullRequestBoundedDataMarker,
+  PullRequestCapability,
+  PullRequestDetail,
+  PullRequestSummary as PullRequestSummaryRecord,
+} from "@mcode/contracts";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
+import { registerCommand } from "@/lib/command-registry";
+import {
+  selectPullRequestDetailCore,
+  selectPullRequestSummaryResources,
+  selectPullRequestTimelineResources,
+} from "@/stores/pull-request-detail-selectors";
+import {
+  usePullRequestDetailStore,
+  type PullRequestDetailLaneState,
+} from "@/stores/pullRequestDetailStore";
+import { usePullRequestStore } from "@/stores/pullRequestStore";
+import { usePullRequestMutationStore } from "@/stores/pullRequestMutationStore";
+import type { PullRequestTransport } from "@/transport/pull-requests";
+import type { PullRequestReviewTaskTransport } from "@/transport/pull-request-review-task";
+import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
+import { useShallow } from "zustand/shallow";
+import { PullRequestDetailHeader } from "./PullRequestDetailHeader";
+import { PullRequestSummary } from "./PullRequestSummary";
+import { PullRequestTimeline } from "./PullRequestTimeline";
+import { PullRequestReviewTaskDialog } from "./PullRequestReviewTaskDialog";
+import { PullRequestIssueCommentComposer } from "./PullRequestIssueCommentComposer";
+import { pullRequestMutationExpected } from "./PullRequestMutationError";
+
+const DETAIL_POLL_INTERVAL_MS = 30_000;
+const PullRequestCode = lazy(() =>
+  import("./PullRequestCode").then((module) => ({
+    default: module.PullRequestCode,
+  })),
+);
+
+const DETAIL_TABS = ["summary", "timeline", "code"] as const;
+type PullRequestDetailTab = (typeof DETAIL_TABS)[number];
+
+/** Props for the selected pull request Summary, Timeline, and Code pane. */
+export interface PullRequestDetailPaneProps {
+  identityKey: string;
+  summaryFallback?: PullRequestSummaryRecord | null;
+  isNarrow: boolean;
+  /** Reserves the top-left slot occupied by the collapsed-sidebar reveal control. */
+  reserveSidebarReveal?: boolean;
+  onClose: () => void;
+  /** Focus target used when narrow activation replaces the inbox. */
+  backButtonRef?: Ref<HTMLButtonElement>;
+  transport?: PullRequestTransport;
+  /** Independent transport for local Review-task actions. */
+  reviewTaskTransport?: PullRequestReviewTaskTransport;
+  /** Independent transport for explicit, non-cancellable remote effects. */
+  mutationTransport?: PullRequestMutationTransport;
+}
+
+function tabId(tab: PullRequestDetailTab): string {
+  return `pull-request-detail-tab-${tab}`;
+}
+
+function laneBusy(lane: PullRequestDetailLaneState): boolean {
+  return lane.status === "loading" || lane.status === "refreshing";
+}
+
+function isDocumentActive(): boolean {
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
+interface PullRequestSummaryPanelProps {
+  identityKey: string;
+  detail: NonNullable<
+    ReturnType<ReturnType<typeof selectPullRequestDetailCore>>["detail"]
+  >;
+  detailBoundedData: PullRequestBoundedDataMarker | null;
+  transport?: PullRequestTransport;
+  onReviewChangeStack?: () => void;
+  reviewChangeStackAllowed: boolean;
+  reviewChangeStackUnavailableReason: string | null;
+}
+
+const PullRequestSummaryPanel = memo(function PullRequestSummaryPanel({
+  identityKey,
+  detail,
+  detailBoundedData,
+  transport,
+  onReviewChangeStack,
+  reviewChangeStackAllowed,
+  reviewChangeStackUnavailableReason,
+}: PullRequestSummaryPanelProps) {
+  const resources = usePullRequestDetailStore(
+    useShallow(selectPullRequestSummaryResources(identityKey)),
+  );
+  const checksLane = resources.checksLane;
+  const commentsLane = resources.commentsLane;
+  if (!checksLane || !commentsLane) return null;
+  const summaryError = checksLane.error ?? commentsLane.error;
+  const summaryStale = checksLane.stale || commentsLane.stale;
+
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      {summaryError && (
+        <div
+          role="status"
+          className="flex items-center gap-2 bg-primary/8 px-4 py-2 text-xs text-muted-foreground"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {summaryStale
+              ? "Stale Summary data."
+              : "Summary data is unavailable."}{" "}
+            {summaryError.message}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              if (checksLane.error) {
+                void usePullRequestDetailStore
+                  .getState()
+                  .loadChecks({ transport });
+              }
+              if (commentsLane.error) {
+                void usePullRequestDetailStore
+                  .getState()
+                  .loadComments({ transport });
+              }
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+      <PullRequestSummary
+        detail={detail}
+        detailBoundedData={detailBoundedData}
+        checks={resources.checks}
+        comments={resources.comments}
+        checksHasMore={resources.checksNextCursor !== null}
+        commentsHasMore={resources.commentsNextCursor !== null}
+        checksBoundedData={checksLane.boundedData}
+        commentsBoundedData={commentsLane.boundedData}
+        checksLoading={laneBusy(checksLane)}
+        commentsLoading={laneBusy(commentsLane)}
+        checksLoaded={checksLane.fetchedAt !== null}
+        commentsLoaded={commentsLane.fetchedAt !== null}
+        onChecksFirstOpen={() => {
+          const current =
+            usePullRequestDetailStore.getState().entries[identityKey];
+          if (current?.lanes.checks.fetchedAt === null) {
+            void usePullRequestDetailStore.getState().loadChecks({ transport });
+          }
+        }}
+        onCommentsFirstOpen={() => {
+          const current =
+            usePullRequestDetailStore.getState().entries[identityKey];
+          if (current?.lanes.comments.fetchedAt === null) {
+            void usePullRequestDetailStore
+              .getState()
+              .loadComments({ transport });
+          }
+        }}
+        onLoadMoreChecks={() =>
+          void usePullRequestDetailStore
+            .getState()
+            .loadChecks({ append: true, transport })
+        }
+        onLoadMoreComments={() =>
+          void usePullRequestDetailStore
+            .getState()
+            .loadComments({ append: true, transport })
+        }
+        onReviewChangeStack={onReviewChangeStack}
+        reviewChangeStackAllowed={reviewChangeStackAllowed}
+        reviewChangeStackUnavailableReason={reviewChangeStackUnavailableReason}
+      />
+    </ScrollArea>
+  );
+});
+
+PullRequestSummaryPanel.displayName = "PullRequestSummaryPanel";
+
+interface PullRequestTimelinePanelProps {
+  identityKey: string;
+  detail: PullRequestDetail;
+  capability: PullRequestCapability | null | undefined;
+  transport?: PullRequestTransport;
+  mutationTransport?: PullRequestMutationTransport;
+  onRefresh: () => Promise<boolean>;
+}
+
+const PullRequestTimelinePanel = memo(function PullRequestTimelinePanel({
+  identityKey,
+  detail,
+  capability,
+  transport,
+  mutationTransport,
+  onRefresh,
+}: PullRequestTimelinePanelProps) {
+  const resources = usePullRequestDetailStore(
+    useShallow(selectPullRequestTimelineResources(identityKey)),
+  );
+  const initialLane = resources.initialLane;
+  const olderLane = resources.olderLane;
+  const newerLane = resources.newerLane;
+  if (!initialLane || !olderLane || !newerLane) return null;
+  const boundedData =
+    newerLane.boundedData ?? olderLane.boundedData ?? initialLane.boundedData;
+  const stale = initialLane.stale || olderLane.stale || newerLane.stale;
+  const error = initialLane.error ?? olderLane.error ?? newerLane.error;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {error && (
+        <div
+          role="status"
+          className="flex items-center gap-2 bg-primary/8 px-4 py-2 text-xs text-muted-foreground"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {stale ? "Stale Timeline data." : "Timeline is unavailable."}{" "}
+            {error.message}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              const current =
+                usePullRequestDetailStore.getState().entries[identityKey];
+              if (current?.lanes.timelineInitial.fetchedAt === null) {
+                void usePullRequestDetailStore
+                  .getState()
+                  .loadTimeline(transport);
+              } else {
+                void usePullRequestDetailStore
+                  .getState()
+                  .catchUpTimeline(transport);
+              }
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+      <PullRequestTimeline
+        items={resources.items}
+        hasMoreOlder={resources.hasMoreOlder}
+        hasMoreNewer={resources.hasMoreNewer}
+        boundedData={boundedData}
+        stale={stale}
+        initialLoading={laneBusy(initialLane)}
+        initialFailed={initialLane.status === "error"}
+        loadingOlder={laneBusy(olderLane)}
+        loadingNewer={laneBusy(newerLane)}
+        onLoadOlder={() =>
+          usePullRequestDetailStore.getState().loadOlderTimeline(transport)
+        }
+        onLoadNewer={() =>
+          void usePullRequestDetailStore.getState().catchUpTimeline(transport)
+        }
+      />
+      <PullRequestIssueCommentComposer
+        identity={detail.identity}
+        expected={pullRequestMutationExpected(detail)}
+        capability={capability}
+        mutationTransport={mutationTransport}
+        readTransport={transport}
+        onRefresh={onRefresh}
+      />
+    </div>
+  );
+});
+
+PullRequestTimelinePanel.displayName = "PullRequestTimelinePanel";
+
+function reviewTaskUnavailableReason(
+  state: PullRequestSummaryRecord["state"],
+  headOid: string | null,
+  capability: PullRequestCapability | null,
+): string | null {
+  if (state === "merged")
+    return "Merged pull requests cannot create a new Review task.";
+  if (state === "closed")
+    return "Closed pull requests cannot create a new Review task.";
+  if (!headOid) return "The pull request head commit is unavailable.";
+  if (capability?.allowed) return null;
+  if (capability?.reason === "unauthenticated")
+    return "GitHub authentication is required.";
+  if (
+    capability?.reason === "forbidden" ||
+    capability?.reason === "missing_scope"
+  ) {
+    return "GitHub permissions do not allow Review worktrees.";
+  }
+  if (capability?.reason === "remote_unavailable")
+    return "GitHub is unavailable.";
+  return "Review worktrees are unavailable.";
+}
+
+/** Persistent read-only Summary, Timeline, and Code pane for one pull request. */
+export function PullRequestDetailPane({
+  identityKey,
+  summaryFallback = null,
+  isNarrow,
+  reserveSidebarReveal = false,
+  onClose,
+  backButtonRef,
+  transport,
+  reviewTaskTransport,
+  mutationTransport,
+}: PullRequestDetailPaneProps) {
+  const core = usePullRequestDetailStore(
+    useShallow(selectPullRequestDetailCore(identityKey)),
+  );
+  const activeHeadOid = core.detail?.head.oid ?? null;
+  const [activeTab, setActiveTab] = useState<PullRequestDetailTab>("summary");
+  const [reviewTaskOpen, setReviewTaskOpen] = useState(false);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const capabilities = usePullRequestStore((state) => state.capabilities);
+  const reviewWorktreeCapability = capabilities?.reviewWorktree ?? null;
+  const reviewWorktreeCapabilityKnown = usePullRequestStore(
+    (state) => state.capabilities !== null,
+  );
+  const openReviewTask = useCallback(() => setReviewTaskOpen(true), []);
+  const reviewTaskReason =
+    core.detail && reviewWorktreeCapabilityKnown
+      ? reviewTaskUnavailableReason(
+          core.detail.state,
+          core.detail.head.oid,
+          reviewWorktreeCapability,
+        )
+      : null;
+  const reviewTaskAllowed =
+    reviewWorktreeCapabilityKnown && reviewTaskReason === null;
+  const refreshSelected = useCallback(async (): Promise<boolean> => {
+    const beforeState = usePullRequestDetailStore.getState();
+    const before = beforeState.entries[identityKey]?.lanes.detail;
+    if (!before || before.operationId) return false;
+    await beforeState.refreshActive({ force: true, transport });
+    const afterState = usePullRequestDetailStore.getState();
+    const after = afterState.entries[identityKey]?.lanes.detail;
+    return Boolean(
+      afterState.activeKey === identityKey &&
+      after &&
+      after.generation > before.generation &&
+      after.operationId === null &&
+      after.status === "ready" &&
+      after.error === null &&
+      after.fetchedAt !== null,
+    );
+  }, [identityKey, transport]);
+
+  useEffect(() => {
+    if (!core.detail || !reviewTaskAllowed) return;
+    return registerCommand({
+      id: "pullRequests.reviewChangeStack",
+      title: "Review Change Stack",
+      category: "Pull requests",
+      handler: openReviewTask,
+    });
+  }, [core.detail, openReviewTask, reviewTaskAllowed]);
+
+  useEffect(() => {
+    const current = usePullRequestDetailStore.getState().entries[identityKey];
+    if (!current) return;
+    if (current.lanes.detail.fetchedAt === null) {
+      void usePullRequestDetailStore.getState().loadDetail(transport);
+    } else {
+      void usePullRequestDetailStore.getState().refreshActive({ transport });
+    }
+    return () => {
+      void usePullRequestDetailStore
+        .getState()
+        .cancelEntry(identityKey, transport);
+    };
+  }, [identityKey, transport]);
+
+  useEffect(() => {
+    if (activeTab !== "timeline") return;
+    const current = usePullRequestDetailStore.getState().entries[identityKey];
+    if (!current || current.lanes.timelineInitial.operationId) return;
+    if (current.lanes.timelineInitial.fetchedAt === null) {
+      void usePullRequestDetailStore.getState().loadTimeline(transport);
+      return;
+    }
+    void usePullRequestDetailStore.getState().refreshActive({ transport });
+  }, [activeHeadOid, activeTab, identityKey, transport]);
+
+  useEffect(() => {
+    let active = isDocumentActive();
+    let intervalId: number | null = null;
+    const clearPolling = () => {
+      if (intervalId === null) return;
+      window.clearInterval(intervalId);
+      intervalId = null;
+    };
+    const armPolling = () => {
+      if (intervalId !== null) return;
+      intervalId = window.setInterval(() => {
+        if (isDocumentActive()) {
+          void usePullRequestDetailStore
+            .getState()
+            .refreshActive({ transport });
+        }
+      }, DETAIL_POLL_INTERVAL_MS);
+    };
+    const handleActivityChange = () => {
+      const nextActive = isDocumentActive();
+      if (nextActive === active) return;
+      active = nextActive;
+      if (!active) {
+        clearPolling();
+        void usePullRequestDetailStore
+          .getState()
+          .cancelEntry(identityKey, transport);
+        return;
+      }
+      armPolling();
+      void usePullRequestDetailStore.getState().refreshActive({ transport });
+    };
+    if (active) armPolling();
+    window.addEventListener("focus", handleActivityChange);
+    window.addEventListener("blur", handleActivityChange);
+    document.addEventListener("visibilitychange", handleActivityChange);
+    return () => {
+      clearPolling();
+      window.removeEventListener("focus", handleActivityChange);
+      window.removeEventListener("blur", handleActivityChange);
+      document.removeEventListener("visibilitychange", handleActivityChange);
+    };
+  }, [identityKey, transport]);
+
+  const changeTab = useCallback((tab: PullRequestDetailTab) => {
+    setActiveTab(tab);
+  }, []);
+
+  const handleTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ): void => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight")
+      nextIndex = (index + 1) % DETAIL_TABS.length;
+    if (event.key === "ArrowLeft") {
+      nextIndex = (index - 1 + DETAIL_TABS.length) % DETAIL_TABS.length;
+    }
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = DETAIL_TABS.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = DETAIL_TABS[nextIndex];
+    if (!nextTab) return;
+    changeTab(nextTab);
+    tabRefs.current[nextIndex]?.focus();
+  };
+
+  if (!core.exists || !core.lane) return null;
+  const detailLane = core.lane;
+  if (!core.detail) {
+    return (
+      <section
+        aria-label="Pull request detail"
+        className="flex min-h-0 flex-1 flex-col bg-page"
+      >
+        <PullRequestDetailHeader
+          detail={null}
+          summaryFallback={summaryFallback}
+          isNarrow={isNarrow}
+          reserveSidebarReveal={reserveSidebarReveal}
+          showBack={isNarrow}
+          onBack={isNarrow ? onClose : undefined}
+          backButtonRef={backButtonRef}
+          onClose={isNarrow ? undefined : onClose}
+        />
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          {detailLane.status === "error" ? (
+            <div className="flex max-w-sm flex-col items-center gap-3 px-6 text-center">
+              <AlertCircle
+                size={22}
+                aria-hidden
+                className="text-destructive/75"
+              />
+              <p className="text-sm text-foreground">
+                {detailLane.error?.message ??
+                  "Pull request detail is unavailable."}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void usePullRequestDetailStore
+                    .getState()
+                    .loadDetail(transport)
+                }
+              >
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <Spinner size="sm" aria-label="Loading pull request detail" />
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      <section
+        aria-label="Selected pull request"
+        className="flex min-h-0 min-w-0 flex-1 flex-col bg-page"
+        onKeyDown={(event) => {
+          if (
+            event.key !== "Escape" ||
+            event.defaultPrevented ||
+            (event.target as HTMLElement).closest(
+              '[data-slot="dialog-content"], [data-slot="dropdown-menu-content"], [data-slot="select-content"]',
+            )
+          ) {
+            return;
+          }
+          event.stopPropagation();
+          onClose();
+        }}
+      >
+        <PullRequestDetailHeader
+          detail={core.detail}
+          summaryFallback={summaryFallback}
+          isNarrow={isNarrow}
+          reserveSidebarReveal={reserveSidebarReveal}
+          showBack={isNarrow}
+          onBack={isNarrow ? onClose : undefined}
+          backButtonRef={backButtonRef}
+          onClose={isNarrow ? undefined : onClose}
+          capabilities={capabilities}
+          mutationTransport={mutationTransport}
+          readTransport={transport}
+          onRefresh={refreshSelected}
+        />
+
+        {detailLane.stale && detailLane.error && (
+          <div className="flex items-center gap-2 bg-destructive/8 px-4 py-2 text-xs text-muted-foreground">
+            <span className="min-w-0 flex-1 truncate">
+              Stale detail. {detailLane.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() =>
+                void usePullRequestDetailStore.getState().loadDetail(transport)
+              }
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
+        <div
+          role="tablist"
+          aria-label="Pull request detail views"
+          className={cn(
+            "flex h-10 shrink-0 items-end gap-1 bg-page",
+            isNarrow ? "px-3" : "px-4",
+          )}
+        >
+          {DETAIL_TABS.map((tab, index) => (
+            <Button
+              key={tab}
+              ref={(node) => {
+                tabRefs.current[index] = node;
+              }}
+              id={tabId(tab)}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab}
+              aria-controls="pull-request-detail-tabpanel"
+              tabIndex={activeTab === tab ? 0 : -1}
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "relative h-8 rounded-none px-2 text-xs font-medium capitalize",
+                activeTab === tab
+                  ? "text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-primary"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => changeTab(tab)}
+              onKeyDown={(event) => handleTabKeyDown(event, index)}
+            >
+              {tab}
+            </Button>
+          ))}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Refresh pull request detail"
+            className="mb-1 ml-auto text-muted-foreground"
+            onClick={() => {
+              if (!core.detail) return;
+              void usePullRequestMutationStore
+                .getState()
+                .acknowledgeOutcomeUnknownAfterRefresh(
+                  core.detail.identity,
+                  refreshSelected,
+                );
+            }}
+          >
+            <RefreshCw
+              size={13}
+              aria-hidden
+              className={
+                detailLane.status === "refreshing" ? "animate-spin" : undefined
+              }
+            />
+          </Button>
+        </div>
+
+        <div
+          id="pull-request-detail-tabpanel"
+          role="tabpanel"
+          aria-labelledby={tabId(activeTab)}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          {activeTab === "summary" ? (
+            <PullRequestSummaryPanel
+              identityKey={identityKey}
+              detail={core.detail}
+              detailBoundedData={detailLane.boundedData}
+              transport={transport}
+              onReviewChangeStack={
+                reviewWorktreeCapabilityKnown ? openReviewTask : undefined
+              }
+              reviewChangeStackAllowed={reviewTaskAllowed}
+              reviewChangeStackUnavailableReason={reviewTaskReason}
+            />
+          ) : activeTab === "timeline" ? (
+            <PullRequestTimelinePanel
+              identityKey={identityKey}
+              detail={core.detail}
+              capability={capabilities?.comment}
+              transport={transport}
+              mutationTransport={mutationTransport}
+              onRefresh={refreshSelected}
+            />
+          ) : core.detail.base.oid && core.detail.head.oid ? (
+            <Suspense
+              fallback={
+                <div className="flex min-h-0 flex-1 items-center justify-center">
+                  <Spinner size="sm" aria-label="Loading pull request Code" />
+                </div>
+              }
+            >
+              <PullRequestCode
+                identity={core.detail.identity}
+                identityKey={identityKey}
+                baseOid={core.detail.base.oid}
+                headOid={core.detail.head.oid}
+                isNarrow={isNarrow}
+                transport={transport}
+                detail={core.detail}
+                reviewCapability={capabilities?.review}
+                mutationTransport={mutationTransport}
+                onRefresh={refreshSelected}
+              />
+            </Suspense>
+          ) : (
+            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
+              <div>
+                <AlertCircle
+                  size={18}
+                  aria-hidden
+                  className="mx-auto text-muted-foreground/55"
+                />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Code needs both base and head commit identifiers.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+      <PullRequestReviewTaskDialog
+        open={reviewTaskOpen}
+        onOpenChange={setReviewTaskOpen}
+        identity={core.detail.identity}
+        currentHeadOid={core.detail.head.oid}
+        transport={reviewTaskTransport}
+      />
+    </>
+  );
+}

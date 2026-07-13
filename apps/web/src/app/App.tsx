@@ -45,6 +45,11 @@ const LazyCommandPalette = lazy(async () => {
   return { default: m.CommandPalette };
 });
 
+const LazyPullRequestSurface = lazy(async () => {
+  const m = await import("@/components/pull-requests/PullRequestSurface");
+  return { default: m.PullRequestSurface };
+});
+
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
@@ -54,17 +59,20 @@ export function App() {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const sidebarFloating = useUiStore((s) => s.sidebarFloating);
   const rightPanelMaximized = useUiStore((s) => s.rightPanelMaximized);
+  const primarySurface = useUiStore((s) => s.primarySurface);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const outerRowRef = useRef<HTMLDivElement>(null);
   const contentRowRef = useRef<HTMLDivElement>(null);
   const showNewThreadCanvas = activeThreadId === null;
   const showProjectlessCanvas = showNewThreadCanvas && activeWorkspaceId === null;
+  const showPullRequests = primarySurface === "pullRequests" && !settingsOpen;
   useIdleReclamation();
 
   useComposerLayoutGuard(outerRowRef, contentRowRef, {
     settingsOpen,
     showLanding: showProjectlessCanvas,
+    showPullRequests,
     activeWorkspaceId,
     activeThreadId,
   });
@@ -215,6 +223,12 @@ export function App() {
           // button uses, instead of the previous orphan custom event.
           useCommandPaletteStore.getState().open({ intent: "addProject" });
         },
+      }),
+      registerCommand({
+        id: "pullRequests.open",
+        title: "Open Pull requests",
+        category: "Navigation",
+        handler: () => useUiStore.getState().setPrimarySurface("pullRequests"),
       }),
       registerCommand({
         id: "sidebar.toggle",
@@ -384,21 +398,25 @@ export function App() {
             className="flex min-w-0 flex-1 overflow-hidden"
           >
             {/* Chat / settings: hidden when the right panel is maximized. */}
-            {!rightPanelMaximized && (
+            {(!rightPanelMaximized || showPullRequests) && (
             <main
               className="flex-1 overflow-hidden bg-background"
-              style={{ minWidth: showNewThreadCanvas || settingsOpen ? 0 : `min(100%, ${COMPOSER_MIN_WIDTH}px)` }}
+              style={{ minWidth: showNewThreadCanvas || settingsOpen || showPullRequests ? 0 : `min(100%, ${COMPOSER_MIN_WIDTH}px)` }}
             >
               {settingsOpen ? (
                 <Suspense fallback={null}>
                   <LazySettingsView section={settingsSection} />
+                </Suspense>
+              ) : showPullRequests ? (
+                <Suspense fallback={null}>
+                  <LazyPullRequestSurface />
                 </Suspense>
               ) : (
                 <ChatView />
               )}
             </main>
             )}
-            {!settingsOpen && !showProjectlessCanvas && (
+            {!settingsOpen && !showProjectlessCanvas && !showPullRequests && (
               <Suspense fallback={null}>
                 <LazyRightPanel />
               </Suspense>

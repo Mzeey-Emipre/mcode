@@ -476,14 +476,31 @@ export async function warmCodexAppServer(
   timeoutMs = 20_000,
   getSpawnEnv?: () => Record<string, string>,
 ): Promise<CodexAppServerWarmupResult> {
+  const deadline = performance.now() + Math.max(0, timeoutMs);
+  const remainingBudgetMs = (): number => Math.max(0, deadline - performance.now());
   let resolvedCliPath = cliPath;
   if (!isAbsolute(cliPath)) {
+    const discoveryBudgetMs = remainingBudgetMs();
+    if (discoveryBudgetMs <= 0) return { initialized: false };
+
+    let discoveryTimer: ReturnType<typeof setTimeout> | undefined;
+    const discovery = Promise.resolve()
+      .then(() => which(cliPath))
+      .catch(() => null);
+    const discoveryTimeout = new Promise<null>((resolve) => {
+      discoveryTimer = setTimeout(() => resolve(null), discoveryBudgetMs);
+    });
+
+    let discoveredCliPath: string | null;
     try {
-      resolvedCliPath = await which(cliPath);
-    } catch {
-      return { initialized: false };
+      discoveredCliPath = await Promise.race([discovery, discoveryTimeout]);
+    } finally {
+      if (discoveryTimer !== undefined) clearTimeout(discoveryTimer);
     }
+    if (discoveredCliPath === null || remainingBudgetMs() <= 0) return { initialized: false };
+    resolvedCliPath = discoveredCliPath;
   }
+  if (remainingBudgetMs() <= 0) return { initialized: false };
   const needsShell =
     process.platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd");
 
@@ -520,7 +537,10 @@ export async function warmCodexAppServer(
       resolve(result);
     };
 
-    const timer = setTimeout(() => finish({ initialized, rateLimitsPayload: latestRateLimitsPayload }), timeoutMs);
+    const timer = setTimeout(
+      () => finish({ initialized, rateLimitsPayload: latestRateLimitsPayload }),
+      remainingBudgetMs(),
+    );
     child.once("error", () => finish({ initialized, rateLimitsPayload: latestRateLimitsPayload }));
     child.once("exit", () => finish({ initialized, rateLimitsPayload: latestRateLimitsPayload }));
 

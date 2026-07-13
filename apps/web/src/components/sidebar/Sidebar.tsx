@@ -1,5 +1,13 @@
 import { ProjectTree } from "./ProjectTree";
-import { Settings, ArrowLeft, ExternalLink, Braces, Search, SquarePen } from "lucide-react";
+import {
+  Settings,
+  ArrowLeft,
+  ExternalLink,
+  Braces,
+  Search,
+  SquarePen,
+  GitPullRequest,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsNav } from "@/components/settings/SettingsNav";
 import type { SettingsSection } from "@/components/settings/settings-nav";
@@ -36,6 +44,8 @@ export function Sidebar({
   onCloseSettings,
 }: SidebarProps) {
   const collapseSidebar = useUiStore((s) => s.collapseSidebar);
+  const primarySurface = useUiStore((s) => s.primarySurface);
+  const setPrimarySurface = useUiStore((s) => s.setPrimarySurface);
 
   const handleEditJson = () => {
     if (window.desktopBridge) {
@@ -65,7 +75,9 @@ export function Sidebar({
             >
               <ArrowLeft size={15} />
             </Button>
-            <span className="text-sm font-semibold text-muted-foreground">Settings</span>
+            <span className="text-sm font-semibold text-muted-foreground">
+              Settings
+            </span>
           </div>
         ) : (
           <>
@@ -92,7 +104,10 @@ export function Sidebar({
       >
         {settingsOpen && settingsSection && onSettingsSection ? (
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <SettingsNav section={settingsSection} onSection={onSettingsSection} />
+            <SettingsNav
+              section={settingsSection}
+              onSection={onSettingsSection}
+            />
           </div>
         ) : (
           <>
@@ -101,7 +116,10 @@ export function Sidebar({
                 variant="ghost"
                 size="sm"
                 className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-muted-foreground shadow-none hover:text-foreground"
-                onClick={() => useWorkspaceStore.getState().beginNewThread()}
+                onClick={() => {
+                  setPrimarySurface("chat");
+                  useWorkspaceStore.getState().beginNewThread();
+                }}
               >
                 <SquarePen size={15} aria-hidden />
                 New thread
@@ -111,11 +129,30 @@ export function Sidebar({
                 size="sm"
                 className="h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal text-muted-foreground hover:text-foreground"
                 onClick={() =>
-                  useCommandPaletteStore.getState().open({ intent: "threadSearch" })
+                  useCommandPaletteStore
+                    .getState()
+                    .open({ intent: "threadSearch" })
                 }
               >
                 <Search size={15} aria-hidden />
                 Search threads
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-current={
+                  primarySurface === "pullRequests" ? "page" : undefined
+                }
+                className={cn(
+                  "h-8 justify-start gap-2 rounded-md px-1.5 text-[13px] font-normal shadow-none",
+                  primarySurface === "pullRequests"
+                    ? "bg-accent/55 text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => setPrimarySurface("pullRequests")}
+              >
+                <GitPullRequest size={15} aria-hidden />
+                Pull requests
               </Button>
             </div>
             <ProjectTree />

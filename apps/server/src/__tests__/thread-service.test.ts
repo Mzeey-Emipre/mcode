@@ -36,6 +36,21 @@ describe("ThreadService.delete", () => {
       listWorktrees: vi.fn(),
       fetchBranch: vi.fn(),
       getCurrentBranchAt: vi.fn(),
+      withReviewWorktreeMutationLock: vi.fn(async (
+        _repoPath: string,
+        work: () => Promise<unknown>,
+      ) => work()),
+      assessWorktreeRemovalSafety: vi.fn(async (
+        worktreePath: string,
+        siblingPaths: readonly string[],
+        truncated: boolean,
+      ) => {
+        const normalize = (value: string) => value.replace(/\\/g, "/").toLowerCase();
+        if (truncated) return { safe: false, reason: "truncated" as const };
+        return siblingPaths.some((path) => normalize(path) === normalize(worktreePath))
+          ? { safe: false, reason: "shared" as const }
+          : { safe: true, reason: "exclusive" as const };
+      }),
     } as unknown as GitService;
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = {
@@ -57,13 +72,14 @@ describe("ThreadService.delete", () => {
     workspaceId: string,
     branch: string,
     wtPath: string,
+    managed = true,
   ): void {
     const now = new Date().toISOString();
     db.prepare(
       `INSERT INTO threads
         (id, workspace_id, title, branch, mode, status, worktree_path, worktree_managed, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'worktree', 'active', ?, 1, ?, ?)`,
-    ).run(id, workspaceId, "Test Thread", branch, wtPath, now, now);
+       VALUES (?, ?, ?, ?, 'worktree', 'active', ?, ?, ?, ?)`,
+    ).run(id, workspaceId, "Test Thread", branch, wtPath, managed ? 1 : 0, now, now);
   }
 
   it("soft-deletes the thread while worktree cleanup is queued", async () => {
@@ -88,6 +104,38 @@ describe("ThreadService.delete", () => {
     expect(jobs[0].workspace_path).toBe("/tmp/test");
     expect(jobs[0].worktree_path).toBe("/tmp/wt/my-worktree");
     expect(jobs[0].branch).toBe("feat/test");
+    expect(mockGitService.withReviewWorktreeMutationLock).toHaveBeenCalledWith(
+      "/tmp/test",
+      expect.any(Function),
+    );
+    expect(mockGitService.assessWorktreeRemovalSafety).toHaveBeenCalledWith(
+      "/tmp/wt/my-worktree",
+      [],
+      false,
+    );
+  });
+
+  it("keeps an unmanaged reused worktree when its thread is deleted", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    insertWorktreeThread("t-unmanaged", ws.id, "feat/shared", "/tmp/wt/shared", false);
+
+    await threadService.delete("t-unmanaged", true);
+
+    expect(cleanupJobRepo.count()).toBe(0);
+    expect(threadRepo.findById("t-unmanaged")).toBeNull();
+    expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("keeps a managed worktree while another active thread shares its path", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    insertWorktreeThread("t-owner", ws.id, "feat/shared", "/tmp/wt/shared");
+    insertWorktreeThread("t-sibling", ws.id, "feat/shared", "/tmp/wt/shared", false);
+
+    await threadService.delete("t-owner", true);
+
+    expect(cleanupJobRepo.count()).toBe(0);
+    expect(threadRepo.findById("t-owner")).toBeNull();
+    expect(threadRepo.findById("t-sibling")).not.toBeNull();
   });
 
   it("hard-deletes without a cleanup job when cleanupWorktree is false", async () => {
@@ -144,7 +192,7 @@ describe("ThreadService.delete", () => {
     expect(threadRepo.findById("t-6")).toBeNull();
   });
 
-  it("enqueues a cleanup job for an attached existing worktree when cleanup is requested", async () => {
+  it("never enqueues filesystem cleanup for an attached existing worktree", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     const now = new Date().toISOString();
     db.prepare(
@@ -156,10 +204,8 @@ describe("ThreadService.delete", () => {
     const result = await threadService.delete("t-existing", true);
 
     expect(result).toBe(true);
-    expect(cleanupJobRepo.count()).toBe(1);
-    const job = cleanupJobRepo.findDue(Date.now())[0];
-    expect(job.worktree_path).toBe("/tmp/existing-wt");
-    expect(job.branch).toBe("feat/existing");
+    expect(cleanupJobRepo.count()).toBe(0);
+    expect(threadRepo.findById("t-existing")).toBeNull();
   });
 
   it("rollback during create does not delete an existing non-mcode branch", async () => {

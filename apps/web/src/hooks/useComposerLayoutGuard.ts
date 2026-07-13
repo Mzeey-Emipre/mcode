@@ -14,6 +14,7 @@ import {
 export interface ComposerLayoutGuardOptions {
   readonly settingsOpen: boolean;
   readonly showLanding: boolean;
+  readonly showPullRequests: boolean;
   readonly activeWorkspaceId: string | null;
   readonly activeThreadId: string | null;
 }
@@ -34,7 +35,12 @@ export function useComposerLayoutGuard(
   const rightPanelMaximizedByLayout = useUiStore((s) => s.rightPanelMaximizedByLayout);
 
   useEffect(() => {
-    if (opts.settingsOpen || opts.showLanding || !opts.activeWorkspaceId) return;
+    if (
+      opts.settingsOpen ||
+      (!opts.showPullRequests && (opts.showLanding || !opts.activeWorkspaceId))
+    ) {
+      return;
+    }
 
     const outer = outerRowRef.current;
     const content = contentRowRef.current;
@@ -46,6 +52,38 @@ export function useComposerLayoutGuard(
       setLayoutMeasurements(contentWidth, outerWidth);
 
       const ui = useUiStore.getState();
+      const sidebarDocked = !ui.sidebarCollapsed && !ui.sidebarFloating;
+
+      if (opts.showPullRequests) {
+        if (ui.sidebarCollapsedByLayout) {
+          if (
+            canFitInlineSidebar(outerWidth, COMPOSER_MIN_WIDTH) &&
+            contentWidth >= COMPOSER_MIN_WIDTH
+          ) {
+            ui.restoreSidebarFromLayoutCollapse();
+          }
+          return;
+        }
+
+        if (
+          ui.sidebarFloating &&
+          canFitInlineSidebar(outerWidth, COMPOSER_MIN_WIDTH) &&
+          contentWidth >= COMPOSER_MIN_WIDTH
+        ) {
+          ui.expandSidebar();
+          return;
+        }
+
+        if (
+          sidebarDocked &&
+          (contentWidth < COMPOSER_MIN_WIDTH ||
+            !canFitInlineSidebar(outerWidth, COMPOSER_MIN_WIDTH))
+        ) {
+          ui.collapseSidebar("layout");
+        }
+        return;
+      }
+
       const diff = useDiffStore.getState();
       const { activeWorkspaceId, activeThreadId } = opts;
       if (!activeWorkspaceId) return;
@@ -53,7 +91,6 @@ export function useComposerLayoutGuard(
       const panelVisible = diff.getRightPanelVisible(activeWorkspaceId, activeThreadId);
       const panelWidth = diff.getRightPanel(activeWorkspaceId, activeThreadId).width;
       const panelInline = panelVisible && !ui.rightPanelMaximized;
-      const sidebarDocked = !ui.sidebarCollapsed && !ui.sidebarFloating;
       const contentNeed = panelInline
         ? minContentWidthForSideBySidePanel(panelWidth)
         : COMPOSER_MIN_WIDTH;
@@ -130,6 +167,7 @@ export function useComposerLayoutGuard(
     contentRowRef,
     opts.settingsOpen,
     opts.showLanding,
+    opts.showPullRequests,
     opts.activeWorkspaceId,
     opts.activeThreadId,
     sidebarCollapsed,

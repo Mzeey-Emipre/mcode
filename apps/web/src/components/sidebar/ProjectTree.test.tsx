@@ -29,7 +29,7 @@ vi.mock("@/stores/workspaceStore", () => ({
       checksById: {},
       error: null,
       reorderWorkspace: vi.fn(),
-    })
+    }),
   ),
 }));
 
@@ -42,8 +42,13 @@ const threadStoreOverrides: {
 } = {};
 
 function buildMockThreadStoreState() {
-  const records = new Map<string, { permissions: Array<{ settled: boolean }> }>();
-  for (const [id, perms] of Object.entries(threadStoreOverrides.permissionsByThread ?? {})) {
+  const records = new Map<
+    string,
+    { permissions: Array<{ settled: boolean }> }
+  >();
+  for (const [id, perms] of Object.entries(
+    threadStoreOverrides.permissionsByThread ?? {},
+  )) {
     records.set(id, { permissions: perms });
   }
   return {
@@ -74,7 +79,7 @@ vi.mock("@/stores/sidebarSearchStore", () => ({
         setExpandedSnapshot: vi.fn(),
         setQuery: vi.fn(),
         clearAll: vi.fn(),
-      })
+      }),
     ),
     { setState: vi.fn(), getState: vi.fn() },
   ),
@@ -185,9 +190,13 @@ function setupStoreMocks({
   };
 
   // Cast via unknown to avoid requiring every field of WorkspaceState in the fixture.
-  (useWorkspaceStore as unknown as { mockImplementation: (fn: (selector: (s: unknown) => unknown) => unknown) => void }).mockImplementation(
-    (selector) => selector(state)
-  );
+  (
+    useWorkspaceStore as unknown as {
+      mockImplementation: (
+        fn: (selector: (s: unknown) => unknown) => unknown,
+      ) => void;
+    }
+  ).mockImplementation((selector) => selector(state));
 
   return state;
 }
@@ -197,7 +206,7 @@ describe("ProjectTree thread interactions", () => {
     // Pre-expand the workspace so the thread list is visible immediately.
     localStorage.setItem(
       "mcode-expanded-projects",
-      JSON.stringify({ "ws-1": true })
+      JSON.stringify({ "ws-1": true }),
     );
     vi.useFakeTimers();
   });
@@ -210,36 +219,51 @@ describe("ProjectTree thread interactions", () => {
   });
 
   it("starts a new thread from the project row without expanding it", () => {
-    localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+    localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": false }),
+    );
     const beginNewThread = vi.fn();
     const state = setupStoreMocks({ beginNewThread });
 
     render(<ProjectTree />);
-    fireEvent.click(screen.getByRole("button", { name: "New thread in Test Project" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "New thread in Test Project" }),
+    );
 
     expect(beginNewThread).toHaveBeenCalledWith("ws-1");
     expect(state.loadThreads).not.toHaveBeenCalled();
   });
 
-  it("selects a project and expands it from its name", () => {
-    localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+  it("expands a project from its folder without opening a new composer", () => {
+    localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": false }),
+    );
     const beginNewThread = vi.fn();
     const state = setupStoreMocks({ beginNewThread });
 
     render(<ProjectTree />);
-    fireEvent.click(screen.getByRole("button", { name: "Select project Test Project" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open project Test Project" }),
+    );
 
-    expect(beginNewThread).toHaveBeenCalledWith("ws-1");
+    expect(beginNewThread).not.toHaveBeenCalled();
     expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
   });
 
   it("keeps thread disclosure separate from project selection", () => {
-    localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": false }));
+    localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": false }),
+    );
     const beginNewThread = vi.fn();
     const state = setupStoreMocks({ beginNewThread });
 
     render(<ProjectTree />);
-    fireEvent.click(screen.getByRole("button", { name: "Toggle threads for Test Project" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Toggle threads for Test Project" }),
+    );
 
     expect(beginNewThread).not.toHaveBeenCalled();
     expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
@@ -250,12 +274,16 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    expect(screen.getByRole("button", { name: "New thread in Test Project" })).toHaveClass(
+    expect(
+      screen.getByRole("button", { name: "New thread in Test Project" }),
+    ).toHaveClass(
       "opacity-0",
       "group-hover/ws:opacity-100",
       "group-focus-within/ws:opacity-100",
     );
-    expect(screen.getByRole("button", { name: "Project options for Test Project" })).toHaveClass(
+    expect(
+      screen.getByRole("button", { name: "Project options for Test Project" }),
+    ).toHaveClass(
       "opacity-0",
       "group-hover/ws:opacity-100",
       "group-focus-within/ws:opacity-100",
@@ -266,10 +294,16 @@ describe("ProjectTree thread interactions", () => {
     setupStoreMocks();
 
     render(<ProjectTree />);
-    fireEvent.click(screen.getByRole("button", { name: "Project options for Test Project" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Project options for Test Project" }),
+    );
 
-    expect(screen.getByText("Open in Explorer", { exact: true })).toBeInTheDocument();
-    expect(screen.getByText("Rename project", { exact: true })).toBeInTheDocument();
+    expect(
+      screen.getByText("Open in Explorer", { exact: true }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Rename project", { exact: true }),
+    ).toBeInTheDocument();
   });
 
   it("labels an expanded project with no threads", () => {
@@ -307,7 +341,9 @@ describe("ProjectTree thread interactions", () => {
     expect(setActiveThread).toHaveBeenCalledTimes(1);
 
     // Second click within the 250ms window enters rename mode.
-    act(() => { vi.advanceTimersByTime(100); });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
     fireEvent.click(threadButton);
 
     // Navigation count stays at 1 — the second click must NOT trigger another navigate.
@@ -325,7 +361,9 @@ describe("ProjectTree thread interactions", () => {
     const threadButton = screen.getByRole("button", { name: /My Thread/i });
 
     fireEvent.click(threadButton);
-    act(() => { vi.advanceTimersByTime(400); });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
     fireEvent.click(threadButton);
 
     expect(setActiveThread).toHaveBeenCalledTimes(2);
@@ -343,7 +381,9 @@ describe("ProjectTree thread interactions", () => {
 
     // Double-click to enter edit mode (first click navigates, second triggers rename).
     fireEvent.click(threadButton);
-    act(() => { vi.advanceTimersByTime(100); });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
     fireEvent.click(threadButton);
 
     expect(screen.getAllByRole("textbox")).toHaveLength(1);
@@ -386,9 +426,20 @@ describe("ProjectTree action-required indicator", () => {
   function installWorkspaceMock() {
     // WorkspaceState is not exported; cast through any so the fixture object
     // satisfies the mock without importing the internal type.
-    vi.mocked(useWorkspaceStore).mockImplementation(
-      ((selector: (s: unknown) => unknown) => selector({
-        workspaces: [{ id: "ws-1", name: "Test", path: "/test", provider_config: {}, created_at: "", updated_at: "" }],
+    vi.mocked(useWorkspaceStore).mockImplementation(((
+      selector: (s: unknown) => unknown,
+    ) =>
+      selector({
+        workspaces: [
+          {
+            id: "ws-1",
+            name: "Test",
+            path: "/test",
+            provider_config: {},
+            created_at: "",
+            updated_at: "",
+          },
+        ],
         activeWorkspaceId: "ws-1",
         activeThreadId: null,
         threads: [currentThread],
@@ -407,8 +458,7 @@ describe("ProjectTree action-required indicator", () => {
         worktreesLoadedForWorkspace: null,
         error: null,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      })) as any
-    );
+      })) as any);
   }
 
   beforeEach(() => {
@@ -418,35 +468,38 @@ describe("ProjectTree action-required indicator", () => {
     currentChecks = {};
     installWorkspaceMock();
     // Pre-expand the workspace so its threads render.
-    window.localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": true }));
+    window.localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": true }),
+    );
   });
 
   afterEach(() => {
     // Restore the default empty-state implementation so this override does not
     // leak into other describes when test order shifts.
-    vi.mocked(useWorkspaceStore).mockImplementation(
-      ((selector: (s: unknown) => unknown) =>
-        selector({
-          workspaces: [],
-          activeWorkspaceId: null,
-          activeThreadId: null,
-          threads: [],
-          loadWorkspaces: vi.fn(),
-          loadThreads: vi.fn(),
-          setActiveWorkspace: vi.fn(),
-          setActiveThread: vi.fn(),
-          createWorkspace: vi.fn(),
-          deleteWorkspace: vi.fn(),
-          deleteThread: vi.fn(),
-          setPendingNewThread: vi.fn(),
-          updateThreadTitle: vi.fn(),
-          loadWorktrees: vi.fn(),
-          worktrees: [],
-          worktreesLoadedForWorkspace: null,
-          error: null,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        })) as any
-    );
+    vi.mocked(useWorkspaceStore).mockImplementation(((
+      selector: (s: unknown) => unknown,
+    ) =>
+      selector({
+        workspaces: [],
+        activeWorkspaceId: null,
+        activeThreadId: null,
+        threads: [],
+        loadWorkspaces: vi.fn(),
+        loadThreads: vi.fn(),
+        setActiveWorkspace: vi.fn(),
+        setActiveThread: vi.fn(),
+        createWorkspace: vi.fn(),
+        deleteWorkspace: vi.fn(),
+        deleteThread: vi.fn(),
+        setPendingNewThread: vi.fn(),
+        updateThreadTitle: vi.fn(),
+        loadWorktrees: vi.fn(),
+        worktrees: [],
+        worktreesLoadedForWorkspace: null,
+        error: null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      })) as any);
     vi.clearAllMocks();
     window.localStorage.clear();
   });
@@ -520,9 +573,7 @@ describe("ProjectTree action-required indicator", () => {
     currentChecks = {
       "thread-pending": {
         aggregate: "failing",
-        runs: [
-          { name: "ci", status: "completed", conclusion: "failure" },
-        ],
+        runs: [{ name: "ci", status: "completed", conclusion: "failure" }],
       },
     };
     installWorkspaceMock();
@@ -579,37 +630,40 @@ describe("ProjectTree PR-ability gating by mode", () => {
     thread: Thread,
     checks: Record<string, { aggregate: string; runs: unknown[] }> = {},
   ) {
-    vi.mocked(useWorkspaceStore).mockImplementation(
-      ((selector: (s: unknown) => unknown) =>
-        selector({
-          workspaces: [WORKSPACE],
-          activeWorkspaceId: "ws-1",
-          activeThreadId: null,
-          threads: [thread],
-          checksById: checks,
-          loadWorkspaces: vi.fn(),
-          loadThreads: vi.fn(),
-          setActiveWorkspace: vi.fn(),
-          setActiveThread: vi.fn(),
-          createWorkspace: vi.fn(),
-          deleteWorkspace: vi.fn(),
-          deleteThread: vi.fn(),
-          setPendingNewThread: vi.fn(),
-          updateThreadTitle: vi.fn(),
-          loadWorktrees: vi.fn(),
-          worktrees: [],
-          worktreesLoadedForWorkspace: null,
-          error: null,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        })) as any,
-    );
+    vi.mocked(useWorkspaceStore).mockImplementation(((
+      selector: (s: unknown) => unknown,
+    ) =>
+      selector({
+        workspaces: [WORKSPACE],
+        activeWorkspaceId: "ws-1",
+        activeThreadId: null,
+        threads: [thread],
+        checksById: checks,
+        loadWorkspaces: vi.fn(),
+        loadThreads: vi.fn(),
+        setActiveWorkspace: vi.fn(),
+        setActiveThread: vi.fn(),
+        createWorkspace: vi.fn(),
+        deleteWorkspace: vi.fn(),
+        deleteThread: vi.fn(),
+        setPendingNewThread: vi.fn(),
+        updateThreadTitle: vi.fn(),
+        loadWorktrees: vi.fn(),
+        worktrees: [],
+        worktreesLoadedForWorkspace: null,
+        error: null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      })) as any);
     return render(<ProjectTree />);
   }
 
   beforeEach(() => {
     threadStoreOverrides.permissionsByThread = undefined;
     threadStoreOverrides.runningThreadIds = undefined;
-    window.localStorage.setItem("mcode-expanded-projects", JSON.stringify({ "ws-1": true }));
+    window.localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": true }),
+    );
   });
 
   afterEach(() => {
@@ -618,18 +672,24 @@ describe("ProjectTree PR-ability gating by mode", () => {
   });
 
   it("renders no PR icon for a direct-mode thread even when a pr_number is attached", () => {
-    renderWithThread(makeThread({ mode: "direct", pr_number: 42, pr_status: "open" }));
+    renderWithThread(
+      makeThread({ mode: "direct", pr_number: 42, pr_status: "open" }),
+    );
     expect(screen.queryByTitle(/PR #42/)).toBeNull();
   });
 
   it("renders the PR icon and number badge for a worktree thread with a pr_number", () => {
-    renderWithThread(makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }));
+    renderWithThread(
+      makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }),
+    );
     expect(screen.getByTitle(/PR #42/)).toBeInTheDocument();
     expect(screen.queryByText("#42")).toBeNull();
   });
 
   it("renders the merged PR visual for a worktree thread", () => {
-    renderWithThread(makeThread({ mode: "worktree", pr_number: 42, pr_status: "merged" }));
+    renderWithThread(
+      makeThread({ mode: "worktree", pr_number: 42, pr_status: "merged" }),
+    );
     expect(screen.getByTitle(/PR #42 \u2013 merged/)).toBeInTheDocument();
   });
 
@@ -647,7 +707,9 @@ describe("ProjectTree PR-ability gating by mode", () => {
   });
 
   it("renders no leading status dot for non-PR rows", () => {
-    renderWithThread(makeThread({ mode: "direct", pr_number: null, status: "paused" }));
+    renderWithThread(
+      makeThread({ mode: "direct", pr_number: null, status: "paused" }),
+    );
     expect(screen.queryByLabelText("Action required")).toBeNull();
     expect(screen.queryByLabelText("Completed")).toBeNull();
     expect(screen.queryByLabelText("Errored")).toBeNull();
@@ -660,24 +722,34 @@ describe("ProjectTree PR-ability gating by mode", () => {
     expect(screen.queryByLabelText("Worktree mode")).toBeNull();
     unmount();
 
-    renderWithThread(makeThread({ mode: "worktree", checkout_state: "branchless", branch: "HEAD" }));
+    renderWithThread(
+      makeThread({
+        mode: "worktree",
+        checkout_state: "branchless",
+        branch: "HEAD",
+      }),
+    );
     expect(screen.getByLabelText("Worktree mode")).toBeInTheDocument();
   });
 
   it("shows a read-only preview on focus with project, HEAD branch, and provider labels", async () => {
-    renderWithThread(makeThread({
-      id: "thread-branchless",
-      title: "Branchless Thread",
-      mode: "worktree",
-      checkout_state: "branchless",
-      branch: "HEAD",
-      status: "paused",
-      provider: "codex",
-    }));
+    renderWithThread(
+      makeThread({
+        id: "thread-branchless",
+        title: "Branchless Thread",
+        mode: "worktree",
+        checkout_state: "branchless",
+        branch: "HEAD",
+        status: "paused",
+        provider: "codex",
+      }),
+    );
 
     screen.getByRole("button", { name: /Branchless Thread/i }).focus();
 
-    const preview = await screen.findByTestId("thread-preview-thread-branchless");
+    const preview = await screen.findByTestId(
+      "thread-preview-thread-branchless",
+    );
     expect(preview).toHaveTextContent("Branchless Thread");
     expect(screen.getByLabelText("Project, Test Project")).toBeInTheDocument();
     expect(screen.getByLabelText("Branch, HEAD")).toBeInTheDocument();

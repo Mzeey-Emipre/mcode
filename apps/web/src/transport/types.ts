@@ -41,6 +41,34 @@ import type {
   MessageMention,
   GoalLookupResult,
   PreviewAnnotationBundle,
+  PullRequestCapabilitiesRequest,
+  PullRequestCapabilitiesResult,
+  PullRequestListRequest,
+  PullRequestListResult,
+  PullRequestGetRequest,
+  PullRequestGetResult,
+  PullRequestTimelineRequest,
+  PullRequestTimelineResult,
+  PullRequestFilesRequest,
+  PullRequestFilesResult,
+  PullRequestPatchRequest,
+  PullRequestPatchResult,
+  PullRequestCancelRequest,
+  PullRequestCancelResult,
+  PullRequestCreateReviewTaskRequest,
+  PullRequestCreateReviewTaskResult,
+  PullRequestReviewLinkRequest,
+  PullRequestReviewLinkResult,
+  PullRequestPostCommentRequest,
+  PullRequestPostCommentResult,
+  PullRequestSubmitReviewRequest,
+  PullRequestSubmitReviewResult,
+  PullRequestSetReadinessRequest,
+  PullRequestSetReadinessResult,
+  PullRequestCloseRequest,
+  PullRequestCloseResult,
+  PullRequestMergeRequest,
+  PullRequestMergeResult,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -70,6 +98,25 @@ export type {
   PlanAction,
   ProviderModelInfo,
   MessageMention,
+  PullRequestCapabilities,
+  PullRequestCapabilityLimitation,
+  PullRequestError,
+  PullRequestIdentity,
+  PullRequestRelationship,
+  PullRequestState,
+  PullRequestSummary,
+  PullRequestBoundedDataMarker,
+  PullRequestCheck,
+  PullRequestConversationItem,
+  PullRequestDetail,
+  PullRequestGetResource,
+  PullRequestTimelineItem,
+  PullRequestTimelineKind,
+  PullRequestTimelineLane,
+  PullRequestFile,
+  PullRequestFileChangeType,
+  PullRequestFilePatchStatus,
+  PullRequestPatchResult,
 } from "@mcode/contracts";
 
 export type { PaginatedMessages, ConversationPage, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
@@ -352,6 +399,55 @@ export interface McodeTransport {
   // GitHub PR
   getBranchPr(branch: string, cwd: string): Promise<PrInfo | null>;
 
+  /** Resolve read and action capabilities for the authenticated pull request viewer. */
+  getPullRequestCapabilities(
+    request: PullRequestCapabilitiesRequest,
+  ): Promise<PullRequestCapabilitiesResult>;
+  /** Load one bounded pull request inbox page. */
+  listPullRequests(request: PullRequestListRequest): Promise<PullRequestListResult>;
+  /** Load one bounded pull request detail, checks, or comments resource. */
+  getPullRequestResource(request: PullRequestGetRequest): Promise<PullRequestGetResult>;
+  /** Load one bounded pull request Timeline page. */
+  getPullRequestTimeline(
+    request: PullRequestTimelineRequest,
+  ): Promise<PullRequestTimelineResult>;
+  /** Load one filtered and bounded page of changed files. */
+  getPullRequestFiles(
+    request: PullRequestFilesRequest,
+  ): Promise<PullRequestFilesResult>;
+  /** Load one immutable, snapshot-qualified file patch. */
+  getPullRequestPatch(
+    request: PullRequestPatchRequest,
+  ): Promise<PullRequestPatchResult>;
+  /** Prepare or create a local Review task for one pull request. */
+  createPullRequestReviewTask(
+    request: PullRequestCreateReviewTaskRequest,
+  ): Promise<PullRequestCreateReviewTaskResult>;
+  /** Resolve the durable pull request link for one thread. */
+  getPullRequestReviewLink(
+    request: PullRequestReviewLinkRequest,
+  ): Promise<PullRequestReviewLinkResult>;
+  /** Post one explicit issue comment to a pull request. */
+  postPullRequestComment(
+    request: PullRequestPostCommentRequest,
+  ): Promise<PullRequestPostCommentResult>;
+  /** Submit one explicit pull request review and its bounded drafts. */
+  submitPullRequestReview(
+    request: PullRequestSubmitReviewRequest,
+  ): Promise<PullRequestSubmitReviewResult>;
+  /** Explicitly change pull request readiness. */
+  setPullRequestReadiness(
+    request: PullRequestSetReadinessRequest,
+  ): Promise<PullRequestSetReadinessResult>;
+  /** Explicitly close one pull request. */
+  closePullRequest(request: PullRequestCloseRequest): Promise<PullRequestCloseResult>;
+  /** Explicitly merge one pull request. */
+  mergePullRequest(request: PullRequestMergeRequest): Promise<PullRequestMergeResult>;
+  /** Cancel a connection-owned pull request read operation. */
+  cancelPullRequestOperation(
+    request: PullRequestCancelRequest,
+  ): Promise<PullRequestCancelResult>;
+
   // PR review
   listOpenPrs(workspaceId: string): Promise<PrDetail[]>;
   fetchBranch(workspaceId: string, branch: string, prNumber?: number): Promise<void>;
@@ -471,7 +567,11 @@ export interface McodeTransport {
 
   // GitHub PR (advanced)
   /** Push a branch to the remote. */
-  push(workspaceId: string, branch: string): Promise<{ success: boolean }>;
+  push(
+    workspaceId: string,
+    branch: string,
+    threadId?: string,
+  ): Promise<{ success: boolean }>;
 
   /** Generate an AI-powered PR draft from commit history and conversation context. */
   generatePrDraft(workspaceId: string, threadId: string, baseBranch: string): Promise<PrDraft>;

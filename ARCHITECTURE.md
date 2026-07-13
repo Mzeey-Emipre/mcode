@@ -104,6 +104,11 @@ apps/server/src/
     workspace-service.ts      Workspace CRUD
     thread-service.ts         Thread lifecycle, worktree provisioning
     git-service.ts            Branch, worktree, checkout, fetch operations
+    pull-requests/
+      github-pull-request-client.ts GitHub CLI adapter and normalization boundary
+      pull-request-service.ts Provider-neutral PR reads and bounded task seed data
+      pull-request-mutation-service.ts Revalidated, idempotent remote PR writes
+      review-worktree-service.ts Review task mapping, provisioning, and linkage
     github-service.ts         PR operations via gh CLI
     file-service.ts           File listing (git ls-files), reading
     config-service.ts         Claude config discovery (~/.claude/)
@@ -117,6 +122,7 @@ apps/server/src/
   repositories/
     workspace-repo.ts         Workspace data access
     thread-repo.ts            Thread data access
+    pull-request-review-link-repo.ts Durable PR to Review task linkage
     message-repo.ts           Message data access
   store/
     database.ts               SQLite setup, WAL mode, forward-only migrations
@@ -139,8 +145,8 @@ apps/web/src/
     desktop-bridge.d.ts       Type declarations for window.desktopBridge
     types.ts                  McodeTransport interface, shared frontend types
   app/                        Routes and providers
-  components/                 UI components (sidebar, chat, terminal, diff)
-  stores/                     Zustand state management
+  components/                 UI components (sidebar, chat, terminal, diff, pull requests)
+  stores/                     Zustand state management, including bounded PR stores
   lib/                        Utilities and types
 ```
 
@@ -297,8 +303,28 @@ erDiagram
         text attachments "JSON, nullable"
     }
 
+    pull_request_review_links {
+        text worktree_id PK "UUID"
+        text provider
+        text repository_node_id
+        integer pull_request_number
+        text pr_url
+        text pr_state
+        text workspace_id FK
+        text worktree_path
+        integer worktree_managed
+        text head_ref
+        text head_oid
+        text local_branch
+        text push_remote
+        text push_ref
+        text primary_thread_id FK "nullable, unique"
+    }
+
     workspaces ||--o{ threads : "has"
     threads ||--o{ messages : "has"
+    workspaces ||--o{ pull_request_review_links : "hosts"
+    threads |o--o| pull_request_review_links : "canonical Review task"
 ```
 
 All model types are defined as Zod schemas in `packages/contracts` and inferred via `z.infer`. The server validates data at the WebSocket boundary (both params and results) so the frontend receives typed, validated payloads.
@@ -378,6 +404,20 @@ All params and results are defined as Zod schemas in `packages/contracts/src/ws/
 | `github.branchPr` | Get PR info for a branch |
 | `github.listOpenPrs` | List open PRs for a workspace |
 | `github.prByUrl` | Look up a PR by URL |
+| `pullRequest.capabilities` | Resolve independently gated viewer permissions |
+| `pullRequest.list` | Load one bounded relationship inbox page |
+| `pullRequest.get` | Load one detail, checks, or comments page |
+| `pullRequest.timeline` | Load one bounded Timeline lane page |
+| `pullRequest.files` | Load one changed-file metadata page |
+| `pullRequest.patch` | Load one immutable-snapshot file patch |
+| `pullRequest.cancel` | Cancel one connection-owned read operation |
+| `pullRequest.createReviewTask` | Prepare, create, or explicitly reuse a linked Review worktree |
+| `pullRequest.reviewLink` | Restore the durable PR link for a canonical Review task |
+| `pullRequest.postComment` | Post one confirmed issue comment |
+| `pullRequest.submitReview` | Submit one confirmed review and its bounded drafts |
+| `pullRequest.setReadiness` | Confirm a draft or ready state change |
+| `pullRequest.close` | Confirm closing an open pull request |
+| `pullRequest.merge` | Merge with an expected-head guard and selected merge method |
 | `config.discover` | Discover Claude config for a workspace path |
 | `skill.list` | List available skills |
 | `terminal.create` | Create a PTY for a thread |
@@ -456,7 +496,65 @@ container.register(AgentService, { useClass: AgentService }, { lifecycle: Lifecy
 
 Services depend on repositories and providers via constructor injection. No service imports another service's implementation directly.
 
-### 7.3 Request Validation
+### 7.3 Pull request Review worktree transaction
+
+`ReviewWorktreeService` owns the local continuation from a remote pull request to
+a Review task. Preparation returns an active canonical task, an opaque compatible
+worktree candidate, a bounded Workspace mapping error, or a server-owned managed
+destination. The renderer never supplies an arbitrary reuse path.
+
+Confirmed creation runs under an identity lock. `GitService` also serializes the
+repository-local remote and ref changes. It fetches the current head into a
+remote-tracking ref, verifies `FETCH_HEAD` against the captured OID, and protects
+that commit with a temporary `refs/mcode/pull-requests/...` ref. A new branch is
+created from that immutable ref. Existing branches are reusable only when the
+OID, upstream, and worktree ownership all match.
+
+The thread and `pull_request_review_links` row are written in one SQLite
+transaction after filesystem setup succeeds. The link retains the explicit push
+remote and ref, PR URL and state, head identity, and canonical thread. This lets
+Overview restore PR context after restart even when a fork Review branch has a
+different local name. `git.push` uses the linked target when a Review thread ID is
+present and rechecks the remote URL and ancestry before pushing.
+
+Failure cleanup removes only refs, branches, directories, and managed remotes
+created by that attempt. Reused worktrees remain unmanaged. Thread deletion also
+keeps a managed worktree while another active thread uses its path. See
+[`docs/guides/pull-request-review-worktrees.md`](docs/guides/pull-request-review-worktrees.md)
+for the operational invariants.
+
+### 7.4 Pull request remote data and mutation boundary
+
+`GithubPullRequestClient` converts hostile GitHub payloads into provider-neutral
+contracts without exposing credentials. Reads are split across inbox, detail,
+checks, comments, Timeline, changed files, and immutable patches. Each page is
+bounded. Active reads carry a connection-owned operation ID so stale selection
+work can be cancelled without affecting another client.
+
+`PullRequestMutationService` owns comments, reviews, readiness changes, closes,
+and merges. Each request carries the pull request identity, the state the user
+confirmed, and a UUID idempotency key. The service rereads viewer permission and
+remote state before dispatch. Merge also sends the current head OID as GitHub's
+atomic expected-head guard.
+
+The idempotency registry keys viewer, pull request, effect, and UUID. Matching
+in-flight calls share one promise. A successful or outcome-unknown result stays
+for ten minutes, with at most 512 entries. A definite no-effect failure removes
+the entry so a corrected retry can run. Reusing a UUID with another payload is a
+typed conflict.
+
+Review submission creates a pending provider review, adds at most 100 bounded
+inline comments or replies, then submits the selected review effect. A definite
+draft or submit failure deletes that pending review when GitHub confirms the
+cleanup. An unknown outcome remains unknown rather than reporting success.
+
+Successful mutations invalidate server read caches and the web inbox, detail,
+Timeline, checks, comments, files, and patch snapshots. The web store clears only
+draft IDs accepted by a successful review. See
+[`docs/guides/pull-request-mutations.md`](docs/guides/pull-request-mutations.md)
+for the operational contract.
+
+### 7.5 Request Validation
 
 The WebSocket router (`ws-router.ts`) performs three-phase validation for every RPC call:
 
@@ -662,6 +760,7 @@ bun run dev:web
 |------|---------|-----------|
 | Unit, component, and integration | `bun run test` | Vitest and Testing Library |
 | Full regression gate | `bun run verify` | Typecheck, lint, and maintained tests |
+| Pull request production performance | `cd apps/web && bun run perf:pull-requests` | Vite manifest, Vitest, and Playwright |
 
 Behavior changes are also exercised against the running app. Agents prefer browser use for web surfaces and computer use for Electron-only surfaces. Disposable verification scripts and artifacts belong under `.dev/verification/`.
 
@@ -674,6 +773,9 @@ Behavior changes are also exercised against the running app. Agents prefer brows
 | First 100 messages load | < 50 ms |
 | App startup to usable | < 2 seconds |
 | Frontend bundle size | < 2 MB gzipped |
+| Eager web chunk | <= 500 KiB gzipped |
+| Pull request virtual viewport | < 500 descendants at legal data bounds |
+| Pull request selector or store update p95 | < 2 ms |
 | Server heap limit | 512 MB (configurable via `server.memory.heapMb`) |
 
 ## 16. CI/CD and Release

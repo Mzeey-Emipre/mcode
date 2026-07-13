@@ -169,3 +169,36 @@ When running this audit, score each category:
 
 - Performance issues are tracked on GitHub with the `perf` label
 - Run this checklist before major releases and after adding new list-based UI or heavy features
+
+## Pull Request Review Gate
+
+Run the production gate from `apps/web`:
+
+```bash
+bun run perf:pull-requests
+```
+
+The command builds the web app, checks the Vite manifest, runs the selector p95
+and layout-rule Vitest files, then runs the pull request Playwright workload
+against `vite preview`. The workload uses only fake GitHub transport responses.
+It must not send a real comment, review, readiness change, close, or merge.
+
+The fixture stays within every wire bound:
+
+- 1,000 inbox rows arrive through 34 calls of at most 30 rows.
+- 1,000 Timeline events arrive through 34 calls of at most 30 events.
+- 500 changed files arrive through five calls of at most 100 files.
+- One patch contains 20,000 parsed lines and uses one patch call.
+
+Each viewport must keep fewer than 500 descendants. Inbox, Timeline, file, and
+patch requests use fixed page counts so an N+1 read fails the test. Selector and
+store-update p95 stays below 2 ms.
+
+The manifest walk starts at each application entry and follows static imports
+only. Every eager chunk must be at most 500 KiB gzip. Pull request Surface, Code,
+and remote Markdown remain dynamic entries.
+
+Chrome trace analysis marks a Layout over 1 ms as slow. One bounded jump may
+contain at most two slow layouts, and no two may start within the same 16.7 ms
+frame window. Three separated slow layouts still fail. Any main-thread task over
+50 ms fails.

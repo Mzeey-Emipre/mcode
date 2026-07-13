@@ -78,6 +78,11 @@ import type { RecapService } from "../services/recap-service.js";
 import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
 import { loadConversationPage } from "../services/conversation-page.js";
 import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
+import type { PullRequestService } from "../services/pull-requests/pull-request-service.js";
+import type { PullRequestMutationService } from "../services/pull-requests/pull-request-mutation-service.js";
+import type { ReviewWorktreeService } from "../services/pull-requests/review-worktree-service.js";
+
+const DEFAULT_PULL_REQUEST_CONNECTION = {};
 
 function redactedUsageDiagnostic(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
@@ -219,6 +224,12 @@ export interface RouterDeps {
   recapService: RecapService;
   /** Tears down provider and terminal resources owned by a thread before deletion. */
   threadTeardownService: ThreadTeardownService;
+  /** Serves provider-neutral pull request capabilities and inbox pages. */
+  pullRequestService: PullRequestService;
+  /** Executes explicit GitHub pull request writes after fresh preflight. */
+  pullRequestMutationService: PullRequestMutationService;
+  /** Creates and restores local Review worktrees linked to pull requests. */
+  reviewWorktreeService: ReviewWorktreeService;
 }
 
 /**
@@ -829,6 +840,55 @@ async function dispatch(
       return deps.githubService.listOpenPrs(params.workspaceId);
     case "github.prByUrl":
       return deps.githubService.getPrByUrl(params.url);
+    case "pullRequest.capabilities":
+      return deps.pullRequestService.capabilities(
+        params,
+        context.client ?? DEFAULT_PULL_REQUEST_CONNECTION,
+      );
+    case "pullRequest.list":
+      return deps.pullRequestService.list(
+        params,
+        context.client ?? DEFAULT_PULL_REQUEST_CONNECTION,
+      );
+    case "pullRequest.get":
+      return deps.pullRequestService.get(
+        params,
+        context.client ?? DEFAULT_PULL_REQUEST_CONNECTION,
+      );
+    case "pullRequest.timeline":
+      return deps.pullRequestService.timeline(
+        params,
+        context.client ?? DEFAULT_PULL_REQUEST_CONNECTION,
+      );
+    case "pullRequest.files":
+      return deps.pullRequestService.files(
+        params,
+        context.client ?? DEFAULT_PULL_REQUEST_CONNECTION,
+      );
+    case "pullRequest.patch":
+      return deps.pullRequestService.patch(
+        params,
+        context.client ?? DEFAULT_PULL_REQUEST_CONNECTION,
+      );
+    case "pullRequest.cancel":
+      return deps.pullRequestService.cancel(
+        context.client ?? DEFAULT_PULL_REQUEST_CONNECTION,
+        params.operationId,
+      );
+    case "pullRequest.createReviewTask":
+      return deps.reviewWorktreeService.createReviewTask(params);
+    case "pullRequest.reviewLink":
+      return deps.reviewWorktreeService.getReviewLink(params.threadId);
+    case "pullRequest.postComment":
+      return deps.pullRequestMutationService.postComment(params);
+    case "pullRequest.submitReview":
+      return deps.pullRequestMutationService.submitReview(params);
+    case "pullRequest.setReadiness":
+      return deps.pullRequestMutationService.setReadiness(params);
+    case "pullRequest.close":
+      return deps.pullRequestMutationService.close(params);
+    case "pullRequest.merge":
+      return deps.pullRequestMutationService.merge(params);
     case "github.checkStatus": {
       // 15s window: matches the active-set polling cadence so a fresh tick result
       // satisfies most reads without spawning a redundant `gh pr checks` subprocess.
@@ -1128,7 +1188,37 @@ async function dispatch(
       const workspace = deps.workspaceService.findById(params.workspaceId);
       if (!workspace) throw new Error(`Workspace ${params.workspaceId} not found`);
       if (!workspace.is_git_repo) return;
-      await deps.gitService.push(workspace.path, params.branch);
+      const pushResolution = params.threadId
+        ? deps.reviewWorktreeService.resolvePushTarget(params.threadId)
+        : { kind: "standard" as const };
+      if (pushResolution.kind === "invalid_review") {
+        throw new Error("The Review task link changed. Reload the task before pushing.");
+      }
+      if (pushResolution.kind === "review") {
+        const reviewTarget = pushResolution.target;
+        if (
+          reviewTarget.workspaceId !== params.workspaceId
+          || reviewTarget.localBranch !== params.branch
+        ) {
+          throw new Error("Review task push target does not match the requested Workspace branch.");
+        }
+        const currentBranch = await deps.gitService.getCurrentBranchAt(
+          reviewTarget.worktreePath,
+        );
+        if (currentBranch !== reviewTarget.localBranch) {
+          throw new Error(
+            `Review task checkout is on ${currentBranch ?? "detached HEAD"}, expected ${reviewTarget.localBranch}.`,
+          );
+        }
+        await deps.gitService.pushPullRequestReviewBranch(
+          reviewTarget.worktreePath,
+          reviewTarget.pushRemote,
+          reviewTarget.pushRef,
+          reviewTarget.expectedHeadRepositoryUrl,
+        );
+      } else {
+        await deps.gitService.push(workspace.path, params.branch);
+      }
       // Fresh CI runs appear 3-15s after push. Schedule bumps so the UI surfaces
       // "pending" without waiting a full passive poll cycle.
       const threadIds = deps.ciWatcherService.findByWorkspaceBranch(
