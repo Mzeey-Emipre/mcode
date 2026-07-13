@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { summonTab } from "@/lib/summon-tab";
 import { useDiffStore } from "@/stores/diffStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 const WID = "ws-1";
@@ -23,6 +24,7 @@ describe("summonTab", () => {
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
     });
+    useUiStore.setState({ primarySurface: "chat" });
     useWorkspaceStore.setState({ activeWorkspaceId: WID, activeThreadId: TID });
   });
 
@@ -155,6 +157,20 @@ describe("summonTab", () => {
 
       summonTab("preview", onFocus); // hide
       expect(onFocus).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns to Chat and shows the requested tab from Pull requests", () => {
+      summonTab("terminal");
+      useUiStore.getState().setPrimarySurface("pullRequests");
+
+      summonTab("terminal");
+
+      expect(useUiStore.getState().primarySurface).toBe("chat");
+      expect(panel()).toMatchObject({
+        visible: true,
+        activeTab: "terminal",
+        openTabs: ["terminal"],
+      });
     });
   });
 });

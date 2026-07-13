@@ -1,5 +1,6 @@
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore, type RightPanelTab } from "@/stores/diffStore";
+import { useUiStore } from "@/stores/uiStore";
 import { PANEL_TAB_TYPES } from "@/lib/panel-tabs";
 import { hideRightPanelAdaptive, showRightPanelAdaptive } from "@/lib/right-panel-layout";
 
@@ -30,7 +31,16 @@ export function summonTab(tab: RightPanelTab, onFocus?: () => void): void {
   if (tabNeedsThread(tab) && !tid) return;
 
   const { getRightPanel, getRightPanelVisible, setRightPanelTab } = useDiffStore.getState();
+  const ui = useUiStore.getState();
   const panel = getRightPanel(wid, tid);
+
+  if (ui.primarySurface !== "chat") {
+    ui.setPrimarySurface("chat");
+    showRightPanelAdaptive(wid, tid);
+    setRightPanelTab(wid, tid, tab);
+    onFocus?.();
+    return;
+  }
 
   if (!getRightPanelVisible(wid, tid)) {
     showRightPanelAdaptive(wid, tid);

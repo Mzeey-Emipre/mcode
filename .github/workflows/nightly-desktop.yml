@@ -37,13 +37,17 @@ jobs:
       - id: check
         name: Compare HEAD to last nightly tag
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Find the most recent tag matching our nightly pattern. If none
-          # exists yet, force a build so we bootstrap the first nightly.
-          last_tag=$(git tag --list "v*-nightly.*" --sort=-creatordate | head -n 1)
+          last_tag=$(gh release list \
+            --repo "${{ github.repository }}" \
+            --limit 100 \
+            --json tagName,isDraft,isPrerelease \
+            --jq '[.[] | select(.isDraft == false and .isPrerelease == true and (.tagName | test("^v.*-nightly\\.")))][0].tagName // ""')
           if [ -z "$last_tag" ]; then
-            echo "No prior nightly tag found; will build."
+            echo "No published nightly found; building one."
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "last_nightly_tag=" >> "$GITHUB_OUTPUT"
             exit 0
@@ -53,8 +57,19 @@ jobs:
           echo "last nightly tag: $last_tag ($last_sha)"
           echo "HEAD: $head_sha"
           if [ "$last_sha" = "$head_sha" ]; then
-            echo "No new commits since last nightly; skipping."
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            assets=$(gh release view "$last_tag" \
+              --repo "${{ github.repository }}" \
+              --json assets \
+              --jq '.assets[].name')
+            if grep -Fxq "nightly.yml" <<< "$assets" \
+              && grep -Fxq "nightly-linux.yml" <<< "$assets" \
+              && grep -Fxq "nightly-mac.yml" <<< "$assets"; then
+              echo "No new commits since the last complete nightly; skipping."
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "The last nightly is incomplete; rebuilding it."
+              echo "should_build=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
@@ -117,6 +132,7 @@ jobs:
           fi
           short_sha=$(git rev-parse --short HEAD)
           gh release create "$TAG" \
+            --draft \
             --prerelease \
             --title "Mcode Nightly ${{ steps.tag.outputs.version }} (${short_sha})" \
             --notes "Automated nightly build from ${{ github.sha }}. Not marked latest. Channel YAML: \`nightly.yml\`." \
@@ -161,7 +177,19 @@ jobs:
             ${{ runner.os }}-bun-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if bun install --frozen-lockfile; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "Dependency installation failed. Retrying in ${delay}s."
+            sleep "$delay"
+          done
 
       - name: Set nightly package version
         shell: bash
@@ -281,14 +309,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Download arm64 yml
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: mac-yml-arm64-nightly
           path: yml-arm64
 
       - name: Download x64 yml
-        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: mac-yml-x64-nightly
@@ -301,12 +327,10 @@ jobs:
           X64_YML="yml-x64/nightly-mac.yml"
 
           if [ ! -f "$ARM64_YML" ] || [ ! -f "$X64_YML" ]; then
-            echo "One or both nightly mac yml files missing, skipping merge"
-            if [ -f "$ARM64_YML" ]; then cp "$ARM64_YML" nightly-mac.yml; fi
-            if [ -f "$X64_YML" ]; then cp "$X64_YML" nightly-mac.yml; fi
-            if [ ! -f nightly-mac.yml ]; then exit 0; fi
-          else
-            node -e "
+            echo "Both macOS update metadata files are required."
+            exit 1
+          fi
+          node -e "
               const fs = require('fs');
               const arm64 = fs.readFileSync('$ARM64_YML', 'utf8');
               const x64 = fs.readFileSync('$X64_YML', 'utf8');
@@ -384,11 +408,9 @@ jobs:
               }
               console.log('Merged nightly-mac.yml:');
               console.log(fs.readFileSync('nightly-mac.yml', 'utf8'));
-            "
-          fi
+          "
 
       - name: Upload merged nightly-mac.yml
-        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.setup.outputs.tag }}
@@ -397,3 +419,39 @@ jobs:
             echo "Uploading merged nightly-mac.yml to $TAG"
             gh release upload "$TAG" nightly-mac.yml --clobber --repo "${{ github.repository }}"
           fi
+
+  publish-nightly:
+    needs: [setup, build, merge-mac-yml-nightly]
+    if: needs.setup.outputs.should_build == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Publish complete nightly release
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          TAG: ${{ needs.setup.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=$(gh release view "$TAG" \
+            --repo "${{ github.repository }}" \
+            --json assets \
+            --jq '.assets[].name')
+          for required in nightly.yml nightly-linux.yml nightly-mac.yml; do
+            if ! grep -Fxq "$required" <<< "$assets"; then
+              echo "Required update metadata is missing: $required"
+              exit 1
+            fi
+          done
+          gh release edit "$TAG" \
+            --repo "${{ github.repository }}" \
+            --draft=false \
+            --prerelease \
+            --latest=false
