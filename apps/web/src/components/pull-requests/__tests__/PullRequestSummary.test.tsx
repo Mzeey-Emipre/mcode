@@ -275,28 +275,17 @@ describe("PullRequestSummary", () => {
     ).toBeVisible();
   });
 
-  it("keeps the local review action inside the description header", () => {
+  it("keeps local task actions out of the summary content", () => {
     render(
       <PullRequestSummary
         detail={detail()}
         checks={[]}
         comments={[]}
-        onReviewChangeStack={vi.fn()}
-        reviewChangeStackAllowed
       />,
     );
 
-    const description = screen.getByRole("heading", { name: "Description" });
-    const action = screen.getByRole("button", { name: "Start review" });
-    expect(description.parentElement).toContainElement(action);
-    expect(
-      screen.queryByRole("heading", { name: "Review Change Stack" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(
-        "Create an isolated task at the current pull request head.",
-      ),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Description" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /review task/i })).toBeNull();
   });
 
   it("surfaces a bounded remote description", () => {

@@ -103,7 +103,8 @@ describe("PullRequestLifecycleActions", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+    await user.click(screen.getByRole("button", { name: "Choose merge method" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Squash and merge" }));
     expect(screen.getByText("Mzeey-Empire/mcode #42")).toBeVisible();
     expect(screen.getByText("Effect:").parentElement).toHaveTextContent("Merge pull request");
     expect(screen.getByRole("combobox", { name: "Merge method" })).toHaveTextContent("Squash and merge");
@@ -161,7 +162,7 @@ describe("PullRequestLifecycleActions", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Select merge method" }));
+    await user.click(screen.getByRole("button", { name: "Choose merge method" }));
     await user.click(await screen.findByRole("menuitem", { name: "Rebase and merge" }));
     const dialog = screen.getByRole("dialog", { name: "Merge pull request" });
     expect(within(dialog).getByRole("combobox", { name: "Merge method" })).toHaveTextContent(
@@ -174,6 +175,29 @@ describe("PullRequestLifecycleActions", () => {
       method: "rebase",
       bypassRequirements: true,
     }));
+  });
+
+  it("keeps merge choices visible while explaining draft and bypass restrictions", async () => {
+    const user = userEvent.setup();
+    render(
+      <PullRequestLifecycleActions
+        detail={{ ...detail, readiness: "draft" }}
+        capabilities={capabilities}
+        isNarrow={false}
+        mutationTransport={mutationTransport()}
+        readTransport={readTransport()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Choose merge method" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Squash and merge" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Merge pull request" });
+    expect(dialog).toHaveTextContent("Mark this pull request ready before merging it.");
+    expect(dialog).toHaveTextContent("Admin bypass unavailable");
+    expect(within(dialog).queryByRole("checkbox")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Merge pull request" })).toBeDisabled();
   });
 
   it("offers readiness through the keyboard-operable actions menu", async () => {
@@ -259,7 +283,8 @@ describe("PullRequestLifecycleActions", () => {
         onRefresh={vi.fn()}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+    await user.click(screen.getByRole("button", { name: "Choose merge method" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Squash and merge" }));
     const dialog = screen.getByRole("dialog", { name: "Merge pull request" });
     const confirm = within(dialog).getByRole("button", { name: "Merge pull request" });
     await user.click(confirm);
@@ -309,7 +334,8 @@ describe("PullRequestLifecycleActions", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+    await user.click(screen.getByRole("button", { name: "Choose merge method" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Squash and merge" }));
     const quarantinedDialog = screen.getByRole("dialog", { name: "Merge pull request" });
     expect(await within(quarantinedDialog).findByText(/outcome could not be confirmed/i)).toBeVisible();
     expect(within(quarantinedDialog).getByRole("combobox", { name: "Merge method" })).toBeDisabled();
@@ -321,7 +347,8 @@ describe("PullRequestLifecycleActions", () => {
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(usePullRequestMutationStore.getState().lanes[commentLaneKey]).toBeUndefined();
 
-    await user.click(screen.getByRole("button", { name: "Squash and merge" }));
+    await user.click(screen.getByRole("button", { name: "Choose merge method" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Squash and merge" }));
     await user.click(screen.getByRole("button", { name: "Merge pull request" }));
     await vi.waitFor(() => expect(merge).toHaveBeenCalledOnce());
   });

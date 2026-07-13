@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, type Ref } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
@@ -40,6 +41,12 @@ export interface PullRequestDetailToolbarProps {
   onRefresh?: () => Promise<boolean> | boolean;
   onRefreshClick?: () => void;
   refreshing?: boolean;
+  /** Opens an isolated local task for reviewing the visible change stack. */
+  onOpenReviewTask?: () => void;
+  /** Whether a local review task can be created from the visible snapshot. */
+  reviewTaskAllowed?: boolean;
+  /** Explains why local review-task creation is unavailable. */
+  reviewTaskUnavailableReason?: string | null;
 }
 
 /** Renders top-level pull request tabs and actions in one compact toolbar. */
@@ -58,6 +65,9 @@ export function PullRequestDetailToolbar({
   onRefresh,
   onRefreshClick,
   refreshing = false,
+  onOpenReviewTask,
+  reviewTaskAllowed = false,
+  reviewTaskUnavailableReason = null,
 }: PullRequestDetailToolbarProps) {
   const browserUrl = model ? safePullRequestHttpUrl(model.url) : null;
 
@@ -110,6 +120,28 @@ export function PullRequestDetailToolbar({
               readTransport={readTransport}
               onRefresh={onRefresh}
             />
+          ) : null}
+          {onOpenReviewTask ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="Open review task"
+                    className="text-muted-foreground"
+                    disabled={!reviewTaskAllowed}
+                    onClick={onOpenReviewTask}
+                  >
+                    <WorktreeModeIcon size={13} aria-hidden />
+                  </Button>
+                }
+              />
+              <TooltipContent>
+                {reviewTaskUnavailableReason ?? "Open an isolated review task"}
+              </TooltipContent>
+            </Tooltip>
           ) : null}
           {onRefresh ? (
             <Button

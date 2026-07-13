@@ -413,7 +413,8 @@ describe("PullRequestCode", () => {
     );
     const footer = screen.getByTestId("pull-request-review-footer");
     expect(footer).toHaveAttribute("data-layout", "compact");
-    expect(footer).toHaveTextContent(`HEAD ${HEAD_OID.slice(0, 8)}`);
+    expect(footer).not.toHaveTextContent("draft");
+    expect(footer).not.toHaveTextContent("HEAD");
     expect(footer).toContainElement(
       screen.getByRole("button", { name: "Submit review" }),
     );

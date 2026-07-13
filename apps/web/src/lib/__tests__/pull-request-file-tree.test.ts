@@ -23,7 +23,6 @@ describe("pull request file tree", () => {
       "directory:apps",
       "directory:apps/server",
       "file:apps/server/index.ts",
-      "directory:apps/web",
       "directory:apps/web/src",
       "file:apps/web/src/alpha.ts",
       "file:apps/web/src/zeta.ts",
@@ -37,17 +36,35 @@ describe("pull request file tree", () => {
       "packages/contracts/src/index.ts",
     ]);
     const collapsed = flattenPullRequestFileTree(tree, new Set());
-    expect(collapsed.map((row) => row.node.path)).toEqual(["apps", "packages"]);
+    expect(collapsed.map((row) => row.node.path)).toEqual([
+      "apps/web/src",
+      "packages/contracts/src",
+    ]);
 
     const appsOpen = flattenPullRequestFileTree(
       tree,
-      new Set(["directory:apps", "directory:apps/web"]),
+      new Set(["directory:apps/web/src"]),
     );
     expect(appsOpen.map((row) => row.node.path)).toEqual([
-      "apps",
-      "apps/web",
       "apps/web/src",
-      "packages",
+      "apps/web/src/App.tsx",
+      "packages/contracts/src",
+    ]);
+  });
+
+  it("compacts a directory chain that contains no sibling files", () => {
+    const tree = buildPullRequestFileTree([
+      ".octopus/qualtex-launchpad/deployment_process.ocl",
+      ".octopus/qualtex-launchpad/variables.ocl",
+    ]);
+
+    expect(tree).toMatchObject([
+      {
+        kind: "directory",
+        id: "directory:.octopus/qualtex-launchpad",
+        name: ".octopus/qualtex-launchpad",
+        path: ".octopus/qualtex-launchpad",
+      },
     ]);
   });
 

@@ -79,13 +79,17 @@ describe("PullRequestFileTree", () => {
         onActivate={vi.fn()}
       />,
     );
-    const apps = screen.getByRole("treeitem", { name: "apps" });
+    const apps = screen.getByRole("treeitem", { name: "apps/web/" });
     apps.focus();
     await userEvent.keyboard("{ArrowRight}");
-    expect(screen.getByRole("treeitem", { name: "web" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("treeitem", { name: "Modified apps/web/App.tsx" }),
+    ).toBeInTheDocument();
 
     await userEvent.keyboard("{ArrowLeft}");
-    expect(screen.queryByRole("treeitem", { name: "web" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("treeitem", { name: "Modified apps/web/App.tsx" }),
+    ).not.toBeInTheDocument();
   });
 
   it("mounts a bounded row window for a large flat Change stack", () => {

@@ -5,7 +5,13 @@ import {
   type PullRequestMergeMethod,
   type PullRequestReadiness,
 } from "@mcode/contracts";
-import { AlertCircle, GitBranch, GitMerge, GitPullRequest } from "lucide-react";
+import {
+  AlertCircle,
+  GitBranch,
+  GitMerge,
+  GitPullRequest,
+  ShieldOff,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -133,7 +139,13 @@ export function PullRequestLifecycleDialog({
   const repository = `${detail.identity.owner}/${detail.identity.repository}`;
   const unavailableReason =
     capabilityReason ??
+    (detail.state === "open"
+      ? null
+      : `This pull request is already ${detail.state}.`) ??
     (expected ? null : "Base or head commit identity is unavailable.") ??
+    (effect === "merge" && detail.readiness === "draft"
+      ? "Mark this pull request ready before merging it."
+      : null) ??
     (effect === "merge" && detail.mergeability === "conflicting"
       ? "The change stack has merge conflicts."
       : null);
@@ -302,6 +314,51 @@ export function PullRequestLifecycleDialog({
                     </SelectContent>
                   </Select>
                 </div>
+                {unavailableReason ? (
+                  <p role="status" className="flex items-start gap-2 bg-primary/8 px-3 py-2.5 text-xs text-muted-foreground">
+                    <AlertCircle size={13} aria-hidden className="mt-0.5 shrink-0 text-primary/80" />
+                    {unavailableReason}
+                  </p>
+                ) : null}
+                {detail.viewerCanBypassMergeRequirements ? (
+                  <div className="flex items-start gap-3 border-t border-border/45 pt-4">
+                    <Checkbox
+                      id="pull-request-bypass-requirements"
+                      checked={bypassRequirements}
+                      disabled={mutationBlocked}
+                      aria-labelledby="pull-request-bypass-requirements-label"
+                      aria-describedby="pull-request-bypass-requirements-description"
+                      onCheckedChange={setBypassRequirements}
+                    />
+                    <span className="min-w-0">
+                      <label
+                        id="pull-request-bypass-requirements-label"
+                        htmlFor="pull-request-bypass-requirements"
+                        className="block cursor-pointer text-xs font-medium text-foreground/90"
+                      >
+                        Bypass merge requirements
+                      </label>
+                      <span
+                        id="pull-request-bypass-requirements-description"
+                        className="mt-0.5 block text-xs leading-5 text-muted-foreground"
+                      >
+                        Use administrator permission when requirements block the merge.
+                      </span>
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3 border-t border-border/45 pt-4 text-muted-foreground">
+                    <ShieldOff size={15} aria-hidden className="mt-0.5 shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-foreground/80">
+                        Admin bypass unavailable
+                      </span>
+                      <span className="mt-0.5 block text-xs leading-5">
+                        GitHub does not allow this account to bypass merge requirements.
+                      </span>
+                    </span>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <label htmlFor="pull-request-merge-headline" className="text-xs text-muted-foreground">
                     Commit headline, optional
@@ -335,37 +392,10 @@ export function PullRequestLifecycleDialog({
                     }}
                   />
                 </div>
-                {detail.viewerCanBypassMergeRequirements ? (
-                  <div className="flex items-start gap-3 border-t border-border/45 pt-4">
-                    <Checkbox
-                      id="pull-request-bypass-requirements"
-                      checked={bypassRequirements}
-                      disabled={mutationBlocked}
-                      aria-labelledby="pull-request-bypass-requirements-label"
-                      aria-describedby="pull-request-bypass-requirements-description"
-                      onCheckedChange={setBypassRequirements}
-                    />
-                    <span className="min-w-0">
-                      <label
-                        id="pull-request-bypass-requirements-label"
-                        htmlFor="pull-request-bypass-requirements"
-                        className="block cursor-pointer text-xs font-medium text-foreground/90"
-                      >
-                        Bypass merge requirements
-                      </label>
-                      <span
-                        id="pull-request-bypass-requirements-description"
-                        className="mt-0.5 block text-xs leading-5 text-muted-foreground"
-                      >
-                        Use administrator permission when requirements block the merge.
-                      </span>
-                    </span>
-                  </div>
-                ) : null}
               </>
             ) : null}
 
-            {unavailableReason ? (
+            {effect !== "merge" && unavailableReason ? (
               <p role="status" className="flex items-start gap-2 bg-primary/8 px-3 py-2.5 text-xs text-muted-foreground">
                 <AlertCircle size={13} aria-hidden className="mt-0.5 shrink-0 text-primary/80" />
                 {unavailableReason}

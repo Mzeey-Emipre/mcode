@@ -90,9 +90,6 @@ interface PullRequestSummaryPanelProps {
   >;
   detailBoundedData: PullRequestBoundedDataMarker | null;
   transport?: PullRequestTransport;
-  onReviewChangeStack?: () => void;
-  reviewChangeStackAllowed: boolean;
-  reviewChangeStackUnavailableReason: string | null;
   isNarrow: boolean;
 }
 
@@ -101,9 +98,6 @@ const PullRequestSummaryPanel = memo(function PullRequestSummaryPanel({
   detail,
   detailBoundedData,
   transport,
-  onReviewChangeStack,
-  reviewChangeStackAllowed,
-  reviewChangeStackUnavailableReason,
   isNarrow,
 }: PullRequestSummaryPanelProps) {
   const resources = usePullRequestDetailStore(
@@ -189,9 +183,6 @@ const PullRequestSummaryPanel = memo(function PullRequestSummaryPanel({
             .getState()
             .loadComments({ append: true, transport })
         }
-        onReviewChangeStack={onReviewChangeStack}
-        reviewChangeStackAllowed={reviewChangeStackAllowed}
-        reviewChangeStackUnavailableReason={reviewChangeStackUnavailableReason}
       />
     </ScrollArea>
   );
@@ -605,6 +596,11 @@ export function PullRequestDetailPane({
               );
           }}
           refreshing={detailLane.status === "refreshing"}
+          onOpenReviewTask={
+            reviewWorktreeCapabilityKnown ? openReviewTask : undefined
+          }
+          reviewTaskAllowed={reviewTaskAllowed}
+          reviewTaskUnavailableReason={reviewTaskReason}
         />
 
         {detailLane.stale && detailLane.error && (
@@ -637,11 +633,6 @@ export function PullRequestDetailPane({
               detail={core.detail}
               detailBoundedData={detailLane.boundedData}
               transport={transport}
-              onReviewChangeStack={
-                reviewWorktreeCapabilityKnown ? openReviewTask : undefined
-              }
-              reviewChangeStackAllowed={reviewTaskAllowed}
-              reviewChangeStackUnavailableReason={reviewTaskReason}
               isNarrow={isNarrow}
             />
           ) : activeTab === "timeline" ? (

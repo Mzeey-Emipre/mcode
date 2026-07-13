@@ -206,15 +206,11 @@ const DiffCell = memo(function DiffCell({
     >
       <span
         aria-hidden
-        className="inline-flex w-4 shrink-0 select-none items-center justify-center bg-page/20 text-current"
+        data-testid="pull-request-diff-gutter"
+        className="inline-grid w-10 shrink-0 select-none grid-cols-[0.75rem_1fr] items-center bg-page/35 pr-1.5 tabular-nums text-muted-foreground/70"
       >
-        {changeMarker}
-      </span>
-      <span
-        aria-hidden
-        className="inline-flex w-12 shrink-0 select-none items-center justify-end bg-page/35 pr-2 tabular-nums text-muted-foreground/70"
-      >
-        {cell.lineNumber ?? ""}
+        <span className="text-center text-current">{changeMarker}</span>
+        <span className="text-right">{cell.lineNumber ?? ""}</span>
       </span>
       <code className="min-w-0 flex-1 whitespace-pre px-2 py-0.5 leading-5">
         {tokenSpans

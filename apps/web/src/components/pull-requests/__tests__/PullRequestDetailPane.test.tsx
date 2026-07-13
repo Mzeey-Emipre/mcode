@@ -383,7 +383,7 @@ describe("PullRequestDetailPane", () => {
     const view = renderPane(transport, reviewTaskTransport);
     await screen.findByText("Read-only detail body");
     expect(
-      screen.queryByRole("button", { name: "Start review" }),
+      screen.queryByRole("button", { name: "Open review task" }),
     ).toBeNull();
 
     act(() => {
@@ -402,7 +402,7 @@ describe("PullRequestDetailPane", () => {
     });
 
     const action = await screen.findByRole("button", {
-      name: "Start review",
+      name: "Open review task",
     });
     expect(action).toBeEnabled();
     expect(getCommand("pullRequests.reviewChangeStack")).toBeDefined();
@@ -433,10 +433,7 @@ describe("PullRequestDetailPane", () => {
     renderPane(transport);
 
     expect(
-      await screen.findByText("The pull request head commit is unavailable."),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Start review" }),
+      await screen.findByRole("button", { name: "Open review task" }),
     ).toBeDisabled();
     expect(getCommand("pullRequests.reviewChangeStack")).toBeUndefined();
   });

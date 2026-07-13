@@ -234,7 +234,7 @@ export function PullRequestFileTree({
         ) : (
           <Folder size={12} aria-hidden />
         )}
-        <span className="min-w-0 truncate">{row.node.name}</span>
+        <span className="min-w-0 truncate">{row.node.name}/</span>
       </Button>
     );
   };

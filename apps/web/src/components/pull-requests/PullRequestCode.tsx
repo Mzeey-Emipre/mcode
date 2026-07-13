@@ -610,47 +610,21 @@ export function PullRequestCode({
             <div
               data-testid="pull-request-review-footer"
               data-layout={isNarrow ? "compact" : "wide"}
-              className={cn(
-                "min-h-10 shrink-0 bg-background px-3 py-1.5",
-                isNarrow
-                  ? "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3"
-                  : "flex flex-wrap items-center gap-2",
-              )}
+              className="flex h-9 shrink-0 items-center gap-2 border-t border-border/45 bg-page px-2"
             >
-              <div
-                className={cn(
-                  "min-w-0",
-                  isNarrow ? "flex flex-col gap-1" : "contents",
-                )}
-              >
-                <div
-                  className={cn(
-                    "flex items-center gap-2",
-                    !isNarrow && "contents",
-                  )}
-                >
-                  <span className="font-mono text-xs font-semibold uppercase tracking-wider text-foreground/80">
-                    Review
-                  </span>
-                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                    {activeDraftCount}{" "}
-                    {activeDraftCount === 1 ? "draft" : "drafts"}
-                  </span>
-                </div>
-                {reviewUnavailableReason ? (
-                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                    {reviewUnavailableReason}
-                  </span>
-                ) : (
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-                    HEAD {headOid.slice(0, 8)}
-                  </span>
-                )}
-              </div>
+              {reviewUnavailableReason ? (
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {reviewUnavailableReason}
+                </span>
+              ) : activeDraftCount > 0 ? (
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {activeDraftCount} draft {activeDraftCount === 1 ? "comment" : "comments"}
+                </span>
+              ) : null}
               <Button
                 type="button"
-                size="sm"
-                className="shrink-0"
+                size="xs"
+                className="ml-auto shrink-0"
                 disabled={Boolean(reviewUnavailableReason)}
                 onClick={() => setSubmitReviewOpen(true)}
               >

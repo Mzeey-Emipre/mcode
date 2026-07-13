@@ -21,7 +21,6 @@ import {
 } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
   Collapsible,
   CollapsibleContent,
@@ -29,11 +28,6 @@ import {
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format-relative";
 import { cn } from "@/lib/utils";
 import { RemoteMarkdown } from "./RemoteMarkdown";
@@ -68,12 +62,6 @@ export interface PullRequestSummaryProps {
   onCommentsFirstOpen?: () => void;
   defaultChecksOpen?: boolean;
   defaultCommentsOpen?: boolean;
-  /** Opens the local Review-task confirmation for this change stack. */
-  onReviewChangeStack?: () => void;
-  /** Whether the current viewer and pull request can create a Review task. */
-  reviewChangeStackAllowed?: boolean;
-  /** Visible reason that Review-task creation is unavailable. */
-  reviewChangeStackUnavailableReason?: string | null;
 }
 
 function titleCase(value: string): string {
@@ -430,9 +418,6 @@ function PullRequestSummaryComponent({
   onCommentsFirstOpen,
   defaultChecksOpen = false,
   defaultCommentsOpen = false,
-  onReviewChangeStack,
-  reviewChangeStackAllowed = false,
-  reviewChangeStackUnavailableReason = null,
 }: PullRequestSummaryProps) {
   const conversationCount = detail.commentCount + detail.reviewThreadCount;
   const handleChecksOpenChange = useFirstOpenTrigger(
@@ -452,42 +437,12 @@ function PullRequestSummaryComponent({
       className="mx-auto min-w-0 w-full max-w-5xl space-y-8 px-6 pb-10 pt-2"
     >
       <section aria-labelledby="pull-request-description-title">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <h3
-            id="pull-request-description-title"
-            className="text-sm font-semibold text-foreground"
-          >
-            Description
-          </h3>
-          {onReviewChangeStack ? (
-            <div className="flex min-w-0 items-center gap-2">
-              {reviewChangeStackUnavailableReason ? (
-                <span className="max-w-xs text-right text-xs leading-4 text-muted-foreground/75">
-                  {reviewChangeStackUnavailableReason}
-                </span>
-              ) : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="shrink-0"
-                      disabled={!reviewChangeStackAllowed}
-                      onClick={onReviewChangeStack}
-                    >
-                      <WorktreeModeIcon size={14} aria-hidden />
-                      Start review
-                    </Button>
-                  }
-                />
-                <TooltipContent>
-                  Create an isolated task at the current pull request head.
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          ) : null}
-        </div>
+        <h3
+          id="pull-request-description-title"
+          className="text-sm font-semibold text-foreground"
+        >
+          Description
+        </h3>
         {detail.body ? (
           <RemoteMarkdown content={detail.body} className="mt-2" />
         ) : (

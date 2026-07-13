@@ -188,6 +188,9 @@ describe("PullRequestVirtualDiff", () => {
     expect(virtualizerProbe.measureElement).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Removed Original line 1: old 1")).toBeVisible();
     expect(screen.getByLabelText("Added Current line 1: new 1")).toBeVisible();
+    expect(screen.getAllByTestId("pull-request-diff-gutter")).toSatisfy(
+      (gutters: HTMLElement[]) => gutters.every((gutter) => gutter.classList.contains("w-10")),
+    );
   });
 
   it("uses the fixed stacked height for unified replacement rows", () => {

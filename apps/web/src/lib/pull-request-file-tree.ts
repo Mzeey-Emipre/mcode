@@ -67,6 +67,29 @@ function freezeDirectory(directory: MutableDirectory): PullRequestFileTreeDirect
   return { ...directory, children };
 }
 
+function compactDirectory(
+  directory: PullRequestFileTreeDirectory,
+): PullRequestFileTreeDirectory {
+  let compacted = directory;
+  while (
+    compacted.children.length === 1 &&
+    compacted.children[0]?.kind === "directory"
+  ) {
+    const child = compacted.children[0];
+    compacted = {
+      ...child,
+      name: `${compacted.name}/${child.name}`,
+      parentId: directory.parentId,
+    };
+  }
+  return {
+    ...compacted,
+    children: compacted.children.map((child) =>
+      child.kind === "directory" ? compactDirectory(child) : child,
+    ),
+  };
+}
+
 /** Build a deterministic directory tree from bounded provider file paths. */
 export function buildPullRequestFileTree(
   filePaths: readonly string[],
@@ -124,7 +147,9 @@ export function buildPullRequestFileTree(
   return [...root.children.values()]
     .sort(compareNodes)
     .map((child) =>
-      child.kind === "directory" ? freezeDirectory(child) : child,
+      child.kind === "directory"
+        ? compactDirectory(freezeDirectory(child))
+        : child,
     );
 }
 

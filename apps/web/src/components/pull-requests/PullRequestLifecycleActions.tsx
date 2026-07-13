@@ -21,6 +21,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
@@ -102,31 +105,23 @@ export function PullRequestLifecycleActions({
 
   return (
     <>
-      {!isNarrow && !mergeReason ? (
-        <div className="flex items-center" role="group" aria-label="Merge pull request">
-          <Button
-            type="button"
-            size="xs"
-            className="rounded-r-none border-r border-primary-foreground/20 pr-2.5"
-            onClick={() => openMerge(detail.defaultMergeMethod)}
-          >
-            <GitMerge size={12} aria-hidden />
-            {mergeMethodLabel(detail.defaultMergeMethod)}
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  className="rounded-l-none px-0"
-                  aria-label="Select merge method"
-                >
-                  <ChevronDown size={13} aria-hidden />
-                </Button>
-              }
-            />
-            <DropdownMenuContent align="end" sideOffset={4} className="min-w-52">
+      {!isNarrow ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                type="button"
+                size="xs"
+                aria-label="Choose merge method"
+              >
+                <GitMerge size={12} aria-hidden />
+                Merge
+                <ChevronDown size={12} aria-hidden />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end" sideOffset={4} className="min-w-52">
+            <DropdownMenuGroup>
               {detail.mergeMethods.map((method) => (
                 <DropdownMenuItem
                   key={method}
@@ -137,9 +132,14 @@ export function PullRequestLifecycleActions({
                   {mergeMethodLabel(method)}
                 </DropdownMenuItem>
               ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+              {mergeReason ? (
+                <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal leading-5 text-muted-foreground">
+                  {mergeReason}
+                </DropdownMenuLabel>
+              ) : null}
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -157,9 +157,6 @@ export function PullRequestLifecycleActions({
         />
         <DropdownMenuContent align="end" sideOffset={4} className="min-w-64">
           <DropdownMenuGroup>
-            <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
-              Remote actions
-            </DropdownMenuLabel>
             <DropdownMenuItem
               disabled={Boolean(readinessReason)}
               className="text-xs"
@@ -168,17 +165,33 @@ export function PullRequestLifecycleActions({
               <CircleDot size={13} aria-hidden />
               {nextReadiness === "ready" ? "Mark ready for review" : "Convert to draft"}
             </DropdownMenuItem>
-            {detail.mergeMethods.map((method) => (
-              <DropdownMenuItem
-                key={method}
-                disabled={Boolean(mergeReason)}
-                className="text-xs"
-                onClick={() => openMerge(method)}
-              >
-                <GitMerge size={13} aria-hidden />
-                {mergeMethodLabel(method)}
-              </DropdownMenuItem>
-            ))}
+            {isNarrow ? (
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="text-xs">
+                  <GitMerge size={13} aria-hidden />
+                  Merge
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="min-w-52">
+                  <DropdownMenuGroup>
+                    {detail.mergeMethods.map((method) => (
+                      <DropdownMenuItem
+                        key={method}
+                        className="text-xs"
+                        onClick={() => openMerge(method)}
+                      >
+                        <GitMerge size={13} aria-hidden />
+                        {mergeMethodLabel(method)}
+                      </DropdownMenuItem>
+                    ))}
+                    {mergeReason ? (
+                      <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal leading-5 text-muted-foreground">
+                        {mergeReason}
+                      </DropdownMenuLabel>
+                    ) : null}
+                  </DropdownMenuGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            ) : null}
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
@@ -190,9 +203,9 @@ export function PullRequestLifecycleActions({
               <XCircle size={13} aria-hidden />
               Close pull request
             </DropdownMenuItem>
-            {readinessReason || closeReason || mergeReason ? (
+            {readinessReason || closeReason ? (
               <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal leading-5 text-muted-foreground">
-                {readinessReason ?? closeReason ?? mergeReason}
+                {readinessReason ?? closeReason}
               </DropdownMenuLabel>
             ) : null}
           </DropdownMenuGroup>
