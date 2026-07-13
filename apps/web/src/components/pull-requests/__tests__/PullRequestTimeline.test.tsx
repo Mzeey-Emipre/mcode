@@ -189,6 +189,30 @@ describe("PullRequestTimeline", () => {
     expect(onLoadNewer).toHaveBeenCalledOnce();
   });
 
+  it("connects event markers as one continuous activity rail", () => {
+    render(
+      <PullRequestTimeline
+        items={[
+          opened("node-a", "2026-07-11T12:00:00.000Z"),
+          opened("node-b", "2026-07-11T12:01:00.000Z"),
+          opened("node-c", "2026-07-11T12:02:00.000Z"),
+        ]}
+      />,
+    );
+
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]?.querySelector('[data-timeline-connector="before"]')).toBeNull();
+    expect(rows[0]?.querySelector('[data-timeline-connector="after"]')).not.toBeNull();
+    expect(rows[1]?.querySelector('[data-timeline-connector="before"]')).not.toBeNull();
+    expect(rows[1]?.querySelector('[data-timeline-connector="after"]')).not.toBeNull();
+    expect(rows[2]?.querySelector('[data-timeline-connector="before"]')).not.toBeNull();
+    expect(rows[2]?.querySelector('[data-timeline-connector="after"]')).toBeNull();
+    rows.forEach((row) => {
+      expect(row.querySelector('[data-timeline-marker="opened"]')).not.toBeNull();
+    });
+  });
+
   it("distinguishes initial loading, failed-empty, and successful-empty states", () => {
     const view = render(<PullRequestTimeline items={[]} initialLoading />);
 

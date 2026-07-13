@@ -8,6 +8,7 @@ import {
   AlertCircle,
   CheckCircle2,
   CircleDot,
+  ExternalLink,
   GitCommitHorizontal,
   MessageSquare,
 } from "lucide-react";
@@ -240,39 +241,62 @@ const TimelineRow = memo(function TimelineRow({
       data-provider-node-id={item.providerNodeId}
       aria-posinset={index + 1}
       aria-setsize={total}
-      className={cn("group px-4 py-3", className)}
+      className={cn("group relative px-4", className)}
       style={style}
     >
-      <div className="flex min-w-0 items-start gap-3">
+      {index > 0 ? (
         <span
           aria-hidden
-          className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-muted/55 text-muted-foreground group-hover:text-primary"
+          data-timeline-connector="before"
+          className="absolute left-7 top-0 h-6 w-px bg-border/70"
+        />
+      ) : null}
+      {index < total - 1 ? (
+        <span
+          aria-hidden
+          data-timeline-connector="after"
+          className="absolute bottom-0 left-7 top-6 w-px bg-border/70"
+        />
+      ) : null}
+      <div className="flex min-w-0 items-start gap-3 py-3">
+        <span
+          aria-hidden
+          data-timeline-marker={item.kind}
+          className={cn(
+            "relative z-10 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors duration-150 group-hover:border-foreground/25 group-hover:text-foreground",
+            item.kind === "commit" &&
+              "border-primary/40 bg-primary/8 text-primary group-hover:border-primary/65 group-hover:text-primary",
+          )}
         >
           <EventGlyph kind={item.kind} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
-            <span className="font-medium text-foreground/90">
-              {item.actor?.login ?? "System"}
-            </span>
-            <span className="text-foreground/75">{eventTitle(item)}</span>
-            <time
-              dateTime={item.occurredAt}
-              className="font-mono tabular-nums text-muted-foreground"
-            >
-              {formatRelative(item.occurredAt)}
-            </time>
+          <div className="flex min-w-0 items-start gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
+              <span className="font-medium text-foreground/90">
+                {item.actor?.login ?? "System"}
+              </span>
+              <span className="text-foreground/75">{eventTitle(item)}</span>
+              <time
+                dateTime={item.occurredAt}
+                className="font-mono tabular-nums text-muted-foreground"
+              >
+                {formatRelative(item.occurredAt)}
+              </time>
+            </div>
             {eventUrl && (
               <a
                 href={eventUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-mono text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                aria-label="Open event"
+                title="Open event"
+                className="-mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] duration-150 hover:bg-muted/50 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
                 onClick={(event) => {
                   if (!item.url || !safePullRequestHttpUrl(item.url)) event.preventDefault();
                 }}
               >
-                Open event
+                <ExternalLink aria-hidden className="size-3.5" />
               </a>
             )}
           </div>
