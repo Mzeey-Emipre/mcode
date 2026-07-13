@@ -79,7 +79,7 @@ describe("PullRequestIssueCommentComposer", () => {
     expect(postComment).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Post comment" }));
     expect(postComment).toHaveBeenCalledOnce();
-    expect(screen.getByRole("region", { name: "Issue comment" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("region", { name: "Add a comment" })).toHaveAttribute("aria-busy", "true");
     const request = postComment.mock.calls[0]![0];
     expect(request).toMatchObject({ identity, expected, body: "Check the retry boundary." });
     expect(request.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i);
@@ -96,6 +96,29 @@ describe("PullRequestIssueCommentComposer", () => {
     });
     expect(await screen.findByText("Comment posted.")).toBeVisible();
     expect(textarea).toHaveValue("");
+  });
+
+  it("keeps the empty Timeline composer compact", () => {
+    render(
+      <PullRequestIssueCommentComposer
+        identity={identity}
+        expected={expected}
+        capability={{ allowed: true }}
+        mutationTransport={transport(vi.fn())}
+        readTransport={readTransport()}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox", {
+      name: /Comment for Mzeey-Empire\/mcode #42/,
+    });
+    expect(textarea).toHaveAttribute("rows", "2");
+    expect(textarea).toHaveClass(
+      "h-16",
+      "max-h-36",
+      "field-sizing-fixed",
+    );
+    expect(screen.getByText("0 / 65,536 bytes")).toHaveClass("sr-only");
   });
 
   it("uses Mod+Enter as an explicit keyboard path", async () => {

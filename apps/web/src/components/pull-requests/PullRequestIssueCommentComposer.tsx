@@ -4,11 +4,12 @@ import {
   type PullRequestIdentity,
   type PullRequestMutationExpected,
 } from "@mcode/contracts";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, SendHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   selectPullRequestCommentDraft,
   selectPullRequestMutationLane,
@@ -112,78 +113,100 @@ export function PullRequestIssueCommentComposer({
     <section
       aria-labelledby="pull-request-comment-composer-title"
       aria-busy={submitting || undefined}
-      className="shrink-0 bg-page/75 px-4 py-3"
+      className="shrink-0 border-t border-border/70 bg-background px-4 py-3"
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <MessageSquare size={13} aria-hidden className="shrink-0 text-primary/80" />
-        <h3
-          id="pull-request-comment-composer-title"
-          className="font-mono text-xs font-semibold uppercase tracking-wider text-foreground/85"
-        >
-          Issue comment
-        </h3>
-        <span className="ml-auto truncate font-mono text-xs text-muted-foreground">
-          {repository}
-        </span>
-      </div>
-      <label htmlFor="pull-request-issue-comment" className="sr-only">
-        Comment for {repository}
-      </label>
-      <Textarea
-        id="pull-request-issue-comment"
-        value={body}
-        rows={3}
-        disabled={Boolean(unavailableReason) || submitting || Boolean(displayedError)}
-        aria-describedby="pull-request-comment-limit pull-request-comment-status"
-        placeholder="Write an issue comment"
-        className="mt-2 min-h-20 resize-y rounded-none bg-background/45 text-sm"
-        onChange={(event) => {
-          const accepted = usePullRequestMutationStore
-            .getState()
-            .setCommentDraft(identity, event.target.value);
-          setLocalError(accepted ? null : "Comment exceeds the session draft limit.");
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
-          event.preventDefault();
-          void post();
-        }}
-      />
-      <div className="mt-2 flex min-w-0 items-center gap-3">
-        <p
-          id="pull-request-comment-limit"
-          className="font-mono text-xs tabular-nums text-muted-foreground/70"
-        >
-          {byteCount}/{PULL_REQUEST_MUTATION_BODY_MAX_BYTES} bytes
-        </p>
-        <p
-          id="pull-request-comment-status"
-          role={localError ? "alert" : "status"}
-          className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-        >
-          {localError ?? unavailableReason ?? (lane.status === "accepted" ? "Comment posted." : "Mod+Enter to post")}
-        </p>
-        <Button type="button" size="sm" disabled={!canPost} onClick={() => void post()}>
-          {submitting ? (
-            <>
-              <Spinner size="xs" aria-hidden />
-              Posting
-            </>
-          ) : (
-            "Post comment"
-          )}
-        </Button>
-      </div>
-      {displayedError ? (
-        <div className="mt-3">
-          <PullRequestMutationError
-            error={displayedError}
-            busy={submitting}
-            onRetry={() => void retry()}
-            onRefresh={() => void refresh()}
+      <div className="mx-auto w-full max-w-5xl">
+        <div className="flex min-w-0 items-center gap-2">
+          <MessageSquare
+            size={14}
+            aria-hidden
+            className="shrink-0 text-muted-foreground"
           />
+          <h3
+            id="pull-request-comment-composer-title"
+            className="shrink-0 text-sm font-medium text-foreground"
+          >
+            Add a comment
+          </h3>
+          <span className="truncate text-xs text-muted-foreground">
+            on {repository}
+          </span>
         </div>
-      ) : null}
+        <label htmlFor="pull-request-issue-comment" className="sr-only">
+          Comment for {repository}
+        </label>
+        <Textarea
+          id="pull-request-issue-comment"
+          value={body}
+          rows={2}
+          disabled={Boolean(unavailableReason) || submitting || Boolean(displayedError)}
+          aria-describedby="pull-request-comment-limit pull-request-comment-status"
+          placeholder="Write a comment"
+          className="mt-2 h-16 min-h-16 max-h-36 field-sizing-fixed resize-y bg-background text-sm shadow-none"
+          onChange={(event) => {
+            const accepted = usePullRequestMutationStore
+              .getState()
+              .setCommentDraft(identity, event.target.value);
+            setLocalError(accepted ? null : "Comment exceeds the session draft limit.");
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+            event.preventDefault();
+            void post();
+          }}
+        />
+        <div className="mt-2 flex min-w-0 items-center gap-3">
+          <p
+            id="pull-request-comment-status"
+            role={localError ? "alert" : "status"}
+            className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+          >
+            {localError ??
+              unavailableReason ??
+              (lane.status === "accepted"
+                ? "Comment posted."
+                : "Ctrl/⌘ Enter to post")}
+          </p>
+          <p
+            id="pull-request-comment-limit"
+            className={cn(
+              "shrink-0 font-mono text-xs tabular-nums text-muted-foreground/70",
+              byteCount === 0 && "sr-only",
+            )}
+          >
+            {byteCount.toLocaleString()} /{" "}
+            {PULL_REQUEST_MUTATION_BODY_MAX_BYTES.toLocaleString()} bytes
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canPost}
+            onClick={() => void post()}
+          >
+            {submitting ? (
+              <>
+                <Spinner size="xs" aria-hidden />
+                Posting
+              </>
+            ) : (
+              <>
+                <SendHorizontal size={13} aria-hidden />
+                Post comment
+              </>
+            )}
+          </Button>
+        </div>
+        {displayedError ? (
+          <div className="mt-3">
+            <PullRequestMutationError
+              error={displayedError}
+              busy={submitting}
+              onRetry={() => void retry()}
+              onRefresh={() => void refresh()}
+            />
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
