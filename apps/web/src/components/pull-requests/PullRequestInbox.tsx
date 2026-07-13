@@ -480,11 +480,11 @@ export function PullRequestInbox({
           onClick={refresh}
           className="mb-1 ml-auto text-muted-foreground"
         >
-          <RefreshCw
-            size={13}
-            aria-hidden
-            className={status === "refreshing" ? "animate-spin" : undefined}
-          />
+          {status === "refreshing" ? (
+            <Spinner size="sm" />
+          ) : (
+            <RefreshCw size={13} aria-hidden />
+          )}
         </Button>
       </div>
 

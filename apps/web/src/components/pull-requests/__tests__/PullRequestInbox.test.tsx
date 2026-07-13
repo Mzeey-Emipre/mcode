@@ -508,6 +508,34 @@ describe("PullRequestInbox", () => {
     );
   });
 
+  it("uses the shared spinner while refreshing cached pull requests", async () => {
+    seedRows(1);
+    let resolveList!: (result: PullRequestListResult) => void;
+    const transport = fakeTransport();
+    vi.mocked(transport.list).mockImplementation(
+      () =>
+        new Promise<PullRequestListResult>((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+    render(<PullRequestInbox autoLoad={false} transport={transport} />);
+    const refreshButton = screen.getByRole("button", {
+      name: "Refresh pull requests",
+    });
+
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => expect(transport.list).toHaveBeenCalledOnce());
+    expect(refreshButton.querySelector("svg")).toBeNull();
+    expect(refreshButton.querySelector(".spinner-tail-fade")).not.toBeNull();
+
+    await act(async () => {
+      resolveList(okList([summary(1)]));
+    });
+    expect(refreshButton.querySelector("svg")).not.toBeNull();
+    expect(refreshButton.querySelector(".spinner-tail-fade")).toBeNull();
+  });
+
   it("matches loaded pull requests by hash-prefixed or bare number", () => {
     seedItems([
       { ...summary(1_339), title: "Target change" },
