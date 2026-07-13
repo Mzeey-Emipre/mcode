@@ -156,6 +156,33 @@ test.describe("Sidebar thread actions", () => {
     await expect(page.getByTestId("new-thread-context-strip")).toContainText("Test Workspace");
   });
 
+  test("project New thread leaves pull requests with the project selected", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Pull requests" }).click();
+    await expect(page.getByRole("heading", { name: "Pull requests" })).toBeVisible();
+
+    await page.getByRole("button", { name: "New thread in Test Workspace" }).click();
+
+    await expect(
+      page.getByRole("heading", { name: "What should we build in Test Workspace?" }),
+    ).toBeVisible();
+    await expect(page.getByTestId("new-thread-context-strip")).toContainText("Test Workspace");
+    await expect(page.getByRole("region", { name: "Pull requests" })).toHaveCount(0);
+  });
+
+  test("project New thread supports keyboard activation from pull requests", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Pull requests" }).click();
+    const newThread = page.getByRole("button", { name: "New thread in Test Workspace" });
+
+    await newThread.focus();
+    await newThread.press("Enter");
+
+    await expect(
+      page.getByRole("heading", { name: "What should we build in Test Workspace?" }),
+    ).toBeVisible();
+  });
+
   test("branch choices stay clickable above the new-thread context rail", async ({
     page,
   }) => {

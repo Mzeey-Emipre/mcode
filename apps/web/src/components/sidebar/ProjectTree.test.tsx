@@ -103,6 +103,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 
 // Import after mocks are registered.
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useUiStore } from "@/stores/uiStore";
 import { ProjectTree } from "./ProjectTree";
 
 /** Build a minimal Thread fixture. */
@@ -225,6 +226,7 @@ describe("ProjectTree thread interactions", () => {
     );
     const beginNewThread = vi.fn();
     const state = setupStoreMocks({ beginNewThread });
+    useUiStore.setState({ primarySurface: "pullRequests" });
 
     render(<ProjectTree />);
     fireEvent.click(
@@ -232,6 +234,7 @@ describe("ProjectTree thread interactions", () => {
     );
 
     expect(beginNewThread).toHaveBeenCalledWith("ws-1");
+    expect(useUiStore.getState().primarySurface).toBe("chat");
     expect(state.loadThreads).not.toHaveBeenCalled();
   });
 

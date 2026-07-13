@@ -13,6 +13,7 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
 import {
@@ -238,6 +239,7 @@ export function ProjectTree() {
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
   const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
+  const setPrimarySurface = useUiStore((s) => s.setPrimarySurface);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const reorderWorkspace = useWorkspaceStore((s) => s.reorderWorkspace);
   const error = useWorkspaceStore((s) => s.error);
@@ -428,9 +430,10 @@ export function ProjectTree() {
 
   const handleCreateThread = useCallback(
     (wsId: string) => {
+      setPrimarySurface("chat");
       beginNewThread(wsId);
     },
-    [beginNewThread],
+    [beginNewThread, setPrimarySurface],
   );
 
   const handleDeleteWorkspace = useCallback((wsId: string) => {
@@ -1692,6 +1695,7 @@ const ProjectNode = memo(function ProjectNode({
           size="icon-xs"
           aria-label={`New thread in ${workspace.name}`}
           title={`New thread in ${workspace.name}`}
+          onKeyDown={(event) => event.stopPropagation()}
           onClick={handleCreateThreadClick}
           className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
