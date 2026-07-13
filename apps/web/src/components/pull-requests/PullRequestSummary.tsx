@@ -29,6 +29,11 @@ import {
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format-relative";
 import { cn } from "@/lib/utils";
 import { RemoteMarkdown } from "./RemoteMarkdown";
@@ -446,46 +451,43 @@ function PullRequestSummaryComponent({
       aria-label="Pull request summary"
       className="mx-auto min-w-0 w-full max-w-5xl space-y-8 px-6 pb-10 pt-2"
     >
-      {onReviewChangeStack ? (
-        <div className="flex flex-col gap-4 border-y border-border/45 py-4 sm:flex-row sm:items-center">
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/55 text-muted-foreground">
-              <WorktreeModeIcon size={15} aria-hidden />
-            </span>
-            <div className="min-w-0">
-              <h3 className="text-sm font-medium text-foreground/90">
-                Review Change Stack
-              </h3>
-              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                Create an isolated task at the current pull request head.
-              </p>
-              {reviewChangeStackUnavailableReason ? (
-                <p className="mt-1 text-xs text-muted-foreground/75">
-                  {reviewChangeStackUnavailableReason}
-                </p>
-              ) : null}
-            </div>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            className="shrink-0"
-            disabled={!reviewChangeStackAllowed}
-            onClick={onReviewChangeStack}
-          >
-            <WorktreeModeIcon size={14} aria-hidden />
-            Start review
-          </Button>
-        </div>
-      ) : null}
-
       <section aria-labelledby="pull-request-description-title">
-        <h3
-          id="pull-request-description-title"
-          className="text-sm font-semibold text-foreground"
-        >
-          Description
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <h3
+            id="pull-request-description-title"
+            className="text-sm font-semibold text-foreground"
+          >
+            Description
+          </h3>
+          {onReviewChangeStack ? (
+            <div className="flex min-w-0 items-center gap-2">
+              {reviewChangeStackUnavailableReason ? (
+                <span className="max-w-xs text-right text-xs leading-4 text-muted-foreground/75">
+                  {reviewChangeStackUnavailableReason}
+                </span>
+              ) : null}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={!reviewChangeStackAllowed}
+                      onClick={onReviewChangeStack}
+                    >
+                      <WorktreeModeIcon size={14} aria-hidden />
+                      Start review
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  Create an isolated task at the current pull request head.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          ) : null}
+        </div>
         {detail.body ? (
           <RemoteMarkdown content={detail.body} className="mt-2" />
         ) : (
