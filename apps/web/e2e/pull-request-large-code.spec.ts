@@ -276,6 +276,7 @@ async function openPullRequestDetail(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Pull requests" }).click();
   const row = page.getByTestId("pull-request-row");
   await expect(row).toHaveCount(1);
+  await row.click();
   await expect(
     page.getByRole("heading", { name: "Exercise the bounded Code review surface" }),
   ).toBeVisible();
