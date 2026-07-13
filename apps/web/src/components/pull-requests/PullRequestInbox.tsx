@@ -386,7 +386,7 @@ export function PullRequestInbox({
     <div
       className={cn(
         "flex min-h-0 flex-1 flex-col bg-page",
-        spacious && "items-center lg:px-6 xl:px-12",
+        spacious && "items-center",
       )}
     >
       <div
@@ -490,33 +490,37 @@ export function PullRequestInbox({
         id={RELATIONSHIP_PANEL_ID}
         role="tabpanel"
         aria-labelledby={relationshipTabId(relationship)}
-        className="flex min-h-0 w-full max-w-[720px] flex-1 flex-col"
+        className="flex min-h-0 w-full flex-1 flex-col"
       >
         {teamLimitation && (
-          <p className="mx-5 mb-2 flex max-w-[680px] items-start gap-2 bg-muted/35 px-2.5 py-2 text-xs text-muted-foreground">
-            <AlertCircle
-              size={13}
-              aria-hidden
-              className="mt-0.5 shrink-0 text-primary/80"
-            />
-            {teamLimitationMessage(teamLimitation)}
-          </p>
+          <div className="mx-auto w-full max-w-[720px] px-5">
+            <p className="mb-2 flex items-start gap-2 bg-muted/35 px-2.5 py-2 text-xs text-muted-foreground">
+              <AlertCircle
+                size={13}
+                aria-hidden
+                className="mt-0.5 shrink-0 text-primary/80"
+              />
+              {teamLimitationMessage(teamLimitation)}
+            </p>
+          </div>
         )}
 
         {stale && error && (
-          <div className="mx-5 mb-2 flex max-w-[680px] items-center gap-2 bg-destructive/10 px-2.5 py-2 text-xs text-muted-foreground">
-            <span className="min-w-0 flex-1 truncate">
-              Stale data. {error.message}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={refresh}
-              className="h-6"
-            >
-              Retry
-            </Button>
+          <div className="mx-auto w-full max-w-[720px] px-5">
+            <div className="mb-2 flex items-center gap-2 bg-destructive/10 px-2.5 py-2 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1 truncate">
+                Stale data. {error.message}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={refresh}
+                className="h-6"
+              >
+                Retry
+              </Button>
+            </div>
           </div>
         )}
 
@@ -550,7 +554,7 @@ export function PullRequestInbox({
         ) : (
           <>
             <ScrollArea
-              className="min-h-0 w-full max-w-[720px] flex-1"
+              className="min-h-0 w-full flex-1"
               viewportRef={viewportRef}
               viewportProps={{
                 role: "listbox",
@@ -566,7 +570,7 @@ export function PullRequestInbox({
               <div
                 role="presentation"
                 data-testid="pull-request-list-content"
-                className="relative min-h-full"
+                className="relative mx-auto min-h-full w-full max-w-[720px]"
                 style={
                   shouldVirtualize
                     ? {
@@ -602,7 +606,7 @@ export function PullRequestInbox({
               </div>
             </ScrollArea>
             {hasNextPage && (
-              <div className="w-full max-w-[720px] shrink-0 px-5 py-2">
+              <div className="mx-auto w-full max-w-[720px] shrink-0 px-5 py-2">
                 <Button
                   type="button"
                   variant="ghost"

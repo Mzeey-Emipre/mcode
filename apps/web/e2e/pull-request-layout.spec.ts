@@ -9,10 +9,10 @@ import {
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
-test("centers the pull request inbox column in the available pane", async ({
+test("keeps pull request rows centered and the scrollbar on the pane edge", async ({
   page,
 }) => {
-  const summaries = makePerformanceSummaries(1);
+  const summaries = makePerformanceSummaries(20);
   await mockWebSocketServer(page, {
     "pullRequest.capabilities": PERFORMANCE_PULL_REQUEST_CAPABILITIES,
     "pullRequest.list": (request) =>
@@ -27,20 +27,31 @@ test("centers the pull request inbox column in the available pane", async ({
   const heading = page.getByRole("heading", { name: "Pull requests" });
   const header = heading.locator("..");
   const listbox = page.getByRole("listbox", { name: "Pull requests" });
+  const listContent = page.getByTestId("pull-request-list-content");
+  const scrollbar = page.locator('[data-slot="scroll-area-scrollbar"]');
   await expect(listbox).toBeVisible();
+  await expect(scrollbar).toBeVisible();
 
   const paneBox = await pane.boundingBox();
   const headerBox = await header.boundingBox();
-  const listboxBox = await listbox.boundingBox();
+  const listContentBox = await listContent.boundingBox();
+  const scrollbarBox = await scrollbar.boundingBox();
   expect(paneBox).not.toBeNull();
   expect(headerBox).not.toBeNull();
-  expect(listboxBox).not.toBeNull();
+  expect(listContentBox).not.toBeNull();
+  expect(scrollbarBox).not.toBeNull();
 
-  for (const contentBox of [headerBox, listboxBox]) {
+  for (const contentBox of [headerBox, listContentBox]) {
     if (!paneBox || !contentBox) continue;
     const leftGutter = contentBox.x - paneBox.x;
     const rightGutter =
       paneBox.x + paneBox.width - (contentBox.x + contentBox.width);
     expect(Math.abs(leftGutter - rightGutter)).toBeLessThanOrEqual(1);
+  }
+
+  if (paneBox && scrollbarBox) {
+    const scrollbarInset =
+      paneBox.x + paneBox.width - (scrollbarBox.x + scrollbarBox.width);
+    expect(Math.abs(scrollbarInset)).toBeLessThanOrEqual(1);
   }
 });
