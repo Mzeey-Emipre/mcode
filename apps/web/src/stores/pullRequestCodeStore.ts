@@ -785,7 +785,9 @@ export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
                 files,
                 activePath: latestEntry.activePath ?? files[0]?.path ?? null,
                 expandedPaths: shouldSeedExpandedFiles
-                  ? Object.fromEntries(files.map((file) => [file.path, true] as const))
+                  ? Object.fromEntries(
+                      files.slice(0, 1).map((file) => [file.path, true] as const),
+                    )
                   : latestEntry.expandedPaths,
                 filesLane: {
                   ...latestEntry.filesLane,

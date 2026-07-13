@@ -434,17 +434,17 @@ function PullRequestSummaryComponent({
   return (
     <section
       aria-label="Pull request summary"
-      className="mx-auto min-w-0 w-full max-w-5xl space-y-8 px-6 pb-10 pt-2"
+      className="mx-auto min-w-0 w-full max-w-5xl space-y-6 px-4 pb-10 pt-4 sm:px-6"
     >
       <section aria-labelledby="pull-request-description-title">
         <h3
           id="pull-request-description-title"
-          className="text-sm font-semibold text-foreground"
+          className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
         >
           Description
         </h3>
         {detail.body ? (
-          <RemoteMarkdown content={detail.body} className="mt-2" />
+          <RemoteMarkdown content={detail.body} className="mt-3 max-w-4xl" />
         ) : (
           <p className="mt-2 text-xs text-muted-foreground">No description</p>
         )}
@@ -467,13 +467,13 @@ function PullRequestSummaryComponent({
       <Collapsible
         defaultOpen={defaultChecksOpen}
         onOpenChange={handleChecksOpenChange}
-        className="border-t border-border/45"
+        className="overflow-hidden rounded-lg bg-background/45"
       >
         <CollapsibleTrigger asChild>
           <Button
             type="button"
             variant="ghost"
-            className="group h-10 w-full justify-start rounded-none px-0 text-xs"
+            className="group h-11 w-full justify-start rounded-none px-3 text-xs hover:bg-muted/20"
             aria-label={`Checks, ${checks.length} loaded of ${detail.checkCount}`}
           >
             <CircleDot
@@ -535,13 +535,13 @@ function PullRequestSummaryComponent({
       <Collapsible
         defaultOpen={defaultCommentsOpen}
         onOpenChange={handleCommentsOpenChange}
-        className="border-t border-border/45"
+        className="overflow-hidden rounded-lg bg-background/45"
       >
         <CollapsibleTrigger asChild>
           <Button
             type="button"
             variant="ghost"
-            className="group h-10 w-full justify-start rounded-none px-0 text-xs"
+            className="group h-11 w-full justify-start rounded-none px-3 text-xs hover:bg-muted/20"
             aria-label={`Comments, ${comments.length} loaded of ${conversationCount}`}
           >
             <MessageSquare

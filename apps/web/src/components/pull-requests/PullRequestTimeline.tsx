@@ -24,7 +24,7 @@ import { safePullRequestHttpUrl } from "./safePullRequestHttpUrl";
 
 const VIRTUALIZATION_THRESHOLD = 30;
 const TIMELINE_OVERSCAN = 4;
-const ESTIMATED_ROW_HEIGHT = 62;
+const ESTIMATED_ROW_HEIGHT = 70;
 const ANCHOR_DRIFT_TOLERANCE = 2;
 const REQUIRED_STABLE_ANCHOR_FRAMES = 3;
 const MAX_ANCHOR_STABILIZATION_FRAMES = 8;
@@ -92,7 +92,9 @@ function eventTitle(item: PullRequestTimelineItem): string {
     case "review_thread":
       return "Started a review thread";
     case "readiness":
-      return item.readiness === "ready" ? "Marked ready for review" : "Converted to draft";
+      return item.readiness === "ready"
+        ? "Marked ready for review"
+        : "Converted to draft";
     case "review_requested":
       return `Requested review from ${reviewerTargetLabel(item.reviewer)}`;
     case "review_request_removed":
@@ -110,7 +112,8 @@ function eventTitle(item: PullRequestTimelineItem): string {
 
 function EventGlyph({ kind }: { kind: PullRequestTimelineItem["kind"] }) {
   const className = "size-3.5";
-  if (kind === "commit") return <GitCommitHorizontal aria-hidden className={className} />;
+  if (kind === "commit")
+    return <GitCommitHorizontal aria-hidden className={className} />;
   if (kind === "issue_comment" || kind === "review_thread") {
     return <MessageSquare aria-hidden className={className} />;
   }
@@ -120,7 +123,11 @@ function EventGlyph({ kind }: { kind: PullRequestTimelineItem["kind"] }) {
   return <CircleDot aria-hidden className={className} />;
 }
 
-function TimelineEventBody({ item }: { item: PullRequestTimelineItem }): ReactNode {
+function TimelineEventBody({
+  item,
+}: {
+  item: PullRequestTimelineItem;
+}): ReactNode {
   switch (item.kind) {
     case "opened":
     case "closed":
@@ -129,12 +136,18 @@ function TimelineEventBody({ item }: { item: PullRequestTimelineItem }): ReactNo
     case "commit":
       return (
         <div className="mt-1.5 flex min-w-0 items-baseline gap-2 text-xs">
-          <code className="shrink-0 font-mono text-primary/90">{item.oid.slice(0, 8)}</code>
-          <span className="truncate text-foreground/80">{item.messageHeadline}</span>
+          <code className="shrink-0 font-mono text-primary/90">
+            {item.oid.slice(0, 8)}
+          </code>
+          <span className="truncate text-foreground/80">
+            {item.messageHeadline}
+          </span>
         </div>
       );
     case "review":
-      return item.body ? <RemoteMarkdown content={item.body} className="mt-2" /> : null;
+      return item.body ? (
+        <RemoteMarkdown content={item.body} className="mt-2" />
+      ) : null;
     case "issue_comment":
       return <RemoteMarkdown content={item.body} className="mt-2" />;
     case "review_thread": {
@@ -142,12 +155,18 @@ function TimelineEventBody({ item }: { item: PullRequestTimelineItem }): ReactNo
       return (
         <div className="mt-2 bg-page/45 px-3 py-2.5">
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
-            <span className="truncate font-mono text-foreground/85">{location}</span>
+            <span className="truncate font-mono text-foreground/85">
+              {location}
+            </span>
             <Badge variant="ghost" size="sm" className="text-muted-foreground">
               {item.isResolved ? "Resolved" : "Unresolved"}
             </Badge>
             {item.isOutdated && (
-              <Badge variant="ghost" size="sm" className="text-muted-foreground">
+              <Badge
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+              >
                 Outdated
               </Badge>
             )}
@@ -159,7 +178,10 @@ function TimelineEventBody({ item }: { item: PullRequestTimelineItem }): ReactNo
                   <span className="text-foreground/75">
                     {comment.author?.login ?? "Unknown actor"}
                   </span>
-                  <time dateTime={comment.createdAt} className="font-mono tabular-nums">
+                  <time
+                    dateTime={comment.createdAt}
+                    className="font-mono tabular-nums"
+                  >
                     {formatRelative(comment.createdAt)}
                   </time>
                 </div>
@@ -169,7 +191,8 @@ function TimelineEventBody({ item }: { item: PullRequestTimelineItem }): ReactNo
           </div>
           {item.totalCount > item.comments.length && (
             <p className="mt-2 font-mono text-xs text-muted-foreground">
-              Showing {item.comments.length} of {item.totalCount} thread comments.
+              Showing {item.comments.length} of {item.totalCount} thread
+              comments.
             </p>
           )}
         </div>
@@ -178,7 +201,8 @@ function TimelineEventBody({ item }: { item: PullRequestTimelineItem }): ReactNo
     case "readiness":
       return (
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Readiness is now {item.readiness === "ready" ? "ready for review" : "draft"}.
+          Readiness is now{" "}
+          {item.readiness === "ready" ? "ready for review" : "draft"}.
         </p>
       );
     case "review_requested":
@@ -188,7 +212,9 @@ function TimelineEventBody({ item }: { item: PullRequestTimelineItem }): ReactNo
       return (
         <p className="mt-1.5 text-xs text-muted-foreground">
           {titleCase(item.checks.state)}, {item.totalCount} checks at head{" "}
-          <code className="font-mono text-foreground/75">{item.headOid.slice(0, 8)}</code>
+          <code className="font-mono text-foreground/75">
+            {item.headOid.slice(0, 8)}
+          </code>
         </p>
       );
     case "merged":
@@ -224,93 +250,96 @@ interface TimelineRowProps {
   measureRef?: (element: HTMLLIElement | null) => void;
 }
 
-const TimelineRow = memo(function TimelineRow({
-  item,
-  index,
-  total,
-  className,
-  style,
-  measureRef,
-}: TimelineRowProps) {
-  const eventUrl = item.url ? safePullRequestHttpUrl(item.url) : null;
+const TimelineRow = memo(
+  function TimelineRow({
+    item,
+    index,
+    total,
+    className,
+    style,
+    measureRef,
+  }: TimelineRowProps) {
+    const eventUrl = item.url ? safePullRequestHttpUrl(item.url) : null;
 
-  return (
-    <li
-      ref={measureRef}
-      data-index={index}
-      data-provider-node-id={item.providerNodeId}
-      aria-posinset={index + 1}
-      aria-setsize={total}
-      className={cn("group relative px-4", className)}
-      style={style}
-    >
-      {index > 0 ? (
-        <span
-          aria-hidden
-          data-timeline-connector="before"
-          className="absolute left-7 top-0 h-6 w-px bg-border/70"
-        />
-      ) : null}
-      {index < total - 1 ? (
-        <span
-          aria-hidden
-          data-timeline-connector="after"
-          className="absolute bottom-0 left-7 top-6 w-px bg-border/70"
-        />
-      ) : null}
-      <div className="flex min-w-0 items-start gap-3 py-3">
-        <span
-          aria-hidden
-          data-timeline-marker={item.kind}
-          className={cn(
-            "relative z-10 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-colors duration-150 group-hover:border-foreground/25 group-hover:text-foreground",
-            item.kind === "commit" &&
-              "border-primary/40 bg-primary/8 text-primary group-hover:border-primary/65 group-hover:text-primary",
-          )}
-        >
-          <EventGlyph kind={item.kind} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-start gap-2">
-            <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
-              <span className="font-medium text-foreground/90">
-                {item.actor?.login ?? "System"}
-              </span>
-              <span className="text-foreground/75">{eventTitle(item)}</span>
-              <time
-                dateTime={item.occurredAt}
-                className="font-mono tabular-nums text-muted-foreground"
-              >
-                {formatRelative(item.occurredAt)}
-              </time>
-            </div>
-            {eventUrl && (
-              <a
-                href={eventUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Open event"
-                title="Open event"
-                className="-mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] duration-150 hover:bg-muted/50 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
-                onClick={(event) => {
-                  if (!item.url || !safePullRequestHttpUrl(item.url)) event.preventDefault();
-                }}
-              >
-                <ExternalLink aria-hidden className="size-3.5" />
-              </a>
+    return (
+      <li
+        ref={measureRef}
+        data-index={index}
+        data-provider-node-id={item.providerNodeId}
+        aria-posinset={index + 1}
+        aria-setsize={total}
+        className={cn("group relative px-4 sm:px-6", className)}
+        style={style}
+      >
+        {index > 0 ? (
+          <span
+            aria-hidden
+            data-timeline-connector="before"
+            className="absolute left-7 top-0 h-6 w-px bg-border/55 sm:left-9"
+          />
+        ) : null}
+        {index < total - 1 ? (
+          <span
+            aria-hidden
+            data-timeline-connector="after"
+            className="absolute bottom-0 left-7 top-6 w-px bg-border/55 sm:left-9"
+          />
+        ) : null}
+        <div className="flex min-w-0 items-start gap-3 py-3.5">
+          <span
+            aria-hidden
+            data-timeline-marker={item.kind}
+            className={cn(
+              "relative z-10 flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-page text-muted-foreground transition-colors duration-150 group-hover:border-foreground/25 group-hover:text-foreground motion-reduce:transition-none",
+              item.kind === "commit" &&
+                "border-primary/40 bg-primary/8 text-primary group-hover:border-primary/65 group-hover:text-primary",
             )}
+          >
+            <EventGlyph kind={item.kind} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-start gap-2">
+              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
+                <span className="font-medium text-foreground/90">
+                  {item.actor?.login ?? "System"}
+                </span>
+                <span className="text-foreground/75">{eventTitle(item)}</span>
+                <time
+                  dateTime={item.occurredAt}
+                  className="font-mono tabular-nums text-muted-foreground"
+                >
+                  {formatRelative(item.occurredAt)}
+                </time>
+              </div>
+              {eventUrl && (
+                <a
+                  href={eventUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Open event"
+                  title="Open event"
+                  className="-mt-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[color,background-color,opacity] duration-150 hover:bg-muted/50 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
+                  onClick={(event) => {
+                    if (!item.url || !safePullRequestHttpUrl(item.url))
+                      event.preventDefault();
+                  }}
+                >
+                  <ExternalLink aria-hidden className="size-3.5" />
+                </a>
+              )}
+            </div>
+            <TimelineEventBody item={item} />
           </div>
-          <TimelineEventBody item={item} />
         </div>
-      </div>
-    </li>
-  );
-}, (previous, next) =>
-  previous.item === next.item &&
-  previous.index === next.index &&
-  previous.total === next.total &&
-  previous.className === next.className &&
-  previous.style?.transform === next.style?.transform,
+      </li>
+    );
+  },
+  (previous, next) =>
+    previous.item === next.item &&
+    previous.index === next.index &&
+    previous.total === next.total &&
+    previous.className === next.className &&
+    previous.style?.transform === next.style?.transform,
 );
 
 TimelineRow.displayName = "TimelineRow";
@@ -332,7 +361,8 @@ function PullRequestTimelineComponent({
   const sortedItems = useMemo(
     () =>
       [...items].sort((left, right) => {
-        const byTime = Date.parse(left.occurredAt) - Date.parse(right.occurredAt);
+        const byTime =
+          Date.parse(left.occurredAt) - Date.parse(right.occurredAt);
         return byTime === 0
           ? left.providerNodeId.localeCompare(right.providerNodeId)
           : byTime;
@@ -358,10 +388,15 @@ function PullRequestTimelineComponent({
     const viewport = viewportRef.current;
     if (!viewport) return null;
     const viewportBounds = viewport.getBoundingClientRect();
-    const rows = viewport.querySelectorAll<HTMLLIElement>("li[data-provider-node-id]");
+    const rows = viewport.querySelectorAll<HTMLLIElement>(
+      "li[data-provider-node-id]",
+    );
     for (const row of rows) {
       const bounds = row.getBoundingClientRect();
-      if (bounds.bottom >= viewportBounds.top && bounds.top <= viewportBounds.bottom) {
+      if (
+        bounds.bottom >= viewportBounds.top &&
+        bounds.top <= viewportBounds.bottom
+      ) {
         const providerNodeId = row.dataset.providerNodeId;
         if (!providerNodeId) return null;
         return { providerNodeId, offsetTop: bounds.top - viewportBounds.top };
@@ -370,7 +405,9 @@ function PullRequestTimelineComponent({
     return null;
   };
 
-  const restorePrependAnchor = (anchor: PullRequestTimelinePrependAnchor): void => {
+  const restorePrependAnchor = (
+    anchor: PullRequestTimelinePrependAnchor,
+  ): void => {
     const currentItems = sortedItemsRef.current;
     const anchorIndex = currentItems.findIndex(
       (item) => item.providerNodeId === anchor.providerNodeId,
@@ -391,7 +428,9 @@ function PullRequestTimelineComponent({
           if (checkedFrames < MAX_ANCHOR_STABILIZATION_FRAMES) scheduleRead();
           return;
         }
-        const rows = viewport.querySelectorAll<HTMLLIElement>("li[data-provider-node-id]");
+        const rows = viewport.querySelectorAll<HTMLLIElement>(
+          "li[data-provider-node-id]",
+        );
         const anchoredRow = Array.from(rows).find(
           (row) => row.dataset.providerNodeId === anchor.providerNodeId,
         );
@@ -407,7 +446,8 @@ function PullRequestTimelineComponent({
         if (Math.abs(offsetDelta) > ANCHOR_DRIFT_TOLERANCE) {
           stableFrames = 0;
           requestAnimationFrame(() => {
-            if (viewportRef.current === viewport) viewport.scrollTop += offsetDelta;
+            if (viewportRef.current === viewport)
+              viewport.scrollTop += offsetDelta;
             if (checkedFrames < MAX_ANCHOR_STABILIZATION_FRAMES) scheduleRead();
           });
           return;
@@ -435,10 +475,20 @@ function PullRequestTimelineComponent({
   };
 
   return (
-    <section aria-label="Pull request Timeline" className="flex min-h-0 flex-1 flex-col bg-background">
+    <section
+      aria-label="Pull request Timeline"
+      className="flex min-h-0 flex-1 flex-col bg-background"
+    >
       {stale && (
-        <p role="status" className="flex items-center gap-2 bg-primary/8 px-4 py-2 text-xs text-muted-foreground">
-          <AlertCircle size={13} aria-hidden className="shrink-0 text-primary/80" />
+        <p
+          role="status"
+          className="flex items-center gap-2 bg-primary/8 px-4 py-2 text-xs text-muted-foreground"
+        >
+          <AlertCircle
+            size={13}
+            aria-hidden
+            className="shrink-0 text-primary/80"
+          />
           Stale data. Showing the last successful Timeline.
         </p>
       )}
@@ -468,22 +518,30 @@ function PullRequestTimelineComponent({
           </div>
         ) : sortedItems.length === 0 && initialFailed ? (
           <div className="px-4 py-12 text-center">
-            <AlertCircle aria-hidden className="mx-auto size-4 text-destructive/70" />
+            <AlertCircle
+              aria-hidden
+              className="mx-auto size-4 text-destructive/70"
+            />
             <p className="mt-2 text-xs text-muted-foreground">
               Timeline activity is unavailable.
             </p>
           </div>
         ) : sortedItems.length === 0 ? (
           <div className="px-4 py-12 text-center">
-            <span aria-hidden className="font-mono text-lg text-muted-foreground/45">
+            <span
+              aria-hidden
+              className="font-mono text-lg text-muted-foreground/45"
+            >
               ∅
             </span>
-            <p className="mt-1 text-xs text-muted-foreground">No remote activity</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              No remote activity
+            </p>
           </div>
         ) : virtualized ? (
           <ol
             aria-label="Pull request timeline"
-            className="relative m-0 list-none p-0"
+            className="relative mx-auto w-full max-w-5xl list-none p-0"
             style={{
               height: virtualizer.getTotalSize(),
               contain: "layout paint style",
@@ -508,7 +566,10 @@ function PullRequestTimelineComponent({
             })}
           </ol>
         ) : (
-          <ol aria-label="Pull request timeline" className="m-0 list-none p-0">
+          <ol
+            aria-label="Pull request timeline"
+            className="mx-auto w-full max-w-5xl list-none p-0"
+          >
             {sortedItems.map((item, index) => (
               <TimelineRow
                 key={item.providerNodeId}
@@ -523,7 +584,9 @@ function PullRequestTimelineComponent({
 
       {hasMoreNewer && (
         <div className="mx-4 mb-2 bg-page/55 px-3 py-2.5">
-          <p className="text-xs text-muted-foreground">Newer activity remains.</p>
+          <p className="text-xs text-muted-foreground">
+            Newer activity remains.
+          </p>
           {onLoadNewer && (
             <Button
               type="button"
@@ -545,7 +608,11 @@ function PullRequestTimelineComponent({
           data-bounded-reason={boundedData.reason}
           className="mx-4 mb-2 flex items-start gap-2 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
         >
-          <AlertCircle size={13} aria-hidden className="mt-0.5 shrink-0 text-primary/80" />
+          <AlertCircle
+            size={13}
+            aria-hidden
+            className="mt-0.5 shrink-0 text-primary/80"
+          />
           {boundedMessage(boundedData)}
         </p>
       )}

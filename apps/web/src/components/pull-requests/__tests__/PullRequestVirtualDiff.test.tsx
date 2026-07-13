@@ -201,6 +201,25 @@ describe("PullRequestVirtualDiff", () => {
     expect(virtualizerProbe.options?.estimateSize(2)).toBe(24);
   });
 
+  it("omits zero-value change statistics from file rows", () => {
+    renderDiff({
+      rows: [
+        {
+          ...fileRow,
+          file: {
+            ...fileRow.file,
+            additions: 0,
+            deletions: 0,
+            changes: 0,
+          },
+        },
+      ],
+    });
+
+    expect(screen.queryByText("+0")).not.toBeInTheDocument();
+    expect(screen.queryByText("−0")).not.toBeInTheDocument();
+  });
+
   it("measures only variable-height rows", () => {
     renderDiff({
       rows: [

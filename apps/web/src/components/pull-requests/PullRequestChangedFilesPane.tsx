@@ -123,7 +123,7 @@ export function PullRequestChangedFilesPane({
               maxLength={200}
               aria-label="Search changed files"
               placeholder="Filter files"
-              className="h-7 rounded-none bg-page pl-7 font-mono text-xs"
+              className="h-7 rounded-md bg-page pl-7 font-mono text-xs"
               onChange={(event) => setSearchInput(event.target.value)}
             />
           </div>
@@ -135,7 +135,7 @@ export function PullRequestChangedFilesPane({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
-                  className="relative rounded-none text-muted-foreground"
+                  className="relative rounded-md text-muted-foreground"
                   aria-label="Filter changed files by status"
                 >
                   <SlidersHorizontal size={13} aria-hidden />
@@ -154,7 +154,7 @@ export function PullRequestChangedFilesPane({
             <PopoverContent
               align="start"
               sideOffset={6}
-              className="w-56 rounded-none p-2"
+              className="w-56 rounded-lg p-2"
             >
               <div
                 role="group"
@@ -171,8 +171,8 @@ export function PullRequestChangedFilesPane({
                       size="sm"
                       aria-pressed={pressed}
                       className={cn(
-                        "justify-start rounded-none px-2 text-xs font-normal",
-                        pressed && "bg-primary/9 text-foreground",
+                        "justify-start rounded-md px-2 text-xs font-normal",
+                        pressed && "bg-muted/70 text-foreground",
                       )}
                       onClick={() => toggleChangeType(option.value)}
                     >

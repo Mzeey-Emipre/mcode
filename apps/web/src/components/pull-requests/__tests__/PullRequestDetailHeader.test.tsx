@@ -92,6 +92,8 @@ describe("PullRequestDetailHeader", () => {
     );
     expect(screen.getByText("Ready for review")).toBeVisible();
     expect(screen.getByText("Mergeable")).toBeVisible();
+    expect(screen.getByText("Mzeey-Empire/mcode")).toBeVisible();
+    expect(screen.getByText("#42")).toBeVisible();
     expect(screen.getByLabelText("Base branch main")).toBeVisible();
     expect(
       screen.getByLabelText("Head branch feature/pr-detail"),

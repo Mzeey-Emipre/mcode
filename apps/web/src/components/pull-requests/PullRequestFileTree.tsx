@@ -20,7 +20,7 @@ import { PullRequestFileRow } from "./PullRequestFileRow";
 
 const VIRTUALIZATION_THRESHOLD = 30;
 const TREE_ROW_HEIGHT = 32;
-const TREE_OVERSCAN = 4;
+const TREE_OVERSCAN = 1;
 
 function collectDirectoryIds(
   nodes: ReturnType<typeof buildPullRequestFileTree>,

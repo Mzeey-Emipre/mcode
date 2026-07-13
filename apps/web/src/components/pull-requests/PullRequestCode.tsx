@@ -348,15 +348,12 @@ export function PullRequestCode({
         <div
           data-testid="pull-request-code-toolbar"
           data-layout={isNarrow ? "compact" : "wide"}
-          className={cn(
-            "shrink-0 bg-background",
-            !isNarrow && "flex h-10 items-center gap-2 px-3",
-          )}
+          className="flex h-11 shrink-0 items-center gap-2 bg-background/80 px-3"
         >
-          {isNarrow && (
+          {isNarrow ? (
             <div
               data-testid="pull-request-code-file-row"
-              className="flex h-10 min-w-0 items-center px-3"
+              className="flex min-w-0 flex-1 items-center"
             >
               <Popover open={filePickerOpen} onOpenChange={setFilePickerOpen}>
                 <PopoverTrigger
@@ -365,7 +362,7 @@ export function PullRequestCode({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="h-8 min-w-0 flex-1 justify-start gap-2 px-2 font-mono text-xs text-foreground/90"
+                      className="h-8 min-w-0 flex-1 justify-start gap-2 rounded-md bg-page/65 px-2 font-mono text-xs text-foreground/90 hover:bg-muted/35"
                       aria-label="Choose a changed file"
                     >
                       <Files
@@ -388,7 +385,7 @@ export function PullRequestCode({
                 <PopoverContent
                   align="start"
                   sideOffset={6}
-                  className="h-80 w-[min(22rem,calc(100vw-2rem))] rounded-none p-0"
+                  className="h-80 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-lg p-0"
                 >
                   <PullRequestChangedFilesPane
                     files={displayedFiles}
@@ -402,20 +399,23 @@ export function PullRequestCode({
                 </PopoverContent>
               </Popover>
             </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <Files size={14} aria-hidden className="shrink-0" />
+              <span className="font-mono tabular-nums">
+                {code.files.length} changed files
+              </span>
+            </div>
           )}
 
           <div
             data-testid={isNarrow ? "pull-request-code-actions-row" : undefined}
-            className={cn(
-              isNarrow
-                ? "flex h-10 min-w-0 items-center justify-end gap-1 px-3"
-                : "contents",
-            )}
+            className="ml-auto flex shrink-0 items-center justify-end gap-1"
           >
             <div
               role="group"
               aria-label="Diff layout"
-              className={cn("flex items-center", !isNarrow && "ml-auto")}
+              className="flex items-center rounded-md bg-page/65 p-0.5"
             >
               <Button
                 type="button"
@@ -424,8 +424,8 @@ export function PullRequestCode({
                 aria-label="Use unified diff layout"
                 aria-pressed={view.viewMode === "unified"}
                 className={cn(
-                  "rounded-none text-muted-foreground",
-                  view.viewMode === "unified" && "bg-primary/9 text-foreground",
+                  "rounded-sm text-muted-foreground",
+                  view.viewMode === "unified" && "bg-muted/70 text-foreground",
                 )}
                 onClick={() =>
                   usePullRequestCodeStore.getState().setViewMode("unified")
@@ -440,8 +440,8 @@ export function PullRequestCode({
                 aria-label="Use split diff layout"
                 aria-pressed={view.viewMode === "split"}
                 className={cn(
-                  "rounded-none text-muted-foreground",
-                  view.viewMode === "split" && "bg-primary/9 text-foreground",
+                  "rounded-sm text-muted-foreground",
+                  view.viewMode === "split" && "bg-muted/70 text-foreground",
                 )}
                 onClick={() =>
                   usePullRequestCodeStore.getState().setViewMode("split")
@@ -456,7 +456,7 @@ export function PullRequestCode({
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                className="rounded-none text-muted-foreground"
+                className="rounded-md text-muted-foreground"
                 aria-label="Show changed files"
                 onClick={() =>
                   usePullRequestCodeStore.getState().setFileTreeVisible(true)
@@ -470,7 +470,7 @@ export function PullRequestCode({
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="rounded-none text-muted-foreground"
+              className="rounded-md text-muted-foreground"
               aria-label="Collapse all file diffs"
               onClick={() => usePullRequestCodeStore.getState().collapseAll()}
             >
@@ -610,7 +610,7 @@ export function PullRequestCode({
             <div
               data-testid="pull-request-review-footer"
               data-layout={isNarrow ? "compact" : "wide"}
-              className="flex h-9 shrink-0 items-center gap-2 border-t border-border/45 bg-page px-2"
+              className="flex h-11 shrink-0 items-center gap-2 border-t border-border/35 bg-page px-3"
             >
               {reviewUnavailableReason ? (
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">

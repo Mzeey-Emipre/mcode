@@ -109,8 +109,8 @@ function FileRow({
       data-diff-focus-key={row.key}
       tabIndex={focusActive ? 0 : -1}
       className={cn(
-        "h-auto w-full justify-start rounded-none bg-page/75 px-3 py-2 text-left font-normal hover:bg-muted/35",
-        active && "bg-primary/8",
+        "h-auto w-full justify-start rounded-none bg-page/55 px-3 py-2.5 text-left font-normal hover:bg-muted/25",
+        active && "bg-muted/45",
       )}
       onFocus={() => onFocusActive(row.key)}
       onKeyDown={(event) => {
@@ -149,12 +149,16 @@ function FileRow({
       >
         {row.file.changeType}
       </Badge>
-      <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--diff-add-strong)]">
-        +{row.file.additions}
-      </span>
-      <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--diff-remove-strong)]">
-        −{row.file.deletions}
-      </span>
+      {row.file.additions > 0 ? (
+        <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--diff-add-strong)]">
+          +{row.file.additions}
+        </span>
+      ) : null}
+      {row.file.deletions > 0 ? (
+        <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--diff-remove-strong)]">
+          −{row.file.deletions}
+        </span>
+      ) : null}
       {(row.threadCount > 0 || row.draftCount > 0) && (
         <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
           {row.threadCount + row.draftCount} notes

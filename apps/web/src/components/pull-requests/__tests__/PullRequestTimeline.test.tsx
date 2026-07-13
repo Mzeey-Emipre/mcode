@@ -247,7 +247,7 @@ describe("PullRequestTimeline", () => {
     expect(virtualizerProbe.measureElement).toHaveBeenCalled();
     const element = document.createElement("li");
     const offsetHeight = vi.spyOn(element, "offsetHeight", "get");
-    expect(options?.measureElement(element, undefined, {})).toBe(62);
+    expect(options?.measureElement(element, undefined, {})).toBe(70);
     expect(offsetHeight).not.toHaveBeenCalled();
     expect(options?.measureElement(
       element,

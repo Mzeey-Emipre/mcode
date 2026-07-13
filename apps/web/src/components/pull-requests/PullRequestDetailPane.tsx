@@ -472,7 +472,7 @@ export function PullRequestDetailPane({
     <div
       role="tablist"
       aria-label="Pull request detail views"
-      className="flex h-full items-center gap-1"
+      className="flex h-full items-stretch gap-5"
     >
       {DETAIL_TABS.map((tab, index) => (
         <Button
@@ -489,10 +489,10 @@ export function PullRequestDetailPane({
           variant="ghost"
           size="sm"
           className={cn(
-            "h-8 rounded-md px-3 text-xs font-medium capitalize",
+            "relative h-full rounded-none px-0 text-xs font-medium capitalize after:absolute after:inset-x-0 after:bottom-0 after:h-px after:origin-center after:scale-x-0 after:bg-primary after:transition-transform after:duration-150 motion-reduce:after:transition-none",
             activeTab === tab
-              ? "bg-muted text-foreground"
-              : "text-muted-foreground hover:text-foreground",
+              ? "bg-transparent text-foreground after:scale-x-100"
+              : "text-muted-foreground hover:bg-transparent hover:text-foreground",
           )}
           disabled={!core.detail && tab !== "summary"}
           onClick={() => changeTab(tab)}

@@ -158,6 +158,20 @@ describe("pullRequestCodeStore", () => {
     ]);
   });
 
+  it("expands only the first file from the initial page", async () => {
+    const items = Array.from({ length: 25 }, (_, index) => file(index + 1));
+    const transport = fakeTransport({
+      files: vi.fn().mockResolvedValue(filesResult(items)),
+    });
+    const snapshotKey = activate(transport);
+
+    await usePullRequestCodeStore.getState().loadFiles({ transport });
+
+    const entry = usePullRequestCodeStore.getState().entries[snapshotKey];
+    expect(entry?.activePath).toBe(file(1).path);
+    expect(entry?.expandedPaths).toEqual({ [file(1).path]: true });
+  });
+
   it("exhausts a filtered file search and marks it complete", async () => {
     const files = vi.fn().mockImplementation(async (request) => {
       if (!request.cursor) return filesResult([file(1)], "cursor-2");

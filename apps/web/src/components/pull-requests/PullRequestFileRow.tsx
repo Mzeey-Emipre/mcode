@@ -2,7 +2,7 @@ import type { PullRequestFile } from "@mcode/contracts";
 import type { KeyboardEvent, Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
+import { getFileIconColor } from "@/lib/file-icons";
 import { cn } from "@/lib/utils";
 
 const changeLabels: Record<PullRequestFile["changeType"], string> = {
@@ -59,7 +59,7 @@ export function PullRequestFileRow({
   onFocus,
   onKeyDown,
 }: PullRequestFileRowProps) {
-  const FileIcon = getFileIcon(file.path);
+  const fileType = file.path.split(".").at(-1)?.slice(0, 2).toUpperCase() ?? "·";
   const patchLabel = patchLabels[file.patchStatus];
   const fullLabel = file.previousPath
     ? `${changeLabels[file.changeType]} ${file.previousPath} to ${file.path}`
@@ -91,12 +91,18 @@ export function PullRequestFileRow({
       onFocus={onFocus}
       onKeyDown={onKeyDown}
     >
-      <FileIcon
+      <span
         data-file-icon="true"
-        size={13}
+        data-change-type={file.changeType}
+        title={changeLabels[file.changeType]}
         aria-hidden
-        className={cn("shrink-0", getFileIconColor(file.path))}
-      />
+        className={cn(
+          "w-7 shrink-0 text-center font-mono text-[9px] font-semibold uppercase",
+          getFileIconColor(file.path),
+        )}
+      >
+        {fileType}·{changeGlyphs[file.changeType]}
+      </span>
       <span className="min-w-0 flex-1 truncate text-left font-mono text-xs">
         {file.path.split("/").at(-1)}
       </span>
@@ -109,28 +115,22 @@ export function PullRequestFileRow({
           {patchLabel}
         </Badge>
       )}
-      <span
-        aria-hidden
-        data-change-type={file.changeType}
-        title={changeLabels[file.changeType]}
-        className={cn(
-          "w-3 shrink-0 text-center font-mono text-xs font-semibold",
-          file.changeType === "added" && "text-primary",
-          file.changeType === "deleted" && "text-destructive/80",
-          file.changeType !== "added" &&
-            file.changeType !== "deleted" &&
-            "text-muted-foreground",
-        )}
-      >
-        {changeGlyphs[file.changeType]}
-      </span>
-      <span
-        aria-label={`${file.additions} additions and ${file.deletions} deletions`}
-        className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground/75"
-      >
-        <span className="text-primary/80">+{file.additions}</span>{" "}
-        <span className="text-destructive/70">−{file.deletions}</span>
-      </span>
+      {file.additions > 0 ? (
+        <span
+          aria-label={`${file.additions} additions`}
+          className="shrink-0 font-mono text-xs tabular-nums text-primary/80"
+        >
+          +{file.additions}
+        </span>
+      ) : null}
+      {file.deletions > 0 ? (
+        <span
+          aria-label={`${file.deletions} deletions`}
+          className="shrink-0 font-mono text-xs tabular-nums text-destructive/70"
+        >
+          −{file.deletions}
+        </span>
+      ) : null}
     </Button>
   );
 }

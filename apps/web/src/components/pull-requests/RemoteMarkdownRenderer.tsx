@@ -45,7 +45,7 @@ const GITHUB_ALERTS: Record<
   note: {
     label: "Note",
     icon: Info,
-    className: "border-sky-500/70 bg-sky-500/5 text-sky-400",
+    className: "border-border/80 bg-muted/15 text-muted-foreground",
   },
   tip: {
     label: "Tip",
@@ -55,7 +55,7 @@ const GITHUB_ALERTS: Record<
   important: {
     label: "Important",
     icon: MessageSquareWarning,
-    className: "border-violet-500/70 bg-violet-500/5 text-violet-400",
+    className: "border-primary/60 bg-primary/5 text-primary",
   },
   warning: {
     label: "Warning",
@@ -74,20 +74,17 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
     const safeHref = safeHttpUrl(href);
     if (!safeHref) return <>{children}</>;
     return (
-      <a
-        {...props}
-        href={safeHref}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+      <a {...props} href={safeHref} target="_blank" rel="noopener noreferrer">
         {children}
       </a>
     );
   },
   pre({ node, children, ...props }) {
     const child = node?.children?.[0];
-    const className = child?.type === "element" ? child.properties?.className : undefined;
-    const isMermaid = Array.isArray(className) && className.includes("language-mermaid");
+    const className =
+      child?.type === "element" ? child.properties?.className : undefined;
+    const isMermaid =
+      Array.isArray(className) && className.includes("language-mermaid");
     if (isMermaid) return <>{children}</>;
     return <pre {...props}>{children}</pre>;
   },
@@ -107,7 +104,11 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
         </Suspense>
       );
     }
-    return <code className={className} {...props}>{children}</code>;
+    return (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
   },
   img() {
     return null;

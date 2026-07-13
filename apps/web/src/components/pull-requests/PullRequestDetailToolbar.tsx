@@ -69,9 +69,9 @@ export function PullRequestDetailToolbar({
   return (
     <header
       aria-label="Pull request detail"
-      className="shrink-0 border-b border-border/45 bg-page px-3"
+      className="shrink-0 border-b border-border/35 bg-page/95 px-3"
     >
-      <div className="grid h-12 min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+      <div className="grid h-12 min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-4">
         <div className="flex min-w-0 items-center gap-2">
           {isNarrow && reserveSidebarReveal && (
             <span
@@ -98,14 +98,21 @@ export function PullRequestDetailToolbar({
               className="shrink-0 text-muted-foreground"
             />
           )}
-          <span className="truncate text-xs font-medium text-foreground/85">
-            {model?.title ?? "Pull request"}
+          <span className="min-w-0 truncate font-mono text-xs text-foreground/75">
+            {model
+              ? `${model.identity.owner}/${model.identity.repository}`
+              : "Pull request"}
           </span>
+          {model ? (
+            <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+              #{model.identity.number}
+            </span>
+          ) : null}
         </div>
 
         {tabs}
 
-        <div className="flex min-w-0 items-center justify-end gap-0.5">
+        <div className="flex min-w-0 items-center justify-end gap-1">
           {detail && capabilities !== undefined && onRefresh ? (
             <PullRequestLifecycleActions
               detail={detail}
