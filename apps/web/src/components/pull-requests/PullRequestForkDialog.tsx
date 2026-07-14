@@ -130,6 +130,8 @@ export interface PullRequestForkDialogProps {
   onOpenChange: (open: boolean) => void;
   detail: PullRequestDetail;
   mode: PullRequestForkMode;
+  /** Optional task prompt focused on a selected review comment. */
+  initialPrompt?: string;
   transport?: PullRequestReviewTaskTransport;
 }
 
@@ -139,6 +141,7 @@ export function PullRequestForkDialog({
   onOpenChange,
   detail,
   mode,
+  initialPrompt,
   transport,
 }: PullRequestForkDialogProps) {
   const [target, setTarget] = useState<ForkTarget | null>(null);
@@ -175,12 +178,13 @@ export function PullRequestForkDialog({
       useComposerDraftStore
         .getState()
         .setPendingPrefill(
-          `Review PR #${detail.identity.number}: ${detail.title}`,
+          initialPrompt ??
+            `Review PR #${detail.identity.number}: ${detail.title}`,
         );
       setTarget(nextTarget);
       setPreparing(false);
     },
-    [detail.identity.number, detail.title],
+    [detail.identity.number, detail.title, initialPrompt],
   );
 
   const prepare = useCallback(

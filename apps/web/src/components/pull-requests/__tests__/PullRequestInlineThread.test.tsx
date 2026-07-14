@@ -96,10 +96,9 @@ describe("PullRequestInlineThread", () => {
 
     expect(screen.getByText("Remote body")).toBeVisible();
     expect(screen.getAllByText("Outdated")).toHaveLength(2);
-    expect(screen.getByRole("link", { name: "Open comment" })).toHaveAttribute(
-      "href",
-      "https://github.com/owner/repo/pull/1#discussion_r1",
-    );
+    expect(
+      screen.queryByRole("link", { name: "Open comment" }),
+    ).not.toBeInTheDocument();
   });
 
   it("updates drafts and restores the originating line after discard", async () => {

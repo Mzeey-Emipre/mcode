@@ -1,5 +1,7 @@
 import type {
+  PullRequestActor,
   PullRequestBoundedDataMarker,
+  PullRequestCapability,
   PullRequestCheck,
   PullRequestCheckState,
   PullRequestConversationItem,
@@ -9,13 +11,21 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertCircle,
   ChevronDown,
-  CircleDot,
+  CircleCheck,
+  CircleHelp,
+  CircleMinus,
+  CircleX,
+  Loader2,
   MessageSquare,
+  UserRound,
+  type LucideIcon,
 } from "lucide-react";
 import {
   memo,
+  useCallback,
   useEffect,
   useRef,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -28,8 +38,17 @@ import {
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
+import { CI_ICON_STROKE } from "@/lib/ci-status";
 import { formatRelative } from "@/lib/format-relative";
 import { cn } from "@/lib/utils";
+import {
+  getPullRequestMutationIdentityKey,
+  usePullRequestMutationStore,
+} from "@/stores/pullRequestMutationStore";
+import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
+import type { PullRequestTransport } from "@/transport/pull-requests";
+import { PullRequestIssueCommentComposer } from "./PullRequestIssueCommentComposer";
+import { pullRequestMutationExpected } from "./PullRequestMutationError";
 import { RemoteMarkdown } from "./RemoteMarkdown";
 import { safePullRequestHttpUrl } from "./safePullRequestHttpUrl";
 
@@ -70,6 +89,18 @@ export interface PullRequestSummaryProps {
   onChecksFirstOpen?: () => void;
   /** Requests the first comments page when its section first opens. */
   onCommentsFirstOpen?: () => void;
+  /** Current permission for posting pull request issue comments. */
+  commentCapability?: PullRequestCapability | null;
+  /** Optional mutation transport used by inline replies. */
+  mutationTransport?: PullRequestMutationTransport;
+  /** Optional read transport refreshed after an inline reply. */
+  readTransport?: PullRequestTransport;
+  /** Refreshes the selected pull request after uncertain mutations. */
+  onRefresh?: () => Promise<boolean> | boolean;
+  /** Opens a Review task focused on one issue comment. */
+  onPromptFix?: (
+    comment: Extract<PullRequestConversationItem, { kind: "issue_comment" }>,
+  ) => void;
   defaultChecksOpen?: boolean;
   defaultCommentsOpen?: boolean;
 }
@@ -81,11 +112,26 @@ function titleCase(value: string): string {
     .join(" ");
 }
 
-function checkTone(state: PullRequestCheckState): string {
-  if (state === "passing") return "bg-[var(--diff-add-strong)]";
-  if (state === "failing" || state === "cancelled") return "bg-destructive";
-  if (state === "pending") return "bg-primary";
-  return "bg-muted-foreground/45";
+function checkVisual(state: PullRequestCheckState): {
+  icon: LucideIcon;
+  className: string;
+} {
+  if (state === "passing") {
+    return {
+      icon: CircleCheck,
+      className: "text-[var(--diff-add-strong)]",
+    };
+  }
+  if (state === "failing" || state === "cancelled") {
+    return { icon: CircleX, className: "text-[var(--diff-remove-strong)]" };
+  }
+  if (state === "pending") {
+    return { icon: Loader2, className: "animate-spin text-primary" };
+  }
+  if (state === "neutral" || state === "skipped") {
+    return { icon: CircleMinus, className: "text-muted-foreground" };
+  }
+  return { icon: CircleHelp, className: "text-muted-foreground" };
 }
 
 function boundedMessage(
@@ -256,11 +302,17 @@ const CheckRow = memo(function CheckRow({
 }: {
   check: PullRequestCheck;
 }) {
+  const visual = checkVisual(check.state);
+  const CheckIcon = visual.icon;
+
   return (
     <>
-      <span
+      <CheckIcon
+        size={15}
+        strokeWidth={CI_ICON_STROKE}
+        data-check-state={check.state}
         aria-hidden
-        className={cn("size-1.5 shrink-0 rounded-full", checkTone(check.state))}
+        className={cn("shrink-0", visual.className)}
       />
       <span className="min-w-0 flex-1 truncate text-foreground/90">
         {check.name}
@@ -298,13 +350,56 @@ const CheckList = memo(function CheckList({
 
 CheckList.displayName = "CheckList";
 
+function ConversationAuthor({
+  author,
+}: {
+  author: PullRequestActor | null;
+}) {
+  const label = author?.login ?? "Unknown actor";
+  const avatarUrl = author?.avatarUrl
+    ? safePullRequestHttpUrl(author.avatarUrl)
+    : null;
+
+  return (
+    <span className="flex min-w-0 items-center gap-2 font-medium text-foreground/90">
+      {avatarUrl ? (
+        <img
+          src={avatarUrl}
+          alt=""
+          className="size-5 shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        <UserRound
+          size={16}
+          aria-hidden
+          className="shrink-0 text-muted-foreground"
+        />
+      )}
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
 const ConversationRow = memo(function ConversationRow({
   item,
+  canReply,
+  replying,
+  prompting,
+  onReply,
+  onTogglePrompt,
+  onPromptFix,
+  replyComposer,
 }: {
   item: PullRequestConversationItem;
+  canReply: boolean;
+  replying: boolean;
+  prompting: boolean;
+  onReply: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
+  onTogglePrompt: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
+  onPromptFix?: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
+  replyComposer: ReactNode;
 }) {
   if (item.kind === "issue_comment") {
-    const commentUrl = item.url ? safePullRequestHttpUrl(item.url) : null;
     const author = item.author?.login ?? "Unknown actor";
     return (
       <article
@@ -312,20 +407,10 @@ const ConversationRow = memo(function ConversationRow({
         className="min-w-0 overflow-hidden rounded-lg bg-card/45 px-4 py-4"
       >
         <header className="flex min-h-8 items-center gap-2 pb-3 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground/90">{author}</span>
+          <ConversationAuthor author={item.author} />
           <time dateTime={item.createdAt} className="font-mono tabular-nums">
             {formatRelative(item.createdAt)}
           </time>
-          {commentUrl ? (
-            <a
-              href={commentUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-auto font-mono underline-offset-4 hover:text-foreground hover:underline"
-            >
-              Open comment
-            </a>
-          ) : null}
         </header>
         <div>
           <RemoteMarkdown
@@ -333,6 +418,58 @@ const ConversationRow = memo(function ConversationRow({
             className={CONVERSATION_MARKDOWN_CLASS}
           />
         </div>
+        {(canReply || onPromptFix) && !replying ? (
+          <div className="mt-3 flex items-center gap-2">
+            {onPromptFix ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground"
+                aria-expanded={prompting}
+                onClick={() => onTogglePrompt(item)}
+              >
+                <ChevronDown
+                  size={13}
+                  aria-hidden
+                  className={cn(
+                    "transition-transform",
+                    prompting ? "rotate-0" : "-rotate-90",
+                  )}
+                />
+                Prompt to fix with AI
+              </Button>
+            ) : null}
+            {canReply ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="ml-auto text-xs text-muted-foreground"
+                onClick={() => onReply(item)}
+              >
+                Reply
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {prompting && onPromptFix ? (
+          <div className="mt-2 flex items-center gap-3 border-t border-border/40 pt-3">
+            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+              Start a Review task with this comment as context.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="text-xs"
+              onClick={() => onPromptFix(item)}
+            >
+              Create task
+            </Button>
+          </div>
+        ) : null}
+        {replying ? replyComposer : null}
       </article>
     );
   }
@@ -358,31 +495,16 @@ const ConversationRow = memo(function ConversationRow({
       </header>
       <div className="divide-y divide-border/40">
         {item.comments.map((comment) => {
-          const commentUrl = comment.url
-            ? safePullRequestHttpUrl(comment.url)
-            : null;
           return (
             <section key={comment.providerNodeId} className="py-4 first:pt-0">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground/90">
-                  {comment.author?.login ?? "Unknown actor"}
-                </span>
+                <ConversationAuthor author={comment.author} />
                 <time
                   dateTime={comment.createdAt}
                   className="font-mono tabular-nums"
                 >
                   {formatRelative(comment.createdAt)}
                 </time>
-                {commentUrl && (
-                  <a
-                    href={commentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-auto font-mono underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    Open comment
-                  </a>
-                )}
               </div>
               <RemoteMarkdown
                 content={comment.body}
@@ -405,8 +527,22 @@ ConversationRow.displayName = "ConversationRow";
 
 const ConversationList = memo(function ConversationList({
   comments,
+  activeReplyId,
+  activePromptId,
+  canReply,
+  onReply,
+  onTogglePrompt,
+  onPromptFix,
+  replyComposer,
 }: {
   comments: readonly PullRequestConversationItem[];
+  activeReplyId: string | null;
+  activePromptId: string | null;
+  canReply: boolean;
+  onReply: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
+  onTogglePrompt: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
+  onPromptFix?: (item: Extract<PullRequestConversationItem, { kind: "issue_comment" }>) => void;
+  replyComposer: ReactNode;
 }) {
   return (
     <ResourceList
@@ -415,7 +551,22 @@ const ConversationList = memo(function ConversationList({
       estimateSize={208}
       getItemKey={(item) => item.providerNodeId}
       rowClassName="pb-4 last:pb-0"
-      renderItem={(item) => <ConversationRow item={item} />}
+      renderItem={(item) => (
+        <ConversationRow
+          item={item}
+          canReply={
+            canReply &&
+            item.kind === "issue_comment" &&
+            Boolean(item.author?.login)
+          }
+          replying={item.providerNodeId === activeReplyId}
+          prompting={item.providerNodeId === activePromptId}
+          onReply={onReply}
+          onTogglePrompt={onTogglePrompt}
+          onPromptFix={item.kind === "issue_comment" ? onPromptFix : undefined}
+          replyComposer={replyComposer}
+        />
+      )}
     />
   );
 });
@@ -439,10 +590,88 @@ function PullRequestSummaryComponent({
   onLoadMoreComments,
   onChecksFirstOpen,
   onCommentsFirstOpen,
+  commentCapability,
+  mutationTransport,
+  readTransport,
+  onRefresh,
+  onPromptFix,
   defaultChecksOpen = true,
   defaultCommentsOpen = true,
 }: PullRequestSummaryProps) {
+  const [activeReply, setActiveReply] = useState<{
+    identityKey: string;
+    providerNodeId: string;
+    actor: string;
+  } | null>(null);
+  const [activePrompt, setActivePrompt] = useState<{
+    identityKey: string;
+    providerNodeId: string;
+  } | null>(null);
   const conversationCount = detail.commentCount + detail.reviewThreadCount;
+  const identityKey = getPullRequestMutationIdentityKey(detail.identity);
+  const expected = pullRequestMutationExpected(detail);
+  const activeReplyId =
+    activeReply?.identityKey === identityKey
+      ? activeReply.providerNodeId
+      : null;
+  const activePromptId =
+    activePrompt?.identityKey === identityKey
+      ? activePrompt.providerNodeId
+      : null;
+  const canReply = commentCapability?.allowed === true && expected !== null;
+  const startReply = useCallback(
+    (
+      item: Extract<
+        PullRequestConversationItem,
+        { kind: "issue_comment" }
+      >,
+    ): void => {
+      const actor = item.author?.login;
+      if (!actor) return;
+      const mutationStore = usePullRequestMutationStore.getState();
+      if (!mutationStore.commentDrafts[identityKey]?.trim()) {
+        mutationStore.setCommentDraft(detail.identity, `@${actor} `);
+      }
+      setActivePrompt(null);
+      setActiveReply({
+        identityKey,
+        providerNodeId: item.providerNodeId,
+        actor,
+      });
+    },
+    [detail.identity, identityKey],
+  );
+  const togglePrompt = useCallback(
+    (
+      item: Extract<
+        PullRequestConversationItem,
+        { kind: "issue_comment" }
+      >,
+    ): void => {
+      setActiveReply(null);
+      setActivePrompt((current) =>
+        current?.identityKey === identityKey &&
+        current.providerNodeId === item.providerNodeId
+          ? null
+          : { identityKey, providerNodeId: item.providerNodeId },
+      );
+    },
+    [identityKey],
+  );
+  const replyComposer = activeReplyId ? (
+    <PullRequestIssueCommentComposer
+      identity={detail.identity}
+      expected={expected}
+      capability={commentCapability}
+      mutationTransport={mutationTransport}
+      readTransport={readTransport}
+      onRefresh={onRefresh}
+      variant="reply"
+      replyTo={activeReply?.actor}
+      onCancel={() => setActiveReply(null)}
+      onPosted={() => setActiveReply(null)}
+    />
+  ) : null;
   const handleChecksOpenChange = useFirstOpenTrigger(
     `${detail.providerNodeId}:${detail.head.oid ?? "unknown"}:checks`,
     defaultChecksOpen,
@@ -496,11 +725,6 @@ function PullRequestSummaryComponent({
             className="group h-11 w-full justify-start rounded-none px-0 text-xs hover:bg-muted/15 aria-expanded:bg-transparent dark:hover:bg-muted/10 dark:aria-expanded:bg-transparent"
             aria-label={`Checks, ${checks.length} loaded of ${detail.checkCount}`}
           >
-            <CircleDot
-              size={13}
-              aria-hidden
-              className="text-muted-foreground"
-            />
             <span>Checks</span>
             <Badge
               variant="ghost"
@@ -598,7 +822,16 @@ function PullRequestSummaryComponent({
               No comments yet.
             </p>
           ) : (
-            <ConversationList comments={comments} />
+            <ConversationList
+              comments={comments}
+              activeReplyId={activeReplyId}
+              activePromptId={activePromptId}
+              canReply={canReply}
+              onReply={startReply}
+              onTogglePrompt={togglePrompt}
+              onPromptFix={onPromptFix}
+              replyComposer={replyComposer}
+            />
           )}
           {commentsBoundedData ? (
             <BoundedDataNotice

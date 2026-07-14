@@ -6,6 +6,7 @@ import type {
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { usePullRequestMutationStore } from "@/stores/pullRequestMutationStore";
 import { PullRequestSummary } from "../PullRequestSummary";
 
 const virtualizerProbe = vi.hoisted(() => ({
@@ -238,6 +239,7 @@ describe("PullRequestSummary", () => {
   beforeEach(() => {
     virtualizerProbe.options.length = 0;
     virtualizerProbe.measureElement.mockClear();
+    usePullRequestMutationStore.setState({ lanes: {}, commentDrafts: {} });
   });
 
   it("renders the remote description without repeating header metadata", async () => {
@@ -300,7 +302,7 @@ describe("PullRequestSummary", () => {
     ).toHaveAttribute("data-bounded-reason", "byte_limit");
   });
 
-  it("links safe issue and review comments back to GitHub", async () => {
+  it("keeps issue and review comments in the app without outbound actions", async () => {
     const linkedComments = comments();
     const issueComment = linkedComments[0];
     if (issueComment?.kind === "issue_comment") {
@@ -332,7 +334,6 @@ describe("PullRequestSummary", () => {
       />,
     );
 
-    const links = await screen.findAllByRole("link", { name: "Open comment" });
     expect(
       screen.getByRole("article", { name: "Comment from commenter" }),
     ).toContainElement(screen.getByText("Please verify"));
@@ -341,14 +342,53 @@ describe("PullRequestSummary", () => {
         name: "Review thread on apps/web/src/app/App.tsx:42",
       }),
     ).toContainElement(screen.getByText("aria-posinset"));
-    expect(links).toHaveLength(2);
-    expect(links[0]).toHaveAttribute(
-      "href",
-      "https://github.com/Mzeey-Empire/mcode/pull/42#issuecomment-1",
+    expect(
+      screen.queryByRole("link", { name: "Open comment" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens a compact reply composer and preserves its draft when closed", async () => {
+    const user = userEvent.setup();
+    const onPromptFix = vi.fn();
+    render(
+      <PullRequestSummary
+        detail={detail()}
+        checks={checks()}
+        comments={comments()}
+        commentCapability={{ allowed: true }}
+        onPromptFix={onPromptFix}
+      />,
     );
-    expect(links[1]).toHaveAttribute(
-      "href",
-      "http://github.com/Mzeey-Empire/mcode/pull/42#discussion_r1",
+
+    await user.click(
+      await screen.findByRole("button", { name: "Prompt to fix with AI" }),
+    );
+    expect(onPromptFix).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("Start a Review task with this comment as context."),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Create task" }));
+    expect(onPromptFix).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "issue_comment",
+        providerNodeId: "comment-1",
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Reply" }));
+    const reply = screen.getByRole("textbox", { name: "Reply to commenter" });
+    expect(reply).toHaveValue("@commenter ");
+    expect(screen.getByRole("button", { name: "Post reply" })).toBeDisabled();
+
+    await user.type(reply, "Please recheck this.");
+    expect(screen.getByRole("button", { name: "Post reply" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Cancel reply" }));
+    expect(
+      screen.queryByRole("textbox", { name: "Reply to commenter" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reply" }));
+    expect(screen.getByRole("textbox", { name: "Reply to commenter" })).toHaveValue(
+      "@commenter Please recheck this.",
     );
   });
 
@@ -404,6 +444,12 @@ describe("PullRequestSummary", () => {
     );
 
     expect(screen.getByText("Web verification")).toBeVisible();
+    expect(document.querySelector('svg[data-check-state="passing"]')).toHaveClass(
+      "lucide-circle-check",
+    );
+    expect(document.querySelector('svg[data-check-state="pending"]')).toHaveClass(
+      "lucide-loader-circle",
+    );
     expect(screen.getByText("Required")).toBeVisible();
     expect(
       screen.getByText(

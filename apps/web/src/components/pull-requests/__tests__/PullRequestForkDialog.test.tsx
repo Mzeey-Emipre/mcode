@@ -206,6 +206,45 @@ describe("PullRequestForkDialog", () => {
     );
   });
 
+  it("prefills the Composer with selected review feedback", async () => {
+    const transport = transportWith({
+      ok: true,
+      status: "confirmation_required",
+      source: {
+        identity: detail.identity,
+        url: detail.url,
+        title: detail.title,
+        state: detail.state,
+        base: detail.base,
+        head: detail.head,
+        expectedHeadOid: detail.head.oid!,
+      },
+      workspace: {
+        id: "workspace-review",
+        name: "Mcode",
+        path: "C:/src/mcode",
+      },
+      suggestedWorktreeName: "pr-42-review",
+      destinationPath: "C:/src/worktrees/pr-42-review",
+    });
+    const initialPrompt =
+      "Review PR #42: Refine pull request workspace\n\nAddress this comment from @reviewer:\n\nHandle the null state.";
+
+    render(
+      <PullRequestForkDialog
+        open
+        onOpenChange={vi.fn()}
+        detail={detail}
+        mode="foreground"
+        initialPrompt={initialPrompt}
+        transport={transport}
+      />,
+    );
+
+    expect(await screen.findByTestId("fork-composer")).toBeVisible();
+    expect(draftState.setPendingPrefill).toHaveBeenCalledWith(initialPrompt);
+  });
+
   it("restores the pull request context after starting an existing-worktree fork in background", async () => {
     const transport = transportWith({
       ok: true,

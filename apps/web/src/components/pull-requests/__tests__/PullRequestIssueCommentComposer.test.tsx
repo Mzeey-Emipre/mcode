@@ -148,6 +148,45 @@ describe("PullRequestIssueCommentComposer", () => {
     expect(postComment).toHaveBeenCalledOnce();
   });
 
+  it("posts a compact reply and closes it after acceptance", async () => {
+    const user = userEvent.setup();
+    const onPosted = vi.fn();
+    const postComment = vi.fn().mockImplementation(async (request) => ({
+      ok: true,
+      effect: "comment",
+      idempotencyKey: request.idempotencyKey,
+      comment: {
+        providerNodeId: "COMMENT_REPLY",
+        url: "https://github.com/Mzeey-Empire/mcode/pull/42#issuecomment-2",
+        createdAt: "2026-07-12T01:05:00.000Z",
+      },
+    }));
+    usePullRequestMutationStore
+      .getState()
+      .setCommentDraft(identity, "@reviewer Addressed in the latest change.");
+
+    render(
+      <PullRequestIssueCommentComposer
+        identity={identity}
+        expected={expected}
+        capability={{ allowed: true }}
+        mutationTransport={transport(postComment)}
+        readTransport={readTransport()}
+        variant="reply"
+        replyTo="reviewer"
+        onPosted={onPosted}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Post reply" }));
+    expect(postComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: "@reviewer Addressed in the latest change.",
+      }),
+    );
+    expect(onPosted).toHaveBeenCalledOnce();
+  });
+
   it("preserves text, retries the same key, and keeps outcome-unknown blocked after refresh", async () => {
     const user = userEvent.setup();
     const calls: Array<{ idempotencyKey: string }> = [];

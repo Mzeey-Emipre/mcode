@@ -4,7 +4,7 @@ import {
   type PullRequestIdentity,
   type PullRequestMutationExpected,
 } from "@mcode/contracts";
-import { MessageSquare, SendHorizontal } from "lucide-react";
+import { MessageSquare, SendHorizontal, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -28,7 +28,7 @@ import {
 
 const textEncoder = new TextEncoder();
 
-/** Props for the explicit issue-comment composer at the end of Timeline. */
+/** Props for an explicit pull request issue-comment composer. */
 export interface PullRequestIssueCommentComposerProps {
   identity: PullRequestIdentity;
   expected: PullRequestMutationExpected | null;
@@ -36,9 +36,17 @@ export interface PullRequestIssueCommentComposerProps {
   mutationTransport?: PullRequestMutationTransport;
   readTransport?: PullRequestTransport;
   onRefresh?: () => Promise<boolean> | boolean;
+  /** Compact presentation used when replying from the Summary conversation. */
+  variant?: "timeline" | "reply";
+  /** Actor named by the compact reply composer. */
+  replyTo?: string;
+  /** Closes the compact reply composer without discarding its session draft. */
+  onCancel?: () => void;
+  /** Closes the compact reply composer after GitHub accepts the comment. */
+  onPosted?: () => void;
 }
 
-/** Session-preserved Timeline composer whose button is the comment confirmation. */
+/** Session-preserved composer whose submit button confirms the remote comment. */
 export function PullRequestIssueCommentComposer({
   identity,
   expected,
@@ -46,6 +54,10 @@ export function PullRequestIssueCommentComposer({
   mutationTransport,
   readTransport,
   onRefresh,
+  variant = "timeline",
+  replyTo,
+  onCancel,
+  onPosted,
 }: PullRequestIssueCommentComposerProps) {
   const identityKey = getPullRequestMutationIdentityKey(identity);
   const selectDraft = useMemo(
@@ -71,30 +83,39 @@ export function PullRequestIssueCommentComposer({
     capabilityReason ??
     (expected ? null : "Base or head commit identity is unavailable.");
   const submitting = lane.status === "submitting";
+  const hasPostBody =
+    body.trim().length > 0 &&
+    !(
+      variant === "reply" &&
+      replyTo &&
+      body.trim() === `@${replyTo}`
+    );
   const canPost =
     !unavailableReason &&
     !submitting &&
     !outcomeUnknownLane &&
     lane.status !== "error" &&
-    body.trim().length > 0 &&
+    hasPostBody &&
     byteCount <= PULL_REQUEST_MUTATION_BODY_MAX_BYTES;
   const repository = `${identity.owner}/${identity.repository} #${identity.number}`;
 
   const post = async (): Promise<void> => {
     if (!canPost || !expected) return;
     setLocalError(null);
-    await usePullRequestMutationStore.getState().postComment(
+    const result = await usePullRequestMutationStore.getState().postComment(
       { identity, expected, body },
       { mutationTransport, readTransport },
     );
+    if (result.ok) onPosted?.();
   };
 
   const retry = async (): Promise<void> => {
-    await usePullRequestMutationStore.getState().retry(
+    const result = await usePullRequestMutationStore.getState().retry(
       identity,
       "comment",
       { mutationTransport, readTransport },
     );
+    if (result?.ok && result.effect === "comment") onPosted?.();
   };
 
   const refresh = async (): Promise<void> => {
@@ -108,6 +129,104 @@ export function PullRequestIssueCommentComposer({
     }
     if (await onRefresh?.()) store.clearLane(identity, "comment");
   };
+
+  if (variant === "reply") {
+    const replyLabel = replyTo ? `Reply to ${replyTo}` : "Reply to comment";
+    const status = localError ?? unavailableReason;
+
+    return (
+      <section
+        aria-label={replyLabel}
+        aria-busy={submitting || undefined}
+        className="mt-4 border-t border-border/40 pt-3"
+      >
+        <label htmlFor="pull-request-inline-reply" className="sr-only">
+          {replyLabel}
+        </label>
+        <div className="flex min-w-0 items-end gap-2">
+          <Textarea
+            id="pull-request-inline-reply"
+            autoFocus
+            value={body}
+            rows={1}
+            disabled={
+              Boolean(unavailableReason) ||
+              submitting ||
+              Boolean(displayedError)
+            }
+            aria-describedby={status ? "pull-request-reply-status" : undefined}
+            placeholder={replyLabel}
+            className="h-10 min-h-10 max-h-28 min-w-0 field-sizing-fixed resize-y bg-background/55 text-sm shadow-none"
+            onChange={(event) => {
+              const accepted = usePullRequestMutationStore
+                .getState()
+                .setCommentDraft(identity, event.target.value);
+              setLocalError(
+                accepted ? null : "Reply exceeds the session draft limit.",
+              );
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onCancel?.();
+                return;
+              }
+              if (
+                event.key !== "Enter" ||
+                !(event.metaKey || event.ctrlKey)
+              ) {
+                return;
+              }
+              event.preventDefault();
+              void post();
+            }}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Cancel reply"
+            onClick={onCancel}
+          >
+            <X size={14} aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-sm"
+            aria-label="Post reply"
+            disabled={!canPost}
+            onClick={() => void post()}
+          >
+            {submitting ? (
+              <Spinner size="xs" aria-hidden />
+            ) : (
+              <SendHorizontal size={14} aria-hidden />
+            )}
+          </Button>
+        </div>
+        {status ? (
+          <p
+            id="pull-request-reply-status"
+            role={localError ? "alert" : "status"}
+            className="mt-2 text-xs text-muted-foreground"
+          >
+            {status}
+          </p>
+        ) : null}
+        {displayedError ? (
+          <div className="mt-3">
+            <PullRequestMutationError
+              error={displayedError}
+              busy={submitting}
+              onRetry={() => void retry()}
+              onRefresh={() => void refresh()}
+            />
+          </div>
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <section

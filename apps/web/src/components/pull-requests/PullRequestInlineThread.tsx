@@ -9,7 +9,6 @@ import type {
 } from "@/lib/pull-request-diff-row-model";
 import { usePullRequestReviewDraftStore } from "@/stores/pullRequestReviewDraftStore";
 import { RemoteMarkdown } from "./RemoteMarkdown";
-import { safePullRequestHttpUrl } from "./safePullRequestHttpUrl";
 
 /** Props for one measured inline review-thread row. */
 export interface PullRequestInlineThreadProps {
@@ -155,30 +154,17 @@ function PullRequestInlineThreadComponent({
               )}
             </div>
             <div className="mt-2 space-y-2.5">
-              {thread.comments.map((comment) => {
-                const url = comment.url ? safePullRequestHttpUrl(comment.url) : null;
-                return (
+              {thread.comments.map((comment) => (
                   <div key={comment.providerNodeId}>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>{comment.author?.login ?? "Unknown actor"}</span>
                       <time dateTime={comment.createdAt} className="font-mono tabular-nums">
                         {new Date(comment.createdAt).toLocaleString()}
                       </time>
-                      {url && (
-                        <a
-                          href={url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="ml-auto font-mono underline-offset-4 hover:text-foreground hover:underline"
-                        >
-                          Open comment
-                        </a>
-                      )}
                     </div>
                     <RemoteMarkdown content={comment.body} className="mt-1" />
                   </div>
-                );
-              })}
+                ))}
             </div>
             {thread.totalCount > thread.comments.length && (
               <p className="mt-2 text-xs text-muted-foreground">
