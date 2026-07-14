@@ -138,12 +138,12 @@ export function PullRequestIssueCommentComposer({
       <section
         aria-label={replyLabel}
         aria-busy={submitting || undefined}
-        className="mt-4 border-t border-border/40 pt-3"
+        className="-mx-4 -mb-4 mt-4 border-t border-border/40 bg-background/25 px-3 py-2.5"
       >
         <label htmlFor="pull-request-inline-reply" className="sr-only">
           {replyLabel}
         </label>
-        <div className="flex min-w-0 items-end gap-2">
+        <div className="flex min-w-0 items-end gap-1 rounded-md ring-1 ring-transparent transition-colors focus-within:bg-background/40 focus-within:ring-ring/60">
           <Textarea
             id="pull-request-inline-reply"
             autoFocus
@@ -156,7 +156,7 @@ export function PullRequestIssueCommentComposer({
             }
             aria-describedby={status ? "pull-request-reply-status" : undefined}
             placeholder={replyLabel}
-            className="h-10 min-h-10 max-h-28 min-w-0 field-sizing-fixed resize-y bg-background/55 text-sm shadow-none"
+            className="h-9 min-h-9 max-h-28 min-w-0 field-sizing-fixed resize-y border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
             onChange={(event) => {
               const accepted = usePullRequestMutationStore
                 .getState()
@@ -184,16 +184,18 @@ export function PullRequestIssueCommentComposer({
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon-xs"
+            className="my-1 size-7 rounded-full text-muted-foreground"
             aria-label="Cancel reply"
             onClick={onCancel}
           >
-            <X size={14} aria-hidden />
+            <X aria-hidden className="size-3.5" />
           </Button>
           <Button
             type="button"
             variant="secondary"
-            size="icon-sm"
+            size="icon-xs"
+            className="my-1 mr-1 size-7 rounded-full"
             aria-label="Post reply"
             disabled={!canPost}
             onClick={() => void post()}
@@ -201,7 +203,7 @@ export function PullRequestIssueCommentComposer({
             {submitting ? (
               <Spinner size="xs" aria-hidden />
             ) : (
-              <SendHorizontal size={14} aria-hidden />
+              <SendHorizontal aria-hidden className="size-3" />
             )}
           </Button>
         </div>

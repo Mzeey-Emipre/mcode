@@ -187,6 +187,42 @@ describe("PullRequestIssueCommentComposer", () => {
     expect(onPosted).toHaveBeenCalledOnce();
   });
 
+  it("keeps reply controls inside the comment footer", () => {
+    usePullRequestMutationStore
+      .getState()
+      .setCommentDraft(identity, "@reviewer ");
+
+    render(
+      <PullRequestIssueCommentComposer
+        identity={identity}
+        expected={expected}
+        capability={{ allowed: true }}
+        mutationTransport={transport(vi.fn())}
+        readTransport={readTransport()}
+        variant="reply"
+        replyTo="reviewer"
+      />,
+    );
+
+    const composer = screen.getByRole("region", { name: "Reply to reviewer" });
+    expect(composer).toHaveClass("-mx-4", "-mb-4", "bg-background/25");
+    expect(screen.getByRole("textbox", { name: "Reply to reviewer" })).toHaveClass(
+      "border-0",
+      "bg-transparent",
+    );
+    expect(screen.getByRole("button", { name: "Cancel reply" })).toHaveClass(
+      "size-7",
+      "rounded-full",
+    );
+    expect(screen.getByRole("button", { name: "Post reply" })).toHaveClass(
+      "size-7",
+      "rounded-full",
+    );
+    expect(
+      screen.getByRole("button", { name: "Post reply" }).querySelector("svg"),
+    ).toHaveClass("size-3");
+  });
+
   it("preserves text, retries the same key, and keeps outcome-unknown blocked after refresh", async () => {
     const user = userEvent.setup();
     const calls: Array<{ idempotencyKey: string }> = [];
