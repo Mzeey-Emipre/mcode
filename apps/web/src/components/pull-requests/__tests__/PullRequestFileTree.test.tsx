@@ -30,12 +30,16 @@ vi.mock("@tanstack/react-virtual", () => ({
   },
 }));
 
-function file(path: string, index: number): PullRequestFile {
+function file(
+  path: string,
+  index: number,
+  changeType: PullRequestFile["changeType"] = "modified",
+): PullRequestFile {
   return {
     locator: `file_${index}`,
     path,
     previousPath: null,
-    changeType: "modified",
+    changeType,
     additions: 1,
     deletions: 1,
     changes: 2,
@@ -111,6 +115,33 @@ describe("PullRequestFileTree", () => {
     ).toHaveTextContent("M");
   });
 
+  it("reserves green and red for added and deleted file semantics", () => {
+    render(
+      <PullRequestFileTree
+        files={[file("added.ts", 1, "added"), file("deleted.ts", 2, "deleted")]}
+        activePath={null}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    const added = screen.getByRole("treeitem", { name: "Added added.ts" });
+    const deleted = screen.getByRole("treeitem", {
+      name: "Deleted deleted.ts",
+    });
+    expect(added.querySelector('[data-change-type="added"]')).toHaveClass(
+      "text-[var(--diff-add-strong)]",
+    );
+    expect(added.querySelector('[aria-label="1 additions"]')).toHaveClass(
+      "text-[var(--diff-add-strong)]",
+    );
+    expect(deleted.querySelector('[data-change-type="deleted"]')).toHaveClass(
+      "text-[var(--diff-remove-strong)]",
+    );
+    expect(deleted.querySelector('[aria-label="1 deletions"]')).toHaveClass(
+      "text-[var(--diff-remove-strong)]",
+    );
+  });
+
   it("expands newly loaded directories without reopening user-collapsed ones", async () => {
     const view = render(
       <PullRequestFileTree
@@ -125,10 +156,7 @@ describe("PullRequestFileTree", () => {
 
     view.rerender(
       <PullRequestFileTree
-        files={[
-          file("apps/web/App.tsx", 1),
-          file("docs/guide.md", 2),
-        ]}
+        files={[file("apps/web/App.tsx", 1), file("docs/guide.md", 2)]}
         activePath={null}
         onActivate={vi.fn()}
       />,

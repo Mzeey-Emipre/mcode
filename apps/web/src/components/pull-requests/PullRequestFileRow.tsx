@@ -2,7 +2,6 @@ import type { PullRequestFile } from "@mcode/contracts";
 import type { KeyboardEvent, Ref } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { getFileIconColor } from "@/lib/file-icons";
 import { cn } from "@/lib/utils";
 
 const changeLabels: Record<PullRequestFile["changeType"], string> = {
@@ -32,6 +31,12 @@ const patchLabels: Partial<Record<PullRequestFile["patchStatus"], string>> = {
   too_large: "Too large",
 };
 
+function changeTone(changeType: PullRequestFile["changeType"]): string {
+  if (changeType === "added") return "text-[var(--diff-add-strong)]";
+  if (changeType === "deleted") return "text-[var(--diff-remove-strong)]";
+  return "text-muted-foreground/70";
+}
+
 /** Props for one accessible file row in the pull request Change stack. */
 export interface PullRequestFileRowProps {
   file: PullRequestFile;
@@ -59,7 +64,8 @@ export function PullRequestFileRow({
   onFocus,
   onKeyDown,
 }: PullRequestFileRowProps) {
-  const fileType = file.path.split(".").at(-1)?.slice(0, 2).toUpperCase() ?? "·";
+  const fileType =
+    file.path.split(".").at(-1)?.slice(0, 2).toUpperCase() ?? "·";
   const patchLabel = patchLabels[file.patchStatus];
   const fullLabel = file.previousPath
     ? `${changeLabels[file.changeType]} ${file.previousPath} to ${file.path}`
@@ -79,11 +85,13 @@ export function PullRequestFileRow({
       aria-setsize={setSize}
       aria-selected={active}
       data-file-path={file.path}
-      title={file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}
+      title={
+        file.previousPath ? `${file.previousPath} → ${file.path}` : file.path
+      }
       className={cn(
         "relative h-8 w-full justify-start gap-1.5 rounded-none px-2 font-normal",
         active
-          ? "bg-primary/9 text-foreground before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:bg-primary"
+          ? "bg-muted/60 text-foreground"
           : "text-foreground/75 hover:bg-muted/45",
       )}
       style={{ paddingLeft: `${Math.max(8, depth * 12)}px` }}
@@ -97,8 +105,8 @@ export function PullRequestFileRow({
         title={changeLabels[file.changeType]}
         aria-hidden
         className={cn(
-          "w-7 shrink-0 text-center font-mono text-[9px] font-semibold uppercase",
-          getFileIconColor(file.path),
+          "w-8 shrink-0 text-center font-mono text-[9px] font-semibold uppercase",
+          changeTone(file.changeType),
         )}
       >
         {fileType}·{changeGlyphs[file.changeType]}
@@ -118,7 +126,7 @@ export function PullRequestFileRow({
       {file.additions > 0 ? (
         <span
           aria-label={`${file.additions} additions`}
-          className="shrink-0 font-mono text-xs tabular-nums text-primary/80"
+          className="shrink-0 font-mono text-xs tabular-nums text-[var(--diff-add-strong)]"
         >
           +{file.additions}
         </span>
@@ -126,7 +134,7 @@ export function PullRequestFileRow({
       {file.deletions > 0 ? (
         <span
           aria-label={`${file.deletions} deletions`}
-          className="shrink-0 font-mono text-xs tabular-nums text-destructive/70"
+          className="shrink-0 font-mono text-xs tabular-nums text-[var(--diff-remove-strong)]"
         >
           −{file.deletions}
         </span>

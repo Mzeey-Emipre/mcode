@@ -22,6 +22,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
+import { useElementWidth } from "@/hooks/useElementWidth";
 import {
   selectPullRequestCodeCore,
   selectPullRequestCodeView,
@@ -46,6 +47,7 @@ const FILES_PANEL_MIN_WIDTH = 220;
 const FILES_PANEL_DEFAULT_WIDTH = 256;
 const FILES_PANEL_WIDE_WIDTH = 480;
 const DIFF_VIEWPORT_MIN_WIDTH = 440;
+const DOCKED_FILES_MIN_WIDTH = FILES_PANEL_MIN_WIDTH + DIFF_VIEWPORT_MIN_WIDTH;
 
 interface ReviewThreadPaginationRun {
   generation: number | null;
@@ -133,6 +135,8 @@ export function PullRequestCode({
   const [filesPanelWidth, setFilesPanelWidth] = useState(
     FILES_PANEL_DEFAULT_WIDTH,
   );
+  const codeRootRef = useRef<HTMLElement>(null);
+  const codeWidth = useElementWidth(codeRootRef, identityKey);
   const [submitReviewOpen, setSubmitReviewOpen] = useState(false);
   const commentPaginationRunRef = useRef<ReviewThreadPaginationRun>({
     generation: null,
@@ -337,20 +341,23 @@ export function PullRequestCode({
   const reviewUnavailableReason =
     pullRequestCapabilityReason(reviewCapability) ??
     (activeDraftIdentityKey ? null : "The review snapshot is still loading.");
+  const filesDocked =
+    codeWidth === 0 ? !isNarrow : codeWidth >= DOCKED_FILES_MIN_WIDTH;
 
   return (
     <>
       <section
+        ref={codeRootRef}
         data-testid="pull-request-code-root"
         aria-label="Pull request Code"
         className="flex min-h-0 flex-1 flex-col bg-page"
       >
         <div
           data-testid="pull-request-code-toolbar"
-          data-layout={isNarrow ? "compact" : "wide"}
+          data-layout={filesDocked ? "wide" : "compact"}
           className="flex h-11 shrink-0 items-center gap-2 bg-background/80 px-3"
         >
-          {isNarrow ? (
+          {!filesDocked ? (
             <div
               data-testid="pull-request-code-file-row"
               className="flex min-w-0 flex-1 items-center"
@@ -409,7 +416,9 @@ export function PullRequestCode({
           )}
 
           <div
-            data-testid={isNarrow ? "pull-request-code-actions-row" : undefined}
+            data-testid={
+              !filesDocked ? "pull-request-code-actions-row" : undefined
+            }
             className="ml-auto flex shrink-0 items-center justify-end gap-1"
           >
             <div
@@ -451,7 +460,7 @@ export function PullRequestCode({
               </Button>
             </div>
 
-            {!isNarrow && !view.fileTreeVisible && (
+            {filesDocked && !view.fileTreeVisible && (
               <Button
                 type="button"
                 variant="ghost"
@@ -634,7 +643,7 @@ export function PullRequestCode({
             </div>
           </div>
 
-          {!isNarrow && view.fileTreeVisible && (
+          {filesDocked && view.fileTreeVisible && (
             <PullRequestChangedFilesPane
               files={displayedFiles}
               activePath={view.activePath}

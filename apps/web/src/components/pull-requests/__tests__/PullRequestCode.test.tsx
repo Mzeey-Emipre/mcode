@@ -18,6 +18,12 @@ import { usePullRequestCodeStore } from "@/stores/pullRequestCodeStore";
 import { usePullRequestStore } from "@/stores/pullRequestStore";
 import type { PullRequestTransport } from "@/transport/pull-requests";
 
+const layout = vi.hoisted(() => ({ codeWidth: 0 }));
+
+vi.mock("@/hooks/useElementWidth", () => ({
+  useElementWidth: () => layout.codeWidth,
+}));
+
 vi.mock("../PullRequestDiffViewport", () => ({
   PullRequestDiffViewport: ({
     files,
@@ -225,6 +231,7 @@ function renderCode(transport: PullRequestTransport, isNarrow = false) {
 
 describe("PullRequestCode", () => {
   beforeEach(() => {
+    layout.codeWidth = 0;
     usePullRequestCodeStore.setState({
       entries: {},
       patches: {},
@@ -432,6 +439,27 @@ describe("PullRequestCode", () => {
     ).toBeVisible();
     expect(
       await screen.findByRole("tree", { name: "Choose a changed file" }),
+    ).toBeVisible();
+  });
+
+  it("docks the reusable file view when the Code workspace can fit it", async () => {
+    layout.codeWidth = 720;
+    const transport = fakeTransport();
+    renderCode(transport, true);
+
+    expect(await screen.findByTestId("code-viewport-seam")).toBeInTheDocument();
+    expect(screen.getByTestId("pull-request-code-toolbar")).toHaveAttribute(
+      "data-layout",
+      "wide",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Choose a changed file" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("pull-request-changed-files-pane")).toBeVisible();
+    expect(
+      screen.getByRole("separator", {
+        name: "Resize Pull request changed files",
+      }),
     ).toBeVisible();
   });
 

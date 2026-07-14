@@ -97,9 +97,7 @@ export function PullRequestFileTree({
   useEffect(() => {
     const directoryIds = collectDirectoryIds(tree);
     setExpandedDirectoryIds((current) => {
-      const next = new Set(
-        [...current].filter((id) => directoryIds.has(id)),
-      );
+      const next = new Set([...current].filter((id) => directoryIds.has(id)));
       for (const id of directoryIds) {
         if (!userCollapsedDirectoryIdsRef.current.has(id)) next.add(id);
       }
@@ -270,7 +268,11 @@ export function PullRequestFileTree({
           <ChevronRight size={11} aria-hidden />
         )}
         {expanded ? (
-          <FolderOpen size={12} aria-hidden className="text-primary/70" />
+          <FolderOpen
+            size={12}
+            aria-hidden
+            className="text-muted-foreground/80"
+          />
         ) : (
           <Folder size={12} aria-hidden />
         )}
