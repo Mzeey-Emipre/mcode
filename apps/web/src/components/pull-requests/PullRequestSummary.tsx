@@ -445,19 +445,16 @@ function PullRequestSummaryComponent({
   return (
     <section
       aria-label="Pull request summary"
-      className="mx-auto min-w-0 w-full max-w-5xl space-y-10 px-4 pb-12 pt-6 sm:px-6"
+      className="mx-auto min-w-0 w-full max-w-5xl space-y-10 px-4 pb-12 sm:px-6"
     >
-      <section aria-labelledby="pull-request-description-title">
-        <h3
-          id="pull-request-description-title"
-          className="text-sm font-semibold text-foreground"
-        >
-          Description
-        </h3>
+      <section aria-label="Description">
         {detail.body ? (
-          <RemoteMarkdown content={detail.body} className="mt-4 max-w-[72ch]" />
+          <RemoteMarkdown
+            content={detail.body}
+            className="max-w-[72ch] [&_h1:first-child]:mt-0 [&_h2:first-child]:mt-0 [&_h3:first-child]:mt-0"
+          />
         ) : (
-          <p className="mt-2 text-xs text-muted-foreground">No description</p>
+          <p className="text-xs text-muted-foreground">No description</p>
         )}
         {detailBoundedData && (
           <p

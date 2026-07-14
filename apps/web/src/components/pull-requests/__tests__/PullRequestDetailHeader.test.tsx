@@ -131,4 +131,18 @@ describe("PullRequestDetailHeader", () => {
     rerender(<PullRequestDetailHeader summaryFallback={fallback} />);
     expect(screen.getByText("octocat")).toBeVisible();
   });
+
+  it("uses a circled x for failed checks", () => {
+    const failed = detail();
+    failed.checks = { state: "failing" };
+
+    const { container } = render(<PullRequestDetailHeader detail={failed} />);
+
+    expect(screen.getByText("Failing checks")).toBeVisible();
+    expect(
+      container.querySelector(
+        'svg[data-check-state="failing"].lucide-circle-x',
+      ),
+    ).toBeVisible();
+  });
 });

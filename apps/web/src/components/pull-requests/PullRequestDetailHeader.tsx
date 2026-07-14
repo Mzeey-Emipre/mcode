@@ -8,6 +8,7 @@ import type {
 import {
   CheckCircle2,
   ChevronRight,
+  CircleX,
   CircleUserRound,
   GitBranch,
   MessageSquare,
@@ -79,13 +80,15 @@ function PullRequestDetailHeaderComponent({
   const reviewers = detail?.reviewers ?? [];
   const conversationCount =
     model.commentCount + (detail?.reviewThreadCount ?? 0);
+  const CheckStateIcon =
+    model.checks.state === "failing" ? CircleX : CheckCircle2;
 
   return (
     <header aria-label="Pull request summary identity">
       <div
         className={cn(
           "mx-auto w-full max-w-5xl",
-          isNarrow ? "px-4 pb-6 pt-6" : "px-6 pb-8 pt-8",
+          isNarrow ? "px-4 pb-4 pt-6" : "px-6 pb-5 pt-8",
         )}
       >
         <h2 className="break-words text-xl font-semibold leading-tight text-foreground [text-wrap:pretty]">
@@ -223,9 +226,10 @@ function PullRequestDetailHeaderComponent({
           </div>
 
           <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
-            <CheckCircle2
+            <CheckStateIcon
               size={14}
               aria-hidden
+              data-check-state={model.checks.state}
               className={checkTone(model.checks.state)}
             />
             <dt className="text-muted-foreground">Checks</dt>

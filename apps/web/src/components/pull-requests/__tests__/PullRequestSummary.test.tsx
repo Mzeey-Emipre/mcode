@@ -265,7 +265,7 @@ describe("PullRequestSummary", () => {
     expect(within(summary).queryByText("3 comments")).not.toBeInTheDocument();
     expect(
       await within(summary).findByRole(
-        "heading",
+        "region",
         { name: "Description" },
         { timeout: 5_000 },
       ),
@@ -278,7 +278,10 @@ describe("PullRequestSummary", () => {
   it("keeps local task actions out of the summary content", () => {
     render(<PullRequestSummary detail={detail()} checks={[]} comments={[]} />);
 
-    expect(screen.getByRole("heading", { name: "Description" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Description" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Description" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /review task/i })).toBeNull();
   });
 
