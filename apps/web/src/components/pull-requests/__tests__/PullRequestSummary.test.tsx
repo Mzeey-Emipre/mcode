@@ -352,6 +352,44 @@ describe("PullRequestSummary", () => {
     );
   });
 
+  it("uses document sections and one conversation card layer", async () => {
+    render(
+      <PullRequestSummary
+        detail={detail()}
+        checks={checks()}
+        comments={comments()}
+      />,
+    );
+
+    const checksTrigger = screen.getByRole("button", {
+      name: "Checks, 2 loaded of 4",
+    });
+    const commentsTrigger = screen.getByRole("button", {
+      name: "Comments, 2 loaded of 4",
+    });
+    expect(checksTrigger.parentElement).toHaveClass("border-t");
+    expect(commentsTrigger.parentElement).toHaveClass("border-t");
+    expect(checksTrigger.parentElement).not.toHaveClass(
+      "rounded-xl",
+      "bg-card/30",
+    );
+    expect(commentsTrigger.parentElement).not.toHaveClass(
+      "rounded-xl",
+      "bg-card/30",
+    );
+
+    const issueComment = await screen.findByRole("article", {
+      name: "Comment from commenter",
+    });
+    const reviewThread = screen.getByRole("article", {
+      name: "Review thread on apps/web/src/app/App.tsx:42",
+    });
+    expect(issueComment).toHaveClass("rounded-lg", "bg-card/45");
+    expect(reviewThread).toHaveClass("rounded-lg", "bg-card/45");
+    expect(issueComment).not.toHaveClass("border");
+    expect(reviewThread).not.toHaveClass("border");
+  });
+
   it("expands checks and comments with explicit bounded markers", async () => {
     render(
       <PullRequestSummary

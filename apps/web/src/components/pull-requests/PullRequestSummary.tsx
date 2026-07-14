@@ -35,6 +35,16 @@ import { safePullRequestHttpUrl } from "./safePullRequestHttpUrl";
 
 const RESOURCE_VIRTUALIZATION_THRESHOLD = 30;
 const RESOURCE_OVERSCAN = 4;
+const CONVERSATION_MARKDOWN_CLASS = [
+  "max-w-[72ch]",
+  "[&_[data-github-alert]]:rounded-none",
+  "[&_[data-github-alert]]:border-0",
+  "[&_details[data-github-disclosure]]:rounded-none",
+  "[&_details[data-github-disclosure]]:border-0",
+  "[&_details[data-github-disclosure]]:border-t",
+  "[&_details[data-github-disclosure]]:bg-transparent",
+  "[&_details[data-github-disclosure]>summary]:px-0",
+].join(" ");
 
 /** Props for the read-only pull request Summary tab. */
 export interface PullRequestSummaryProps {
@@ -280,8 +290,7 @@ const CheckList = memo(function CheckList({
       label="Loaded checks"
       estimateSize={40}
       getItemKey={(check) => check.providerNodeId}
-      rowClassName="flex min-w-0 items-center gap-2 bg-background/30 px-3 py-2 text-xs"
-      listClassName="space-y-1"
+      rowClassName="flex min-w-0 items-center gap-2.5 py-2 text-xs"
       renderItem={(check) => <CheckRow check={check} />}
     />
   );
@@ -300,9 +309,9 @@ const ConversationRow = memo(function ConversationRow({
     return (
       <article
         aria-label={`Comment from ${author}`}
-        className="overflow-hidden rounded-lg border border-border/50 bg-card"
+        className="min-w-0 overflow-hidden rounded-lg bg-card/45 px-4 py-4"
       >
-        <header className="flex min-h-10 items-center gap-2 border-b border-border/45 bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
+        <header className="flex min-h-8 items-center gap-2 pb-3 text-xs text-muted-foreground">
           <span className="font-medium text-foreground/90">{author}</span>
           <time dateTime={item.createdAt} className="font-mono tabular-nums">
             {formatRelative(item.createdAt)}
@@ -318,8 +327,11 @@ const ConversationRow = memo(function ConversationRow({
             </a>
           ) : null}
         </header>
-        <div className="px-4 py-4">
-          <RemoteMarkdown content={item.body} className="max-w-[72ch]" />
+        <div>
+          <RemoteMarkdown
+            content={item.body}
+            className={CONVERSATION_MARKDOWN_CLASS}
+          />
         </div>
       </article>
     );
@@ -329,9 +341,9 @@ const ConversationRow = memo(function ConversationRow({
   return (
     <article
       aria-label={`Review thread on ${location}`}
-      className="overflow-hidden rounded-lg border border-border/50 bg-card"
+      className="min-w-0 overflow-hidden rounded-lg bg-card/45 px-4 py-4"
     >
-      <header className="flex min-h-10 min-w-0 flex-wrap items-center gap-2 border-b border-border/45 bg-muted/20 px-4 py-2 text-xs">
+      <header className="flex min-h-8 min-w-0 flex-wrap items-center gap-2 pb-3 text-xs">
         <span className="truncate font-mono text-foreground/85">
           {location}
         </span>
@@ -350,7 +362,7 @@ const ConversationRow = memo(function ConversationRow({
             ? safePullRequestHttpUrl(comment.url)
             : null;
           return (
-            <section key={comment.providerNodeId} className="px-4 py-4">
+            <section key={comment.providerNodeId} className="py-4 first:pt-0">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span className="font-medium text-foreground/90">
                   {comment.author?.login ?? "Unknown actor"}
@@ -374,14 +386,14 @@ const ConversationRow = memo(function ConversationRow({
               </div>
               <RemoteMarkdown
                 content={comment.body}
-                className="mt-3 max-w-[72ch]"
+                className={cn("mt-3", CONVERSATION_MARKDOWN_CLASS)}
               />
             </section>
           );
         })}
       </div>
       {item.totalCount > item.comments.length && (
-        <p className="border-t border-border/40 px-4 py-3 font-mono text-xs text-muted-foreground">
+        <p className="border-t border-border/40 pt-3 font-mono text-xs text-muted-foreground">
           Showing {item.comments.length} of {item.totalCount} thread comments.
         </p>
       )}
@@ -402,7 +414,7 @@ const ConversationList = memo(function ConversationList({
       label="Loaded comments"
       estimateSize={208}
       getItemKey={(item) => item.providerNodeId}
-      rowClassName="pb-6"
+      rowClassName="pb-4 last:pb-0"
       renderItem={(item) => <ConversationRow item={item} />}
     />
   );
@@ -475,13 +487,13 @@ function PullRequestSummaryComponent({
       <Collapsible
         defaultOpen={defaultChecksOpen}
         onOpenChange={handleChecksOpenChange}
-        className="overflow-hidden rounded-xl border border-border/40 bg-card/30"
+        className="border-t border-border/45"
       >
         <CollapsibleTrigger asChild>
           <Button
             type="button"
             variant="ghost"
-            className="group h-12 w-full justify-start rounded-none px-4 text-xs hover:bg-muted/20"
+            className="group h-11 w-full justify-start rounded-none px-0 text-xs hover:bg-muted/15 aria-expanded:bg-transparent dark:hover:bg-muted/10 dark:aria-expanded:bg-transparent"
             aria-label={`Checks, ${checks.length} loaded of ${detail.checkCount}`}
           >
             <CircleDot
@@ -504,7 +516,7 @@ function PullRequestSummaryComponent({
             />
           </Button>
         </CollapsibleTrigger>
-        <CollapsibleContent className="px-4 pb-4">
+        <CollapsibleContent className="pb-1">
           {checksLoading && checks.length === 0 ? (
             <p
               role="status"
@@ -543,13 +555,13 @@ function PullRequestSummaryComponent({
       <Collapsible
         defaultOpen={defaultCommentsOpen}
         onOpenChange={handleCommentsOpenChange}
-        className="overflow-hidden rounded-xl border border-border/40 bg-card/30"
+        className="border-t border-border/45"
       >
         <CollapsibleTrigger asChild>
           <Button
             type="button"
             variant="ghost"
-            className="group h-12 w-full justify-start rounded-none px-4 text-xs hover:bg-muted/20"
+            className="group h-11 w-full justify-start rounded-none px-0 text-xs hover:bg-muted/15 aria-expanded:bg-transparent dark:hover:bg-muted/10 dark:aria-expanded:bg-transparent"
             aria-label={`Comments, ${comments.length} loaded of ${conversationCount}`}
           >
             <MessageSquare
@@ -572,7 +584,7 @@ function PullRequestSummaryComponent({
             />
           </Button>
         </CollapsibleTrigger>
-        <CollapsibleContent className="px-4 pb-4">
+        <CollapsibleContent className="pb-1">
           {commentsLoading && comments.length === 0 ? (
             <p
               role="status"
