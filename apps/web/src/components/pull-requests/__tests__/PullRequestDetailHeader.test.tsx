@@ -3,7 +3,9 @@ import type {
   PullRequestSummary as PullRequestSummaryRecord,
 } from "@mcode/contracts";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { PullRequestDetailHeader } from "../PullRequestDetailHeader";
 
 function detail(): PullRequestDetail {
@@ -144,5 +146,54 @@ describe("PullRequestDetailHeader", () => {
         'svg[data-check-state="failing"].lucide-circle-x',
       ),
     ).toBeVisible();
+  });
+
+  it("shows reviewer identities on hover with review state indicators", async () => {
+    const reviewed = detail();
+    reviewed.reviewers = [
+      {
+        target: {
+          kind: "user",
+          actor: {
+            providerNodeId: "reviewer-node",
+            login: "reviewer",
+            avatarUrl: "https://avatars.githubusercontent.com/u/1",
+            profileUrl: "https://github.com/reviewer",
+          },
+        },
+        state: "approved",
+        submittedAt: "2026-07-11T12:00:00.000Z",
+      },
+      {
+        target: {
+          kind: "team",
+          providerNodeId: "team-node",
+          organization: "Mzeey-Empire",
+          slug: "reviewers",
+        },
+        state: "requested",
+        submittedAt: null,
+      },
+    ];
+
+    const { container } = render(
+      <TooltipProvider delay={0}>
+        <PullRequestDetailHeader detail={reviewed} />
+      </TooltipProvider>,
+    );
+
+    const reviewer = screen.getByLabelText("reviewer, Approved");
+    expect(screen.getByLabelText("Mzeey-Empire/reviewers, Review requested")).toBeVisible();
+    expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-review-state="approved"]'),
+    ).toHaveClass("bg-[var(--diff-add-strong)]");
+    expect(
+      container.querySelector('[data-review-state="requested"]'),
+    ).toHaveClass("bg-primary");
+
+    await userEvent.hover(reviewer);
+    expect(await screen.findByText("reviewer")).toBeVisible();
+    expect(screen.getByText("· Approved")).toBeVisible();
   });
 });

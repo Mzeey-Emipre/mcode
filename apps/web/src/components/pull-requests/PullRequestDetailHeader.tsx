@@ -15,6 +15,11 @@ import {
   Users,
 } from "lucide-react";
 import { memo } from "react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format-relative";
 import { cn } from "@/lib/utils";
 import { safePullRequestHttpUrl } from "./safePullRequestHttpUrl";
@@ -62,6 +67,31 @@ function reviewerAvatarUrl(reviewer: PullRequestReviewer): string | null {
     return null;
   }
   return safePullRequestHttpUrl(reviewer.target.actor.avatarUrl);
+}
+
+function reviewerStateLabel(state: PullRequestReviewer["state"]): string {
+  switch (state) {
+    case "requested":
+      return "Review requested";
+    case "approved":
+      return "Approved";
+    case "changes_requested":
+      return "Changes requested";
+    case "commented":
+      return "Commented";
+    case "dismissed":
+      return "Dismissed";
+    case "pending":
+      return "Review pending";
+  }
+}
+
+function reviewerStateTone(state: PullRequestReviewer["state"]): string {
+  if (state === "approved") return "bg-[var(--diff-add-strong)]";
+  if (state === "changes_requested") return "bg-destructive";
+  if (state === "requested" || state === "pending") return "bg-primary";
+  if (state === "commented") return "bg-muted-foreground";
+  return "bg-muted-foreground/45";
 }
 
 function PullRequestDetailHeaderComponent({
@@ -176,36 +206,56 @@ function PullRequestDetailHeaderComponent({
           <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
             <Users size={14} aria-hidden className="text-muted-foreground/80" />
             <dt className="text-muted-foreground">Reviewers</dt>
-            <dd className="flex min-w-0 items-center gap-2 text-foreground/90">
+            <dd className="flex min-w-0 flex-wrap items-center gap-1.5 text-foreground/90">
               {!detail ? (
                 "Loading"
               ) : reviewers.length > 0 ? (
-                <>
-                  <span aria-hidden className="flex shrink-0 -space-x-1.5">
-                    {reviewers.slice(0, 4).map((reviewer) => {
-                      const label = reviewerLabel(reviewer);
-                      const reviewerAvatar = reviewerAvatarUrl(reviewer);
-                      return reviewerAvatar ? (
-                        <img
-                          key={label}
-                          src={reviewerAvatar}
-                          alt=""
-                          className="size-5 rounded-full border border-page object-cover"
-                        />
-                      ) : (
+                reviewers.map((reviewer) => {
+                  const label = reviewerLabel(reviewer);
+                  const stateLabel = reviewerStateLabel(reviewer.state);
+                  const reviewerAvatar = reviewerAvatarUrl(reviewer);
+                  return (
+                    <Tooltip key={label}>
+                      <TooltipTrigger
+                        render={
+                          <span
+                            role="img"
+                            tabIndex={0}
+                            aria-label={`${label}, ${stateLabel}`}
+                            className="relative inline-flex size-5 shrink-0 rounded-full outline-none ring-offset-page focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                          />
+                        }
+                      >
+                        {reviewerAvatar ? (
+                          <img
+                            src={reviewerAvatar}
+                            alt=""
+                            className="size-5 rounded-full object-cover"
+                          />
+                        ) : (
+                          <span
+                            aria-hidden
+                            className="inline-flex size-5 items-center justify-center rounded-full bg-muted text-xs font-medium uppercase text-muted-foreground"
+                          >
+                            {label.charAt(0)}
+                          </span>
+                        )}
                         <span
-                          key={label}
-                          className="inline-flex size-5 items-center justify-center rounded-full border border-page bg-muted text-xs font-medium uppercase text-muted-foreground"
-                        >
-                          {label.charAt(0)}
-                        </span>
-                      );
-                    })}
-                  </span>
-                  <span className="min-w-0 truncate">
-                    {reviewers.map(reviewerLabel).join(" · ")}
-                  </span>
-                </>
+                          aria-hidden
+                          data-review-state={reviewer.state}
+                          className={cn(
+                            "absolute -bottom-0.5 -right-0.5 size-2 rounded-full border border-page",
+                            reviewerStateTone(reviewer.state),
+                          )}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent sideOffset={6}>
+                        <span>{label}</span>
+                        <span className="opacity-65">· {stateLabel}</span>
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })
               ) : (
                 "No reviewers"
               )}
