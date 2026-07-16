@@ -340,6 +340,8 @@ describe("PullRequestVirtualDiff", () => {
       "size-6",
       "rounded-md",
       "bg-foreground",
+      "hover:bg-foreground",
+      "dark:hover:bg-foreground",
       "text-background",
       "group-hover/cell:opacity-100",
       "pointer-events-auto",

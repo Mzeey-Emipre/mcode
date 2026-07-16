@@ -242,7 +242,7 @@ const DiffCell = memo(function DiffCell({
           tabIndex={-1}
           aria-label={`Draft comment on ${lineLabel.toLowerCase()}`}
           className={cn(
-            "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground/90 hover:text-background group-hover/cell:pointer-events-auto group-hover/cell:opacity-100 group-focus-within/cell:pointer-events-auto group-focus-within/cell:opacity-100 motion-reduce:transition-none",
+            "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground hover:text-background dark:hover:bg-foreground group-hover/cell:pointer-events-auto group-hover/cell:opacity-100 group-focus-within/cell:pointer-events-auto group-focus-within/cell:opacity-100 motion-reduce:transition-none",
             active && "pointer-events-auto opacity-100",
           )}
           onClick={(event) => {
