@@ -407,6 +407,9 @@ describe("PullRequestSummary", () => {
     const commentsTrigger = screen.getByRole("button", {
       name: "Comments, 2 loaded of 4",
     });
+    expect(commentsTrigger.querySelector("svg")).toHaveClass(
+      "lucide-message-circle",
+    );
     expect(checksTrigger.parentElement).toHaveClass("border-t");
     expect(commentsTrigger.parentElement).toHaveClass("border-t");
     expect(checksTrigger.parentElement).not.toHaveClass(

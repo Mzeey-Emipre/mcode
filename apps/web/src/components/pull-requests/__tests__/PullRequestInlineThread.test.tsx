@@ -120,6 +120,13 @@ describe("PullRequestInlineThread", () => {
     expect(
       screen.getByText("Review thread").closest("article"),
     ).toHaveClass("rounded-lg", "ring-1");
+    const reviewIcon = screen.getByText("Review thread").previousElementSibling;
+    expect(reviewIcon?.tagName).toBe("svg");
+    expect(reviewIcon).toHaveClass("lucide-message-circle");
+    expect(reviewIcon).not.toHaveClass("rounded-full", "bg-background/70", "ring-1");
+    const draftIcon = screen.getByText("Local comment").previousElementSibling;
+    expect(draftIcon?.tagName).toBe("svg");
+    expect(draftIcon).toHaveClass("lucide-message-circle");
     expect(
       screen.queryByRole("link", { name: "Open comment" }),
     ).not.toBeInTheDocument();

@@ -112,21 +112,24 @@ describe("PullRequestIssueCommentComposer", () => {
     const textarea = screen.getByRole("textbox", {
       name: /Comment for Mzeey-Empire\/mcode #42/,
     });
+    expect(textarea.tagName).toBe("TEXTAREA");
     expect(textarea).toHaveAttribute("rows", "1");
     expect(textarea).toHaveClass(
       "min-h-12",
       "max-h-32",
-      "field-sizing-fixed",
+      "field-sizing-content",
+      "resize-none",
       "border-0",
       "bg-transparent",
       "pr-12",
     );
+    expect(textarea).not.toHaveClass("resize-y", "field-sizing-fixed");
     expect(
       screen.getByRole("button", { name: "Post comment" }),
     ).toHaveClass("absolute", "bottom-2", "right-2", "rounded-full");
     expect(
       screen.getByRole("region", { name: "Add a comment" }),
-    ).not.toHaveClass("border-t");
+    ).not.toHaveClass("border-t", "bg-page");
     expect(screen.queryByText("Ctrl/⌘ Enter to post")).not.toBeInTheDocument();
     expect(screen.getByText("0 / 65,536 bytes")).toHaveClass("sr-only");
   });

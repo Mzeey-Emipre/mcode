@@ -16,7 +16,7 @@ import {
   CircleMinus,
   CircleX,
   Loader2,
-  MessageSquare,
+  MessageCircle,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -788,7 +788,7 @@ function PullRequestSummaryComponent({
             className="group h-11 w-full justify-start rounded-none px-0 text-xs hover:bg-muted/15 aria-expanded:bg-transparent dark:hover:bg-muted/10 dark:aria-expanded:bg-transparent"
             aria-label={`Comments, ${comments.length} loaded of ${conversationCount}`}
           >
-            <MessageSquare
+            <MessageCircle
               size={13}
               aria-hidden
               className="text-muted-foreground"

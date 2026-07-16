@@ -246,7 +246,7 @@ export function PullRequestIssueCommentComposer({
     <section
       aria-label="Add a comment"
       aria-busy={submitting || undefined}
-      className="shrink-0 bg-page px-3 pb-3 pt-2"
+      className="shrink-0 px-3 pb-3 pt-2"
     >
       <div className="mx-auto w-full max-w-5xl">
         <div className="relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 transition-shadow focus-within:ring-2 focus-within:ring-primary/70">
@@ -264,7 +264,7 @@ export function PullRequestIssueCommentComposer({
             }
             aria-describedby={commentDescriptionIds || undefined}
             placeholder={`Comment on ${repository}`}
-            className="min-h-12 max-h-32 field-sizing-fixed resize-y border-0 bg-transparent px-3 pb-3 pr-12 pt-3 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+            className="min-h-12 max-h-32 resize-none border-0 bg-transparent px-3 pb-3 pr-12 pt-3 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
             onChange={(event) => {
               const accepted = usePullRequestMutationStore
                 .getState()

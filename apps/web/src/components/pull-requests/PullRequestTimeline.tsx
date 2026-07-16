@@ -10,7 +10,7 @@ import {
   CircleDot,
   ExternalLink,
   GitCommitHorizontal,
-  MessageSquare,
+  MessageCircle,
 } from "lucide-react";
 import { memo, useMemo, useRef, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -115,7 +115,7 @@ function EventGlyph({ kind }: { kind: PullRequestTimelineItem["kind"] }) {
   if (kind === "commit")
     return <GitCommitHorizontal aria-hidden className={className} />;
   if (kind === "issue_comment" || kind === "review_thread") {
-    return <MessageSquare aria-hidden className={className} />;
+    return <MessageCircle aria-hidden className={className} />;
   }
   if (kind === "checks" || kind === "merged") {
     return <CheckCircle2 aria-hidden className={className} />;

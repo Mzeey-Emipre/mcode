@@ -13,7 +13,9 @@ import {
   ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
+import { CodeBlock } from "@/components/chat/CodeBlock";
 import { cn } from "@/lib/utils";
+import { resolveCodeBlockLanguage } from "@/lib/resolve-code-block-language";
 import {
   remarkGitHubAlerts,
   type GitHubAlertKind,
@@ -82,19 +84,23 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
       </a>
     );
   },
-  pre({ node, children, ...props }) {
-    const child = node?.children?.[0];
-    const className =
-      child?.type === "element" ? child.properties?.className : undefined;
-    const isMermaid =
-      Array.isArray(className) && className.includes("language-mermaid");
-    if (isMermaid) return <>{children}</>;
-    return <pre {...props}>{children}</pre>;
+  pre({ node: _node, children }) {
+    return <>{children}</>;
   },
   code({ node: _node, className, children, ...props }) {
-    const language = /language-(\S+)/.exec(className ?? "")?.[1];
-    if (language === "mermaid") {
-      const code = String(children).replace(/\n$/, "");
+    const source = String(children);
+    const rawFence = /language-(\S+)/.exec(className ?? "")?.[1] ?? "";
+    const isBlock = rawFence !== "" || source.endsWith("\n");
+    if (!isBlock) {
+      return (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      );
+    }
+
+    const code = source.replace(/\n$/, "");
+    if (rawFence === "mermaid") {
       return (
         <Suspense
           fallback={
@@ -107,10 +113,28 @@ const REMOTE_MARKDOWN_COMPONENTS: Components = {
         </Suspense>
       );
     }
+
+    const { language, label } = resolveCodeBlockLanguage(rawFence, code);
     return (
-      <code className={className} {...props}>
-        {children}
-      </code>
+      <div
+        data-remote-code-block
+        className={[
+          "min-w-0",
+          "[&_[data-code-block]>div]:overflow-x-hidden",
+          "[&_[data-code-block]_pre]:!min-w-0",
+          "[&_[data-code-block]_pre]:!w-full",
+          "[&_[data-code-block]_pre]:!whitespace-pre-wrap",
+          "[&_[data-code-block]_code]:break-words",
+          "[&_[data-code-block]_code]:whitespace-pre-wrap",
+        ].join(" ")}
+      >
+        <CodeBlock
+          code={code}
+          language={language}
+          languageLabel={label}
+          isStreaming={false}
+        />
+      </div>
     );
   },
   img() {
@@ -194,9 +218,8 @@ const RemoteMarkdownRenderer = memo(function RemoteMarkdownRenderer({
         "[&_li]:my-1",
         "[&_a]:text-link [&_a]:underline [&_a]:underline-offset-2",
         "[&_hr]:my-5 [&_hr]:border-border/50",
-        "[&_pre]:overflow-x-auto [&_pre]:rounded-sm [&_pre]:bg-muted/30 [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-xs",
         "[&_code]:rounded-sm [&_code]:bg-muted/35 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs",
-        "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
+        "[&_[data-code-block]_code]:rounded-none [&_[data-code-block]_code]:bg-transparent [&_[data-code-block]_code]:p-0",
         "[&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:border-collapse",
         "[&_th]:border [&_th]:border-border/40 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left",
         "[&_td]:border [&_td]:border-border/40 [&_td]:px-2 [&_td]:py-1",

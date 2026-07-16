@@ -1,5 +1,5 @@
 import type { PullRequestReviewThread } from "@mcode/contracts";
-import { MessageSquareText } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 import { memo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -82,9 +82,10 @@ function DraftEditor({
       data-draft-id={draft.localId}
     >
       <div className="flex min-w-0 items-center gap-2">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background/70 text-muted-foreground ring-1 ring-inset ring-border/60">
-          <MessageSquareText aria-hidden className="size-3.5" />
-        </span>
+        <MessageCircle
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground"
+        />
         <span className="text-sm font-medium text-foreground">
           Local comment
         </span>
@@ -166,9 +167,10 @@ function PullRequestInlineThreadComponent({
             className="overflow-hidden rounded-lg bg-muted/45 ring-1 ring-inset ring-border/60"
           >
             <div className="flex min-w-0 items-center gap-2 px-3 py-2.5">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background/70 text-muted-foreground ring-1 ring-inset ring-border/60">
-                <MessageSquareText aria-hidden className="size-3.5" />
-              </span>
+              <MessageCircle
+                aria-hidden
+                className="size-4 shrink-0 text-muted-foreground"
+              />
               <span className="text-sm font-medium text-foreground">
                 Review thread
               </span>

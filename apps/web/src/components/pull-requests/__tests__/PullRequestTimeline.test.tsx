@@ -213,6 +213,30 @@ describe("PullRequestTimeline", () => {
     });
   });
 
+  it("uses the rounded comment bubble for comment activity", () => {
+    render(
+      <PullRequestTimeline
+        items={[
+          {
+            kind: "issue_comment",
+            providerNodeId: "comment-node",
+            occurredAt: "2026-07-11T12:00:00.000Z",
+            updatedAt: "2026-07-11T12:00:00.000Z",
+            actor: null,
+            url: null,
+            body: "Comment body",
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      document.querySelector(
+        '[data-timeline-marker="issue_comment"] svg.lucide-message-circle',
+      ),
+    ).not.toBeNull();
+  });
+
   it("distinguishes initial loading, failed-empty, and successful-empty states", () => {
     const view = render(<PullRequestTimeline items={[]} initialLoading />);
 
