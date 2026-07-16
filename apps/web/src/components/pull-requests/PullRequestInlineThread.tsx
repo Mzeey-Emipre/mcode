@@ -1,4 +1,5 @@
 import type { PullRequestReviewThread } from "@mcode/contracts";
+import { MessageSquareText } from "lucide-react";
 import { memo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,21 +20,47 @@ export interface PullRequestInlineThreadProps {
   onRestoreFocus: (lineKey: string | null) => void;
 }
 
-function placementLabel(row: PullRequestDiffInlineRow): string {
-  if (row.placement === "file") return "File conversation";
-  if (row.placement === "outdated") return "Outdated conversation";
-  if (row.placement === "original") return "Original line conversation";
-  return "Line conversation";
+function coordinateLabel(
+  subjectType: "file" | "line",
+  side: "left" | "right" | null,
+  line: number | null,
+  originalLine: number | null,
+): string {
+  if (subjectType === "file") return "Comment on file";
+  const targetLine = line ?? originalLine;
+  if (targetLine === null) return "Comment on line";
+  return `Comment on line ${side === "left" ? "L" : "R"}${targetLine}`;
+}
+
+function rowTargetLabel(row: PullRequestDiffInlineRow): string {
+  if (!row.coordinate) return `Comment on ${row.path}`;
+  return coordinateLabel(
+    row.coordinate.subjectType,
+    row.coordinate.side ?? row.coordinate.originalSide,
+    row.coordinate.line,
+    row.coordinate.originalLine,
+  );
+}
+
+function threadTargetLabel(thread: PullRequestReviewThread): string {
+  return coordinateLabel(
+    thread.subjectType,
+    thread.side,
+    thread.line,
+    thread.originalLine,
+  );
 }
 
 function DraftEditor({
   draft,
+  targetLabel,
   originLineKey,
   onUpdateDraft,
   onRemoveDraft,
   onRestoreFocus,
 }: {
   draft: PullRequestDiffDraftLike;
+  targetLabel: string;
   originLineKey: string | null;
   onUpdateDraft: (localId: string, body: string) => boolean;
   onRemoveDraft: (localId: string) => void;
@@ -50,20 +77,32 @@ function DraftEditor({
   };
 
   return (
-    <div className="bg-background/45 px-3 py-2.5" data-draft-id={draft.localId}>
-      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="font-mono uppercase tracking-wider">Local draft</span>
-        {draft.outdated && (
+    <div
+      className="rounded-lg bg-muted/55 p-3 ring-1 ring-inset ring-border/60"
+      data-draft-id={draft.localId}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background/70 text-muted-foreground ring-1 ring-inset ring-border/60">
+          <MessageSquareText aria-hidden className="size-3.5" />
+        </span>
+        <span className="text-sm font-medium text-foreground">
+          Local comment
+        </span>
+        {draft.outdated ? (
           <Badge variant="ghost" size="sm">
             Outdated
           </Badge>
-        )}
+        ) : null}
+        <span className="ml-auto min-w-0 truncate font-mono text-xs text-muted-foreground">
+          {targetLabel}
+        </span>
       </div>
       <Textarea
         aria-label="Review draft"
         autoFocus={body.length === 0}
         value={body}
-        className="min-h-20 resize-y rounded-none font-mono text-xs"
+        placeholder="Request change"
+        className="mt-3 min-h-16 resize-y border-border/50 bg-background/60 px-3 py-2 text-sm shadow-none"
         onChange={(event) => {
           setError(
             onUpdateDraft(draft.localId, event.target.value)
@@ -82,11 +121,11 @@ function DraftEditor({
           {error}
         </p>
       )}
-      <div className="mt-2 flex justify-end gap-1">
+      <div className="mt-2.5 flex justify-end gap-1.5">
         <Button
           type="button"
           variant="ghost"
-          size="sm"
+          size="xs"
           className="text-xs text-muted-foreground"
           onClick={removeAndRestore}
         >
@@ -95,11 +134,11 @@ function DraftEditor({
         <Button
           type="button"
           variant="secondary"
-          size="sm"
+          size="xs"
           className="text-xs"
           onClick={() => onRestoreFocus(originLineKey)}
         >
-          Keep draft
+          Done
         </Button>
       </div>
     </div>
@@ -115,34 +154,23 @@ function PullRequestInlineThreadComponent({
 }: PullRequestInlineThreadProps) {
   return (
     <section
-      aria-label={placementLabel(row)}
-      className="bg-page/70 px-3 py-2.5"
+      aria-label="Inline review comments"
+      className="py-3 pl-12 pr-3"
       data-inline-placement={row.placement}
     >
-      <div className="mb-2 flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-muted-foreground">
-        <span aria-hidden className="text-primary/80">⌁</span>
-        <span>{placementLabel(row)}</span>
-        {row.placement === "outdated" && (
-          <span className="min-w-0 truncate normal-case tracking-normal">
-            {row.path}
-          </span>
-        )}
-        <span className="tabular-nums">
-          {row.threads.length + row.drafts.length}
-        </span>
-      </div>
-      <div className="space-y-3">
+      <div className="max-w-4xl space-y-3">
         {row.threads.map((thread) => (
           <article
             key={thread.providerNodeId}
             data-provider-node-id={thread.providerNodeId}
-            className="bg-background/35 px-3 py-2.5"
+            className="overflow-hidden rounded-lg bg-muted/45 ring-1 ring-inset ring-border/60"
           >
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="font-mono text-foreground/80">
-                {thread.subjectType === "file"
-                  ? thread.path
-                  : `${thread.path}:${thread.line ?? thread.originalLine ?? "?"}`}
+            <div className="flex min-w-0 items-center gap-2 px-3 py-2.5">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-background/70 text-muted-foreground ring-1 ring-inset ring-border/60">
+                <MessageSquareText aria-hidden className="size-3.5" />
+              </span>
+              <span className="text-sm font-medium text-foreground">
+                Review thread
               </span>
               <Badge variant="ghost" size="sm">
                 {thread.isResolved ? "Resolved" : "Open"}
@@ -152,35 +180,45 @@ function PullRequestInlineThreadComponent({
                   Outdated
                 </Badge>
               )}
+              <span className="ml-auto min-w-0 truncate font-mono text-xs text-muted-foreground">
+                {threadTargetLabel(thread)}
+              </span>
             </div>
-            <div className="mt-2 space-y-2.5">
+            <div className="divide-y divide-border/40 border-t border-border/40">
               {thread.comments.map((comment) => (
-                  <div key={comment.providerNodeId}>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>{comment.author?.login ?? "Unknown actor"}</span>
-                      <time dateTime={comment.createdAt} className="font-mono tabular-nums">
-                        {new Date(comment.createdAt).toLocaleString()}
-                      </time>
-                    </div>
-                    <RemoteMarkdown content={comment.body} className="mt-1" />
+                <div className="px-3 py-3" key={comment.providerNodeId}>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground/80">
+                      {comment.author?.login ?? "Unknown actor"}
+                    </span>
+                    <time
+                      dateTime={comment.createdAt}
+                      className="font-mono tabular-nums"
+                    >
+                      {new Date(comment.createdAt).toLocaleString()}
+                    </time>
                   </div>
-                ))}
+                  <RemoteMarkdown content={comment.body} className="mt-1" />
+                </div>
+              ))}
             </div>
             {thread.totalCount > thread.comments.length && (
-              <p className="mt-2 text-xs text-muted-foreground">
+              <p className="border-t border-border/40 px-3 py-2 text-xs text-muted-foreground">
                 Showing {thread.comments.length} of {thread.totalCount} comments.
               </p>
             )}
             {!thread.isResolved && onCreateReply && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="mt-2 text-xs text-muted-foreground"
-                onClick={() => onCreateReply(thread, row.anchorLineKey)}
-              >
-                Draft reply
-              </Button>
+              <div className="flex justify-end border-t border-border/40 px-2 py-1.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="text-xs text-muted-foreground"
+                  onClick={() => onCreateReply(thread, row.anchorLineKey)}
+                >
+                  Draft reply
+                </Button>
+              </div>
             )}
           </article>
         ))}
@@ -188,6 +226,7 @@ function PullRequestInlineThreadComponent({
           <DraftEditor
             key={draft.localId}
             draft={draft}
+            targetLabel={rowTargetLabel(row)}
             originLineKey={row.anchorLineKey}
             onUpdateDraft={onUpdateDraft}
             onRemoveDraft={onRemoveDraft}

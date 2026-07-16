@@ -14,7 +14,19 @@ const row: PullRequestDiffInlineRow = {
   key: "inline-1",
   snapshotKey: "snapshot-a",
   path: "src/a.ts",
-  coordinate: null,
+  coordinate: {
+    subjectType: "line",
+    side: "right",
+    startSide: "right",
+    line: 8,
+    startLine: 8,
+    originalSide: "left",
+    originalStartSide: "left",
+    originalLine: 7,
+    originalStartLine: 7,
+    commitOid: "a".repeat(40),
+    headOid: "b".repeat(40),
+  },
   placement: "outdated",
   anchorLineKey: "line-8",
   threads: [
@@ -96,6 +108,18 @@ describe("PullRequestInlineThread", () => {
 
     expect(screen.getByText("Remote body")).toBeVisible();
     expect(screen.getAllByText("Outdated")).toHaveLength(2);
+    expect(screen.getByText("Review thread")).toBeVisible();
+    expect(screen.getByText("Local comment")).toBeVisible();
+    expect(screen.getAllByText("Comment on line R8")).toHaveLength(2);
+    expect(
+      screen.queryByText("Line conversation", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Inline review comments" }),
+    ).toHaveClass("pl-12");
+    expect(
+      screen.getByText("Review thread").closest("article"),
+    ).toHaveClass("rounded-lg", "ring-1");
     expect(
       screen.queryByRole("link", { name: "Open comment" }),
     ).not.toBeInTheDocument();
@@ -120,10 +144,32 @@ describe("PullRequestInlineThread", () => {
     );
 
     const editor = screen.getByRole("textbox", { name: "Review draft" });
+    expect(editor).toHaveAttribute("placeholder", "Request change");
+    expect(editor).toHaveClass("min-h-16", "rounded-lg", "text-sm");
+    expect(editor).not.toHaveClass("font-mono", "rounded-none");
     fireEvent.change(editor, { target: { value: "Revised" } });
     expect(update).toHaveBeenLastCalledWith("draft-1", "Revised");
     await user.click(screen.getByRole("button", { name: "Discard" }));
     expect(remove).toHaveBeenCalledWith("draft-1");
+    expect(restore).toHaveBeenCalledWith("line-8");
+  });
+
+  it("closes the editor without discarding an autosaved draft", async () => {
+    const user = userEvent.setup();
+    const remove = vi.fn();
+    const restore = vi.fn();
+    render(
+      <PullRequestInlineThread
+        row={row}
+        onUpdateDraft={() => true}
+        onRemoveDraft={remove}
+        onRestoreFocus={restore}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Done" }));
+
+    expect(remove).not.toHaveBeenCalled();
     expect(restore).toHaveBeenCalledWith("line-8");
   });
 });

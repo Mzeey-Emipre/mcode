@@ -320,7 +320,7 @@ function PullRequestVirtualDiffComponent({
     estimateSize: (index) => {
       const row = rows[index];
       if (row?.kind === "file") return 40;
-      if (row?.kind === "inline") return 180;
+      if (row?.kind === "inline") return 160;
       if (row?.kind === "notice") return 44;
       if (row?.kind === "hunk") {
         return row.hiddenLineCount > 0 ? DIFF_ROW_ESTIMATE_PX : 0;
