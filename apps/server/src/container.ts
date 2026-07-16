@@ -21,6 +21,7 @@ import { CleanupJobRepo } from "./repositories/cleanup-job-repo";
 import { ModelCacheRepo } from "./repositories/model-cache-repo";
 import { PlanQuestionAnswersRepo } from "./repositories/plan-question-answers-repo";
 import { PlanRepo } from "./repositories/plan-repo";
+import { PullRequestReviewLinkRepo } from "./repositories/pull-request-review-link-repo";
 
 // Providers
 import { ClaudeProvider } from "./providers/claude/claude-provider";
@@ -71,6 +72,10 @@ import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
 import { ThreadTeardownService } from "./services/thread-teardown-service";
 import { RealGitExecutor } from "./services/git-executor/index.js";
+import { GithubPullRequestClient } from "./services/pull-requests/github-pull-request-client.js";
+import { PullRequestService } from "./services/pull-requests/pull-request-service.js";
+import { PullRequestMutationService } from "./services/pull-requests/pull-request-mutation-service.js";
+import { ReviewWorktreeService } from "./services/pull-requests/review-worktree-service.js";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(mcodeDir: string): typeof container {
@@ -206,6 +211,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register("PlanRepo", {
     useFactory: (c) => c.resolve(PlanRepo),
   });
+  container.register(
+    PullRequestReviewLinkRepo,
+    { useClass: PullRequestReviewLinkRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
 
   // Providers
   container.register(
@@ -314,6 +324,19 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     GithubService,
     { useClass: GithubService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  const githubPullRequestClient = new GithubPullRequestClient();
+  const pullRequestService = new PullRequestService(githubPullRequestClient);
+  container.registerInstance(GithubPullRequestClient, githubPullRequestClient);
+  container.registerInstance(PullRequestService, pullRequestService);
+  container.registerInstance(
+    PullRequestMutationService,
+    new PullRequestMutationService(githubPullRequestClient, pullRequestService),
+  );
+  container.register(
+    ReviewWorktreeService,
+    { useClass: ReviewWorktreeService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

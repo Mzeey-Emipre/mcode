@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { container } from "tsyringe";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../store/database.js";
-import { ThreadRepo } from "../thread-repo.js";
+import { ThreadRepo, MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS } from "../thread-repo.js";
 import { TurnSnapshotRepo } from "../turn-snapshot-repo.js";
 import { WorkspaceRepo } from "../workspace-repo.js";
 
@@ -38,6 +38,47 @@ describe("ThreadRepo has_file_changes", () => {
     db.prepare("UPDATE threads SET has_file_changes = 0 WHERE id = ?").run(t.id);
     const reloaded2 = threadRepo.findById(t.id);
     expect(reloaded2?.has_file_changes).toBe(false);
+  });
+});
+
+describe("ThreadRepo active worktree ownership paths", () => {
+  it("caps retained sibling paths and reports truncation", () => {
+    const db = openMemoryDatabase();
+    const workspaceRepo = new WorkspaceRepo(db);
+    const threadRepo = new ThreadRepo(db);
+    const workspace = workspaceRepo.create("bounded", "/tmp/bounded", true);
+    const source = threadRepo.create(
+      workspace.id,
+      "source",
+      "worktree",
+      "feature/source",
+    );
+    threadRepo.updateWorktreePath(source.id, "/tmp/worktrees/source");
+    const now = new Date().toISOString();
+    const insert = db.prepare(
+      `INSERT INTO threads
+        (id, workspace_id, title, branch, mode, status, worktree_path, worktree_managed, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'worktree', 'active', ?, 0, ?, ?)`,
+    );
+    db.transaction(() => {
+      for (let index = 0; index <= MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS; index++) {
+        insert.run(
+          `sibling-${index}`,
+          workspace.id,
+          `Sibling ${index}`,
+          `feature/${index}`,
+          `/tmp/worktrees/${index}`,
+          now,
+          now,
+        );
+      }
+    })();
+
+    const paths = threadRepo.listActiveSiblingWorktreePaths(source.id);
+
+    expect(paths.paths).toHaveLength(MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS);
+    expect(paths.truncated).toBe(true);
+    db.close();
   });
 });
 

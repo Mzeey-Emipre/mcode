@@ -567,6 +567,76 @@ within their own provider's context window. Distinct from a fork handoff,
 though the orchestrator does consult `last_compact_summary` when building a
 deterministic path-D handoff.
 
+## Pull request review
+
+### Pull request inbox
+The workspace-level surface that gathers pull requests the user authored or was
+asked to review across connected repositories. It is independent of the active
+thread and groups review work by the user's relationship to each pull request.
+The All relationship view presents Review requested, Previously reviewed, and
+Authored as one ordered set of subsections. Fresh loaded rows are reused across
+covered relationship views and local search or filters refine that snapshot
+without replacing the inbox with a loading state.
+_Avoid_: PR tab, Review tab
+
+### Pull request review
+The read-and-respond workflow for one remote pull request: inspect its summary,
+conversation, checks, and code changes, then optionally submit a review. It does
+not require a local thread or worktree.
+_Avoid_: Checkout
+
+### Remote effect
+The named GitHub change a Pull request mutation would make: post an issue
+comment, submit a review, change readiness, close, or merge. The interface shows
+the Remote effect before confirmation. Pull request mutation names the confirmed
+attempt; Remote effect names what that attempt changes.
+_Avoid_: Action, when it hides what would change
+
+### Review draft
+A session-local inline comment, thread reply, or overall review body tied to one
+base and head snapshot. A Review draft does not exist on GitHub until the user
+confirms Submit review. It becomes outdated, rather than moving silently, when
+the Change stack changes. A failed, conflicted, or rate-limited submission keeps
+the draft available for correction or retry.
+_Avoid_: Pending review, which is a provider-side object used only during submission
+
+### Change stack
+The complete set of changes proposed by a pull request, viewed as one reviewable
+unit across its summary, timeline, checks, comments, commits, and file diffs.
+_Avoid_: Diff, when referring to the whole pull request
+
+### Review worktree
+An isolated local worktree created from a pull request's head branch so the user
+can ask an agent to inspect or modify the proposed changes. It belongs to a new
+thread and does not alter the source pull request until the user explicitly
+commits, pushes, comments, reviews, or merges.
+_Avoid_: Checkout, pull into a worktree
+
+### Review task
+The thread created to work on a pull request's Review worktree. It carries the
+pull request as its starting context and follows the normal thread lifecycle
+after creation.
+_Avoid_: Pull request thread
+
+### Review Change Stack
+The local continuation action that creates or reuses a Review worktree and
+Review task for a pull request. It may fetch refs and update local Git and Mcode
+state, but it never posts, reviews, closes, merges, commits, or pushes.
+_Avoid_: Checkout, Submit review
+
+### Pull request mutation
+An explicit remote write against one pull request: post a comment, submit a
+review, change draft or ready state, close, or merge. Each mutation names its
+effect before confirmation and rechecks current GitHub state before writing.
+Reading, refreshing, and Review task creation are not mutations.
+_Avoid_: Action, when the remote effect is the important distinction
+
+### Mutation outcome unknown
+A pull request mutation result used when GitHub may have accepted a write but
+the response did not establish the outcome. The user must refresh remote state
+before choosing another effect. Retrying the same attempt keeps its identity.
+_Avoid_: Failed, which states that the write did not happen
+
 ## Thread overview
 
 ### Overview

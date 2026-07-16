@@ -189,7 +189,11 @@ interface WorkspaceState {
    * the project selector re-sorts immediately. Pass an optional `call` to
    * route the touchLastOpened RPC through a custom dispatcher (used in tests).
    */
-  setActiveWorkspace: (id: string | null, call?: WorkspaceRpcCall) => void;
+  setActiveWorkspace: (
+    id: string | null,
+    call?: WorkspaceRpcCall,
+    loadThreads?: boolean,
+  ) => void;
   /** Pin or unpin a workspace. Optimistically updates local state; reverts on RPC failure. */
   pinWorkspace: (id: string, pinned: boolean, call?: WorkspaceRpcCall) => Promise<void>;
   /** Remove a workspace from the recents list. Clears last_opened_at and pinned locally; reverts on RPC failure. */
@@ -313,6 +317,16 @@ interface WorkspaceState {
    * link without waiting for the next background poll.
    */
   recordPrCreated: (threadId: string, prNumber: number, prUrl: string) => void;
+  /**
+   * Record a pull request link even when its thread has not been loaded yet.
+   * The cached URL survives the subsequent thread-list load.
+   */
+  recordPullRequestLink: (
+    threadId: string,
+    prNumber: number,
+    prUrl: string,
+    prStatus: string,
+  ) => void;
 }
 
 /** Zustand store for workspace, thread, branch, and PR state management. */
@@ -535,7 +549,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     }));
   },
 
-  setActiveWorkspace: (id, call) => {
+  setActiveWorkspace: (id, call, loadThreads = true) => {
     if (id === get().activeWorkspaceId) return;
     // Only clear activeThreadId if the current thread belongs to a different workspace
     const currentThread = get().threads.find(
@@ -559,7 +573,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       branchManuallySelected: false,
     });
     if (id) {
-      get().loadThreads(id);
+      if (loadThreads) get().loadThreads(id);
       // Optimistically bump the local last_opened_at so the project selector
       // re-sorts immediately. Without this the row only moves to the top of
       // "Recent" after the next workspace list refresh, which feels laggy.
@@ -1287,17 +1301,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     }
   },
 
-  recordPrCreated: (threadId, prNumber, prUrl) => {
+  recordPullRequestLink: (threadId, prNumber, prUrl, prStatus) => {
     set((state) => {
       const thread = state.threads.find((t) => t.id === threadId);
-      if (!thread) return state;
       return {
-        threads: state.threads.map((t) =>
-          t.id === threadId ? { ...t, pr_number: prNumber, pr_status: "OPEN" } : t,
-        ),
+        threads: thread
+          ? state.threads.map((candidate) =>
+              candidate.id === threadId
+                ? { ...candidate, pr_number: prNumber, pr_status: prStatus }
+                : candidate,
+            )
+          : state.threads,
         prUrlsByThreadId: { ...state.prUrlsByThreadId, [threadId]: prUrl },
       };
     });
+  },
+  recordPrCreated: (threadId, prNumber, prUrl) => {
+    if (!get().threads.some((thread) => thread.id === threadId)) return;
+    get().recordPullRequestLink(threadId, prNumber, prUrl, "OPEN");
   },
 };
 });

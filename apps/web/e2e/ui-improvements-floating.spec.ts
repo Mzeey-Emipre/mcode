@@ -54,6 +54,15 @@ async function openComposerInNewThread(page: Page): Promise<void> {
     page.getByRole("heading", { name: "What should we build in Test Workspace?" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /^(Send message|Queue message|Stop agent)$/ })).toBeVisible();
+  const closeProjectTree = page.getByRole("button", {
+    name: "Close project tree",
+  });
+  if (await closeProjectTree.isVisible().catch(() => false)) {
+    const viewport = page.viewportSize();
+    if (!viewport) throw new Error("Viewport size is unavailable");
+    await page.mouse.click(viewport.width - 8, 8);
+    await expect(closeProjectTree).toHaveCount(0);
+  }
 }
 
 test.describe("Composer options — wide viewport (md+)", () => {

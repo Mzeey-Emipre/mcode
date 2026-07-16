@@ -235,6 +235,15 @@ function failingChecksWithRuns() {
 
 /** Opens the Overview if it isn't already (it auto-opens on wide viewports). */
 async function ensureOverviewOpen(page: import("@playwright/test").Page) {
+  const closeProjectTree = page.getByRole("button", {
+    name: "Close project tree",
+  });
+  if (await closeProjectTree.isVisible().catch(() => false)) {
+    const viewport = page.viewportSize();
+    if (!viewport) throw new Error("Viewport size is unavailable");
+    await page.mouse.click(viewport.width - 8, 8);
+    await expect(closeProjectTree).toHaveCount(0);
+  }
   const content = overviewContent(page);
   if (!(await content.isVisible().catch(() => false))) {
     await page.getByTestId("header-workspace-menu").click();

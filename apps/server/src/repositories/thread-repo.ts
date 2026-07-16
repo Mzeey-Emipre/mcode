@@ -87,6 +87,15 @@ function rowToThread(row: ThreadRow): Thread {
 const THREAD_COLUMNS =
   "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
 
+/** Maximum active sibling paths considered during one worktree ownership decision. */
+export const MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS = 512;
+
+/** Bounded active sibling paths used for canonical filesystem identity checks. */
+export interface ActiveWorktreePathSet {
+  paths: string[];
+  truncated: boolean;
+}
+
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
 export class ThreadRepo {
@@ -375,13 +384,19 @@ export class ThreadRepo {
   /** Soft-delete a thread by setting deleted_at and status to "deleted". */
   softDelete(id: string): boolean {
     const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        "UPDATE threads SET deleted_at = ?, status = ?, updated_at = ? WHERE id = ?",
-      )
-      .run(now, "deleted", now, id);
-
-    return result.changes > 0;
+    return this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          "UPDATE threads SET deleted_at = ?, status = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(now, "deleted", now, id);
+      if (result.changes > 0) {
+        this.db.prepare(
+          "UPDATE pull_request_review_links SET primary_thread_id = NULL, updated_at = ? WHERE primary_thread_id = ?",
+        ).run(now, id);
+      }
+      return result.changes > 0;
+    })();
   }
 
   /** Permanently remove a thread record from the database. */
@@ -634,5 +649,31 @@ export class ThreadRepo {
       )
       .get(threadId, branch, threadId) as { count: number };
     return row.count;
+  }
+
+  /** List bounded active sibling worktree paths for canonical ownership checks. */
+  listActiveSiblingWorktreePaths(
+    threadId: string,
+    limit = MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS,
+  ): ActiveWorktreePathSet {
+    const boundedLimit = Math.max(
+      1,
+      Math.min(MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS, Math.trunc(limit)),
+    );
+    const rows = this.db
+      .prepare(
+        `SELECT worktree_path
+         FROM threads
+         WHERE workspace_id = (SELECT workspace_id FROM threads WHERE id = ?)
+         AND id != ?
+         AND deleted_at IS NULL
+         AND worktree_path IS NOT NULL
+         LIMIT ?`,
+      )
+      .all(threadId, threadId, boundedLimit + 1) as Array<{ worktree_path: string }>;
+    return {
+      paths: rows.slice(0, boundedLimit).map((row) => row.worktree_path),
+      truncated: rows.length > boundedLimit,
+    };
   }
 }

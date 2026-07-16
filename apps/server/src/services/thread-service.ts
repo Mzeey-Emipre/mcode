@@ -196,30 +196,66 @@ export class ThreadService {
    */
   async delete(threadId: string, cleanupWorktree: boolean): Promise<boolean> {
     const thread = this.threadRepo.findById(threadId);
-    if (!thread) return false;
+    if (!thread || thread.deleted_at !== null) return false;
 
-    if (cleanupWorktree) {
-      if (thread.worktree_path) {
-        const workspace = this.workspaceRepo.findById(thread.workspace_id);
-        if (workspace) {
-          this.cleanupJobRepo.insert({
-            thread_id: threadId,
-            workspace_path: workspace.path,
-            worktree_path: thread.worktree_path,
-            branch: thread.branch,
-          });
-          logger.info("Worktree cleanup job enqueued", {
-            threadId,
-            worktreePath: thread.worktree_path,
-          });
-          return this.threadRepo.softDelete(threadId);
-        }
+    if (cleanupWorktree && thread.worktree_path && thread.worktree_managed) {
+      const worktreePath = thread.worktree_path;
+      const workspace = this.workspaceRepo.findById(thread.workspace_id);
+      if (workspace) {
+        const queued = await this.gitService.withReviewWorktreeMutationLock(
+          workspace.path,
+          async () => {
+            const current = this.threadRepo.findById(threadId);
+            if (
+              !current
+              || current.deleted_at !== null
+              || !current.worktree_managed
+              || !current.worktree_path
+              || current.worktree_path !== worktreePath
+            ) {
+              return false;
+            }
+            const siblings = this.threadRepo.listActiveSiblingWorktreePaths(threadId);
+            const safety = await this.gitService.assessWorktreeRemovalSafety(
+              current.worktree_path,
+              siblings.paths,
+              siblings.truncated,
+            );
+            if (!safety.safe) {
+              logger.info("Worktree cleanup skipped because ownership is not exclusive", {
+                threadId,
+                worktreePath: current.worktree_path,
+                reason: safety.reason,
+              });
+              return false;
+            }
+            this.cleanupJobRepo.insert({
+              thread_id: threadId,
+              workspace_path: workspace.path,
+              worktree_path: current.worktree_path,
+              branch: current.branch,
+            });
+            logger.info("Worktree cleanup job enqueued", {
+              threadId,
+              worktreePath: current.worktree_path,
+            });
+            return this.threadRepo.softDelete(threadId);
+          },
+        );
+        if (queued) return true;
+      } else {
         logger.warn("Worktree cleanup skipped - workspace not found, directory will not be removed", {
           threadId,
           workspaceId: thread.workspace_id,
           worktreePath: thread.worktree_path,
         });
       }
+    } else if (cleanupWorktree && thread.worktree_path) {
+      logger.info("Worktree cleanup skipped because the checkout is reused or unmanaged", {
+        threadId,
+        worktreePath: thread.worktree_path,
+        managed: thread.worktree_managed,
+      });
     }
 
     this.attachmentService.removeForThread(threadId);

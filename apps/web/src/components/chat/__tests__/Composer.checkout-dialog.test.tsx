@@ -409,6 +409,26 @@ describe("Composer checkout confirmation", () => {
     ]);
   });
 
+  it("reports the created thread to an embedding new-thread workflow", async () => {
+    seedComposerState("worktree");
+    const onThreadCreated = vi.fn();
+    render(
+      <Composer
+        isNewThread
+        workspaceId="ws-1"
+        onThreadCreated={onThreadCreated}
+      />,
+    );
+
+    await typeAndSend();
+
+    await waitFor(() =>
+      expect(onThreadCreated).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "thread-created" }),
+      ),
+    );
+  });
+
   it("clears annotations and exits design mode after a successful annotation send", async () => {
     const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
     const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });

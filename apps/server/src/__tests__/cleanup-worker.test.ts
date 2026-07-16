@@ -60,6 +60,18 @@ describe("CleanupWorker", () => {
     mockGitService = {
       removeWorktree: vi.fn().mockResolvedValue(true),
       isRegisteredWorktreePath: vi.fn().mockReturnValue(false),
+      withReviewWorktreeMutationLock: vi.fn(async (_repoPath, work) => work()),
+      assessWorktreeRemovalSafety: vi.fn(async (
+        worktreePath: string,
+        siblingPaths: readonly string[],
+        truncated: boolean,
+      ) => {
+        const normalize = (value: string) => value.replace(/\\/g, "/").toLowerCase();
+        if (truncated) return { safe: false, reason: "truncated" as const };
+        return siblingPaths.some((path) => normalize(path) === normalize(worktreePath))
+          ? { safe: false, reason: "shared" as const }
+          : { safe: true, reason: "exclusive" as const };
+      }),
     } as unknown as GitService;
 
     worker = new CleanupWorker(
@@ -151,6 +163,42 @@ describe("CleanupWorker", () => {
       await worker.poll();
 
       expect(threadRepo.findById("t-2")).toBeNull();
+    });
+
+    it("does not remove a worktree that gained an active sibling after enqueue", async () => {
+      const ws = workspaceRepo.create("test", "/repo");
+      const sharedPath = wt("shared-after-enqueue");
+      insertThread("t-deleted", ws.id, "mcode/shared", sharedPath);
+      const sibling = threadRepo.create(
+        ws.id,
+        "Active sibling",
+        "worktree",
+        "mcode/shared",
+        false,
+      );
+      threadRepo.updateWorktreePath(sibling.id, sharedPath);
+      cleanupJobRepo.insert({
+        thread_id: "t-deleted",
+        workspace_path: "/repo",
+        worktree_path: sharedPath,
+        branch: "mcode/shared",
+      });
+
+      await worker.poll();
+
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+      expect(mockGitService.withReviewWorktreeMutationLock).toHaveBeenCalledWith(
+        expect.stringMatching(/[\\/]repo$/i),
+        expect.any(Function),
+      );
+      expect(mockGitService.assessWorktreeRemovalSafety).toHaveBeenCalledWith(
+        sharedPath,
+        [sharedPath],
+        false,
+      );
+      expect(threadRepo.findById("t-deleted")).toBeNull();
+      expect(threadRepo.findById(sibling.id)).not.toBeNull();
+      expect(cleanupJobRepo.count()).toBe(0);
     });
 
     it("removes the cleanup job after successful cleanup", async () => {

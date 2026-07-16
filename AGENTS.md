@@ -77,6 +77,32 @@ buffer fills. Unbounded retention is never acceptable, even "temporarily."
 or behind a cheap guard. Measure before adding validation inside a hot path. When
 in doubt, bound the work first, optimize second.
 
+## UI Design Workflow
+
+For user-visible frontend work, use this instruction order:
+
+1. The user's explicit feedback, screenshots, and selected references.
+2. [PRODUCT.md](PRODUCT.md) for audience, jobs, and product principles.
+3. [DESIGN.md](DESIGN.md) for tokens, typography, spacing, components, and
+   surface treatment.
+4. [docs/guides/ui-design-spec.md](docs/guides/ui-design-spec.md) for
+   qualitative direction where it agrees with PRODUCT.md and DESIGN.md.
+5. Existing shared components and neighboring product patterns.
+6. Generic design skills and heuristics.
+
+Higher items override lower ones. A generic design rule must not erase an
+intentional Mcode pattern or a capability the user asked to preserve.
+
+For a scoped correction, identify the root cause and the existing pattern to
+preserve. Do not invent a new visual direction or signature treatment. For a
+substantial new surface or redesign, record the reference, hierarchy, visual
+direction, and restraint before coding.
+
+Responsive work keeps the same tool and state where possible. A panel may dock
+when wide and float when narrow, but it should not become a weaker picker,
+dropdown, or modal solely because its container shrank. Verify the exact
+viewport, split position, state, and transition that the user reported.
+
 ## UI Components
 
 When working on frontend code, follow the component registry and rules in **[docs/guides/ui-components.md](docs/guides/ui-components.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.

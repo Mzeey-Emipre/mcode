@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import type { Thread } from "@/transport";
+import { useOverviewStore } from "@/stores/overviewStore";
 
 const {
   mockCreateBranch,
@@ -169,12 +170,23 @@ describe("ThreadOverview branchless Create PR", () => {
     mockWorkspaceState.checksById = {};
     mockWorkspaceState.worktreesLoadedForWorkspace = "ws-1";
     mockCreateBranch.mockReset().mockResolvedValue({ branch: "feat/issue-801" });
+    useOverviewStore.setState({ reserveSpace: false, requestedThreadId: null });
   });
 
   it("classifies only branchless worktrees as branch-name Create PR candidates", () => {
     expect(canStartBranchlessCreatePr(makeThread())).toBe(true);
     expect(canStartBranchlessCreatePr(makeThread({ checkout_state: "named" }))).toBe(false);
     expect(canStartBranchlessCreatePr(makeThread({ mode: "direct" }))).toBe(false);
+  });
+
+  it("consumes a thread-keyed request to open Overview after navigation", async () => {
+    useOverviewStore.getState().requestOpen("thread-1");
+
+    render(<ThreadOverview thread={makeThread()} threadPaneWidth={500} />);
+
+    await waitFor(() =>
+      expect(useOverviewStore.getState().requestedThreadId).toBeNull(),
+    );
   });
 
   it("creates a named branch from the branchless worktree row", async () => {

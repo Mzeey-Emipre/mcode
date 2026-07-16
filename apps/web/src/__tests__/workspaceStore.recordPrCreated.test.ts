@@ -71,6 +71,45 @@ describe("workspaceStore.recordPrCreated", () => {
   });
 });
 
+describe("workspaceStore.recordPullRequestLink", () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({
+      threads: [],
+      prUrlsByThreadId: {},
+    });
+  });
+
+  it("records the URL before the linked Review task is loaded", () => {
+    useWorkspaceStore.getState().recordPullRequestLink(
+      "review-thread",
+      42,
+      "https://github.com/o/r/pull/42",
+      "open",
+    );
+
+    expect(useWorkspaceStore.getState().prUrlsByThreadId["review-thread"]).toBe(
+      "https://github.com/o/r/pull/42",
+    );
+    expect(useWorkspaceStore.getState().threads).toEqual([]);
+  });
+
+  it("updates an already loaded thread with the remote PR state", () => {
+    useWorkspaceStore.setState({ threads: [baseThread] });
+
+    useWorkspaceStore.getState().recordPullRequestLink(
+      "t1",
+      42,
+      "https://github.com/o/r/pull/42",
+      "merged",
+    );
+
+    expect(useWorkspaceStore.getState().threads[0]).toMatchObject({
+      pr_number: 42,
+      pr_status: "merged",
+    });
+  });
+});
+
 describe("workspaceStore.deleteThread", () => {
   beforeEach(() => {
     vi.clearAllMocks();

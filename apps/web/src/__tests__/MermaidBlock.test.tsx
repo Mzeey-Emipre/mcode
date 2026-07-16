@@ -59,6 +59,52 @@ describe("MermaidBlock", () => {
     });
   });
 
+  it("opens an interactive diagram preview with zoom controls", async () => {
+    mockRender.mockResolvedValue({ svg: '<svg data-testid="mermaid-svg">test</svg>' });
+    render(<MermaidBlock code="graph TD; A-->B;" isStreaming={false} />);
+
+    const previewTrigger = await screen.findByRole("button", {
+      name: "Open diagram preview",
+    });
+    fireEvent.click(previewTrigger);
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Diagram preview" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Zoom out" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reset view" })).toBeEnabled();
+    expect(screen.getByText("100%")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(screen.getByText("125%")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Reset view" }));
+    expect(screen.getByText("100%")).toBeVisible();
+
+    const canvas = screen.getByRole("application", {
+      name: "Interactive diagram canvas",
+    });
+    Object.assign(canvas, {
+      setPointerCapture: vi.fn(),
+      hasPointerCapture: vi.fn(() => true),
+      releasePointerCapture: vi.fn(),
+    });
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      pointerId: 7,
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(canvas, {
+      pointerId: 7,
+      clientX: 30,
+      clientY: 40,
+    });
+
+    expect(canvas.querySelector("[style*='translate3d']")).toHaveStyle({
+      transform: "translate3d(20px, 30px, 0) scale(1)",
+    });
+  });
+
   it("shows error banner and raw code on render failure", async () => {
     mockRender.mockRejectedValue(new Error("Parse error"));
     render(<MermaidBlock code="invalid mermaid" isStreaming={false} />);

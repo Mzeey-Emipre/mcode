@@ -8,8 +8,13 @@ import {
 import { COMPOSER_MIN_WIDTH, useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
+/** Top-level content surface displayed beside the application sidebar. */
+export type PrimarySurface = "chat" | "pullRequests";
+
 /** UI state for cross-component toggles that commands need to control. */
 interface UiState {
+  /** Top-level content surface displayed beside the application sidebar. */
+  primarySurface: PrimarySurface;
   /** Whether the sidebar is collapsed. */
   sidebarCollapsed: boolean;
   /** Whether the layout guard, not the user, collapsed the sidebar. */
@@ -30,10 +35,15 @@ interface UiState {
   /** Whether cramped layout, not the user, maximized the right panel. */
   rightPanelMaximizedByLayout: boolean;
 
+  /** Select the top-level content surface. */
+  setPrimarySurface: (surface: PrimarySurface) => void;
+
   /** Toggle sidebar collapsed state (expands floating when inline will not fit). */
   toggleSidebar: () => void;
   /** Expand the project tree inline when there is room, otherwise as a float. */
   expandSidebar: () => void;
+  /** Keep the open project tree visible as a floating panel. */
+  floatSidebar: () => void;
   /** Collapse the project tree and exit floating mode. */
   collapseSidebar: (source?: "user" | "layout") => void;
   /** Restore a sidebar that was collapsed only to protect the layout. */
@@ -65,12 +75,21 @@ function contentNeedForSidebarDock(rightPanelMaximized: boolean): number {
 
 /** Zustand store for global UI toggle state. Command palette state lives in commandPaletteStore. */
 export const useUiStore = create<UiState>((set, get) => ({
+  primarySurface: "chat",
   sidebarCollapsed: false,
   sidebarCollapsedByLayout: false,
   sidebarFloating: false,
   shortcutHelpOpen: false,
   rightPanelMaximized: false,
   rightPanelMaximizedByLayout: false,
+
+  setPrimarySurface: (surface) =>
+    set({
+      primarySurface: surface,
+      rightPanelMaximized: surface === "pullRequests" ? false : get().rightPanelMaximized,
+      rightPanelMaximizedByLayout:
+        surface === "pullRequests" ? false : get().rightPanelMaximizedByLayout,
+    }),
 
   toggleSidebar: () => {
     if (get().sidebarCollapsed) get().expandSidebar();
@@ -83,6 +102,8 @@ export const useUiStore = create<UiState>((set, get) => ({
       getContentRowWidth() >= contentNeed;
     set({ sidebarCollapsed: false, sidebarCollapsedByLayout: false, sidebarFloating: !inline });
   },
+  floatSidebar: () =>
+    set({ sidebarCollapsed: false, sidebarCollapsedByLayout: false, sidebarFloating: true }),
   collapseSidebar: (source = "user") =>
     set({
       sidebarCollapsed: true,

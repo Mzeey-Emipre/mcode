@@ -4,6 +4,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../popover";
@@ -52,6 +55,33 @@ describe("overlay pointer event boundaries", () => {
 
     await screen.findByTestId("dropdown-content");
     expect(getFixedInertBackdrops()).toHaveLength(0);
+  });
+
+  it("positions cascading menus beside a full-width trigger", async () => {
+    render(
+      <DropdownMenu open>
+        <DropdownMenuTrigger render={<button type="button">Open</button>} />
+        <DropdownMenuContent>
+          <DropdownMenuSub open>
+            <DropdownMenuSubTrigger data-testid="submenu-trigger">
+              Status
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent data-testid="submenu-content">
+              <DropdownMenuItem>Open</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+
+    const trigger = screen.getByTestId("submenu-trigger");
+    const content = await screen.findByTestId("submenu-content");
+
+    expect(trigger).toHaveClass("w-full");
+    expect(trigger.querySelector("svg")).toHaveClass("ml-auto");
+    expect(content).toHaveClass("max-h-(--available-height)");
+    expect(content.parentElement).toHaveAttribute("data-side", "inline-end");
+    expect(content.parentElement).toHaveAttribute("data-align", "start");
   });
 
   it("keeps popover positioners pointer-transparent while content remains interactive", async () => {

@@ -25,7 +25,7 @@ One person, holding their attention:
 Not for:
 
 - People who have never used Claude Code, Cursor, or Codex from a terminal. The mental model is too dense.
-- Teams looking for ticket tracking, code review, or PR workflow inside the app.
+- Teams looking for a multi-user review system, team policy enforcement, or repository administration.
 - People who want a single chat box with no concept of branches, threads, or worktrees.
 
 ## 3. The Jobs Mcode Does
@@ -37,6 +37,7 @@ In rough order of frequency:
 | Run an agent on a fresh branch | Pick provider, choose **New worktree** mode, type the prompt, submit. A worktree is provisioned and the agent starts. | One action vs. five terminal commands. The worktree is named, tracked, listed. |
 | Track multiple agents at once | Sidebar shows every thread across every project with a status dot (idle / running / errored). | A terminal cannot show eight sessions at a glance. |
 | Review what an agent did | Diff panel renders per-turn file changes; side-rail jumps straight to the file in the user's editor. | The CLI's diff output scrolls past and is gone. |
+| Review a pull request | The Pull requests surface groups authored, requested, and reviewed work, then exposes Summary, Timeline, Code, and an optional isolated Review task. | Remote review and local agent work stay in one explicit flow while GitHub remains the system of record. |
 | Follow up on a previous run | Fork a thread from any message, or attach a new thread to an existing worktree. | The CLI has no concept of "continue from message N." |
 | Hand work between providers | Fork a Claude thread into a Cursor thread; a generated handoff doc carries context across. | Provider sessions don't talk to each other. Mcode's B/A/D ladder bridges them. |
 | Inspect an agent's web preview | Preview panel renders the running app; captures regions or full screenshots straight into the next prompt. | No tab-flipping; the screenshot lands in the composer ready to send. |
@@ -60,9 +61,9 @@ Five things that decide ambiguous design or scope calls:
 
 Most of the time, the user is not reading the agent's reply. They're glancing at the sidebar to see what's done, what's running, what errored. Optimize for the glance. A status dot you can read at flick-speed is worth more than a paragraph of agent prose.
 
-### 2. Density over discovery.
+### 2. Information density over uniform compression.
 
-Developers tolerate small type, tight rows, packed columns. Don't add tooltips to teach them what icons mean — they'll learn it once. Don't wrap things in cards to "make them feel safe." Tight is correct.
+Prefer high information density, not tight spacing everywhere. Keep rows compact within a related list, but use stronger spacing between groups, task stages, and primary surfaces. Whitespace is structural when it communicates hierarchy, focus, or ownership. Do not add onboarding tooltips for standard icons. Use tooltips when they reveal clipped data, such as a full file path, or name an icon-only action whose label is not otherwise visible. Do not wrap content in cards only to add space or containment.
 
 ### 3. The agent is a peer, not an oracle.
 
@@ -80,6 +81,14 @@ The interface rewards inactivity. When nothing is happening, the app looks calm.
 
 At every node of the loop, the app surfaces the one move the user is most likely to make next. When the outcome is unambiguous it just happens (add a project, land in a new chat on it); when there is a real choice it offers a single primary action and keeps the rest quiet (a finished turn offers View diff; an errored one offers Re-run). The suggestions are curated, not learned, so the same state always proposes the same move and the user comes to trust it. The goal is not cleverness. It is that the user rarely has to stop and ask "what now?"
 
+### 7. Same tool, different posture.
+
+Responsive changes preserve capability, context, and state. A file navigator
+can dock beside a diff when there is room and float over it when there is not.
+It does not become a weaker picker or a separate workflow just because its
+container narrowed. Layout adapts continuously as panels resize, without
+requiring the user to close and reopen the surface.
+
 ## 6. The Surfaces
 
 A user with Mcode open sees, in priority order:
@@ -92,6 +101,7 @@ A user with Mcode open sees, in priority order:
 | **Plan-mode wizard** | When Plan mode is active, the composer transforms into a step-by-step question flow before any work begins. | Structured planning, not free-form chat. |
 | **Preview panel** | Embedded browser pointed at the running app. Has a **design mode** (manual inspection, gates the main submit button) and a **capture dock** (screenshot regions or elements into the composer). | Visual loop without leaving the app. |
 | **Diff panel** | Per-turn file changes, side-rail to open in editor, whole-file Markdown preview. | Reviewing what the agent did is the second most common action after sending a prompt. |
+| **Pull requests** | Relationship inbox with Summary, Timeline, Code, explicit Remote effects, and Review Change Stack. | Review a remote Change stack or continue it in an isolated Review task without hiding which system changes. |
 | **Command palette** | Cmd+K. Slash commands, actions, and a jump to Settings. | The keyboard discovery surface. |
 | **Right panel** | Terminal as a tab; other auxiliary tabs alongside. | Drop into a shell without leaving the workspace. |
 | **Settings** | Appearance, performance, model context overrides, provider keys, permission modes. Reached from the sidebar or the command palette. | Configuration without leaving the workspace. |
@@ -101,7 +111,7 @@ A user with Mcode open sees, in priority order:
 Explicit non-goals. Saying no to these is what keeps the surface coherent.
 
 - **No ticket tracking.** GitHub Issues, Linear, Jira exist. We point at them; we don't replace them.
-- **No code review workflow.** PRs happen on GitHub. The diff panel is for *the agent's work in flight*, not for reviewing teammates' PRs.
+- **No team review policy or repository administration.** Mcode may surface and act on pull-request review. GitHub remains the system of record; Mcode does not own team review policy or administer repositories.
 - **No team features.** Mcode is a personal tool. Multi-user, shared workspaces, role-based access are out of scope.
 - **No marketing surface.** No dashboards, no "stats", no "your week in Mcode." The app is a tool, not a thing to look at.
 - **No model abstraction layer.** We do not reinvent the provider SDKs. We adapt to them. If Claude releases a new feature, we surface it. We do not pretend providers are interchangeable when they aren't.

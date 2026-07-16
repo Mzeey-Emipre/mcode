@@ -30,10 +30,12 @@ describe('Sidebar "Edit settings.json" button', () => {
 
     // Register non-hoisted mocks for heavy transitive deps.
     vi.doMock("@/components/sidebar/ProjectTree", () => ({
-      ProjectTree: () => React.createElement("div", { "data-testid": "project-tree" }),
+      ProjectTree: () =>
+        React.createElement("div", { "data-testid": "project-tree" }),
     }));
     vi.doMock("@/components/settings/SettingsNav", () => ({
-      SettingsNav: () => React.createElement("div", { "data-testid": "settings-nav" }),
+      SettingsNav: () =>
+        React.createElement("div", { "data-testid": "settings-nav" }),
     }));
 
     // Reset module registry so the fresh import picks up desktopBridge.
@@ -89,7 +91,9 @@ describe('Sidebar "Edit settings.json" button', () => {
   it('renders an SVG icon inside the "Edit settings.json" button', () => {
     renderSettingsSidebar();
 
-    const editButton = screen.getByRole("button", { name: /Edit settings\.json/i });
+    const editButton = screen.getByRole("button", {
+      name: /Edit settings\.json/i,
+    });
     const svgInButton = editButton.querySelector("svg");
     expect(svgInButton).not.toBeNull();
   });
@@ -97,7 +101,9 @@ describe('Sidebar "Edit settings.json" button', () => {
   it('the icon inside "Edit settings.json" has the lucide-braces class', () => {
     renderSettingsSidebar();
 
-    const editButton = screen.getByRole("button", { name: /Edit settings\.json/i });
+    const editButton = screen.getByRole("button", {
+      name: /Edit settings\.json/i,
+    });
     const svg = editButton.querySelector("svg");
     expect(svg?.classList.contains("lucide-braces")).toBe(true);
   });
@@ -106,9 +112,30 @@ describe('Sidebar "Edit settings.json" button', () => {
     renderProjectSidebar();
 
     const newThread = screen.getByRole("button", { name: "New thread" });
-    const searchThreads = screen.getByRole("button", { name: "Search threads" });
+    const searchThreads = screen.getByRole("button", {
+      name: "Search threads",
+    });
     expect(newThread).not.toHaveClass("bg-secondary");
     expect(searchThreads).not.toHaveClass("bg-secondary");
+  });
+
+  it("keeps New thread and Search threads ahead of Pull requests without a duplicate Chat action", () => {
+    renderProjectSidebar();
+
+    expect(
+      screen.queryByRole("button", { name: "Chat" }),
+    ).not.toBeInTheDocument();
+    const newThread = screen.getByRole("button", { name: "New thread" });
+    const searchThreads = screen.getByRole("button", {
+      name: "Search threads",
+    });
+    const pullRequests = screen.getByRole("button", { name: "Pull requests" });
+    expect(newThread.compareDocumentPosition(searchThreads)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(searchThreads.compareDocumentPosition(pullRequests)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it("does not display a keyboard shortcut beside thread search", () => {

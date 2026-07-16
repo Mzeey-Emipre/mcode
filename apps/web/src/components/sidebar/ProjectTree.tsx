@@ -13,10 +13,29 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { Trash2, GitBranch, GitBranchMinus, AlertTriangle, ChevronRight, FolderPlus, Folder, FolderOpen, Activity, MoreHorizontal, Pencil, Plus, SquarePen } from "lucide-react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  Trash2,
+  GitBranch,
+  GitBranchMinus,
+  AlertTriangle,
+  ChevronRight,
+  FolderPlus,
+  Folder,
+  FolderOpen,
+  Activity,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  SquarePen,
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
 import {
   ClaudeIcon,
@@ -48,7 +67,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { schedulePrefetch, cancelPrefetch } from "@/lib/thread-hydrator/prefetch-scheduler";
+import {
+  schedulePrefetch,
+  cancelPrefetch,
+} from "@/lib/thread-hydrator/prefetch-scheduler";
 import { isPrable } from "@/lib/is-prable";
 import { getCiVisual, CI_ICON_STROKE } from "@/lib/ci-status";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
@@ -112,7 +134,9 @@ const DOUBLE_CLICK_THRESHOLD_MS = 250;
 /** Read per-workspace "show all threads" state from localStorage. */
 function getThreadListExpanded(): Record<string, boolean> {
   try {
-    return JSON.parse(localStorage.getItem("mcode-expanded-thread-lists") || "{}");
+    return JSON.parse(
+      localStorage.getItem("mcode-expanded-thread-lists") || "{}",
+    );
   } catch {
     return {};
   }
@@ -206,13 +230,16 @@ export function ProjectTree() {
   const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces);
   const loadThreads = useWorkspaceStore((s) => s.loadThreads);
   const loadWorktrees = useWorkspaceStore((s) => s.loadWorktrees);
-  const worktreesLoadedForWorkspace = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
+  const worktreesLoadedForWorkspace = useWorkspaceStore(
+    (s) => s.worktreesLoadedForWorkspace,
+  );
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
   const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
+  const setPrimarySurface = useUiStore((s) => s.setPrimarySurface);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const reorderWorkspace = useWorkspaceStore((s) => s.reorderWorkspace);
   const error = useWorkspaceStore((s) => s.error);
@@ -245,15 +272,22 @@ export function ProjectTree() {
     return map;
   }, [threads]);
 
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(getExpandedState);
-  const [threadListExpanded, setThreadListExpandedState] = useState<Record<string, boolean>>(getThreadListExpanded);
+  const [expanded, setExpanded] =
+    useState<Record<string, boolean>>(getExpandedState);
+  const [threadListExpanded, setThreadListExpandedState] = useState<
+    Record<string, boolean>
+  >(getThreadListExpanded);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
-  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(
+    null,
+  );
   const [deleteWorktree, setDeleteWorktree] = useState(false);
-  const [wsDeleteDialog, setWsDeleteDialog] = useState<WorkspaceDeleteDialogState | null>(null);
+  const [wsDeleteDialog, setWsDeleteDialog] =
+    useState<WorkspaceDeleteDialogState | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [wsRenameDialog, setWsRenameDialog] = useState<WorkspaceRenameDialogState | null>(null);
+  const [wsRenameDialog, setWsRenameDialog] =
+    useState<WorkspaceRenameDialogState | null>(null);
   const [workspaceRenameValue, setWorkspaceRenameValue] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -261,7 +295,9 @@ export function ProjectTree() {
   const workspaceIds = useMemo(() => workspaces.map((w) => w.id), [workspaces]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
   );
 
   useEffect(() => {
@@ -298,9 +334,13 @@ export function ProjectTree() {
 
   // Auto-load worktrees for the active workspace so stale-worktree detection has data.
   useEffect(() => {
-    if (!activeWorkspaceId || worktreesLoadedForWorkspace === activeWorkspaceId) return;
+    if (!activeWorkspaceId || worktreesLoadedForWorkspace === activeWorkspaceId)
+      return;
     const hasWorktreeThreads = threads.some(
-      (t) => t.workspace_id === activeWorkspaceId && t.mode === "worktree" && t.worktree_path,
+      (t) =>
+        t.workspace_id === activeWorkspaceId &&
+        t.mode === "worktree" &&
+        t.worktree_path,
     );
     if (hasWorktreeThreads) {
       loadWorktrees(activeWorkspaceId);
@@ -325,7 +365,8 @@ export function ProjectTree() {
         target?.closest?.('[contenteditable="true"]') ||
         target?.getAttribute?.("role") === "textbox" ||
         target?.hasAttribute?.("aria-multiline")
-      ) return;
+      )
+        return;
 
       const thread = threads.find((t) => t.id === activeThreadId);
       if (thread) {
@@ -342,17 +383,20 @@ export function ProjectTree() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [activeThreadId, threads, inlineEdit]);
 
-  const toggleExpand = useCallback((wsId: string) => {
-    setExpanded((prev) => {
-      const isExpanding = !prev[wsId];
-      const next = { ...prev, [wsId]: isExpanding };
-      if (isExpanding) {
-        // Load threads independently without changing the active workspace
-        loadThreads(wsId);
-      }
-      return next;
-    });
-  }, [loadThreads]);
+  const toggleExpand = useCallback(
+    (wsId: string) => {
+      setExpanded((prev) => {
+        const isExpanding = !prev[wsId];
+        const next = { ...prev, [wsId]: isExpanding };
+        if (isExpanding) {
+          // Load threads independently without changing the active workspace
+          loadThreads(wsId);
+        }
+        return next;
+      });
+    },
+    [loadThreads],
+  );
 
   // Open the palette's folder-browse view instead of using the native OS dialog.
   // This works across Electron and standalone web, and avoids the desktopBridge dependency.
@@ -372,21 +416,30 @@ export function ProjectTree() {
         worktreePath: thread.worktree_path,
       });
     },
-    []
+    [],
   );
 
   // Stable callbacks that accept wsId to avoid per-workspace closures in the render loop.
-  const handleSelectThread = useCallback((wsId: string, threadId: string) => {
-    setActiveWorkspace(wsId);
-    setActiveThread(threadId);
-  }, [setActiveWorkspace, setActiveThread]);
+  const handleSelectThread = useCallback(
+    (wsId: string, threadId: string) => {
+      setActiveWorkspace(wsId);
+      setActiveThread(threadId);
+    },
+    [setActiveWorkspace, setActiveThread],
+  );
 
-  const handleCreateThread = useCallback((wsId: string) => {
-    beginNewThread(wsId);
-  }, [beginNewThread]);
+  const handleCreateThread = useCallback(
+    (wsId: string) => {
+      setPrimarySurface("chat");
+      beginNewThread(wsId);
+    },
+    [beginNewThread, setPrimarySurface],
+  );
 
   const handleDeleteWorkspace = useCallback((wsId: string) => {
-    const ws = useWorkspaceStore.getState().workspaces.find((w) => w.id === wsId);
+    const ws = useWorkspaceStore
+      .getState()
+      .workspaces.find((w) => w.id === wsId);
     if (ws) {
       setWsDeleteDialog({ workspaceId: ws.id, workspaceName: ws.name });
     }
@@ -394,11 +447,14 @@ export function ProjectTree() {
 
   const handleRenameWorkspace = useCallback((workspace: Workspace) => {
     setWorkspaceRenameValue(workspace.name);
-    setWsRenameDialog({ workspaceId: workspace.id, workspaceName: workspace.name });
+    setWsRenameDialog({
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+    });
   }, []);
 
   const handleInlineEditChange = useCallback((title: string) => {
-    setInlineEdit((prev) => prev ? { ...prev, title } : null);
+    setInlineEdit((prev) => (prev ? { ...prev, title } : null));
   }, []);
 
   const handleInlineEditCancel = useCallback(() => {
@@ -444,30 +500,36 @@ export function ProjectTree() {
     }
   }, [wsDeleteDialog, deleteWorkspace]);
 
-  const handleWorkspaceRenameConfirm = useCallback(async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!wsRenameDialog || isRenaming) return;
+  const handleWorkspaceRenameConfirm = useCallback(
+    async (event: React.FormEvent) => {
+      event.preventDefault();
+      if (!wsRenameDialog || isRenaming) return;
 
-    const name = workspaceRenameValue.trim();
-    if (!name || name === wsRenameDialog.workspaceName) {
-      setWsRenameDialog(null);
-      return;
-    }
+      const name = workspaceRenameValue.trim();
+      if (!name || name === wsRenameDialog.workspaceName) {
+        setWsRenameDialog(null);
+        return;
+      }
 
-    setIsRenaming(true);
-    try {
-      await renameWorkspace(wsRenameDialog.workspaceId, name);
-      setWsRenameDialog(null);
-    } catch {
-      // The workspace store retains the failure message for the sidebar error rail.
-    } finally {
-      setIsRenaming(false);
-    }
-  }, [isRenaming, renameWorkspace, workspaceRenameValue, wsRenameDialog]);
+      setIsRenaming(true);
+      try {
+        await renameWorkspace(wsRenameDialog.workspaceId, name);
+        setWsRenameDialog(null);
+      } catch {
+        // The workspace store retains the failure message for the sidebar error rail.
+      } finally {
+        setIsRenaming(false);
+      }
+    },
+    [isRenaming, renameWorkspace, workspaceRenameValue, wsRenameDialog],
+  );
 
-  const handleStartInlineEdit = useCallback((threadId: string, title: string) => {
-    setInlineEdit({ threadId, title, originalTitle: title });
-  }, []);
+  const handleStartInlineEdit = useCallback(
+    (threadId: string, title: string) => {
+      setInlineEdit({ threadId, title, originalTitle: title });
+    },
+    [],
+  );
 
   const handleProjectDragStart = useCallback((event: DragStartEvent) => {
     setActiveDragId(String(event.active.id));
@@ -524,7 +586,13 @@ export function ProjectTree() {
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button variant="ghost" size="icon-xs" onClick={handleOpenFolder} aria-label="Add project" className="text-muted-foreground hover:text-foreground">
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={handleOpenFolder}
+                aria-label="Add project"
+                className="text-muted-foreground hover:text-foreground"
+              >
                 <Plus size={15} />
               </Button>
             }
@@ -547,38 +615,42 @@ export function ProjectTree() {
             onDragEnd={handleProjectDragEnd}
             onDragCancel={handleProjectDragCancel}
           >
-            <SortableContext items={workspaceIds} strategy={verticalListSortingStrategy}>
+            <SortableContext
+              items={workspaceIds}
+              strategy={verticalListSortingStrategy}
+            >
               {workspaces.map((ws) => {
-                const wsThreads = threadsByWorkspace.get(ws.id) ?? EMPTY_THREADS;
+                const wsThreads =
+                  threadsByWorkspace.get(ws.id) ?? EMPTY_THREADS;
 
                 return (
-                <SortableProjectShell
-                  key={ws.id}
-                  sortableId={ws.id}
-                  activeDragId={activeDragId}
-                  workspace={ws}
-                  isExpanded={expanded[ws.id] ?? false}
-                  isActive={activeWorkspaceId === ws.id}
-                  activeThreadId={activeThreadId}
-                  threads={wsThreads}
-                  runningThreadIds={runningThreadIds}
-                  pendingPermissionThreadIds={pendingPermissionThreadIds}
-                  isThreadListExpanded={threadListExpanded[ws.id] ?? false}
-                  checksById={checksById}
-                  onToggleThreadList={toggleThreadList}
-                  scrollElementRef={scrollViewportRef}
-                  inlineEdit={inlineEdit}
-                  onInlineEditChange={handleInlineEditChange}
-                  onInlineEditCommit={handleInlineEditCommit}
-                  onInlineEditCancel={handleInlineEditCancel}
-                  onStartInlineEdit={handleStartInlineEdit}
-                  onToggle={toggleExpand}
-                  onSelectThread={handleSelectThread}
-                  onCreateThread={handleCreateThread}
-                  onDelete={handleDeleteWorkspace}
-                  onRename={handleRenameWorkspace}
-                  onThreadContextMenu={handleThreadContextMenu}
-                />
+                  <SortableProjectShell
+                    key={ws.id}
+                    sortableId={ws.id}
+                    activeDragId={activeDragId}
+                    workspace={ws}
+                    isExpanded={expanded[ws.id] ?? false}
+                    isActive={activeWorkspaceId === ws.id}
+                    activeThreadId={activeThreadId}
+                    threads={wsThreads}
+                    runningThreadIds={runningThreadIds}
+                    pendingPermissionThreadIds={pendingPermissionThreadIds}
+                    isThreadListExpanded={threadListExpanded[ws.id] ?? false}
+                    checksById={checksById}
+                    onToggleThreadList={toggleThreadList}
+                    scrollElementRef={scrollViewportRef}
+                    inlineEdit={inlineEdit}
+                    onInlineEditChange={handleInlineEditChange}
+                    onInlineEditCommit={handleInlineEditCommit}
+                    onInlineEditCancel={handleInlineEditCancel}
+                    onStartInlineEdit={handleStartInlineEdit}
+                    onToggle={toggleExpand}
+                    onSelectThread={handleSelectThread}
+                    onCreateThread={handleCreateThread}
+                    onDelete={handleDeleteWorkspace}
+                    onRename={handleRenameWorkspace}
+                    onThreadContextMenu={handleThreadContextMenu}
+                  />
                 );
               })}
             </SortableContext>
@@ -603,7 +675,10 @@ export function ProjectTree() {
                 onClick={handleOpenFolder}
                 className="group h-auto gap-1.5 rounded-md border border-border/50 px-2.5 py-1 text-[11.5px] font-normal text-muted-foreground/80 hover:border-border hover:bg-accent/50 hover:text-foreground"
               >
-                <FolderPlus size={11} className="opacity-70 group-hover:opacity-100" />
+                <FolderPlus
+                  size={11}
+                  className="opacity-70 group-hover:opacity-100"
+                />
                 Open a folder
               </Button>
             </div>
@@ -611,9 +686,7 @@ export function ProjectTree() {
         </div>
       </ScrollArea>
 
-      {error && (
-        <p className="px-3 py-1 text-xs text-destructive">{error}</p>
-      )}
+      {error && <p className="px-3 py-1 text-xs text-destructive">{error}</p>}
 
       {contextMenu && (
         <ContextMenu
@@ -674,12 +747,15 @@ export function ProjectTree() {
           }
         }}
       >
-        <DialogContent showCloseButton={false} className="sm:max-w-md overflow-hidden">
+        <DialogContent
+          showCloseButton={false}
+          className="sm:max-w-md overflow-hidden"
+        >
           <div className="flex flex-col gap-2">
             <DialogTitle>Delete thread</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete &ldquo;{deleteDialog?.threadTitle}&rdquo;?
-              This action cannot be undone.
+              Are you sure you want to delete &ldquo;{deleteDialog?.threadTitle}
+              &rdquo;? This action cannot be undone.
             </DialogDescription>
           </div>
           {deleteDialog?.worktreePath && (
@@ -735,22 +811,26 @@ export function ProjectTree() {
           if (!open) setWsDeleteDialog(null);
         }}
       >
-        <DialogContent showCloseButton={false} className="sm:max-w-md overflow-hidden">
+        <DialogContent
+          showCloseButton={false}
+          className="sm:max-w-md overflow-hidden"
+        >
           <div className="flex flex-col gap-2">
             <DialogTitle>Delete project</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete &ldquo;{wsDeleteDialog?.workspaceName}&rdquo;?
-              All threads in this project will also be removed. This action cannot be undone.
+              Are you sure you want to delete &ldquo;
+              {wsDeleteDialog?.workspaceName}&rdquo;? All threads in this
+              project will also be removed. This action cannot be undone.
             </DialogDescription>
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="outline"
-              onClick={() => setWsDeleteDialog(null)}
-            >
+            <Button variant="outline" onClick={() => setWsDeleteDialog(null)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleWorkspaceDeleteConfirm}>
+            <Button
+              variant="destructive"
+              onClick={handleWorkspaceDeleteConfirm}
+            >
               Delete
             </Button>
           </div>
@@ -763,8 +843,14 @@ export function ProjectTree() {
           if (!open && !isRenaming) setWsRenameDialog(null);
         }}
       >
-        <DialogContent showCloseButton={false} className="sm:max-w-md overflow-hidden">
-          <form onSubmit={handleWorkspaceRenameConfirm} className="flex flex-col gap-4">
+        <DialogContent
+          showCloseButton={false}
+          className="sm:max-w-md overflow-hidden"
+        >
+          <form
+            onSubmit={handleWorkspaceRenameConfirm}
+            className="flex flex-col gap-4"
+          >
             <div className="flex flex-col gap-2">
               <DialogTitle>Rename project</DialogTitle>
               <DialogDescription>
@@ -776,7 +862,9 @@ export function ProjectTree() {
               <Input
                 id="workspace-rename"
                 value={workspaceRenameValue}
-                onChange={(event) => setWorkspaceRenameValue(event.target.value)}
+                onChange={(event) =>
+                  setWorkspaceRenameValue(event.target.value)
+                }
                 maxLength={120}
                 autoFocus
                 disabled={isRenaming}
@@ -793,7 +881,9 @@ export function ProjectTree() {
               </Button>
               <Button
                 type="submit"
-                disabled={isRenaming || workspaceRenameValue.trim().length === 0}
+                disabled={
+                  isRenaming || workspaceRenameValue.trim().length === 0
+                }
               >
                 {isRenaming && <Spinner size={14} className="text-current" />}
                 {isRenaming ? "Renaming..." : "Rename"}
@@ -802,7 +892,6 @@ export function ProjectTree() {
           </form>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }
@@ -869,7 +958,9 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
   const count = agg === "failing" ? failingCount : pendingCount;
   const noun = count === 1 ? "thread" : "threads";
   const label =
-    agg === "failing" ? `${count} ${noun} failing` : `${count} ${noun} with checks running`;
+    agg === "failing"
+      ? `${count} ${noun} failing`
+      : `${count} ${noun} with checks running`;
 
   return (
     <span
@@ -884,11 +975,7 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
       {agg === "pending" ? (
         <Spinner size={9} className="text-current" />
       ) : (
-        <Icon
-          size={9}
-          strokeWidth={CI_ICON_STROKE}
-          className="shrink-0"
-        />
+        <Icon size={9} strokeWidth={CI_ICON_STROKE} className="shrink-0" />
       )}
       <span>{count}</span>
     </span>
@@ -897,21 +984,30 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
 
 type IconComponent = ComponentType<{ size?: number; className?: string }>;
 
-const PROVIDER_META: Record<string, { icon: IconComponent; label: string; color: string }> = {
+const PROVIDER_META: Record<
+  string,
+  { icon: IconComponent; label: string; color: string }
+> = {
   claude: { icon: ClaudeIcon, label: "Claude", color: "" },
   codex: { icon: CodexIcon, label: "Codex", color: "text-foreground" },
-  copilot: { icon: CopilotIcon, label: "GitHub Copilot", color: "text-violet-400 dark:text-violet-300" },
+  copilot: {
+    icon: CopilotIcon,
+    label: "GitHub Copilot",
+    color: "text-violet-400 dark:text-violet-300",
+  },
   cursor: { icon: CursorProviderIcon, label: "Cursor", color: "" },
   gemini: { icon: GeminiIcon, label: "Gemini", color: "text-sky-400" },
   opencode: { icon: OpenCodeIcon, label: "OpenCode", color: "text-violet-400" },
 };
 
 function getProviderMeta(provider: string) {
-  return PROVIDER_META[provider] ?? {
-    icon: Activity,
-    label: provider || "Provider",
-    color: "text-muted-foreground",
-  };
+  return (
+    PROVIDER_META[provider] ?? {
+      icon: Activity,
+      label: provider || "Provider",
+      color: "text-muted-foreground",
+    }
+  );
 }
 
 function SidebarThreadPreview({
@@ -924,16 +1020,25 @@ function SidebarThreadPreview({
   const checkoutLabel = resolveThreadCheckoutLabel(thread);
 
   return (
-    <div data-testid={`thread-preview-${thread.id}`} className="w-64 space-y-2 text-popover-foreground">
+    <div
+      data-testid={`thread-preview-${thread.id}`}
+      className="w-64 space-y-2 text-popover-foreground"
+    >
       <div className="min-w-0 font-medium text-xs leading-5">
         {thread.title}
       </div>
       <div className="grid gap-1.5">
-        <div aria-label={`Project, ${workspaceName}`} className="flex min-w-0 items-center gap-2">
+        <div
+          aria-label={`Project, ${workspaceName}`}
+          className="flex min-w-0 items-center gap-2"
+        >
           <Folder size={13} aria-hidden className="shrink-0 opacity-75" />
           <span className="truncate text-xs">{workspaceName}</span>
         </div>
-        <div aria-label={`Branch, ${checkoutLabel}`} className="flex min-w-0 items-center gap-2">
+        <div
+          aria-label={`Branch, ${checkoutLabel}`}
+          className="flex min-w-0 items-center gap-2"
+        >
           <GitBranch size={13} aria-hidden className="shrink-0 opacity-75" />
           <span className="truncate font-mono text-xs">{checkoutLabel}</span>
         </div>
@@ -965,13 +1070,18 @@ function VirtualizedThreadList({
 
   // Cap to `maxVisible` so the sidebar isn't dominated by a single busy workspace.
   const treeItems = useMemo(
-    () => (Number.isFinite(maxVisible) ? allTreeItems.slice(0, maxVisible) : allTreeItems),
+    () =>
+      Number.isFinite(maxVisible)
+        ? allTreeItems.slice(0, maxVisible)
+        : allTreeItems,
     [allTreeItems, maxVisible],
   );
 
   // Normalized set of existing worktree paths for stale detection.
   const worktrees = useWorkspaceStore((s) => s.worktrees);
-  const worktreesLoadedFor = useWorkspaceStore((s) => s.worktreesLoadedForWorkspace);
+  const worktreesLoadedFor = useWorkspaceStore(
+    (s) => s.worktreesLoadedForWorkspace,
+  );
   // Subscribe once at the list level so we can derive unusable state per-thread
   // inside the map without violating Rules of Hooks.
   const availableProviders = useProviderAvailabilityStore((s) => s.providers);
@@ -987,32 +1097,38 @@ function VirtualizedThreadList({
   // double-click window without delaying the first click's navigation.
   const lastClickTimeRef = useRef<Map<string, number>>(new Map());
 
-  const handleThreadClick = useCallback((threadId: string, title: string) => {
-    // If already editing this thread, clicks are absorbed to avoid conflicting with the input.
-    if (inlineEdit?.threadId === threadId) return;
+  const handleThreadClick = useCallback(
+    (threadId: string, title: string) => {
+      // If already editing this thread, clicks are absorbed to avoid conflicting with the input.
+      if (inlineEdit?.threadId === threadId) return;
 
-    const now = Date.now();
-    const hadPrevious = lastClickTimeRef.current.has(threadId);
-    const last = lastClickTimeRef.current.get(threadId) ?? 0;
-    const elapsed = now - last;
-    lastClickTimeRef.current.set(threadId, now);
+      const now = Date.now();
+      const hadPrevious = lastClickTimeRef.current.has(threadId);
+      const last = lastClickTimeRef.current.get(threadId) ?? 0;
+      const elapsed = now - last;
+      lastClickTimeRef.current.set(threadId, now);
 
-    if (hadPrevious && elapsed < DOUBLE_CLICK_THRESHOLD_MS) {
-      // Double-click: enter inline rename. The first click has already navigated,
-      // which is fine — the row is now active and rename happens in place.
+      if (hadPrevious && elapsed < DOUBLE_CLICK_THRESHOLD_MS) {
+        // Double-click: enter inline rename. The first click has already navigated,
+        // which is fine — the row is now active and rename happens in place.
+        lastClickTimeRef.current.delete(threadId);
+        onStartInlineEdit(threadId, title);
+      } else {
+        // Single click navigates immediately. No artificial delay.
+        onSelectThread(threadId);
+      }
+    },
+    [inlineEdit, onSelectThread, onStartInlineEdit],
+  );
+
+  const handleThreadDoubleClick = useCallback(
+    (threadId: string, title: string) => {
+      if (inlineEdit?.threadId === threadId) return;
       lastClickTimeRef.current.delete(threadId);
       onStartInlineEdit(threadId, title);
-    } else {
-      // Single click navigates immediately. No artificial delay.
-      onSelectThread(threadId);
-    }
-  }, [inlineEdit, onSelectThread, onStartInlineEdit]);
-
-  const handleThreadDoubleClick = useCallback((threadId: string, title: string) => {
-    if (inlineEdit?.threadId === threadId) return;
-    lastClickTimeRef.current.delete(threadId);
-    onStartInlineEdit(threadId, title);
-  }, [inlineEdit, onStartInlineEdit]);
+    },
+    [inlineEdit, onStartInlineEdit],
+  );
 
   // Recompute offset from the outer scroll viewport after each layout pass.
   // Stays in sync when workspaces above expand/collapse.
@@ -1057,16 +1173,29 @@ function VirtualizedThreadList({
         // thread shows its branch/agent status, never a PR icon, even if a PR
         // number happens to be attached.
         const prable = isPrable(thread);
-        const showEndMarker = !(prable && thread.pr_number != null && marker.kind === "ci");
+        const showEndMarker = !(
+          prable &&
+          thread.pr_number != null &&
+          marker.kind === "ci"
+        );
         // Worktree thread whose directory no longer exists on disk.
         // Only check threads from the workspace whose worktrees are loaded — comparing
         // against a different workspace's worktree list would produce false positives.
-        const isStaleWorktree = worktreesLoadedFor === thread.workspace_id
-          && thread.mode === "worktree" && !!thread.worktree_path
-          && !validWorktreePaths.has(thread.worktree_path.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase());
+        const isStaleWorktree =
+          worktreesLoadedFor === thread.workspace_id &&
+          thread.mode === "worktree" &&
+          !!thread.worktree_path &&
+          !validWorktreePaths.has(
+            thread.worktree_path
+              .replace(/\\/g, "/")
+              .replace(/\/$/, "")
+              .toLowerCase(),
+          );
         // Unusable when the provider is disabled or its CLI binary is missing.
         // "unchecked" is not treated as unusable — the server may not have verified yet.
-        const providerRow = availableProviders.find((p) => p.id === thread.provider);
+        const providerRow = availableProviders.find(
+          (p) => p.id === thread.provider,
+        );
         const unusable = providerRow
           ? !providerRow.enabled || providerRow.cli.status === "not_found"
           : false;
@@ -1090,13 +1219,18 @@ function VirtualizedThreadList({
               if (isEditing) return;
               // Keyboard navigation fires immediately — no double-click semantics for keyboard users.
               // Enter/Space always navigates; rename must be triggered via mouse double-click.
-              if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+              if (
+                (e.key === "Enter" || e.key === " ") &&
+                e.target === e.currentTarget
+              ) {
                 e.preventDefault();
                 onSelectThread(thread.id);
               }
             }}
             onClick={() => handleThreadClick(thread.id, thread.title)}
-            onDoubleClick={() => handleThreadDoubleClick(thread.id, thread.title)}
+            onDoubleClick={() =>
+              handleThreadDoubleClick(thread.id, thread.title)
+            }
             onContextMenu={(e) => onThreadContextMenu(e, thread)}
             onMouseEnter={() => {
               if (!thread.clientPreparing && !thread.clientError) {
@@ -1108,21 +1242,25 @@ function VirtualizedThreadList({
               "group/row relative flex min-h-8 items-center gap-2 rounded-md pr-2 text-[13px] cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
               activeThreadId === thread.id
                 ? "bg-accent text-foreground"
-                : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground"
+                : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
             )}
             style={{ paddingLeft: `${38 + depth * 12}px` }}
           >
-            {prable && thread.pr_number != null ? (() => {
-              const { Icon: PrIcon, color: prColor } = getPrVisual(thread.pr_status);
-              return (
-                <span
-                  title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
-                  className="absolute left-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center"
-                >
-                  <PrIcon size={12} className={prColor} />
-                </span>
-              );
-            })() : null}
+            {prable && thread.pr_number != null
+              ? (() => {
+                  const { Icon: PrIcon, color: prColor } = getPrVisual(
+                    thread.pr_status,
+                  );
+                  return (
+                    <span
+                      title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
+                      className="absolute left-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center"
+                    >
+                      <PrIcon size={12} className={prColor} />
+                    </span>
+                  );
+                })()
+              : null}
             <span
               aria-label={`Provider, ${providerMeta.label}`}
               className={cn(
@@ -1140,66 +1278,86 @@ function VirtualizedThreadList({
                 scaffoldDim,
               )}
             >
-            {isEditing ? (
-              <Input
-                type="text"
-                size="xs"
-                value={inlineEdit.title}
-                onChange={(e) => onInlineEditChange(e.target.value)}
-                onKeyDown={(e) => {
-                  if (!e.nativeEvent.isComposing) {
-                    if (e.key === "Enter") onInlineEditCommit();
-                    if (e.key === "Escape") onInlineEditCancel();
-                  }
-                  e.stopPropagation();
-                }}
-                onBlur={onInlineEditCommit}
-                autoFocus
-                onClick={(e) => e.stopPropagation()}
-                className="flex-1 border-ring"
-              />
-            ) : (
-              <>
-                <span className={cn("truncate flex-1", isStaleWorktree && "text-[var(--diff-remove-strong)]/85 line-through")} data-testid="thread-title">
-                  {isStaleWorktree && (
+              {isEditing ? (
+                <Input
+                  type="text"
+                  size="xs"
+                  value={inlineEdit.title}
+                  onChange={(e) => onInlineEditChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (!e.nativeEvent.isComposing) {
+                      if (e.key === "Enter") onInlineEditCommit();
+                      if (e.key === "Escape") onInlineEditCancel();
+                    }
+                    e.stopPropagation();
+                  }}
+                  onBlur={onInlineEditCommit}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex-1 border-ring"
+                />
+              ) : (
+                <>
+                  <span
+                    className={cn(
+                      "truncate flex-1",
+                      isStaleWorktree &&
+                        "text-[var(--diff-remove-strong)]/85 line-through",
+                    )}
+                    data-testid="thread-title"
+                  >
+                    {isStaleWorktree && (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <AlertTriangle
+                              size={11}
+                              className="inline mr-1 align-text-bottom text-[var(--diff-remove-strong)]/80"
+                            />
+                          }
+                        />
+                        <TooltipContent side="right" className="text-xs">
+                          Worktree directory no longer exists
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    {thread.title}
+                  </span>
+                  {thread.mode === "worktree" && (
                     <Tooltip>
-                      <TooltipTrigger render={<AlertTriangle size={11} className="inline mr-1 align-text-bottom text-[var(--diff-remove-strong)]/80" />} />
-                      <TooltipContent side="right" className="text-xs">Worktree directory no longer exists</TooltipContent>
+                      <TooltipTrigger
+                        render={
+                          <WorktreeModeIcon
+                            size={12}
+                            data-testid={`thread-worktree-indicator-${thread.id}`}
+                            aria-label="Worktree mode"
+                            className="text-muted-foreground/65"
+                          />
+                        }
+                      />
+                      <TooltipContent side="right" className="text-xs">
+                        Worktree
+                      </TooltipContent>
                     </Tooltip>
                   )}
-                  {thread.title}
-                </span>
-                {thread.mode === "worktree" && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <WorktreeModeIcon
-                          size={12}
-                          data-testid={`thread-worktree-indicator-${thread.id}`}
-                          aria-label="Worktree mode"
-                          className="text-muted-foreground/65"
-                        />
-                      }
-                    />
-                    <TooltipContent side="right" className="text-xs">Worktree</TooltipContent>
-                  </Tooltip>
-                )}
-              </>
-            )}
-            {!isEditing && unusable && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span
-                      data-testid={`sidebar-unusable-${thread.id}`}
-                      className="ml-1 shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
-                      aria-label={unusableReason}
-                    />
-                  }
-                />
-                <TooltipContent side="right" className="text-xs">{unusableReason}</TooltipContent>
-              </Tooltip>
-            )}
+                </>
+              )}
+              {!isEditing && unusable && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        data-testid={`sidebar-unusable-${thread.id}`}
+                        className="ml-1 shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
+                        aria-label={unusableReason}
+                      />
+                    }
+                  />
+                  <TooltipContent side="right" className="text-xs">
+                    {unusableReason}
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </div>
             {!isEditing && showEndMarker && (
               <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
@@ -1220,20 +1378,29 @@ function VirtualizedThreadList({
               transform: `translateY(${virtualItem.start - scrollMargin}px)`,
             }}
           >
-              {isEditing ? (
-                row
-              ) : (
-                <Tooltip>
-                  <TooltipTrigger render={row} />
-                  <TooltipContent side="right" align="start" sideOffset={8} variant="surface" className="max-w-none p-3">
-                    <SidebarThreadPreview workspaceName={workspaceName} thread={thread} />
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            {isEditing ? (
+              row
+            ) : (
+              <Tooltip>
+                <TooltipTrigger render={row} />
+                <TooltipContent
+                  side="right"
+                  align="start"
+                  sideOffset={8}
+                  variant="surface"
+                  className="max-w-none p-3"
+                >
+                  <SidebarThreadPreview
+                    workspaceName={workspaceName}
+                    thread={thread}
+                  />
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1267,7 +1434,11 @@ interface ProjectNodeProps {
   onCreateThread: (wsId: string) => void;
   onDelete: (wsId: string) => void;
   onRename: (workspace: Workspace) => void;
-  onThreadContextMenu: (e: React.MouseEvent, thread: Thread, workspacePath: string) => void;
+  onThreadContextMenu: (
+    e: React.MouseEvent,
+    thread: Thread,
+    workspacePath: string,
+  ) => void;
   /** When set, forwards drag-handle listeners from `@dnd-kit/sortable` onto the project row. */
   sortableListeners?: DraggableSyntheticListeners;
   /** True while this project row is the item being dragged. */
@@ -1311,39 +1482,77 @@ const ProjectNode = memo(function ProjectNode({
   // Use the flattened tree order (same order VirtualizedThreadList renders) for cap decisions.
   const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
   const needsCap = treeItems.length > THREAD_LIST_CAP;
-  const activeIndex = activeThreadId ? treeItems.findIndex((item) => item.thread.id === activeThreadId) : -1;
+  const activeIndex = activeThreadId
+    ? treeItems.findIndex((item) => item.thread.id === activeThreadId)
+    : -1;
   const forceExpand = activeIndex >= THREAD_LIST_CAP;
-  const maxVisible = !needsCap || isThreadListExpanded || forceExpand ? Infinity : THREAD_LIST_CAP;
+  const maxVisible =
+    !needsCap || isThreadListExpanded || forceExpand
+      ? Infinity
+      : THREAD_LIST_CAP;
 
   const wsId = workspace.id;
   const handleToggle = useCallback(() => onToggle(wsId), [onToggle, wsId]);
-  const handleToggleThreadList = useCallback(() => onToggleThreadList(wsId), [onToggleThreadList, wsId]);
-  const handleCreateThread = useCallback(() => onCreateThread(wsId), [onCreateThread, wsId]);
-  const handleCreateThreadClick = useCallback((event: React.MouseEvent) => {
-    event.stopPropagation();
-    handleCreateThread();
-  }, [handleCreateThread]);
-  const handleDelete = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    onDelete(wsId);
-  }, [onDelete, wsId]);
-  const handleRename = useCallback((event: React.MouseEvent) => {
-    event.stopPropagation();
-    onRename(workspace);
-  }, [onRename, workspace]);
-  const handleOpenInExplorer = useCallback((event: React.MouseEvent) => {
-    event.stopPropagation();
-    getTransport().openIn(FILE_EXPLORER_ID, workspace.path).catch((error: unknown) => {
-      useToastStore.getState().show(
-        "error",
-        "Couldn't open File Explorer",
-        String((error as { message?: string })?.message ?? error),
-      );
-    });
-  }, [workspace.path]);
-  const handleSelectThread = useCallback((threadId: string) => onSelectThread(wsId, threadId), [onSelectThread, wsId]);
+  const handleToggleThreadList = useCallback(
+    () => onToggleThreadList(wsId),
+    [onToggleThreadList, wsId],
+  );
+  const handleCreateThread = useCallback(
+    () => onCreateThread(wsId),
+    [onCreateThread, wsId],
+  );
+  const handleOpenProject = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      handleToggle();
+    },
+    [handleToggle],
+  );
+  const handleCreateThreadClick = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      handleCreateThread();
+    },
+    [handleCreateThread],
+  );
+  const handleDelete = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDelete(wsId);
+    },
+    [onDelete, wsId],
+  );
+  const handleRename = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      onRename(workspace);
+    },
+    [onRename, workspace],
+  );
+  const handleOpenInExplorer = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      getTransport()
+        .openIn(FILE_EXPLORER_ID, workspace.path)
+        .catch((error: unknown) => {
+          useToastStore
+            .getState()
+            .show(
+              "error",
+              "Couldn't open File Explorer",
+              String((error as { message?: string })?.message ?? error),
+            );
+        });
+    },
+    [workspace.path],
+  );
+  const handleSelectThread = useCallback(
+    (threadId: string) => onSelectThread(wsId, threadId),
+    [onSelectThread, wsId],
+  );
   const handleThreadContextMenu = useCallback(
-    (e: React.MouseEvent, thread: Thread) => onThreadContextMenu(e, thread, workspace.path),
+    (e: React.MouseEvent, thread: Thread) =>
+      onThreadContextMenu(e, thread, workspace.path),
     [onThreadContextMenu, workspace.path],
   );
 
@@ -1367,13 +1576,19 @@ const ProjectNode = memo(function ProjectNode({
       >
         <button
           type="button"
-          aria-label={`Select project ${workspace.name}`}
+          aria-label={`Open project ${workspace.name}`}
           onKeyDown={(event) => event.stopPropagation()}
-          onClick={handleCreateThread}
+          onClick={handleOpenProject}
           className="flex min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
         >
-          <Folder size={14} className="shrink-0 text-muted-foreground/80" aria-hidden />
-          <span className="truncate font-medium tracking-tight">{workspace.name}</span>
+          <Folder
+            size={14}
+            className="shrink-0 text-muted-foreground/80"
+            aria-hidden
+          />
+          <span className="truncate font-medium tracking-tight">
+            {workspace.name}
+          </span>
         </button>
 
         {!workspace.is_git_repo && (
@@ -1407,7 +1622,13 @@ const ProjectNode = memo(function ProjectNode({
           }}
           className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
-          <ChevronRight size={14} className={cn("transition-transform duration-150 motion-reduce:transition-none", isExpanded && "rotate-90")} />
+          <ChevronRight
+            size={14}
+            className={cn(
+              "transition-transform duration-150 motion-reduce:transition-none",
+              isExpanded && "rotate-90",
+            )}
+          />
         </Button>
 
         <span className="flex-1" />
@@ -1474,6 +1695,7 @@ const ProjectNode = memo(function ProjectNode({
           size="icon-xs"
           aria-label={`New thread in ${workspace.name}`}
           title={`New thread in ${workspace.name}`}
+          onKeyDown={(event) => event.stopPropagation()}
           onClick={handleCreateThreadClick}
           className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
@@ -1514,7 +1736,6 @@ const ProjectNode = memo(function ProjectNode({
                 : `Show more (${treeItems.length - THREAD_LIST_CAP})`}
             </Button>
           )}
-
         </div>
       )}
       {isExpanded && threads.length === 0 && (
@@ -1538,7 +1759,14 @@ const SortableProjectShell = memo(function SortableProjectShell(
 ) {
   const { sortableId, activeDragId, ...nodeProps } = props;
   const collapseForDrag = activeDragId !== null;
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: sortableId,
   });
   const style: CSSProperties = {

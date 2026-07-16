@@ -218,16 +218,43 @@ export class CleanupWorker {
       //    boundary; rollback paths are handled separately in ThreadService.
       //    Skip branch deletion when another active thread references the same branch.
       const wtName = resolvedWt.replace(/\\/g, "/").split("/").pop() ?? resolvedWt;
-      const shouldDelete = job.branch ? this.shouldDeleteBranch(job) : false;
-      const removeOptions = (job.branch && shouldDelete)
-        ? { branchName: job.branch, worktreePath: resolvedWt }
-        : { deleteBranch: false, worktreePath: resolvedWt };
-
-      const removed = await this.gitService.removeWorktree(
+      let preserveWorktreeReason: string | null = null;
+      const removed = await this.gitService.withReviewWorktreeMutationLock(
         resolvedWs,
-        wtName,
-        removeOptions,
+        async () => {
+          const siblings = this.threadRepo.listActiveSiblingWorktreePaths(job.thread_id);
+          const safety = await this.gitService.assessWorktreeRemovalSafety(
+            job.worktree_path,
+            siblings.paths,
+            siblings.truncated,
+          );
+          if (!safety.safe) {
+            preserveWorktreeReason = safety.reason;
+            return true;
+          }
+          const shouldDelete = job.branch ? this.shouldDeleteBranch(job) : false;
+          const removeOptions = (job.branch && shouldDelete)
+            ? { branchName: job.branch, worktreePath: resolvedWt }
+            : { deleteBranch: false, worktreePath: resolvedWt };
+          return this.gitService.removeWorktree(resolvedWs, wtName, removeOptions);
+        },
       );
+
+      if (preserveWorktreeReason) {
+        logger.info("Worktree preserved because removal ownership is not exclusive", {
+          threadId: job.thread_id,
+          worktreePath: resolvedWt,
+          reason: preserveWorktreeReason,
+        });
+        this.attachmentService.removeForThread(job.thread_id);
+        await this.handoffStorage.deleteThreadFiles(job.thread_id);
+        this.db.transaction(() => {
+          this.threadRepo.hardDelete(job.thread_id);
+          this.cleanupJobRepo.delete(job.id);
+        })();
+        await this.finalizeWorkspaceIfDone(job.workspace_path);
+        return;
+      }
 
       if (!removed) {
         throw new Error(`Worktree directory still exists after removal: ${resolvedWt}`);
@@ -294,7 +321,7 @@ export class CleanupWorker {
       }
 
       // Find worktree threads missing cleanup jobs
-      const worktreeThreads = threads.filter((t) => t.worktree_path);
+      const worktreeThreads = threads.filter((t) => t.worktree_path && t.worktree_managed);
       const missingJobs = worktreeThreads.filter(
         (t) => !this.cleanupJobRepo.findByThreadId(t.id),
       );

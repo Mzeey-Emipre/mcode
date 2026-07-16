@@ -87,6 +87,49 @@ export const threads = sqliteTable(
   ],
 );
 
+export const pullRequestReviewLinks = sqliteTable(
+  "pull_request_review_links",
+  {
+    worktreeId: text("worktree_id").primaryKey().notNull(),
+    provider: text("provider").notNull(),
+    repositoryNodeId: text("repository_node_id").notNull(),
+    pullRequestNumber: integer("pull_request_number").notNull(),
+    pullRequestUrl: text("pr_url").notNull(),
+    pullRequestState: text("pr_state").notNull(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    worktreePath: text("worktree_path").notNull(),
+    worktreeManaged: integer("worktree_managed").notNull().default(1),
+    headRepositoryNodeId: text("head_repository_node_id").notNull(),
+    headRepositoryOwner: text("head_repository_owner").notNull(),
+    headRepositoryName: text("head_repository_name").notNull(),
+    headRef: text("head_ref").notNull(),
+    headOid: text("head_oid").notNull(),
+    localBranch: text("local_branch").notNull(),
+    pushRemote: text("push_remote").notNull(),
+    pushRef: text("push_ref").notNull(),
+    managedRemoteName: text("managed_remote_name"),
+    primaryThreadId: text("primary_thread_id").references(() => threads.id, {
+      onDelete: "set null",
+    }),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    updatedAt: text("updated_at").notNull().default(timestampDefault),
+  },
+  (table) => [
+    uniqueIndex("idx_pull_request_review_links_identity").on(
+      table.provider,
+      table.repositoryNodeId,
+      table.pullRequestNumber,
+    ),
+    uniqueIndex("idx_pull_request_review_links_primary_thread").on(
+      table.primaryThreadId,
+    ),
+    index("idx_pull_request_review_links_workspace").on(table.workspaceId),
+    index("idx_pull_request_review_links_worktree_path").on(table.worktreePath),
+  ],
+);
+
 export const messages = sqliteTable(
   "messages",
   {

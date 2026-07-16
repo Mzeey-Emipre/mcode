@@ -105,6 +105,7 @@ export default defineConfig({
     target: "esnext",
     minify: "oxc",
     sourcemap: false,
+    manifest: true,
     chunkSizeWarningLimit: 1500,
   },
   test: {

@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "perf:chunks": "vite build && bun scripts/check-web-chunks.ts",
+    "perf:pull-requests": "vite build && bun scripts/check-web-chunks.ts && vitest run src/stores/__tests__/pull-request-performance.test.ts src/lib/__tests__/pull-request-performance-metrics.test.ts && bun scripts/run-pull-request-performance.ts",
     "lint": "eslint . --cache --cache-location node_modules/.cache/.eslintcache",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -73,6 +75,7 @@
     "rollup-plugin-visualizer": "^7.0.1",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
+    "tsx": "^4.21.0",
     "typescript-eslint": "^8.57.1",
     "vitest": "^4.1.0"
   }

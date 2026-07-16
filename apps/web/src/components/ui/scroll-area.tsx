@@ -7,12 +7,15 @@ function ScrollArea({
   children,
   viewportRef,
   viewportClassName,
+  viewportProps,
   ...props
 }: ScrollAreaPrimitive.Root.Props & {
   /** Ref forwarded to the scrollable viewport element. */
   viewportRef?: React.Ref<HTMLDivElement>;
   /** Optional classes for the actual scrollable viewport. */
   viewportClassName?: string;
+  /** Optional semantics and event handlers applied to the scrollable viewport. */
+  viewportProps?: Omit<ScrollAreaPrimitive.Viewport.Props, "className" | "ref">;
 }) {
   return (
     <ScrollAreaPrimitive.Root
@@ -21,6 +24,7 @@ function ScrollArea({
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
+        {...viewportProps}
         ref={viewportRef}
         data-slot="scroll-area-viewport"
         className={cn(

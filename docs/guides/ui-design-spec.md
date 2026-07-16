@@ -39,7 +39,10 @@ It would not be:
 
 ### Warmth in the dark
 
-Both themes (light and dark) are warm. The dark theme is **the primary canvas** because most users keep this app open in the evening. Lean into amber and clay; avoid the blue-cyan-on-black "AI dashboard" cliché at all costs.
+Warmth comes from the amber lamp and semantic clay, not from the base
+surfaces. Both themes use the cool-slate neutrals defined in DESIGN.md. The
+dark theme is the primary canvas because most users keep this app open in the
+evening. Avoid the blue-cyan-on-black "AI dashboard" cliché.
 
 The accent color is a **warm amber**, somewhere between brass and tobacco. It appears rarely — on the active state, the running indicator, the focus ring. When you see it, it should mean something. If amber is everywhere, amber is meaningless.
 
@@ -47,7 +50,10 @@ Sage green carries success and additions. Clay red carries removals and errors. 
 
 ### Tonal lift instead of lines
 
-Panels float on a slightly darker page. They are separated by **tonal contrast**, not by border lines. This is the single most defining surface decision in the product. If you find yourself reaching for a divider line between two surfaces, ask whether the surfaces could just sit on different tones instead.
+Major surfaces use **tonal contrast** before borders. Dense internal structures
+still need quiet hairlines: toolbars, resize seams, diff hunks, adjacent rows,
+and compact disclosures. Tone establishes depth; hairlines clarify local
+structure.
 
 Shadows are subtle. Cards have a quiet inner ring rather than a heavy drop shadow. The interface should feel like it was *cut*, not *drawn on top of itself*.
 
@@ -55,24 +61,50 @@ Shadows are subtle. Cards have a quiet inner ring rather than a heavy drop shado
 
 There is no illustration in Mcode. There are no marketing graphics, no decorative shapes, no patterns, no gradients. The typographic system **is** the design. Choose body and mono families that feel like a well-typeset book, not like a default OS picker.
 
-Section headings are tiny mono small-caps with wide letter-spacing — they read like a librarian's index labels. Numbers, hashes, timestamps are always tabular monospace so they line up vertically. Body text is set tight enough to be dense but loose enough to read in a long session.
+Use tiny mono small-caps for true technical index labels, machine facts, and
+empty-state captions. Do not use them as a default heading treatment for every
+section or action. Interactive and content headings use sentence case.
+Numbers, hashes, and timestamps are tabular monospace so they line up
+vertically. Body text is compact enough for scanning and comfortable enough to
+read in a long session.
 
 ### Empty states earn their place
 
 When there's nothing to show, do not show an illustration of an empty box. Set a single typographic glyph — `◌`, `⊘`, `⊕`, `∅`, `⌂` — at low opacity, with a small-caps mono caption underneath. The glyph is a quiet anchor, not a mascot. The caption uses technical language: "Empty thread", "No active runs", "Awaiting agent."
 
-## 5. Density Is a Feature, Not a Bug
+## 5. Information Density Without Uniform Compression
 
-Developers prefer information-dense interfaces. They tolerate small type, tight rows, and packed columns — because every pixel of whitespace is a pixel they have to scan past.
+Prefer high information density, not tight spacing everywhere. Keep rows compact
+within a related list, but use stronger spacing between groups, task stages, and
+primary surfaces. Whitespace is structural when it communicates hierarchy,
+focus, or ownership.
 
 This means:
 
-- Don't pad with marketing-style breathing room. Tight is correct.
+- Do not add decorative whitespace that does not clarify the interface.
 - Don't blow up small data into big "stat tiles." Numbers can be 12px and tabular.
 - Don't replace a row of text with a grid of cards. Rows scan faster than cards.
-- Don't hide tertiary actions behind hovers if there's room to show them.
+- Give writing, reading, comments, dialogs, and isolated decisions enough room
+  to establish focus and ownership.
+- Keep the current state and primary action visible. Put alternate methods and
+  infrequent actions in an attached menu instead of showing several competing
+  buttons.
 
-But **density is not chaos.** Hierarchy comes from weight, opacity tier, and tonal lift — not from boxing things in. A dense interface that uses three opacity levels (full, 70%, 40%) for primary/secondary/tertiary text is more readable than a sparse one with everything at full contrast.
+Hierarchy comes from spacing, weight, opacity tier, and tonal lift, not from
+boxing each part in. Compact rows still need clear separation between groups
+and stages.
+
+### One containment layer
+
+Use a contained surface for a genuinely discrete object, such as a comment or
+review thread. Keep its internal header, metadata, body, and actions flat. Do
+not stack cards, tonal bands, rings, and footers to repeat the same boundary.
+
+### Identity first, state second
+
+Keep the familiar icon or avatar that tells the user what an object is. Add a
+small semantic marker or color to show what happened to it. Do not replace file
+identity with an `A` or `M`, or replace a pull request icon with a generic dot.
 
 ## 6. Status, Motion, and Time
 
@@ -84,6 +116,10 @@ Mcode shows agents that are **alive** — they're working, thinking, writing fil
 - Avoid bouncing or elastic animations. Real things decelerate smoothly; bouncy easing reads as toy-like.
 - One well-timed entrance is worth more than fifteen scattered micro-interactions.
 
+Use a spinner inside the initiating control for a short indeterminate action.
+Use a skeleton for initial content whose final geometry is known. Keep stale
+content visible during background refresh instead of replacing it with either.
+
 Time is everywhere in this app — relative ("2m ago"), tabular, monospace. Never lose track of *when* something happened.
 
 ## 7. Surfaces
@@ -94,7 +130,11 @@ Mcode has three primary surfaces visible at most times:
 - **Conversation** (center): the agent's stream — messages, tool calls, diffs inline. The thing the user reads.
 - **Panel** (right): tasks, changes, terminal output — secondary inspection. The thing the user opens when they want to dig in.
 
-Each of these is a floating card. They are siblings, not nested children. They never crowd each other — when the right panel would squeeze the conversation too narrow, it pops out as a modal overlay instead.
+These are sibling workspace panes, not nested cards. At wide sizes they dock
+beside each other and may be resized. When a secondary pane would squeeze the
+primary work area, keep the same component and float it over the right edge.
+Use a full-surface takeover only when the remaining work area cannot support
+the task. A narrow pane is not automatically a phone layout.
 
 A composer sits at the bottom of the conversation. It is the user's only direct input — everything else is review. Treat it with care: it should feel like a place the user *wants* to type into. Not a form field, not a chat box, not a search bar. A drafting surface.
 
@@ -116,6 +156,34 @@ When you must show secondary controls, prefer popovers anchored to the trigger. 
 
 If a setting affects what the next action will do — what mode, what permission level, what branch — its **current value must be visible**, not hidden behind a click. The user should never have to open a menu to find out what state they're in.
 
+### One control per task
+
+Use one visible control for one task. Put alternate methods in an attached
+menu, and put infrequent commands in overflow. Persistent actions belong in
+persistent chrome. Do not duplicate a submit action in a bottom bar or expose
+separate buttons for two states of one layout toggle.
+
+### Show meaning, not wire syntax
+
+Translate implementation metadata into the concept the user needs. Render
+Mermaid as a diagram, GitHub alert syntax as a callout, raw hunk coordinates as
+an unchanged-lines separator, and truncated paths with a full-path tooltip.
+
+### Preserve capability across widths
+
+Responsive layout changes posture before capability. Dock, float, or collapse
+the same component while preserving its state, resize behavior, search,
+selection, and actions. Do not replace a rich panel with a picker or dropdown
+solely because the container became narrow. The posture must update while the
+user resizes, without a close-and-reopen cycle.
+
+### One alignment axis
+
+Headings, filters, tabs, and the content they control share one horizontal
+axis. A bounded content column may be centered within a wide pane, while the
+text and controls inside it remain left-aligned. This is different from
+centering every element.
+
 ### Recoverable everything
 
 Esc closes the thing in front of you. It does not silently mutate state. Destructive actions show what will cascade ("This deletes 4 threads and 1 worktree"). Errors surface next to the thing that failed, not in a banner across the page.
@@ -132,7 +200,9 @@ These are the patterns that make an interface look AI-generated. None of them ar
 - **Identical card grids** — the same card repeated four times in a 2x2. If it's the same card, it should be a row.
 - **Sparklines as garnish** — tiny chart that conveys nothing. If a chart is decoration, delete it.
 - **Wrapping everything in a card** — not all content needs a container. Tonal lift and indentation work.
-- **Centered everything** — left-aligned with intentional asymmetry feels designed; centered everything feels templated.
+- **Centered text compositions everywhere:** keep content and controls
+  left-aligned. Centering a shared content column within a pane is allowed and
+  often necessary for a stable alignment axis.
 - **Marketing fonts** — Inter, DM Sans, Space Grotesk, Plus Jakarta, Outfit, Fraunces, Newsreader, IBM Plex, Crimson, Lora, Playfair, Cormorant. All banned. Reach further. Find the font that feels like the museum caption, the mainframe console, the letterpress label.
 - **Emojis as decoration** — never. Typographic glyphs only.
 - **"Get started!" empty states** — no exclamation marks, no marketing copy.

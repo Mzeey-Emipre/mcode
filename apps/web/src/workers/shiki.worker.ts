@@ -47,7 +47,79 @@ interface TokenizeResponse {
   }>;
 }
 
-type WorkerRequest = HighlightRequest | TokenizeRequest;
+/** Maximum source lines accepted by one pull request diff highlighting job. */
+export const PULL_REQUEST_DIFF_WORKER_MAX_LINES = 512;
+
+/** Maximum UTF-8 bytes retained from one remote patch line before tokenization. */
+export const PULL_REQUEST_DIFF_WORKER_MAX_LINE_LENGTH = 16 * 1_024;
+
+function truncatePullRequestDiffLine(line: string): {
+  value: string;
+  truncated: boolean;
+} {
+  let bytes = 0;
+  let codeUnits = 0;
+  for (const character of line) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    const characterBytes =
+      codePoint <= 0x7f
+        ? 1
+        : codePoint <= 0x7ff
+          ? 2
+          : codePoint <= 0xffff
+            ? 3
+            : 4;
+    if (bytes + characterBytes > PULL_REQUEST_DIFF_WORKER_MAX_LINE_LENGTH) {
+      return { value: line.slice(0, codeUnits), truncated: true };
+    }
+    bytes += characterBytes;
+    codeUnits += character.length;
+  }
+  return { value: line, truncated: false };
+}
+
+/** One coherent visible-hunk block sent to the worker for pull request highlighting. */
+export interface PullRequestDiffTokenizeBlock {
+  blockId: string;
+  lineKeys: string[];
+  lines: string[];
+  language: string;
+  theme: "github-dark" | "github-light";
+}
+
+/** Cancellable, visible-window pull request diff tokenization request. */
+export interface PullRequestDiffTokenizeRequest {
+  id: string;
+  type: "tokenize-diff-window";
+  blocks: PullRequestDiffTokenizeBlock[];
+}
+
+/** Pull request diff tokenization result with cache-byte accounting. */
+export interface PullRequestDiffTokenizeResponse {
+  id: string;
+  type: "tokenize-diff-window";
+  results: Array<{
+    blockId: string;
+    lineKeys: string[];
+    lines: TokenSpan[][];
+    truncatedLineKeys: string[];
+    tokenBytes: number;
+    error?: string;
+  }>;
+  tokenBytes: number;
+  error?: string;
+}
+
+interface CancelRequest {
+  type: "cancel";
+  id: string;
+}
+
+type WorkerRequest =
+  | HighlightRequest
+  | TokenizeRequest
+  | PullRequestDiffTokenizeRequest
+  | CancelRequest;
 
 /** Shiki language parameter type derived from the core highlighter's loadLanguage signature. */
 type ShikiLang = Parameters<
@@ -108,6 +180,22 @@ const LANG_ALIASES: Record<string, string> = {
 const languageLoading = new Map<string, Promise<void>>();
 
 let highlighterPromise: ReturnType<typeof createHighlighterCore> | null = null;
+const activeRequestIds = new Set<string>();
+const cancelledRequestIds = new Set<string>();
+
+function yieldToWorkerQueue(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function tokenSpanBytes(lines: readonly TokenSpan[][]): number {
+  let bytes = 0;
+  for (const line of lines) {
+    for (const token of line) {
+      bytes += (token.content.length + token.color.length) * 2 + 32;
+    }
+  }
+  return bytes;
+}
 
 /**
  * Returns the singleton highlighter, creating it on first call.
@@ -173,6 +261,11 @@ async function resolveLanguage(
 
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const req = e.data;
+
+  if (req.type === "cancel") {
+    if (activeRequestIds.has(req.id)) cancelledRequestIds.add(req.id);
+    return;
+  }
 
   if (req.type === "highlight") {
     const { id, code, language, theme } = req;
@@ -242,6 +335,106 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         results: [],
         error: err instanceof Error ? err.message : "Unknown error",
       } as TokenizeResponse & { error: string });
+    }
+    return;
+  }
+
+  if (req.type === "tokenize-diff-window") {
+    const { id } = req;
+    activeRequestIds.add(id);
+    try {
+      const totalLines = req.blocks.reduce(
+        (count, block) => count + block.lines.length,
+        0,
+      );
+      if (totalLines > PULL_REQUEST_DIFF_WORKER_MAX_LINES) {
+        self.postMessage({
+          id,
+          type: "tokenize-diff-window",
+          results: [],
+          tokenBytes: 0,
+          error: "Pull request highlight window exceeds the worker line limit",
+        } satisfies PullRequestDiffTokenizeResponse);
+        return;
+      }
+
+      const highlighter = await getHighlighter();
+      const results: PullRequestDiffTokenizeResponse["results"] = [];
+      let tokenBytes = 0;
+      for (const block of req.blocks) {
+        await yieldToWorkerQueue();
+        if (cancelledRequestIds.has(id)) return;
+        if (block.lineKeys.length !== block.lines.length) {
+          results.push({
+            blockId: block.blockId,
+            lineKeys: [],
+            lines: [],
+            truncatedLineKeys: [],
+            tokenBytes: 0,
+            error: "Pull request highlight line keys do not match source lines",
+          });
+          continue;
+        }
+
+        const truncatedLineKeys: string[] = [];
+        const boundedLines = block.lines.map((line, index) => {
+          const bounded = truncatePullRequestDiffLine(line);
+          if (bounded.truncated) truncatedLineKeys.push(block.lineKeys[index]);
+          return bounded.value;
+        });
+        try {
+          const lang = await resolveLanguage(highlighter, block.language);
+          if (cancelledRequestIds.has(id)) return;
+          const { tokens } = highlighter.codeToTokens(boundedLines.join("\n"), {
+            lang,
+            theme: block.theme,
+          });
+          const lines = tokens.map((lineTokens) =>
+            lineTokens.map((token) => ({
+              content: token.content,
+              color: token.color ?? "inherit",
+            })),
+          );
+          const blockTokenBytes = tokenSpanBytes(lines);
+          tokenBytes += blockTokenBytes;
+          results.push({
+            blockId: block.blockId,
+            lineKeys: block.lineKeys,
+            lines,
+            truncatedLineKeys,
+            tokenBytes: blockTokenBytes,
+          });
+        } catch (error) {
+          results.push({
+            blockId: block.blockId,
+            lineKeys: block.lineKeys,
+            lines: [],
+            truncatedLineKeys,
+            tokenBytes: 0,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      }
+      if (cancelledRequestIds.has(id)) return;
+      self.postMessage({
+        id,
+        type: "tokenize-diff-window",
+        results,
+        tokenBytes,
+      } satisfies PullRequestDiffTokenizeResponse);
+    } catch (error) {
+      if (!cancelledRequestIds.has(id)) {
+        self.postMessage({
+          id,
+          type: "tokenize-diff-window",
+          results: [],
+          tokenBytes: 0,
+          error: error instanceof Error ? error.message : "Unknown error",
+        } satisfies PullRequestDiffTokenizeResponse);
+      }
+    } finally {
+      activeRequestIds.delete(id);
+      cancelledRequestIds.delete(id);
     }
   }
 };
