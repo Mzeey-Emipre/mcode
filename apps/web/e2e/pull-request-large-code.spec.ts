@@ -682,7 +682,11 @@ test.describe("Pull request large Code gates", () => {
     await page.getByRole("tab", { name: "Code" }).click();
 
     await expect(
-      page.getByLabel("Change stack").getByText("Generated", { exact: true }),
+      page
+        .getByRole("complementary", {
+          name: "Pull request changed files navigator",
+        })
+        .getByText("Generated", { exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("grid", { name: "Pull request diff" })).toContainText(
       "after",
