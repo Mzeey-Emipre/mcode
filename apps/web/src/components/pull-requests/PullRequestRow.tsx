@@ -1,5 +1,10 @@
+import {
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestClosed,
+  GitPullRequestDraft,
+} from "lucide-react";
 import { memo, useMemo } from "react";
-import { GitPullRequest, GitMerge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -27,6 +32,25 @@ const checkPresentation = {
   pending: { label: "Checks pending", tone: "bg-primary/75" },
   neutral: { label: "Checks neutral", tone: "bg-muted-foreground/55" },
   unknown: { label: "Checks unavailable", tone: "bg-muted-foreground/35" },
+} as const;
+
+const statePresentation = {
+  open: {
+    icon: GitPullRequest,
+    tone: "text-[var(--diff-add-strong)]",
+  },
+  draft: {
+    icon: GitPullRequestDraft,
+    tone: "text-muted-foreground/75",
+  },
+  closed: {
+    icon: GitPullRequestClosed,
+    tone: "text-destructive/85",
+  },
+  merged: {
+    icon: GitMerge,
+    tone: "text-violet-400 dark:text-violet-300",
+  },
 } as const;
 
 function relativeTime(value: string, now = Date.now()): string {
@@ -79,13 +103,17 @@ function PullRequestRowComponent({
   const accessibleName = useMemo(() => {
     if (!item) return "Pull request unavailable";
     const actor = item.author?.login ?? "unknown author";
-    return `${item.title}, pull request #${item.identity.number}, ${item.identity.owner}/${item.identity.repository}, ${actor}, ${item.state}, updated ${relativeTime(item.updatedAt)}`;
+    return `${item.title}, pull request #${item.identity.number}, ${item.identity.owner}/${item.identity.repository}, ${actor}, ${item.state}, ${item.readiness}, updated ${relativeTime(item.updatedAt)}`;
   }, [item]);
 
   if (!item) return null;
   const checks = checkPresentation[item.checks.state];
-  const merged = item.state === "merged";
-  const StateIcon = merged ? GitMerge : GitPullRequest;
+  const stateKey =
+    item.state === "open" && item.readiness === "draft"
+      ? "draft"
+      : item.state;
+  const state = statePresentation[stateKey];
+  const StateIcon = state.icon;
   const avatarUrl = safeRemoteImageUrl(item.author?.avatarUrl);
 
   return (
@@ -120,7 +148,13 @@ function PullRequestRowComponent({
       )}
     >
       <span className="flex min-w-0 flex-1 items-start gap-3">
-        <span className="relative mt-1 flex size-5 shrink-0 items-center justify-center text-muted-foreground/80">
+        <span
+          data-pull-request-state={stateKey}
+          className={cn(
+            "relative mt-1 flex size-5 shrink-0 items-center justify-center",
+            state.tone,
+          )}
+        >
           <StateIcon size={15} aria-hidden />
           <span
             aria-label={checks.label}

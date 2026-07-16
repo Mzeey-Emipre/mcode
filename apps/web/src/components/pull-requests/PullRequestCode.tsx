@@ -503,8 +503,9 @@ export function PullRequestCode({
             ) : null}
             <Button
               type="button"
+              variant="outline"
               size="xs"
-              className="ml-1 shrink-0 gap-1.5"
+              className="ml-1 shrink-0 gap-1.5 border-border/60 bg-background/35 text-foreground shadow-none hover:bg-muted/40"
               aria-describedby={
                 reviewUnavailableReason
                   ? "pull-request-review-unavailable"

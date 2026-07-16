@@ -422,6 +422,9 @@ describe("PullRequestCode", () => {
       screen.getByRole("button", { name: "Submit review" }),
     );
     expect(
+      screen.getByRole("button", { name: "Submit review" }),
+    ).toHaveClass("border-border/60", "bg-background/35", "shadow-none");
+    expect(
       screen.queryByTestId("pull-request-review-footer"),
     ).not.toBeInTheDocument();
     expect(

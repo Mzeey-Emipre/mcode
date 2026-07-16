@@ -718,6 +718,39 @@ describe("PullRequestInbox", () => {
       "closed",
     ]);
     expect(closed).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("tablist", { name: "Pull request relationships" }),
+    ).toHaveClass("items-center");
+    expect(
+      screen.getByRole("button", { name: "Refresh pull requests" }),
+    ).not.toHaveClass("mb-1");
+  });
+
+  it("uses distinct icon shapes and tones for pull request states", () => {
+    seedItems([
+      summary(1),
+      { ...summary(2), readiness: "draft" },
+      { ...summary(3), state: "closed" },
+      { ...summary(4), state: "merged" },
+    ]);
+
+    render(<PullRequestInbox autoLoad={false} />);
+
+    const open = document.querySelector('[data-pull-request-state="open"]');
+    const draft = document.querySelector('[data-pull-request-state="draft"]');
+    const closed = document.querySelector('[data-pull-request-state="closed"]');
+    const merged = document.querySelector('[data-pull-request-state="merged"]');
+
+    expect(open).toHaveClass("text-[var(--diff-add-strong)]");
+    expect(open?.querySelector(".lucide-git-pull-request")).toBeTruthy();
+    expect(draft).toHaveClass("text-muted-foreground/75");
+    expect(draft?.querySelector(".lucide-git-pull-request-draft")).toBeTruthy();
+    expect(closed).toHaveClass("text-destructive/85");
+    expect(
+      closed?.querySelector(".lucide-git-pull-request-closed"),
+    ).toBeTruthy();
+    expect(merged).toHaveClass("text-violet-400");
+    expect(merged?.querySelector(".lucide-git-merge")).toBeTruthy();
   });
 
   it("keeps unrelated row renders isolated", () => {

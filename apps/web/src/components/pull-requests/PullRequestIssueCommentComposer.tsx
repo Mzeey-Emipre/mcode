@@ -78,6 +78,8 @@ export function PullRequestIssueCommentComposer({
   const displayedError = outcomeUnknownLane?.error ?? lane.error;
   const [localError, setLocalError] = useState<string | null>(null);
   const byteCount = textEncoder.encode(body).byteLength;
+  const showByteCount =
+    byteCount >= PULL_REQUEST_MUTATION_BODY_MAX_BYTES * 0.9;
   const capabilityReason = pullRequestCapabilityReason(capability);
   const unavailableReason =
     capabilityReason ??
@@ -98,6 +100,16 @@ export function PullRequestIssueCommentComposer({
     hasPostBody &&
     byteCount <= PULL_REQUEST_MUTATION_BODY_MAX_BYTES;
   const repository = `${identity.owner}/${identity.repository} #${identity.number}`;
+  const commentStatus =
+    localError ??
+    unavailableReason ??
+    (lane.status === "accepted" ? "Comment posted." : null);
+  const commentDescriptionIds = [
+    showByteCount ? "pull-request-comment-limit" : null,
+    commentStatus ? "pull-request-comment-status" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const post = async (): Promise<void> => {
     if (!canPost || !expected) return;
@@ -234,10 +246,10 @@ export function PullRequestIssueCommentComposer({
     <section
       aria-label="Add a comment"
       aria-busy={submitting || undefined}
-      className="shrink-0 border-t border-border/40 bg-page px-3 py-3"
+      className="shrink-0 bg-page px-3 pb-3 pt-2"
     >
       <div className="mx-auto w-full max-w-5xl">
-        <div className="rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 transition-shadow focus-within:ring-2 focus-within:ring-primary/70">
+        <div className="relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 transition-shadow focus-within:ring-2 focus-within:ring-primary/70">
           <label htmlFor="pull-request-issue-comment" className="sr-only">
             Comment for {repository}
           </label>
@@ -250,9 +262,9 @@ export function PullRequestIssueCommentComposer({
               submitting ||
               Boolean(displayedError)
             }
-            aria-describedby="pull-request-comment-limit pull-request-comment-status"
+            aria-describedby={commentDescriptionIds || undefined}
             placeholder={`Comment on ${repository}`}
-            className="min-h-12 max-h-32 field-sizing-fixed resize-y border-0 bg-transparent px-3 pb-2 pt-3 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+            className="min-h-12 max-h-32 field-sizing-fixed resize-y border-0 bg-transparent px-3 pb-3 pr-12 pt-3 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
             onChange={(event) => {
               const accepted = usePullRequestMutationStore
                 .getState()
@@ -274,44 +286,56 @@ export function PullRequestIssueCommentComposer({
               void post();
             }}
           />
-          <div className="flex min-w-0 items-center gap-2 border-t border-border/20 px-2.5 py-1.5">
-            <p
-              id="pull-request-comment-status"
-              role={localError ? "alert" : "status"}
-              className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-            >
-              {localError ??
-                unavailableReason ??
-                (lane.status === "accepted"
-                  ? "Comment posted."
-                  : "Ctrl/⌘ Enter to post")}
-            </p>
-            <p
-              id="pull-request-comment-limit"
-              className={cn(
-                "shrink-0 font-mono text-xs tabular-nums text-muted-foreground/70",
-                byteCount === 0 && "sr-only",
-              )}
-            >
-              {byteCount.toLocaleString()} /{" "}
-              {PULL_REQUEST_MUTATION_BODY_MAX_BYTES.toLocaleString()} bytes
-            </p>
-            <Button
-              type="button"
-              size="icon-sm"
-              className="shrink-0 rounded-full"
-              aria-label={submitting ? "Posting comment" : "Post comment"}
-              disabled={!canPost}
-              onClick={() => void post()}
-            >
-              {submitting ? (
-                <Spinner size="xs" aria-hidden />
-              ) : (
-                <ArrowUp size={14} aria-hidden />
-              )}
-            </Button>
-          </div>
+          <Button
+            type="button"
+            size="icon-sm"
+            className="absolute bottom-2 right-2 size-8 rounded-full"
+            aria-label={submitting ? "Posting comment" : "Post comment"}
+            disabled={!canPost}
+            onClick={() => void post()}
+          >
+            {submitting ? (
+              <Spinner size="xs" aria-hidden />
+            ) : (
+              <ArrowUp size={14} aria-hidden />
+            )}
+          </Button>
         </div>
+        {commentStatus || showByteCount ? (
+          <div className="mt-2 flex min-w-0 items-center gap-2 px-1">
+            {commentStatus ? (
+              <p
+                id="pull-request-comment-status"
+                role={localError ? "alert" : "status"}
+                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+              >
+                {commentStatus}
+              </p>
+            ) : (
+              <span className="flex-1" />
+            )}
+            {showByteCount ? (
+              <p
+                id="pull-request-comment-limit"
+                className={cn(
+                  "shrink-0 font-mono text-xs tabular-nums",
+                  byteCount > PULL_REQUEST_MUTATION_BODY_MAX_BYTES
+                    ? "text-destructive"
+                    : "text-muted-foreground/70",
+                )}
+              >
+                {byteCount.toLocaleString()} /{" "}
+                {PULL_REQUEST_MUTATION_BODY_MAX_BYTES.toLocaleString()} bytes
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {!showByteCount ? (
+          <p id="pull-request-comment-limit" className="sr-only">
+            {byteCount.toLocaleString()} /{" "}
+            {PULL_REQUEST_MUTATION_BODY_MAX_BYTES.toLocaleString()} bytes
+          </p>
+        ) : null}
         {displayedError ? (
           <div className="mt-3">
             <PullRequestMutationError

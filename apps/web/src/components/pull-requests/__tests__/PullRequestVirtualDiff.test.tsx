@@ -191,11 +191,16 @@ describe("PullRequestVirtualDiff", () => {
     expect(screen.getAllByTestId("pull-request-diff-gutter")).toSatisfy(
       (gutters: HTMLElement[]) => gutters.every((gutter) => gutter.classList.contains("w-10")),
     );
+    expect(screen.queryByText("@@ -1 +1 @@")).not.toBeInTheDocument();
+    expect(screen.queryByText("@@ -20 +20 @@")).not.toBeInTheDocument();
+    expect(screen.getByText("18 unchanged lines")).toBeVisible();
   });
 
   it("uses the fixed stacked height for unified replacement rows", () => {
     renderDiff();
+    expect(virtualizerProbe.options?.estimateSize(1)).toBe(0);
     expect(virtualizerProbe.options?.estimateSize(2)).toBe(48);
+    expect(virtualizerProbe.options?.estimateSize(3)).toBe(24);
 
     renderDiff({ mode: "split" });
     expect(virtualizerProbe.options?.estimateSize(2)).toBe(24);

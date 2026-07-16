@@ -119,10 +119,15 @@ describe("PullRequestIssueCommentComposer", () => {
       "field-sizing-fixed",
       "border-0",
       "bg-transparent",
+      "pr-12",
     );
     expect(
       screen.getByRole("button", { name: "Post comment" }),
-    ).toHaveClass("rounded-full");
+    ).toHaveClass("absolute", "bottom-2", "right-2", "rounded-full");
+    expect(
+      screen.getByRole("region", { name: "Add a comment" }),
+    ).not.toHaveClass("border-t");
+    expect(screen.queryByText("Ctrl/⌘ Enter to post")).not.toBeInTheDocument();
     expect(screen.getByText("0 / 65,536 bytes")).toHaveClass("sr-only");
   });
 

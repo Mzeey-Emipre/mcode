@@ -446,7 +446,7 @@ export function PullRequestInbox({
       <div
         role="tablist"
         aria-label="Pull request relationships"
-        className="mb-3 mt-5 flex h-9 w-full max-w-[720px] shrink-0 items-end gap-1 px-5"
+        className="mb-3 mt-5 flex h-9 w-full max-w-[720px] shrink-0 items-center gap-1 px-5"
       >
         {RELATIONSHIP_TABS.map((tab, index) => (
           <Button
@@ -489,7 +489,7 @@ export function PullRequestInbox({
                 size="xs"
                 aria-pressed={selected}
                 className={cn(
-                  "h-7 px-2 text-xs font-normal capitalize",
+                  "h-8 px-2 text-xs font-normal capitalize",
                   selected
                     ? "bg-muted/70 text-foreground"
                     : "text-muted-foreground hover:text-foreground",
@@ -507,7 +507,7 @@ export function PullRequestInbox({
           size="icon-xs"
           aria-label="Refresh pull requests"
           onClick={refresh}
-          className="mb-1 text-muted-foreground"
+          className="ml-1 text-muted-foreground"
         >
           {status === "refreshing" ? (
             <Spinner size="sm" />

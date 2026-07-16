@@ -12,6 +12,7 @@ import {
 } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HunkSeparator } from "@/components/diff/HunkSeparator";
 import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePullRequestDiffHighlighter } from "@/hooks/usePullRequestDiffHighlighter";
@@ -321,6 +322,9 @@ function PullRequestVirtualDiffComponent({
       if (row?.kind === "file") return 40;
       if (row?.kind === "inline") return 180;
       if (row?.kind === "notice") return 44;
+      if (row?.kind === "hunk") {
+        return row.hiddenLineCount > 0 ? DIFF_ROW_ESTIMATE_PX : 0;
+      }
       if (
         row?.kind === "line" &&
         effectiveMode === "unified" &&
@@ -526,16 +530,11 @@ function PullRequestVirtualDiffComponent({
     }
     if (row.kind === "hunk") {
       return gridCell(
-        <div className="flex min-h-6 items-center gap-2 bg-page/55 px-3 font-mono text-xs text-muted-foreground">
-          <span className="min-w-0 truncate whitespace-nowrap">
-            {row.label}
-          </span>
-          {row.hiddenLineCount > 0 && (
-            <span className="ml-auto shrink-0 tabular-nums">
-              {row.hiddenLineCount} unchanged
-            </span>
-          )}
-        </div>,
+        row.hiddenLineCount > 0 ? (
+          <HunkSeparator hiddenLineCount={row.hiddenLineCount} />
+        ) : (
+          <div aria-hidden className="h-0 overflow-hidden" />
+        ),
       );
     }
     if (row.kind === "notice") {
