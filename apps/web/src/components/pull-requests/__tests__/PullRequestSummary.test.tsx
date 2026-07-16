@@ -689,4 +689,23 @@ describe("PullRequestSummary", () => {
     expect(virtualizerProbe.measureElement).toHaveBeenCalled();
     expect(document.querySelectorAll("*").length).toBeLessThan(500);
   });
+
+  it("lets the Summary page scroll naturally for a normal comment set", () => {
+    render(
+      <PullRequestSummary
+        detail={{ ...detail(), commentCount: 31, reviewThreadCount: 0 }}
+        checks={[]}
+        comments={manyComments(31)}
+      />,
+    );
+
+    expect(
+      screen.queryByLabelText("Loaded comments viewport"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("list", { name: "Loaded comments" })).getAllByRole(
+        "listitem",
+      ),
+    ).toHaveLength(31);
+  });
 });

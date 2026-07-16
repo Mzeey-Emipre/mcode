@@ -129,6 +129,15 @@ describe("PullRequestIssueCommentComposer", () => {
     ).toHaveClass("absolute", "bottom-2", "right-2", "rounded-full");
     expect(
       screen.getByRole("region", { name: "Add a comment" }),
+    ).toHaveClass(
+      "relative",
+      "z-10",
+      "before:bg-gradient-to-t",
+      "before:from-page",
+      "before:to-transparent",
+    );
+    expect(
+      screen.getByRole("region", { name: "Add a comment" }),
     ).not.toHaveClass("border-t", "bg-page");
     expect(screen.queryByText("Ctrl/⌘ Enter to post")).not.toBeInTheDocument();
     expect(screen.getByText("0 / 65,536 bytes")).toHaveClass("sr-only");
@@ -200,7 +209,7 @@ describe("PullRequestIssueCommentComposer", () => {
     expect(onPosted).toHaveBeenCalledOnce();
   });
 
-  it("keeps reply controls inside the comment footer", () => {
+  it("uses the same composer shell for replies and Timeline comments", () => {
     usePullRequestMutationStore
       .getState()
       .setCommentDraft(identity, "@reviewer ");
@@ -218,22 +227,48 @@ describe("PullRequestIssueCommentComposer", () => {
     );
 
     const composer = screen.getByRole("region", { name: "Reply to reviewer" });
-    expect(composer).toHaveClass("-mx-4", "-mb-4", "bg-background/25");
-    expect(screen.getByRole("textbox", { name: "Reply to reviewer" })).toHaveClass(
+    expect(composer).toHaveClass("mt-4");
+    expect(composer).not.toHaveClass(
+      "-mx-4",
+      "-mb-4",
+      "border-t",
+      "bg-background/25",
+    );
+    const textbox = screen.getByRole("textbox", { name: "Reply to reviewer" });
+    expect(textbox.parentElement).toHaveClass(
+      "relative",
+      "rounded-xl",
+      "bg-muted/50",
+      "ring-1",
+      "ring-inset",
+      "ring-border/60",
+    );
+    expect(textbox).toHaveClass(
+      "min-h-12",
+      "max-h-32",
+      "field-sizing-content",
+      "resize-none",
       "border-0",
       "bg-transparent",
+      "pr-20",
     );
     expect(screen.getByRole("button", { name: "Cancel reply" })).toHaveClass(
-      "size-7",
+      "absolute",
+      "bottom-2",
+      "right-11",
+      "size-8",
       "rounded-full",
     );
     expect(screen.getByRole("button", { name: "Post reply" })).toHaveClass(
-      "size-7",
+      "absolute",
+      "bottom-2",
+      "right-2",
+      "size-8",
       "rounded-full",
     );
     expect(
       screen.getByRole("button", { name: "Post reply" }).querySelector("svg"),
-    ).toHaveClass("size-3");
+    ).toHaveClass("lucide-arrow-up");
   });
 
   it("preserves text, retries the same key, and keeps outcome-unknown blocked after refresh", async () => {

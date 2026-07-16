@@ -322,6 +322,36 @@ describe("PullRequestVirtualDiff", () => {
     );
   });
 
+  it("reveals a white add button over the line gutter on hover", () => {
+    const onCreateDraft = vi.fn();
+    renderDiff({ onCreateDraft });
+    const first = document.querySelector<HTMLElement>(
+      '[data-line-key="pr-c:test:0:1:left:remove"]',
+    );
+    expect(first).not.toBeNull();
+    fireEvent.mouseEnter(first!);
+
+    const addComment = screen.getByRole("button", {
+      name: "Draft comment on original line 1",
+    });
+    expect(addComment).toHaveClass(
+      "absolute",
+      "left-0.5",
+      "top-0.5",
+      "bg-foreground",
+      "text-background",
+      "opacity-0",
+      "group-hover/cell:opacity-100",
+    );
+    expect(addComment.querySelector("svg")).toHaveClass("lucide-plus");
+
+    fireEvent.click(addComment);
+    expect(onCreateDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "pr-l:test:0:1" }),
+      expect.objectContaining({ key: "pr-c:test:0:1:left:remove" }),
+    );
+  });
+
   it("toggles a collapsed file without changing active path during focus", () => {
     const onToggleFile = vi.fn();
     const onActivePathChange = vi.fn();

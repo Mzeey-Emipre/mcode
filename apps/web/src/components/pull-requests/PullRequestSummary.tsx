@@ -52,7 +52,7 @@ import { pullRequestMutationExpected } from "./PullRequestMutationError";
 import { RemoteMarkdown } from "./RemoteMarkdown";
 import { safePullRequestHttpUrl } from "./safePullRequestHttpUrl";
 
-const RESOURCE_VIRTUALIZATION_THRESHOLD = 30;
+const RESOURCE_VIRTUALIZATION_THRESHOLD = 100;
 const RESOURCE_OVERSCAN = 4;
 const CONVERSATION_MARKDOWN_CLASS = [
   "max-w-[72ch]",

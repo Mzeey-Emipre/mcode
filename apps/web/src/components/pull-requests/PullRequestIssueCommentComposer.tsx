@@ -4,7 +4,7 @@ import {
   type PullRequestIdentity,
   type PullRequestMutationExpected,
 } from "@mcode/contracts";
-import { ArrowUp, SendHorizontal, X } from "lucide-react";
+import { ArrowUp, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -27,6 +27,10 @@ import {
 } from "./PullRequestMutationError";
 
 const textEncoder = new TextEncoder();
+const composerShellClass =
+  "relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 transition-shadow focus-within:ring-2 focus-within:ring-primary/70";
+const composerTextareaClass =
+  "min-h-12 max-h-32 resize-none border-0 bg-transparent px-3 pb-3 pt-3 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent";
 
 /** Props for an explicit pull request issue-comment composer. */
 export interface PullRequestIssueCommentComposerProps {
@@ -150,12 +154,12 @@ export function PullRequestIssueCommentComposer({
       <section
         aria-label={replyLabel}
         aria-busy={submitting || undefined}
-        className="-mx-4 -mb-4 mt-4 border-t border-border/40 bg-background/25 px-3 py-2.5"
+        className="mt-4"
       >
         <label htmlFor="pull-request-inline-reply" className="sr-only">
           {replyLabel}
         </label>
-        <div className="flex min-w-0 items-end gap-1 rounded-md ring-1 ring-transparent transition-colors focus-within:bg-background/40 focus-within:ring-ring/60">
+        <div className={composerShellClass}>
           <Textarea
             id="pull-request-inline-reply"
             autoFocus
@@ -168,7 +172,7 @@ export function PullRequestIssueCommentComposer({
             }
             aria-describedby={status ? "pull-request-reply-status" : undefined}
             placeholder={replyLabel}
-            className="h-9 min-h-9 max-h-28 min-w-0 field-sizing-fixed resize-y border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+            className={cn(composerTextareaClass, "pr-20")}
             onChange={(event) => {
               const accepted = usePullRequestMutationStore
                 .getState()
@@ -196,8 +200,8 @@ export function PullRequestIssueCommentComposer({
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
-            className="my-1 size-7 rounded-full text-muted-foreground"
+            size="icon-sm"
+            className="absolute bottom-2 right-11 size-8 rounded-full text-muted-foreground"
             aria-label="Cancel reply"
             onClick={onCancel}
           >
@@ -205,9 +209,8 @@ export function PullRequestIssueCommentComposer({
           </Button>
           <Button
             type="button"
-            variant="secondary"
-            size="icon-xs"
-            className="my-1 mr-1 size-7 rounded-full"
+            size="icon-sm"
+            className="absolute bottom-2 right-2 size-8 rounded-full"
             aria-label="Post reply"
             disabled={!canPost}
             onClick={() => void post()}
@@ -215,7 +218,7 @@ export function PullRequestIssueCommentComposer({
             {submitting ? (
               <Spinner size="xs" aria-hidden />
             ) : (
-              <SendHorizontal aria-hidden className="size-3" />
+              <ArrowUp size={14} aria-hidden />
             )}
           </Button>
         </div>
@@ -246,10 +249,10 @@ export function PullRequestIssueCommentComposer({
     <section
       aria-label="Add a comment"
       aria-busy={submitting || undefined}
-      className="shrink-0 px-3 pb-3 pt-2"
+      className="relative z-10 shrink-0 px-3 pb-3 pt-2 before:pointer-events-none before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-gradient-to-t before:from-page before:to-transparent"
     >
       <div className="mx-auto w-full max-w-5xl">
-        <div className="relative rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 transition-shadow focus-within:ring-2 focus-within:ring-primary/70">
+        <div className={composerShellClass}>
           <label htmlFor="pull-request-issue-comment" className="sr-only">
             Comment for {repository}
           </label>
@@ -264,7 +267,7 @@ export function PullRequestIssueCommentComposer({
             }
             aria-describedby={commentDescriptionIds || undefined}
             placeholder={`Comment on ${repository}`}
-            className="min-h-12 max-h-32 resize-none border-0 bg-transparent px-3 pb-3 pr-12 pt-3 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+            className={cn(composerTextareaClass, "pr-12")}
             onChange={(event) => {
               const accepted = usePullRequestMutationStore
                 .getState()

@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDown, ChevronRight, MessageSquarePlus } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -225,7 +225,7 @@ const DiffCell = memo(function DiffCell({
       data-line-side={cell.side}
       tabIndex={active ? 0 : -1}
       className={cn(
-        "group/cell flex min-h-6 min-w-0 items-stretch font-mono text-xs outline-none",
+        "group/cell relative flex min-h-6 min-w-0 items-stretch font-mono text-xs outline-none",
         cellTone(cell),
         split && "min-w-0 flex-1",
         active && "ring-1 ring-inset ring-primary/70",
@@ -234,6 +234,22 @@ const DiffCell = memo(function DiffCell({
       onClick={() => onActivate(row, cell)}
       onKeyDown={(event) => onKeyDown(event, row, cell)}
     >
+      {cell.lineNumber !== null && cell.type !== "metadata" && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          tabIndex={-1}
+          aria-label={`Draft comment on ${lineLabel.toLowerCase()}`}
+          className="pointer-events-none absolute left-0.5 top-0.5 z-10 size-5 rounded-sm bg-foreground text-background opacity-0 shadow-none transition-opacity hover:bg-foreground/90 hover:text-background group-hover/cell:pointer-events-auto group-hover/cell:opacity-100 group-focus-within/cell:pointer-events-auto group-focus-within/cell:opacity-100"
+          onClick={(event) => {
+            event.stopPropagation();
+            onCreateDraft(row, cell);
+          }}
+        >
+          <Plus size={14} strokeWidth={2.5} aria-hidden />
+        </Button>
+      )}
       <span
         aria-hidden
         data-testid="pull-request-diff-gutter"
@@ -255,22 +271,6 @@ const DiffCell = memo(function DiffCell({
           : cell.content}
         {trailingText}
       </code>
-      {active && cell.lineNumber !== null && cell.type !== "metadata" && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          tabIndex={-1}
-          aria-label={`Draft comment on ${lineLabel.toLowerCase()}`}
-          className="my-0.5 mr-1 size-5 shrink-0 text-muted-foreground hover:text-foreground"
-          onClick={(event) => {
-            event.stopPropagation();
-            onCreateDraft(row, cell);
-          }}
-        >
-          <MessageSquarePlus size={12} aria-hidden />
-        </Button>
-      )}
     </div>
   );
 });
