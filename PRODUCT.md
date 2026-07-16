@@ -61,9 +61,9 @@ Five things that decide ambiguous design or scope calls:
 
 Most of the time, the user is not reading the agent's reply. They're glancing at the sidebar to see what's done, what's running, what errored. Optimize for the glance. A status dot you can read at flick-speed is worth more than a paragraph of agent prose.
 
-### 2. Density over discovery.
+### 2. Information density over uniform compression.
 
-Developers tolerate small type, tight rows, packed columns. Do not add onboarding tooltips for standard icons. Use tooltips when they reveal clipped data, such as a full file path, or name an icon-only action whose label is not otherwise visible. Don't wrap things in cards to "make them feel safe." Tight is correct.
+Prefer high information density, not tight spacing everywhere. Keep rows compact within a related list, but use stronger spacing between groups, task stages, and primary surfaces. Whitespace is structural when it communicates hierarchy, focus, or ownership. Do not add onboarding tooltips for standard icons. Use tooltips when they reveal clipped data, such as a full file path, or name an icon-only action whose label is not otherwise visible. Do not wrap content in cards only to add space or containment.
 
 ### 3. The agent is a peer, not an oracle.
 

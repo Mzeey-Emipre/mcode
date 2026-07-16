@@ -65,27 +65,34 @@ Use tiny mono small-caps for true technical index labels, machine facts, and
 empty-state captions. Do not use them as a default heading treatment for every
 section or action. Interactive and content headings use sentence case.
 Numbers, hashes, and timestamps are tabular monospace so they line up
-vertically. Body text is set tight enough to be dense but loose enough to read
-in a long session.
+vertically. Body text is compact enough for scanning and comfortable enough to
+read in a long session.
 
 ### Empty states earn their place
 
 When there's nothing to show, do not show an illustration of an empty box. Set a single typographic glyph — `◌`, `⊘`, `⊕`, `∅`, `⌂` — at low opacity, with a small-caps mono caption underneath. The glyph is a quiet anchor, not a mascot. The caption uses technical language: "Empty thread", "No active runs", "Awaiting agent."
 
-## 5. Density Is a Feature, Not a Bug
+## 5. Information Density Without Uniform Compression
 
-Developers prefer information-dense interfaces. They tolerate small type, tight rows, and packed columns — because every pixel of whitespace is a pixel they have to scan past.
+Prefer high information density, not tight spacing everywhere. Keep rows compact
+within a related list, but use stronger spacing between groups, task stages, and
+primary surfaces. Whitespace is structural when it communicates hierarchy,
+focus, or ownership.
 
 This means:
 
-- Don't pad with marketing-style breathing room. Tight is correct.
+- Do not add decorative whitespace that does not clarify the interface.
 - Don't blow up small data into big "stat tiles." Numbers can be 12px and tabular.
 - Don't replace a row of text with a grid of cards. Rows scan faster than cards.
+- Give writing, reading, comments, dialogs, and isolated decisions enough room
+  to establish focus and ownership.
 - Keep the current state and primary action visible. Put alternate methods and
   infrequent actions in an attached menu instead of showing several competing
   buttons.
 
-But **density is not chaos.** Hierarchy comes from weight, opacity tier, and tonal lift — not from boxing things in. A dense interface that uses three opacity levels (full, 70%, 40%) for primary/secondary/tertiary text is more readable than a sparse one with everything at full contrast.
+Hierarchy comes from spacing, weight, opacity tier, and tonal lift, not from
+boxing each part in. Compact rows still need clear separation between groups
+and stages.
 
 ### One containment layer
 

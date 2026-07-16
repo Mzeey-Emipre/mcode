@@ -180,7 +180,7 @@ components:
 
 Mcode is the surface a developer keeps open all evening on a second monitor while five agents run in parallel. It is not a destination; it is an instrument panel that sits next to the editor, the terminal, and the browser. So the whole system is built for the *glance*, not the read. The user is rarely studying the agent's prose; they are flicking their eyes to the sidebar to see what finished, what errored, and what branch each run is on. Everything here optimizes that one-second scan: a status dot read at flick-speed is worth more than a paragraph.
 
-The register is editorial and typeset, closer to a well-made code editor or a terminal than a CRM or a SaaS dashboard. Density is a feature. Developers tolerate and prefer tight layouts with monospaced, tabular numerics; we do not pad with marketing whitespace. Color is rationed: a warm amber primary on a matte cool-slate canvas, with sage for additions and clay for removals. The amber is the single point of warmth; the slate is the cool room around it after dark. Dark is the default canvas because the product is used in the evening; a cool light counterpart exists for daytime.
+The register is editorial and typeset, closer to a well-made code editor or a terminal than a CRM or a SaaS dashboard. Information density is a feature, but uniform compression is not. Repeated rows and tabular data stay compact. Groups, task stages, writing surfaces, and primary work areas use enough space to communicate hierarchy, focus, and ownership. Color is rationed: a warm amber primary on a matte cool-slate canvas, with sage for additions and clay for removals. The amber is the single point of warmth; the slate is the cool room around it after dark. Dark is the default canvas because the product is used in the evening; a cool light counterpart exists for daytime.
 
 This system explicitly rejects the consumer-app reflexes: no softened "Oops, something went wrong" copy (we say "Errored", "Idle", "Empty"), no emoji decoration, no colorful status chips, no glassmorphism, no gradient hero metrics, no marketing voice in the diff. If it looks like it wants to convert a visitor, it is wrong. It should look like it wants to get out of the way.
 
@@ -190,7 +190,7 @@ This system explicitly rejects the consumer-app reflexes: no softened "Oops, som
 - Tonal lift instead of divider lines: panels float a few percent off the page.
 - Monospace carries machine facts (SHAs, counts, timestamps, status labels); Public Sans carries human prose.
 - Keyboard-first: shortcuts are first-class, not hidden.
-- Information-dense by intent: tight, tabular, no decorative padding.
+- Information-dense by intent: compact related rows, clear group spacing, and no decorative padding.
 - Four-point spacing: every layout gap, inset, control size, and icon size lands on a 4px step.
 - Capability-preserving responsive layout: the same tool docks, floats, or
   collapses without losing state or actions.
@@ -297,7 +297,7 @@ Shadows exist only as a response to interactive state, never as ambient decorati
 - **Background:** Workspace panes use the page/background layers. Floating panels use `--card` / `--popover`, lifted by tone.
 - **Shadow Strategy:** None at rest (see Elevation). Separation is tonal.
 - **Border:** Quiet hairlines are allowed for dense internal structure. Never a colored side-stripe.
-- **Internal Padding:** 12px (`0.75rem`) typical; tighten for dense lists.
+- **Internal Padding:** 12px (`0.75rem`) typical. Repeated list rows may use less, while writing, reading, and decision surfaces should preserve comfortable structure.
 - **Containment depth:** A discrete object may use one contained surface. Its
   headers, metadata, body, and actions stay flat inside it. Do not nest cards,
   tonal slabs, rings, and footers to restate the same boundary.
