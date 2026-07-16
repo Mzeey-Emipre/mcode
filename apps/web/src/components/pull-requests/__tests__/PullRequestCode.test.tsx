@@ -433,21 +433,16 @@ describe("PullRequestCode", () => {
     ).toBeVisible();
   });
 
-  it("replaces the persistent tree rail with a narrow file picker", async () => {
+  it("floats the reusable file view over the narrow Code workspace", async () => {
     const transport = fakeTransport();
     renderCode(transport, true);
 
     expect(await screen.findByTestId("code-viewport-seam")).toBeInTheDocument();
     const toolbar = screen.getByTestId("pull-request-code-toolbar");
-    const fileRow = screen.getByTestId("pull-request-code-file-row");
     const actionsRow = screen.getByTestId("pull-request-code-actions-row");
     expect(toolbar).toHaveAttribute("data-layout", "compact");
-    expect(fileRow.compareDocumentPosition(actionsRow)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
-    expect(fileRow).toContainElement(
-      screen.getByRole("button", { name: "Choose a changed file" }),
-    );
+    expect(toolbar).toHaveTextContent("feature");
+    expect(toolbar).toHaveTextContent("main");
     expect(actionsRow).toContainElement(
       screen.getByRole("button", { name: "Collapse all file diffs" }),
     );
@@ -458,11 +453,11 @@ describe("PullRequestCode", () => {
       screen.queryByTestId("pull-request-review-footer"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("pull-request-changed-files-pane"),
+      screen.queryByRole("button", { name: "Choose a changed file" }),
     ).not.toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Choose a changed file" }),
-    );
+    const navigator = screen.getByTestId("pull-request-changed-files-pane");
+    expect(navigator).toBeVisible();
+    expect(navigator.parentElement).toHaveClass("absolute", "right-0");
     expect(
       screen.getByRole("textbox", { name: "Search changed files" }),
     ).toBeVisible();
@@ -471,9 +466,16 @@ describe("PullRequestCode", () => {
         name: "Filter changed files by status",
       }),
     ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Hide changed files" }),
+    );
     expect(
-      await screen.findByRole("tree", { name: "Choose a changed file" }),
-    ).toBeVisible();
+      screen.queryByTestId("pull-request-changed-files-pane"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Show changed files" }),
+    );
+    expect(screen.getByTestId("pull-request-changed-files-pane")).toBeVisible();
   });
 
   it("docks the reusable file view when the Code workspace can fit it", async () => {
@@ -495,6 +497,39 @@ describe("PullRequestCode", () => {
         name: "Resize Pull request changed files",
       }),
     ).toBeVisible();
+  });
+
+  it("moves the file view between docked and floating layouts as the workspace resizes", async () => {
+    layout.codeWidth = 900;
+    const transport = fakeTransport();
+    const rendered = renderCode(transport, true);
+
+    expect(await screen.findByTestId("code-viewport-seam")).toBeInTheDocument();
+    const navigator = screen.getByTestId("pull-request-changed-files-pane");
+    expect(navigator.parentElement).not.toHaveClass("absolute");
+
+    layout.codeWidth = 700;
+    rendered.rerender(
+      <PullRequestCode
+        identity={IDENTITY}
+        identityKey={IDENTITY_KEY}
+        baseOid={BASE_OID}
+        headOid={HEAD_OID}
+        isNarrow
+        transport={transport}
+        detail={DETAIL}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("pull-request-changed-files-pane").parentElement,
+      ).toHaveClass("absolute", "right-0"),
+    );
+    expect(screen.getByTestId("pull-request-code-toolbar")).toHaveAttribute(
+      "data-layout",
+      "compact",
+    );
   });
 
   it("keeps orphan review context visible when the ready file view is empty", async () => {
@@ -539,7 +574,7 @@ describe("PullRequestCode", () => {
     },
   );
 
-  it("updates the narrow file picker from immutable patch evidence", async () => {
+  it("updates the narrow floating file view from immutable patch evidence", async () => {
     const item = file(1);
     const transport = fakeTransport({
       patch: vi.fn().mockResolvedValue(patchResult(item, "generated")),
@@ -547,13 +582,7 @@ describe("PullRequestCode", () => {
     renderCode(transport, true);
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "Choose a changed file" }),
-    );
-    await userEvent.click(
       await screen.findByRole("treeitem", { name: `Modified ${item.path}` }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Choose a changed file" }),
     );
 
     expect(await screen.findByText("Generated", { exact: true })).toBeVisible();

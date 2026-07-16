@@ -8,7 +8,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlignJustify,
   AlertCircle,
-  ChevronDown,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -17,11 +16,6 @@ import {
   GitBranch,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import {
@@ -46,6 +40,8 @@ const FILES_PANEL_DEFAULT_WIDTH = 360;
 const FILES_PANEL_WIDE_WIDTH = 520;
 const DIFF_VIEWPORT_MIN_WIDTH = 520;
 const DOCKED_FILES_MIN_WIDTH = FILES_PANEL_MIN_WIDTH + DIFF_VIEWPORT_MIN_WIDTH;
+const FLOATING_FILES_PANEL_EDGE_GAP = 48;
+const FLOATING_FILES_PANEL_FLOOR = 220;
 
 interface ReviewThreadPaginationRun {
   generation: number | null;
@@ -123,7 +119,6 @@ export function PullRequestCode({
       };
     }),
   );
-  const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [filesPanelWidth, setFilesPanelWidth] = useState(
     FILES_PANEL_DEFAULT_WIDTH,
   );
@@ -186,6 +181,26 @@ export function PullRequestCode({
           DIFF_VIEWPORT_MIN_WIDTH,
       ),
     [],
+  );
+  const floatingFilesPanelMaxWidth =
+    codeWidth > 0
+      ? Math.max(
+          FLOATING_FILES_PANEL_FLOOR,
+          codeWidth - FLOATING_FILES_PANEL_EDGE_GAP,
+        )
+      : FILES_PANEL_DEFAULT_WIDTH;
+  const floatingFilesPanelMinWidth = Math.min(
+    FILES_PANEL_MIN_WIDTH,
+    floatingFilesPanelMaxWidth,
+  );
+  const getFloatingFilesPanelMaxWidth = useCallback(
+    (panel: HTMLDivElement | null): number =>
+      Math.max(
+        floatingFilesPanelMinWidth,
+        (panel?.parentElement?.clientWidth ?? window.innerWidth) -
+          FLOATING_FILES_PANEL_EDGE_GAP,
+      ),
+    [floatingFilesPanelMinWidth],
   );
 
   useEffect(() => {
@@ -290,7 +305,6 @@ export function PullRequestCode({
       usePullRequestCodeStore.getState().setActivePath(path);
     }
     void usePullRequestCodeStore.getState().ensurePatch(file, transport);
-    setFilePickerOpen(false);
   };
 
   const updateFileQuery = useCallback(
@@ -314,9 +328,6 @@ export function PullRequestCode({
     view.query.search.length > 0 || view.query.changeTypes.length > 0;
   const readyEmptyFileView =
     code.files.length === 0 && filesLane?.status === "ready";
-  const activeFileLabel =
-    code.files.find((file) => file.path === view.activePath)?.path ??
-    "Choose a changed file";
   const filesDocked =
     codeWidth === 0 ? !isNarrow : codeWidth >= DOCKED_FILES_MIN_WIDTH;
   const allFilesExpanded =
@@ -336,71 +347,18 @@ export function PullRequestCode({
           data-layout={filesDocked ? "wide" : "compact"}
           className="flex h-11 shrink-0 items-center gap-2 border-b border-border/35 bg-page px-3"
         >
-          {!filesDocked ? (
-            <div
-              data-testid="pull-request-code-file-row"
-              className="flex min-w-0 flex-1 items-center"
-            >
-              <Popover open={filePickerOpen} onOpenChange={setFilePickerOpen}>
-                <PopoverTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 min-w-0 flex-1 justify-start gap-2 rounded-md bg-page/65 px-2 font-mono text-xs text-foreground/90 hover:bg-muted/35"
-                      aria-label="Choose a changed file"
-                    >
-                      <Files
-                        size={14}
-                        aria-hidden
-                        className="shrink-0 text-muted-foreground"
-                      />
-                      <span className="truncate">{activeFileLabel}</span>
-                      <ChevronDown
-                        size={13}
-                        aria-hidden
-                        className={cn(
-                          "ml-auto shrink-0 text-muted-foreground/70 transition-transform duration-200 motion-reduce:transition-none",
-                          filePickerOpen && "rotate-180",
-                        )}
-                      />
-                    </Button>
-                  }
-                />
-                <PopoverContent
-                  align="start"
-                  sideOffset={6}
-                  className="h-80 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-lg p-0"
-                >
-                  <PullRequestChangedFilesPane
-                    files={displayedFiles}
-                    activePath={view.activePath}
-                    query={view.query}
-                    className="h-full"
-                    ariaLabel="Choose a changed file"
-                    onActivate={activateFile}
-                    onQueryChange={updateFileQuery}
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-          ) : (
-            <div className="flex min-w-0 flex-1 items-center gap-2 font-mono text-xs text-muted-foreground">
-              <GitBranch size={14} aria-hidden className="shrink-0" />
-              <span className="min-w-0 truncate text-foreground/80">
-                {detail.head.name}
-              </span>
-              <ChevronRight
-                size={13}
-                aria-hidden
-                className="shrink-0 text-muted-foreground/55"
-              />
-              <span className="min-w-0 truncate">
-                {detail.base.name}
-              </span>
-            </div>
-          )}
+          <div className="flex min-w-0 flex-1 items-center gap-2 font-mono text-xs text-muted-foreground">
+            <GitBranch size={14} aria-hidden className="shrink-0" />
+            <span className="min-w-0 truncate text-foreground/80">
+              {detail.head.name}
+            </span>
+            <ChevronRight
+              size={13}
+              aria-hidden
+              className="shrink-0 text-muted-foreground/55"
+            />
+            <span className="min-w-0 truncate">{detail.base.name}</span>
+          </div>
 
           <div
             data-testid={
@@ -408,27 +366,28 @@ export function PullRequestCode({
             }
             className="ml-auto flex shrink-0 items-center justify-end gap-1"
           >
-            {filesDocked && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="rounded-md text-muted-foreground"
-                aria-label={
-                  view.fileTreeVisible
-                    ? "Hide changed files"
-                    : "Show changed files"
-                }
-                aria-pressed={view.fileTreeVisible}
-                onClick={() =>
-                  usePullRequestCodeStore
-                    .getState()
-                    .setFileTreeVisible(!view.fileTreeVisible)
-                }
-              >
-                <Files size={13} aria-hidden />
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className={cn(
+                "rounded-md text-muted-foreground",
+                view.fileTreeVisible && "bg-muted/60 text-foreground",
+              )}
+              aria-label={
+                view.fileTreeVisible
+                  ? "Hide changed files"
+                  : "Show changed files"
+              }
+              aria-pressed={view.fileTreeVisible}
+              onClick={() =>
+                usePullRequestCodeStore
+                  .getState()
+                  .setFileTreeVisible(!view.fileTreeVisible)
+              }
+            >
+              <Files size={13} aria-hidden />
+            </Button>
 
             <Button
               type="button"
@@ -518,7 +477,7 @@ export function PullRequestCode({
           </p>
         )}
 
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-page">
             {!code.entry ||
             (filesLane?.status === "loading" &&
@@ -622,6 +581,23 @@ export function PullRequestCode({
               wideWidth={FILES_PANEL_WIDE_WIDTH}
               getMaxWidth={getFilesPanelMaxWidth}
               onWidthChange={setFilesPanelWidth}
+              onActivate={activateFile}
+              onQueryChange={updateFileQuery}
+            />
+          )}
+          {!filesDocked && view.fileTreeVisible && (
+            <PullRequestChangedFilesPane
+              files={displayedFiles}
+              activePath={view.activePath}
+              query={view.query}
+              width={Math.min(filesPanelWidth, floatingFilesPanelMaxWidth)}
+              minWidth={floatingFilesPanelMinWidth}
+              maxWidth={`calc(100% - ${FLOATING_FILES_PANEL_EDGE_GAP}px)`}
+              defaultWidth={FILES_PANEL_DEFAULT_WIDTH}
+              wideWidth={FILES_PANEL_WIDE_WIDTH}
+              getMaxWidth={getFloatingFilesPanelMaxWidth}
+              onWidthChange={setFilesPanelWidth}
+              className="absolute inset-y-0 right-0 z-30 h-full bg-popover shadow-lg animate-in slide-in-from-right-2 duration-150 motion-reduce:animate-none"
               onActivate={activateFile}
               onQueryChange={updateFileQuery}
             />
