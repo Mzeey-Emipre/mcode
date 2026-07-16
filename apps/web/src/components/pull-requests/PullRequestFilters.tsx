@@ -5,8 +5,8 @@ import type {
 import {
   CircleCheck,
   FolderGit2,
+  ListFilter,
   Search,
-  SlidersHorizontal,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -122,7 +122,7 @@ export function PullRequestFilters({
                 aria-label={filterLabel}
                 className="relative bg-page"
               >
-                <SlidersHorizontal size={13} aria-hidden />
+                <ListFilter size={13} aria-hidden />
                 {activeCount > 0 && (
                   <Badge
                     variant="secondary"

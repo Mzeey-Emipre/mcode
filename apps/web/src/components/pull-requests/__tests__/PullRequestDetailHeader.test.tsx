@@ -80,7 +80,9 @@ function summaryFallback(): PullRequestSummaryRecord {
 
 describe("PullRequestDetailHeader", () => {
   it("presents pull request status and review metadata", () => {
-    render(<PullRequestDetailHeader detail={detail()} />);
+    const { container } = render(
+      <PullRequestDetailHeader detail={detail()} />,
+    );
 
     expect(
       screen.getByRole("heading", {
@@ -102,6 +104,7 @@ describe("PullRequestDetailHeader", () => {
     expect(screen.getByLabelText("34 deletions")).toHaveTextContent("−34");
     expect(screen.getByText("No reviewers")).toBeVisible();
     expect(screen.getByText("4 comments")).toBeVisible();
+    expect(container.querySelector(".lucide-message-circle")).toBeVisible();
     expect(screen.getByText("Checks successful")).toBeVisible();
     expect(
       document.querySelector('time[datetime="2026-07-11T12:00:00.000Z"]'),

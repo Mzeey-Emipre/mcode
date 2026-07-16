@@ -4,7 +4,7 @@ import {
   type PullRequestIdentity,
   type PullRequestMutationExpected,
 } from "@mcode/contracts";
-import { MessageSquare, SendHorizontal, X } from "lucide-react";
+import { ArrowUp, SendHorizontal, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -232,90 +232,85 @@ export function PullRequestIssueCommentComposer({
 
   return (
     <section
-      aria-labelledby="pull-request-comment-composer-title"
+      aria-label="Add a comment"
       aria-busy={submitting || undefined}
-      className="shrink-0 border-t border-border/70 bg-background px-4 py-3"
+      className="shrink-0 border-t border-border/40 bg-page px-3 py-3"
     >
       <div className="mx-auto w-full max-w-5xl">
-        <div className="flex min-w-0 items-center gap-2">
-          <MessageSquare
-            size={14}
-            aria-hidden
-            className="shrink-0 text-muted-foreground"
+        <div className="rounded-xl bg-muted/50 ring-1 ring-inset ring-border/60 transition-shadow focus-within:ring-2 focus-within:ring-primary/70">
+          <label htmlFor="pull-request-issue-comment" className="sr-only">
+            Comment for {repository}
+          </label>
+          <Textarea
+            id="pull-request-issue-comment"
+            value={body}
+            rows={1}
+            disabled={
+              Boolean(unavailableReason) ||
+              submitting ||
+              Boolean(displayedError)
+            }
+            aria-describedby="pull-request-comment-limit pull-request-comment-status"
+            placeholder={`Comment on ${repository}`}
+            className="min-h-12 max-h-32 field-sizing-fixed resize-y border-0 bg-transparent px-3 pb-2 pt-3 text-sm shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+            onChange={(event) => {
+              const accepted = usePullRequestMutationStore
+                .getState()
+                .setCommentDraft(identity, event.target.value);
+              setLocalError(
+                accepted
+                  ? null
+                  : "Comment exceeds the session draft limit.",
+              );
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.key !== "Enter" ||
+                !(event.metaKey || event.ctrlKey)
+              ) {
+                return;
+              }
+              event.preventDefault();
+              void post();
+            }}
           />
-          <h3
-            id="pull-request-comment-composer-title"
-            className="shrink-0 text-sm font-medium text-foreground"
-          >
-            Add a comment
-          </h3>
-          <span className="truncate text-xs text-muted-foreground">
-            on {repository}
-          </span>
-        </div>
-        <label htmlFor="pull-request-issue-comment" className="sr-only">
-          Comment for {repository}
-        </label>
-        <Textarea
-          id="pull-request-issue-comment"
-          value={body}
-          rows={2}
-          disabled={Boolean(unavailableReason) || submitting || Boolean(displayedError)}
-          aria-describedby="pull-request-comment-limit pull-request-comment-status"
-          placeholder="Write a comment"
-          className="mt-2 h-16 min-h-16 max-h-36 field-sizing-fixed resize-y bg-background text-sm shadow-none"
-          onChange={(event) => {
-            const accepted = usePullRequestMutationStore
-              .getState()
-              .setCommentDraft(identity, event.target.value);
-            setLocalError(accepted ? null : "Comment exceeds the session draft limit.");
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
-            event.preventDefault();
-            void post();
-          }}
-        />
-        <div className="mt-2 flex min-w-0 items-center gap-3">
-          <p
-            id="pull-request-comment-status"
-            role={localError ? "alert" : "status"}
-            className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-          >
-            {localError ??
-              unavailableReason ??
-              (lane.status === "accepted"
-                ? "Comment posted."
-                : "Ctrl/⌘ Enter to post")}
-          </p>
-          <p
-            id="pull-request-comment-limit"
-            className={cn(
-              "shrink-0 font-mono text-xs tabular-nums text-muted-foreground/70",
-              byteCount === 0 && "sr-only",
-            )}
-          >
-            {byteCount.toLocaleString()} /{" "}
-            {PULL_REQUEST_MUTATION_BODY_MAX_BYTES.toLocaleString()} bytes
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            disabled={!canPost}
-            onClick={() => void post()}
-          >
-            {submitting ? (
-              <>
+          <div className="flex min-w-0 items-center gap-2 border-t border-border/20 px-2.5 py-1.5">
+            <p
+              id="pull-request-comment-status"
+              role={localError ? "alert" : "status"}
+              className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+            >
+              {localError ??
+                unavailableReason ??
+                (lane.status === "accepted"
+                  ? "Comment posted."
+                  : "Ctrl/⌘ Enter to post")}
+            </p>
+            <p
+              id="pull-request-comment-limit"
+              className={cn(
+                "shrink-0 font-mono text-xs tabular-nums text-muted-foreground/70",
+                byteCount === 0 && "sr-only",
+              )}
+            >
+              {byteCount.toLocaleString()} /{" "}
+              {PULL_REQUEST_MUTATION_BODY_MAX_BYTES.toLocaleString()} bytes
+            </p>
+            <Button
+              type="button"
+              size="icon-sm"
+              className="shrink-0 rounded-full"
+              aria-label={submitting ? "Posting comment" : "Post comment"}
+              disabled={!canPost}
+              onClick={() => void post()}
+            >
+              {submitting ? (
                 <Spinner size="xs" aria-hidden />
-                Posting
-              </>
-            ) : (
-              <>
-                <SendHorizontal size={13} aria-hidden />
-                Post comment
-              </>
-            )}
-          </Button>
+              ) : (
+                <ArrowUp size={14} aria-hidden />
+              )}
+            </Button>
+          </div>
         </div>
         {displayedError ? (
           <div className="mt-3">

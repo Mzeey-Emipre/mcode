@@ -2,7 +2,7 @@ import type {
   PullRequestFile,
   PullRequestFileChangeType,
 } from "@mcode/contracts";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { ListFilter, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   FilesPanel,
@@ -110,7 +110,7 @@ export function PullRequestChangedFilesPane({
       getMaxWidth={getMaxWidth}
       onWidthChange={onWidthChange}
       controls={
-        <div className="flex h-9 shrink-0 items-center gap-1 px-2">
+        <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border/35 px-2.5">
           <div className="relative min-w-0 flex-1">
             <Search
               size={13}
@@ -123,7 +123,7 @@ export function PullRequestChangedFilesPane({
               maxLength={200}
               aria-label="Search changed files"
               placeholder="Filter files"
-              className="h-7 rounded-md bg-page pl-7 font-mono text-xs"
+              className="h-8 rounded-md bg-background/70 pl-7 font-mono text-xs"
               onChange={(event) => setSearchInput(event.target.value)}
             />
           </div>
@@ -138,7 +138,7 @@ export function PullRequestChangedFilesPane({
                   className="relative rounded-md text-muted-foreground"
                   aria-label="Filter changed files by status"
                 >
-                  <SlidersHorizontal size={13} aria-hidden />
+                  <ListFilter size={13} aria-hidden />
                   {query.changeTypes.length > 0 && (
                     <Badge
                       variant="secondary"

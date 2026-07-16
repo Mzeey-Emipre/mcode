@@ -1,4 +1,5 @@
 import type {
+  PullRequestCapabilitiesResult,
   PullRequestDetail,
   PullRequestGetResult,
   PullRequestIdentity,
@@ -190,7 +191,7 @@ describe("PullRequestDetailPane", () => {
   beforeEach(() => {
     usePullRequestDetailStore.setState({ entries: {}, activeKey: null });
     usePullRequestMutationStore.setState({ lanes: {}, commentDrafts: {} });
-    usePullRequestStore.setState({ capabilities: null });
+    usePullRequestStore.getState().reset();
     clearCommands();
   });
 
@@ -224,6 +225,40 @@ describe("PullRequestDetailPane", () => {
     expect(
       screen.getByRole("heading", { name: "Persistent summary header" }),
     ).toBeVisible();
+  });
+
+  it("loads capability status for the visible detail actions", async () => {
+    const capabilityResult: PullRequestCapabilitiesResult = {
+      ok: true,
+      viewer: {
+        providerNodeId: "viewer-node",
+        login: "mcode-reviewer",
+        avatarUrl: null,
+        profileUrl: null,
+      },
+      capabilities: {
+        read: { allowed: true },
+        teamRequests: { allowed: true },
+        comment: { allowed: true },
+        review: { allowed: true },
+        readiness: { allowed: true },
+        close: { allowed: true },
+        merge: { allowed: true },
+        reviewWorktree: { allowed: true },
+      },
+      fetchedAt: "2026-07-11T12:00:00.000Z",
+      staleAt: "2099-07-11T12:00:30.000Z",
+    };
+    const getCapabilities = vi.fn().mockResolvedValue(capabilityResult);
+    const transport = fakeTransport({ getCapabilities });
+
+    renderPane(transport);
+
+    await waitFor(() => expect(getCapabilities).toHaveBeenCalledOnce());
+    expect(usePullRequestStore.getState().viewer?.login).toBe("mcode-reviewer");
+    expect(usePullRequestStore.getState().capabilities?.merge).toEqual({
+      allowed: true,
+    });
   });
 
   it("surfaces a bounded description marker from the detail lane", async () => {
@@ -370,7 +405,14 @@ describe("PullRequestDetailPane", () => {
   });
 
   it("reveals fork actions only after the local worktree capability is known", async () => {
-    const transport = fakeTransport();
+    const transport = fakeTransport({
+      getCapabilities: vi.fn(
+        () =>
+          new Promise<PullRequestCapabilitiesResult>(() => {
+            // Keep the capability read pending so the unknown state is stable.
+          }),
+      ),
+    });
     const reviewTaskTransport: PullRequestReviewTaskTransport = {
       createReviewTask: vi.fn().mockResolvedValue({
         ok: false,
@@ -381,14 +423,17 @@ describe("PullRequestDetailPane", () => {
       }),
       reviewLink: vi.fn().mockResolvedValue(null),
     };
+    const user = userEvent.setup();
     const view = renderPane(transport, reviewTaskTransport);
-    await screen.findByText("Read-only detail body");
+    await screen.findByText("Read-only detail body", undefined, {
+      timeout: 3_000,
+    });
     const actionsButton = screen.getByRole("button", {
       name: "Pull request actions",
     });
-    await userEvent.click(actionsButton);
+    await user.click(actionsButton);
     expect(screen.queryByRole("menuitem", { name: "Fork" })).toBeNull();
-    await userEvent.keyboard("{Escape}");
+    await user.keyboard("{Escape}");
     await waitFor(() =>
       expect(actionsButton).toHaveAttribute("aria-expanded", "false"),
     );
@@ -412,14 +457,14 @@ describe("PullRequestDetailPane", () => {
       expect(getCommand("pullRequests.reviewChangeStack")).toBeDefined();
     });
 
-    await userEvent.click(actionsButton);
+    await user.click(actionsButton);
     const action = await screen.findByRole(
       "menuitem",
       { name: "Fork" },
       { timeout: 3_000 },
     );
     expect(action).not.toHaveAttribute("aria-disabled", "true");
-    await userEvent.click(action);
+    await user.click(action);
     expect(
       screen.getByRole("dialog", { name: "Fork pull request" }),
     ).toHaveTextContent("foreground");

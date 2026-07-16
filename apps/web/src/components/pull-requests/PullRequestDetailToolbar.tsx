@@ -80,34 +80,38 @@ export function PullRequestDetailToolbar({
               className="w-8 shrink-0"
             />
           )}
-          {isNarrow && onBack ? (
-            <Button
-              ref={backButtonRef}
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Back to pull requests"
-              onClick={onBack}
-            >
-              <ArrowLeft size={14} aria-hidden />
-            </Button>
+          {isNarrow ? (
+            onBack ? (
+              <Button
+                ref={backButtonRef}
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Back to pull requests"
+                onClick={onBack}
+              >
+                <ArrowLeft size={14} aria-hidden />
+              </Button>
+            ) : null
           ) : (
-            <GitPullRequest
-              size={14}
-              aria-hidden
-              className="shrink-0 text-muted-foreground"
-            />
+            <>
+              <GitPullRequest
+                size={14}
+                aria-hidden
+                className="shrink-0 text-muted-foreground"
+              />
+              <span className="min-w-0 truncate font-mono text-xs text-foreground/75">
+                {model
+                  ? `${model.identity.owner}/${model.identity.repository}`
+                  : "Pull request"}
+              </span>
+              {model ? (
+                <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                  #{model.identity.number}
+                </span>
+              ) : null}
+            </>
           )}
-          <span className="min-w-0 truncate font-mono text-xs text-foreground/75">
-            {model
-              ? `${model.identity.owner}/${model.identity.repository}`
-              : "Pull request"}
-          </span>
-          {model ? (
-            <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-              #{model.identity.number}
-            </span>
-          ) : null}
         </div>
 
         {tabs}

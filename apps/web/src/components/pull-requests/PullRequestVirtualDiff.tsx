@@ -109,8 +109,8 @@ function FileRow({
       data-diff-focus-key={row.key}
       tabIndex={focusActive ? 0 : -1}
       className={cn(
-        "h-auto w-full justify-start rounded-none bg-page/55 px-3 py-2.5 text-left font-normal hover:bg-muted/25",
-        active && "bg-muted/45",
+        "h-10 w-full justify-start rounded-none border-y border-border/35 bg-background/75 px-3 text-left font-normal hover:bg-muted/30",
+        active && "bg-muted/50",
       )}
       onFocus={() => onFocusActive(row.key)}
       onKeyDown={(event) => {
@@ -318,7 +318,7 @@ function PullRequestVirtualDiffComponent({
     getScrollElement: () => viewportRef.current,
     estimateSize: (index) => {
       const row = rows[index];
-      if (row?.kind === "file") return 36;
+      if (row?.kind === "file") return 40;
       if (row?.kind === "inline") return 180;
       if (row?.kind === "notice") return 44;
       if (

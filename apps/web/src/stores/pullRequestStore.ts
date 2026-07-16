@@ -1,6 +1,7 @@
 import type {
   PullRequestActor,
   PullRequestCapabilities,
+  PullRequestCapabilityReason,
   PullRequestCapabilityLimitation,
   PullRequestError,
   PullRequestRelationship,
@@ -55,7 +56,8 @@ export interface PullRequestStoreState {
   capabilities: PullRequestCapabilities | null;
   viewer: PullRequestActor | null;
   limitations: PullRequestCapabilityLimitation[];
-  activeOperationId: string | null;
+  activeCapabilitiesOperationId: string | null;
+  activeListOperationId: string | null;
   setRelationship: (relationship: PullRequestInboxRelationship) => void;
   setStates: (states: PullRequestState[]) => void;
   setSearch: (search: string) => void;
@@ -115,7 +117,8 @@ const dataInitialState = {
   capabilities: null as PullRequestCapabilities | null,
   viewer: null as PullRequestActor | null,
   limitations: [] as PullRequestCapabilityLimitation[],
-  activeOperationId: null as string | null,
+  activeCapabilitiesOperationId: null as string | null,
+  activeListOperationId: null as string | null,
 };
 
 /** Return the stable provider-neutral key for a pull request summary. */
@@ -144,6 +147,28 @@ export function isPullRequestSnapshotStale(
 function createOperationId(kind: "cap" | "list"): string {
   operationSequence += 1;
   return `pr-${kind}-${Date.now().toString(36)}-${operationSequence.toString(36)}`;
+}
+
+function deniedCapabilitiesForError(
+  error: PullRequestError,
+): PullRequestCapabilities {
+  const reason: PullRequestCapabilityReason =
+    error.code === "unauthenticated"
+      ? "unauthenticated"
+      : error.code === "forbidden"
+        ? "forbidden"
+        : "remote_unavailable";
+  const denied = { allowed: false, reason } as const;
+  return {
+    read: denied,
+    teamRequests: denied,
+    comment: denied,
+    review: denied,
+    readiness: denied,
+    close: denied,
+    merge: denied,
+    reviewWorktree: denied,
+  };
 }
 
 function mergeSummary(
@@ -218,12 +243,13 @@ async function loadPage(
 
   const operationId = createOperationId("list");
   usePullRequestStore.setState({
-    activeOperationId: operationId,
+    activeListOperationId: operationId,
     status: before.orderedKeys.length > 0 ? "refreshing" : "loading",
     error: null,
   });
-  await cancelOperation(before.activeOperationId, transport);
-  if (usePullRequestStore.getState().activeOperationId !== operationId) return;
+  await cancelOperation(before.activeListOperationId, transport);
+  if (usePullRequestStore.getState().activeListOperationId !== operationId)
+    return;
 
   try {
     const result = await transport.list({
@@ -234,12 +260,12 @@ async function loadPage(
       ...(cursor ? { cursor } : {}),
       limit: 30,
     });
-    if (usePullRequestStore.getState().activeOperationId !== operationId)
+    if (usePullRequestStore.getState().activeListOperationId !== operationId)
       return;
 
     if (!result.ok) {
       usePullRequestStore.setState((state) => ({
-        activeOperationId: null,
+        activeListOperationId: null,
         status: "error",
         error: result.error,
         stale: state.orderedKeys.length > 0,
@@ -282,13 +308,13 @@ async function loadPage(
       status: "ready",
       error: null,
       limitations: result.limitations,
-      activeOperationId: null,
+      activeListOperationId: null,
     });
   } catch (error) {
-    if (usePullRequestStore.getState().activeOperationId !== operationId)
+    if (usePullRequestStore.getState().activeListOperationId !== operationId)
       return;
     usePullRequestStore.setState((state) => ({
-      activeOperationId: null,
+      activeListOperationId: null,
       status: "error",
       stale: state.orderedKeys.length > 0,
       error: {
@@ -353,44 +379,47 @@ export const usePullRequestStore = create<PullRequestStoreState>(
     },
     loadCapabilities: async (transportOverride) => {
       const transport = transportOverride ?? getPullRequestTransport();
-      const previousOperationId = get().activeOperationId;
+      const previousOperationId = get().activeCapabilitiesOperationId;
       const operationId = createOperationId("cap");
-      set({ activeOperationId: operationId });
+      set({ activeCapabilitiesOperationId: operationId });
       await cancelOperation(previousOperationId, transport);
-      if (get().activeOperationId !== operationId) return false;
+      if (get().activeCapabilitiesOperationId !== operationId) return false;
       try {
         const result = await transport.getCapabilities({
           operationId,
           provider: "github",
         });
-        if (get().activeOperationId !== operationId) return false;
+        if (get().activeCapabilitiesOperationId !== operationId) return false;
         if (result.ok) {
           set({
             capabilities: result.capabilities,
             viewer: result.viewer,
-            activeOperationId: null,
+            activeCapabilitiesOperationId: null,
           });
           return true;
         } else {
           set({
-            activeOperationId: null,
+            activeCapabilitiesOperationId: null,
+            capabilities: deniedCapabilitiesForError(result.error),
             error: result.error,
             status: "error",
           });
           return false;
         }
       } catch (error) {
-        if (get().activeOperationId !== operationId) return false;
+        if (get().activeCapabilitiesOperationId !== operationId) return false;
+        const pullRequestError: PullRequestError = {
+          code: "remote_unavailable",
+          message:
+            error instanceof Error
+              ? error.message.slice(0, 512)
+              : "Capability read failed",
+        };
         set({
-          activeOperationId: null,
+          activeCapabilitiesOperationId: null,
+          capabilities: deniedCapabilitiesForError(pullRequestError),
           status: "error",
-          error: {
-            code: "remote_unavailable",
-            message:
-              error instanceof Error
-                ? error.message.slice(0, 512)
-                : "Capability read failed",
-          },
+          error: pullRequestError,
         });
         return false;
       }
@@ -406,11 +435,20 @@ export const usePullRequestStore = create<PullRequestStoreState>(
       await loadPage(false, transport);
     },
     cancelActive: async (transportOverride) => {
-      const operationId = get().activeOperationId;
-      set({ activeOperationId: null });
-      await cancelOperation(
-        operationId,
-        transportOverride ?? getPullRequestTransport(),
+      const {
+        activeCapabilitiesOperationId,
+        activeListOperationId,
+      } = get();
+      set({
+        activeCapabilitiesOperationId: null,
+        activeListOperationId: null,
+      });
+      const transport =
+        transportOverride ?? getPullRequestTransport();
+      await Promise.all(
+        [activeCapabilitiesOperationId, activeListOperationId].map(
+          (operationId) => cancelOperation(operationId, transport),
+        ),
       );
     },
     reset: () => set(dataInitialState),

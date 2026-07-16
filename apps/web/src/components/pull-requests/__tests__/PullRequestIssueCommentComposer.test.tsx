@@ -112,12 +112,17 @@ describe("PullRequestIssueCommentComposer", () => {
     const textarea = screen.getByRole("textbox", {
       name: /Comment for Mzeey-Empire\/mcode #42/,
     });
-    expect(textarea).toHaveAttribute("rows", "2");
+    expect(textarea).toHaveAttribute("rows", "1");
     expect(textarea).toHaveClass(
-      "h-16",
-      "max-h-36",
+      "min-h-12",
+      "max-h-32",
       "field-sizing-fixed",
+      "border-0",
+      "bg-transparent",
     );
+    expect(
+      screen.getByRole("button", { name: "Post comment" }),
+    ).toHaveClass("rounded-full");
     expect(screen.getByText("0 / 65,536 bytes")).toHaveClass("sr-only");
   });
 

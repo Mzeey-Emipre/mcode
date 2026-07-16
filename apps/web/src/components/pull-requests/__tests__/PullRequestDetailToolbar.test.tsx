@@ -97,6 +97,8 @@ describe("PullRequestDetailToolbar", () => {
       screen.getByRole("button", { name: "Back to pull requests" }),
     );
     expect(onBack).toHaveBeenCalledOnce();
+    expect(screen.queryByText("Mzeey-Empire/mcode")).not.toBeInTheDocument();
+    expect(screen.queryByText("#42")).not.toBeInTheDocument();
   });
 
   it("keeps the refresh spinner aligned inside the actions menu", async () => {

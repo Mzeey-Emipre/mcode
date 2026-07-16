@@ -418,13 +418,12 @@ describe("PullRequestCode", () => {
     expect(actionsRow).toContainElement(
       screen.getByRole("button", { name: "Collapse all file diffs" }),
     );
-    const footer = screen.getByTestId("pull-request-review-footer");
-    expect(footer).toHaveAttribute("data-layout", "compact");
-    expect(footer).not.toHaveTextContent("draft");
-    expect(footer).not.toHaveTextContent("HEAD");
-    expect(footer).toContainElement(
+    expect(actionsRow).toContainElement(
       screen.getByRole("button", { name: "Submit review" }),
     );
+    expect(
+      screen.queryByTestId("pull-request-review-footer"),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("pull-request-changed-files-pane"),
     ).not.toBeInTheDocument();
@@ -443,15 +442,15 @@ describe("PullRequestCode", () => {
   });
 
   it("docks the reusable file view when the Code workspace can fit it", async () => {
-    layout.codeWidth = 720;
+    layout.codeWidth = 900;
     const transport = fakeTransport();
     renderCode(transport, true);
 
     expect(await screen.findByTestId("code-viewport-seam")).toBeInTheDocument();
-    expect(screen.getByTestId("pull-request-code-toolbar")).toHaveAttribute(
-      "data-layout",
-      "wide",
-    );
+    const toolbar = screen.getByTestId("pull-request-code-toolbar");
+    expect(toolbar).toHaveAttribute("data-layout", "wide");
+    expect(toolbar).toHaveTextContent("feature");
+    expect(toolbar).toHaveTextContent("main");
     expect(
       screen.queryByRole("button", { name: "Choose a changed file" }),
     ).not.toBeInTheDocument();

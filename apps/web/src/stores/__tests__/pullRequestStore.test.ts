@@ -309,6 +309,24 @@ describe("pullRequestStore", () => {
     );
   });
 
+  it("turns a failed capability read into a typed unavailable state", async () => {
+    const transport = fakeTransport(async () => listResult([]));
+    vi.mocked(transport.getCapabilities).mockResolvedValue({
+      ok: false,
+      error: {
+        code: "unauthenticated",
+        message: "GitHub authentication is required",
+      },
+    });
+
+    await usePullRequestStore.getState().loadCapabilities(transport);
+
+    expect(usePullRequestStore.getState().capabilities?.merge).toEqual({
+      allowed: false,
+      reason: "unauthenticated",
+    });
+  });
+
   it("keeps the newest capability generation when an older read resolves late", async () => {
     let resolveFirst!: (result: PullRequestCapabilitiesResult) => void;
     let resolveSecond!: (result: PullRequestCapabilitiesResult) => void;
@@ -360,6 +378,46 @@ describe("pullRequestStore", () => {
     });
     expect(usePullRequestStore.getState().viewer).toMatchObject({
       login: "viewer-new",
+    });
+  });
+
+  it("keeps a capability read alive while the inbox list refreshes", async () => {
+    let resolveCapabilities!: (
+      result: PullRequestCapabilitiesResult,
+    ) => void;
+    let resolveList!: (result: PullRequestListResult) => void;
+    const transport = fakeTransport(
+      () =>
+        new Promise<PullRequestListResult>((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+    vi.mocked(transport.getCapabilities).mockImplementation(
+      () =>
+        new Promise<PullRequestCapabilitiesResult>((resolve) => {
+          resolveCapabilities = resolve;
+        }),
+    );
+
+    const capabilitiesLoad = usePullRequestStore
+      .getState()
+      .loadCapabilities(transport);
+    await vi.waitFor(() =>
+      expect(transport.getCapabilities).toHaveBeenCalledOnce(),
+    );
+    const listLoad = usePullRequestStore.getState().loadFirstPage(transport);
+    await vi.waitFor(() => expect(transport.list).toHaveBeenCalledOnce());
+
+    resolveList(listResult([summary(1)]));
+    await listLoad;
+    resolveCapabilities(capabilitiesResult());
+    await capabilitiesLoad;
+
+    expect(usePullRequestStore.getState().viewer).toMatchObject({
+      login: "viewer",
+    });
+    expect(usePullRequestStore.getState().capabilities?.merge).toEqual({
+      allowed: true,
     });
   });
 

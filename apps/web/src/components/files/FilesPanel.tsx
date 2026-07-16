@@ -4,6 +4,7 @@ import {
   ResizableRightPanel,
   type ResizablePanelWidthSource,
 } from "@/components/panels/ResizableRightPanel";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -62,21 +63,25 @@ export function FilesPanel({
       <aside
         data-testid={testId}
         aria-label={`${ariaLabel} navigator`}
-        className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-border/70 bg-background"
+        className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-border/55 bg-page"
       >
-        <header className="flex h-9 shrink-0 items-center gap-2 px-2.5">
-          <span className="text-xs font-medium text-foreground/85">
+        <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/35 px-3">
+          <span className="text-xs font-medium text-foreground/90">
             {title}
           </span>
-          <span className="font-mono text-xs tabular-nums text-muted-foreground/75">
+          <Badge
+            variant="ghost"
+            size="sm"
+            className="px-1 font-mono font-normal tabular-nums text-muted-foreground"
+          >
             {count}
-          </span>
+          </Badge>
           {onClose ? (
             <Button
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="ml-auto rounded-none text-muted-foreground"
+              className="ml-auto rounded-md text-muted-foreground"
               aria-label={`Hide ${title.toLowerCase()}`}
               onClick={onClose}
             >

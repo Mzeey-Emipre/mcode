@@ -28,6 +28,7 @@ const VIRTUALIZE_THRESHOLD = 30;
 const OVERSCAN = 4;
 const BACKGROUND_REFRESH_MS = 120_000;
 const RELATIONSHIP_TABS = ["all", "reviewing", "authored"] as const;
+const STATE_FILTERS = ["open", "closed", "merged"] as const;
 const RELATIONSHIP_PANEL_ID = "pull-request-relationship-panel";
 
 function relationshipTabId(tab: PullRequestInboxRelationship): string {
@@ -69,6 +70,7 @@ export function PullRequestInbox({
 }: PullRequestInboxProps) {
   const relationship = usePullRequestStore((state) => state.relationship);
   const states = usePullRequestStore((state) => state.states);
+  const viewer = usePullRequestStore((state) => state.viewer);
   const storeSearch = usePullRequestStore((state) => state.search);
   const orderedKeys = usePullRequestStore((state) => state.orderedKeys);
   const entities = usePullRequestStore((state) => state.entities);
@@ -404,7 +406,7 @@ export function PullRequestInbox({
           Pull requests
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Review and track work across GitHub.
+          Review and track work across {viewer?.login ?? "GitHub"}.
         </p>
       </div>
       <div className="w-full max-w-[720px] shrink-0 px-5">
@@ -472,13 +474,40 @@ export function PullRequestInbox({
             {tab}
           </Button>
         ))}
+        <div
+          role="group"
+          aria-label="Pull request state"
+          className="ml-auto flex items-center gap-0.5"
+        >
+          {STATE_FILTERS.map((state) => {
+            const selected = states.length === 1 && states[0] === state;
+            return (
+              <Button
+                key={state}
+                type="button"
+                variant="ghost"
+                size="xs"
+                aria-pressed={selected}
+                className={cn(
+                  "h-7 px-2 text-xs font-normal capitalize",
+                  selected
+                    ? "bg-muted/70 text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => changeStates([state])}
+              >
+                {state}
+              </Button>
+            );
+          })}
+        </div>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           aria-label="Refresh pull requests"
           onClick={refresh}
-          className="mb-1 ml-auto text-muted-foreground"
+          className="mb-1 text-muted-foreground"
         >
           {status === "refreshing" ? (
             <Spinner size="sm" />

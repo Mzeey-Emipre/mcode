@@ -256,8 +256,8 @@ export function PullRequestFileTree({
           if (node) rowRefs.current.set(row.node.id, node);
           else rowRefs.current.delete(row.node.id);
         }}
-        className="h-8 w-full justify-start gap-1 rounded-none px-2 font-mono text-xs font-normal text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-        style={{ paddingLeft: `${Math.max(8, row.depth * 12)}px` }}
+        className="mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1 rounded-md px-2 font-mono text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+        style={{ paddingLeft: `${Math.max(8, row.depth * 12 - 4)}px` }}
         onClick={() => toggleDirectory(row.node.id)}
         onFocus={() => setFocusedId(row.node.id)}
         onKeyDown={(event) => handleKeyDown(event, row, index)}

@@ -1,7 +1,8 @@
 import type { PullRequestFile } from "@mcode/contracts";
 import type { KeyboardEvent, Ref } from "react";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { cn } from "@/lib/utils";
 
 const changeLabels: Record<PullRequestFile["changeType"], string> = {
@@ -64,8 +65,6 @@ export function PullRequestFileRow({
   onFocus,
   onKeyDown,
 }: PullRequestFileRowProps) {
-  const fileType =
-    file.path.split(".").at(-1)?.slice(0, 2).toUpperCase() ?? "·";
   const patchLabel = patchLabels[file.patchStatus];
   const fullLabel = file.previousPath
     ? `${changeLabels[file.changeType]} ${file.previousPath} to ${file.path}`
@@ -89,27 +88,22 @@ export function PullRequestFileRow({
         file.previousPath ? `${file.previousPath} → ${file.path}` : file.path
       }
       className={cn(
-        "relative h-8 w-full justify-start gap-1.5 rounded-none px-2 font-normal",
+        "relative mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1.5 rounded-md px-2 font-normal",
         active
-          ? "bg-muted/60 text-foreground"
-          : "text-foreground/75 hover:bg-muted/45",
+          ? "bg-muted/70 text-foreground"
+          : "text-foreground/75 hover:bg-muted/40",
       )}
-      style={{ paddingLeft: `${Math.max(8, depth * 12)}px` }}
+      style={{ paddingLeft: `${Math.max(8, depth * 12 - 4)}px` }}
       onClick={() => onActivate(file.path)}
       onFocus={onFocus}
       onKeyDown={onKeyDown}
     >
       <span
         data-file-icon="true"
-        data-change-type={file.changeType}
-        title={changeLabels[file.changeType]}
         aria-hidden
-        className={cn(
-          "w-8 shrink-0 text-center font-mono text-[9px] font-semibold uppercase",
-          changeTone(file.changeType),
-        )}
+        className="flex size-4 shrink-0 items-center justify-center"
       >
-        {fileType}·{changeGlyphs[file.changeType]}
+        <FileTypeIcon filePath={file.path} size={14} />
       </span>
       <span className="min-w-0 flex-1 truncate text-left font-mono text-xs">
         {file.path.split("/").at(-1)}
@@ -123,6 +117,17 @@ export function PullRequestFileRow({
           {patchLabel}
         </Badge>
       )}
+      <span
+        data-change-type={file.changeType}
+        title={changeLabels[file.changeType]}
+        aria-hidden
+        className={cn(
+          "w-3 shrink-0 text-center font-mono text-xs font-medium",
+          changeTone(file.changeType),
+        )}
+      >
+        {changeGlyphs[file.changeType]}
+      </span>
       {file.additions > 0 ? (
         <span
           aria-label={`${file.additions} additions`}

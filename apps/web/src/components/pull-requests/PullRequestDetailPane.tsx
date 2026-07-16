@@ -408,6 +408,11 @@ export function PullRequestDetailPane({
   }, [identityKey, transport]);
 
   useEffect(() => {
+    if (capabilities !== null) return;
+    void usePullRequestStore.getState().loadCapabilities(transport);
+  }, [capabilities, transport]);
+
+  useEffect(() => {
     if (!core.detail || !reviewTaskAllowed) return;
     return registerCommand({
       id: "pullRequests.reviewChangeStack",

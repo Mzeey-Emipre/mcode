@@ -11,7 +11,7 @@ import {
   CircleX,
   CircleUserRound,
   GitBranch,
-  MessageSquare,
+  MessageCircle,
   Users,
 } from "lucide-react";
 import { memo } from "react";
@@ -263,7 +263,7 @@ function PullRequestDetailHeaderComponent({
           </div>
 
           <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
-            <MessageSquare
+            <MessageCircle
               size={14}
               aria-hidden
               className="text-muted-foreground/80"

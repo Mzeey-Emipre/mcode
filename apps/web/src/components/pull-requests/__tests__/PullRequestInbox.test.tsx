@@ -215,6 +215,24 @@ describe("PullRequestInbox", () => {
     expect(transport.list).toHaveBeenCalledOnce();
   });
 
+  it("names the connected GitHub viewer in the inbox introduction", () => {
+    seedRows(1);
+    usePullRequestStore.setState({
+      viewer: {
+        providerNodeId: "viewer-node",
+        login: "mcode-reviewer",
+        avatarUrl: null,
+        profileUrl: null,
+      },
+    });
+
+    render(<PullRequestInbox autoLoad={false} />);
+
+    expect(
+      screen.getByText("Review and track work across mcode-reviewer."),
+    ).toBeVisible();
+  });
+
   it("shows only non-zero change counts", () => {
     seedItems([
       { ...summary(1), additions: 1, deletions: 0 },
@@ -238,6 +256,10 @@ describe("PullRequestInbox", () => {
     expect(
       screen.getByRole("option", { name: /pull request #1339/ }),
     ).toBeVisible();
+    expect(document.querySelector("time")).toHaveClass(
+      "justify-self-end",
+      "text-right",
+    );
   });
 
   it("moves selection with arrow keys", () => {
@@ -644,9 +666,11 @@ describe("PullRequestInbox", () => {
     const user = userEvent.setup();
     render(<PullRequestInbox autoLoad={false} />);
 
-    await user.click(
-      screen.getByRole("button", { name: "Filter pull requests" }),
-    );
+    const filterButton = screen.getByRole("button", {
+      name: "Filter pull requests",
+    });
+    expect(filterButton.querySelector(".lucide-list-filter")).toBeVisible();
+    await user.click(filterButton);
 
     const status = await screen.findByText("Status");
     expect(status).toBeVisible();
@@ -673,6 +697,27 @@ describe("PullRequestInbox", () => {
         name: "All repositories",
       }),
     ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("exposes open, closed, and merged as direct state filters", async () => {
+    seedRows(1);
+    const transport = fakeTransport();
+    render(<PullRequestInbox autoLoad={false} transport={transport} />);
+
+    const open = screen.getByRole("button", { name: /^open$/i });
+    const closed = screen.getByRole("button", { name: /^closed$/i });
+    const merged = screen.getByRole("button", { name: /^merged$/i });
+    expect(open).toHaveAttribute("aria-pressed", "true");
+    expect(closed).toHaveAttribute("aria-pressed", "false");
+    expect(merged).toHaveAttribute("aria-pressed", "false");
+
+    await userEvent.click(closed);
+
+    await waitFor(() => expect(transport.list).toHaveBeenCalledOnce());
+    expect(vi.mocked(transport.list).mock.calls[0]?.[0].states).toEqual([
+      "closed",
+    ]);
+    expect(closed).toHaveAttribute("aria-pressed", "true");
   });
 
   it("keeps unrelated row renders isolated", () => {

@@ -141,7 +141,7 @@ function PullRequestRowComponent({
           </span>
           <time
             dateTime={item.updatedAt}
-            className="font-mono text-xs tabular-nums text-muted-foreground/80"
+            className="justify-self-end text-right font-mono text-xs tabular-nums text-muted-foreground/80"
           >
             {relativeTime(item.updatedAt)}
           </time>

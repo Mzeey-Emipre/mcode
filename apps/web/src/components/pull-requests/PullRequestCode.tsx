@@ -10,9 +10,12 @@ import {
   AlignJustify,
   AlertCircle,
   ChevronDown,
+  ChevronRight,
   ChevronsDownUp,
   Columns2,
   Files,
+  GitBranch,
+  MessageSquareText,
   PanelRightOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -43,10 +46,10 @@ import { PullRequestDiffViewport } from "./PullRequestDiffViewport";
 import { PullRequestSubmitReviewDialog } from "./PullRequestSubmitReviewDialog";
 import { pullRequestCapabilityReason } from "./PullRequestMutationError";
 
-const FILES_PANEL_MIN_WIDTH = 220;
-const FILES_PANEL_DEFAULT_WIDTH = 256;
-const FILES_PANEL_WIDE_WIDTH = 480;
-const DIFF_VIEWPORT_MIN_WIDTH = 440;
+const FILES_PANEL_MIN_WIDTH = 280;
+const FILES_PANEL_DEFAULT_WIDTH = 360;
+const FILES_PANEL_WIDE_WIDTH = 520;
+const DIFF_VIEWPORT_MIN_WIDTH = 520;
 const DOCKED_FILES_MIN_WIDTH = FILES_PANEL_MIN_WIDTH + DIFF_VIEWPORT_MIN_WIDTH;
 
 interface ReviewThreadPaginationRun {
@@ -355,7 +358,7 @@ export function PullRequestCode({
         <div
           data-testid="pull-request-code-toolbar"
           data-layout={filesDocked ? "wide" : "compact"}
-          className="flex h-11 shrink-0 items-center gap-2 bg-background/80 px-3"
+          className="flex h-11 shrink-0 items-center gap-2 border-b border-border/35 bg-page px-3"
         >
           {!filesDocked ? (
             <div
@@ -407,10 +410,18 @@ export function PullRequestCode({
               </Popover>
             </div>
           ) : (
-            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-              <Files size={14} aria-hidden className="shrink-0" />
-              <span className="font-mono tabular-nums">
-                {code.files.length} changed files
+            <div className="flex min-w-0 flex-1 items-center gap-2 font-mono text-xs text-muted-foreground">
+              <GitBranch size={14} aria-hidden className="shrink-0" />
+              <span className="min-w-0 truncate text-foreground/80">
+                {detail.head.name}
+              </span>
+              <ChevronRight
+                size={13}
+                aria-hidden
+                className="shrink-0 text-muted-foreground/55"
+              />
+              <span className="min-w-0 truncate">
+                {detail.base.name}
               </span>
             </div>
           )}
@@ -421,10 +432,25 @@ export function PullRequestCode({
             }
             className="ml-auto flex shrink-0 items-center justify-end gap-1"
           >
+            {filesDocked && !view.fileTreeVisible && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="rounded-md text-muted-foreground"
+                aria-label="Show changed files"
+                onClick={() =>
+                  usePullRequestCodeStore.getState().setFileTreeVisible(true)
+                }
+              >
+                <PanelRightOpen size={13} aria-hidden />
+              </Button>
+            )}
+
             <div
               role="group"
               aria-label="Diff layout"
-              className="flex items-center rounded-md bg-page/65 p-0.5"
+              className="flex items-center"
             >
               <Button
                 type="button"
@@ -460,21 +486,6 @@ export function PullRequestCode({
               </Button>
             </div>
 
-            {filesDocked && !view.fileTreeVisible && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="rounded-md text-muted-foreground"
-                aria-label="Show changed files"
-                onClick={() =>
-                  usePullRequestCodeStore.getState().setFileTreeVisible(true)
-                }
-              >
-                <PanelRightOpen size={13} aria-hidden />
-              </Button>
-            )}
-
             <Button
               type="button"
               variant="ghost"
@@ -484,6 +495,27 @@ export function PullRequestCode({
               onClick={() => usePullRequestCodeStore.getState().collapseAll()}
             >
               <ChevronsDownUp size={13} aria-hidden />
+            </Button>
+            {reviewUnavailableReason ? (
+              <span id="pull-request-review-unavailable" className="sr-only">
+                {reviewUnavailableReason}
+              </span>
+            ) : null}
+            <Button
+              type="button"
+              size="xs"
+              className="ml-1 shrink-0 gap-1.5"
+              aria-describedby={
+                reviewUnavailableReason
+                  ? "pull-request-review-unavailable"
+                  : undefined
+              }
+              disabled={Boolean(reviewUnavailableReason)}
+              onClick={() => setSubmitReviewOpen(true)}
+            >
+              <MessageSquareText size={13} aria-hidden />
+              Submit review
+              {activeDraftCount > 0 ? ` (${activeDraftCount})` : null}
             </Button>
           </div>
         </div>
@@ -616,31 +648,6 @@ export function PullRequestCode({
                 </Button>
               </div>
             )}
-            <div
-              data-testid="pull-request-review-footer"
-              data-layout={isNarrow ? "compact" : "wide"}
-              className="flex h-11 shrink-0 items-center gap-2 border-t border-border/35 bg-page px-3"
-            >
-              {reviewUnavailableReason ? (
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                  {reviewUnavailableReason}
-                </span>
-              ) : activeDraftCount > 0 ? (
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                  {activeDraftCount} draft{" "}
-                  {activeDraftCount === 1 ? "comment" : "comments"}
-                </span>
-              ) : null}
-              <Button
-                type="button"
-                size="xs"
-                className="ml-auto shrink-0"
-                disabled={Boolean(reviewUnavailableReason)}
-                onClick={() => setSubmitReviewOpen(true)}
-              >
-                Submit review
-              </Button>
-            </div>
           </div>
 
           {filesDocked && view.fileTreeVisible && (
