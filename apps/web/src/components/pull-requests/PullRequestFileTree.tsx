@@ -11,6 +11,11 @@ import { ChevronDown, ChevronRight, Folder, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   buildPullRequestFileTree,
   flattenPullRequestFileTree,
   type PullRequestFileTreeRow,
@@ -21,6 +26,49 @@ import { PullRequestFileRow } from "./PullRequestFileRow";
 const VIRTUALIZATION_THRESHOLD = 30;
 const TREE_ROW_HEIGHT = 32;
 const TREE_OVERSCAN = 1;
+
+interface OverflowPathLabelProps {
+  label: string;
+  path: string;
+}
+
+function OverflowPathLabel({ label, path }: OverflowPathLabelProps) {
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useEffect(() => {
+    const labelNode = labelRef.current;
+    if (!labelNode) return;
+    const measure = (): void => {
+      setOverflowing(labelNode.scrollWidth > labelNode.clientWidth);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(labelNode);
+    return () => observer.disconnect();
+  }, [label]);
+
+  return (
+    <Tooltip disabled={!overflowing}>
+      <TooltipTrigger
+        render={
+          <span ref={labelRef} className="min-w-0 truncate">
+            {label}
+          </span>
+        }
+      />
+      <TooltipContent
+        side="left"
+        align="start"
+        variant="surface"
+        className="max-w-72 break-all whitespace-normal text-left font-mono leading-relaxed"
+      >
+        {path}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function collectDirectoryIds(
   nodes: ReturnType<typeof buildPullRequestFileTree>,
@@ -276,7 +324,7 @@ export function PullRequestFileTree({
         ) : (
           <Folder size={12} aria-hidden />
         )}
-        <span className="min-w-0 truncate">{row.node.name}</span>
+        <OverflowPathLabel label={row.node.name} path={row.node.path} />
       </Button>
     );
   };

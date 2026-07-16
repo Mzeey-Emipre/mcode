@@ -39,7 +39,7 @@ describe("PullRequestChangedFilesPane", () => {
     );
   });
 
-  it("owns debounced search and status filtering", async () => {
+  it("owns debounced search without a second filter control", async () => {
     const onQueryChange = vi.fn();
     render(
       <PullRequestChangedFilesPane
@@ -61,15 +61,10 @@ describe("PullRequestChangedFilesPane", () => {
         changeTypes: [],
       }),
     );
-
-    onQueryChange.mockClear();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Filter changed files by status" }),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Added" }));
-    expect(onQueryChange).toHaveBeenCalledWith({
-      search: "store",
-      changeTypes: ["added"],
-    });
+    expect(
+      screen.queryByRole("button", {
+        name: "Filter changed files by status",
+      }),
+    ).not.toBeInTheDocument();
   });
 });

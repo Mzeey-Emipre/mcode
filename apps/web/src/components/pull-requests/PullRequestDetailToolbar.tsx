@@ -22,6 +22,8 @@ export interface PullRequestDetailToolbarProps {
   model?: PullRequestDetail | PullRequestSummary | null;
   detail?: PullRequestDetail | null;
   tabs: ReactNode;
+  /** View-specific action shown before persistent pull request actions. */
+  viewAction?: ReactNode;
   isNarrow?: boolean;
   reserveSidebarReveal?: boolean;
   onBack?: () => void;
@@ -48,6 +50,7 @@ export function PullRequestDetailToolbar({
   model = null,
   detail = null,
   tabs,
+  viewAction,
   isNarrow = false,
   reserveSidebarReveal = false,
   onBack,
@@ -117,6 +120,7 @@ export function PullRequestDetailToolbar({
         {tabs}
 
         <div className="flex min-w-0 items-center justify-end gap-1">
+          {viewAction}
           {detail && capabilities !== undefined && onRefresh ? (
             <PullRequestLifecycleActions
               detail={detail}

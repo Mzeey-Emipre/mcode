@@ -1,6 +1,5 @@
 import type {
   PullRequestBoundedDataMarker,
-  PullRequestCapability,
   PullRequestDetail,
   PullRequestIdentity,
   PullRequestReviewThread,
@@ -12,11 +11,10 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
+  ChevronsUpDown,
   Columns2,
   Files,
   GitBranch,
-  MessageSquareText,
-  PanelRightOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,13 +36,10 @@ import { usePullRequestDetailStore } from "@/stores/pullRequestDetailStore";
 import { usePullRequestReviewDraftStore } from "@/stores/pullRequestReviewDraftStore";
 import { usePullRequestStore } from "@/stores/pullRequestStore";
 import type { PullRequestTransport } from "@/transport/pull-requests";
-import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
 import { cn } from "@/lib/utils";
 import { useShallow } from "zustand/shallow";
 import { PullRequestChangedFilesPane } from "./PullRequestChangedFilesPane";
 import { PullRequestDiffViewport } from "./PullRequestDiffViewport";
-import { PullRequestSubmitReviewDialog } from "./PullRequestSubmitReviewDialog";
-import { pullRequestCapabilityReason } from "./PullRequestMutationError";
 
 const FILES_PANEL_MIN_WIDTH = 280;
 const FILES_PANEL_DEFAULT_WIDTH = 360;
@@ -67,9 +62,6 @@ export interface PullRequestCodeProps {
   isNarrow: boolean;
   transport?: PullRequestTransport;
   detail: PullRequestDetail;
-  reviewCapability: PullRequestCapability | null | undefined;
-  mutationTransport?: PullRequestMutationTransport;
-  onRefresh: () => Promise<boolean> | boolean;
 }
 
 function boundedFilesMessage(marker: PullRequestBoundedDataMarker): string {
@@ -97,9 +89,6 @@ export function PullRequestCode({
   isNarrow,
   transport,
   detail,
-  reviewCapability,
-  mutationTransport,
-  onRefresh,
 }: PullRequestCodeProps) {
   const viewerNodeId = usePullRequestStore(
     (state) => state.viewer?.providerNodeId ?? null,
@@ -140,7 +129,6 @@ export function PullRequestCode({
   );
   const codeRootRef = useRef<HTMLElement>(null);
   const codeWidth = useElementWidth(codeRootRef, identityKey);
-  const [submitReviewOpen, setSubmitReviewOpen] = useState(false);
   const commentPaginationRunRef = useRef<ReviewThreadPaginationRun>({
     generation: null,
     pendingAppend: null,
@@ -182,18 +170,6 @@ export function PullRequestCode({
         const draft = state.drafts[localId];
         return draft?.identityKey === activeDraftIdentityKey && draft.outdated;
       }),
-  );
-  const activeDraftCount = usePullRequestReviewDraftStore((state) =>
-    activeDraftIdentityKey === null
-      ? 0
-      : state.order.reduce(
-          (count, localId) =>
-            count +
-            (state.drafts[localId]?.identityKey === activeDraftIdentityKey
-              ? 1
-              : 0),
-          0,
-        ),
   );
   const hasOrphanContext =
     hasOutdatedDrafts || reviewThreads.some((thread) => thread.isOutdated);
@@ -341,11 +317,11 @@ export function PullRequestCode({
   const activeFileLabel =
     code.files.find((file) => file.path === view.activePath)?.path ??
     "Choose a changed file";
-  const reviewUnavailableReason =
-    pullRequestCapabilityReason(reviewCapability) ??
-    (activeDraftIdentityKey ? null : "The review snapshot is still loading.");
   const filesDocked =
     codeWidth === 0 ? !isNarrow : codeWidth >= DOCKED_FILES_MIN_WIDTH;
+  const allFilesExpanded =
+    code.files.length > 0 &&
+    code.files.every((file) => Boolean(view.expandedPaths[file.path]));
 
   return (
     <>
@@ -432,91 +408,74 @@ export function PullRequestCode({
             }
             className="ml-auto flex shrink-0 items-center justify-end gap-1"
           >
-            {filesDocked && !view.fileTreeVisible && (
+            {filesDocked && (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-xs"
                 className="rounded-md text-muted-foreground"
-                aria-label="Show changed files"
+                aria-label={
+                  view.fileTreeVisible
+                    ? "Hide changed files"
+                    : "Show changed files"
+                }
+                aria-pressed={view.fileTreeVisible}
                 onClick={() =>
-                  usePullRequestCodeStore.getState().setFileTreeVisible(true)
+                  usePullRequestCodeStore
+                    .getState()
+                    .setFileTreeVisible(!view.fileTreeVisible)
                 }
               >
-                <PanelRightOpen size={13} aria-hidden />
+                <Files size={13} aria-hidden />
               </Button>
             )}
 
-            <div
-              role="group"
-              aria-label="Diff layout"
-              className="flex items-center"
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={
+                view.viewMode === "unified"
+                  ? "Use split diff layout"
+                  : "Use unified diff layout"
+              }
+              className="rounded-md text-muted-foreground"
+              onClick={() =>
+                usePullRequestCodeStore
+                  .getState()
+                  .setViewMode(
+                    view.viewMode === "unified" ? "split" : "unified",
+                  )
+              }
             >
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Use unified diff layout"
-                aria-pressed={view.viewMode === "unified"}
-                className={cn(
-                  "rounded-sm text-muted-foreground",
-                  view.viewMode === "unified" && "bg-muted/70 text-foreground",
-                )}
-                onClick={() =>
-                  usePullRequestCodeStore.getState().setViewMode("unified")
-                }
-              >
-                <AlignJustify size={13} aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Use split diff layout"
-                aria-pressed={view.viewMode === "split"}
-                className={cn(
-                  "rounded-sm text-muted-foreground",
-                  view.viewMode === "split" && "bg-muted/70 text-foreground",
-                )}
-                onClick={() =>
-                  usePullRequestCodeStore.getState().setViewMode("split")
-                }
-              >
+              {view.viewMode === "unified" ? (
                 <Columns2 size={13} aria-hidden />
-              </Button>
-            </div>
+              ) : (
+                <AlignJustify size={13} aria-hidden />
+              )}
+            </Button>
 
             <Button
               type="button"
               variant="ghost"
               size="icon-xs"
               className="rounded-md text-muted-foreground"
-              aria-label="Collapse all file diffs"
-              onClick={() => usePullRequestCodeStore.getState().collapseAll()}
-            >
-              <ChevronsDownUp size={13} aria-hidden />
-            </Button>
-            {reviewUnavailableReason ? (
-              <span id="pull-request-review-unavailable" className="sr-only">
-                {reviewUnavailableReason}
-              </span>
-            ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              className="ml-1 shrink-0 gap-1.5 border-border/60 bg-background/35 text-foreground shadow-none hover:bg-muted/40"
-              aria-describedby={
-                reviewUnavailableReason
-                  ? "pull-request-review-unavailable"
-                  : undefined
+              aria-label={
+                allFilesExpanded
+                  ? "Collapse all file diffs"
+                  : "Expand all file diffs"
               }
-              disabled={Boolean(reviewUnavailableReason)}
-              onClick={() => setSubmitReviewOpen(true)}
+              onClick={() => {
+                const store = usePullRequestCodeStore.getState();
+                if (allFilesExpanded) store.collapseAll();
+                else store.expandAll(code.files.map((file) => file.path));
+              }}
             >
-              <MessageSquareText size={13} aria-hidden />
-              Submit review
-              {activeDraftCount > 0 ? ` (${activeDraftCount})` : null}
+              {allFilesExpanded ? (
+                <ChevronsDownUp size={13} aria-hidden />
+              ) : (
+                <ChevronsUpDown size={13} aria-hidden />
+              )}
             </Button>
           </div>
         </div>
@@ -665,26 +624,10 @@ export function PullRequestCode({
               onWidthChange={setFilesPanelWidth}
               onActivate={activateFile}
               onQueryChange={updateFileQuery}
-              onClose={() =>
-                usePullRequestCodeStore.getState().setFileTreeVisible(false)
-              }
             />
           )}
         </div>
       </section>
-      {activeDraftIdentityKey ? (
-        <PullRequestSubmitReviewDialog
-          open={submitReviewOpen}
-          onOpenChange={setSubmitReviewOpen}
-          detail={detail}
-          draftIdentityKey={activeDraftIdentityKey}
-          threadIndexComplete={commentsComplete}
-          capability={reviewCapability}
-          mutationTransport={mutationTransport}
-          readTransport={transport}
-          onRefresh={onRefresh}
-        />
-      ) : null}
     </>
   );
 }

@@ -142,6 +142,7 @@ export interface PullRequestCodeStoreState {
   clearPatchDerivedBytes: (patchKey: string) => void;
   touchPatch: (patchKey: string) => void;
   toggleFileExpanded: (path: string) => void;
+  expandAll: (paths: readonly string[]) => void;
   collapseAll: () => void;
   setActivePath: (path: string | null) => void;
   setViewMode: (mode: PullRequestCodeViewMode) => void;
@@ -1025,6 +1026,25 @@ export const usePullRequestCodeStore = create<PullRequestCodeStoreState>(
             ...entry,
             expandedPaths,
             activePath: path,
+            lastAccessedAt: nextAccess(),
+          },
+        },
+      });
+    },
+
+    expandAll: (paths) => {
+      const state = get();
+      const key = state.activeSnapshotKey;
+      const entry = key ? state.entries[key] : undefined;
+      if (!key || !entry) return;
+      set({
+        entries: {
+          ...state.entries,
+          [key]: {
+            ...entry,
+            expandedPaths: Object.fromEntries(
+              paths.map((path) => [path, true] as const),
+            ),
             lastAccessedAt: nextAccess(),
           },
         },

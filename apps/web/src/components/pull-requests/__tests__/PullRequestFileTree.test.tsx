@@ -99,6 +99,39 @@ describe("PullRequestFileTree", () => {
     ).toBeInTheDocument();
   });
 
+  it("reveals the full directory path when its label overflows", async () => {
+    const scrollWidth = vi
+      .spyOn(HTMLElement.prototype, "scrollWidth", "get")
+      .mockReturnValue(240);
+    const clientWidth = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockReturnValue(80);
+    try {
+      render(
+        <PullRequestFileTree
+          files={[
+            file(
+              "QualtexTrade.IntegrationTests/Systems/WebApi/Services/Test.cs",
+              1,
+            ),
+          ]}
+          activePath={null}
+          onActivate={vi.fn()}
+        />,
+      );
+
+      const label = await screen.findByText(
+        "QualtexTrade.IntegrationTests/Systems/WebApi/Services",
+      );
+      await userEvent.hover(label);
+
+      await waitFor(() => expect(label).toHaveAttribute("data-popup-open"));
+    } finally {
+      scrollWidth.mockRestore();
+      clientWidth.mockRestore();
+    }
+  });
+
   it("uses a file icon while retaining the change type indicator", () => {
     render(
       <PullRequestFileTree

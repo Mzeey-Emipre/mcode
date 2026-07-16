@@ -376,6 +376,14 @@ describe("PullRequestDetailPane", () => {
       await screen.findByTestId("pull-request-code-panel"),
     ).toHaveTextContent("bbbb:aaaa");
     expect(codeTab).toHaveAttribute("aria-selected", "true");
+    const submitReview = screen.getByRole("button", {
+      name: "Submit review",
+    });
+    expect(submitReview.closest("header")).toHaveAttribute(
+      "aria-label",
+      "Pull request detail",
+    );
+    expect(submitReview.querySelector("svg")).not.toBeInTheDocument();
   });
 
   it("reloads an active Timeline after a detail refresh advances the head", async () => {

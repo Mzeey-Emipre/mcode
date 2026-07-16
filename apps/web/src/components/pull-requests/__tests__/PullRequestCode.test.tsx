@@ -223,8 +223,6 @@ function renderCode(transport: PullRequestTransport, isNarrow = false) {
       isNarrow={isNarrow}
       transport={transport}
       detail={DETAIL}
-      reviewCapability={{ allowed: true }}
-      onRefresh={vi.fn()}
     />,
   );
 }
@@ -400,6 +398,41 @@ describe("PullRequestCode", () => {
     expect(screen.getByTestId("pull-request-changed-files-pane")).toBeVisible();
   });
 
+  it("uses one stateful control for the diff layout", async () => {
+    const transport = fakeTransport();
+    renderCode(transport);
+    await screen.findByTestId("code-viewport-seam");
+
+    expect(
+      screen.queryByRole("button", { name: "Use unified diff layout" }),
+    ).not.toBeInTheDocument();
+    const layoutButton = screen.getByRole("button", {
+      name: "Use split diff layout",
+    });
+    await userEvent.click(layoutButton);
+    expect(
+      screen.getByRole("button", { name: "Use unified diff layout" }),
+    ).toBeVisible();
+  });
+
+  it("toggles every file diff between expanded and collapsed", async () => {
+    const transport = fakeTransport();
+    renderCode(transport);
+    await screen.findByTestId("code-viewport-seam");
+
+    const collapseButton = screen.getByRole("button", {
+      name: "Collapse all file diffs",
+    });
+    await userEvent.click(collapseButton);
+    const expandButton = screen.getByRole("button", {
+      name: "Expand all file diffs",
+    });
+    await userEvent.click(expandButton);
+    expect(
+      screen.getByRole("button", { name: "Collapse all file diffs" }),
+    ).toBeVisible();
+  });
+
   it("replaces the persistent tree rail with a narrow file picker", async () => {
     const transport = fakeTransport();
     renderCode(transport, true);
@@ -418,12 +451,9 @@ describe("PullRequestCode", () => {
     expect(actionsRow).toContainElement(
       screen.getByRole("button", { name: "Collapse all file diffs" }),
     );
-    expect(actionsRow).toContainElement(
-      screen.getByRole("button", { name: "Submit review" }),
-    );
     expect(
-      screen.getByRole("button", { name: "Submit review" }),
-    ).toHaveClass("border-border/60", "bg-background/35", "shadow-none");
+      screen.queryByRole("button", { name: "Submit review" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("pull-request-review-footer"),
     ).not.toBeInTheDocument();
@@ -437,8 +467,10 @@ describe("PullRequestCode", () => {
       screen.getByRole("textbox", { name: "Search changed files" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Filter changed files by status" }),
-    ).toBeVisible();
+      screen.queryByRole("button", {
+        name: "Filter changed files by status",
+      }),
+    ).not.toBeInTheDocument();
     expect(
       await screen.findByRole("tree", { name: "Choose a changed file" }),
     ).toBeVisible();

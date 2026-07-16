@@ -1,39 +1,15 @@
-import type {
-  PullRequestFile,
-  PullRequestFileChangeType,
-} from "@mcode/contracts";
-import { ListFilter, Search } from "lucide-react";
+import type { PullRequestFile } from "@mcode/contracts";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   FilesPanel,
   type FilesPanelProps,
 } from "@/components/files/FilesPanel";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import type { PullRequestFileQuery } from "@/stores/pullRequestCodeStore";
-import { cn } from "@/lib/utils";
 import { PullRequestFileTree } from "./PullRequestFileTree";
 
 const FILE_SEARCH_DEBOUNCE_MS = 250;
-
-const changeTypeOptions: Array<{
-  value: PullRequestFileChangeType;
-  label: string;
-}> = [
-  { value: "added", label: "Added" },
-  { value: "modified", label: "Modified" },
-  { value: "deleted", label: "Deleted" },
-  { value: "renamed", label: "Renamed" },
-  { value: "copied", label: "Copied" },
-  { value: "changed", label: "Changed" },
-  { value: "unchanged", label: "Unchanged" },
-];
 
 /** Props for the reusable changed-files navigator shown beside a pull request diff. */
 export interface PullRequestChangedFilesPaneProps {
@@ -73,26 +49,24 @@ export function PullRequestChangedFilesPane({
   onWidthChange,
 }: PullRequestChangedFilesPaneProps) {
   const [searchInput, setSearchInput] = useState(query.search);
-  const filtersActive = query.search.length > 0 || query.changeTypes.length > 0;
+  const searchActive = query.search.length > 0;
 
   useEffect(() => {
     setSearchInput(query.search);
   }, [query.search]);
 
   useEffect(() => {
+    if (query.changeTypes.length === 0) return;
+    onQueryChange({ search: query.search, changeTypes: [] });
+  }, [onQueryChange, query.changeTypes.length, query.search]);
+
+  useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       if (searchInput.trim() === query.search) return;
-      onQueryChange({ ...query, search: searchInput });
+      onQueryChange({ search: searchInput, changeTypes: [] });
     }, FILE_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [onQueryChange, query, searchInput]);
-
-  const toggleChangeType = (changeType: PullRequestFileChangeType): void => {
-    const changeTypes = query.changeTypes.includes(changeType)
-      ? query.changeTypes.filter((item) => item !== changeType)
-      : [...query.changeTypes, changeType];
-    onQueryChange({ ...query, search: searchInput, changeTypes });
-  };
+  }, [onQueryChange, query.search, searchInput]);
 
   return (
     <FilesPanel
@@ -127,69 +101,13 @@ export function PullRequestChangedFilesPane({
               onChange={(event) => setSearchInput(event.target.value)}
             />
           </div>
-
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="relative rounded-md text-muted-foreground"
-                  aria-label="Filter changed files by status"
-                >
-                  <ListFilter size={13} aria-hidden />
-                  {query.changeTypes.length > 0 && (
-                    <Badge
-                      variant="secondary"
-                      size="sm"
-                      className="absolute -right-1 -top-1 min-w-3 justify-center px-0.5 font-mono tabular-nums"
-                    >
-                      {query.changeTypes.length}
-                    </Badge>
-                  )}
-                </Button>
-              }
-            />
-            <PopoverContent
-              align="start"
-              sideOffset={6}
-              className="w-56 rounded-lg p-2"
-            >
-              <div
-                role="group"
-                aria-label="Changed file statuses"
-                className="grid grid-cols-2 gap-1"
-              >
-                {changeTypeOptions.map((option) => {
-                  const pressed = query.changeTypes.includes(option.value);
-                  return (
-                    <Button
-                      key={option.value}
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-pressed={pressed}
-                      className={cn(
-                        "justify-start rounded-md px-2 text-xs font-normal",
-                        pressed && "bg-muted/70 text-foreground",
-                      )}
-                      onClick={() => toggleChangeType(option.value)}
-                    >
-                      {option.label}
-                    </Button>
-                  );
-                })}
-              </div>
-            </PopoverContent>
-          </Popover>
         </div>
       }
     >
       <PullRequestFileTree
         files={files}
         activePath={activePath}
-        searchActive={filtersActive}
+        searchActive={searchActive}
         className="min-h-0 flex-1"
         ariaLabel={ariaLabel}
         onActivate={onActivate}

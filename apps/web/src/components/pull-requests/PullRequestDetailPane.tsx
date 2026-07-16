@@ -33,6 +33,7 @@ import {
 } from "@/stores/pullRequestDetailStore";
 import { usePullRequestStore } from "@/stores/pullRequestStore";
 import { usePullRequestMutationStore } from "@/stores/pullRequestMutationStore";
+import { usePullRequestReviewDraftStore } from "@/stores/pullRequestReviewDraftStore";
 import type { PullRequestTransport } from "@/transport/pull-requests";
 import type { PullRequestReviewTaskTransport } from "@/transport/pull-request-review-task";
 import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
@@ -46,7 +47,11 @@ import {
   type PullRequestForkMode,
 } from "./PullRequestForkDialog";
 import { PullRequestIssueCommentComposer } from "./PullRequestIssueCommentComposer";
-import { pullRequestMutationExpected } from "./PullRequestMutationError";
+import {
+  pullRequestCapabilityReason,
+  pullRequestMutationExpected,
+} from "./PullRequestMutationError";
+import { PullRequestSubmitReviewDialog } from "./PullRequestSubmitReviewDialog";
 
 const DETAIL_POLL_INTERVAL_MS = 30_000;
 const PullRequestCode = lazy(() =>
@@ -343,10 +348,42 @@ export function PullRequestDetailPane({
   );
   const activeHeadOid = core.detail?.head.oid ?? null;
   const [activeTab, setActiveTab] = useState<PullRequestDetailTab>("summary");
+  const [submitReviewOpen, setSubmitReviewOpen] = useState(false);
   const [forkMode, setForkMode] = useState<PullRequestForkMode | null>(null);
   const [forkPrompt, setForkPrompt] = useState<string | null>(null);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const capabilities = usePullRequestStore((state) => state.capabilities);
+  const reviewDraftIdentityKey =
+    core.detail?.base.oid && core.detail.head.oid
+      ? JSON.stringify([
+          core.detail.identity.provider,
+          core.detail.identity.repositoryNodeId,
+          core.detail.identity.number,
+        ])
+      : null;
+  const activeDraftCount = usePullRequestReviewDraftStore((state) =>
+    reviewDraftIdentityKey === null
+      ? 0
+      : state.order.reduce(
+          (count, localId) =>
+            count +
+            (state.drafts[localId]?.identityKey === reviewDraftIdentityKey
+              ? 1
+              : 0),
+          0,
+        ),
+  );
+  const commentsComplete = usePullRequestDetailStore((state) => {
+    const entry = state.entries[identityKey];
+    const lane = entry?.lanes.comments;
+    return Boolean(
+      lane &&
+        lane.fetchedAt !== null &&
+        entry?.commentsNextCursor === null &&
+        lane.boundedData === null &&
+        lane.error === null,
+    );
+  });
   const reviewWorktreeCapability = capabilities?.reviewWorktree ?? null;
   const reviewWorktreeCapabilityKnown = usePullRequestStore(
     (state) => state.capabilities !== null,
@@ -551,6 +588,35 @@ export function PullRequestDetailPane({
       ))}
     </div>
   );
+  const reviewUnavailableReason =
+    pullRequestCapabilityReason(capabilities?.review) ??
+    (reviewDraftIdentityKey ? null : "The review snapshot is still loading.");
+  const reviewAction =
+    activeTab === "code" ? (
+      <>
+        {reviewUnavailableReason ? (
+          <span id="pull-request-review-unavailable" className="sr-only">
+            {reviewUnavailableReason}
+          </span>
+        ) : null}
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          className="shrink-0 border-border/60 bg-background/50 text-foreground shadow-none hover:bg-muted/40"
+          aria-describedby={
+            reviewUnavailableReason
+              ? "pull-request-review-unavailable"
+              : undefined
+          }
+          disabled={Boolean(reviewUnavailableReason)}
+          onClick={() => setSubmitReviewOpen(true)}
+        >
+          Submit review
+          {activeDraftCount > 0 ? ` (${activeDraftCount})` : null}
+        </Button>
+      </>
+    ) : null;
 
   if (!core.exists || !core.lane) return null;
   const detailLane = core.lane;
@@ -630,6 +696,7 @@ export function PullRequestDetailPane({
           model={core.detail}
           detail={core.detail}
           tabs={detailTabs}
+          viewAction={reviewAction}
           isNarrow={isNarrow}
           reserveSidebarReveal={reserveSidebarReveal}
           onBack={isNarrow ? onClose : undefined}
@@ -717,9 +784,6 @@ export function PullRequestDetailPane({
                 isNarrow={isNarrow}
                 transport={transport}
                 detail={core.detail}
-                reviewCapability={capabilities?.review}
-                mutationTransport={mutationTransport}
-                onRefresh={refreshSelected}
               />
             </Suspense>
           ) : (
@@ -738,6 +802,19 @@ export function PullRequestDetailPane({
           )}
         </div>
       </section>
+      {reviewDraftIdentityKey ? (
+        <PullRequestSubmitReviewDialog
+          open={submitReviewOpen}
+          onOpenChange={setSubmitReviewOpen}
+          detail={core.detail}
+          draftIdentityKey={reviewDraftIdentityKey}
+          threadIndexComplete={commentsComplete}
+          capability={capabilities?.review}
+          mutationTransport={mutationTransport}
+          readTransport={transport}
+          onRefresh={refreshSelected}
+        />
+      ) : null}
       {forkMode ? (
         <PullRequestForkDialog
           open
