@@ -440,6 +440,7 @@ describe("PullRequestDetailPane", () => {
       name: "Pull request actions",
     });
     await user.click(actionsButton);
+    await screen.findByRole("menuitem", { name: "Refresh" });
     expect(screen.queryByRole("menuitem", { name: "Fork" })).toBeNull();
     await user.keyboard("{Escape}");
     await waitFor(() =>

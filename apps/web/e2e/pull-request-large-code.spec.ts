@@ -121,6 +121,8 @@ function pullRequestDetail(
     createdAt: FIXTURE_TIME,
     updatedAt: FIXTURE_TIME,
     mergeability: "mergeable",
+    mergeMethods: ["merge", "squash", "rebase"],
+    defaultMergeMethod: "squash",
     reviewDecision: "review_required",
     reviewers: [],
     checks: summary.checks,
@@ -280,6 +282,11 @@ async function openPullRequestDetail(page: Page): Promise<void> {
   await expect(
     page.getByRole("heading", { name: "Exercise the bounded Code review surface" }),
   ).toBeVisible();
+  const checksRing = page.locator('[data-check-state="passing"]');
+  await expect(checksRing).toBeVisible();
+  await expect(checksRing).toHaveClass(/rounded-full/);
+  await expect(checksRing).toHaveCSS("width", "12px");
+  await expect(checksRing).toHaveCSS("height", "12px");
   await expect(page.getByRole("tab", { name: "Code" })).toBeVisible();
 }
 
@@ -502,6 +509,7 @@ test.describe("Pull request large Code gates", () => {
     await expect(
       page.getByText("Search paused after four GitHub pages. More matching files may remain."),
     ).toBeVisible();
+    await page.getByRole("button", { name: "Hide changed files" }).click();
     const continueButton = page.getByRole("button", { name: "Search remaining files" });
     await expect(continueButton).toBeVisible();
     await continueButton.click();

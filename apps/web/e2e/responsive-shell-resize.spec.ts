@@ -100,6 +100,7 @@ async function openChangesPanel(page: Page): Promise<void> {
 async function shellState(page: Page): Promise<{
   sidebarCollapsed: boolean;
   sidebarCollapsedByLayout: boolean;
+  sidebarFloating: boolean;
   rightPanelVisible: boolean;
   rightPanelMaximized: boolean;
   rightPanelMaximizedByLayout: boolean;
@@ -121,6 +122,7 @@ async function shellState(page: Page): Promise<{
       const ui = uiStore.getState() as {
         sidebarCollapsed: boolean;
         sidebarCollapsedByLayout: boolean;
+        sidebarFloating: boolean;
         rightPanelMaximized: boolean;
         rightPanelMaximizedByLayout: boolean;
       };
@@ -130,6 +132,7 @@ async function shellState(page: Page): Promise<{
       return {
         sidebarCollapsed: ui.sidebarCollapsed,
         sidebarCollapsedByLayout: ui.sidebarCollapsedByLayout,
+        sidebarFloating: ui.sidebarFloating,
         rightPanelVisible: diff.getRightPanelVisible(wid, tid),
         rightPanelMaximized: ui.rightPanelMaximized,
         rightPanelMaximizedByLayout: ui.rightPanelMaximizedByLayout,
@@ -227,12 +230,14 @@ test.describe("responsive shell resizing", () => {
     }
 
     await expect.poll(() => shellState(page)).toMatchObject({
-      sidebarCollapsed: true,
-      sidebarCollapsedByLayout: true,
+      sidebarCollapsed: false,
+      sidebarCollapsedByLayout: false,
+      sidebarFloating: true,
       rightPanelVisible: true,
       rightPanelMaximized: true,
       rightPanelMaximizedByLayout: true,
     });
+    await expect(page.getByTestId("sidebar-floating")).toBeVisible();
     await expect(page.getByTestId("right-panel")).toBeVisible();
     await expect(page.getByTestId("thread-overview-body")).toHaveCount(0);
 
@@ -243,6 +248,7 @@ test.describe("responsive shell resizing", () => {
     await expect.poll(() => shellState(page)).toMatchObject({
       sidebarCollapsed: false,
       sidebarCollapsedByLayout: false,
+      sidebarFloating: false,
       rightPanelVisible: true,
       rightPanelMaximized: false,
       rightPanelMaximizedByLayout: false,
