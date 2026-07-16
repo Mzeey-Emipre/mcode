@@ -107,6 +107,9 @@ describe("PullRequestDetailHeader", () => {
     expect(container.querySelector(".lucide-message-circle")).toBeVisible();
     expect(screen.getByText("Checks successful")).toBeVisible();
     expect(
+      container.querySelector('[data-check-state="passing"]'),
+    ).toHaveClass("rounded-full", "border-[var(--diff-add-strong)]");
+    expect(
       document.querySelector('time[datetime="2026-07-11T12:00:00.000Z"]'),
     ).not.toBeNull();
   });
@@ -137,7 +140,7 @@ describe("PullRequestDetailHeader", () => {
     expect(screen.getByText("octocat")).toBeVisible();
   });
 
-  it("uses a circled x for failed checks", () => {
+  it("uses a circular status ring for failed checks", () => {
     const failed = detail();
     failed.checks = { state: "failing" };
 
@@ -145,10 +148,8 @@ describe("PullRequestDetailHeader", () => {
 
     expect(screen.getByText("Failing checks")).toBeVisible();
     expect(
-      container.querySelector(
-        'svg[data-check-state="failing"].lucide-circle-x',
-      ),
-    ).toBeVisible();
+      container.querySelector('[data-check-state="failing"]'),
+    ).toHaveClass("rounded-full", "border-[var(--diff-remove-strong)]");
   });
 
   it("shows reviewer identities on hover with review state indicators", async () => {

@@ -6,9 +6,7 @@ import type {
   PullRequestSummary as PullRequestSummaryRecord,
 } from "@mcode/contracts";
 import {
-  CheckCircle2,
   ChevronRight,
-  CircleX,
   CircleUserRound,
   GitBranch,
   MessageCircle,
@@ -44,11 +42,17 @@ function mergeabilityTone(mergeability: PullRequestMergeability): string {
   return "text-muted-foreground";
 }
 
-function checkTone(state: PullRequestCheckState): string {
-  if (state === "passing") return "text-[var(--diff-add-strong)]";
-  if (state === "failing" || state === "cancelled") return "text-destructive";
-  if (state === "pending") return "text-primary";
-  return "text-muted-foreground";
+function checkRingTone(state: PullRequestCheckState): string {
+  if (state === "passing") {
+    return "border-[var(--diff-add-strong)]";
+  }
+  if (state === "failing" || state === "cancelled") {
+    return "border-[var(--diff-remove-strong)]";
+  }
+  if (state === "pending") {
+    return "animate-spin border-muted-foreground/30 border-t-primary motion-reduce:animate-none";
+  }
+  return "border-muted-foreground/55";
 }
 
 function checkLabel(state: PullRequestCheckState): string {
@@ -110,9 +114,6 @@ function PullRequestDetailHeaderComponent({
   const reviewers = detail?.reviewers ?? [];
   const conversationCount =
     model.commentCount + (detail?.reviewThreadCount ?? 0);
-  const CheckStateIcon =
-    model.checks.state === "failing" ? CircleX : CheckCircle2;
-
   return (
     <header aria-label="Pull request summary identity">
       <div
@@ -276,11 +277,13 @@ function PullRequestDetailHeaderComponent({
           </div>
 
           <div className="grid min-w-0 grid-cols-[1.25rem_5.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[1.25rem_6.5rem_minmax(0,1fr)]">
-            <CheckStateIcon
-              size={14}
+            <span
               aria-hidden
               data-check-state={model.checks.state}
-              className={checkTone(model.checks.state)}
+              className={cn(
+                "ml-0.5 size-3 rounded-full border-2",
+                checkRingTone(model.checks.state),
+              )}
             />
             <dt className="text-muted-foreground">Checks</dt>
             <dd className="text-foreground/90">
