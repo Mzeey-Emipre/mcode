@@ -603,9 +603,9 @@ test.describe("Pull request large Code gates", () => {
       if (!result.ok) throw new Error("Failed to seed the local review draft");
     }, { identityKey: DRAFT_IDENTITY_KEY, baseOid: BASE_OID_A, headOid: HEAD_OID_A });
 
-    const refresh = page.getByRole("button", { name: "Refresh pull request detail" });
     snapshotIndex = 1;
-    await refresh.click();
+    await page.getByRole("button", { name: "Pull request actions" }).click();
+    await page.getByRole("menuitem", { name: "Refresh" }).click();
     await expect.poll(() => activeDetailSnapshot(page)).toEqual({
       baseOid: BASE_OID_B,
       headOid: HEAD_OID_A,
@@ -615,10 +615,14 @@ test.describe("Pull request large Code gates", () => {
     await expect(page.getByRole("textbox", { name: "Review draft" })).toHaveValue(
       "Local draft retained for the removed file.",
     );
-    await expect(page.getByLabel("Outdated conversation")).toBeVisible();
+    const remoteConversation = page
+      .getByRole("article")
+      .filter({ hasText: "Remote note retained for the removed file." });
+    await expect(remoteConversation.getByText("Outdated", { exact: true })).toBeVisible();
 
     snapshotIndex = 2;
-    await refresh.click();
+    await page.getByRole("button", { name: "Pull request actions" }).click();
+    await page.getByRole("menuitem", { name: "Refresh" }).click();
     await expect.poll(() => activeDetailSnapshot(page)).toEqual({
       baseOid: BASE_OID_B,
       headOid: HEAD_OID_B,
