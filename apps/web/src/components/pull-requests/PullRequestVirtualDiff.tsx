@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 import type { PullRequestReviewThread } from "@mcode/contracts";
 import { PullRequestInlineThread } from "./PullRequestInlineThread";
 
-const DIFF_ROW_ESTIMATE_PX = 24;
+const DIFF_ROW_ESTIMATE_PX = 28;
 const DIFF_ROW_OVERSCAN = 3;
 
 /** Props for the single row-major pull request diff virtualizer. */
@@ -225,7 +225,7 @@ const DiffCell = memo(function DiffCell({
       data-line-side={cell.side}
       tabIndex={active ? 0 : -1}
       className={cn(
-        "group/cell relative flex min-h-6 min-w-0 items-stretch font-mono text-xs outline-none",
+        "group/cell relative flex min-h-7 min-w-0 items-stretch font-mono text-xs outline-none",
         cellTone(cell),
         split && "min-w-0 flex-1",
         active && "ring-1 ring-inset ring-primary/70",
@@ -241,13 +241,16 @@ const DiffCell = memo(function DiffCell({
           size="icon-xs"
           tabIndex={-1}
           aria-label={`Draft comment on ${lineLabel.toLowerCase()}`}
-          className="pointer-events-none absolute left-0.5 top-0.5 z-10 size-5 rounded-sm bg-foreground text-background opacity-0 shadow-none transition-opacity hover:bg-foreground/90 hover:text-background group-hover/cell:pointer-events-auto group-hover/cell:opacity-100 group-focus-within/cell:pointer-events-auto group-focus-within/cell:opacity-100"
+          className={cn(
+            "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground/90 hover:text-background group-hover/cell:pointer-events-auto group-hover/cell:opacity-100 group-focus-within/cell:pointer-events-auto group-focus-within/cell:opacity-100 motion-reduce:transition-none",
+            active && "pointer-events-auto opacity-100",
+          )}
           onClick={(event) => {
             event.stopPropagation();
             onCreateDraft(row, cell);
           }}
         >
-          <Plus size={14} strokeWidth={2.5} aria-hidden />
+          <Plus className="size-4" strokeWidth={2.5} aria-hidden />
         </Button>
       )}
       <span
@@ -258,7 +261,7 @@ const DiffCell = memo(function DiffCell({
         <span className="text-center text-current">{changeMarker}</span>
         <span className="text-right">{cell.lineNumber ?? ""}</span>
       </span>
-      <code className="min-w-0 flex-1 whitespace-pre px-2 py-0.5 leading-5">
+      <code className="min-w-0 flex-1 whitespace-pre px-2 py-1 leading-5">
         {tokenSpans
           ? tokenSpans.map((token, index) => (
               <span

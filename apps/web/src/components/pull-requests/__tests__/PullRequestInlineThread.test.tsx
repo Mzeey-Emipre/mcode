@@ -152,8 +152,13 @@ describe("PullRequestInlineThread", () => {
 
     const editor = screen.getByRole("textbox", { name: "Review draft" });
     expect(editor).toHaveAttribute("placeholder", "Request change");
-    expect(editor).toHaveClass("min-h-16", "rounded-lg", "text-sm");
-    expect(editor).not.toHaveClass("font-mono", "rounded-none");
+    expect(editor).toHaveClass(
+      "min-h-20",
+      "resize-none",
+      "rounded-lg",
+      "text-sm",
+    );
+    expect(editor).not.toHaveClass("font-mono", "rounded-none", "resize-y");
     fireEvent.change(editor, { target: { value: "Revised" } });
     expect(update).toHaveBeenLastCalledWith("draft-1", "Revised");
     await user.click(screen.getByRole("button", { name: "Discard" }));

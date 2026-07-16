@@ -103,7 +103,7 @@ function DraftEditor({
         autoFocus={body.length === 0}
         value={body}
         placeholder="Request change"
-        className="mt-3 min-h-16 resize-y border-border/50 bg-background/60 px-3 py-2 text-sm shadow-none"
+        className="mt-3 min-h-20 resize-none border-border/50 bg-background/60 px-3 py-2.5 text-sm leading-5 shadow-none"
         onChange={(event) => {
           setError(
             onUpdateDraft(draft.localId, event.target.value)
