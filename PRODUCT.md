@@ -63,7 +63,7 @@ Most of the time, the user is not reading the agent's reply. They're glancing at
 
 ### 2. Density over discovery.
 
-Developers tolerate small type, tight rows, packed columns. Don't add tooltips to teach them what icons mean — they'll learn it once. Don't wrap things in cards to "make them feel safe." Tight is correct.
+Developers tolerate small type, tight rows, packed columns. Do not add onboarding tooltips for standard icons. Use tooltips when they reveal clipped data, such as a full file path, or name an icon-only action whose label is not otherwise visible. Don't wrap things in cards to "make them feel safe." Tight is correct.
 
 ### 3. The agent is a peer, not an oracle.
 
@@ -80,6 +80,14 @@ The interface rewards inactivity. When nothing is happening, the app looks calm.
 ### 6. Anticipate the next step.
 
 At every node of the loop, the app surfaces the one move the user is most likely to make next. When the outcome is unambiguous it just happens (add a project, land in a new chat on it); when there is a real choice it offers a single primary action and keeps the rest quiet (a finished turn offers View diff; an errored one offers Re-run). The suggestions are curated, not learned, so the same state always proposes the same move and the user comes to trust it. The goal is not cleverness. It is that the user rarely has to stop and ask "what now?"
+
+### 7. Same tool, different posture.
+
+Responsive changes preserve capability, context, and state. A file navigator
+can dock beside a diff when there is room and float over it when there is not.
+It does not become a weaker picker or a separate workflow just because its
+container narrowed. Layout adapts continuously as panels resize, without
+requiring the user to close and reopen the surface.
 
 ## 6. The Surfaces
 

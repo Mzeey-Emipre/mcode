@@ -161,6 +161,11 @@ components:
     padding: "0 1.2rem"
     height: "3.2rem"
   panel:
+    backgroundColor: "{colors.slate-bg}"
+    textColor: "{colors.ink}"
+    rounded: "0"
+    padding: "0"
+  floating-panel:
     backgroundColor: "{colors.slate-card}"
     textColor: "{colors.ink}"
     rounded: "{rounded.xl}"
@@ -187,6 +192,8 @@ This system explicitly rejects the consumer-app reflexes: no softened "Oops, som
 - Keyboard-first: shortcuts are first-class, not hidden.
 - Information-dense by intent: tight, tabular, no decorative padding.
 - Four-point spacing: every layout gap, inset, control size, and icon size lands on a 4px step.
+- Capability-preserving responsive layout: the same tool docks, floats, or
+  collapses without losing state or actions.
 
 ## 2. Colors
 
@@ -253,7 +260,7 @@ Light theme mirrors this on cool neutrals: page `oklch(0.955 0.005 260)`, backgr
 
 ## 4. Elevation
 
-Flat by default. Depth is conveyed by **tonal layering**, not shadows. The signature move: `--page` sits a few percent below (dark) or above (light) `--background`, and floating panels (`--card`, `--popover`) step further along the lightness ramp so they read as lifted off the chrome. This replaces inter-panel divider lines entirely. Reach for tonal separation before reaching for a `border`.
+Flat by default. Depth is conveyed by **tonal layering**, not shadows. The signature move: `--page` sits a few percent below (dark) or above (light) `--background`, and floating panels (`--card`, `--popover`) step further along the lightness ramp so they read as lifted off the chrome. Use tonal separation for macro surfaces. Use quiet hairlines for dense internal boundaries, toolbars, diff hunks, resize seams, and adjacent rows when tone alone does not make the structure clear.
 
 Shadows exist only as a response to interactive state, never as ambient decoration.
 
@@ -263,7 +270,7 @@ Shadows exist only as a response to interactive state, never as ambient decorati
 - **Edge glow** (`box-shadow: -2px 0 8px -1px color-mix(in oklch, var(--primary), transparent 65%)`): A single lamp edge cue at a panel boundary; used once, deliberately, not as a card style.
 
 ### Named Rules
-**The Tonal-Lift Rule.** Separation between surfaces is carried by a step on the lightness ramp, not by a line. A divider line is a failure of the tonal system. Use `--border` only where two surfaces share the same tone and must still be distinguished.
+**The Tonal-Lift Rule.** Separate major surfaces with a step on the lightness ramp. Use `--border` for compact internal structure where neighboring elements share a tone or where a resize, diff, toolbar, or row boundary must remain legible.
 
 **The Shadow-Is-State Rule.** Surfaces are flat at rest. A shadow appears only on focus or as a one-off boundary cue. Resting drop shadows under cards are forbidden.
 
@@ -285,11 +292,28 @@ Shadows exist only as a response to interactive state, never as ambient decorati
 - **Error / Disabled:** `aria-invalid` draws a destructive border and ring; disabled drops to 50% opacity and `pointer-events-none`.
 
 ### Cards / Panels
-- **Corner Style:** 14px (`--radius-xl`) for primary floating panels.
-- **Background:** `--card` / `--popover`, lifted off `--background` by tone.
+- **Workspace panes:** Edge-to-edge, square to the app shell, and resizable where the user compares or inspects content. Do not wrap a primary work area in a decorative card.
+- **Floating panels:** 14px (`--radius-xl`) for transient overlays, popovers, dialogs, and narrow layouts where a docked pane floats over the work area.
+- **Background:** Workspace panes use the page/background layers. Floating panels use `--card` / `--popover`, lifted by tone.
 - **Shadow Strategy:** None at rest (see Elevation). Separation is tonal.
-- **Border:** Avoid. Only `--border` where tones match. Never a colored side-stripe.
+- **Border:** Quiet hairlines are allowed for dense internal structure. Never a colored side-stripe.
 - **Internal Padding:** 12px (`0.75rem`) typical; tighten for dense lists.
+- **Containment depth:** A discrete object may use one contained surface. Its
+  headers, metadata, body, and actions stay flat inside it. Do not nest cards,
+  tonal slabs, rings, and footers to restate the same boundary.
+
+### Responsive Workspaces
+- Preserve the component, its state, and its actions across widths.
+- Prefer docked pane to floating pane to full-surface takeover. Use a modal only when the interaction itself is modal.
+- Choose breakpoints from the component's usable content width, not a device label.
+- Recompute posture while the user resizes. Do not require close and reopen.
+- Keep one visible toggle for a panel. Do not add a second compact-only control that exposes a different version of the same tool.
+
+### Action Hierarchy
+- Give one task one visible control. Put alternate methods in an attached menu.
+- Put persistent actions in persistent chrome. Do not create a second bottom toolbar for an action already available at the top.
+- Keep primary color for the current selection or genuine primary action. Secondary toolbar actions stay neutral.
+- Keep actions near the object they affect, without creating a panel solely to hold a button.
 
 ### Navigation (Sidebar)
 - **Style:** Projects-and-threads tree, drag-reorderable, one status dot per thread. The first thing the user scans, every time.
@@ -322,6 +346,13 @@ The interface expression of the "Anticipate the next step" product principle. A 
 - **Do** use full row-fill (`bg-accent`) for selection, and indentation alone for tree depth.
 - **Do** set hyperlinks and link-styled text in Cool Link (`text-link`), never amber. Cold for plumbing, warm for the lamp.
 - **Do** write technical copy: "Errored", "Idle", "Empty". Match PRODUCT.md's voice.
+- **Do** keep one alignment axis through headings, filters, tabs, and the content they control. A content column may be centered inside a pane while its text remains left-aligned.
+- **Do** preserve the same reusable panel and its capabilities across responsive postures.
+- **Do** show identity before state. Use the familiar object icon for files,
+  people, and pull requests, then add a restrained semantic marker for added,
+  modified, draft, merged, passing, or failing state.
+- **Do** render the meaning of implementation metadata. Replace raw wire syntax
+  with a familiar label, separator, diagram, disclosure, or status.
 - **Do** give every animation a `prefers-reduced-motion` alternative, and reuse the existing `wizard-*` and `narrative-*` curves (`cubic-bezier(0.25, 1, 0.5, 1)` and `cubic-bezier(0.22, 1, 0.36, 1)`) rather than inventing new ones.
 - **Do** use the documented type scale exactly; dense chrome defaults to Body SM or Body MD, while H1-H6 are reserved for document and spacious panel hierarchy.
 - **Do** elevate exactly one next-step per state in Filament Amber, bound to the Tab accept key, and auto-advance only single-outcome transitions.
@@ -338,4 +369,7 @@ The interface expression of the "Anticipate the next step" product principle. A 
 - **Don't** use raw Tailwind state colors (`bg-yellow-500`, `bg-green-500`). Use the tokenized diff/status colors.
 - **Don't** fill a content surface with the lamp color (`bg-primary` on message bubbles, panels, or any block of prose). Lamp at area scale violates the Cold-Surface Rule; content surfaces are slate neutrals.
 - **Don't** pad with marketing whitespace or build a hero-metric layout. This is a dense instrument, not a landing page.
+- **Don't** interpret "centered everything" as a ban on centered content columns. The ban is about centered text and templated compositions, not a shared pane axis.
+- **Don't** replace a resizable panel with a dropdown, picker, or modal as a responsive shortcut.
+- **Don't** duplicate persistent actions in top and bottom chrome, or expose two controls for the same layout choice.
 - **Don't** show two competing primary next-steps, auto-advance a transition that has a real choice, or let the next-step suggestion learn or reorder itself. Curated and singular, or nothing.
