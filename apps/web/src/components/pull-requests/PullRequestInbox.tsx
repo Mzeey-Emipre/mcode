@@ -394,8 +394,9 @@ export function PullRequestInbox({
       )}
     >
       <div
+        data-testid="pull-request-inbox-heading-column"
         className={cn(
-          "w-full max-w-[720px] shrink-0 px-5 pb-5 pt-8 lg:pt-16",
+          "mx-auto w-full max-w-[720px] shrink-0 px-5 pb-5 pt-8 lg:pt-16",
           reserveSidebarReveal && "max-lg:pl-14 max-lg:pt-4",
         )}
       >
@@ -409,7 +410,10 @@ export function PullRequestInbox({
           Review and track work across {viewer?.login ?? "GitHub"}.
         </p>
       </div>
-      <div className="w-full max-w-[720px] shrink-0 px-5">
+      <div
+        data-testid="pull-request-inbox-filter-column"
+        className="mx-auto w-full max-w-[720px] shrink-0 px-5"
+      >
         <PullRequestFilters
           search={search}
           states={states}
@@ -446,7 +450,7 @@ export function PullRequestInbox({
       <div
         role="tablist"
         aria-label="Pull request relationships"
-        className="mb-3 mt-5 flex h-9 w-full max-w-[720px] shrink-0 items-center gap-1 px-5"
+        className="mx-auto mb-3 mt-5 flex h-9 w-full max-w-[720px] shrink-0 items-center gap-1 px-5"
       >
         {RELATIONSHIP_TABS.map((tab, index) => (
           <Button

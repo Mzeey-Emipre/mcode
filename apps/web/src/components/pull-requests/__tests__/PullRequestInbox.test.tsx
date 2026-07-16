@@ -233,6 +233,26 @@ describe("PullRequestInbox", () => {
     ).toBeVisible();
   });
 
+  it("centers the inbox chrome on the same column as the pull request list", () => {
+    seedRows(1);
+
+    render(<PullRequestInbox autoLoad={false} />);
+
+    expect(
+      screen.getByTestId("pull-request-inbox-heading-column"),
+    ).toHaveClass("mx-auto", "max-w-[720px]");
+    expect(
+      screen.getByTestId("pull-request-inbox-filter-column"),
+    ).toHaveClass("mx-auto", "max-w-[720px]");
+    expect(
+      screen.getByRole("tablist", { name: "Pull request relationships" }),
+    ).toHaveClass("mx-auto", "max-w-[720px]");
+    expect(screen.getByTestId("pull-request-list-content")).toHaveClass(
+      "mx-auto",
+      "max-w-[720px]",
+    );
+  });
+
   it("shows only non-zero change counts", () => {
     seedItems([
       { ...summary(1), additions: 1, deletions: 0 },
