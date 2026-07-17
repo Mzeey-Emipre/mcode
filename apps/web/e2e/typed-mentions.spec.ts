@@ -105,6 +105,9 @@ test("Codex @ autocomplete groups agents and files, then sends selected agent me
   await expect(popup).toHaveClass(/composer-autocomplete-surface/);
   await expect(popup).toHaveCSS("position", "fixed");
   await expect(popup).toHaveAttribute("data-composer-autocomplete", "true");
+  await popup.evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
   const [mentionBox, composerBox] = await Promise.all([
     popup.boundingBox(),
     page.getByTestId("composer-surface").boundingBox(),
