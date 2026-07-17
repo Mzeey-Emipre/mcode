@@ -8,7 +8,6 @@ import {
   isMaxEffortModel,
   isXhighEffortModel,
   supportsEffortParameter,
-  supportsUltrathink,
   supports1MContextWindow,
   supportsThinkingToggle,
   normalizeReasoningLevelForModel,
@@ -319,26 +318,23 @@ export function ModelSection() {
     if (provider === "copilot") {
       return REASONING_OPTIONS_BASE;
     }
-    // Claude: correct tier order is Low, Medium, High, X-High, Max, Ultrathink.
+    // Claude: correct tier order is Low, Medium, High, X-High, Max.
     // Tiers above the model's ceiling are disabled.
     return [
       ...REASONING_OPTIONS_BASE,
       { value: "xhigh",      label: "X-High",     disabled: !isXhighEffortModel(modelId) },
       { value: "max",        label: "Max",        disabled: !isMaxEffortModel(modelId) },
-      { value: "ultrathink", label: "Ultrathink", disabled: !supportsUltrathink(modelId) },
     ];
   }, [modelId, codexLevels, provider]);
 
   const reasoningHint = useMemo(() => {
     if (codexLevels) {
-      return codexLevels.includes("ultra")
-        ? "Reasoning effort for Codex models. Ultra uses automatic task delegation."
-        : "Reasoning effort for Codex models.";
+      return "Reasoning effort for Codex models.";
     }
     if (provider === "copilot") {
       return "Reasoning effort passed to the Copilot model. Not all models support all levels.";
     }
-    return "Default reasoning level. Max and Ultrathink require Opus 4.7/4.6 or Sonnet 4.6. X-High requires Opus 4.7. Ultrathink prepends an explicit instruction to the prompt.";
+    return "Default reasoning level. Max requires Fable 5, Sonnet 5, Opus 4.8/4.7/4.6, or Sonnet 4.6. X-High requires Opus 4.8 or Opus 4.7.";
   }, [codexLevels, provider]);
 
   const handleProviderChange = (v: string) => {

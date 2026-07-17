@@ -120,7 +120,7 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
             <div>
               <div className="text-sm font-medium capitalize">{providerId}</div>
               {activeThread?.model && (
-                <div className="text-[10px] text-muted-foreground">
+                <div className="text-xs text-muted-foreground">
                   {activeThread.model}
                   {contextEntry?.costMultiplier != null && ` · ${contextEntry.costMultiplier}×`}
                 </div>
@@ -136,7 +136,7 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
           {/* Quota section */}
           {categories.length > 0 ? (
             <div className="space-y-2">
-              <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
                 Quota
               </div>
               {categories.map((cat) => (
@@ -173,7 +173,7 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
           {/* Context window section */}
           {hasContext && (
             <div className="space-y-1 border-t border-border pt-2">
-              <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
                 Context window
               </div>
               <div className="flex items-center justify-between text-xs">
@@ -192,29 +192,29 @@ export function UsagePopover({ threadId, children, onOpenChange, side = "top", a
           {/* Last turn section */}
           {hasTurn ? (
             <div className="space-y-2 border-t border-border pt-2">
-              <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">
                 Last turn
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 <div className="rounded bg-muted/40 px-2 py-1.5">
-                  <div className="text-[9px] text-muted-foreground">in</div>
+                  <div className="text-xs text-muted-foreground">in</div>
                   <div className="text-xs text-foreground/80">{formatTokens(tokensIn)}</div>
                 </div>
                 <div className="rounded bg-muted/40 px-2 py-1.5">
-                  <div className="text-[9px] text-muted-foreground">out</div>
+                  <div className="text-xs text-muted-foreground">out</div>
                   <div className="text-xs text-foreground/80">
                     {formatTokens(tokensOut)}
                   </div>
                 </div>
                 {contextEntry?.cacheReadTokens != null && (
                   <div className="rounded bg-muted/40 px-2 py-1.5">
-                    <div className="text-[9px] text-muted-foreground">cache read</div>
+                    <div className="text-xs text-muted-foreground">cache read</div>
                     <div className="text-xs text-foreground/80">{formatTokens(contextEntry.cacheReadTokens)}</div>
                   </div>
                 )}
                 {contextEntry?.cacheWriteTokens != null && (
                   <div className="rounded bg-muted/40 px-2 py-1.5">
-                    <div className="text-[9px] text-muted-foreground">cache write</div>
+                    <div className="text-xs text-muted-foreground">cache write</div>
                     <div className="text-xs text-foreground/80">{formatTokens(contextEntry.cacheWriteTokens)}</div>
                   </div>
                 )}

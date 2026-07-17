@@ -1,0 +1,1 @@
+ALTER TABLE `threads` ADD `orchestration_mode` text;

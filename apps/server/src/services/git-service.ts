@@ -9,7 +9,7 @@
 import { injectable, inject } from "tsyringe";
 import { createHash } from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
-import { rm, rename, rmdir, realpath } from "fs/promises";
+import { rm, rmdir, realpath } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
@@ -857,44 +857,14 @@ export class GitService {
       }
     }
 
-    // 3. Rename-then-delete: atomically unblock the path even if deletion is slow.
-    // Renaming succeeds even when the directory has open handles, so the original
-    // path becomes available immediately while the OS drains remaining handles.
-    let deferredRm: Promise<void> | undefined;
-    if (existsSync(wtPath)) {
-      // Use a timestamp suffix to avoid collision with stale .deleting directories
-      // left by previous crashed cleanup attempts.
-      const pendingPath = `${wtPath}.deleting-${Date.now()}`;
-      try {
-        await rename(wtPath, pendingPath);
-        logger.info("Renamed stuck worktree for deferred deletion", { wtPath, pendingPath });
-        // Best-effort: .catch() intentionally swallows errors because the
-        // original worktree path is already gone (renamed). If the deferred rm
-        // fails the .deleting-* dir persists but the worktree is effectively
-        // removed, so retrying the entire cleanup job would be pointless.
-        deferredRm = rm(pendingPath, RM_RETRY_OPTIONS).catch(
-          (err) => {
-            logger.warn("Deferred deletion of renamed worktree failed", {
-              pendingPath,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          },
-        );
-      } catch (err) {
-        logger.error("Rename-then-delete fallback failed", {
-          wtPath,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    // 4. Verify cleanup
+    // 3. Keep a locked worktree at its registered path so the cleanup worker
+    // can retry after the application holding the directory releases it.
     if (existsSync(wtPath)) {
       logger.error("Worktree directory could not be removed", { wtPath });
       return false;
     }
 
-    // 5. Prune stale worktree metadata after any manual fallback removed the path.
+    // 4. Prune stale worktree metadata after any manual fallback removed the path.
     try {
       await this.gitExecutor.exec(["-C", repoPath, "worktree", "prune"], { timeout: 10_000 });
     } catch (err) {
@@ -903,18 +873,12 @@ export class GitService {
       });
     }
 
-    // 6. Wait for any deferred deletion to finish so the parent directory is
-    //    actually empty before we try to rmdir it.
-    if (deferredRm) {
-      await deferredRm;
-    }
-
-    // 7. Remove empty managed parent directories. Returns false on transient
+    // 5. Remove empty managed parent directories. Returns false on transient
     //    lock errors (EBUSY/EPERM) so the cleanup worker can retry later when
     //    the OS releases handles.
     const parentsCleaned = await removeEmptyManagedParentDirs(wtPath);
 
-    // 8. Delete the branch when explicitly requested (independent of parent
+    // 6. Delete the branch when explicitly requested (independent of parent
     //    dir state - always attempt this).
     if (branch) {
       try {

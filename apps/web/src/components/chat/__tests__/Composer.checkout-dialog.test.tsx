@@ -6,6 +6,7 @@ import { Composer } from "../Composer";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   usePreviewAnnotationStore,
+  type SavedDiffAnnotation,
   type SavedPreviewAnnotation,
 } from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
@@ -204,8 +205,11 @@ vi.mock("../ProviderUnavailableBanner", () => ({
   ProviderUnavailableBanner: () => <div />,
 }));
 
-function seedComposerState(mode: "direct" | "worktree" | "existing-worktree") {
-  const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+function seedComposerState(
+  mode: "direct" | "worktree" | "existing-worktree",
+  isGitRepo = true,
+) {
+  const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: isGitRepo });
   useWorkspaceStore.setState({
     workspaces: [workspace],
     activeWorkspaceId: workspace.id,
@@ -274,6 +278,20 @@ function makePreviewAnnotationBundle() {
   };
 }
 
+function makeSavedDiffAnnotation(): SavedDiffAnnotation {
+  return {
+    kind: "diff",
+    id: "550e8400-e29b-41d4-a716-446655440002",
+    displayNumber: 2,
+    filePath: "apps/web/src/components/chat/Composer.tsx",
+    side: "right",
+    line: 946,
+    lineContent: "const diffAnnotationRows = usePreviewAnnotationStore(...);",
+    note: "Keep this review target attached to the next prompt.",
+    createdAt: 1_783_036_800_001,
+  };
+}
+
 describe("Composer checkout confirmation", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -281,7 +299,7 @@ describe("Composer checkout confirmation", () => {
     lastComposerText = "";
     resetThreadStoreForTests({ runningThreadIds: new Set() });
     useQueueStore.setState({ queues: {}, toast: null, editingThreadId: null });
-    usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
+    usePreviewAnnotationStore.setState({ byThread: {}, diffByThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     useWorkspaceStore.setState({
       workspaces: [],
@@ -314,6 +332,14 @@ describe("Composer checkout confirmation", () => {
     expect(within(strip).getByText(workspace.name)).toBeInTheDocument();
     expect(within(strip).getByTestId("mode-selector")).toHaveTextContent("direct");
     expect(within(strip).getByTestId("branch-picker")).toHaveTextContent("feature/base");
+  });
+
+  it("renders Local for a non-git project without overwriting the remembered mode", () => {
+    seedComposerState("worktree", false);
+    render(<Composer isNewThread workspaceId="ws-1" />);
+
+    expect(screen.getByTestId("mode-selector")).toHaveTextContent("direct");
+    expect(useWorkspaceStore.getState().newThreadMode).toBe("worktree");
   });
 
   it("clears the selected project without deleting it", async () => {
@@ -429,7 +455,7 @@ describe("Composer checkout confirmation", () => {
     );
   });
 
-  it("clears annotations and exits design mode after a successful annotation send", async () => {
+  it("clears annotations and comments after a successful feedback send", async () => {
     const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
     const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
     useWorkspaceStore.setState({
@@ -448,13 +474,16 @@ describe("Composer checkout confirmation", () => {
       byThread: {
         [thread.id]: [makeSavedAnnotation()],
       },
+      diffByThread: {
+        [thread.id]: [makeSavedDiffAnnotation()],
+      },
     });
     (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     render(<Composer threadId={thread.id} workspaceId="ws-1" />);
 
     expect(screen.getByTestId("composer-annotation-bundle")).toHaveTextContent(
-      "1 annotation",
+      "1 annotation · 1 comment",
     );
     expect(screen.getByTestId("composer-annotation-bundle")).toHaveClass(
       "bg-accent",
@@ -463,7 +492,22 @@ describe("Composer checkout confirmation", () => {
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
+    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(sendCall?.[17]).toMatchObject({
+      schemaVersion: 1,
+      annotations: [
+        { id: "550e8400-e29b-41d4-a716-446655440001" },
+        {
+          kind: "diff",
+          id: "550e8400-e29b-41d4-a716-446655440002",
+          filePath: "apps/web/src/components/chat/Composer.tsx",
+          line: 946,
+          note: "Keep this review target attached to the next prompt.",
+        },
+      ],
+    });
     expect(usePreviewAnnotationStore.getState().byThread[thread.id] ?? []).toEqual([]);
+    expect(usePreviewAnnotationStore.getState().diffByThread[thread.id] ?? []).toEqual([]);
     expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(false);
   });
 

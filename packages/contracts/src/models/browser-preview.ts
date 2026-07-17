@@ -429,12 +429,55 @@ export type PreviewAnnotationPayload = z.infer<
 >;
 
 /**
+ * One saved line comment captured while reviewing a local agent diff.
+ */
+export const DiffAnnotationPayloadSchema = lazySchema(() =>
+  z.object({
+    kind: z.literal("diff"),
+    id: z.string().uuid(),
+    displayNumber: z.number().int().positive(),
+    filePath: z.string().min(1).max(1024),
+    side: z.enum(["left", "right"]),
+    line: z.number().int().positive(),
+    lineContent: z.string().max(4096),
+    note: z.string().trim().min(1).max(PREVIEW_ANNOTATION_STRING_MAX.note),
+  }),
+);
+
+export type DiffAnnotationPayload = z.infer<
+  ReturnType<typeof DiffAnnotationPayloadSchema>
+>;
+
+/** One visual or code target attached to a composer message. */
+export const ComposerAnnotationPayloadSchema = lazySchema(() =>
+  z.union([PreviewAnnotationPayloadSchema(), DiffAnnotationPayloadSchema()]),
+);
+
+export type ComposerAnnotationPayload = z.infer<
+  ReturnType<typeof ComposerAnnotationPayloadSchema>
+>;
+
+/** Returns whether a composer annotation targets a local diff line. */
+export function isDiffAnnotationPayload(
+  annotation: ComposerAnnotationPayload,
+): annotation is DiffAnnotationPayload {
+  return "kind" in annotation && annotation.kind === "diff";
+}
+
+/** Returns whether a composer annotation targets the browser Preview. */
+export function isPreviewAnnotationPayload(
+  annotation: ComposerAnnotationPayload,
+): annotation is PreviewAnnotationPayload {
+  return !isDiffAnnotationPayload(annotation);
+}
+
+/**
  * Structured Annotation bundle payload sent beside normal composer content.
  */
 export const PreviewAnnotationBundleSchema = lazySchema(() =>
   z.object({
     schemaVersion: z.literal(1),
-    annotations: z.array(PreviewAnnotationPayloadSchema()).min(1),
+    annotations: z.array(ComposerAnnotationPayloadSchema()).min(1),
   }),
 );
 
@@ -484,7 +527,11 @@ export function previewAnnotationSnapshotStoredAttachment(
 export function previewAnnotationSnapshotAttachments(
   bundle: PreviewAnnotationBundle | undefined,
 ): AttachmentMeta[] {
-  return bundle?.annotations.map(previewAnnotationSnapshotAttachmentMeta) ?? [];
+  return (
+    bundle?.annotations
+      .filter(isPreviewAnnotationPayload)
+      .map(previewAnnotationSnapshotAttachmentMeta) ?? []
+  );
 }
 
 /**
@@ -493,5 +540,9 @@ export function previewAnnotationSnapshotAttachments(
 export function previewAnnotationSnapshotStoredAttachments(
   bundle: PreviewAnnotationBundle | null | undefined,
 ): StoredAttachment[] {
-  return bundle?.annotations.map(previewAnnotationSnapshotStoredAttachment) ?? [];
+  return (
+    bundle?.annotations
+      .filter(isPreviewAnnotationPayload)
+      .map(previewAnnotationSnapshotStoredAttachment) ?? []
+  );
 }

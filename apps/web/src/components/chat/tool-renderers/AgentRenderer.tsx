@@ -18,7 +18,7 @@ export function AgentRenderer({ toolCall, isActive }: ToolRendererProps) {
     >
       <div className="space-y-1.5">
         {prompt && (
-          <pre className="rounded bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground font-mono whitespace-pre-wrap">
+          <pre className="rounded bg-muted/30 p-2 text-xs leading-relaxed text-muted-foreground font-mono whitespace-pre-wrap">
             {prompt}
           </pre>
         )}
@@ -32,7 +32,7 @@ export function AgentRenderer({ toolCall, isActive }: ToolRendererProps) {
               {showResult ? "Hide result" : "Show result"}
             </button>
             {showResult && (
-              <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground font-mono whitespace-pre-wrap">
+              <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted/30 p-2 text-xs leading-relaxed text-muted-foreground font-mono whitespace-pre-wrap">
                 {toolCall.output}
               </pre>
             )}

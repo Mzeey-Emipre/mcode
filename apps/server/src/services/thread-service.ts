@@ -202,33 +202,29 @@ export class ThreadService {
       const worktreePath = thread.worktree_path;
       const workspace = this.workspaceRepo.findById(thread.workspace_id);
       if (workspace) {
-        const queued = await this.gitService.withReviewWorktreeMutationLock(
-          workspace.path,
-          async () => {
-            const current = this.threadRepo.findById(threadId);
-            if (
-              !current
-              || current.deleted_at !== null
-              || !current.worktree_managed
-              || !current.worktree_path
-              || current.worktree_path !== worktreePath
-            ) {
-              return false;
-            }
-            const siblings = this.threadRepo.listActiveSiblingWorktreePaths(threadId);
-            const safety = await this.gitService.assessWorktreeRemovalSafety(
-              current.worktree_path,
-              siblings.paths,
-              siblings.truncated,
-            );
-            if (!safety.safe) {
-              logger.info("Worktree cleanup skipped because ownership is not exclusive", {
-                threadId,
-                worktreePath: current.worktree_path,
-                reason: safety.reason,
-              });
-              return false;
-            }
+        const current = this.threadRepo.findById(threadId);
+        if (
+          current
+          && current.deleted_at === null
+          && current.worktree_managed
+          && current.worktree_path === worktreePath
+        ) {
+          const siblings = this.threadRepo.listActiveSiblingWorktreePaths(threadId);
+          const safety = await this.gitService.assessWorktreeRemovalSafety(
+            current.worktree_path,
+            siblings.paths,
+            siblings.truncated,
+          );
+          if (!safety.safe) {
+            logger.info("Worktree cleanup skipped because ownership is not exclusive", {
+              threadId,
+              worktreePath: current.worktree_path,
+              reason: safety.reason,
+            });
+          } else {
+            // The cleanup worker repeats this ownership check while holding the
+            // repository lock. Keeping that lock out of the foreground RPC
+            // prevents an unrelated cleanup from stalling the delete dialog.
             this.cleanupJobRepo.insert({
               thread_id: threadId,
               workspace_path: workspace.path,
@@ -239,10 +235,9 @@ export class ThreadService {
               threadId,
               worktreePath: current.worktree_path,
             });
-            return this.threadRepo.softDelete(threadId);
-          },
-        );
-        if (queued) return true;
+            if (this.threadRepo.softDelete(threadId)) return true;
+          }
+        }
       } else {
         logger.warn("Worktree cleanup skipped - workspace not found, directory will not be removed", {
           threadId,
@@ -274,6 +269,7 @@ export class ThreadService {
     settings: {
       reasoning_level?: string;
       interaction_mode?: string;
+      orchestration_mode?: string;
       permission_mode?: string;
       copilot_agent?: string | null;
       context_window_mode?: ContextWindowMode | null;
@@ -285,6 +281,7 @@ export class ThreadService {
     return this.threadRepo.updateSettings(threadId, {
       ...(settings.reasoning_level !== undefined && { reasoning_level: settings.reasoning_level }),
       ...(settings.interaction_mode !== undefined && { interaction_mode: settings.interaction_mode }),
+      ...(settings.orchestration_mode !== undefined && { orchestration_mode: settings.orchestration_mode }),
       ...(settings.permission_mode !== undefined && { permission_mode: settings.permission_mode }),
       ...("copilot_agent" in settings && { copilot_agent: settings.copilot_agent }),
       ...("context_window_mode" in settings && { context_window_mode: settings.context_window_mode }),

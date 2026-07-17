@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useWorkspaceStore, type WorkspaceRpcCall } from "../workspaceStore";
 import { useDiffStore } from "../diffStore";
 import type { Workspace } from "@/transport/types";
+import { rememberComposerMode } from "@/lib/composer-mode-preference";
 
 function makeWs(overrides?: Partial<Workspace>): Workspace {
   return {
@@ -21,6 +22,7 @@ function makeWs(overrides?: Partial<Workspace>): Workspace {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   useWorkspaceStore.setState({ workspaces: [makeWs()], activeWorkspaceId: null });
   useDiffStore.setState({
     rightPanelByThread: {},
@@ -111,7 +113,8 @@ describe("workspaceStore new-thread panel transition", () => {
     });
   });
 
-  it("enters a clean pending composer for the selected workspace", () => {
+  it("enters a clean pending composer with the last selected mode", () => {
+    rememberComposerMode("existing-worktree");
     useWorkspaceStore.setState({
       workspaces: [makeWs(), makeWs({ id: "ws-2", name: "second" })],
       activeWorkspaceId: "ws-2",
@@ -127,7 +130,7 @@ describe("workspaceStore new-thread panel transition", () => {
       activeWorkspaceId: "ws-2",
       activeThreadId: null,
       pendingNewThread: true,
-      newThreadMode: "direct",
+      newThreadMode: "existing-worktree",
       newThreadBranch: "",
     });
   });

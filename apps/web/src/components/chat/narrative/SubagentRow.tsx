@@ -80,7 +80,7 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
   if (!hasChildren && !finalOutput) {
     return (
       <div
-        className="flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden px-2 py-1 text-[0.8125rem]"
+        className="flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden px-2 py-1 text-sm"
         data-testid="subagent-flat-row"
       >
         <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/65 ring-1 ring-inset ring-border/60">
@@ -188,7 +188,7 @@ function ExpandableSubagentRow({
           userToggledRef.current = true;
           setOpen((o) => !o);
         }}
-        className={`${NARRATIVE_TOOL_ROW} h-auto w-full justify-start px-2 py-1 text-left rounded-md hover:bg-muted/30 transition-colors duration-100 text-[0.8125rem]`}
+        className={`${NARRATIVE_TOOL_ROW} h-auto w-full justify-start px-2 py-1 text-left rounded-md hover:bg-muted/30 transition-colors duration-100 text-sm`}
         aria-expanded={open}
       >
         <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/65 ring-1 ring-inset ring-border/60">
@@ -211,7 +211,7 @@ function ExpandableSubagentRow({
         <DelegationTags tags={delegationTags} />
 
         {metaText && (
-          <span className="font-mono text-[0.6875rem] text-muted-foreground/50 shrink-0">
+          <span className="font-mono text-xs text-muted-foreground/50 shrink-0">
             {!isRunning ? `· ${metaText}` : metaText}
           </span>
         )}
@@ -272,7 +272,7 @@ function ExpandableSubagentRow({
             const detail = extractToolInputDetail(tc);
 
             return (
-              <li key={tc.id} className={`${NARRATIVE_TOOL_ROW} py-px text-[0.8125rem]`}>
+              <li key={tc.id} className={`${NARRATIVE_TOOL_ROW} py-px text-sm`}>
                 <Icon className={`w-3 h-3 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground/50"}`} />
                 <span className={`shrink-0 ${isActive ? "text-foreground" : "text-muted-foreground/70"}`}>{label}</span>
                 <span className={narrativeToolDetailClass("sm")} title={detail}>

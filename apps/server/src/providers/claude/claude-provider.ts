@@ -18,6 +18,7 @@ import type {
   TurnRequest,
   ProviderId,
   ReasoningLevel,
+  OrchestrationMode,
   ContextWindowMode,
   AgentEvent,
   AttachmentMeta,
@@ -33,7 +34,7 @@ import type {
 } from "@mcode/contracts";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
 import { listClaudeModels } from "./list-models.js";
-import { applyUltrathinkPrefix, resolveSdkModelSlug } from "./resolve-slug.js";
+import { resolveSdkModelSlug } from "./resolve-slug.js";
 import { clampContextWindowToMode, resolveAutoCompactWindow } from "./context-window.js";
 import { readAnthropicOauthToken } from "@mcode/shared/usage";
 import { AnthropicOAuthUsageSource } from "./usage/oauth-usage-source.js";
@@ -117,6 +118,8 @@ interface ClaudeSessionState {
    * for permissionMode.
    */
   contextWindowMode: ContextWindowMode | undefined;
+  /** Session-scoped dynamic workflow orchestration state. */
+  orchestrationMode: OrchestrationMode;
   lastUsedAt: number;
   /** When true, the finally block in startStreamLoop should not emit an "ended" event. */
   suppressEnded?: boolean;
@@ -305,6 +308,8 @@ interface PendingSpawnTurn {
   resolvedModel: string;
   /** Context window mode the session was spawned with; gates the in-place reuse check. */
   contextWindowMode: ContextWindowMode | undefined;
+  /** Orchestration mode encoded into the session's flag settings. */
+  orchestrationMode: OrchestrationMode;
 }
 
 /** Claude Agent SDK adapter implementing IAgentProvider with prompt queue pattern. */
@@ -436,6 +441,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       permissionMode: req.permissionMode,
       attachments: req.attachments,
       reasoningLevel: req.reasoningLevel,
+      orchestrationMode: req.orchestrationMode ?? "standard",
       contextWindowMode: req.providerOptions.contextWindowMode,
       thinking: req.providerOptions.thinking,
       maxBudgetUsd: req.maxBudgetUsd,
@@ -849,6 +855,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     permissionMode: string;
     attachments?: AttachmentMeta[];
     reasoningLevel?: ReasoningLevel;
+    orchestrationMode: OrchestrationMode;
     contextWindowMode?: ContextWindowMode;
     thinking?: boolean;
     maxBudgetUsd?: number;
@@ -864,6 +871,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       permissionMode,
       attachments,
       reasoningLevel,
+      orchestrationMode,
       contextWindowMode,
       thinking,
     } = params;
@@ -884,14 +892,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     // `context-1m-2025-08-07` beta header.
     const sdkModelSlug = resolveSdkModelSlug(resolvedModel, contextWindowMode);
 
-    // Ultrathink prepends "Ultrathink:\n" to the user prompt for models that
-    // support it. The matching `effort: "max"` is emitted by buildReasoningOptions.
-    const finalMessage = applyUltrathinkPrefix(message, reasoningLevel, resolvedModel);
-
     const prompt =
       attachments && attachments.length > 0
-        ? await this.buildMultimodalMessage(finalMessage, attachments, sessionId)
-        : toUserMessage(finalMessage, sessionId);
+        ? await this.buildMultimodalMessage(message, attachments, sessionId)
+        : toUserMessage(message, sessionId);
 
     // A live session whose spawn-fixed parameters (permissionMode or
     // contextWindowMode) still match the request can be reused in place: the
@@ -922,6 +926,26 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     if (existing && reusable) {
       this.runtime.recordUsage(sessionId);
       existing.lastUsedAt = Date.now();
+
+      if (existing.orchestrationMode !== orchestrationMode) {
+        try {
+          await existing.query.applyFlagSettings({
+            ultracode: orchestrationMode === "proactive",
+          });
+          existing.orchestrationMode = orchestrationMode;
+        } catch (err) {
+          logger.error("Ultracode mode change failed, recreating session", {
+            sessionId,
+            orchestrationMode,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          existing.suppressEnded = true;
+          this.suppressEndedQueries.add(existing.query);
+          this.suppressSessionStartHooks.add(tid);
+          await this.runtime.stop(sessionId);
+          return this.doSendMessage({ ...params, resume: false });
+        }
+      }
 
       if (existing.model !== resolvedModel) {
         logger.info("Model changed, calling setModel()", {
@@ -1162,9 +1186,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       // wire tier (mode plus model support). Inline `settings` is the SDK's
       // `--settings` layer, so this takes precedence over any autoCompactWindow
       // in the user's own settings.json.
-      ...(autoCompactWindow !== undefined && {
-        settings: { autoCompactWindow },
-      }),
+      settings: {
+        ...(autoCompactWindow !== undefined && { autoCompactWindow }),
+        ultracode: orchestrationMode === "proactive",
+      },
       includePartialMessages: true,
       // Guardrails are fixed at session creation. If the user changes the
       // setting between turns while the session is still live in memory, the
@@ -1220,6 +1245,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         baseOptions,
         resolvedModel,
         contextWindowMode,
+        orchestrationMode,
       });
     };
 
@@ -1339,7 +1365,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     }
     this.pendingSpawnTurns.delete(sessionId);
 
-    const { prompt, resume, resumeId, uuid, baseOptions, resolvedModel, contextWindowMode } = staged;
+    const {
+      prompt,
+      resume,
+      resumeId,
+      uuid,
+      baseOptions,
+      resolvedModel,
+      contextWindowMode,
+      orchestrationMode,
+    } = staged;
 
     // Capture the subprocess stderr tail so a non-zero exit (which the SDK
     // reports as a bare "process exited with code N") carries the actual CLI
@@ -1401,6 +1436,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       model: resolvedModel,
       permissionMode: args.permissionMode,
       contextWindowMode,
+      orchestrationMode,
       lastUsedAt: Date.now(),
       pendingToolUses: new Set<string>(),
       hasFiredToolThisTurn: false,

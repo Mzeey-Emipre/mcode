@@ -17,10 +17,11 @@ describe("ThreadRepo.updateSettings", () => {
     threadId = thread.id;
   });
 
-  it("persists reasoning_level, interaction_mode, and permission_mode", () => {
+  it("persists reasoning, interaction, orchestration, and permission settings", () => {
     const ok = repo.updateSettings(threadId, {
       reasoning_level: "high",
       interaction_mode: "plan",
+      orchestration_mode: "proactive",
       permission_mode: "supervised",
     });
     expect(ok).toBe(true);
@@ -28,6 +29,7 @@ describe("ThreadRepo.updateSettings", () => {
     const thread = repo.findById(threadId);
     expect(thread?.reasoning_level).toBe("high");
     expect(thread?.interaction_mode).toBe("plan");
+    expect(thread?.orchestration_mode).toBe("proactive");
     expect(thread?.permission_mode).toBe("supervised");
   });
 
@@ -36,6 +38,7 @@ describe("ThreadRepo.updateSettings", () => {
     const thread = repo.findById(threadId);
     expect(thread?.reasoning_level).toBe("max");
     expect(thread?.interaction_mode).toBeNull();
+    expect(thread?.orchestration_mode).toBeNull();
     expect(thread?.permission_mode).toBeNull();
   });
 
@@ -48,6 +51,15 @@ describe("ThreadRepo.updateSettings", () => {
     const thread = repo.findById(threadId);
     expect(thread?.reasoning_level).toBeNull();
     expect(thread?.interaction_mode).toBeNull();
+    expect(thread?.orchestration_mode).toBeNull();
     expect(thread?.permission_mode).toBeNull();
+  });
+
+  it("normalizes legacy orchestration-shaped reasoning values to max", () => {
+    db.prepare("UPDATE threads SET reasoning_level = ? WHERE id = ?").run("ultrathink", threadId);
+    expect(repo.findById(threadId)?.reasoning_level).toBe("max");
+
+    db.prepare("UPDATE threads SET reasoning_level = ? WHERE id = ?").run("ultra", threadId);
+    expect(repo.findById(threadId)?.reasoning_level).toBe("max");
   });
 });

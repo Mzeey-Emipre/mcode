@@ -21,7 +21,7 @@ vi.mock("@/stores/toastStore", () => ({
   },
 }));
 
-import { ActiveGoalBar } from "../Composer";
+import { ActiveGoalChip } from "../Composer";
 
 const goal: GoalState = {
   threadId: "thread-1",
@@ -52,7 +52,7 @@ function lookup(overrides: Partial<GoalLookupResult> = {}): GoalLookupResult {
   };
 }
 
-describe("ActiveGoalBar", () => {
+describe("ActiveGoalChip", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     refreshThreadGoal.mockResolvedValue(lookup());
@@ -60,14 +60,14 @@ describe("ActiveGoalBar", () => {
   });
 
   it("opens details through refreshThreadGoal and does not send a chat message", async () => {
-    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
-    await userEvent.click(screen.getByLabelText("Show active goal"));
+    await userEvent.click(screen.getByLabelText(/Show active goal/));
 
     expect(refreshThreadGoal).toHaveBeenCalledWith("thread-1");
     expect(sendMessage).not.toHaveBeenCalled();
     await waitFor(() =>
-      expect(screen.getAllByText("Ship app-level goal controls").length).toBeGreaterThanOrEqual(2),
+      expect(screen.getByText("Ship app-level goal controls")).toBeInTheDocument(),
     );
     expect(screen.getByText("Tokens used")).toBeInTheDocument();
     expect(screen.getByText("Token budget")).toBeInTheDocument();
@@ -77,19 +77,19 @@ describe("ActiveGoalBar", () => {
 
   it("keeps prior details visible and shows refresh failure inline", async () => {
     refreshThreadGoal.mockRejectedValue(new Error("offline"));
-    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
-    await userEvent.click(screen.getByLabelText("Show active goal"));
+    await userEvent.click(screen.getByLabelText(/Show active goal/));
 
     await waitFor(() =>
-      expect(screen.getAllByText("Ship app-level goal controls").length).toBeGreaterThanOrEqual(2),
+      expect(screen.getByText("Ship app-level goal controls")).toBeInTheDocument(),
     );
     expect(await screen.findByText("Could not refresh goal details.")).toBeInTheDocument();
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("clears through clearThreadGoal and does not send a chat message", async () => {
-    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
     await userEvent.click(screen.getByLabelText("Clear active goal"));
 
@@ -102,10 +102,10 @@ describe("ActiveGoalBar", () => {
     clearThreadGoal.mockReturnValue(new Promise((resolve) => {
       resolveClear = resolve;
     }));
-    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
-    await userEvent.click(screen.getByLabelText("Show active goal"));
-    await userEvent.click(await screen.findByRole("button", { name: "Clear" }));
+    await userEvent.click(screen.getByLabelText(/Show active goal/));
+    await userEvent.click(await screen.findByRole("button", { name: "Clear goal" }));
 
     expect(screen.getAllByText("Clearing...").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("button", { name: "Clearing..." })).toBeDisabled();
@@ -121,10 +121,10 @@ describe("ActiveGoalBar", () => {
     clearThreadGoal.mockReturnValueOnce(new Promise((resolve) => {
       resolveClear = resolve;
     }));
-    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
-    await userEvent.click(screen.getByLabelText("Show active goal"));
-    await userEvent.click(await screen.findByRole("button", { name: "Clear" }));
+    await userEvent.click(screen.getByLabelText(/Show active goal/));
+    await userEvent.click(await screen.findByRole("button", { name: "Clear goal" }));
 
     await waitFor(() => expect(screen.getAllByText("Clearing...").length).toBeGreaterThanOrEqual(1));
     resolveClear(lookup({
@@ -147,7 +147,7 @@ describe("ActiveGoalBar", () => {
 
   it("shows a not-cleared toast for non-authoritative open-goal results", async () => {
     clearThreadGoal.mockResolvedValue(lookup({ authoritative: false }));
-    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
     await userEvent.click(screen.getByLabelText("Clear active goal"));
 
@@ -166,7 +166,7 @@ describe("ActiveGoalBar", () => {
       source: "unsupported",
       reason: "unsupported-provider",
     }));
-    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
     await userEvent.click(screen.getByLabelText("Clear active goal"));
 
@@ -181,7 +181,7 @@ describe("ActiveGoalBar", () => {
 
   it("shows the normalized RPC error when clear throws", async () => {
     clearThreadGoal.mockRejectedValue(new Error("clear failed"));
-    render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
     await userEvent.click(screen.getByLabelText("Clear active goal"));
 
@@ -195,17 +195,17 @@ describe("ActiveGoalBar", () => {
     refreshThreadGoal.mockReturnValueOnce(new Promise((resolve) => {
       resolveRefresh = resolve;
     }));
-    const { rerender } = render(<ActiveGoalBar threadId="thread-1" goal={goal} />);
+    const { rerender } = render(<ActiveGoalChip threadId="thread-1" goal={goal} />);
 
-    await userEvent.click(screen.getByLabelText("Show active goal"));
+    await userEvent.click(screen.getByLabelText(/Show active goal/));
     expect(refreshThreadGoal).toHaveBeenCalledWith("thread-1");
 
-    rerender(<ActiveGoalBar threadId="thread-2" goal={otherGoal} />);
+    rerender(<ActiveGoalChip threadId="thread-2" goal={otherGoal} />);
     resolveRefresh(lookup({ source: "codex-native", reason: "missing" }));
     await waitFor(() => expect(screen.queryByText("Lookup source")).not.toBeInTheDocument());
 
-    await userEvent.click(screen.getByLabelText("Show active goal"));
-    expect(screen.getAllByText("Review the branch").length).toBeGreaterThanOrEqual(2);
+    await userEvent.click(screen.getByLabelText(/Show active goal/));
+    expect(screen.getByText("Review the branch")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("codex-native")).toBeInTheDocument());
   });
 });

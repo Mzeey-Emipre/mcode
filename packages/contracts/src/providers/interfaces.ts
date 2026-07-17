@@ -1,5 +1,5 @@
 import type { AgentEvent } from "../events/agent-event.js";
-import type { InteractionMode } from "../models/enums.js";
+import type { InteractionMode, OrchestrationMode } from "../models/enums.js";
 import type { AttachmentMeta } from "../models/attachment.js";
 import type { MessageMention } from "../models/mention.js";
 import type { GoalLookupResult, GoalState } from "../models/goal.js";
@@ -67,6 +67,8 @@ export interface TurnRequest<P extends ProviderId = ProviderId> {
   permissionMode: string;
   /** Per-Turn interaction state. Plan suppresses Cursor's native auto-answer. */
   interactionMode: InteractionMode;
+  /** Requests provider-native proactive delegation without changing reasoning effort. */
+  orchestrationMode?: OrchestrationMode;
   reasoningLevel?: ReasoningLevel;
   /** USD budget cap for this Turn. Undefined or 0 disables. */
   maxBudgetUsd?: number;

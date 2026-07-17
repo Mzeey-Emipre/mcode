@@ -78,7 +78,7 @@ export function AnsweredSummary({ content, messageId }: AnsweredSummaryProps) {
             open && "rotate-90",
           )}
         />
-        <span className="font-mono text-[10px] uppercase tracking-widest">
+        <span className="font-mono text-xs uppercase tracking-widest">
           {questions.length} plan question{questions.length !== 1 ? "s" : ""} answered
         </span>
       </CollapsibleTrigger>
@@ -86,7 +86,7 @@ export function AnsweredSummary({ content, messageId }: AnsweredSummaryProps) {
       <CollapsibleContent className="ml-4.5 space-y-2 data-[state=open]:animate-fade-up-in">
         {questions.map((q) => (
           <div key={q.id} className="text-xs">
-            <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground/30">
+            <span className="text-xs font-medium uppercase tracking-widest text-muted-foreground/30">
               {q.category}
             </span>
             <p className="text-muted-foreground/60 mt-0.5">{q.question}</p>
@@ -95,7 +95,7 @@ export function AnsweredSummary({ content, messageId }: AnsweredSummaryProps) {
                 <span
                   key={o.id}
                   className={cn(
-                    "inline-block text-[10px] px-1.5 py-0.5 rounded border",
+                    "inline-block text-xs px-1.5 py-0.5 rounded border",
                     o.recommended
                       ? "border-primary/20 text-primary/50 bg-primary/5"
                       : "border-border/30 text-muted-foreground/35",

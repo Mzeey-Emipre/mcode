@@ -7,6 +7,6 @@ export {
   $isSlashCommandNode,
 } from "./SlashCommandNode";
 export { insertMentionNode } from "./MentionPlugin";
-export { insertSlashCommandNode } from "./SlashCommandPlugin";
+export { insertSlashCommandNode, removeSlashCommandTrigger } from "./SlashCommandPlugin";
 export { getPlainTextFromEditor, extractMentionPaths, extractComposerMessage } from "./cursor-utils";
 export type { ExtractedComposerMessage } from "./cursor-utils";

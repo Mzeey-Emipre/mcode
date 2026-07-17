@@ -53,6 +53,17 @@ export const INTERACTION_MODES = {
   PLAN: "plan" as const,
 } satisfies Record<string, InteractionMode>;
 
+/** Whether a provider should proactively orchestrate delegated agent work. */
+export const OrchestrationModeSchema = z.enum(["standard", "proactive"]);
+/** Provider-agnostic orchestration behavior for a turn. */
+export type OrchestrationMode = z.infer<typeof OrchestrationModeSchema>;
+
+/** Constant lookup for orchestration modes. */
+export const ORCHESTRATION_MODES = {
+  STANDARD: "standard" as const,
+  PROACTIVE: "proactive" as const,
+} satisfies Record<string, OrchestrationMode>;
+
 /** Discriminates where a Copilot sub-agent was discovered from. */
 export const CopilotSubagentSourceSchema = z.enum(["default", "user", "project"]);
 /** Copilot sub-agent source value. */

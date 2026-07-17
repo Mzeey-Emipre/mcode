@@ -1,5 +1,7 @@
-import { FolderOpen, GitBranch, GitFork, Check, ChevronDown } from "lucide-react";
+import { FolderOpen, Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { WorktreeModeIcon } from "@/components/icons/WorktreeModeIcon";
+import type { ComponentType } from "react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -19,14 +21,14 @@ export type ComposerMode = "direct" | "worktree" | "existing-worktree";
 export interface ModeOption {
   value: ComposerMode;
   label: string;
-  icon: typeof FolderOpen;
+  icon: ComponentType<{ size?: number; className?: string }>;
 }
 
 /** All available mode options. Consumers can filter this list before passing to ModeSelector. */
 export const ALL_MODE_OPTIONS: ModeOption[] = [
   { value: "direct", label: "Local", icon: FolderOpen },
-  { value: "worktree", label: "New worktree", icon: GitBranch },
-  { value: "existing-worktree", label: "Existing worktree", icon: GitFork },
+  { value: "worktree", label: "New worktree", icon: WorktreeModeIcon },
+  { value: "existing-worktree", label: "Existing worktree", icon: WorktreeModeIcon },
 ];
 
 interface ModeSelectorProps {

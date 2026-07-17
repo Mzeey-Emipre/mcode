@@ -144,7 +144,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
                     <FileText size={18} className="shrink-0 text-primary" />
                     <span className="truncate text-xs font-medium text-foreground">Page context</span>
                   </div>
-                  <span className="block max-w-[120px] truncate pl-[26px] text-[10px] leading-tight text-muted-foreground">
+                  <span className="block max-w-[120px] truncate pl-[26px] text-xs leading-tight text-muted-foreground">
                     {spill ? spill.line : "No image"}
                   </span>
                   {removeButton(att.name, att.id)}
@@ -186,7 +186,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
                 >
                   {spill ? (
                     <span
-                      className="absolute bottom-0.5 left-0.5 right-0.5 z-10 truncate rounded bg-background/85 px-0.5 text-center text-[8px] font-medium text-foreground/90 shadow-sm"
+                      className="absolute bottom-0.5 left-0.5 right-0.5 z-10 truncate rounded bg-background/85 px-0.5 text-center text-xs font-medium text-foreground/90 shadow-sm"
                       title={spill.title}
                     >
                       + spill file

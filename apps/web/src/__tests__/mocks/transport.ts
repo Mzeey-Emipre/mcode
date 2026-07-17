@@ -58,6 +58,7 @@ export function createMockThread(overrides?: Partial<Thread>): Thread {
     context_window: null,
     reasoning_level: null,
     interaction_mode: null,
+    orchestration_mode: null,
     permission_mode: null,
     context_window_mode: null,
     thinking: null,

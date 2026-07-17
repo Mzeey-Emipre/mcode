@@ -15,6 +15,7 @@ import type { ToolGroup } from "./types";
 import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
+import { CommandExecutionCard } from "./CommandExecutionCard";
 
 interface ToolSummaryLineProps {
   /** The group of consecutive tool calls to summarize. */
@@ -105,7 +106,7 @@ function StatusBadge({ status }: StatusBadgeProps) {
   };
   return (
     <span
-      className={`font-mono text-[0.625rem] font-medium px-1.5 py-px rounded-sm ${styles[status]}`}
+      className={`font-mono text-xs font-medium px-1.5 py-px rounded-sm ${styles[status]}`}
     >
       {status}
     </span>
@@ -126,6 +127,19 @@ export function ToolSummaryLine({
   hasCancelled,
 }: ToolSummaryLineProps) {
   const [open, setOpen] = useState(false);
+
+  if (
+    group.calls.length > 0 &&
+    group.calls.every((call) => isShellTool(call.toolName))
+  ) {
+    return (
+      <div className="flex min-w-0 max-w-full flex-col gap-1 py-0.5">
+        {group.calls.map((toolCall) => (
+          <CommandExecutionCard key={toolCall.id} toolCall={toolCall} />
+        ))}
+      </div>
+    );
+  }
 
   const firstCall = group.calls[0];
   const LeadingIcon = firstCall
@@ -164,6 +178,14 @@ export function ToolSummaryLine({
             const detail = extractToolInputDetail(tc);
             const status = getCallStatus(tc);
 
+            if (isShellTool(tc.toolName)) {
+              return (
+                <li key={tc.id} className="min-w-0 max-w-full py-0.5">
+                  <CommandExecutionCard toolCall={tc} />
+                </li>
+              );
+            }
+
             return (
               <li key={tc.id} className="flex min-w-0 max-w-full flex-col gap-0.5">
                 {/* Row: icon + label + detail + badge */}
@@ -179,15 +201,6 @@ export function ToolSummaryLine({
                 </div>
 
                 {/* Inline content blocks */}
-                {tc.isComplete && !tc.isError && isShellTool(tc.toolName) && tc.output && (
-                  <div className="flex min-w-0 max-w-full flex-col gap-1">
-                    <ToolOutputTruncationNotice toolCall={tc} />
-                    <pre className="max-w-full text-sm font-mono rounded px-2 py-1 bg-[var(--code-bg)] text-foreground/80 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
-                      {tc.output}
-                    </pre>
-                  </div>
-                )}
-
                 {tc.isError && tc.output && (
                   <div className="flex min-w-0 max-w-full flex-col gap-1">
                     <ToolOutputTruncationNotice toolCall={tc} />

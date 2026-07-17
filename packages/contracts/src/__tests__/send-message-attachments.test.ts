@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { SendMessageSchema } from "../ws/methods.js";
+import { CreateAndSendSchema, SendMessageSchema, WS_METHODS } from "../ws/methods.js";
+import { supportsCodexUltraOrchestration } from "../providers/codex-static-fallback.js";
+import { MAX_GOAL_OBJECTIVE_CHARS } from "../models/goal.js";
 import { MAX_ATTACHMENTS } from "../models/file-types.js";
 
 const sampleAttachment = {
@@ -35,5 +37,61 @@ describe("SendMessageSchema attachments", () => {
       attachments,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("typed goal objectives", () => {
+  it("accepts bounded objectives on send and create-and-send", () => {
+    const goalObjective = "Ship the composer capability";
+    expect(SendMessageSchema().safeParse({
+      threadId: "550e8400-e29b-41d4-a716-446655440000",
+      content: goalObjective,
+      goalObjective,
+    }).success).toBe(true);
+    expect(CreateAndSendSchema().safeParse({
+      workspaceId: "550e8400-e29b-41d4-a716-446655440000",
+      content: goalObjective,
+      model: "claude-sonnet-4-6",
+      goalObjective,
+    }).success).toBe(true);
+  });
+
+  it("rejects blank and oversized objectives", () => {
+    const base = {
+      threadId: "550e8400-e29b-41d4-a716-446655440000",
+      content: "run",
+    };
+    expect(SendMessageSchema().safeParse({ ...base, goalObjective: "   " }).success).toBe(false);
+    expect(SendMessageSchema().safeParse({
+      ...base,
+      goalObjective: "x".repeat(MAX_GOAL_OBJECTIVE_CHARS + 1),
+    }).success).toBe(false);
+  });
+});
+
+describe("orchestration mode", () => {
+  it("accepts proactive orchestration on send, create-and-send, and thread settings", () => {
+    expect(SendMessageSchema().safeParse({
+      threadId: "550e8400-e29b-41d4-a716-446655440000",
+      content: "delegate this work",
+      orchestrationMode: "proactive",
+    }).success).toBe(true);
+    expect(CreateAndSendSchema().safeParse({
+      workspaceId: "550e8400-e29b-41d4-a716-446655440000",
+      content: "delegate this work",
+      model: "gpt-5.6-sol",
+      orchestrationMode: "proactive",
+    }).success).toBe(true);
+    expect(WS_METHODS()["thread.updateSettings"].params.safeParse({
+      threadId: "550e8400-e29b-41d4-a716-446655440000",
+      orchestrationMode: "proactive",
+    }).success).toBe(true);
+  });
+
+  it("advertises Codex Ultra only for Sol and Terra", () => {
+    expect(supportsCodexUltraOrchestration("gpt-5.6-sol")).toBe(true);
+    expect(supportsCodexUltraOrchestration("gpt-5.6-terra")).toBe(true);
+    expect(supportsCodexUltraOrchestration("gpt-5.6-luna")).toBe(false);
+    expect(supportsCodexUltraOrchestration("gpt-5.4")).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
@@ -13,6 +13,7 @@ import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -34,6 +35,7 @@ import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
 import { Button } from "@/components/ui/button";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
+import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -105,7 +107,7 @@ function EmptyState({ onPromptSelect }: EmptyStateProps) {
             className="flex flex-col items-start gap-0.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5 text-left transition-colors hover:border-border/70 hover:bg-muted/40"
           >
             <span className="text-xs font-medium text-foreground/80">{ep.label}</span>
-            <span className="text-[11px] text-muted-foreground/60">{ep.description}</span>
+            <span className="text-xs text-muted-foreground/60">{ep.description}</span>
           </button>
         ))}
       </div>
@@ -166,7 +168,7 @@ function NewThreadWelcome({
               className="group h-auto min-h-24 flex-col items-start justify-between rounded-xl border-border/70 bg-transparent px-4 py-3.5 text-left shadow-none hover:border-primary/35 hover:bg-accent/45"
             >
               <Icon size={15} className="text-primary transition-transform duration-200 group-hover:-translate-y-0.5 motion-reduce:transform-none" aria-hidden />
-              <span className="max-w-32 text-wrap text-[13px] font-medium leading-5 text-foreground/90">
+              <span className="max-w-32 text-wrap text-sm font-medium leading-5 text-foreground/90">
                 {label}
               </span>
             </Button>
@@ -226,7 +228,7 @@ function ThreadPreparingShell({
                   <button
                     type="button"
                     onClick={() => useWorkspaceStore.getState().setActiveThread(thread.parent_thread_id!)}
-                    className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                    className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
                   >
                     <GitFork size={10} />
                     <span>Forked</span>
@@ -263,6 +265,35 @@ function ThreadPreparingShell({
   );
 }
 const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024; // 20 MB
+const THREAD_SUBSCRIPTION_RETRY_BASE_MS = 100;
+const THREAD_SUBSCRIPTION_RETRY_MAX_MS = 1_600;
+const THREAD_SUBSCRIPTION_MAX_RETRIES = 4;
+
+type ThreadSubscriptionAction = "subscribe" | "unsubscribe";
+
+/** Keeps the conversation surface occupied while the latest persisted tail loads. */
+function ConversationLoadingState() {
+  return (
+    <div
+      data-testid="conversation-loading"
+      role="status"
+      aria-label="Loading conversation"
+      className="flex h-full items-end px-4 pb-6 sm:px-8"
+    >
+      <div className={`${PRIMARY_CONTENT_RAIL_CLASS} w-full space-y-5 motion-safe:animate-pulse`}>
+        <div className="ml-auto space-y-2">
+          <Skeleton className="ml-auto h-3 w-2/5 rounded bg-muted/55" />
+          <Skeleton className="ml-auto h-3 w-3/5 rounded bg-muted/40" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-3 w-1/4 rounded bg-muted/55" />
+          <Skeleton className="h-3 w-4/5 rounded bg-muted/40" />
+          <Skeleton className="h-3 w-3/5 rounded bg-muted/40" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** Renders the main chat UI for sending and receiving messages within a thread. */
 export function ChatView() {
@@ -279,7 +310,9 @@ export function ChatView() {
   const loadMessages = useThreadStore((s) => s.loadMessages);
   const clearMessages = useThreadStore((s) => s.clearMessages);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const hydratedThreadId = useThreadStore((s) => s.currentThreadId);
   const messageCount = useActiveThreadRecord((r) => r.messages.length);
+  const historyLoading = useActiveThreadRecord((r) => r.loading);
   const setPendingPrefill = useComposerDraftStore((s) => s.setPendingPrefill);
 
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
@@ -431,16 +464,144 @@ export function ChatView() {
   }, [connectionStatus]);
 
   const prevThreadIdRef = useRef<string | null>(null);
+  const confirmedThreadIdsRef = useRef<Set<string>>(new Set());
+  const desiredThreadIdsRef = useRef<Set<string>>(new Set());
+  const pendingThreadChangesRef = useRef<Map<string, symbol>>(new Map());
+  const previousSubscriptionStatusRef = useRef<typeof connectionStatus | null>(null);
+  const subscriptionEpochRef = useRef(0);
+  const subscriptionRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subscriptionRetryAttemptRef = useRef(0);
+  const subscriptionRetryExhaustedRef = useRef(false);
+  const subscriptionTargetSignatureRef = useRef("");
+  const subscriptionMountedRef = useRef(true);
+  const [subscriptionReconcileVersion, setSubscriptionReconcileVersion] = useState(0);
 
   useEffect(() => {
-    if (!activeThreadId) return;
-    void getTransport().subscribeThread(activeThreadId).catch(() => {});
-    return () => {
-      void getTransport().unsubscribeThread(activeThreadId).catch(() => {});
+    const desired = new Set(runningThreadIds);
+    if (activeThreadId) desired.add(activeThreadId);
+    desiredThreadIdsRef.current = desired;
+
+    const targetSignature = `${connectionStatus}:${Array.from(desired).sort().join("\u0000")}`;
+    if (subscriptionTargetSignatureRef.current !== targetSignature) {
+      subscriptionTargetSignatureRef.current = targetSignature;
+      subscriptionRetryAttemptRef.current = 0;
+      subscriptionRetryExhaustedRef.current = false;
+      if (subscriptionRetryTimerRef.current !== null) {
+        clearTimeout(subscriptionRetryTimerRef.current);
+        subscriptionRetryTimerRef.current = null;
+      }
+    }
+
+    const reconnected = connectionStatus === "connected"
+      && previousSubscriptionStatusRef.current !== "connected";
+    const disconnected = connectionStatus !== "connected"
+      && previousSubscriptionStatusRef.current === "connected";
+    if (reconnected || disconnected) {
+      subscriptionEpochRef.current += 1;
+      confirmedThreadIdsRef.current.clear();
+      pendingThreadChangesRef.current.clear();
+    }
+    previousSubscriptionStatusRef.current = connectionStatus;
+
+    if (connectionStatus !== "connected" || subscriptionRetryExhaustedRef.current) return;
+
+    const epoch = subscriptionEpochRef.current;
+    const operations: Promise<boolean>[] = [];
+    const startChange = (threadId: string, action: ThreadSubscriptionAction) => {
+      const change = Symbol();
+      pendingThreadChangesRef.current.set(threadId, change);
+      const request = action === "subscribe"
+        ? getTransport().subscribeThread(threadId)
+        : getTransport().unsubscribeThread(threadId);
+
+      operations.push(request.then(() => {
+        if (subscriptionEpochRef.current !== epoch) return true;
+        if (action === "subscribe") confirmedThreadIdsRef.current.add(threadId);
+        else confirmedThreadIdsRef.current.delete(threadId);
+        return true;
+      }, () => false).finally(() => {
+        if (pendingThreadChangesRef.current.get(threadId) === change) {
+          pendingThreadChangesRef.current.delete(threadId);
+        }
+      }));
     };
-  }, [activeThreadId]);
+
+    for (const threadId of desired) {
+      if (!confirmedThreadIdsRef.current.has(threadId)
+        && !pendingThreadChangesRef.current.has(threadId)) {
+        startChange(threadId, "subscribe");
+      }
+    }
+    for (const threadId of confirmedThreadIdsRef.current) {
+      if (!desired.has(threadId) && !pendingThreadChangesRef.current.has(threadId)) {
+        startChange(threadId, "unsubscribe");
+      }
+    }
+
+    if (operations.length === 0) return;
+
+    void Promise.all(operations).then((results) => {
+      if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
+      if (subscriptionTargetSignatureRef.current !== targetSignature) {
+        setSubscriptionReconcileVersion((version) => version + 1);
+        return;
+      }
+
+      if (results.every(Boolean)) {
+        subscriptionRetryAttemptRef.current = 0;
+        subscriptionRetryExhaustedRef.current = false;
+        const confirmed = confirmedThreadIdsRef.current;
+        const latestDesired = desiredThreadIdsRef.current;
+        const needsReconcile = confirmed.size !== latestDesired.size
+          || Array.from(confirmed).some((threadId) => !latestDesired.has(threadId));
+        if (needsReconcile) {
+          setSubscriptionReconcileVersion((version) => version + 1);
+        }
+        return;
+      }
+
+      if (subscriptionRetryAttemptRef.current >= THREAD_SUBSCRIPTION_MAX_RETRIES) {
+        subscriptionRetryExhaustedRef.current = true;
+        return;
+      }
+
+      const delay = Math.min(
+        THREAD_SUBSCRIPTION_RETRY_BASE_MS * (2 ** subscriptionRetryAttemptRef.current),
+        THREAD_SUBSCRIPTION_RETRY_MAX_MS,
+      );
+      subscriptionRetryAttemptRef.current += 1;
+      subscriptionRetryTimerRef.current = setTimeout(() => {
+        subscriptionRetryTimerRef.current = null;
+        if (subscriptionMountedRef.current) {
+          setSubscriptionReconcileVersion((version) => version + 1);
+        }
+      }, delay);
+    });
+  }, [activeThreadId, connectionStatus, runningThreadIds, subscriptionReconcileVersion]);
 
   useEffect(() => {
+    subscriptionMountedRef.current = true;
+    return () => {
+      subscriptionMountedRef.current = false;
+      subscriptionEpochRef.current += 1;
+      if (subscriptionRetryTimerRef.current !== null) {
+        clearTimeout(subscriptionRetryTimerRef.current);
+        subscriptionRetryTimerRef.current = null;
+      }
+      const threadIds = new Set([
+        ...confirmedThreadIdsRef.current,
+        ...desiredThreadIdsRef.current,
+      ]);
+      for (const threadId of threadIds) {
+        void getTransport().unsubscribeThread(threadId).catch(() => {});
+      }
+      confirmedThreadIdsRef.current.clear();
+      desiredThreadIdsRef.current.clear();
+      pendingThreadChangesRef.current.clear();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
     if (!activeThreadId) {
       clearMessages();
     } else {
@@ -527,7 +688,8 @@ export function ChatView() {
   }
 
   const hasMessages = messageCount > 0;
-  const showEmptyState = !hasMessages && !isAgentRunning;
+  const conversationLoading = hydratedThreadId !== activeThreadId || historyLoading;
+  const showEmptyState = !hasMessages && !isAgentRunning && !conversationLoading;
 
   return (
     <div ref={chatPaneRef} className="flex h-full flex-col bg-background" data-testid="chat-view">
@@ -557,7 +719,7 @@ export function ChatView() {
                   <button
                     type="button"
                     onClick={() => setActiveThread(activeThread.parent_thread_id!)}
-                    className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                    className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
                   >
                     <GitFork size={10} />
                     <span>Forked</span>
@@ -608,7 +770,9 @@ export function ChatView() {
         className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200"
         style={{ paddingRight: overviewPaddingRight }}
       >
-        {showEmptyState ? (
+        {conversationLoading && !hasMessages && !isAgentRunning ? (
+          <ConversationLoadingState />
+        ) : showEmptyState ? (
           <div className="flex h-full items-center justify-center">
             <EmptyState onPromptSelect={setPendingPrefill} />
           </div>

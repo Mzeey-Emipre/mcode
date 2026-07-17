@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
 
+/** Maximum accepted length for a provider goal objective. */
+export const MAX_GOAL_OBJECTIVE_CHARS = 4000;
+
+/** Validates a non-empty, bounded provider goal objective at transport boundaries. */
+export const GoalObjectiveSchema = lazySchema(() =>
+  z.string().trim().min(1).max(MAX_GOAL_OBJECTIVE_CHARS),
+);
+
 /** Provider-backed lifecycle state for a thread goal. */
 export const GoalStatusSchema = lazySchema(() =>
   z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]),

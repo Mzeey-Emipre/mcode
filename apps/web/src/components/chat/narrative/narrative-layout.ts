@@ -19,6 +19,6 @@ export function narrativeToolDetailClass(size: "sm" | "md"): string {
   const tone =
     size === "md"
       ? "text-sm text-muted-foreground/80"
-      : "text-[0.6875rem] text-muted-foreground/50";
+      : "text-sm text-muted-foreground/50";
   return `font-mono ${tone} truncate flex-1 min-w-0 [overflow-wrap:anywhere]`;
 }

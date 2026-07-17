@@ -2,12 +2,14 @@ import { create } from "zustand";
 import type {
   BrowserPreviewBounds,
   BrowserPreviewElementStyle,
+  ComposerAnnotationPayload,
+  DiffAnnotationPayload,
   McodeBrowserCaptureV2,
   PreviewAnnotationBundle,
   PreviewAnnotationPayload,
   PreviewAnnotationVisualProposal,
 } from "@mcode/contracts";
-import { PreviewAnnotationBundleSchema } from "@mcode/contracts";
+import { isDiffAnnotationPayload, PreviewAnnotationBundleSchema } from "@mcode/contracts";
 
 /** Draft data captured from the Preview before it becomes a saved annotation. */
 export interface PreviewDraftAnnotation {
@@ -39,9 +41,31 @@ export interface SavedPreviewAnnotation extends PreviewAnnotationPayload {
   readonly createdAt: number;
 }
 
+/** Saved local code comment with stable identity and creation ordering. */
+export interface SavedDiffAnnotation extends DiffAnnotationPayload {
+  /** Stable sort key independent of display number. */
+  readonly createdAt: number;
+}
+
+/** Input captured by a Dev diff line before it becomes a saved annotation. */
+export interface DiffAnnotationInput {
+  /** Workspace-relative file path. */
+  readonly filePath: string;
+  /** Diff side that owns the target line. */
+  readonly side: DiffAnnotationPayload["side"];
+  /** Target line number on that side. */
+  readonly line: number;
+  /** Source line text shown to the agent for context. */
+  readonly lineContent: string;
+  /** User review note. */
+  readonly note: string;
+}
+
 interface PreviewAnnotationStore {
   /** Saved annotation sets keyed by thread id. */
   readonly byThread: Record<string, SavedPreviewAnnotation[]>;
+  /** Saved Dev code comments keyed by thread id. */
+  readonly diffByThread: Record<string, SavedDiffAnnotation[]>;
   /** Active unsaved drafts keyed by thread id. */
   readonly drafts: Record<string, PreviewDraftAnnotation | undefined>;
   /** Returns all saved annotations for a thread in creation order. */
@@ -52,6 +76,8 @@ interface PreviewAnnotationStore {
   setDraft(threadId: string, draft: PreviewDraftAnnotation | undefined): void;
   /** Saves a draft or edited annotation into the thread bundle. */
   saveAnnotation(threadId: string, draft: PreviewDraftAnnotation, id?: string): SavedPreviewAnnotation;
+  /** Saves a local diff line comment into the thread bundle. */
+  saveDiffAnnotation(threadId: string, input: DiffAnnotationInput, id?: string): SavedDiffAnnotation;
   /** Deletes one saved annotation by stable id. */
   deleteAnnotation(threadId: string, id: string): void;
   /** Deletes saved annotations for the current page identity only. */
@@ -96,11 +122,22 @@ export function normalizePreviewPageIdentity(rawUrl: string): string {
   }
 }
 
-function renumber(list: readonly SavedPreviewAnnotation[]): SavedPreviewAnnotation[] {
-  return list.map((annotation, index) => ({
-    ...annotation,
-    displayNumber: index + 1,
-  }));
+function renumberAnnotations(
+  preview: readonly SavedPreviewAnnotation[],
+  diff: readonly SavedDiffAnnotation[],
+): { preview: SavedPreviewAnnotation[]; diff: SavedDiffAnnotation[] } {
+  const ordered = [...preview, ...diff].sort((a, b) => a.createdAt - b.createdAt);
+  const numbers = new Map(ordered.map((annotation, index) => [annotation.id, index + 1]));
+  return {
+    preview: preview.map((annotation) => ({
+      ...annotation,
+      displayNumber: numbers.get(annotation.id) ?? annotation.displayNumber,
+    })),
+    diff: diff.map((annotation) => ({
+      ...annotation,
+      displayNumber: numbers.get(annotation.id) ?? annotation.displayNumber,
+    })),
+  };
 }
 
 function visualSummary(proposedChanges: PreviewAnnotationVisualProposal | undefined): string | undefined {
@@ -114,6 +151,7 @@ function visualSummary(proposedChanges: PreviewAnnotationVisualProposal | undefi
 /** Zustand store for thread-scoped Preview annotation sets. */
 export const usePreviewAnnotationStore = create<PreviewAnnotationStore>((set, get) => ({
   byThread: {},
+  diffByThread: {},
   drafts: {},
 
   getThreadAnnotations(threadId) {
@@ -152,34 +190,75 @@ export const usePreviewAnnotationStore = create<PreviewAnnotationStore>((set, ge
       proposedChanges: draft.proposedChanges,
       snapshot: draft.snapshot,
     };
-    const next = id
+    const nextPreview = id
       ? existing.map((row) => (row.id === id ? annotation : row))
       : [...existing, annotation];
-    const sorted = renumber([...next].sort((a, b) => a.createdAt - b.createdAt));
+    const next = renumberAnnotations(nextPreview, get().diffByThread[threadId] ?? []);
     set((state) => ({
-      byThread: { ...state.byThread, [threadId]: sorted },
+      byThread: { ...state.byThread, [threadId]: next.preview },
+      diffByThread: { ...state.diffByThread, [threadId]: next.diff },
       drafts: { ...state.drafts, [threadId]: undefined },
     }));
-    return sorted.find((row) => row.id === annotation.id) ?? annotation;
+    return next.preview.find((row) => row.id === annotation.id) ?? annotation;
+  },
+
+  saveDiffAnnotation(threadId, input, id) {
+    const existing = get().diffByThread[threadId] ?? [];
+    const note = input.note.trim();
+    if (!note) throw new Error("code comment note is required");
+    const annotation: SavedDiffAnnotation = {
+      kind: "diff",
+      id: id ?? crypto.randomUUID(),
+      createdAt: id ? (existing.find((row) => row.id === id)?.createdAt ?? Date.now()) : Date.now(),
+      displayNumber: 1,
+      filePath: input.filePath,
+      side: input.side,
+      line: input.line,
+      lineContent: input.lineContent,
+      note,
+    };
+    const nextDiff = id
+      ? existing.map((row) => (row.id === id ? annotation : row))
+      : [...existing, annotation];
+    const next = renumberAnnotations(get().byThread[threadId] ?? [], nextDiff);
+    set((state) => ({
+      byThread: { ...state.byThread, [threadId]: next.preview },
+      diffByThread: { ...state.diffByThread, [threadId]: next.diff },
+    }));
+    return next.diff.find((row) => row.id === annotation.id) ?? annotation;
   },
 
   deleteAnnotation(threadId, id) {
-    const next = renumber((get().byThread[threadId] ?? []).filter((row) => row.id !== id));
-    set((state) => ({ byThread: { ...state.byThread, [threadId]: next } }));
+    const next = renumberAnnotations(
+      (get().byThread[threadId] ?? []).filter((row) => row.id !== id),
+      (get().diffByThread[threadId] ?? []).filter((row) => row.id !== id),
+    );
+    set((state) => ({
+      byThread: { ...state.byThread, [threadId]: next.preview },
+      diffByThread: { ...state.diffByThread, [threadId]: next.diff },
+    }));
   },
 
   discardPage(threadId, pageIdentity) {
-    const next = renumber((get().byThread[threadId] ?? []).filter((row) => row.pageIdentity !== pageIdentity));
-    set((state) => ({ byThread: { ...state.byThread, [threadId]: next } }));
+    const next = renumberAnnotations(
+      (get().byThread[threadId] ?? []).filter((row) => row.pageIdentity !== pageIdentity),
+      get().diffByThread[threadId] ?? [],
+    );
+    set((state) => ({
+      byThread: { ...state.byThread, [threadId]: next.preview },
+      diffByThread: { ...state.diffByThread, [threadId]: next.diff },
+    }));
   },
 
   clearThread(threadId) {
     set((state) => {
       const byThread = { ...state.byThread };
+      const diffByThread = { ...state.diffByThread };
       const drafts = { ...state.drafts };
       delete byThread[threadId];
+      delete diffByThread[threadId];
       delete drafts[threadId];
-      return { byThread, drafts };
+      return { byThread, diffByThread, drafts };
     });
   },
 
@@ -194,25 +273,35 @@ export const usePreviewAnnotationStore = create<PreviewAnnotationStore>((set, ge
       return false;
     }
     const baseCreatedAt = Date.now();
-    const annotations = renumber(
-      parsed.data.annotations.map((annotation, index) => ({
-        ...annotation,
-        createdAt: baseCreatedAt + index,
-      })),
-    );
+    const preview: SavedPreviewAnnotation[] = [];
+    const diff: SavedDiffAnnotation[] = [];
+    parsed.data.annotations.forEach((annotation, index) => {
+      if (isDiffAnnotationPayload(annotation)) {
+        diff.push({ ...annotation, createdAt: baseCreatedAt + index });
+      } else {
+        preview.push({ ...annotation, createdAt: baseCreatedAt + index });
+      }
+    });
+    const annotations = renumberAnnotations(preview, diff);
     set((state) => ({
-      byThread: { ...state.byThread, [threadId]: annotations },
+      byThread: { ...state.byThread, [threadId]: annotations.preview },
+      diffByThread: { ...state.diffByThread, [threadId]: annotations.diff },
       drafts: { ...state.drafts, [threadId]: undefined },
     }));
     return true;
   },
 
   buildBundle(threadId) {
-    const annotations = get().byThread[threadId] ?? [];
+    const annotations: Array<ComposerAnnotationPayload & { createdAt: number }> = [
+      ...(get().byThread[threadId] ?? []),
+      ...(get().diffByThread[threadId] ?? []),
+    ];
     if (annotations.length === 0) return undefined;
     return {
       schemaVersion: 1,
-      annotations: annotations.map(({ createdAt: _createdAt, ...annotation }) => annotation),
+      annotations: annotations
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map(({ createdAt: _createdAt, ...annotation }) => annotation),
     };
   },
 }));

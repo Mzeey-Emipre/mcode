@@ -22,7 +22,7 @@ export function WebRenderer({ toolCall, isActive }: ToolRendererProps) {
     >
       {lines.length > 0 && lines[0].trim() && (
         <div>
-          <pre className="max-h-64 overflow-auto rounded bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground font-mono whitespace-pre-wrap">
+          <pre className="max-h-64 overflow-auto rounded bg-muted/30 p-2 text-xs leading-relaxed text-muted-foreground font-mono whitespace-pre-wrap">
             {visible.join("\n")}
           </pre>
           <ShowMoreButton

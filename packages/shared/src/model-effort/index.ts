@@ -13,10 +13,6 @@ import type { ReasoningLevel } from "@mcode/contracts";
 //
 // xhigh sits below max because xhigh is exclusive to Opus 4.8/4.7, while max is
 // a broader "extended thinking" tier supported by Opus 4.6 and Sonnet 4.6 as well.
-// "ultrathink" is the virtual top tier: it is mapped to "max" effort at the SDK
-// boundary and additionally prepends "Ultrathink:\n" to the user prompt.
-// Eligibility is identical to the max tier (Opus 4.8/4.7/4.6, Sonnet 4.6).
-//
 // "none" and "minimal" align with OpenAI Codex app-server ReasoningEffort and are filtered
 // out or mapped before Claude SDK calls.
 const TIER_LADDER: readonly ReasoningLevel[] = [
@@ -27,8 +23,6 @@ const TIER_LADDER: readonly ReasoningLevel[] = [
   "high",
   "xhigh",
   "max",
-  "ultra",
-  "ultrathink",
 ];
 
 /** Claude model IDs that support the "xhigh" effort tier. */
@@ -43,12 +37,6 @@ const MAX_EFFORT_MODEL_IDS: readonly string[] = [
   "claude-opus-4-6",
   "claude-sonnet-4-6",
 ];
-
-/**
- * Claude model IDs that support the "ultrathink" virtual tier.
- * Identical to the max-tier set — ultrathink is "max + prompt prefix".
- */
-const ULTRATHINK_MODEL_IDS: readonly string[] = MAX_EFFORT_MODEL_IDS;
 
 /**
  * Claude model IDs that support the extended 1,000,000-token context window.
@@ -82,7 +70,6 @@ const ALL_KNOWN_BASE_IDS: readonly string[] = [
   ...new Set([
     ...XHIGH_EFFORT_MODEL_IDS,
     ...MAX_EFFORT_MODEL_IDS,
-    ...ULTRATHINK_MODEL_IDS,
     ...ONE_M_CONTEXT_MODEL_IDS,
     ...THINKING_TOGGLE_MODEL_IDS,
     ...EFFORT_UNSUPPORTED_CLAUDE_IDS,
@@ -112,18 +99,15 @@ function isCodexCatalogModelId(modelId: string): boolean {
 
 /**
  * Normalizes reasoning levels for OpenAI Codex GPT-5 models.
- * GPT-5.6 variants expose model-specific effort tiers, including automatic delegation.
+ * GPT-5.6 variants expose model-specific reasoning effort tiers.
  */
 function normalizeCodexReasoningLevel(modelId: string, level: ReasoningLevel): ReasoningLevel {
   const id = normalizeModelId(modelId);
   if (id.startsWith("gpt-5.6-")) {
     const allowed = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh", "max"]);
-    if (id === "gpt-5.6-sol" || id === "gpt-5.6-terra") allowed.add("ultra");
-    const requested = level === "ultrathink" ? "max" : level;
+    if (allowed.has(level)) return level;
 
-    if (allowed.has(requested)) return requested;
-
-    const idx = TIER_LADDER.indexOf(requested);
+    const idx = TIER_LADDER.indexOf(level);
     for (let i = idx - 1; i >= 0; i--) {
       const tier = TIER_LADDER[i];
       if (allowed.has(tier)) return tier;
@@ -132,7 +116,7 @@ function normalizeCodexReasoningLevel(modelId: string, level: ReasoningLevel): R
   }
 
   const base = new Set<ReasoningLevel>(["none", "minimal", "low", "medium", "high"]);
-  const withXhigh = new Set<ReasoningLevel>([...base, "xhigh", "max", "ultrathink"]);
+  const withXhigh = new Set<ReasoningLevel>([...base, "xhigh", "max"]);
   const isMini =
     (id.includes("mini") && id.includes("codex"))
     || id === "gpt-5.4-mini";
@@ -167,17 +151,6 @@ export function isXhighEffortModel(modelId: string): boolean {
  */
 export function isMaxEffortModel(modelId: string): boolean {
   return MAX_EFFORT_MODEL_IDS.includes(normalizeModelId(modelId));
-}
-
-/**
- * Returns true when the model supports the "ultrathink" virtual tier.
- *
- * Applies to the fable-5, sonnet-5, opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6 families.
- * Ultrathink resolves to "max" effort at the SDK boundary and additionally
- * prepends "Ultrathink:\n" to the user prompt.
- */
-export function supportsUltrathink(modelId: string): boolean {
-  return ULTRATHINK_MODEL_IDS.includes(normalizeModelId(modelId));
 }
 
 /**
@@ -245,10 +218,6 @@ export function normalizeReasoningLevelForModel(
   if (isXhighEffortModel(modelId)) {
     allowed.add("xhigh");
   }
-  if (supportsUltrathink(modelId)) {
-    allowed.add("ultrathink");
-  }
-
   if (allowed.has(level)) {
     return level;
   }

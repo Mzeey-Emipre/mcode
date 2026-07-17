@@ -93,6 +93,9 @@ export interface PersistNarrativeResult {
   toolCallCount: number;
 }
 
+/** Bounds persisted shell commands while retaining enough text for readable expansion. */
+const MAX_PERSISTED_COMMAND_CHARS = 4096;
+
 @injectable()
 export class NarrativeStore {
   /** Per-thread buffer of tool calls accumulated during the current turn. */
@@ -686,7 +689,10 @@ export class NarrativeStore {
       case "Write":
         return String(input.file_path ?? input.filePath ?? "");
       case "Bash":
-        return String(input.command ?? "").slice(0, 200);
+      case "Shell":
+      case "Terminal":
+      case "command_execution":
+        return String(input.command ?? "").slice(0, MAX_PERSISTED_COMMAND_CHARS);
       case "Grep":
       case "Glob":
         return String(input.pattern ?? "");

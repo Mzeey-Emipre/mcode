@@ -4,6 +4,7 @@ import { ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useShallow } from "zustand/shallow";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -396,8 +397,17 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   /** Clears tail pin when the user scrolls content upward (wheel / trackpad). */
   const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
     if (e.deltaY < 0) {
+      const interruptedPendingTailScroll = scrollTimerRef.current !== null;
       scrollToTailIntentRef.current = false;
       pinListTailRef.current = false;
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
+      if (interruptedPendingTailScroll) {
+        isScrolledUpRef.current = true;
+        setShowScrollBtn(true);
+      }
       streamingFollowPauseUntilRef.current = Date.now() + WHEEL_UP_FOLLOW_PAUSE_MS;
     }
   }, []);
@@ -433,11 +443,18 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const awayFromTail = distanceFromBottom > USER_AWAY_FROM_BOTTOM_PX;
-    if (scrollToTailIntentRef.current && !awayFromTail) {
+    const wasScrolledUp = isScrolledUpRef.current;
+    const completedTailScroll = scrollToTailIntentRef.current && !awayFromTail;
+    if (completedTailScroll) {
       scrollToTailIntentRef.current = false;
     }
     const scrolledUp = awayFromTail && !scrollToTailIntentRef.current;
-    if (awayFromTail) pinListTailRef.current = false;
+    if (awayFromTail) {
+      pinListTailRef.current = false;
+    } else if (pinListTailRef.current || wasScrolledUp || completedTailScroll) {
+      pinListTailRef.current = true;
+      pinTailBaselineMaxScrollRef.current = maxScroll;
+    }
     isScrolledUpRef.current = scrolledUp;
     setShowScrollBtn(scrolledUp);
     if (!awayFromTail) {
@@ -626,6 +643,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     useFlushSync: false,
   });
   virtualizerRef.current = virtualizer;
+  const virtualTotalSize = virtualizer.getTotalSize();
 
   // Pinned to tail: always compensate for size changes so the viewport tracks
   // the bottom as rows measure. Adjusting by +delta when at scrollOffset = oldMaxScroll
@@ -651,6 +669,29 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     return item.start < scrollOffset;
   };
 
+  /** Pins the visible transcript to the current measured tail before paint. */
+  const snapToBottom = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    pinListTailRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    pinTailBaselineMaxScrollRef.current = Math.max(0, el.scrollHeight - el.clientHeight);
+    requestAnimationFrame(() => {
+      const current = containerRef.current;
+      if (!current || !pinListTailRef.current) return;
+      current.scrollTop = current.scrollHeight;
+      pinTailBaselineMaxScrollRef.current = Math.max(
+        0,
+        current.scrollHeight - current.clientHeight,
+      );
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!pinListTailRef.current) return;
+    snapToBottom();
+  }, [items.length, snapToBottom, virtualTotalSize]);
+
   /**
    * Programmatic scroll to the list tail. Auto-follow uses the scroll element
    * directly (no virtualizer reconcile, no CSS smooth). The floating button
@@ -658,58 +699,48 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
    */
   const scrollToBottom = useCallback(
     (smooth: boolean) => {
+      if (!smooth) {
+        if (scrollTimerRef.current) return;
+        snapToBottom();
+        return;
+      }
       if (scrollTimerRef.current) return;
-      const delay = smooth ? 200 : 0;
       scrollTimerRef.current = setTimeout(() => {
         scrollTimerRef.current = null;
         const count = itemsLengthRef.current;
         if (count === 0) return;
-        const el = containerRef.current;
-        if (smooth) {
-          virtualizer.scrollToIndex(count - 1, {
-            align: "end",
-            behavior: "smooth",
-          });
-          return;
-        }
-        if (el) {
-          pinListTailRef.current = true;
-          el.scrollTop = el.scrollHeight;
-          pinTailBaselineMaxScrollRef.current = Math.max(0, el.scrollHeight - el.clientHeight);
-          requestAnimationFrame(() => {
-            const el2 = containerRef.current;
-            if (el2) {
-              el2.scrollTop = el2.scrollHeight;
-              pinTailBaselineMaxScrollRef.current = Math.max(0, el2.scrollHeight - el2.clientHeight);
-            }
-          });
-        }
-      }, delay);
+        virtualizer.scrollToIndex(count - 1, {
+          align: "end",
+          behavior: "smooth",
+        });
+      }, 200);
     },
-    [virtualizer],
+    [snapToBottom, virtualizer],
   );
 
   /**
-   * Pins the scroll element to the list tail and reveals only after the inner
-   * list height has been stable for {@link TAIL_SETTLE_STABLE_FRAMES} consecutive
-   * frames (or {@link TAIL_SETTLE_MAX_FRAMES} hard cap, whichever comes first).
+   * Pins the scroll element to the list tail. Cache-miss navigation may reveal
+   * after two frames while the same loop continues settling later row measurements;
+   * other callers reveal after the inner height stabilizes or reaches the hard cap.
    *
    * Why a settle loop: TanStack Virtual measures rows after mount via its
    * internal ResizeObserver. On long threads the estimated total size can be
    * significantly less than the measured total. A single (or few) `scrollTop =
    * scrollHeight` snap revealed before measurements complete leaves the user
    * sitting *above* the real tail. ResizeObserver-based pinning fires too late
-   * to fix the perceived first paint. Hiding the list (opacity: 0) until both
-   * `scrollHeight` and `virtualizer.getTotalSize()` stop changing means the
-   * very first thing the user sees is already at the true bottom.
+   * to fix the perceived first paint. The loop keeps snapping until
+   * `scrollHeight` and `virtualizer.getTotalSize()` stop changing. Regular
+   * positioning stays hidden during that work; cache-miss navigation reveals
+   * the anchored tail early while the same loop continues below the viewport.
    *
-   * @param options.measureFirst - When true, runs `virtualizer.measure()` and
-   *   `scrollToIndex(n-1, end, auto)` to anchor the virtualizer to the tail
-   *   before rows finish measuring. Used on cache-miss completion and first
-   *   open. Cache-hit switches omit this so the cached measurement state stays
-   *   warm and we land exactly where the cache says the tail is.
+   * @param options.measureFirst - Re-measures and anchors the virtualizer to the tail.
+   * @param options.revealEarly - Reveals the anchored tail after two frames while
+   *   the pin loop continues to absorb later row measurements.
    */
-  const positionAtBottom = useCallback((options?: { measureFirst?: boolean }) => {
+  const positionAtBottom = useCallback((options?: {
+    measureFirst?: boolean;
+    revealEarly?: boolean;
+  }) => {
     beginSuppressPassiveAutoBottomScroll();
     const settleGen = ++tailSettleGenRef.current;
     pinListTailRef.current = true;
@@ -733,6 +764,16 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     // Synchronous first snap so non-rAF environments (jsdom in unit tests)
     // still see scrollTop applied before the rAF-based settle loop runs.
     snap();
+
+    if (options?.revealEarly) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (tailSettleGenRef.current !== settleGen) return;
+          snap();
+          setIsPositioned(true);
+        });
+      });
+    }
 
     let lastScrollHeight = -1;
     let lastTotalSize = -1;
@@ -923,7 +964,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       // also hits this branch. Pin the tail here so it tracks the same path as a
       // cache-hit switch (lazy markdown and measured row heights included).
       pendingScrollRestoreRef.current = null;
-      positionAtBottom({ measureFirst: true });
+      positionAtBottom({ measureFirst: true, revealEarly: true });
     }
   }, [activeThreadId, loading, virtualizer, positionAtBottom, items.length]);
 
@@ -1027,7 +1068,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   }, [activeThreadId, items.length, loading, beginSuppressPassiveAutoBottomScroll, scheduleEndSuppressPassiveAutoBottomScroll]);
 
   // Discrete events (new message, tool call) -> scroll if at bottom, else highlight button
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isInitialLoadRef.current) return;
     if (suppressPassiveAutoBottomScrollRef.current) return;
     if (isScrolledUpRef.current) {
@@ -1046,8 +1087,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     scrollToBottom(false);
   }, [activeThreadId, messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
-  // Streaming deltas -> scroll if at bottom, else highlight button
-  useEffect(() => {
+  // Streaming deltas -> scroll before paint when following the tail, else highlight button.
+  useLayoutEffect(() => {
     if (suppressPassiveAutoBottomScrollRef.current) return;
     if (!streamingText || isInitialLoadRef.current) return;
     if (isScrolledUpRef.current) {
@@ -1164,7 +1205,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       >
         <div
           className="relative w-full"
-          style={{ height: virtualizer.getTotalSize() }}
+          style={{ height: virtualTotalSize }}
         >
           {virtualizer.getVirtualItems().map((vi) => {
             const item = items[vi.index];
@@ -1191,9 +1232,9 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       {handoffStatus === "generating" && messages.filter((m) => m.role !== "system").length <= 1 && (
         <div className="px-4 py-4 sm:px-8">
           <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "space-y-2")}>
-            <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted" />
-            <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted" />
-            <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted" />
+            <Skeleton className="h-3.5 w-3/4 animate-pulse rounded" />
+            <Skeleton className="h-3.5 w-1/2 animate-pulse rounded" />
+            <Skeleton className="h-3.5 w-2/3 animate-pulse rounded" />
           </div>
         </div>
       )}

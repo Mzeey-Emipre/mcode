@@ -104,15 +104,27 @@ describe("ThreadService.delete", () => {
     expect(jobs[0].workspace_path).toBe("/tmp/test");
     expect(jobs[0].worktree_path).toBe("/tmp/wt/my-worktree");
     expect(jobs[0].branch).toBe("feat/test");
-    expect(mockGitService.withReviewWorktreeMutationLock).toHaveBeenCalledWith(
-      "/tmp/test",
-      expect.any(Function),
-    );
+    expect(mockGitService.withReviewWorktreeMutationLock).not.toHaveBeenCalled();
     expect(mockGitService.assessWorktreeRemovalSafety).toHaveBeenCalledWith(
       "/tmp/wt/my-worktree",
       [],
       false,
     );
+  });
+
+  it("queues cleanup without waiting for the repository mutation lock", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+    insertWorktreeThread("t-busy", ws.id, "feat/busy", "/tmp/wt/busy");
+    (mockGitService.withReviewWorktreeMutationLock as ReturnType<typeof vi.fn>)
+      .mockImplementation(() => new Promise(() => {}));
+
+    const deletion = threadService.delete("t-busy", true);
+    await Promise.resolve();
+
+    expect(threadRepo.findById("t-busy")?.status).toBe("deleted");
+    expect(cleanupJobRepo.findByThreadId("t-busy")).not.toBeNull();
+    expect(mockGitService.withReviewWorktreeMutationLock).not.toHaveBeenCalled();
+    await expect(deletion).resolves.toBe(true);
   });
 
   it("keeps an unmanaged reused worktree when its thread is deleted", async () => {

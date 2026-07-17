@@ -4,6 +4,7 @@ import {
   PreviewAnnotationBundleSchema,
   SendMessageSchema,
   previewAnnotationSnapshotAttachmentMeta,
+  previewAnnotationSnapshotAttachments,
   previewAnnotationSnapshotStoredAttachment,
 } from "../../index.js";
 
@@ -40,6 +41,17 @@ const annotation = {
   },
 };
 
+const diffAnnotation = {
+  kind: "diff" as const,
+  id: "00000000-0000-4000-8000-000000000002",
+  displayNumber: 2,
+  filePath: "apps/web/src/App.tsx",
+  side: "right" as const,
+  line: 42,
+  lineContent: "return <App />;",
+  note: "Handle the loading branch here.",
+};
+
 describe("PreviewAnnotationBundleSchema", () => {
   it("accepts a bounded annotation payload", () => {
     expect(
@@ -48,6 +60,16 @@ describe("PreviewAnnotationBundleSchema", () => {
         annotations: [annotation],
       }).success,
     ).toBe(true);
+  });
+
+  it("accepts local code comments without creating screenshot attachments", () => {
+    const bundle = {
+      schemaVersion: 1 as const,
+      annotations: [annotation, diffAnnotation],
+    };
+
+    expect(PreviewAnnotationBundleSchema().safeParse(bundle).success).toBe(true);
+    expect(previewAnnotationSnapshotAttachments(bundle)).toHaveLength(1);
   });
 
   it("rejects annotations without note or proposed changes", () => {

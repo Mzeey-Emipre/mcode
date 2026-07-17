@@ -8,6 +8,17 @@ import {
 } from "../models/settings.js";
 
 describe("SettingsSchema", () => {
+  describe("model.defaults.reasoning", () => {
+    it("normalizes legacy orchestration-shaped values to max", () => {
+      expect(SettingsSchema().parse({
+        model: { defaults: { reasoning: "ultra" } },
+      }).model.defaults.reasoning).toBe("max");
+      expect(SettingsSchema().parse({
+        model: { defaults: { reasoning: "ultrathink" } },
+      }).model.defaults.reasoning).toBe("max");
+    });
+  });
+
   describe("server.memory.heapMb", () => {
     it("defaults to the supported server heap cap when parsing an empty object", () => {
       const result = SettingsSchema().parse({});

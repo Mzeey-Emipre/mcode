@@ -113,7 +113,7 @@ export function ComposerQueueList({
       {/* Header strip: small-caps mono, quiet, dev-tool feel.
           Continue is primary (only when idle); Clear all is quiet on the side. */}
       <header className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/70">
+        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground/70">
           Queued
         </span>
         <div className="flex items-center gap-1.5">
@@ -122,7 +122,7 @@ export function ComposerQueueList({
               type="button"
               onClick={onResume}
               aria-label="Send next queued message"
-              className="flex items-center gap-1 rounded-sm bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-primary transition-colors hover:bg-primary/20"
+              className="flex items-center gap-1 rounded-sm bg-primary/10 px-1.5 py-0.5 font-mono text-xs uppercase tracking-[0.16em] text-primary transition-colors hover:bg-primary/20"
             >
               <Play size={9} strokeWidth={1.75} />
               Continue
@@ -132,7 +132,7 @@ export function ComposerQueueList({
             type="button"
             onClick={() => clearQueue(threadId)}
             aria-label="Clear all queued messages"
-            className="flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground/50 transition-colors hover:bg-destructive/8 hover:text-destructive"
+            className="flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground/50 transition-colors hover:bg-destructive/8 hover:text-destructive"
           >
             <Trash2 size={9} strokeWidth={1.75} />
             Clear all
@@ -262,13 +262,13 @@ const QueueRow = memo(function QueueRow({
         <PreviewAnnotationBundleChip
           bundle={msg.previewAnnotations}
           testId="queue-annotation-bundle"
-          className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px]"
+          className="shrink-0 rounded-md px-1.5 py-0.5 text-xs"
         />
       ) : null}
 
       {hasAttachments && (
         <span
-          className="flex shrink-0 items-center gap-0.5 font-mono text-[10px] tabular-nums text-muted-foreground/55"
+          className="flex shrink-0 items-center gap-0.5 font-mono text-xs tabular-nums text-muted-foreground/55"
           aria-label={`${msg.attachments.length} attachment${msg.attachments.length === 1 ? "" : "s"}`}
         >
           <Paperclip size={9} strokeWidth={1.75} />

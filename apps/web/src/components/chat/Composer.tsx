@@ -9,24 +9,20 @@ import type { PermissionMode, InteractionMode, AttachmentMeta, Thread } from "@/
 import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";
 import {
   ArrowUp,
-  Hammer,
-  FileEdit,
+  Goal,
   Lock,
   Unlock,
   ChevronDown,
   Check,
   ListChecks,
   MoreHorizontal,
-  Target,
-  Info,
-  Trash2,
+  Network,
   X,
   Zap,
   Folder,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogClose,
@@ -45,7 +41,8 @@ import { isCursorPermissionLockedToFull } from "@/lib/cursor-permission";
 import { isGoalControlCommand } from "@/lib/goal-command";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
-import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supportsUltrathink, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
+import { rememberComposerMode } from "@/lib/composer-mode-preference";
+import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector, ALL_MODE_OPTIONS } from "./ModeSelector";
 import type { ComposerMode, ModeOption } from "./ModeSelector";
@@ -58,6 +55,11 @@ import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache, type MentionSuggestion } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerAddMenu } from "./ComposerAddMenu";
+import { ComposerCapabilityChip } from "./ComposerCapabilityChip";
+import {
+  resolveComposerCapabilities,
+  type ComposerCapabilityId,
+} from "./composer-capabilities";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import {
   ComposerEditor,
@@ -66,6 +68,7 @@ import {
   extractComposerMessage,
   insertMentionNode,
   insertSlashCommandNode,
+  removeSlashCommandTrigger,
   type MentionNodeData,
 } from "./lexical";
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
@@ -73,7 +76,7 @@ import { useTaskStore, type TaskItem } from "@/stores/taskStore";
 import { usePlanStore } from "@/stores/planStore";
 
 const NEW_THREAD_CONTEXT_CONTROL_CLASS =
-  "h-[28px] gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none";
+  "h-[28px] gap-[6px] rounded-md px-[10px] text-xs font-medium leading-none";
 import { useDiffStore } from "@/stores/diffStore";
 import {
   hideRightPanelAdaptive,
@@ -111,6 +114,7 @@ import {
   isVirtualBrowserContextAttachment,
   attachmentAcceptAttribute,
   isGoalOpen,
+  ORCHESTRATION_MODES,
 } from "@mcode/contracts";
 import type {
   AttachedBrowserCapture,
@@ -120,6 +124,7 @@ import type {
   ReasoningLevel,
   ProviderId,
   GoalState,
+  OrchestrationMode,
 } from "@mcode/contracts";
 import { getModelContextWindow } from "@mcode/shared/model-context";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
@@ -264,13 +269,12 @@ const ATTACHMENT_INPUT_ACCEPT = attachmentAcceptAttribute();
 
 /** ReasoningLevel values as a Set for O(1) membership checks in the Codex level filter. */
 const VALID_REASONING_LEVELS_SET = new Set<string>([
-  "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "ultrathink",
+  "none", "minimal", "low", "medium", "high", "xhigh", "max",
 ]);
 
 /** Display label for a reasoning level value. */
 function reasoningLabel(level: string): string {
   if (level === "xhigh") return "X-High";
-  if (level === "ultrathink") return "Ultrathink";
   if (level === "none") return "None";
   if (level === "minimal") return "Minimal";
   return level.charAt(0).toUpperCase() + level.slice(1);
@@ -299,8 +303,7 @@ interface PendingCheckoutConfirmation {
 type AccessMode = PermissionMode;
 
 /**
- * Overflow popover that hosts secondary composer controls (interaction mode,
- * permission mode, and the Plan-panel toggle when applicable).
+ * Overflow popover that hosts permission mode and the Plan-panel toggle.
  *
  * Centralizing these behind a single trigger keeps the status bar compact on
  * every viewport — previously each toggle was its own button and they wrapped
@@ -308,14 +311,11 @@ type AccessMode = PermissionMode;
  */
 function ComposerOptionsMenu({
   threadId,
-  mode,
   access,
   permissionLocked,
-  onModeChange,
   onAccessChange,
 }: {
   threadId?: string;
-  mode: InteractionMode;
   access: PermissionMode;
   /**
    * When true, the permission toggle is hidden and Full access is shown
@@ -324,7 +324,6 @@ function ComposerOptionsMenu({
    * sandbox is unavailable on Windows. See {@link isCursorPermissionLockedToFull}.
    */
   permissionLocked: boolean;
-  onModeChange: (next: InteractionMode) => void;
   onAccessChange: (next: PermissionMode) => void;
 }) {
   const hasPlans = usePlanStore(
@@ -356,45 +355,8 @@ function ComposerOptionsMenu({
         <MoreHorizontal size={14} />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={8} className="w-60 p-2">
-        {/* Mode */}
-        <div className="px-1.5 pt-1 pb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
-          Mode
-        </div>
-        <div className="mb-2 flex rounded-md bg-muted/40 p-0.5">
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => onModeChange(INTERACTION_MODES.BUILD)}
-            aria-pressed={mode === INTERACTION_MODES.BUILD}
-            className={cn(
-              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
-              mode === INTERACTION_MODES.BUILD
-                ? "bg-background text-foreground shadow-sm hover:bg-background"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Hammer size={12} />
-            Build
-          </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => onModeChange(INTERACTION_MODES.PLAN)}
-            aria-pressed={mode === INTERACTION_MODES.PLAN}
-            className={cn(
-              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
-              mode === INTERACTION_MODES.PLAN
-                ? "bg-background text-foreground shadow-sm hover:bg-background"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <FileEdit size={12} />
-            Plan
-          </Button>
-        </div>
-
         {/* Permissions */}
-        <div className="px-1.5 pt-1 pb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+        <div className="px-1.5 pt-1 pb-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
           Permissions
         </div>
         {permissionLocked ? (
@@ -456,7 +418,7 @@ function ComposerOptionsMenu({
               <ListChecks size={13} className={panelVisible ? "text-primary" : "text-muted-foreground"} />
               Plan panel
             </span>
-            <span className={cn("text-[10px] font-medium uppercase tracking-[0.1em]", panelVisible ? "text-primary" : "text-muted-foreground/60")}>
+            <span className={cn("text-xs font-medium uppercase tracking-[0.1em]", panelVisible ? "text-primary" : "text-muted-foreground/60")}>
               {panelVisible ? "On" : "Off"}
             </span>
           </Button>
@@ -467,25 +429,21 @@ function ComposerOptionsMenu({
 }
 
 /**
- * Inline rendering of the same controls — Mode (Chat/Plan), Permissions
- * (Full/Supervised), and the Plan-panel toggle. Used at md+ widths where the
+ * Inline rendering of Permissions (Full/Supervised) and the Plan-panel toggle.
+ * Used at md+ widths where the
  * controls fit comfortably in the model bar; below md the parent renders
  * `ComposerOptionsMenu` instead so they collapse behind a single trigger.
  */
 function InlineComposerOptions({
   threadId,
-  mode,
   access,
   permissionLocked,
-  onModeChange,
   onAccessChange,
 }: {
   threadId?: string;
-  mode: InteractionMode;
   access: PermissionMode;
   /** See {@link ComposerOptionsMenu}. */
   permissionLocked: boolean;
-  onModeChange: (next: InteractionMode) => void;
   onAccessChange: (next: PermissionMode) => void;
 }) {
   const hasPlans = usePlanStore(
@@ -509,23 +467,6 @@ function InlineComposerOptions({
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => onModeChange(mode === INTERACTION_MODES.BUILD ? INTERACTION_MODES.PLAN : INTERACTION_MODES.BUILD)}
-              className="gap-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-            >
-              {mode === INTERACTION_MODES.BUILD ? <Hammer size={14} /> : <FileEdit size={14} />}
-              <span className="text-sm">{mode === INTERACTION_MODES.BUILD ? "Build" : "Plan"}</span>
-            </Button>
-          }
-        />
-        <TooltipContent>{mode === INTERACTION_MODES.BUILD ? "Build mode" : "Plan mode"}</TooltipContent>
-      </Tooltip>
-
       {permissionLocked ? (
         <Tooltip>
           <TooltipTrigger
@@ -633,8 +574,8 @@ function goalStatusLabel(status: GoalState["status"]): string {
   }
 }
 
-/** Shows the active provider goal and exposes app-level goal actions. */
-export function ActiveGoalBar({
+/** Shows the active provider goal as a compact composer capability chip. */
+export function ActiveGoalChip({
   threadId,
   goal,
 }: {
@@ -766,121 +707,103 @@ export function ActiveGoalBar({
       });
   };
 
+  const goalLabel = (
+    <span className="inline-flex items-center gap-1.5 px-2 text-xs font-semibold text-foreground">
+      <Goal size={13} className="text-primary" aria-hidden />
+      <span>Goal</span>
+    </span>
+  );
+
   return (
-    <div
-      className="mb-2 flex min-h-9 items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/35 px-3 py-2 text-xs text-muted-foreground shadow-sm"
-      data-testid="active-goal-bar"
-    >
-      <div className="min-w-0 flex items-center gap-2">
-        <Target size={13} className="shrink-0 text-primary" aria-hidden="true" />
-        <Badge variant="secondary" size="sm" className="shrink-0">
-          {goalStatusLabel(goal.status)}
-        </Badge>
-        <span className="shrink-0 text-muted-foreground/80">·</span>
-        <span className="shrink-0 tabular-nums">{formatGoalElapsed(elapsed)}</span>
-        <span className="truncate text-muted-foreground/80">{goal.objective}</span>
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        {isClearingGoal && !detailsOpen && (
-          <span className="text-muted-foreground">Clearing...</span>
-        )}
-        {canInspect && (
-          <Popover open={detailsOpen} onOpenChange={openDetails}>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                        aria-label="Show active goal"
-                      >
-                        <Info size={13} />
-                      </Button>
-                    }
-                  />
-                }
-              />
-              <TooltipContent>Show active goal</TooltipContent>
-            </Tooltip>
-            <PopoverContent align="end" sideOffset={8} className="w-80 space-y-3 p-3 text-xs">
-              <div className="space-y-1">
-                <div className="font-medium text-foreground">{goal.objective}</div>
-                <div className="text-muted-foreground">{goalStatusLabel(goal.status)}</div>
-              </div>
-              <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
-                <span>Elapsed</span>
-                <span className="text-foreground">{formatGoalElapsed(elapsed)}</span>
-                <span>Tokens used</span>
-                <span className="text-foreground tabular-nums">{goal.tokensUsed}</span>
-                {goal.tokenBudget != null && (
-                  <>
-                    <span>Token budget</span>
-                    <span className="text-foreground tabular-nums">{goal.tokenBudget}</span>
-                  </>
-                )}
-                <span>Goal source</span>
-                <span className="text-foreground">{goal.source}</span>
-                <span>Updated</span>
-                <span className="text-foreground">{formatGoalDate(goal.updatedAt)}</span>
-                <span>Lookup source</span>
-                <span className="text-foreground">{lookupSource ?? "Refreshing"}</span>
-                {lookupReason && (
-                  <>
-                    <span>Lookup reason</span>
-                    <span className="text-foreground">{lookupReason}</span>
-                  </>
-                )}
-              </div>
-              {(isRefreshingGoal || refreshError || isClearingGoal) && (
-                <div className="text-muted-foreground">
-                  {isClearingGoal
-                    ? "Clearing..."
-                    : refreshError
-                      ? "Could not refresh goal details."
-                      : "Refreshing..."}
-                </div>
-              )}
-              {canClear && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  disabled={isClearingGoal}
-                  onClick={handleClearGoal}
-                >
-                  {isClearingGoal ? "Clearing..." : "Clear"}
-                </Button>
-              )}
-            </PopoverContent>
-          </Popover>
-        )}
-        {canClear && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                  aria-label="Clear active goal"
-                  disabled={isClearingGoal}
-                  onClick={handleClearGoal}
-                >
-                  <Trash2 size={13} />
-                </Button>
-              }
-            />
-            <TooltipContent>Clear active goal</TooltipContent>
-          </Tooltip>
-        )}
-      </div>
-    </div>
+    <Popover open={detailsOpen} onOpenChange={openDetails}>
+      <span
+        data-testid="active-goal-chip"
+        className="inline-flex h-7 shrink-0 items-center rounded-lg bg-accent/70 pr-0.5 ring-1 ring-inset ring-primary/30"
+      >
+        {canInspect ? (
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                className="h-6 gap-0 rounded-md px-0 hover:bg-accent"
+                aria-label={`Show active goal: ${goal.objective}`}
+              >
+                {goalLabel}
+              </Button>
+            }
+          />
+        ) : goalLabel}
+        {canClear ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="size-6 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Clear active goal"
+            title="Clear active goal"
+            disabled={isClearingGoal}
+            onClick={handleClearGoal}
+          >
+            <X size={12} aria-hidden />
+          </Button>
+        ) : null}
+      </span>
+      {canInspect ? (
+        <PopoverContent align="start" sideOffset={8} className="w-80 space-y-3 p-3 text-xs">
+          <div className="space-y-1">
+            <div className="font-medium text-foreground">{goal.objective}</div>
+            <div className="text-muted-foreground">{goalStatusLabel(goal.status)}</div>
+          </div>
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
+            <span>Elapsed</span>
+            <span className="text-foreground">{formatGoalElapsed(elapsed)}</span>
+            <span>Tokens used</span>
+            <span className="text-foreground tabular-nums">{goal.tokensUsed}</span>
+            {goal.tokenBudget != null ? (
+              <>
+                <span>Token budget</span>
+                <span className="text-foreground tabular-nums">{goal.tokenBudget}</span>
+              </>
+            ) : null}
+            <span>Goal source</span>
+            <span className="text-foreground">{goal.source}</span>
+            <span>Updated</span>
+            <span className="text-foreground">{formatGoalDate(goal.updatedAt)}</span>
+            <span>Lookup source</span>
+            <span className="text-foreground">{lookupSource ?? "Refreshing"}</span>
+            {lookupReason ? (
+              <>
+                <span>Lookup reason</span>
+                <span className="text-foreground">{lookupReason}</span>
+              </>
+            ) : null}
+          </div>
+          {isRefreshingGoal || refreshError || isClearingGoal ? (
+            <div className="text-muted-foreground">
+              {isClearingGoal
+                ? "Clearing..."
+                : refreshError
+                  ? "Could not refresh goal details."
+                  : "Refreshing..."}
+            </div>
+          ) : null}
+          {canClear ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full"
+              disabled={isClearingGoal}
+              onClick={handleClearGoal}
+            >
+              {isClearingGoal ? "Clearing..." : "Clear goal"}
+            </Button>
+          ) : null}
+        </PopoverContent>
+      ) : null}
+    </Popover>
   );
 }
 
@@ -936,6 +859,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [provider, setProvider] = useState<string>(getDefaultProviderId());
   const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.BUILD);
+  const [goalPending, setGoalPending] = useState(false);
+  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationMode>(
+    ORCHESTRATION_MODES.STANDARD,
+  );
   const [copilotAgent, setCopilotAgent] = useState<string | null>(null);
   // Per-thread overrides; null/undefined means inherit from settings default.
   const [contextWindow, setContextWindow] = useState<ContextWindowMode | null>(null);
@@ -950,16 +877,17 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const annotationRows = usePreviewAnnotationStore((s) =>
     annotationScopeId ? s.byThread[annotationScopeId] : undefined,
   );
-  const annotationCount = annotationRows?.length ?? 0;
+  const diffAnnotationRows = usePreviewAnnotationStore((s) =>
+    annotationScopeId ? s.diffByThread[annotationScopeId] : undefined,
+  );
+  const annotationCount =
+    (annotationRows?.length ?? 0) + (diffAnnotationRows?.length ?? 0);
   const annotationBundleForDisplay = useMemo(
     () =>
-      annotationRows && annotationRows.length > 0
-        ? {
-            schemaVersion: 1 as const,
-            annotations: annotationRows.map(({ createdAt: _createdAt, ...annotation }) => annotation),
-          }
+      annotationScopeId
+        ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
         : undefined,
-    [annotationRows],
+    [annotationRows, annotationScopeId, diffAnnotationRows],
   );
   const setPreviewDesignModeActive = usePreviewDesignModeStore((s) => s.setActive);
 
@@ -995,6 +923,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     displayContent: string;
     mentions: MessageMention[];
     previewAnnotations?: PreviewAnnotationBundle;
+    goalObjective?: string;
+    orchestrationMode?: OrchestrationMode;
   } | null>(null);
   const [pendingCheckoutConfirmation, setPendingCheckoutConfirmation] =
     useState<PendingCheckoutConfirmation | null>(null);
@@ -1169,6 +1099,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             const s = useThreadStore.getState().getThreadSettings(threadId);
             return {
               interactionMode: s.interactionMode,
+              orchestrationMode: s.orchestrationMode,
               permissionMode: s.permissionMode,
               copilotAgent: s.copilotAgent ?? null,
               contextWindow: s.contextWindow ?? null,
@@ -1178,6 +1109,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           })()
         : {
             interactionMode: INTERACTION_MODES.BUILD,
+            orchestrationMode: ORCHESTRATION_MODES.STANDARD,
             permissionMode: PERMISSION_MODES.FULL,
             copilotAgent: null,
             contextWindow: null,
@@ -1203,6 +1135,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setProvider(session.provider);
     setReasoning(session.reasoning);
     setMode(session.interactionMode);
+    setOrchestrationMode(
+      threadId
+        ? useThreadStore.getState().getThreadSettings(threadId).orchestrationMode ?? ORCHESTRATION_MODES.STANDARD
+        : ORCHESTRATION_MODES.STANDARD,
+    );
     setAccess(session.permissionMode);
     setCopilotAgent(session.copilotAgent);
     setContextWindow(session.contextWindow);
@@ -1227,6 +1164,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   }, [threadId, isNewThread, saveDraft, getDraft]);
 
   const persistedInteractionMode = useThreadRecord(threadId, (r) => r.settings.interactionMode);
+  const persistedOrchestrationMode = useThreadRecord(
+    threadId,
+    (record) => record.settings.orchestrationMode,
+  );
   const threadRecordInteractionMode = useWorkspaceThread(threadId, (t) => {
     const mode = t?.interaction_mode;
     return mode === "plan" || mode === "build" ? mode : undefined;
@@ -1240,6 +1181,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       setMode(resolved);
     }
   }, [threadId, persistedInteractionMode, threadRecordInteractionMode]);
+
+  useEffect(() => {
+    if (!threadId || persistedOrchestrationMode === undefined) return;
+    setOrchestrationMode(persistedOrchestrationMode);
+  }, [threadId, persistedOrchestrationMode]);
 
   // Selectors needed by the branch-mode effect below — must be declared before the effect
   // to avoid temporal dead zone errors in the dependency array.
@@ -1343,6 +1289,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   );
   const activeGoal = useThreadRecord(threadId, (r) => r.goal ?? null);
 
+  useEffect(() => {
+    if (isGoalOpen(activeGoal)) setGoalPending(false);
+  }, [activeGoal]);
+
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
 
@@ -1355,9 +1305,27 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const usageInfo = useThreadRecord(threadId, (r) => r.usageByProvider[activeProviderId]);
   const hasLowQuota = usageInfo?.quotaCategories.some((c) => !c.isUnlimited && c.remainingPercent < 0.2) ?? false;
 
-  // For new threads (no active thread yet), fall back to the composer-selected
-  // provider so the availability banner tracks what the user is about to submit.
-  const effectiveProviderId = (activeThread?.provider ?? provider) as ProviderId;
+  // Composer selection is authoritative. On existing threads the persisted row
+  // updates on send, so reading it here would leave capability menus one switch behind.
+  const effectiveProviderId = provider as ProviderId;
+  const composerCapabilities = useMemo(
+    () => resolveComposerCapabilities({ providerId: effectiveProviderId, modelId }),
+    [effectiveProviderId, modelId],
+  );
+  const planCapability = composerCapabilities.find((capability) => capability.id === "plan");
+  const goalCapability = composerCapabilities.find((capability) => capability.id === "goal");
+  const orchestrationCapability = composerCapabilities.find(
+    (capability) => capability.id === "orchestration",
+  );
+  const attachedCapabilityIds = useMemo(() => {
+    const ids = new Set<ComposerCapabilityId>();
+    if (mode === INTERACTION_MODES.PLAN) ids.add("plan");
+    if (goalPending || isGoalOpen(activeGoal)) ids.add("goal");
+    if (orchestrationMode === ORCHESTRATION_MODES.PROACTIVE) ids.add("orchestration");
+    return ids;
+  }, [activeGoal, goalPending, mode, orchestrationMode]);
+  const goalAvailable = goalCapability !== undefined;
+  const orchestrationLabel = orchestrationCapability?.label;
   const availability = useProviderAvailabilityStore((s) => s.getAvailability(effectiveProviderId));
   const providerUnusable = !!availability && (
     !availability.enabled || availability.cli.status === "not_found"
@@ -1421,14 +1389,99 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setFilePopupAnchorRect(composerContainerRef.current?.getBoundingClientRect() ?? null);
   }, [fileAutocomplete.isOpen]);
 
-  const toggleInteractionMode = useCallback(() => {
-    const next =
-      mode === INTERACTION_MODES.PLAN
-        ? INTERACTION_MODES.BUILD
-        : INTERACTION_MODES.PLAN;
-    setMode(next);
-    if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-  }, [mode, setMode, threadId, setThreadSettings]);
+  const attachPlan = useCallback(() => {
+    setMode(INTERACTION_MODES.PLAN);
+    agentSettingsTouchedRef.current = true;
+    if (threadId) void setThreadSettings(threadId, { interactionMode: INTERACTION_MODES.PLAN });
+    editorRef.current?.focus();
+  }, [setMode, threadId, setThreadSettings]);
+
+  const detachPlan = useCallback(() => {
+    setMode(INTERACTION_MODES.BUILD);
+    agentSettingsTouchedRef.current = true;
+    if (threadId) void setThreadSettings(threadId, { interactionMode: INTERACTION_MODES.BUILD });
+    editorRef.current?.focus();
+  }, [setMode, threadId, setThreadSettings]);
+
+  const attachGoal = useCallback(() => {
+    if (!goalAvailable || isGoalOpen(activeGoal)) return;
+    setGoalPending(true);
+    editorRef.current?.focus();
+  }, [activeGoal, goalAvailable]);
+
+  const detachPendingGoal = useCallback(() => {
+    setGoalPending(false);
+    editorRef.current?.focus();
+  }, []);
+
+  const attachOrchestration = useCallback(() => {
+    if (!orchestrationLabel) return;
+    setOrchestrationMode(ORCHESTRATION_MODES.PROACTIVE);
+    if (threadId) {
+      void setThreadSettings(threadId, {
+        orchestrationMode: ORCHESTRATION_MODES.PROACTIVE,
+      });
+    }
+    editorRef.current?.focus();
+  }, [orchestrationLabel, setThreadSettings, threadId]);
+
+  const detachOrchestration = useCallback(() => {
+    setOrchestrationMode(ORCHESTRATION_MODES.STANDARD);
+    if (threadId) {
+      void setThreadSettings(threadId, {
+        orchestrationMode: ORCHESTRATION_MODES.STANDARD,
+      });
+    }
+    editorRef.current?.focus();
+  }, [setThreadSettings, threadId]);
+
+  const attachComposerCapability = useCallback(
+    (capabilityId: ComposerCapabilityId) => {
+      if (capabilityId === "plan") {
+        attachPlan();
+      } else if (capabilityId === "goal") {
+        attachGoal();
+      } else {
+        attachOrchestration();
+      }
+    },
+    [attachGoal, attachOrchestration, attachPlan],
+  );
+
+  useEffect(() => {
+    if (mode !== INTERACTION_MODES.PLAN || planCapability) return;
+    detachPlan();
+    useToastStore.getState().show(
+      "info",
+      "Plan removed",
+      "The selected provider manages Plan through its own agent selector.",
+    );
+  }, [detachPlan, mode, planCapability]);
+
+  useEffect(() => {
+    if (!goalPending || goalCapability) return;
+    setGoalPending(false);
+    useToastStore.getState().show(
+      "info",
+      "Goal removed",
+      "The selected provider does not support this capability.",
+    );
+  }, [goalCapability, goalPending]);
+
+  useEffect(() => {
+    if (orchestrationMode !== ORCHESTRATION_MODES.PROACTIVE || orchestrationLabel) return;
+    setOrchestrationMode(ORCHESTRATION_MODES.STANDARD);
+    if (threadId) {
+      void setThreadSettings(threadId, {
+        orchestrationMode: ORCHESTRATION_MODES.STANDARD,
+      });
+    }
+    useToastStore.getState().show(
+      "info",
+      "Orchestration removed",
+      "The selected provider or model does not support this capability.",
+    );
+  }, [orchestrationLabel, orchestrationMode, setThreadSettings, threadId]);
 
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
@@ -1458,9 +1511,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     anchorRef: composerContainerRef,
     cwd: workspacePath,
     providerId: effectiveProviderId,
+    modelId,
     onMcodeCommand: (action) => {
-      if (action === "toggle-plan") {
-        toggleInteractionMode();
+      if (action === "attach-plan") {
+        attachPlan();
+      } else if (action === "attach-goal") {
+        attachGoal();
+      } else if (action === "attach-orchestration") {
+        attachOrchestration();
       }
     },
   });
@@ -1526,6 +1584,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     (mode: ComposerMode) => {
       setComposerModeLocal(mode);
       setNewThreadMode(mode);
+      rememberComposerMode(mode);
       if (mode === "existing-worktree" && workspaceId) {
         loadWorktrees(workspaceId);
       }
@@ -1533,27 +1592,16 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     [setNewThreadMode, loadWorktrees, workspaceId],
   );
 
+  // Resolve capability and thread state together so a remembered worktree mode
+  // cannot fight the direct-only constraint of a non-git project.
   useEffect(() => {
-    if (isNewThread && composerMode !== newThreadMode) {
-      setComposerModeLocal(newThreadMode);
+    const targetMode = isNewThread
+      ? (isGitRepo ? newThreadMode : "direct")
+      : (activeThread?.mode === "worktree" ? "worktree" : "direct");
+    if (composerMode !== targetMode) {
+      setComposerModeLocal(targetMode);
     }
-  }, [isNewThread, composerMode, newThreadMode]);
-
-  // Sync composerMode with thread's persisted mode when switching threads
-  useEffect(() => {
-    if (isNewThread) return;
-    const mode = activeThread?.mode === "worktree" ? "worktree" : "direct";
-    setComposerModeLocal(mode);
-    setNewThreadMode(mode);
-  }, [activeThread?.mode, isNewThread, setNewThreadMode]);
-
-  // Force direct mode for non-git workspaces — worktree modes are not available without git
-  useEffect(() => {
-    if (!isGitRepo && composerMode !== "direct") {
-      setComposerModeLocal("direct");
-      setNewThreadMode("direct");
-    }
-  }, [isGitRepo, composerMode, setNewThreadMode]);
+  }, [activeThread?.mode, composerMode, isGitRepo, isNewThread, newThreadMode]);
 
   // Load branches when entering new thread mode (always refresh to pick up live changes)
   useEffect(() => {
@@ -1719,12 +1767,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         model: modelId,
         permissionMode: access,
         reasoningLevel: reasoning,
+        orchestrationMode,
         provider,
         copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
         contextWindow: contextWindow ?? undefined,
         thinking: thinking ?? undefined,
         codexFastMode:
           provider === "codex" ? (codexFastMode === null ? undefined : codexFastMode) : undefined,
+        goalObjective: goalPending ? trimmedInput : undefined,
         replyToMessageId: replyContext?.messageId,
         quotedText: replyContext?.quotedText,
       };
@@ -1735,11 +1785,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       modelId,
       access,
       reasoning,
+      orchestrationMode,
       provider,
       copilotAgent,
       contextWindow,
       thinking,
       codexFastMode,
+      goalPending,
       replyContext,
     ],
   );
@@ -1816,11 +1868,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       if (popped.model) setModelId(popped.model);
       if (popped.provider) setProvider(popped.provider);
       if (popped.reasoningLevel) setReasoning(popped.reasoningLevel);
+      if (popped.orchestrationMode) setOrchestrationMode(popped.orchestrationMode);
       if (popped.permissionMode) setAccess(popped.permissionMode);
       setCopilotAgent(popped.copilotAgent ?? null);
       setContextWindow(popped.contextWindow ?? null);
       setThinking(popped.thinking ?? null);
       setCodexFastMode(popped.codexFastMode !== undefined ? popped.codexFastMode : null);
+      setGoalPending(Boolean(popped.goalObjective));
 
       if (popped.browserCaptureSpillPaths?.length) {
         void releaseBrowserCaptureSpills(popped.browserCaptureSpillPaths);
@@ -2209,6 +2263,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const rawInput = composerMessage.text;
     const selectedMentions = composerMessage.mentions;
     const trimmed = rawInput.trim();
+    const submittedGoalObjective = goalPending ? trimmed : undefined;
     const outboundPreviewAnnotations = annotationScopeId
       ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
       : undefined;
@@ -2256,6 +2311,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           displayContent: trimmed,
           mentions: selectedMentions,
           previewAnnotations: effectivePreviewAnnotations,
+          goalObjective: submittedGoalObjective,
+          orchestrationMode,
         });
         return;
       }
@@ -2279,12 +2336,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         model: modelId,
         permissionMode: access,
         reasoningLevel: reasoning,
+        orchestrationMode,
         provider,
         copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
         contextWindow: contextWindow ?? undefined,
         thinking: thinking ?? undefined,
         codexFastMode:
           provider === "codex" ? (codexFastMode === null ? undefined : codexFastMode) : undefined,
+        goalObjective: submittedGoalObjective,
         replyToMessageId: replyContext?.messageId,
         quotedText: replyContext?.quotedText,
         browserCaptureSpillPaths:
@@ -2300,6 +2359,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
         setPreviewDesignModeActive(annotationScopeId, false);
       }
+      if (enqueued && submittedGoalObjective) setGoalPending(false);
       if (editingFromQueue && enqueued) {
         useToastStore
           .getState()
@@ -2451,6 +2511,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             outboundDisplay,
             selectedMentions,
             effectivePreviewAnnotations,
+            submittedGoalObjective,
+            orchestrationMode,
           );
         onThreadCreated?.(createdThread);
       } else if (branchFromMessageId && threadId) {
@@ -2493,6 +2555,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         codexFastMode: provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
         mentions: selectedMentions,
         previewAnnotations: effectivePreviewAnnotations,
+        goalObjective: submittedGoalObjective,
+        orchestrationMode,
       });
       onBranchModeExit?.();
       } else if (threadId) {
@@ -2514,8 +2578,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           undefined,
           selectedMentions,
           effectivePreviewAnnotations,
+          submittedGoalObjective,
+          orchestrationMode,
         );
       }
+
+      if (submittedGoalObjective) setGoalPending(false);
 
       if (annotationScopeId && outboundPreviewAnnotations) {
         usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
@@ -2556,7 +2624,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations]);
+  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, orchestrationMode, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations, goalPending]);
 
   useEffect(() => {
     if (!annotationScopeId) return;
@@ -2612,6 +2680,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       undefined,
       queued.mentions,
       queued.previewAnnotations,
+      queued.goalObjective,
+      queued.orchestrationMode,
     );
   // modelId/access/reasoning/provider intentionally read from render-time values via closure;
   // handoffStatus is the sole reactive trigger so we don't re-fire on unrelated changes.
@@ -2625,9 +2695,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const handleSlashSelect = useCallback((cmd: Command) => {
     // No-op replaceText: Lexical handles text replacement via insertSlashCommandNode
     slashCommand.onSelect(cmd, () => {});
-    // Action-only commands (e.g. /plan toggle) should not insert a chip
-    if (!cmd.action && editorRef.current) {
-      insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
+    if (editorRef.current) {
+      if (cmd.action) {
+        removeSlashCommandTrigger(editorRef.current);
+      } else {
+        insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
+      }
     }
   }, [slashCommand]);
 
@@ -2693,7 +2766,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       "high",
       ...(isXhighEffortModel(modelId) ? (["xhigh"] as const) : []),
       ...(isMaxEffortModel(modelId)   ? (["max"]   as const) : []),
-      ...(supportsUltrathink(modelId) ? (["ultrathink"] as const) : []),
     ];
   }, [modelId, provider]);
 
@@ -2848,10 +2920,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         />
       )}
 
-      {threadId && !isNewThread && (
-        <ActiveGoalBar threadId={threadId} goal={activeGoal} />
-      )}
-
       {isNewThread && (
         <div
           data-testid="new-thread-context-strip"
@@ -2860,7 +2928,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           {activeWorkspace ? (
             <>
               <div
-                className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md pl-[10px] text-[12px] font-medium leading-none text-foreground/90"
+                className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md pl-[10px] text-xs font-medium leading-none text-foreground/90"
               >
                 <Folder size={14} className="shrink-0 text-muted-foreground" aria-hidden />
                 <span className="max-w-40 truncate" title={activeWorkspace.path}>
@@ -3010,7 +3078,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             out for editing. Cancel returns it to its original slot. */}
         {editingFromQueue && (
           <div className="flex items-center justify-between gap-2 border-b border-primary/20 bg-primary/5 px-3 py-1.5">
-            <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-primary/85">
+            <span className="font-mono text-xs uppercase tracking-[0.18em] text-primary/85">
               Editing
               <span className="ml-1.5 tabular-nums text-primary/55">
                 {String(editingFromQueue.originalIndex + 1).padStart(2, "0")}
@@ -3046,7 +3114,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             disabled={planPending || isStaleWorktree || !!providerReason}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : isNewThread ? "Do anything" : "Message Mcode..."}
+            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : goalPending ? "Describe the goal..." : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : isNewThread ? "Do anything" : "Message Mcode..."}
           />
           <FileTagPopup
             items={fileAutocomplete.suggestions}
@@ -3105,6 +3173,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           <ComposerAddMenu
             disabled={planPending || isStaleWorktree || !!providerReason}
             onAttachFiles={handleAttachPick}
+            capabilities={composerCapabilities}
+            attachedCapabilityIds={attachedCapabilityIds}
+            onAttachCapability={attachComposerCapability}
             getComposerRect={() => composerContainerRef.current?.getBoundingClientRect() ?? null}
           />
           {/* Model picker */}
@@ -3158,7 +3229,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                   ? "Fast mode"
                   : "Context window";
 
-            const sectionHeaderClass = "px-3 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none";
+            const sectionHeaderClass = "px-3 pt-1.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground/60 select-none";
             const itemClass = (active: boolean) => cn(
               "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs",
               active
@@ -3193,7 +3264,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                         {activeChipLabel && (
                           <span
                             data-testid="composer-1m-badge"
-                            className="rounded-sm bg-foreground/5 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-foreground/80 ring-1 ring-inset ring-foreground/10 tabular-nums"
+                            className="rounded-sm bg-foreground/5 px-1 py-px text-xs font-medium uppercase tracking-wide text-foreground/80 ring-1 ring-inset ring-foreground/10 tabular-nums"
                           >
                             {activeChipLabel}
                           </span>
@@ -3352,14 +3423,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           ) : showInlineComposerOptions ? (
             <InlineComposerOptions
               threadId={threadId}
-              mode={mode}
               access={access}
               permissionLocked={permissionLocked}
-              onModeChange={(next) => {
-                setMode(next);
-                agentSettingsTouchedRef.current = true;
-                if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-              }}
               onAccessChange={(next) => {
                 setAccess(next);
                 agentSettingsTouchedRef.current = true;
@@ -3369,14 +3434,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           ) : (
             <ComposerOptionsMenu
               threadId={threadId}
-              mode={mode}
               access={access}
               permissionLocked={permissionLocked}
-              onModeChange={(next) => {
-                setMode(next);
-                agentSettingsTouchedRef.current = true;
-                if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-              }}
               onAccessChange={(next) => {
                 setAccess(next);
                 agentSettingsTouchedRef.current = true;
@@ -3384,6 +3443,38 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               }}
             />
           )}
+
+          {mode === INTERACTION_MODES.PLAN && planCapability ? (
+            <ComposerCapabilityChip
+              label={planCapability.label}
+              icon={ListChecks}
+              removeLabel={`Remove ${planCapability.label}`}
+              onRemove={detachPlan}
+              testId="composer-capability-plan"
+            />
+          ) : null}
+
+          {goalPending && goalCapability ? (
+            <ComposerCapabilityChip
+              label={goalCapability.label}
+              icon={Goal}
+              removeLabel={`Remove ${goalCapability.label}`}
+              onRemove={detachPendingGoal}
+              testId="composer-capability-goal-pending"
+            />
+          ) : threadId && !isNewThread ? (
+            <ActiveGoalChip threadId={threadId} goal={activeGoal} />
+          ) : null}
+
+          {orchestrationMode === ORCHESTRATION_MODES.PROACTIVE && orchestrationCapability ? (
+            <ComposerCapabilityChip
+              label={orchestrationCapability.label}
+              icon={Network}
+              removeLabel={`Remove ${orchestrationCapability.label}`}
+              onRemove={detachOrchestration}
+              testId="composer-capability-orchestration"
+            />
+          ) : null}
 
           {/* Spacer */}
           <div className="flex-1" />
@@ -3500,7 +3591,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       {/* Queued-send hint: shown while the child thread handoff is still generating */}
       {queuedSend && (
-        <p className="px-1 pt-1 text-[10px] text-muted-foreground/60">
+        <p className="px-1 pt-1 text-xs text-muted-foreground/60">
           queued · sends when handoff lands
         </p>
       )}
@@ -3517,7 +3608,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         {showComposerStatusBar && <div className="min-h-0">
           <div className="flex items-center justify-between px-1 pt-1.5">
             {!isGitRepo && isNewThread ? (
-              <span className="flex h-6 items-center rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground/40">
+              <span className="flex h-6 items-center rounded-md px-1.5 py-0.5 text-xs text-muted-foreground/40">
                 Not a git repo
               </span>
             ) : (

@@ -278,10 +278,7 @@ export function createWsTransport(
       // Deferred import avoids a circular dependency at module evaluation time.
       const nowForThreads = Date.now();
       import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
-        const { activeWorkspaceId, activeThreadId, loadThreads } = useWorkspaceStore.getState();
-        if (activeThreadId) {
-          rpc<void>("push.subscribeThread", { threadId: activeThreadId }).catch(() => {});
-        }
+        const { activeWorkspaceId, loadThreads } = useWorkspaceStore.getState();
         if (!activeWorkspaceId) return;
         const last = lastLoadThreadsAtByWorkspace.get(activeWorkspaceId) ?? 0;
         if (nowForThreads - last <= LOAD_THREADS_RECONNECT_COOLDOWN_MS) return;
@@ -553,6 +550,7 @@ export function createWsTransport(
         threadId,
         reasoningLevel: settings.reasoningLevel,
         interactionMode: settings.interactionMode,
+        orchestrationMode: settings.orchestrationMode,
         permissionMode: settings.permissionMode,
         copilotAgent: settings.copilotAgent,
         contextWindow: settings.contextWindow,
@@ -597,6 +595,8 @@ export function createWsTransport(
       planAction?,
       mentions?,
       previewAnnotations?,
+      goalObjective?,
+      orchestrationMode?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -621,6 +621,8 @@ export function createWsTransport(
         ...(planAction !== undefined && { planAction }),
         ...(mentions !== undefined && { mentions }),
         ...(previewAnnotations !== undefined && { previewAnnotations }),
+        ...(goalObjective !== undefined && { goalObjective }),
+        ...(orchestrationMode !== undefined && { orchestrationMode }),
         ...guardrails,
       });
     },
@@ -647,6 +649,8 @@ export function createWsTransport(
       displayContent?,
       mentions?,
       previewAnnotations?,
+      goalObjective?,
+      orchestrationMode?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -675,6 +679,8 @@ export function createWsTransport(
         ...(displayContent !== undefined && { displayContent }),
         ...(mentions !== undefined && { mentions }),
         ...(previewAnnotations !== undefined && { previewAnnotations }),
+        ...(goalObjective !== undefined && { goalObjective }),
+        ...(orchestrationMode !== undefined && { orchestrationMode }),
         ...guardrails,
       });
     },

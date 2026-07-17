@@ -116,6 +116,47 @@ describe("CodexProvider first turn on new session", () => {
     await ended;
   });
 
+  it("maps proactive orchestration to Ultra only on supported Codex models", async () => {
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      sessionId: "mcode-ultra-sol",
+      threadId: "ultra-sol",
+      message: "delegate this work",
+      cwd: process.cwd(),
+      model: "gpt-5.6-sol",
+      reasoningLevel: "high",
+      interactionMode: "build",
+      orchestrationMode: "proactive",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(sendTurnMock.mock.calls[0]?.[1]).toMatchObject({ effort: "ultra" });
+
+    sendTurnMock.mockClear();
+    await provider.sendTurn({
+      sessionId: "mcode-ultra-luna",
+      threadId: "ultra-luna",
+      message: "delegate this work",
+      cwd: process.cwd(),
+      model: "gpt-5.6-luna",
+      reasoningLevel: "high",
+      interactionMode: "build",
+      orchestrationMode: "proactive",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(sendTurnMock.mock.calls[0]?.[1]).toMatchObject({ effort: "high" });
+  });
+
   it("did not overwrite pendingTurnId when a superseding runTurn finished sendTurn first", async () => {
     const supersedeThreadId = "supersede-turn-thread";
     const supersedeSessionId = `mcode-${supersedeThreadId}`;

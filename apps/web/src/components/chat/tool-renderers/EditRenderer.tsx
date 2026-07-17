@@ -23,7 +23,7 @@ export const EditRenderer = memo(function EditRenderer({ toolCall, isActive }: T
       defaultExpanded
     >
       {lines.length > 0 && (
-        <div className="rounded border border-border/30 overflow-hidden font-mono text-[11px] leading-relaxed">
+        <div className="rounded border border-border/30 overflow-hidden font-mono text-xs leading-relaxed">
           {lines.map((line, i) => (
             <div
               key={i}

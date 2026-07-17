@@ -28,7 +28,7 @@ export function GrepRenderer({ toolCall, isActive }: ToolRendererProps) {
           {visible.map((line, i) => (
             <div key={i} className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <File size={12} className="shrink-0 opacity-60" />
-              <span className="truncate font-mono text-[11px]">{line}</span>
+              <span className="truncate font-mono text-xs">{line}</span>
             </div>
           ))}
           <ShowMoreButton

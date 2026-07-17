@@ -1047,6 +1047,58 @@ function SidebarThreadPreview({
   );
 }
 
+interface ThreadPrIndicatorProps {
+  threadId: string;
+  prNumber: number;
+  prStatus: string | null;
+  checks: ChecksStatus | undefined;
+  showCi: boolean;
+}
+
+/** Renders an optically aligned PR glyph with its CI state attached as a status dot. */
+const ThreadPrIndicator = memo(function ThreadPrIndicator({
+  threadId,
+  prNumber,
+  prStatus,
+  checks,
+  showCi,
+}: ThreadPrIndicatorProps) {
+  const { Icon: PrIcon, color: prColor } = getPrVisual(prStatus);
+  const ciVisual =
+    showCi && checks && checks.aggregate !== "no_checks"
+      ? getCiVisual(checks.aggregate)
+      : null;
+  const label = `PR #${prNumber}, ${prStatus ?? "open"}${ciVisual ? `. ${ciVisual.label}` : ""}`;
+
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      data-testid={`thread-pr-indicator-${threadId}`}
+      className="absolute left-1.5 top-1/2 -mt-px flex h-4 w-4 -translate-y-1/2 items-center justify-center"
+    >
+      <span className="relative flex size-4 items-center justify-center">
+        <PrIcon
+          size={13}
+          aria-hidden
+          className={cn("shrink-0", prColor)}
+        />
+        {ciVisual ? (
+          <span
+            data-testid={`thread-pr-ci-${threadId}`}
+            aria-hidden
+            className={cn(
+              "absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-current ring-1 ring-page",
+              ciVisual.color,
+              checks?.aggregate === "pending" && "status-pulse",
+            )}
+          />
+        ) : null}
+      </span>
+    </span>
+  );
+});
+
 /** Renders a virtualized, scrollable list of threads for a single workspace. */
 function VirtualizedThreadList({
   workspaceName,
@@ -1173,11 +1225,15 @@ function VirtualizedThreadList({
         // thread shows its branch/agent status, never a PR icon, even if a PR
         // number happens to be attached.
         const prable = isPrable(thread);
-        const showEndMarker = !(
+        const showPrCi = Boolean(
           prable &&
-          thread.pr_number != null &&
-          marker.kind === "ci"
+            thread.pr_number != null &&
+            checks &&
+            checks.aggregate !== "no_checks" &&
+            marker.kind !== "action" &&
+            marker.kind !== "running",
         );
+        const showEndMarker = !showPrCi;
         // Worktree thread whose directory no longer exists on disk.
         // Only check threads from the workspace whose worktrees are loaded — comparing
         // against a different workspace's worktree list would produce false positives.
@@ -1244,27 +1300,21 @@ function VirtualizedThreadList({
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
             )}
-            style={{ paddingLeft: `${38 + depth * 12}px` }}
+            style={{ paddingLeft: `${42 + depth * 12}px` }}
           >
-            {prable && thread.pr_number != null
-              ? (() => {
-                  const { Icon: PrIcon, color: prColor } = getPrVisual(
-                    thread.pr_status,
-                  );
-                  return (
-                    <span
-                      title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
-                      className="absolute left-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center"
-                    >
-                      <PrIcon size={12} className={prColor} />
-                    </span>
-                  );
-                })()
-              : null}
+            {prable && thread.pr_number != null ? (
+              <ThreadPrIndicator
+                threadId={thread.id}
+                prNumber={thread.pr_number}
+                prStatus={thread.pr_status}
+                checks={checks}
+                showCi={showPrCi}
+              />
+            ) : null}
             <span
               aria-label={`Provider, ${providerMeta.label}`}
               className={cn(
-                "absolute top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center",
+                "absolute top-1/2 -mt-px flex h-4 w-4 -translate-y-1/2 items-center justify-center",
                 providerMeta.color,
                 scaffoldDim,
               )}
@@ -1652,7 +1702,7 @@ const ProjectNode = memo(function ProjectNode({
         )}
 
         {threads.length > 0 && (
-          <span className="shrink-0 font-mono text-[9.5px] tabular-nums text-muted-foreground/40">
+          <span className="shrink-0 font-mono text-[9.5px] leading-none tabular-nums text-muted-foreground/40">
             {threads.length}
           </span>
         )}

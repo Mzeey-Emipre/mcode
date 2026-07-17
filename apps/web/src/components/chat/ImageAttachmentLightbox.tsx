@@ -303,13 +303,13 @@ export const ImageAttachmentLightbox = memo(function ImageAttachmentLightbox({
 
                       <div className="flex w-full min-w-0 flex-col items-center gap-1 border-t border-white/[0.08] pt-3 text-center">
                         <p
-                          className="line-clamp-2 max-w-full min-w-0 break-words px-1 text-[13px] font-medium leading-snug tracking-tight text-white/[0.94]"
+                          className="line-clamp-2 max-w-full min-w-0 break-words px-1 text-sm font-medium leading-snug tracking-tight text-white/[0.94]"
                           title={rawTitle.trim() ? rawTitle : undefined}
                         >
                           {displayTitle}
                         </p>
                         {carousel ? (
-                          <p className="text-[11px] tabular-nums tracking-wide text-white/48">
+                          <p className="text-xs tabular-nums tracking-wide text-white/48">
                             {safeIndex + 1} / {items.length}
                           </p>
                         ) : null}

@@ -313,6 +313,8 @@ interface DiffState {
   reviewDiffStat: { additions: number; deletions: number } | null;
   /** Bulk expand/collapse command for the Review view's file cards; each FileEntry applies it on nonce change. */
   bulkDiffExpand: { expand: boolean; nonce: number } | null;
+  /** File-tree jump request for the active Review scope. */
+  reviewFileJumpRequest: { scopeId: string; path: string; nonce: number } | null;
   /** Per-thread line-wrap preference keyed by thread ID. */
   readonly lineWrapByThread: Record<string, boolean>;
   /** Turn snapshots keyed by thread ID. */
@@ -423,6 +425,8 @@ interface DiffState {
   setReviewDiffStat: (stat: { additions: number; deletions: number } | null) => void;
   /** Expand or collapse every file card in the active Review view. */
   setBulkDiffExpand: (expand: boolean) => void;
+  /** Ask the active Review file list to reveal one changed file. */
+  requestReviewFileJump: (scopeId: string, path: string) => void;
   getLineWrap: (threadId: string) => boolean;
   toggleLineWrap: (threadId: string) => void;
   setSnapshots: (threadId: string, snapshots: TurnSnapshot[]) => void;
@@ -468,6 +472,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   reviewFileCount: null,
   reviewDiffStat: null,
   bulkDiffExpand: null,
+  reviewFileJumpRequest: null,
   lineWrapByThread: {},
   snapshotsByThread: {},
   snapshotsLoadingByThread: {},
@@ -621,6 +626,14 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   setReviewDiffStat: (stat) => set({ reviewDiffStat: stat }),
   setBulkDiffExpand: (expand) =>
     set((s) => ({ bulkDiffExpand: { expand, nonce: (s.bulkDiffExpand?.nonce ?? 0) + 1 } })),
+  requestReviewFileJump: (scopeId, path) =>
+    set((s) => ({
+      reviewFileJumpRequest: {
+        scopeId,
+        path,
+        nonce: (s.reviewFileJumpRequest?.nonce ?? 0) + 1,
+      },
+    })),
   getLineWrap: (threadId) => get().lineWrapByThread[threadId] ?? DEFAULT_LINE_WRAP,
   toggleLineWrap: (threadId) =>
     set((state) => {

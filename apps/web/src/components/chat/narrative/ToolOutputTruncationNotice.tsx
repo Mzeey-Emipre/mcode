@@ -18,7 +18,7 @@ export function ToolOutputTruncationNotice({ toolCall }: ToolOutputTruncationNot
 
   return (
     <div
-      className="max-w-full text-[0.6875rem] font-mono text-muted-foreground/65 truncate"
+      className="max-w-full truncate font-mono text-xs font-normal leading-5 text-muted-foreground/65"
       title={toolCall.outputArtifactPath}
       aria-label={`Output truncated${total}${saved}`}
     >

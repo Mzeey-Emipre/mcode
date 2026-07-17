@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  */
 function makeFakeSdkQuery(
   pushCalls: Array<{ options: Record<string, unknown> }>,
+  flagSettingsCalls: Array<Record<string, unknown>>,
 ) {
   return ({
     prompt,
@@ -50,6 +51,9 @@ function makeFakeSdkQuery(
 
     Object.assign(generator, {
       setModel: vi.fn(async () => {}),
+      applyFlagSettings: vi.fn(async (settings: Record<string, unknown>) => {
+        flagSettingsCalls.push(settings);
+      }),
       interrupt: vi.fn(async () => {}),
       close: vi.fn(() => {}),
     });
@@ -81,11 +85,13 @@ import { stubJobObject } from "./stub-job-object.js";
 
 describe("ClaudeProvider permission mode changes", () => {
   let provider: ClaudeProvider;
+  const flagSettingsCalls: Array<Record<string, unknown>> = [];
 
   beforeEach(() => {
     vi.clearAllMocks();
     sdkCalls.length = 0;
-    mockQuery.mockImplementation(makeFakeSdkQuery(sdkCalls));
+    flagSettingsCalls.length = 0;
+    mockQuery.mockImplementation(makeFakeSdkQuery(sdkCalls, flagSettingsCalls));
     provider = new ClaudeProvider(stubEnvService(), stubJobObject());
   });
 
@@ -147,5 +153,39 @@ describe("ClaudeProvider permission mode changes", () => {
     // Second spawn is in full (SDK "bypassPermissions") mode, still no CLI bypass flag.
     expect(sdkCalls[1]!.options.permissionMode).toBe("bypassPermissions");
     expect(sdkCalls[1]!.options.allowDangerouslySkipPermissions).toBeUndefined();
+  });
+
+  it("starts proactive sessions with Ultracode enabled", async () => {
+    await provider.sendTurn({
+      sessionId: "mcode-ultracode-new",
+      threadId: "ultracode-new",
+      message: "delegate this work",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      permissionMode: "supervised",
+      interactionMode: "build",
+      orchestrationMode: "proactive",
+      providerOptions: {},
+    });
+
+    expect(sdkCalls).toHaveLength(1);
+    expect(sdkCalls[0]!.options.settings).toMatchObject({ ultracode: true });
+  });
+
+  it("applies Ultracode when orchestration changes on a reusable session", async () => {
+    const baseRequest = {
+      sessionId: "mcode-ultracode-toggle",
+      threadId: "ultracode-toggle",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      permissionMode: "supervised" as const,
+      interactionMode: "build" as const,
+      providerOptions: {},
+    };
+    await provider.sendTurn({ ...baseRequest, message: "first", orchestrationMode: "standard" });
+    await provider.sendTurn({ ...baseRequest, message: "second", orchestrationMode: "proactive" });
+
+    expect(sdkCalls).toHaveLength(1);
+    expect(flagSettingsCalls).toEqual([{ ultracode: true }]);
   });
 });
