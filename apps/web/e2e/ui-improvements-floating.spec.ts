@@ -3,7 +3,7 @@ import { mockWebSocketServer, interceptZustandStores } from "./helpers/e2e-helpe
 
 /**
  * E2E coverage for the shell UI:
- *  1. Composer overflow popover (replaces inline Mode/Permissions/Tasks toggles).
+ *  1. Composer overflow popover for responsive permission and task controls.
  *  2. Right panel modal overlay at narrow viewports (<768px).
  *  3. Docked shell surfaces with dividers instead of visible gaps.
  */
@@ -65,7 +65,7 @@ async function openComposerInNewThread(page: Page): Promise<void> {
   }
 }
 
-test.describe("Composer options — wide viewport (md+)", () => {
+test.describe("Composer options at wide viewport", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);
     // Must be called before page.goto so zustand.js is intercepted on load.
@@ -73,13 +73,13 @@ test.describe("Composer options — wide viewport (md+)", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
   });
 
-  test("renders Build / Full access toggles inline and hides the overflow trigger", async ({ page }) => {
+  test("renders Full access inline and hides the overflow trigger", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await openComposerInNewThread(page);
 
-    // Inline buttons are visible above the md breakpoint.
-    await expect(page.getByRole("button", { name: /^Build$/ })).toBeVisible();
+    // Capability modes are attached through the add menu, not permanent controls.
+    await expect(page.getByRole("button", { name: /^Build$/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^Full access$/ })).toBeVisible();
 
     // The overflow trigger is reserved for narrow viewports.
@@ -87,7 +87,7 @@ test.describe("Composer options — wide viewport (md+)", () => {
   });
 });
 
-test.describe("Composer options — narrow viewport (below md)", () => {
+test.describe("Composer options at narrow viewport", () => {
   test.beforeEach(async ({ page }) => {
     await mockWebSocketServer(page);
     // Must be called before page.goto so zustand.js is intercepted on load.
@@ -100,7 +100,7 @@ test.describe("Composer options — narrow viewport (below md)", () => {
     await page.waitForLoadState("networkidle");
     await openComposerInNewThread(page);
 
-    // Inline Build / Full access buttons collapse below md.
+    // Inline permission controls collapse below the threshold.
     await expect(page.getByRole("button", { name: /^Build$/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^Full access$/ })).toHaveCount(0);
 
@@ -108,31 +108,29 @@ test.describe("Composer options — narrow viewport (below md)", () => {
     await expect(trigger).toBeVisible();
     await trigger.click();
 
-    // Popover exposes grouped Mode + Permissions controls.
-    await expect(page.getByText("Mode", { exact: true })).toBeVisible();
+    // Capability modes remain in the add menu; this popover contains permissions.
+    await expect(page.getByText("Mode", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Permissions", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Build", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Plan" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Full" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Supervised" })).toBeVisible();
   });
 
-  test("Mode segmented control reflects aria-pressed when toggled", async ({ page }) => {
+  test("permission control reflects aria-pressed when toggled", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await openComposerInNewThread(page);
 
     await page.getByRole("button", { name: "Composer options" }).click();
-    const planBtn = page.getByRole("button", { name: "Plan", exact: true });
-    const buildBtn = page.getByRole("button", { name: "Build", exact: true });
+    const fullBtn = page.getByRole("button", { name: "Full", exact: true });
+    const supervisedBtn = page.getByRole("button", { name: "Supervised", exact: true });
 
-    await expect(buildBtn).toHaveAttribute("aria-pressed", "true");
-    await expect(planBtn).toHaveAttribute("aria-pressed", "false");
+    await expect(fullBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(supervisedBtn).toHaveAttribute("aria-pressed", "false");
 
-    await planBtn.click();
+    await supervisedBtn.click();
 
-    await expect(planBtn).toHaveAttribute("aria-pressed", "true");
-    await expect(buildBtn).toHaveAttribute("aria-pressed", "false");
+    await expect(supervisedBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(fullBtn).toHaveAttribute("aria-pressed", "false");
   });
 
   test("Tasks panel row is hidden when the thread has no tasks", async ({ page }) => {
@@ -337,8 +335,8 @@ test.describe("Visual regression — docked layout", () => {
     const trigger = page.getByRole("button", { name: "Composer options" });
     await expect(trigger).toBeVisible();
     await trigger.click();
-    // Wait for the popover to render its grouped controls before screenshotting.
-    await expect(page.getByText("Mode", { exact: true })).toBeVisible();
+    // Wait for the popover to render its controls before screenshotting.
+    await expect(page.getByText("Permissions", { exact: true })).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath("composer-popover.png"),
       fullPage: false,
