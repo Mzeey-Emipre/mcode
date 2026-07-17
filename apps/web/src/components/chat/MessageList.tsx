@@ -397,8 +397,17 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   /** Clears tail pin when the user scrolls content upward (wheel / trackpad). */
   const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
     if (e.deltaY < 0) {
+      const interruptedPendingTailScroll = scrollTimerRef.current !== null;
       scrollToTailIntentRef.current = false;
       pinListTailRef.current = false;
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
+      if (interruptedPendingTailScroll) {
+        isScrolledUpRef.current = true;
+        setShowScrollBtn(true);
+      }
       streamingFollowPauseUntilRef.current = Date.now() + WHEEL_UP_FOLLOW_PAUSE_MS;
     }
   }, []);
@@ -434,11 +443,18 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const awayFromTail = distanceFromBottom > USER_AWAY_FROM_BOTTOM_PX;
-    if (scrollToTailIntentRef.current && !awayFromTail) {
+    const wasScrolledUp = isScrolledUpRef.current;
+    const completedTailScroll = scrollToTailIntentRef.current && !awayFromTail;
+    if (completedTailScroll) {
       scrollToTailIntentRef.current = false;
     }
     const scrolledUp = awayFromTail && !scrollToTailIntentRef.current;
-    if (awayFromTail) pinListTailRef.current = false;
+    if (awayFromTail) {
+      pinListTailRef.current = false;
+    } else if (pinListTailRef.current || wasScrolledUp || completedTailScroll) {
+      pinListTailRef.current = true;
+      pinTailBaselineMaxScrollRef.current = maxScroll;
+    }
     isScrolledUpRef.current = scrolledUp;
     setShowScrollBtn(scrolledUp);
     if (!awayFromTail) {
@@ -627,6 +643,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     useFlushSync: false,
   });
   virtualizerRef.current = virtualizer;
+  const virtualTotalSize = virtualizer.getTotalSize();
 
   // Pinned to tail: always compensate for size changes so the viewport tracks
   // the bottom as rows measure. Adjusting by +delta when at scrollOffset = oldMaxScroll
@@ -652,6 +669,29 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     return item.start < scrollOffset;
   };
 
+  /** Pins the visible transcript to the current measured tail before paint. */
+  const snapToBottom = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    pinListTailRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    pinTailBaselineMaxScrollRef.current = Math.max(0, el.scrollHeight - el.clientHeight);
+    requestAnimationFrame(() => {
+      const current = containerRef.current;
+      if (!current || !pinListTailRef.current) return;
+      current.scrollTop = current.scrollHeight;
+      pinTailBaselineMaxScrollRef.current = Math.max(
+        0,
+        current.scrollHeight - current.clientHeight,
+      );
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!pinListTailRef.current) return;
+    snapToBottom();
+  }, [items.length, snapToBottom, virtualTotalSize]);
+
   /**
    * Programmatic scroll to the list tail. Auto-follow uses the scroll element
    * directly (no virtualizer reconcile, no CSS smooth). The floating button
@@ -659,35 +699,23 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
    */
   const scrollToBottom = useCallback(
     (smooth: boolean) => {
+      if (!smooth) {
+        if (scrollTimerRef.current) return;
+        snapToBottom();
+        return;
+      }
       if (scrollTimerRef.current) return;
-      const delay = smooth ? 200 : 0;
       scrollTimerRef.current = setTimeout(() => {
         scrollTimerRef.current = null;
         const count = itemsLengthRef.current;
         if (count === 0) return;
-        const el = containerRef.current;
-        if (smooth) {
-          virtualizer.scrollToIndex(count - 1, {
-            align: "end",
-            behavior: "smooth",
-          });
-          return;
-        }
-        if (el) {
-          pinListTailRef.current = true;
-          el.scrollTop = el.scrollHeight;
-          pinTailBaselineMaxScrollRef.current = Math.max(0, el.scrollHeight - el.clientHeight);
-          requestAnimationFrame(() => {
-            const el2 = containerRef.current;
-            if (el2) {
-              el2.scrollTop = el2.scrollHeight;
-              pinTailBaselineMaxScrollRef.current = Math.max(0, el2.scrollHeight - el2.clientHeight);
-            }
-          });
-        }
-      }, delay);
+        virtualizer.scrollToIndex(count - 1, {
+          align: "end",
+          behavior: "smooth",
+        });
+      }, 200);
     },
-    [virtualizer],
+    [snapToBottom, virtualizer],
   );
 
   /**
@@ -1040,7 +1068,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   }, [activeThreadId, items.length, loading, beginSuppressPassiveAutoBottomScroll, scheduleEndSuppressPassiveAutoBottomScroll]);
 
   // Discrete events (new message, tool call) -> scroll if at bottom, else highlight button
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isInitialLoadRef.current) return;
     if (suppressPassiveAutoBottomScrollRef.current) return;
     if (isScrolledUpRef.current) {
@@ -1059,8 +1087,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     scrollToBottom(false);
   }, [activeThreadId, messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
-  // Streaming deltas -> scroll if at bottom, else highlight button
-  useEffect(() => {
+  // Streaming deltas -> scroll before paint when following the tail, else highlight button.
+  useLayoutEffect(() => {
     if (suppressPassiveAutoBottomScrollRef.current) return;
     if (!streamingText || isInitialLoadRef.current) return;
     if (isScrolledUpRef.current) {
@@ -1177,7 +1205,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       >
         <div
           className="relative w-full"
-          style={{ height: virtualizer.getTotalSize() }}
+          style={{ height: virtualTotalSize }}
         >
           {virtualizer.getVirtualItems().map((vi) => {
             const item = items[vi.index];

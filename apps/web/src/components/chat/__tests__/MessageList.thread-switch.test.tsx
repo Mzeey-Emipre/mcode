@@ -18,15 +18,16 @@
  * `positionAtBottom({ measureFirst: true })` calls `scrollToIndex` with
  * `behavior: "auto"` so the list anchors to the tail before rows finish measuring.
  */
-import { render, act } from "@testing-library/react";
+import { render, act, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const measureSpy = vi.fn();
 const scrollToIndexSpy = vi.fn();
+let totalSizeValue = 0;
 
 const mockVirtualizer = {
   getVirtualItems: () => [],
-  getTotalSize: () => 0,
+  getTotalSize: () => totalSizeValue,
   measure: measureSpy,
   scrollToIndex: scrollToIndexSpy,
   measureElement: () => {},
@@ -103,6 +104,7 @@ import { rememberScrollTop, recallScrollTop, clearScrollMemory } from "../scroll
 beforeEach(() => {
   measureSpy.mockClear();
   scrollToIndexSpy.mockClear();
+  totalSizeValue = 0;
   clearScrollMemory();
 });
 
@@ -111,6 +113,109 @@ afterEach(() => {
 });
 
 describe("MessageList thread switch", () => {
+  it("keeps the measured transcript tail pinned as virtualized content grows", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [{ id: "m1", sequence: 1 }];
+    totalSizeValue = 6000;
+    const { rerender, container } = render(<MessageList />);
+
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    let scrollHeight = 6000;
+    let scrollTop = 5600;
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(scrollEl, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    scrollHeight = 8000;
+    totalSizeValue = 8000;
+    act(() => rerender(<MessageList />));
+
+    expect(scrollTop).toBe(8000);
+  });
+
+  it("preserves the reading position when virtualized content grows after wheel-up", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [{ id: "m1", sequence: 1 }];
+    totalSizeValue = 6000;
+    const { rerender, container } = render(<MessageList />);
+
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    let scrollHeight = 6000;
+    let scrollTop = 3000;
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(scrollEl, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    fireEvent.wheel(scrollEl, { deltaY: -100 });
+    scrollHeight = 8000;
+    totalSizeValue = 8000;
+    act(() => rerender(<MessageList />));
+
+    expect(scrollTop).toBe(3000);
+  });
+
+  it("does not restore tail pin when wheel-up remains inside the bottom cushion", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [{ id: "m1", sequence: 1 }];
+    totalSizeValue = 6000;
+    const { rerender, container } = render(<MessageList />);
+
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    let scrollHeight = 6000;
+    let scrollTop = 5600;
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(scrollEl, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    fireEvent.wheel(scrollEl, { deltaY: -100 });
+    scrollTop = 5580;
+    fireEvent.scroll(scrollEl);
+    scrollHeight = 8000;
+    totalSizeValue = 8000;
+    act(() => rerender(<MessageList />));
+
+    expect(scrollTop).toBe(5580);
+  });
+
   it("does not call virtualizer.measure() on a cache-hit switch", () => {
     loadingValue = false;            // cache hit ⇒ loading is false synchronously
     messagesValue = [{ id: "m1", sequence: 1 }];
