@@ -3,7 +3,8 @@
  *
  * 1. Built renamed `mcode-server` Electron binary (before fuse flip)
  * 2. Copied Claude Agent SDK native CLI into the asar-unpacked server tree
- * 3. Copied browser V8 snapshot (when generated) and flipped security fuses
+ * 3. Restored node-pty's Windows ConPTY runtime after the native rebuild
+ * 4. Copied browser V8 snapshot (when generated) and flipped security fuses
  *
  * This script is invoked automatically by electron-builder via the
  * "afterPack" config in package.json.
@@ -20,6 +21,7 @@ import {
   electronPlatformToNpm,
   resolvePackagedServerDir,
 } from "../../../scripts/build-server-dev-bundle.mjs";
+import { ensurePackagedConptyRuntime } from "./packaged-node-pty.mjs";
 
 /**
  * @param {import("electron-builder").AfterPackContext} context
@@ -88,6 +90,7 @@ export default async function afterPack(context) {
 
   const serverPackageRoot = resolve(desktopRoot, "..", "server");
   const npmPlatform = electronPlatformToNpm(electronPlatformName);
+  const npmArch = electronArchToNpm(context.arch);
   const packagedServerDir = resolvePackagedServerDir({
     appOutDir,
     electronPlatformName,
@@ -97,9 +100,26 @@ export default async function afterPack(context) {
     destServerDir: packagedServerDir,
     serverPackageRoot,
     platform: npmPlatform,
-    arch: electronArchToNpm(context.arch),
+    arch: npmArch,
   });
   console.log(`[after-pack] Copied Claude SDK CLI (${platformPkg}) to ${binDst}`);
+
+  if (npmPlatform === "win32") {
+    const nodePtyRoot = resolve(
+      packagedServerDir,
+      "..",
+      "..",
+      "node_modules",
+      "node-pty",
+    );
+    // Keep this mandatory: electron-builder can retain conpty.node while
+    // dropping its runtime files, which makes every packaged terminal fail.
+    const { dllPath } = ensurePackagedConptyRuntime({
+      nodePtyRoot,
+      arch: npmArch,
+    });
+    console.log(`[after-pack] Restored packaged ConPTY runtime at ${dllPath}`);
+  }
 
   // -------------------------------------------------------------------------
   // Step 2: V8 snapshot copy + fuse flip.
