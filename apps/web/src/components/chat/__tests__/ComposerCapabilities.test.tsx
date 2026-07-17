@@ -50,11 +50,14 @@ describe("composer capabilities", () => {
     const onAttachCapability = vi.fn();
     renderAddMenu({ onAttachCapability });
 
-    await user.click(screen.getByRole("button", { name: "Add to composer" }));
-    await user.click(screen.getByRole("button", { name: new RegExp(label) }));
+    const trigger = screen.getByRole("button", { name: "Add to composer" });
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    expect(screen.getByRole("menu", { name: "Add to composer" })).toBeVisible();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: new RegExp(label) }));
 
     await waitFor(() => expect(onAttachCapability).toHaveBeenCalledWith(capabilityId));
-    expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menu", { name: "Add to composer" })).not.toBeInTheDocument();
   });
 
   it("attaches Ultra from the composer add menu", async () => {
@@ -63,10 +66,10 @@ describe("composer capabilities", () => {
     renderAddMenu({ capabilities: CODEX_CAPABILITIES, onAttachCapability });
 
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
-    await user.click(screen.getByRole("button", { name: /Ultra/ }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: /Ultra/ }));
 
     await waitFor(() => expect(onAttachCapability).toHaveBeenCalledWith("orchestration"));
-    expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menu", { name: "Add to composer" })).not.toBeInTheDocument();
   });
 
   it("removes an attached capability through its named control", async () => {
@@ -93,11 +96,13 @@ describe("composer capabilities", () => {
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
 
     expect(
-      screen.getByRole("button", { name: /Plan/ }).querySelector(".lucide-list-checks"),
+      screen.getByRole("menuitemcheckbox", { name: /Plan/ }).querySelector(".lucide-list-checks"),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Goal/ }).querySelector(".lucide-goal")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /Ultra/ }).querySelector(".lucide-network"),
+      screen.getByRole("menuitemcheckbox", { name: /Goal/ }).querySelector(".lucide-goal"),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: /Ultra/ }).querySelector(".lucide-network"),
     ).toBeTruthy();
   });
 
@@ -107,8 +112,8 @@ describe("composer capabilities", () => {
 
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
 
-    const planButton = screen.getByRole("button", { name: /Plan/ });
-    expect(planButton).toHaveAttribute("aria-pressed", "true");
+    const planButton = screen.getByRole("menuitemcheckbox", { name: /Plan/ });
+    expect(planButton).toHaveAttribute("aria-checked", "true");
     expect(planButton.querySelector(".lucide-check")).toBeTruthy();
   });
 
@@ -144,7 +149,7 @@ describe("composer capabilities", () => {
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
 
     expect(screen.queryByText("Capabilities")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Files/ })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: /Files/ })).toBeVisible();
   });
 
   it("focuses the first action and supports arrow, Home, and End navigation", async () => {
@@ -154,9 +159,9 @@ describe("composer capabilities", () => {
     const trigger = screen.getByRole("button", { name: "Add to composer" });
     await user.click(trigger);
 
-    const files = screen.getByRole("button", { name: /Files/ });
-    const plan = screen.getByRole("button", { name: /Plan/ });
-    const ultracode = screen.getByRole("button", { name: /Ultracode/ });
+    const files = screen.getByRole("menuitem", { name: /Files/ });
+    const plan = screen.getByRole("menuitemcheckbox", { name: /Plan/ });
+    const ultracode = screen.getByRole("menuitemcheckbox", { name: /Ultracode/ });
     await waitFor(() => expect(files).toHaveFocus());
 
     await user.keyboard("{ArrowDown}");

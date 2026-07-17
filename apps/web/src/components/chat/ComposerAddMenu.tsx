@@ -156,7 +156,7 @@ export function ComposerAddMenu({
         aria-label="Add to composer"
         title="Add to composer"
         aria-expanded={open}
-        aria-haspopup="dialog"
+        aria-haspopup="menu"
         data-testid="composer-add"
         disabled={disabled}
         onClick={toggleMenu}
@@ -167,16 +167,22 @@ export function ComposerAddMenu({
       {open && anchorRect ? (
         <ComposerOverlaySurface
           data-testid="composer-add-menu"
-          role="dialog"
+          role="menu"
           aria-label="Add to composer"
           anchorRect={anchorRect}
           estimatedHeight={ADD_MENU_HEIGHT}
           attached
         >
           <div ref={menuRef} className="p-1" onKeyDown={handleMenuKeyDown}>
-            <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">Attach</div>
+            <div
+              role="presentation"
+              className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground"
+            >
+              Attach
+            </div>
             <Button
               type="button"
+              role="menuitem"
               variant="ghost"
               size="sm"
               onClick={handleAttachFiles}
@@ -190,8 +196,11 @@ export function ComposerAddMenu({
             </Button>
             {capabilities.length > 0 ? (
               <>
-                <div className="mx-2 my-1 h-px bg-border/60" />
-                <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">
+                <div role="separator" className="mx-2 my-1 h-px bg-border/60" />
+                <div
+                  role="presentation"
+                  className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground"
+                >
                   Capabilities
                 </div>
                 {capabilities.map((capability) => {
@@ -201,11 +210,12 @@ export function ComposerAddMenu({
                     <Button
                       key={capability.id}
                       type="button"
+                      role="menuitemcheckbox"
                       variant="ghost"
                       size="sm"
                       onClick={() => handleAttachCapability(capability.id)}
                       disabled={attached}
-                      aria-pressed={attached}
+                      aria-checked={attached}
                       className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70 disabled:bg-accent/45 disabled:opacity-100"
                     >
                       <Icon

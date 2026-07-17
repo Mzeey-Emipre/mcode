@@ -1386,12 +1386,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setMode(INTERACTION_MODES.PLAN);
     agentSettingsTouchedRef.current = true;
     if (threadId) void setThreadSettings(threadId, { interactionMode: INTERACTION_MODES.PLAN });
+    editorRef.current?.focus();
   }, [setMode, threadId, setThreadSettings]);
 
   const detachPlan = useCallback(() => {
     setMode(INTERACTION_MODES.BUILD);
     agentSettingsTouchedRef.current = true;
     if (threadId) void setThreadSettings(threadId, { interactionMode: INTERACTION_MODES.BUILD });
+    editorRef.current?.focus();
   }, [setMode, threadId, setThreadSettings]);
 
   const attachGoal = useCallback(() => {
