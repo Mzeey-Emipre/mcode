@@ -204,8 +204,11 @@ vi.mock("../ProviderUnavailableBanner", () => ({
   ProviderUnavailableBanner: () => <div />,
 }));
 
-function seedComposerState(mode: "direct" | "worktree" | "existing-worktree") {
-  const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+function seedComposerState(
+  mode: "direct" | "worktree" | "existing-worktree",
+  isGitRepo = true,
+) {
+  const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: isGitRepo });
   useWorkspaceStore.setState({
     workspaces: [workspace],
     activeWorkspaceId: workspace.id,
@@ -314,6 +317,14 @@ describe("Composer checkout confirmation", () => {
     expect(within(strip).getByText(workspace.name)).toBeInTheDocument();
     expect(within(strip).getByTestId("mode-selector")).toHaveTextContent("direct");
     expect(within(strip).getByTestId("branch-picker")).toHaveTextContent("feature/base");
+  });
+
+  it("renders Local for a non-git project without overwriting the remembered mode", () => {
+    seedComposerState("worktree", false);
+    render(<Composer isNewThread workspaceId="ws-1" />);
+
+    expect(screen.getByTestId("mode-selector")).toHaveTextContent("direct");
+    expect(useWorkspaceStore.getState().newThreadMode).toBe("worktree");
   });
 
   it("clears the selected project without deleting it", async () => {

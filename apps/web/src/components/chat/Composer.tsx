@@ -45,6 +45,7 @@ import { isCursorPermissionLockedToFull } from "@/lib/cursor-permission";
 import { isGoalControlCommand } from "@/lib/goal-command";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
+import { rememberComposerMode } from "@/lib/composer-mode-preference";
 import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supportsUltrathink, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector, ALL_MODE_OPTIONS } from "./ModeSelector";
@@ -1519,6 +1520,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     (mode: ComposerMode) => {
       setComposerModeLocal(mode);
       setNewThreadMode(mode);
+      rememberComposerMode(mode);
       if (mode === "existing-worktree" && workspaceId) {
         loadWorktrees(workspaceId);
       }
@@ -1526,27 +1528,16 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     [setNewThreadMode, loadWorktrees, workspaceId],
   );
 
+  // Resolve capability and thread state together so a remembered worktree mode
+  // cannot fight the direct-only constraint of a non-git project.
   useEffect(() => {
-    if (isNewThread && composerMode !== newThreadMode) {
-      setComposerModeLocal(newThreadMode);
+    const targetMode = isNewThread
+      ? (isGitRepo ? newThreadMode : "direct")
+      : (activeThread?.mode === "worktree" ? "worktree" : "direct");
+    if (composerMode !== targetMode) {
+      setComposerModeLocal(targetMode);
     }
-  }, [isNewThread, composerMode, newThreadMode]);
-
-  // Sync composerMode with thread's persisted mode when switching threads
-  useEffect(() => {
-    if (isNewThread) return;
-    const mode = activeThread?.mode === "worktree" ? "worktree" : "direct";
-    setComposerModeLocal(mode);
-    setNewThreadMode(mode);
-  }, [activeThread?.mode, isNewThread, setNewThreadMode]);
-
-  // Force direct mode for non-git workspaces — worktree modes are not available without git
-  useEffect(() => {
-    if (!isGitRepo && composerMode !== "direct") {
-      setComposerModeLocal("direct");
-      setNewThreadMode("direct");
-    }
-  }, [isGitRepo, composerMode, setNewThreadMode]);
+  }, [activeThread?.mode, composerMode, isGitRepo, isNewThread, newThreadMode]);
 
   // Load branches when entering new thread mode (always refresh to pick up live changes)
   useEffect(() => {

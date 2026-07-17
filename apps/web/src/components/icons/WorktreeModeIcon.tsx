@@ -18,6 +18,7 @@ export function WorktreeModeIcon({
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      data-slot="worktree-mode-icon"
       className={cn("shrink-0", className)}
       {...props}
     >
