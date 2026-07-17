@@ -414,8 +414,7 @@ test("thread switch shows a running agent before persisted history refreshes", a
 
   await threadItems.nth(1).click();
   await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread B");
-  await expect(page.getByText("Running a command...", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("echo live-switch", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Running command echo live-switch" })).toBeVisible();
   expect(typeof resolveThreadBHistory).toBe("function");
 
   resolveThreadBHistory?.();
