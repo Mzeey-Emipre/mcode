@@ -250,6 +250,9 @@ test("rapid reselection paints the tail before auxiliary thread data resolves", 
   resolveSnapshots();
   resolveGoal();
   resolveThreadB();
+  await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread A");
+  await expect(page.getByText("Alpha tail after reselection", { exact: true })).toBeVisible();
+  await expect(page.getByText("Beta tail", { exact: true })).not.toBeVisible();
 });
 
 test("thread switch paints the latest turn before older history finishes", async ({ page }) => {
@@ -338,7 +341,12 @@ test("thread switch paints the latest turn before older history finishes", async
   { timeout: 3000 }).toBe(2);
   expect(typeof resolveOlderHistory).toBe("function");
   await expect(page.getByText("Latest beta response", { exact: true })).toBeVisible();
+  const scrollContainer = page.locator("[data-testid=message-list] > div").first();
+  const tailScrollHeight = await scrollContainer.evaluate((element) => element.scrollHeight);
   resolveOlderHistory?.();
+  await expect.poll(() => scrollContainer.evaluate((element) => element.scrollHeight))
+    .toBeGreaterThan(tailScrollHeight);
+  await expect(page.getByText("Latest beta response", { exact: true })).toBeVisible();
 
   const threadBCalls = calls.filter((call) =>
     call.method === "conversation.page"
@@ -418,4 +426,5 @@ test("thread switch shows a running agent before persisted history refreshes", a
   expect(typeof resolveThreadBHistory).toBe("function");
 
   resolveThreadBHistory?.();
+  await expect(page.getByRole("button", { name: "Running command echo live-switch" })).toBeVisible();
 });

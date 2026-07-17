@@ -265,6 +265,11 @@ function ThreadPreparingShell({
   );
 }
 const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024; // 20 MB
+const THREAD_SUBSCRIPTION_RETRY_BASE_MS = 100;
+const THREAD_SUBSCRIPTION_RETRY_MAX_MS = 1_600;
+const THREAD_SUBSCRIPTION_MAX_RETRIES = 4;
+
+type ThreadSubscriptionAction = "subscribe" | "unsubscribe";
 
 /** Keeps the conversation surface occupied while the latest persisted tail loads. */
 function ConversationLoadingState() {
@@ -459,38 +464,141 @@ export function ChatView() {
   }, [connectionStatus]);
 
   const prevThreadIdRef = useRef<string | null>(null);
-  const subscribedThreadIdsRef = useRef<Set<string>>(new Set());
+  const confirmedThreadIdsRef = useRef<Set<string>>(new Set());
+  const desiredThreadIdsRef = useRef<Set<string>>(new Set());
+  const pendingThreadChangesRef = useRef<Map<string, symbol>>(new Map());
   const previousSubscriptionStatusRef = useRef<typeof connectionStatus | null>(null);
+  const subscriptionEpochRef = useRef(0);
+  const subscriptionRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subscriptionRetryAttemptRef = useRef(0);
+  const subscriptionRetryExhaustedRef = useRef(false);
+  const subscriptionTargetSignatureRef = useRef("");
+  const subscriptionMountedRef = useRef(true);
+  const [subscriptionReconcileVersion, setSubscriptionReconcileVersion] = useState(0);
 
   useEffect(() => {
     const desired = new Set(runningThreadIds);
     if (activeThreadId) desired.add(activeThreadId);
+    desiredThreadIdsRef.current = desired;
 
-    const previous = subscribedThreadIdsRef.current;
+    const targetSignature = `${connectionStatus}:${Array.from(desired).sort().join("\u0000")}`;
+    if (subscriptionTargetSignatureRef.current !== targetSignature) {
+      subscriptionTargetSignatureRef.current = targetSignature;
+      subscriptionRetryAttemptRef.current = 0;
+      subscriptionRetryExhaustedRef.current = false;
+      if (subscriptionRetryTimerRef.current !== null) {
+        clearTimeout(subscriptionRetryTimerRef.current);
+        subscriptionRetryTimerRef.current = null;
+      }
+    }
+
     const reconnected = connectionStatus === "connected"
       && previousSubscriptionStatusRef.current !== "connected";
-    if (connectionStatus === "connected") {
-      for (const threadId of desired) {
-        if (reconnected || !previous.has(threadId)) {
-          void getTransport().subscribeThread(threadId).catch(() => {});
-        }
-      }
-      for (const threadId of previous) {
-        if (!desired.has(threadId)) {
-          void getTransport().unsubscribeThread(threadId).catch(() => {});
-        }
-      }
+    const disconnected = connectionStatus !== "connected"
+      && previousSubscriptionStatusRef.current === "connected";
+    if (reconnected || disconnected) {
+      subscriptionEpochRef.current += 1;
+      confirmedThreadIdsRef.current.clear();
+      pendingThreadChangesRef.current.clear();
     }
-
-    subscribedThreadIdsRef.current = desired;
     previousSubscriptionStatusRef.current = connectionStatus;
-  }, [activeThreadId, connectionStatus, runningThreadIds]);
 
-  useEffect(() => () => {
-    for (const threadId of subscribedThreadIdsRef.current) {
-      void getTransport().unsubscribeThread(threadId).catch(() => {});
+    if (connectionStatus !== "connected" || subscriptionRetryExhaustedRef.current) return;
+
+    const epoch = subscriptionEpochRef.current;
+    const operations: Promise<boolean>[] = [];
+    const startChange = (threadId: string, action: ThreadSubscriptionAction) => {
+      const change = Symbol();
+      pendingThreadChangesRef.current.set(threadId, change);
+      const request = action === "subscribe"
+        ? getTransport().subscribeThread(threadId)
+        : getTransport().unsubscribeThread(threadId);
+
+      operations.push(request.then(() => {
+        if (subscriptionEpochRef.current !== epoch) return true;
+        if (action === "subscribe") confirmedThreadIdsRef.current.add(threadId);
+        else confirmedThreadIdsRef.current.delete(threadId);
+        return true;
+      }, () => false).finally(() => {
+        if (pendingThreadChangesRef.current.get(threadId) === change) {
+          pendingThreadChangesRef.current.delete(threadId);
+        }
+      }));
+    };
+
+    for (const threadId of desired) {
+      if (!confirmedThreadIdsRef.current.has(threadId)
+        && !pendingThreadChangesRef.current.has(threadId)) {
+        startChange(threadId, "subscribe");
+      }
     }
-    subscribedThreadIdsRef.current.clear();
+    for (const threadId of confirmedThreadIdsRef.current) {
+      if (!desired.has(threadId) && !pendingThreadChangesRef.current.has(threadId)) {
+        startChange(threadId, "unsubscribe");
+      }
+    }
+
+    if (operations.length === 0) return;
+
+    void Promise.all(operations).then((results) => {
+      if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
+      if (subscriptionTargetSignatureRef.current !== targetSignature) {
+        setSubscriptionReconcileVersion((version) => version + 1);
+        return;
+      }
+
+      if (results.every(Boolean)) {
+        subscriptionRetryAttemptRef.current = 0;
+        subscriptionRetryExhaustedRef.current = false;
+        const confirmed = confirmedThreadIdsRef.current;
+        const latestDesired = desiredThreadIdsRef.current;
+        const needsReconcile = confirmed.size !== latestDesired.size
+          || Array.from(confirmed).some((threadId) => !latestDesired.has(threadId));
+        if (needsReconcile) {
+          setSubscriptionReconcileVersion((version) => version + 1);
+        }
+        return;
+      }
+
+      if (subscriptionRetryAttemptRef.current >= THREAD_SUBSCRIPTION_MAX_RETRIES) {
+        subscriptionRetryExhaustedRef.current = true;
+        return;
+      }
+
+      const delay = Math.min(
+        THREAD_SUBSCRIPTION_RETRY_BASE_MS * (2 ** subscriptionRetryAttemptRef.current),
+        THREAD_SUBSCRIPTION_RETRY_MAX_MS,
+      );
+      subscriptionRetryAttemptRef.current += 1;
+      subscriptionRetryTimerRef.current = setTimeout(() => {
+        subscriptionRetryTimerRef.current = null;
+        if (subscriptionMountedRef.current) {
+          setSubscriptionReconcileVersion((version) => version + 1);
+        }
+      }, delay);
+    });
+  }, [activeThreadId, connectionStatus, runningThreadIds, subscriptionReconcileVersion]);
+
+  useEffect(() => {
+    subscriptionMountedRef.current = true;
+    return () => {
+      subscriptionMountedRef.current = false;
+      subscriptionEpochRef.current += 1;
+      if (subscriptionRetryTimerRef.current !== null) {
+        clearTimeout(subscriptionRetryTimerRef.current);
+        subscriptionRetryTimerRef.current = null;
+      }
+      const threadIds = new Set([
+        ...confirmedThreadIdsRef.current,
+        ...desiredThreadIdsRef.current,
+      ]);
+      for (const threadId of threadIds) {
+        void getTransport().unsubscribeThread(threadId).catch(() => {});
+      }
+      confirmedThreadIdsRef.current.clear();
+      desiredThreadIdsRef.current.clear();
+      pendingThreadChangesRef.current.clear();
+    };
   }, []);
 
   useLayoutEffect(() => {

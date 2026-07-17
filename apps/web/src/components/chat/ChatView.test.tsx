@@ -341,4 +341,58 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     });
     expect(chatViewTransportMock.unsubscribeThread).not.toHaveBeenCalledWith(thread1.id);
   });
+
+  it("retries a rejected thread subscription", async () => {
+    chatViewTransportMock.subscribeThread
+      .mockRejectedValueOnce(new Error("temporary subscribe failure"))
+      .mockResolvedValue(undefined);
+
+    render(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledTimes(2);
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenLastCalledWith("thread-1");
+    }, { timeout: 3000 });
+  });
+
+  it("stops retrying a rejected thread subscription after the retry limit", async () => {
+    chatViewTransportMock.subscribeThread.mockRejectedValue(new Error("persistent subscribe failure"));
+
+    render(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledTimes(5);
+    }, { timeout: 3000 });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledTimes(5);
+  });
+
+  it("retries a rejected thread unsubscription", async () => {
+    const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2" });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread1.id,
+      threads: [thread1, thread2],
+    }));
+
+    const { rerender } = render(<ChatView />);
+    await waitFor(() => {
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledWith(thread1.id);
+    });
+
+    chatViewTransportMock.unsubscribeThread
+      .mockRejectedValueOnce(new Error("temporary unsubscribe failure"))
+      .mockResolvedValue(undefined);
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread2.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: thread2.id });
+    rerender(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewTransportMock.unsubscribeThread).toHaveBeenCalledTimes(2);
+      expect(chatViewTransportMock.unsubscribeThread).toHaveBeenLastCalledWith(thread1.id);
+    }, { timeout: 3000 });
+  });
 });
