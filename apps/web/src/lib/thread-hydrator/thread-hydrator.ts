@@ -19,11 +19,19 @@ import type {
   ThreadHydratorTransport,
   ThreadHydratorWriteState,
 } from "./types";
-import { snapshotBuilder } from "./snapshot-builder";
+import { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
 
-/** Initial message fetch size per thread. */
-export const MESSAGE_FETCH_SIZE = 100;
+interface HistoryHydrate {
+  expectedEpoch: number;
+  promise: Promise<void>;
+}
+
+/** Latest messages fetched before the selected thread first paints. */
+export const MESSAGE_FETCH_SIZE = 12;
+
+/** Earlier messages filled in after the latest tail has painted. */
+export const HISTORY_PREFETCH_SIZE = 88;
 
 /** Auxiliary side-effect refresh TTL (permissions, tasks, plans). */
 export const HYDRATION_TTL_MS = 2000;
@@ -39,6 +47,7 @@ export class ThreadHydrator {
   private readonly auxiliaryHydrator: AuxiliaryHydrator;
   private readonly activeHydrates = new Map<string, Promise<void>>();
   private readonly backgroundHydrates = new Map<string, Promise<void>>();
+  private readonly historyHydrates = new Map<string, HistoryHydrate>();
 
   constructor(private readonly deps: ThreadHydratorDeps) {
     this.auxiliaryHydrator = new AuxiliaryHydrator({
@@ -145,13 +154,33 @@ export class ThreadHydrator {
       return;
     }
 
+    const resident = this.deps.getState().records.get(threadId);
+    const hasResidentLayer = resident != null && (
+      resident.messages.length > 0
+      || resident.streaming.length > 0
+      || resident.toolCalls.length > 0
+      || resident.thoughtSegments.length > 0
+      || resident.hooks.length > 0
+      || this.deps.getState().runningThreadIds.has(threadId)
+    );
+
     const inFlight = this.activeHydrates.get(threadId);
     if (inFlight) {
+      this.selectInFlightLayer(threadId, hasResidentLayer);
       await inFlight;
+      const state = this.deps.getState();
+      const current = getThreadRecord(state.records, threadId);
+      if (state.currentThreadId === threadId && current.loading && !hasCachedRecord(threadId)) {
+        await this.hydrateActive(threadId, opts);
+      }
       return;
     }
 
-    const hydrate = this.fetchActiveReusingBackground(threadId, opts).finally(() => {
+    if (hasResidentLayer) {
+      this.activateResidentLayer(threadId);
+    }
+
+    const hydrate = this.fetchActiveReusingBackground(threadId, opts, hasResidentLayer).finally(() => {
       if (this.activeHydrates.get(threadId) === hydrate) {
         this.activeHydrates.delete(threadId);
       }
@@ -164,10 +193,13 @@ export class ThreadHydrator {
   private async fetchActiveReusingBackground(
     threadId: string,
     opts?: ThreadHydratorOptions,
+    hasResidentLayer = false,
   ): Promise<void> {
     const background = this.backgroundHydrates.get(threadId);
     if (background) {
-      this.prepareActiveLoad(threadId);
+      if (!hasResidentLayer) {
+        this.prepareActiveLoad(threadId);
+      }
       await background;
 
       if (this.deps.getState().currentThreadId !== threadId) return;
@@ -182,7 +214,42 @@ export class ThreadHydrator {
       return;
     }
 
-    await this.fetchAndCommit(threadId, opts);
+    await this.fetchAndCommit(threadId, opts, hasResidentLayer
+      ? {
+          skipPrepare: true,
+          fetchLimit: BACKGROUND_PREFETCH_LIMIT,
+          prefetchEarlierHistory: false,
+        }
+      : undefined);
+  }
+
+  /** Makes a retained thread record visible while its persisted history refreshes. */
+  private activateResidentLayer(threadId: string): void {
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      const current = getThreadRecord(state.records, threadId);
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          loading: false,
+          error: null,
+          isLoadingMore: false,
+          loadEpoch: current.loadEpoch + 1,
+          settings: this.deps.getWorkspaceThreadSettings(threadId),
+        }),
+        currentThreadId: threadId,
+      };
+    });
+  }
+
+  /** Makes an already-loading thread current without invalidating its request epoch. */
+  private selectInFlightLayer(threadId: string, hasResidentLayer: boolean): void {
+    this.deps.setState((state: ThreadHydratorWriteState) => ({
+      records: patchThreadRecord(state.records, threadId, {
+        loading: !hasResidentLayer,
+        error: null,
+        settings: this.deps.getWorkspaceThreadSettings(threadId),
+      }),
+      currentThreadId: threadId,
+    }));
   }
 
   /** Restore cached data to the active store and refresh auxiliary data. */
@@ -193,12 +260,17 @@ export class ThreadHydrator {
     restoreOpts?: { bumpLoadEpoch?: boolean },
   ): void {
     this.restoreFromCache(threadId, cached, restoreOpts);
-    void this.refreshThreadGoal(threadId);
+    const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
+    void this.refreshThreadGoal(threadId, expectedEpoch);
     this.auxiliaryHydrator.hydrate(threadId, {
       freshnessTtlMs: HYDRATION_TTL_MS,
       force: opts?.force,
       commitFileChangesToStore: true,
+      expectedLoadEpoch: expectedEpoch,
     });
+    if (cached.hasMoreMessages && cached.messages.length < BACKGROUND_PREFETCH_LIMIT) {
+      this.scheduleEarlierHistoryHydration(threadId, cached);
+    }
   }
 
   /**
@@ -250,9 +322,21 @@ export class ThreadHydrator {
   }
 
   /** Apply lookup result semantics to the live record and record cache. */
-  private applyGoalLookup(threadId: string, lookup: GoalLookupResult): void {
+  private applyGoalLookup(
+    threadId: string,
+    lookup: GoalLookupResult,
+    expectedEpoch?: number,
+  ): void {
+    let applied = false;
     this.deps.setState((state: ThreadHydratorWriteState) => {
       const current = getThreadRecord(state.records, threadId);
+      if (expectedEpoch != null && (
+        state.currentThreadId !== threadId
+        || current.loadEpoch !== expectedEpoch
+      )) {
+        return {};
+      }
+      applied = true;
       const goal = resolveGoalLookupGoal(lookup, current.goal);
       return {
         records: patchThreadRecord(state.records, threadId, { goal }),
@@ -260,16 +344,40 @@ export class ThreadHydrator {
     });
 
     const cached = getCachedRecord(threadId);
-    if (!cached) return;
+    if (!cached || !applied) return;
     const goal = resolveGoalLookupGoal(lookup, cached.goal);
     cacheRecord(threadId, { ...cached, goal });
   }
 
+  /** Merges file-change snapshots only into the load that requested them. */
+  private applySnapshots(
+    threadId: string,
+    snapshots: Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>,
+    expectedEpoch: number,
+  ): void {
+    const fileChanges = SnapshotBuilder.deriveFileChanges(snapshots);
+    let applied = false;
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      const current = getThreadRecord(state.records, threadId);
+      if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) {
+        return {};
+      }
+      applied = true;
+      return {
+        records: patchThreadRecord(state.records, threadId, fileChanges),
+      };
+    });
+
+    const cached = getCachedRecord(threadId);
+    if (!cached || !applied) return;
+    cacheRecord(threadId, { ...cached, ...fileChanges });
+  }
+
   /** Refresh one thread's active goal without blocking main hydration. */
-  private async refreshThreadGoal(threadId: string): Promise<void> {
+  private async refreshThreadGoal(threadId: string, expectedEpoch: number): Promise<void> {
     try {
       const lookup = await this.transport().getThreadGoal(threadId);
-      this.applyGoalLookup(threadId, lookup);
+      this.applyGoalLookup(threadId, lookup, expectedEpoch);
     } catch {
       // Best-effort hydration: message load remains the authoritative error surface.
     }
@@ -333,34 +441,42 @@ export class ThreadHydrator {
   private async fetchAndCommit(
     threadId: string,
     opts?: ThreadHydratorOptions,
-    commitOpts?: { skipPrepare?: boolean },
+    commitOpts?: {
+      skipPrepare?: boolean;
+      fetchLimit?: number;
+      prefetchEarlierHistory?: boolean;
+    },
   ): Promise<void> {
     const { getState, setState } = this.deps;
 
     if (!commitOpts?.skipPrepare) {
       this.prepareActiveLoad(threadId);
     }
+    const expectedEpoch = getThreadRecord(getState().records, threadId).loadEpoch;
 
     try {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
       const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
 
       const goalLookupPromise = this.transport().getThreadGoal(threadId).catch(() => null);
-      const [pageResult, snapshots, goalLookup] = await Promise.all([
-        this.transport().loadConversationPage(threadId, MESSAGE_FETCH_SIZE),
-        shouldFetchSnapshots
-          ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
-          : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>),
-        goalLookupPromise,
-      ]);
+      const snapshotsPromise = shouldFetchSnapshots
+        ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
+        : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>);
+      const pageResult = await this.transport().loadConversationPage(
+        threadId,
+        commitOpts?.fetchLimit ?? MESSAGE_FETCH_SIZE,
+      );
 
-      if (getState().currentThreadId !== threadId) return;
+      const stateAtCommit = getState();
+      if (
+        stateAtCommit.currentThreadId !== threadId
+        || getThreadRecord(stateAtCommit.records, threadId).loadEpoch !== expectedEpoch
+      ) return;
 
       const patch = snapshotBuilder.build({
         messages: pageResult.messages,
         hasMore: pageResult.hasMore,
         answeredPlanMessageIds: pageResult.answeredPlanMessageIds,
-        snapshots,
       });
 
       setState((state: ThreadHydratorWriteState) => ({
@@ -377,6 +493,8 @@ export class ThreadHydrator {
         freshnessTtlMs: HYDRATION_TTL_MS,
         force: opts?.force ?? true,
         commitFileChangesToStore: true,
+        expectedLoadEpoch: expectedEpoch,
+        skipFileChangeSnapshots: true,
       });
 
       const committed = getThreadRecord(getState().records, threadId);
@@ -391,8 +509,14 @@ export class ThreadHydrator {
       }
 
       cacheRecord(threadId, getThreadRecord(getState().records, threadId));
-      if (goalLookup) {
-        this.applyGoalLookup(threadId, goalLookup);
+      void snapshotsPromise.then((snapshots) => {
+        this.applySnapshots(threadId, snapshots, expectedEpoch);
+      });
+      void goalLookupPromise.then((goalLookup) => {
+        if (goalLookup) this.applyGoalLookup(threadId, goalLookup, expectedEpoch);
+      });
+      if (commitOpts?.prefetchEarlierHistory !== false) {
+        this.scheduleEarlierHistoryHydration(threadId, pageResult);
       }
     } catch (e) {
       if (getState().currentThreadId === threadId) {
@@ -404,6 +528,100 @@ export class ThreadHydrator {
         }));
       }
       evictCachedRecord(threadId);
+    }
+  }
+
+  /** Defers older history until the browser has had a chance to paint the tail. */
+  private scheduleEarlierHistoryHydration(
+    threadId: string,
+    page: Pick<ThreadRecord, "messages"> & { hasMore?: boolean; hasMoreMessages?: boolean },
+  ): void {
+    if (!(page.hasMore ?? page.hasMoreMessages) || page.messages.length === 0) return;
+    const before = page.messages[0].sequence;
+    const epoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
+    const hydrateKey = `${threadId}:${before}`;
+    setTimeout(() => {
+      const state = this.deps.getState();
+      if (state.currentThreadId !== threadId) return;
+      if (getThreadRecord(state.records, threadId).loadEpoch !== epoch) return;
+      const existing = this.historyHydrates.get(hydrateKey);
+      if (existing) {
+        existing.expectedEpoch = epoch;
+        return;
+      }
+      const hydrate: HistoryHydrate = {
+        expectedEpoch: epoch,
+        promise: Promise.resolve(),
+      };
+      hydrate.promise = this.hydrateEarlierHistory(
+        threadId,
+        before,
+        () => hydrate.expectedEpoch,
+      ).finally(() => {
+        if (this.historyHydrates.get(hydrateKey) === hydrate) {
+          this.historyHydrates.delete(hydrateKey);
+        }
+      });
+      this.historyHydrates.set(hydrateKey, hydrate);
+    }, 0);
+  }
+
+  /** Prepends the rest of the warm history window without blocking the tail. */
+  private async hydrateEarlierHistory(
+    threadId: string,
+    before: number,
+    getExpectedEpoch: () => number,
+  ): Promise<void> {
+    try {
+      const page = await this.transport().loadConversationPage(
+        threadId,
+        HISTORY_PREFETCH_SIZE,
+        before,
+      );
+      const state = this.deps.getState();
+      const current = getThreadRecord(state.records, threadId);
+      const expectedEpoch = getExpectedEpoch();
+      if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return;
+
+      const currentIds = new Set(current.messages.map((message) => message.id));
+      const earlierMessages = page.messages.filter((message) => !currentIds.has(message.id));
+      const persistedToolCallCounts = { ...current.persistedToolCallCounts };
+      for (const message of earlierMessages) {
+        if (message.tool_call_count && message.tool_call_count > 0) {
+          persistedToolCallCounts[message.id] = message.tool_call_count;
+        }
+      }
+      const messages = [...earlierMessages, ...current.messages];
+
+      this.deps.setState((latest: ThreadHydratorWriteState) => {
+        const record = getThreadRecord(latest.records, threadId);
+        if (latest.currentThreadId !== threadId || record.loadEpoch !== expectedEpoch) {
+          return {};
+        }
+        return {
+          records: patchThreadRecord(latest.records, threadId, {
+            messages,
+            oldestLoadedSequence: messages[0]?.sequence ?? record.oldestLoadedSequence,
+            hasMoreMessages: page.hasMore,
+            persistedToolCallCounts,
+            narrativeByMessage: {
+              ...page.narrativeByMessage,
+              ...record.narrativeByMessage,
+            },
+            answeredPlanMessageIds: new Set([
+              ...record.answeredPlanMessageIds,
+              ...(page.answeredPlanMessageIds ?? []),
+            ]),
+          }),
+        };
+      });
+      const latest = this.deps.getState();
+      const latestRecord = getThreadRecord(latest.records, threadId);
+      if (latest.currentThreadId === threadId && latestRecord.loadEpoch === getExpectedEpoch()) {
+        cacheRecord(threadId, latestRecord);
+      }
+    } catch {
+      // The visible tail is complete; older history remains available on scroll.
     }
   }
 

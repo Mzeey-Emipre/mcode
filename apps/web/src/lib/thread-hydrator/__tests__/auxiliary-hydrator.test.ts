@@ -367,4 +367,42 @@ describe("AuxiliaryHydrator", () => {
       "turn-1": ["src/a.ts"],
     });
   });
+
+  it("discarded file-change snapshots after the expected load epoch changed", async () => {
+    let resolveSnapshots!: (value: Array<{
+      message_id: string;
+      files_changed: string[];
+      thread_id: string;
+      created_at: string;
+    }>) => void;
+    records = patchThreadRecord(records, THREAD_ID, { loadEpoch: 4 });
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveSnapshots = resolve;
+      }),
+    );
+
+    const aux = createAux({
+      getWorkspaceThread: () => createMockThread({ id: THREAD_ID, has_file_changes: true }),
+    });
+    aux.hydrate(THREAD_ID, {
+      freshnessTtlMs: HYDRATION_TTL_MS,
+      force: true,
+      commitFileChangesToStore: true,
+      expectedLoadEpoch: 4,
+    });
+    records = patchThreadRecord(records, THREAD_ID, { loadEpoch: 5 });
+
+    resolveSnapshots([{
+      message_id: "turn-stale",
+      files_changed: ["src/stale.ts"],
+      thread_id: THREAD_ID,
+      created_at: "2026-01-01T00:00:00Z",
+    }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getCachedRecord(THREAD_ID)?.persistedFilesChanged).toEqual({});
+    expect(getThreadRecord(records, THREAD_ID).persistedFilesChanged).toEqual({});
+  });
 });

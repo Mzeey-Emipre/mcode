@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Thread } from "@/transport/types";
@@ -6,8 +6,9 @@ import type { Thread } from "@/transport/types";
 // Store mocks must be declared before importing the component under test.
 
 /** Holds the store snapshot backing both the hook selector and `getState()` (real Zustand API). */
-const { chatViewWorkspaceMockRef, chatViewTransportMock } = vi.hoisted(() => ({
+const { chatViewWorkspaceMockRef, chatViewThreadMockRef, chatViewTransportMock } = vi.hoisted(() => ({
   chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
+  chatViewThreadMockRef: { current: null as Record<string, unknown> | null },
   chatViewTransportMock: {
     subscribeThread: vi.fn(),
     unsubscribeThread: vi.fn(),
@@ -36,16 +37,17 @@ vi.mock("@/stores/workspaceStore", () => ({
 }));
 
 vi.mock("@/stores/threadStore", () => ({
-  useThreadStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({
-      records: new Map(),
-      currentThreadId: null,
-      runningThreadIds: new Set(),
-      loadMessages: vi.fn(),
-      clearMessages: vi.fn(),
-      setForkMode: vi.fn(),
-      sendMessage: vi.fn(),
-    }),
+  useThreadStore: vi.fn((selector: (s: unknown) => unknown) => {
+    if (!chatViewThreadMockRef.current) {
+      throw new Error("ChatView tests: set chatViewThreadMockRef before render");
+    }
+    return selector(chatViewThreadMockRef.current);
+  }),
+}));
+
+vi.mock("@/stores/connectionStore", () => ({
+  useConnectionStore: vi.fn((selector: (s: unknown) => unknown) =>
+    selector({ status: "connected" }),
   ),
 }));
 
@@ -185,6 +187,22 @@ function setupWorkspaceMock(state: ReturnType<typeof defaultWorkspaceState>) {
   );
 }
 
+/** Produces the thread-store fields consumed by ChatView. */
+function defaultThreadState(overrides: Partial<{
+  currentThreadId: string | null;
+  runningThreadIds: Set<string>;
+}> = {}) {
+  return {
+    records: new Map(),
+    currentThreadId: overrides.currentThreadId ?? "thread-1",
+    runningThreadIds: overrides.runningThreadIds ?? new Set<string>(),
+    loadMessages: vi.fn(),
+    clearMessages: vi.fn(),
+    setForkMode: vi.fn(),
+    sendMessage: vi.fn(),
+  };
+}
+
 describe("ChatView - Thread Title Double-Click Rename", () => {
   beforeEach(() => {
     chatViewTransportMock.subscribeThread.mockResolvedValue(undefined);
@@ -192,6 +210,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewTransportMock.subscribeThread.mockClear();
     chatViewTransportMock.unsubscribeThread.mockClear();
     setupWorkspaceMock(defaultWorkspaceState());
+    chatViewThreadMockRef.current = defaultThreadState();
   });
 
   it("renders thread title as static span by default", () => {
@@ -280,5 +299,100 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
 
     // Edit mode should be closed
     expect(screen.queryByTestId("chat-header-title-input")).not.toBeInTheDocument();
+  });
+
+  it("swaps the thread shell before persisted history resolves", () => {
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: "thread-2" });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("chat-header-title")).toHaveTextContent("My Thread");
+    expect(screen.getByTestId("conversation-loading")).toBeVisible();
+    expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
+  });
+
+  it("keeps running threads subscribed while another thread is selected", async () => {
+    const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2", status: "active" });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread1.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread1.id,
+      runningThreadIds: new Set([thread2.id]),
+    });
+
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledWith(thread1.id);
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledWith(thread2.id);
+    });
+
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread1.id,
+      runningThreadIds: new Set(),
+    });
+    rerender(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewTransportMock.unsubscribeThread).toHaveBeenCalledWith(thread2.id);
+    });
+    expect(chatViewTransportMock.unsubscribeThread).not.toHaveBeenCalledWith(thread1.id);
+  });
+
+  it("retries a rejected thread subscription", async () => {
+    chatViewTransportMock.subscribeThread
+      .mockRejectedValueOnce(new Error("temporary subscribe failure"))
+      .mockResolvedValue(undefined);
+
+    render(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledTimes(2);
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenLastCalledWith("thread-1");
+    }, { timeout: 3000 });
+  });
+
+  it("stops retrying a rejected thread subscription after the retry limit", async () => {
+    chatViewTransportMock.subscribeThread.mockRejectedValue(new Error("persistent subscribe failure"));
+
+    render(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledTimes(5);
+    }, { timeout: 3000 });
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledTimes(5);
+  });
+
+  it("retries a rejected thread unsubscription", async () => {
+    const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2" });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread1.id,
+      threads: [thread1, thread2],
+    }));
+
+    const { rerender } = render(<ChatView />);
+    await waitFor(() => {
+      expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledWith(thread1.id);
+    });
+
+    chatViewTransportMock.unsubscribeThread
+      .mockRejectedValueOnce(new Error("temporary unsubscribe failure"))
+      .mockResolvedValue(undefined);
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread2.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: thread2.id });
+    rerender(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewTransportMock.unsubscribeThread).toHaveBeenCalledTimes(2);
+      expect(chatViewTransportMock.unsubscribeThread).toHaveBeenLastCalledWith(thread1.id);
+    }, { timeout: 3000 });
   });
 });

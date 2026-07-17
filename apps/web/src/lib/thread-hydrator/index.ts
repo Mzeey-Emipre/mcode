@@ -5,6 +5,7 @@ export {
   getThreadHydrator,
   __resetThreadHydratorForTests,
   MESSAGE_FETCH_SIZE,
+  HISTORY_PREFETCH_SIZE,
   HYDRATION_TTL_MS,
   BACKGROUND_PREFETCH_LIMIT,
 } from "./thread-hydrator";

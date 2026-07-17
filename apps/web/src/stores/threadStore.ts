@@ -35,6 +35,7 @@ import { isGoalStatusNotice } from "@/lib/goal-message";
 import {
   createThreadHydrator,
   registerThreadHydrator,
+  MESSAGE_FETCH_SIZE as HYDRATOR_MESSAGE_FETCH_SIZE,
   type ThreadHydratorWriteState,
 } from "@/lib/thread-hydrator";
 import {
@@ -612,8 +613,8 @@ export const OLDER_PAGE_SIZE = 50;
 /** Maximum messages kept in the in-memory sliding window. */
 export const MESSAGE_WINDOW_SIZE = 200;
 
-/** Initial message fetch size per thread */
-export const MESSAGE_FETCH_SIZE = 100;
+/** Initial message fetch size per thread. */
+export const MESSAGE_FETCH_SIZE = HYDRATOR_MESSAGE_FETCH_SIZE;
 
 const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
   permissionMode: PERMISSION_MODES.FULL,
