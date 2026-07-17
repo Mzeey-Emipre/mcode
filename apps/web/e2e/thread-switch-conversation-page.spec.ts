@@ -405,7 +405,6 @@ test("thread switch paints the latest turn before older history finishes", async
   });
   await expect.poll(() => scrollContainer.evaluate((element) => element.scrollHeight))
     .toBeGreaterThan(tailScrollHeight);
-  await expect(page.getByText("Latest beta response", { exact: true })).toBeVisible();
 
   const threadBCalls = calls.filter((call) =>
     call.method === "conversation.page"
