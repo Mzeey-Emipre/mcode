@@ -19,6 +19,7 @@ import { usePreviewTabsStore } from "./previewTabsStore";
 import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
 import { sanitizeCustomBranchInput } from "@/lib/branch-name";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
+import { readRememberedComposerMode } from "@/lib/composer-mode-preference";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
@@ -425,7 +426,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   error: null,
   branches: [],
   branchesLoading: false,
-  newThreadMode: "direct" as const,
+  newThreadMode: readRememberedComposerMode(),
   newThreadBranch: "",
   newThreadBranchSource: "branch" as const,
   worktrees: [],
@@ -1172,7 +1173,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       pendingNewThread: value,
       ...(value
         ? {
-            newThreadMode: "direct" as const,
+            newThreadMode: readRememberedComposerMode(),
             newThreadBranch: "",
             newThreadBranchSource: "branch" as const,
             namingMode: "auto" as const,
