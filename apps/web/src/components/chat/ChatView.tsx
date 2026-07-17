@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
@@ -34,6 +34,7 @@ import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
 import { Button } from "@/components/ui/button";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
+import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -264,6 +265,30 @@ function ThreadPreparingShell({
 }
 const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024; // 20 MB
 
+/** Keeps the conversation surface occupied while the latest persisted tail loads. */
+function ConversationLoadingState() {
+  return (
+    <div
+      data-testid="conversation-loading"
+      role="status"
+      aria-label="Loading conversation"
+      className="flex h-full items-end px-4 pb-6 sm:px-8"
+    >
+      <div className={`${PRIMARY_CONTENT_RAIL_CLASS} w-full space-y-5 motion-safe:animate-pulse`}>
+        <div className="ml-auto space-y-2">
+          <div className="ml-auto h-3 w-2/5 rounded bg-muted/55" />
+          <div className="ml-auto h-3 w-3/5 rounded bg-muted/40" />
+        </div>
+        <div className="space-y-2">
+          <div className="h-3 w-1/4 rounded bg-muted/55" />
+          <div className="h-3 w-4/5 rounded bg-muted/40" />
+          <div className="h-3 w-3/5 rounded bg-muted/40" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Renders the main chat UI for sending and receiving messages within a thread. */
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -279,7 +304,9 @@ export function ChatView() {
   const loadMessages = useThreadStore((s) => s.loadMessages);
   const clearMessages = useThreadStore((s) => s.clearMessages);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const hydratedThreadId = useThreadStore((s) => s.currentThreadId);
   const messageCount = useActiveThreadRecord((r) => r.messages.length);
+  const historyLoading = useActiveThreadRecord((r) => r.loading);
   const setPendingPrefill = useComposerDraftStore((s) => s.setPendingPrefill);
 
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
@@ -431,16 +458,41 @@ export function ChatView() {
   }, [connectionStatus]);
 
   const prevThreadIdRef = useRef<string | null>(null);
+  const subscribedThreadIdsRef = useRef<Set<string>>(new Set());
+  const previousSubscriptionStatusRef = useRef<typeof connectionStatus | null>(null);
 
   useEffect(() => {
-    if (!activeThreadId) return;
-    void getTransport().subscribeThread(activeThreadId).catch(() => {});
-    return () => {
-      void getTransport().unsubscribeThread(activeThreadId).catch(() => {});
-    };
-  }, [activeThreadId]);
+    const desired = new Set(runningThreadIds);
+    if (activeThreadId) desired.add(activeThreadId);
 
-  useEffect(() => {
+    const previous = subscribedThreadIdsRef.current;
+    const reconnected = connectionStatus === "connected"
+      && previousSubscriptionStatusRef.current !== "connected";
+    if (connectionStatus === "connected") {
+      for (const threadId of desired) {
+        if (reconnected || !previous.has(threadId)) {
+          void getTransport().subscribeThread(threadId).catch(() => {});
+        }
+      }
+      for (const threadId of previous) {
+        if (!desired.has(threadId)) {
+          void getTransport().unsubscribeThread(threadId).catch(() => {});
+        }
+      }
+    }
+
+    subscribedThreadIdsRef.current = desired;
+    previousSubscriptionStatusRef.current = connectionStatus;
+  }, [activeThreadId, connectionStatus, runningThreadIds]);
+
+  useEffect(() => () => {
+    for (const threadId of subscribedThreadIdsRef.current) {
+      void getTransport().unsubscribeThread(threadId).catch(() => {});
+    }
+    subscribedThreadIdsRef.current.clear();
+  }, []);
+
+  useLayoutEffect(() => {
     if (!activeThreadId) {
       clearMessages();
     } else {
@@ -527,7 +579,8 @@ export function ChatView() {
   }
 
   const hasMessages = messageCount > 0;
-  const showEmptyState = !hasMessages && !isAgentRunning;
+  const conversationLoading = hydratedThreadId !== activeThreadId || historyLoading;
+  const showEmptyState = !hasMessages && !isAgentRunning && !conversationLoading;
 
   return (
     <div ref={chatPaneRef} className="flex h-full flex-col bg-background" data-testid="chat-view">
@@ -608,7 +661,9 @@ export function ChatView() {
         className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200"
         style={{ paddingRight: overviewPaddingRight }}
       >
-        {showEmptyState ? (
+        {conversationLoading && !hasMessages && !isAgentRunning ? (
+          <ConversationLoadingState />
+        ) : showEmptyState ? (
           <div className="flex h-full items-center justify-center">
             <EmptyState onPromptSelect={setPendingPrefill} />
           </div>

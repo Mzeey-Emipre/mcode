@@ -24,6 +24,7 @@ import {
 import { createEmptyThreadRecord, patchThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
   createThreadHydrator,
+  BACKGROUND_PREFETCH_LIMIT,
   HYDRATION_TTL_MS,
   MESSAGE_FETCH_SIZE,
   type ThreadHydrator,
@@ -174,6 +175,63 @@ describe("ThreadHydrator", () => {
     expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
   });
 
+  it("commits the latest tail before prefetching earlier history", async () => {
+    const history = Array.from({ length: 100 }, (_, index) => createMockMessage({
+      id: `a-${index + 1}`,
+      thread_id: THREAD_A,
+      content: `message ${index + 1}`,
+      sequence: index + 1,
+    }));
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_threadId: string, limit: number, before?: number) => {
+        const eligible = before == null
+          ? history
+          : history.filter((entry) => entry.sequence < before);
+        const messages = eligible.slice(-limit);
+        return {
+          messages,
+          hasMore: eligible.length > messages.length,
+          narrativeByMessage: {},
+        };
+      },
+    );
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(mockTransport.loadConversationPage).toHaveBeenNthCalledWith(1, THREAD_A, 12);
+    expect(getTestActiveMessages()).toEqual(history.slice(88));
+
+    await vi.waitFor(() => {
+      expect(mockTransport.loadConversationPage).toHaveBeenNthCalledWith(2, THREAD_A, 88, 89);
+      expect(getTestActiveMessages()).toEqual(history);
+    });
+  });
+
+  it("resumes earlier-history hydration when a cached tail is reopened", async () => {
+    const history = Array.from({ length: 100 }, (_, index) => createMockMessage({
+      id: `cached-a-${index + 1}`,
+      thread_id: THREAD_A,
+      sequence: index + 1,
+    }));
+    cacheRecord(THREAD_A, {
+      ...makeCachedRecord(history.slice(88)),
+      hasMoreMessages: true,
+    });
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: history.slice(0, 88),
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(getTestActiveMessages()).toEqual(history.slice(88));
+    await vi.waitFor(() => {
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_A, 88, 89);
+      expect(getTestActiveMessages()).toEqual(history);
+    });
+  });
+
   it("preserves an existing open goal when lookup returns non-authoritative null", async () => {
     const goal = makeGoal();
     resetThreadStoreForTests({
@@ -281,6 +339,49 @@ describe("ThreadHydrator", () => {
     await hydrator.hydrate(THREAD_A, "active");
 
     expect(getTestThreadStreaming(THREAD_A)).toBe("partial...");
+    expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
+  });
+
+  it("activates a running resident layer before its history refresh resolves", async () => {
+    let resolvePage!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_B,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map<string, ThreadRecord>([[
+        THREAD_A,
+        {
+          ...createEmptyThreadRecord(),
+          messages: [msgA],
+          streaming: "current activity",
+          toolCalls: [
+            { id: "tc1", toolName: "bash", toolInput: {}, output: null, isError: false, isComplete: false },
+          ],
+        },
+      ]]),
+    });
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolvePage = resolve;
+      }),
+    );
+
+    const hydration = hydrator.hydrate(THREAD_A, "active");
+
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_A);
+    expect(readActiveThreadField((record) => record.loading)).toBe(false);
+    expect(getTestActiveMessages()).toEqual([msgA]);
+    expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
+    expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_A, BACKGROUND_PREFETCH_LIMIT);
+
+    resolvePage({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
+    await hydration;
+
+    expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
     expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
   });
 

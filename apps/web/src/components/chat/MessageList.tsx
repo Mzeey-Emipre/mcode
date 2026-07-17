@@ -703,13 +703,14 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
    * `scrollHeight` and `virtualizer.getTotalSize()` stop changing means the
    * very first thing the user sees is already at the true bottom.
    *
-   * @param options.measureFirst - When true, runs `virtualizer.measure()` and
-   *   `scrollToIndex(n-1, end, auto)` to anchor the virtualizer to the tail
-   *   before rows finish measuring. Used on cache-miss completion and first
-   *   open. Cache-hit switches omit this so the cached measurement state stays
-   *   warm and we land exactly where the cache says the tail is.
+   * @param options.measureFirst - Re-measures and anchors the virtualizer to the tail.
+   * @param options.revealEarly - Reveals the anchored tail after two frames while
+   *   the pin loop continues to absorb later row measurements.
    */
-  const positionAtBottom = useCallback((options?: { measureFirst?: boolean }) => {
+  const positionAtBottom = useCallback((options?: {
+    measureFirst?: boolean;
+    revealEarly?: boolean;
+  }) => {
     beginSuppressPassiveAutoBottomScroll();
     const settleGen = ++tailSettleGenRef.current;
     pinListTailRef.current = true;
@@ -733,6 +734,16 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     // Synchronous first snap so non-rAF environments (jsdom in unit tests)
     // still see scrollTop applied before the rAF-based settle loop runs.
     snap();
+
+    if (options?.revealEarly) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (tailSettleGenRef.current !== settleGen) return;
+          snap();
+          setIsPositioned(true);
+        });
+      });
+    }
 
     let lastScrollHeight = -1;
     let lastTotalSize = -1;
@@ -923,7 +934,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       // also hits this branch. Pin the tail here so it tracks the same path as a
       // cache-hit switch (lazy markdown and measured row heights included).
       pendingScrollRestoreRef.current = null;
-      positionAtBottom({ measureFirst: true });
+      positionAtBottom({ measureFirst: true, revealEarly: true });
     }
   }, [activeThreadId, loading, virtualizer, positionAtBottom, items.length]);
 

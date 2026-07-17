@@ -176,3 +176,172 @@ test("thread switch cache miss hydrates messages and narrative through conversat
   expect(calls.filter((call) => call.method === "conversation.page" && (call.params as { threadId?: string }).threadId === "thread-b")).toHaveLength(1);
   expect(calls.filter((call) => call.method === "message.list" || call.method === "turn.load" || call.method === "narrative.list")).toHaveLength(0);
 });
+
+test("thread switch paints the latest turn before older history finishes", async ({ page }) => {
+  test.setTimeout(90_000);
+  const calls: RpcCall[] = [];
+  let resolveTail: (() => void) | undefined;
+  let resolveOlderHistory: (() => void) | undefined;
+  const threads = [
+    thread("thread-a", "Thread A"),
+    thread("thread-b", "Thread B"),
+  ];
+  const threadAMessages = [
+    message("thread-a", "thread-a-user", "user", "Alpha request", 1),
+    message("thread-a", "thread-a-assistant", "assistant", "Alpha response", 2),
+  ];
+  const threadBMessages = Array.from({ length: 120 }, (_, index) => {
+    const sequence = index + 1;
+    return message(
+      "thread-b",
+      `thread-b-${sequence}`,
+      sequence % 2 === 0 ? "assistant" : "user",
+      sequence === 120 ? "Latest beta response" : `Beta message ${sequence}`,
+      sequence,
+    );
+  });
+
+  await mockWebSocketServer(page, {
+    "workspace.list": [workspace],
+    "thread.list": threads,
+    "conversation.page": (params) => {
+      const input = params as { threadId: string; limit: number; before?: number };
+      calls.push({ method: "conversation.page", params: input });
+      const source = input.threadId === "thread-b" ? threadBMessages : threadAMessages;
+      const eligible = input.before == null
+        ? source
+        : source.filter((entry) => entry.sequence < input.before!);
+      const messages = eligible.slice(-input.limit);
+      const result = {
+        messages,
+        hasMore: eligible.length > messages.length,
+        answeredPlanMessageIds: [],
+        narrativeByMessage: {},
+      };
+      if (input.threadId !== "thread-b") return result;
+      return new Promise((resolve) => {
+        const release = () => resolve(result);
+        if (input.before == null) resolveTail = release;
+        else resolveOlderHistory = release;
+      });
+    },
+  });
+
+  await page.goto("/");
+  await page.getByRole("group", { name: "Conversation Page Workspace project" }).click();
+  await page.waitForSelector("[data-testid='thread-item']");
+  const threadItems = page.locator("[data-testid='thread-item']");
+  await threadItems.nth(0).click();
+  await expect(page.locator("[data-testid=message-list]")).toContainText("Alpha response");
+
+  const loadingObserved = page.evaluate(() => new Promise<boolean>((resolve) => {
+    if (document.querySelector("[data-testid='conversation-loading']")) {
+      resolve(true);
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      if (!document.querySelector("[data-testid='conversation-loading']")) return;
+      observer.disconnect();
+      resolve(true);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => {
+      observer.disconnect();
+      resolve(false);
+    }, 1000);
+  }));
+  await threadItems.nth(1).click();
+  expect(await loadingObserved).toBe(true);
+  await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread B");
+  await expect.poll(() => typeof resolveTail).toBe("function");
+  resolveTail?.();
+  await expect(page.getByText("Latest beta response", { exact: true })).toBeVisible();
+
+  await expect.poll(() => calls.filter((call) =>
+    call.method === "conversation.page"
+    && (call.params as { threadId?: string }).threadId === "thread-b").length,
+  { timeout: 3000 }).toBe(2);
+  expect(typeof resolveOlderHistory).toBe("function");
+  await expect(page.getByText("Latest beta response", { exact: true })).toBeVisible();
+  resolveOlderHistory?.();
+
+  const threadBCalls = calls.filter((call) =>
+    call.method === "conversation.page"
+    && (call.params as { threadId?: string }).threadId === "thread-b");
+  expect(threadBCalls).toHaveLength(2);
+  expect(threadBCalls.map((call) => call.params)).toEqual([
+    { threadId: "thread-b", limit: 12 },
+    { threadId: "thread-b", limit: 88, before: 109 },
+  ]);
+});
+
+test("thread switch shows a running agent before persisted history refreshes", async ({ page }) => {
+  test.setTimeout(90_000);
+  const calls: RpcCall[] = [];
+  let resolveThreadBHistory: (() => void) | undefined;
+  const threads = [
+    thread("thread-a", "Thread A"),
+    { ...thread("thread-b", "Thread B"), status: "active" as const },
+  ];
+  const threadAMessages = [
+    message("thread-a", "thread-a-user", "user", "Alpha request", 1),
+    message("thread-a", "thread-a-assistant", "assistant", "Alpha response", 2),
+  ];
+
+  const controller = await mockWebSocketServer(page, {
+    "workspace.list": [workspace],
+    "thread.list": threads,
+    "agent.listRunning": ["thread-b"],
+    "push.subscribeThread": (params) => {
+      calls.push({ method: "push.subscribeThread", params });
+      return undefined;
+    },
+    "conversation.page": (params) => {
+      const input = params as { threadId: string; limit: number; before?: number };
+      calls.push({ method: "conversation.page", params: input });
+      if (input.threadId === "thread-a") {
+        return {
+          messages: threadAMessages,
+          hasMore: false,
+          answeredPlanMessageIds: [],
+          narrativeByMessage: {},
+        };
+      }
+      return new Promise((resolve) => {
+        resolveThreadBHistory = () => resolve({
+          messages: [],
+          hasMore: false,
+          answeredPlanMessageIds: [],
+          narrativeByMessage: {},
+        });
+      });
+    },
+  });
+
+  await page.goto("/");
+  await page.getByRole("group", { name: "Conversation Page Workspace project" }).click();
+  await page.waitForSelector("[data-testid='thread-item']");
+  const threadItems = page.locator("[data-testid='thread-item']");
+  await threadItems.nth(0).click();
+  await expect(page.locator("[data-testid=message-list]")).toContainText("Alpha response");
+
+  await expect.poll(() => calls.some((call) =>
+    call.method === "push.subscribeThread"
+    && (call.params as { threadId?: string }).threadId === "thread-b"),
+  ).toBe(true);
+  await controller.sendPush("agent.event", {
+    type: "toolUse",
+    threadId: "thread-b",
+    toolCallId: "thread-b-live-tool",
+    toolName: "Bash",
+    toolInput: { command: "echo live-switch" },
+  });
+
+  await threadItems.nth(1).click();
+  await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread B");
+  await expect(page.getByText("Running a command...", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("echo live-switch", { exact: true })).toBeVisible();
+  expect(typeof resolveThreadBHistory).toBe("function");
+
+  resolveThreadBHistory?.();
+});
