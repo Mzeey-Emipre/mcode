@@ -1574,7 +1574,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
 
   // Slash-command autocomplete for the bubble. Builtins are excluded because
-  // mcode app-level actions (m:plan, compact, goal) have no meaning inside an
+  // mcode app-level actions (plan, compact, goal) have no meaning inside an
   // annotation comment because they target the Composer's thread, not the bubble.
   const bubbleSlashCommand = useSlashCommand({
     anchorRef: bubbleNoteInputRef as React.RefObject<HTMLElement | null>,

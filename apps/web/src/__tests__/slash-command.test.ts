@@ -162,7 +162,7 @@ describe("filter logic", () => {
     });
     await act(async () => {});
     const names = result.current.items.map((i) => i.name);
-    expect(names).toContain("m:plan");
+    expect(names).toContain("plan");
   });
 });
 
@@ -280,16 +280,18 @@ describe("mcode side-effect dispatch", () => {
     const { result } = renderHook(() =>
       useSlashCommand({ anchorRef: ref, onMcodeCommand })
     );
-    await act(async () => { result.current.onInputChange("/m:pla"); });
+    await act(async () => { result.current.onInputChange("/pla"); });
     await act(async () => {});
 
-    const planCmd = result.current.items.find((i) => i.name === "m:plan");
+    const planCmd = result.current.items.find((i) => i.name === "plan");
     expect(planCmd).toBeDefined();
 
+    let emittedValue = "unchanged";
     await act(async () => {
-      result.current.onSelect(planCmd!, (_v: string) => {});
+      result.current.onSelect(planCmd!, (value: string) => { emittedValue = value; });
     });
-    expect(onMcodeCommand).toHaveBeenCalledWith("toggle-plan");
+    expect(onMcodeCommand).toHaveBeenCalledWith("attach-plan");
+    expect(emittedValue).toBe("");
   });
 });
 
@@ -374,7 +376,7 @@ describe("provider-scoped commands", () => {
     expect(mockListSkills).toHaveBeenCalledWith("/my/project", undefined);
   });
 
-  it("hides /m:plan for copilot provider", async () => {
+  it("hides /plan for copilot provider", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
       useSlashCommand({ anchorRef: ref, providerId: "copilot" })
@@ -384,11 +386,11 @@ describe("provider-scoped commands", () => {
     await act(async () => {});
 
     const names = result.current.allCommands.map((c) => c.name);
-    expect(names).not.toContain("m:plan");
+    expect(names).not.toContain("plan");
     expect(names).toContain("compact");
   });
 
-  it("shows /m:plan for claude provider", async () => {
+  it("shows /plan for claude provider", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
       useSlashCommand({ anchorRef: ref, providerId: "claude" })
@@ -398,10 +400,10 @@ describe("provider-scoped commands", () => {
     await act(async () => {});
 
     const names = result.current.allCommands.map((c) => c.name);
-    expect(names).toContain("m:plan");
+    expect(names).toContain("plan");
   });
 
-  it("shows /m:plan when no provider is specified", async () => {
+  it("shows /plan when no provider is specified", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
       useSlashCommand({ anchorRef: ref })
@@ -411,7 +413,7 @@ describe("provider-scoped commands", () => {
     await act(async () => {});
 
     const names = result.current.allCommands.map((c) => c.name);
-    expect(names).toContain("m:plan");
+    expect(names).toContain("plan");
   });
 
   it("always shows /compact regardless of provider", async () => {
@@ -535,7 +537,7 @@ describe("includeBuiltins: false", () => {
 
     const names = result.current.allCommands.map((c) => c.name);
     // Builtins that MUST be absent
-    expect(names).not.toContain("m:plan");
+    expect(names).not.toContain("plan");
     expect(names).not.toContain("compact");
     expect(names).not.toContain("goal");
   });

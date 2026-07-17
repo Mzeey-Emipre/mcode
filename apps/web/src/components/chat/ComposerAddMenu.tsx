@@ -1,22 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import { FilePlus2, Plus } from "lucide-react";
+import { FileEdit, FilePlus2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 
 interface ComposerAddMenuProps {
   disabled: boolean;
   onAttachFiles: () => void;
+  onAttachPlan: () => void;
+  planAttached: boolean;
   getComposerRect: () => DOMRect | null;
 }
 
-const ADD_MENU_HEIGHT = 80;
+const ADD_MENU_HEIGHT = 132;
 
 /**
- * Compact attachment menu for adding files to the current composer message.
+ * Compact menu for adding files or attaching capabilities to the composer.
  */
 export function ComposerAddMenu({
   disabled,
   onAttachFiles,
+  onAttachPlan,
+  planAttached,
   getComposerRect,
 }: ComposerAddMenuProps) {
   const [open, setOpen] = useState(false);
@@ -64,6 +68,12 @@ export function ComposerAddMenu({
     requestAnimationFrame(onAttachFiles);
   };
 
+  const handleAttachPlan = () => {
+    setOpen(false);
+    setAnchorRect(null);
+    requestAnimationFrame(onAttachPlan);
+  };
+
   return (
     <>
       <Button
@@ -71,8 +81,8 @@ export function ComposerAddMenu({
         type="button"
         variant="ghost"
         size="icon"
-        aria-label="Add attachment"
-        title="Add attachment"
+        aria-label="Add to composer"
+        title="Add to composer"
         aria-expanded={open}
         aria-haspopup="dialog"
         data-testid="composer-add"
@@ -86,7 +96,7 @@ export function ComposerAddMenu({
         <ComposerOverlaySurface
           data-testid="composer-add-menu"
           role="dialog"
-          aria-label="Add attachment"
+          aria-label="Add to composer"
           anchorRect={anchorRect}
           estimatedHeight={ADD_MENU_HEIGHT}
           attached
@@ -105,6 +115,24 @@ export function ComposerAddMenu({
                 <span className="text-sm font-medium leading-none text-foreground">Files</span>
                 <span className="text-xs font-normal leading-snug text-muted-foreground">
                   Images, PDFs, documents, and code
+                </span>
+              </span>
+            </Button>
+            <div className="mx-2 my-1 h-px bg-border/60" />
+            <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">Capabilities</div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleAttachPlan}
+              disabled={planAttached}
+              className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70"
+            >
+              <FileEdit size={15} className="shrink-0 text-muted-foreground" aria-hidden />
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="text-sm font-medium leading-none text-foreground">Plan</span>
+                <span className="text-xs font-normal leading-snug text-muted-foreground">
+                  Explore the work and propose a plan
                 </span>
               </span>
             </Button>

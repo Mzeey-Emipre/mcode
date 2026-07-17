@@ -130,3 +130,27 @@ export function insertSlashCommandNode(
     afterNode.select(offset, offset);
   });
 }
+
+/** Removes the slash trigger at the current selection without inserting a command node. */
+export function removeSlashCommandTrigger(editor: LexicalEditor): void {
+  editor.update(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return;
+
+    const anchor = selection.anchor;
+    if (anchor.type !== "text") return;
+
+    const node = anchor.getNode();
+    if (!(node instanceof TextNode)) return;
+
+    const textContent = node.getTextContent();
+    const cursorOffset = anchor.offset;
+    const match = SLASH_TRIGGER_RE.exec(textContent.slice(0, cursorOffset));
+    if (!match) return;
+
+    const triggerStart = match.index + match[1].length;
+    const nextText = textContent.slice(0, triggerStart) + textContent.slice(cursorOffset);
+    node.setTextContent(nextText);
+    node.select(triggerStart, triggerStart);
+  });
+}

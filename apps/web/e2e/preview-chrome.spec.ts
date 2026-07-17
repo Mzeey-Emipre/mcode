@@ -935,9 +935,9 @@ test.describe("PreviewPanel: annotation bubble slash-command popup", () => {
     await expect(page.getByRole("listbox", { name: "Slash commands" })).toBeVisible({
       timeout: 6000,
     });
-    // Builtins like /m:plan must not appear in the annotation bubble popup
+    // Builtins like /plan must not appear in the annotation bubble popup
     // because includeBuiltins: false is passed to useSlashCommand here.
-    await expect(page.getByText("/m:plan")).toHaveCount(0);
+    await expect(page.getByText("/plan")).toHaveCount(0);
   });
 
   test("ArrowDown + Enter inserts the command as plain text and does not save the annotation", async ({ page }) => {

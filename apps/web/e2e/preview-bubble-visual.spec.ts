@@ -384,7 +384,7 @@ test.describe("Bubble dark-tone visual cohesion", () => {
 
     // Semantic: seeded skills are present, mcode builtins are absent
     await expect(page.getByText("/commit")).toBeVisible();
-    await expect(page.getByText("/m:plan")).toHaveCount(0);
+    await expect(page.getByText("/plan")).toHaveCount(0);
 
     await page.screenshot({ path: screenshotPath("d-slash-popup"), fullPage: false });
   });

@@ -9,7 +9,6 @@ import type { PermissionMode, InteractionMode, AttachmentMeta, Thread } from "@/
 import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";
 import {
   ArrowUp,
-  Hammer,
   FileEdit,
   Lock,
   Unlock,
@@ -59,6 +58,7 @@ import type { PendingAttachment } from "./AttachmentPreview";
 import { useFileAutocomplete, clearFileListCache, type MentionSuggestion } from "./useFileAutocomplete";
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerAddMenu } from "./ComposerAddMenu";
+import { ComposerCapabilityChip } from "./ComposerCapabilityChip";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import {
   ComposerEditor,
@@ -66,6 +66,7 @@ import {
   extractComposerMessage,
   insertMentionNode,
   insertSlashCommandNode,
+  removeSlashCommandTrigger,
   type MentionNodeData,
 } from "./lexical";
 import { TerminalStatusIndicator } from "./TerminalStatusIndicator";
@@ -293,8 +294,7 @@ interface PendingCheckoutConfirmation {
 type AccessMode = PermissionMode;
 
 /**
- * Overflow popover that hosts secondary composer controls (interaction mode,
- * permission mode, and the Plan-panel toggle when applicable).
+ * Overflow popover that hosts permission mode and the Plan-panel toggle.
  *
  * Centralizing these behind a single trigger keeps the status bar compact on
  * every viewport — previously each toggle was its own button and they wrapped
@@ -302,14 +302,11 @@ type AccessMode = PermissionMode;
  */
 function ComposerOptionsMenu({
   threadId,
-  mode,
   access,
   permissionLocked,
-  onModeChange,
   onAccessChange,
 }: {
   threadId?: string;
-  mode: InteractionMode;
   access: PermissionMode;
   /**
    * When true, the permission toggle is hidden and Full access is shown
@@ -318,7 +315,6 @@ function ComposerOptionsMenu({
    * sandbox is unavailable on Windows. See {@link isCursorPermissionLockedToFull}.
    */
   permissionLocked: boolean;
-  onModeChange: (next: InteractionMode) => void;
   onAccessChange: (next: PermissionMode) => void;
 }) {
   const hasPlans = usePlanStore(
@@ -350,43 +346,6 @@ function ComposerOptionsMenu({
         <MoreHorizontal size={14} />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={8} className="w-60 p-2">
-        {/* Mode */}
-        <div className="px-1.5 pt-1 pb-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
-          Mode
-        </div>
-        <div className="mb-2 flex rounded-md bg-muted/40 p-0.5">
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => onModeChange(INTERACTION_MODES.BUILD)}
-            aria-pressed={mode === INTERACTION_MODES.BUILD}
-            className={cn(
-              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
-              mode === INTERACTION_MODES.BUILD
-                ? "bg-background text-foreground shadow-sm hover:bg-background"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Hammer size={12} />
-            Build
-          </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => onModeChange(INTERACTION_MODES.PLAN)}
-            aria-pressed={mode === INTERACTION_MODES.PLAN}
-            className={cn(
-              "h-auto flex-1 gap-1.5 rounded-[5px] px-2 py-1 text-xs font-medium hover:bg-transparent",
-              mode === INTERACTION_MODES.PLAN
-                ? "bg-background text-foreground shadow-sm hover:bg-background"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <FileEdit size={12} />
-            Plan
-          </Button>
-        </div>
-
         {/* Permissions */}
         <div className="px-1.5 pt-1 pb-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
           Permissions
@@ -461,25 +420,21 @@ function ComposerOptionsMenu({
 }
 
 /**
- * Inline rendering of the same controls — Mode (Chat/Plan), Permissions
- * (Full/Supervised), and the Plan-panel toggle. Used at md+ widths where the
+ * Inline rendering of Permissions (Full/Supervised) and the Plan-panel toggle.
+ * Used at md+ widths where the
  * controls fit comfortably in the model bar; below md the parent renders
  * `ComposerOptionsMenu` instead so they collapse behind a single trigger.
  */
 function InlineComposerOptions({
   threadId,
-  mode,
   access,
   permissionLocked,
-  onModeChange,
   onAccessChange,
 }: {
   threadId?: string;
-  mode: InteractionMode;
   access: PermissionMode;
   /** See {@link ComposerOptionsMenu}. */
   permissionLocked: boolean;
-  onModeChange: (next: InteractionMode) => void;
   onAccessChange: (next: PermissionMode) => void;
 }) {
   const hasPlans = usePlanStore(
@@ -503,23 +458,6 @@ function InlineComposerOptions({
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => onModeChange(mode === INTERACTION_MODES.BUILD ? INTERACTION_MODES.PLAN : INTERACTION_MODES.BUILD)}
-              className="gap-1.5 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-            >
-              {mode === INTERACTION_MODES.BUILD ? <Hammer size={14} /> : <FileEdit size={14} />}
-              <span className="text-sm">{mode === INTERACTION_MODES.BUILD ? "Build" : "Plan"}</span>
-            </Button>
-          }
-        />
-        <TooltipContent>{mode === INTERACTION_MODES.BUILD ? "Build mode" : "Plan mode"}</TooltipContent>
-      </Tooltip>
-
       {permissionLocked ? (
         <Tooltip>
           <TooltipTrigger
@@ -1416,14 +1354,17 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setFilePopupAnchorRect(composerContainerRef.current?.getBoundingClientRect() ?? null);
   }, [fileAutocomplete.isOpen]);
 
-  const toggleInteractionMode = useCallback(() => {
-    const next =
-      mode === INTERACTION_MODES.PLAN
-        ? INTERACTION_MODES.BUILD
-        : INTERACTION_MODES.PLAN;
-    setMode(next);
-    if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-  }, [mode, setMode, threadId, setThreadSettings]);
+  const attachPlan = useCallback(() => {
+    setMode(INTERACTION_MODES.PLAN);
+    agentSettingsTouchedRef.current = true;
+    if (threadId) void setThreadSettings(threadId, { interactionMode: INTERACTION_MODES.PLAN });
+  }, [setMode, threadId, setThreadSettings]);
+
+  const detachPlan = useCallback(() => {
+    setMode(INTERACTION_MODES.BUILD);
+    agentSettingsTouchedRef.current = true;
+    if (threadId) void setThreadSettings(threadId, { interactionMode: INTERACTION_MODES.BUILD });
+  }, [setMode, threadId, setThreadSettings]);
 
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
@@ -1454,8 +1395,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     cwd: workspacePath,
     providerId: effectiveProviderId,
     onMcodeCommand: (action) => {
-      if (action === "toggle-plan") {
-        toggleInteractionMode();
+      if (action === "attach-plan") {
+        attachPlan();
       }
     },
   });
@@ -2610,9 +2551,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const handleSlashSelect = useCallback((cmd: Command) => {
     // No-op replaceText: Lexical handles text replacement via insertSlashCommandNode
     slashCommand.onSelect(cmd, () => {});
-    // Action-only commands (e.g. /plan toggle) should not insert a chip
-    if (!cmd.action && editorRef.current) {
-      insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
+    if (editorRef.current) {
+      if (cmd.action) {
+        removeSlashCommandTrigger(editorRef.current);
+      } else {
+        insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
+      }
     }
   }, [slashCommand]);
 
@@ -3090,6 +3034,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           <ComposerAddMenu
             disabled={planPending || isStaleWorktree || !!providerReason}
             onAttachFiles={handleAttachPick}
+            onAttachPlan={attachPlan}
+            planAttached={mode === INTERACTION_MODES.PLAN}
             getComposerRect={() => composerContainerRef.current?.getBoundingClientRect() ?? null}
           />
           {/* Model picker */}
@@ -3337,14 +3283,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           ) : showInlineComposerOptions ? (
             <InlineComposerOptions
               threadId={threadId}
-              mode={mode}
               access={access}
               permissionLocked={permissionLocked}
-              onModeChange={(next) => {
-                setMode(next);
-                agentSettingsTouchedRef.current = true;
-                if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-              }}
               onAccessChange={(next) => {
                 setAccess(next);
                 agentSettingsTouchedRef.current = true;
@@ -3354,14 +3294,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           ) : (
             <ComposerOptionsMenu
               threadId={threadId}
-              mode={mode}
               access={access}
               permissionLocked={permissionLocked}
-              onModeChange={(next) => {
-                setMode(next);
-                agentSettingsTouchedRef.current = true;
-                if (threadId) void setThreadSettings(threadId, { interactionMode: next });
-              }}
               onAccessChange={(next) => {
                 setAccess(next);
                 agentSettingsTouchedRef.current = true;
@@ -3369,6 +3303,16 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               }}
             />
           )}
+
+          {mode === INTERACTION_MODES.PLAN && provider !== "copilot" ? (
+            <ComposerCapabilityChip
+              label="Plan"
+              icon={FileEdit}
+              removeLabel="Remove Plan"
+              onRemove={detachPlan}
+              testId="composer-capability-plan"
+            />
+          ) : null}
 
           {/* Spacer */}
           <div className="flex-1" />

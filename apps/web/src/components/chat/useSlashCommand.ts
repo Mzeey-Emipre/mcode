@@ -8,12 +8,15 @@ import type { SkillInfo } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 
 /** A slash command entry shown in the popup. */
+export type ComposerCommandAction = "attach-plan";
+
+/** A slash command entry shown in the popup. */
 export interface Command {
   name: string;
   description: string;
   namespace: SlashCommandNamespace;
   /** For mcode-namespace commands, the action string dispatched on selection. */
-  action?: string;
+  action?: ComposerCommandAction;
 }
 
 /**
@@ -58,10 +61,10 @@ const MAX_SLASH_COMMAND_ITEMS = 100;
 
 const BUILTIN_COMMANDS: BuiltinCommand[] = [
   {
-    name: "m:plan",
-    description: "Toggle plan mode",
+    name: "plan",
+    description: "Attach Plan to the composer",
     namespace: "mcode",
-    action: "toggle-plan",
+    action: "attach-plan",
     // Multi-provider: every provider except Copilot, which has its own native
     // plan mode plus repo-scoped sub-agents. TODO: once Copilot ACP exposes a
     // native-plan/sub-agent capability, replace this hardcoded exclusion with a
@@ -119,12 +122,12 @@ function sortCommands(cmds: Command[]): Command[] {
 /** Options for the useSlashCommand hook. */
 interface UseSlashCommandOptions {
   anchorRef: React.RefObject<HTMLElement | null>;
-  onMcodeCommand?: (action: string) => void;
+  onMcodeCommand?: (action: ComposerCommandAction) => void;
   cwd?: string;
-  /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /m:plan for "copilot"). */
+  /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /plan for "copilot"). */
   providerId?: string;
   /**
-   * Whether to include mcode built-in commands (m:plan, compact, goal) in the
+   * Whether to include mcode built-in commands (plan, compact, goal) in the
    * command list. Default `true`. Pass `false` for contexts like the annotation
    * bubble where mcode actions are meaningless and must not be selectable.
    */
@@ -321,7 +324,11 @@ export function useSlashCommand({
         // position, rather than lastIndexOf which can pick the wrong occurrence
         // when the same trigger text appears multiple times before the cursor.
         const triggerStart = match.index + match[1].length;
-        replaceText(value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor));
+        replaceText(
+          cmd.action
+            ? value.slice(0, triggerStart) + value.slice(cursor)
+            : value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor),
+        );
       }
       if (cmd.action && onMcodeCommand) onMcodeCommand(cmd.action);
       setIsOpen(false);

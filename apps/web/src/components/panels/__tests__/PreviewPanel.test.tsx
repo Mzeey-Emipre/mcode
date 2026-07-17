@@ -2022,7 +2022,7 @@ describe("PreviewPanel: full panel state", () => {
     fireEvent.change(note, { target: { value: "/" } });
 
     // With no skills and no builtins, the popup shows the empty state, not a
-    // listbox. Builtins (m:plan, compact, goal) must not appear.
+    // listbox. Builtins (plan, compact, goal) must not appear.
     await waitFor(() => {
       expect(screen.queryByRole("listbox", { name: "Slash commands" })).not.toBeInTheDocument();
       // The popup is still rendered (closed state would remove it entirely) but

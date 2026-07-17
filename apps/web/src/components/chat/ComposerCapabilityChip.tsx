@@ -1,0 +1,46 @@
+import type { LucideIcon } from "lucide-react";
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+interface ComposerCapabilityChipProps {
+  /** Stable label shown for the attached composer capability. */
+  label: string;
+  /** Icon that identifies the capability in the compact composer row. */
+  icon: LucideIcon;
+  /** Accessible explanation for removing the attached capability. */
+  removeLabel: string;
+  /** Removes or clears the attached capability. */
+  onRemove: () => void;
+  /** Optional stable selector for focused UI verification. */
+  testId?: string;
+}
+
+/** Renders an attached composer capability as a compact removable chip. */
+export function ComposerCapabilityChip({
+  label,
+  icon: Icon,
+  removeLabel,
+  onRemove,
+  testId,
+}: ComposerCapabilityChipProps) {
+  return (
+    <span
+      data-testid={testId}
+      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-muted/45 pl-2 pr-0.5 text-xs font-medium text-foreground ring-1 ring-inset ring-border/60"
+    >
+      <Icon size={13} className="text-muted-foreground" aria-hidden />
+      <span>{label}</span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        onClick={onRemove}
+        aria-label={removeLabel}
+        title={removeLabel}
+        className="size-6 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <X size={12} aria-hidden />
+      </Button>
+    </span>
+  );
+}
