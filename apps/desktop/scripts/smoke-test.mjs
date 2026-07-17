@@ -53,6 +53,7 @@ function findUnpackedServer() {
       electron: resolve(releaseDir, "win-unpacked/Mcode.exe"),
       sqlite: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // Linux (electron-builder uses package name as binary name)
     {
@@ -61,6 +62,7 @@ function findUnpackedServer() {
       electron: resolve(releaseDir, "linux-unpacked/mcode-desktop"),
       sqlite: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // macOS Intel
     {
@@ -69,6 +71,7 @@ function findUnpackedServer() {
       electron: resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
       sqlite: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // macOS ARM
     {
@@ -77,6 +80,7 @@ function findUnpackedServer() {
       electron: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
       sqlite: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
     },
   ];
 
@@ -93,7 +97,14 @@ function findUnpackedServer() {
       const nodeBinding = resolve(c.sqlite, "better_sqlite3.node");
       const binding = existsSync(electronBinding) ? electronBinding : existsSync(nodeBinding) ? nodeBinding : undefined;
       const electronDir = useRenamed ? dirname(c.electron) : undefined;
-      return { server: c.server, electron: runtime, binding, electronDir, koffi: c.koffi };
+      return {
+        server: c.server,
+        electron: runtime,
+        binding,
+        electronDir,
+        koffi: c.koffi,
+        nodePty: c.nodePty,
+      };
     }
   }
   return null;
@@ -169,6 +180,61 @@ if (!bundleOnly) {
     process.exit(1);
   }
   console.log(`[smoke-test] Claude SDK CLI: ${claudeCli}`);
+
+  if (sdkTarget.platform === "win32") {
+    const marker = "MCODE_PACKAGED_PTY_OK";
+    const ptyScript = `
+      const { spawn } = require(process.env.MCODE_PACKAGED_NODE_PTY);
+      const marker = ${JSON.stringify(marker)};
+      let output = "";
+      const terminal = spawn(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", "Write-Output " + marker],
+        {
+          name: "xterm-256color",
+          cols: 80,
+          rows: 24,
+          cwd: process.cwd(),
+          env: process.env,
+          useConptyDll: true,
+        },
+      );
+      const timeout = setTimeout(() => {
+        console.error("Packaged PTY timed out: " + JSON.stringify(output));
+        process.exit(1);
+      }, 8000);
+      terminal.onData((data) => { output += data; });
+      terminal.onExit(({ exitCode }) => {
+        clearTimeout(timeout);
+        if (exitCode !== 0 || !output.includes(marker)) {
+          console.error("Packaged PTY failed: " + JSON.stringify({ exitCode, output }));
+          process.exit(1);
+        }
+        process.stdout.write(marker, () => process.exit(0));
+      });
+    `;
+
+    try {
+      const output = execFileSync(found.electron, ["-e", ptyScript], {
+        cwd: dirname(found.server),
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+          MCODE_PACKAGED_NODE_PTY: found.nodePty,
+        },
+      });
+      if (!output.includes(marker)) {
+        throw new Error(`Packaged PTY marker missing from output: ${output}`);
+      }
+      console.log("[smoke-test] Packaged PTY: PASS");
+    } catch (error) {
+      const details = error.stderr?.toString() || error.stdout?.toString() || error.message;
+      console.error(`[smoke-test] ERROR: Packaged PTY failed to start: ${details}`);
+      process.exit(1);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
