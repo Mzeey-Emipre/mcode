@@ -6,6 +6,13 @@ import {
 } from "@/stores/skillsStore";
 import type { SkillInfo } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
+import {
+  resolveComposerCapabilities,
+  type ComposerCapabilityAction,
+} from "./composer-capabilities";
+
+/** A slash command entry shown in the popup. */
+export type ComposerCommandAction = ComposerCapabilityAction;
 
 /** A slash command entry shown in the popup. */
 export interface Command {
@@ -13,7 +20,7 @@ export interface Command {
   description: string;
   namespace: SlashCommandNamespace;
   /** For mcode-namespace commands, the action string dispatched on selection. */
-  action?: string;
+  action?: ComposerCommandAction;
 }
 
 /**
@@ -31,57 +38,13 @@ export type PopupState =
   | { kind: "empty" }
   | { kind: "error"; error: Error };
 
-/**
- * A built-in command plus the predicate that decides which providers see it.
- * Built-ins are the only commands gated by provider on the client: scanned
- * skills arrive already provider-scoped from the server (skill-service filters
- * by each skill's `providers[]`). Declaring availability next to the command
- * keeps the rule local instead of scattered across inline conditionals.
- *
- * Layer mapping (CONTEXT.md §App-side extensibility):
- *   - Mcode-level command   → available to every provider
- *   - Multi-provider command → available to an explicit set of providers
- */
-interface BuiltinCommand extends Command {
-  /** Whether this built-in is offered for the given provider. */
-  isAvailable: (providerId: string | undefined) => boolean;
-}
-
-/**
- * Providers that support `/goal` today. It is a gradual rollout (implemented in
- * Claude's Stop hook; Codex planned), so this is an allow-list that grows by
- * adding entries, not a Claude special-case. `/goal` is hidden for any
- * provider not in this set, including when no provider is selected.
- */
-const GOAL_PROVIDERS = new Set<string>(["claude", "codex"]);
 const MAX_SLASH_COMMAND_ITEMS = 100;
 
-const BUILTIN_COMMANDS: BuiltinCommand[] = [
-  {
-    name: "m:plan",
-    description: "Toggle plan mode",
-    namespace: "mcode",
-    action: "toggle-plan",
-    // Multi-provider: every provider except Copilot, which has its own native
-    // plan mode plus repo-scoped sub-agents. TODO: once Copilot ACP exposes a
-    // native-plan/sub-agent capability, replace this hardcoded exclusion with a
-    // capability check so newly added providers opt in correctly.
-    isAvailable: (providerId) => providerId !== "copilot",
-  },
+const BUILTIN_COMMANDS: Command[] = [
   {
     name: "compact",
     description: "Summarise conversation history to free up context window",
     namespace: "command",
-    // Mcode-level: app-level summarisation, offered for every provider.
-    isAvailable: () => true,
-  },
-  {
-    name: "goal",
-    description: "Set a goal the agent must satisfy before stopping (\"/goal clear\" to remove)",
-    namespace: "command",
-    // Multi-provider, gradual rollout: shown only for providers that support it
-    // (see GOAL_PROVIDERS), hidden for everything else including no selection.
-    isAvailable: (providerId) => providerId !== undefined && GOAL_PROVIDERS.has(providerId),
   },
 ];
 
@@ -119,12 +82,14 @@ function sortCommands(cmds: Command[]): Command[] {
 /** Options for the useSlashCommand hook. */
 interface UseSlashCommandOptions {
   anchorRef: React.RefObject<HTMLElement | null>;
-  onMcodeCommand?: (action: string) => void;
+  onMcodeCommand?: (action: ComposerCommandAction) => void;
   cwd?: string;
-  /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /m:plan for "copilot"). */
+  /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /plan for "copilot"). */
   providerId?: string;
+  /** Model ID used to resolve model-specific composer capabilities. */
+  modelId?: string;
   /**
-   * Whether to include mcode built-in commands (m:plan, compact, goal) in the
+   * Whether to include mcode built-in commands (plan, compact, goal) in the
    * command list. Default `true`. Pass `false` for contexts like the annotation
    * bubble where mcode actions are meaningless and must not be selectable.
    */
@@ -163,6 +128,7 @@ export function useSlashCommand({
   onMcodeCommand,
   cwd,
   providerId,
+  modelId,
   includeBuiltins = true,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
   const [isOpen, setIsOpen] = useState(false);
@@ -188,24 +154,25 @@ export function useSlashCommand({
   // Build the full command list only when its inputs change. Filtering stays
   // separate so keyboard selection does not rebuild every command row.
   const allCommands = useMemo(() => {
-    // Strip the predicate so the rendered list holds plain Command objects;
-    // availability has already been resolved here.
     const builtins: Command[] = includeBuiltins
-      ? BUILTIN_COMMANDS.filter((cmd) => cmd.isAvailable(providerId)).map(
-          (cmd): Command => ({
-            name: cmd.name,
-            description: cmd.description,
-            namespace: cmd.namespace,
-            action: cmd.action,
-          }),
-        )
+      ? [
+          ...resolveComposerCapabilities({ providerId, modelId }).map(
+            (capability): Command => ({
+              name: capability.slashCommand,
+              description: `Attach ${capability.label} to the composer`,
+              namespace: "mcode",
+              action: capability.action,
+            }),
+          ),
+          ...BUILTIN_COMMANDS,
+        ]
       : [];
     const commands: Command[] = [
       ...builtins,
       ...((skills ?? []).map(toCommand)),
     ];
     return sortCommands(commands);
-  }, [skills, providerId, includeBuiltins]);
+  }, [skills, providerId, modelId, includeBuiltins]);
 
   const filtered = useMemo(() => {
     const f = filter.toLowerCase();
@@ -321,7 +288,11 @@ export function useSlashCommand({
         // position, rather than lastIndexOf which can pick the wrong occurrence
         // when the same trigger text appears multiple times before the cursor.
         const triggerStart = match.index + match[1].length;
-        replaceText(value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor));
+        replaceText(
+          cmd.action
+            ? value.slice(0, triggerStart) + value.slice(cursor)
+            : value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor),
+        );
       }
       if (cmd.action && onMcodeCommand) onMcodeCommand(cmd.action);
       setIsOpen(false);

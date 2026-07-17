@@ -3,6 +3,7 @@ import type { ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord } from "
 import type {
   ContextWindowMode,
   ReasoningLevel,
+  OrchestrationMode,
   PlanQuestion,
   PlanAnswer,
   ProviderUsageInfo,
@@ -26,6 +27,7 @@ export interface ThreadSettings {
   permissionMode: PermissionMode;
   interactionMode: InteractionMode;
   reasoningLevel?: ReasoningLevel;
+  orchestrationMode?: OrchestrationMode;
   copilotAgent?: string | null;
   contextWindow?: ContextWindowMode | null;
   thinking?: boolean | null;

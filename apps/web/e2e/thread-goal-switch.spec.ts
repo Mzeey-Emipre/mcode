@@ -125,11 +125,13 @@ test("thread switch A/B/A renders active goal for only the matching thread", asy
 
   const threadItems = page.locator("[data-testid='thread-item']");
   await threadItems.nth(0).click();
-  await expect(page.getByTestId("active-goal-bar")).toContainText("Keep Alpha active");
+  await expect(page.getByTestId("active-goal-chip")).toHaveCount(1);
+  await expect(page.getByLabel("Show active goal: Keep Alpha active")).toBeVisible();
 
   await threadItems.nth(1).click();
-  await expect(page.getByTestId("active-goal-bar")).toHaveCount(0);
+  await expect(page.getByTestId("active-goal-chip")).toHaveCount(0);
 
   await threadItems.nth(0).click();
-  await expect(page.getByTestId("active-goal-bar")).toContainText("Keep Alpha active");
+  await expect(page.getByTestId("active-goal-chip")).toHaveCount(1);
+  await expect(page.getByLabel("Show active goal: Keep Alpha active")).toBeVisible();
 });

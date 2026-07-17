@@ -27,23 +27,14 @@ export type AgentDefaultMode = z.infer<typeof AgentDefaultModeSchema>;
 
 /**
  * Reasoning effort level for model inference.
- * "max" maps to extended reasoning in Claude and Codex; "xhigh" maps to Codex's xhigh effort tier and Claude Opus 4.7+;
- * "ultra" maps to Codex's automatic task-delegation tier;
- * "ultrathink" is a virtual top-tier that prepends "Ultrathink:\n" to the user prompt and
- * sends "max" effort to the SDK (supported only by max-tier Claude models).
+ * "max" maps to extended reasoning in Claude and Codex; "xhigh" maps to Codex's xhigh effort tier and Claude Opus 4.7+.
  * "none" and "minimal" map to OpenAI Codex `effort` presets; Claude models normalize them to "low".
+ * Legacy orchestration-shaped values normalize to "max" when older settings are loaded.
  */
-export const ReasoningLevelSchema = z.enum([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "max",
-  "xhigh",
-  "ultra",
-  "ultrathink",
-]);
+export const ReasoningLevelSchema = z.preprocess(
+  (value) => value === "ultra" || value === "ultrathink" ? "max" : value,
+  z.enum(["none", "minimal", "low", "medium", "high", "max", "xhigh"]),
+);
 /** Reasoning effort level value. */
 export type ReasoningLevel = z.infer<typeof ReasoningLevelSchema>;
 

@@ -132,6 +132,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     context_window: null,
     reasoning_level: null,
     interaction_mode: null,
+    orchestration_mode: null,
     permission_mode: null,
     context_window_mode: null,
     thinking: null,
@@ -602,6 +603,7 @@ describe("ProjectTree action-required indicator", () => {
     expect(indicator.className).toContain("ring-amber-500");
     // CI "failing" would normally paint bg-red-500; the ring must suppress it.
     expect(indicator.className).not.toContain("bg-red-500");
+    expect(screen.queryByTestId("thread-pr-ci-thread-pending")).toBeNull();
   });
 
   it("does not dim row chrome when the thread row is a client scaffold", () => {
@@ -695,11 +697,13 @@ describe("ProjectTree PR-ability gating by mode", () => {
     expect(screen.queryByTitle(/PR #42/)).toBeNull();
   });
 
-  it("optically aligns the PR icon for a worktree thread with a pr_number", () => {
+  it("optically aligns the PR icon without redundant number text", () => {
     renderWithThread(
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }),
     );
-    expect(screen.getByTitle(/PR #42/)).toHaveClass("-mt-px");
+    const indicator = screen.getByTestId("thread-pr-indicator-thread-1");
+    expect(indicator).toHaveAttribute("aria-label", "PR #42, open");
+    expect(indicator).toHaveClass("-mt-px");
     expect(screen.queryByText("#42")).toBeNull();
   });
 
@@ -707,20 +711,27 @@ describe("ProjectTree PR-ability gating by mode", () => {
     renderWithThread(
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "merged" }),
     );
-    expect(screen.getByTitle(/PR #42 \u2013 merged/)).toBeInTheDocument();
+    expect(screen.getByTitle("PR #42, merged")).toBeInTheDocument();
   });
 
-  it("keeps CI checks out of thread rows even when checks are present", () => {
+  it.each([
+    ["passing", "Checks passing", "--diff-add-strong"],
+    ["failing", "Checks failing", "--diff-remove-strong"],
+    ["pending", "Checks running", "text-primary"],
+  ])("attaches %s CI status to the PR icon", (aggregate, label, tone) => {
     renderWithThread(
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }),
       {
         "thread-1": {
-          aggregate: "pending",
-          runs: [{ name: "build", status: "in_progress", conclusion: null }],
+          aggregate,
+          runs: [{ name: "build", status: "completed", conclusion: "success" }],
         },
       },
     );
-    expect(screen.queryByLabelText(/checks done/i)).toBeNull();
+
+    expect(screen.getByLabelText(`PR #42, open. ${label}`)).toBeInTheDocument();
+    expect(screen.getByTestId("thread-pr-ci-thread-1").className).toContain(tone);
+    expect(screen.queryByLabelText(/pending check|failing check/i)).toBeNull();
   });
 
   it("renders no leading status dot for non-PR rows", () => {

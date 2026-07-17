@@ -5,6 +5,7 @@ import type {
   MessageMention,
   PreviewAnnotationBundle,
   ReasoningLevel,
+  OrchestrationMode,
 } from "@mcode/contracts";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 
@@ -23,6 +24,8 @@ export interface QueuedMessage {
   permissionMode: PermissionMode;
   /** Reasoning effort level to apply when the message is sent. */
   reasoningLevel?: ReasoningLevel;
+  /** Provider-native proactive delegation mode for this queued turn. */
+  orchestrationMode?: OrchestrationMode;
   /** Provider to use; undefined means inherit the thread's stored provider. */
   provider?: string;
   /** Copilot sub-agent to use; undefined means inherit the thread's stored agent. */
@@ -33,6 +36,8 @@ export interface QueuedMessage {
   thinking?: boolean;
   /** Codex OpenAI fast tier for this queued send; undefined inherits at dequeue. */
   codexFastMode?: boolean;
+  /** Goal objective installed atomically when this queued turn dispatches. */
+  goalObjective?: string;
   replyToMessageId?: string;
   /** Quoted text excerpt for the reply. */
   quotedText?: string;

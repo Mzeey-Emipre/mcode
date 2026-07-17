@@ -27,6 +27,7 @@ import type {
   AgentEvent,
   ProviderId,
   InteractionMode,
+  OrchestrationMode,
   PermissionDecision,
   PermissionRequest,
   PlanOutput,
@@ -283,6 +284,8 @@ export class AgentService {
    * one place rather than branched inline.
    */
   private readonly commandRouter: CommandRouter;
+  /** Goal command shared by slash-command and typed composer goal dispatch. */
+  private readonly goalCommand: GoalCommand;
   /**
    * Threads whose `TurnComplete` event has already been processed but whose
    * finalize may still be in-flight or have already finished.
@@ -345,9 +348,11 @@ export class AgentService {
       this.turnSnapshotRepo,
       this.db,
     );
-    this.commandRouter = new CommandRouter([
-      new GoalCommand({ messageRepo: this.messageRepo, db: this.db }, broadcast),
-    ]);
+    this.goalCommand = new GoalCommand(
+      { messageRepo: this.messageRepo, db: this.db },
+      broadcast,
+    );
+    this.commandRouter = new CommandRouter([this.goalCommand]);
   }
 
   /**
@@ -397,6 +402,8 @@ export class AgentService {
     planAction?: PlanAction,
     mentions: MessageMention[] = [],
     previewAnnotations?: PreviewAnnotationBundle,
+    goalObjective?: string,
+    orchestrationMode?: OrchestrationMode,
   ): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -406,6 +413,8 @@ export class AgentService {
     // Fall back to the thread's persisted Copilot agent when the caller doesn't supply one.
     // Converts null (DB "cleared") to undefined (provider ignores it) so the SDK defaults.
     const effectiveCopilotAgent = copilotAgent ?? (thread.copilot_agent ?? undefined);
+    const effectiveOrchestrationMode =
+      orchestrationMode ?? thread.orchestration_mode ?? "standard";
 
     // Gate: reject disabled or CLI-missing providers before any side effects
     // (message persistence, status changes) so the thread stays in a clean state.
@@ -459,11 +468,14 @@ export class AgentService {
     // catch block runs onRollback as a belt-and-suspenders guard.
     let pendingDispatch: (() => void | Promise<void>) | null = null;
     let pendingRollback: (() => void | Promise<void>) | null = null;
-    const commandOutcome = await this.commandRouter.route({
+    const commandContext = {
       threadId,
       content,
       provider: this.providerRegistry.resolve(effectiveProvider),
-    });
+    };
+    const commandOutcome = goalObjective !== undefined
+      ? await this.goalCommand.prepareSet(commandContext, goalObjective)
+      : await this.commandRouter.route(commandContext);
     if (commandOutcome.kind === "handled") {
       logger.info("Handled mcode-native command", { threadId });
       return;
@@ -471,7 +483,7 @@ export class AgentService {
     if (commandOutcome.kind === "rewrite") {
       pendingDispatch = commandOutcome.onDispatch ?? null;
       pendingRollback = commandOutcome.onRollback ?? null;
-      messageDisplayContent = content;
+      messageDisplayContent ??= content;
       content = commandOutcome.content;
     }
 
@@ -673,6 +685,7 @@ export class AgentService {
     this.threadRepo.updateSettings(threadId, {
       ...(reasoningLevel !== undefined && { reasoning_level: reasoningLevel }),
       ...(interactionMode !== undefined && { interaction_mode: interactionMode }),
+      ...(orchestrationMode !== undefined && { orchestration_mode: orchestrationMode }),
       ...(permissionMode !== undefined && permissionMode !== "default" && { permission_mode: permissionMode }),
       ...(contextWindowMode !== undefined && { context_window_mode: contextWindowMode }),
       ...(thinking !== undefined && { thinking }),
@@ -770,6 +783,7 @@ export class AgentService {
       fallbackModel,
       permissionMode,
       interactionMode: effectiveInteractionMode ?? "build",
+      orchestrationMode: effectiveOrchestrationMode,
       attachments: persisted.length > 0 ? persisted : undefined,
       reasoningLevel,
       ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
@@ -1046,6 +1060,8 @@ export class AgentService {
     displayContent?: string,
     mentions: MessageMention[] = [],
     previewAnnotations?: PreviewAnnotationBundle,
+    goalObjective?: string,
+    orchestrationMode?: OrchestrationMode,
   ): Promise<Thread & { warnings?: string[] }> {
     const title = truncateTitle(displayContent ?? content);
 
@@ -1061,6 +1077,8 @@ export class AgentService {
         codexFastMode,
         displayContent,
         previewAnnotations,
+        goalObjective,
+        orchestrationMode,
       });
     }
 
@@ -1101,6 +1119,7 @@ export class AgentService {
     this.threadRepo.updateSettings(thread.id, {
       ...(reasoningLevel !== undefined && { reasoning_level: reasoningLevel }),
       ...(interactionMode !== undefined && { interaction_mode: interactionMode }),
+      ...(orchestrationMode !== undefined && { orchestration_mode: orchestrationMode }),
       ...(permissionMode !== undefined && permissionMode !== "default" && { permission_mode: permissionMode }),
       ...(contextWindowMode !== undefined && { context_window_mode: contextWindowMode }),
       ...(thinking !== undefined && { thinking }),
@@ -1117,6 +1136,7 @@ export class AgentService {
       provider,
       reasoning_level: reasoningLevel ?? thread.reasoning_level,
       interaction_mode: interactionMode ?? thread.interaction_mode,
+      orchestration_mode: orchestrationMode ?? thread.orchestration_mode,
       permission_mode: persistedPermissionMode,
       context_window_mode: contextWindowMode ?? thread.context_window_mode,
       thinking: thinking ?? thread.thinking,
@@ -1149,6 +1169,8 @@ export class AgentService {
       undefined,
       mentions,
       previewAnnotations,
+      goalObjective,
+      orchestrationMode,
     ).catch((err) => {
       logger.error("createAndSend initial send failed", {
         threadId: thread.id,
@@ -1192,6 +1214,8 @@ export class AgentService {
     codexFastMode?: boolean;
     displayContent?: string;
     previewAnnotations?: PreviewAnnotationBundle;
+    goalObjective?: string;
+    orchestrationMode?: OrchestrationMode;
   }): Promise<Thread & { warnings?: string[] }> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
@@ -1204,6 +1228,8 @@ export class AgentService {
       codexFastMode,
       displayContent,
       previewAnnotations,
+      goalObjective,
+      orchestrationMode,
     } = params;
 
     // Validate parent
@@ -1295,6 +1321,7 @@ export class AgentService {
     this.threadRepo.updateSettings(thread.id, {
       ...(reasoningLevel !== undefined && { reasoning_level: reasoningLevel }),
       ...(interactionMode !== undefined && { interaction_mode: interactionMode }),
+      ...(orchestrationMode !== undefined && { orchestration_mode: orchestrationMode }),
       ...(permissionMode !== undefined && permissionMode !== "default" && { permission_mode: permissionMode }),
       ...(effectiveContextWindowMode !== undefined && { context_window_mode: effectiveContextWindowMode }),
       ...(effectiveThinking !== undefined && { thinking: effectiveThinking }),
@@ -1311,6 +1338,7 @@ export class AgentService {
       provider,
       reasoning_level: reasoningLevel ?? thread.reasoning_level,
       interaction_mode: interactionMode ?? thread.interaction_mode,
+      orchestration_mode: orchestrationMode ?? thread.orchestration_mode,
       permission_mode: persistedPermissionMode,
       context_window_mode: effectiveContextWindowMode ?? thread.context_window_mode,
       thinking: effectiveThinking ?? thread.thinking,
@@ -1368,6 +1396,8 @@ export class AgentService {
       undefined,
       mentions,
       previewAnnotations,
+      goalObjective,
+      orchestrationMode,
     ).catch((err) => {
       logger.error("createBranchedThread initial send failed", {
         threadId: thread.id,

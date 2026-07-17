@@ -134,32 +134,36 @@ also attach to a branchless worktree.
 ### Composer session
 The composer's per-thread state, treated as one value: draft text,
 attachments, model, provider, reasoning level, composer mode,
-access/permission mode, context window, and provider-specific toggles. Owned
+access/permission mode, context window, orchestration mode, and provider-specific toggles. Owned
 by one module whose interface is **snapshot** (save the outgoing thread's
 session) and **restore** (install the incoming thread's session as a single
 state transition). Switching threads is one restore; the editor update is an
 implementation detail behind the seam. (Epic #649, slice #655.)
 
-## Interaction modes
+## Interaction modes and composer capabilities
 
-The two modes a thread can be in. Mutually exclusive; orthogonal to the
-composer mode and to model configuration.
+Build and Plan remain mutually exclusive provider behaviors. The composer
+presents Build as the default and Plan as an attachable capability. Users add
+Plan from the plus menu or `/plan`; its chip can be removed before sending.
 
 ### Plan mode
 A thread state where the agent produces a structured plan instead of
 executing changes. The agent reasons, searches the codebase, drafts a plan
 document, and presents it for the user to approve, revise, or reject.
 Distinct from the Plan tab, which is a right-panel surface for viewing saved
-plan documents. Exited via the SDK's `ExitPlanMode` tool, after which the
-thread switches to Build mode and the agent can act on the plan.
+plan documents.
 
 ### Build mode
-The opposite of Plan mode: the thread state where the agent actually
-performs the work — editing files, running tools, making changes. The
-default for new threads when the user does not opt into Plan mode.
+The implicit default where the agent performs the work: editing files,
+running tools, and making changes. Build does not occupy a composer chip.
+
+### Goal capability
+A removable composer capability for installing an objective immediately
+before the next turn. Users attach it from the plus menu or `/goal`. An active
+provider goal remains visible as a compact chip with its lifecycle details.
 
 > **Codebase mismatch (rename pending).** The `AgentDefaultModeSchema`
-> still exposes a deprecated third `"agent"` value that should be dropped —
+> still exposes a deprecated third `"agent"` value that should be dropped;
 > the product has only Plan and Build.
 
 ## Model configuration
@@ -183,16 +187,20 @@ unlocks Claude's extended context but typically costs more per turn.
 ### Reasoning level
 A per-thread setting that controls how much reasoning effort the model
 spends per turn. Values: `none`, `minimal`, `low`, `medium`, `high`,
-`max`, `xhigh`, `ultrathink`. Each provider maps the value to whatever its
-SDK supports — Claude uses these directly (with `max` mapping to extended
+`max`, `xhigh`. Each provider maps the value to whatever its
+SDK supports. Claude uses these directly (with `max` mapping to extended
 thinking on supported models), Codex maps `none`/`minimal` to its own
 presets, and Copilot honours the level per model capability. The Cursor
-provider does not expose a reasoning-level selector — its models manage
+provider does not expose a reasoning-level selector; its models manage
 reasoning internally.
 
-**Ultrathink** is a virtual top tier: it prepends `Ultrathink:\n` to the
-user's prompt and sends `max` effort to the SDK underneath. Supported
-only on max-tier Claude models.
+### Orchestration mode
+A per-thread setting with `standard` and `proactive` values. The composer
+exposes proactive orchestration as a removable provider-specific capability:
+**Ultra** for supported Codex models and **Ultracode** for supported Claude
+models. Ultra maps to the Codex app-server's native `ultra` effort. Ultracode
+enables Claude's session-scoped dynamic workflow orchestration. Neither value
+is a reasoning tier.
 
 ## Chat threading
 
@@ -1056,10 +1064,10 @@ Slash commands sit in one of three availability layers:
   by the active provider before it reaches the client. The composer does
   **not** re-filter these; they arrive already scoped.
 - **Multi-provider command** — offered to an explicit, growing set of
-  providers. `/goal` is backed by provider goal support, while `/m:plan`
+  providers. `/goal` is backed by provider goal support, while `/plan`
   applies to every provider except Copilot, which has its own native plan mode.
-  Built-in availability is declared per command in `useSlashCommand`
-  (`BuiltinCommand.isAvailable`), not scattered as inline conditionals.
+  Capability availability is resolved once by `resolveComposerCapabilities`
+  and shared by the plus menu, slash commands, and attached chips.
 - **Mcode-level command** — app-level, offered for every provider regardless
   of which one is active (e.g. `/compact`).
 

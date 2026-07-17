@@ -1,5 +1,5 @@
 import type { Thread } from "@/transport";
-import type { ContextWindowMode, ReasoningLevel } from "@mcode/contracts";
+import type { ContextWindowMode, OrchestrationMode, ReasoningLevel } from "@mcode/contracts";
 
 /**
  * Thread row in the workspace store may include client-only fields while the
@@ -81,6 +81,7 @@ export function buildPlaceholderWorkspaceThread(params: {
   provider?: string | null;
   reasoningLevel?: ReasoningLevel | null;
   interactionMode?: Thread["interaction_mode"];
+  orchestrationMode?: OrchestrationMode | null;
   permissionMode?: Thread["permission_mode"];
   contextWindow?: ContextWindowMode | null;
   thinking?: boolean | null;
@@ -119,6 +120,7 @@ export function buildPlaceholderWorkspaceThread(params: {
     context_window: null,
     reasoning_level: params.reasoningLevel ?? null,
     interaction_mode: params.interactionMode ?? null,
+    orchestration_mode: params.orchestrationMode ?? null,
     permission_mode: params.permissionMode ?? null,
     context_window_mode: params.contextWindow ?? null,
     thinking: params.thinking ?? null,

@@ -284,6 +284,10 @@ erDiagram
         text pr_status "nullable"
         text sdk_session_id "nullable, for resuming SDK sessions"
         text model "nullable"
+        text reasoning_level "nullable"
+        text interaction_mode "nullable"
+        text orchestration_mode "standard|proactive, nullable"
+        text permission_mode "nullable"
         text created_at
         text updated_at
         text deleted_at "nullable, soft delete"

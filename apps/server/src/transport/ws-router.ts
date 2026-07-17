@@ -519,6 +519,7 @@ async function dispatch(
       return deps.threadService.updateSettings(params.threadId, {
         reasoning_level: params.reasoningLevel,
         interaction_mode: params.interactionMode,
+        orchestration_mode: params.orchestrationMode,
         permission_mode: params.permissionMode,
         copilot_agent: params.copilotAgent,
         context_window_mode: params.contextWindow,
@@ -739,6 +740,8 @@ async function dispatch(
         params.planAction,
         params.mentions,
         params.previewAnnotations,
+        params.goalObjective,
+        params.orchestrationMode,
       );
       return;
     case "agent.createAndSend": {
@@ -767,6 +770,8 @@ async function dispatch(
         params.displayContent ?? params.content,
         params.mentions,
         params.previewAnnotations,
+        params.goalObjective,
+        params.orchestrationMode,
       );
       watchReturnedThreadWorktree(deps, thread);
       return thread;

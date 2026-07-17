@@ -16,7 +16,7 @@ import { useComposerDraftStore } from "./composerDraftStore";
 import { useDiffStore } from "./diffStore";
 import { usePreviewReferenceQueueStore } from "./previewReferenceQueueStore";
 import { usePreviewTabsStore } from "./previewTabsStore";
-import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode } from "@mcode/contracts";
+import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode, OrchestrationMode } from "@mcode/contracts";
 import { sanitizeCustomBranchInput } from "@/lib/branch-name";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
 import { readRememberedComposerMode } from "@/lib/composer-mode-preference";
@@ -101,12 +101,15 @@ interface PendingThreadCreation {
   reasoningLevel?: ReasoningLevel;
   provider?: string;
   interactionMode?: InteractionMode;
+  orchestrationMode?: OrchestrationMode;
   sourceThreadId?: string;
   forkedFromMessageId?: string;
   copilotAgent?: string;
   contextWindow?: ContextWindowMode;
   thinking?: boolean;
   codexFastMode?: boolean;
+  /** Goal objective installed atomically with this thread's first turn. */
+  goalObjective?: string;
 }
 
 const pendingThreadCreationByPlaceholderId = new Map<string, PendingThreadCreation>();
@@ -135,6 +138,8 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     pending.displayContent,
     pending.mentions,
     pending.previewAnnotations,
+    pending.goalObjective,
+    pending.orchestrationMode,
   );
 }
 /**
@@ -224,6 +229,8 @@ interface WorkspaceState {
     displayContent?: string,
     mentions?: MessageMention[],
     previewAnnotations?: PreviewAnnotationBundle,
+    goalObjective?: string,
+    orchestrationMode?: OrchestrationMode,
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: {
@@ -247,6 +254,8 @@ interface WorkspaceState {
     codexFastMode?: boolean;
     mentions?: MessageMention[];
     previewAnnotations?: PreviewAnnotationBundle;
+    goalObjective?: string;
+    orchestrationMode?: OrchestrationMode;
   }) => Promise<Thread>;
   /**
    * Re-run server creation for a placeholder thread after {@link WorkspaceThread.clientError}.
@@ -772,6 +781,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     displayContent,
     mentions,
     previewAnnotations,
+    goalObjective,
+    orchestrationMode,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -825,12 +836,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       reasoningLevel,
       provider,
       interactionMode,
+      orchestrationMode,
       copilotAgent,
       contextWindow,
       thinking,
       codexFastMode,
       mentions,
       previewAnnotations,
+      goalObjective,
     };
 
     const captionForUi = displayContent ?? content;
@@ -855,6 +868,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       provider,
       reasoningLevel,
       interactionMode,
+      orchestrationMode,
       permissionMode,
       contextWindow,
       thinking,
@@ -945,6 +959,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       reasoningLevel: params.reasoningLevel,
       provider: params.provider,
       interactionMode: params.interactionMode,
+      orchestrationMode: params.orchestrationMode,
       sourceThreadId: params.sourceThreadId,
       forkedFromMessageId: params.forkedFromMessageId,
       copilotAgent: params.copilotAgent,
@@ -953,6 +968,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       codexFastMode: params.codexFastMode,
       mentions: params.mentions,
       previewAnnotations: params.previewAnnotations,
+      goalObjective: params.goalObjective,
     };
 
     const branchCaptionForUi = params.displayContent ?? params.content;
@@ -977,6 +993,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       provider: params.provider,
       reasoningLevel: params.reasoningLevel,
       interactionMode: params.interactionMode,
+      orchestrationMode: params.orchestrationMode,
       permissionMode: params.permissionMode,
       contextWindow: params.contextWindow,
       thinking: params.thinking,

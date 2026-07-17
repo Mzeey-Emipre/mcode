@@ -206,8 +206,9 @@ describe("ReasoningLevelSchema", () => {
     expect(ReasoningLevelSchema.parse("xhigh")).toBe("xhigh");
   });
 
-  it("accepts the Codex ultra tier", () => {
-    expect(ReasoningLevelSchema.parse("ultra")).toBe("ultra");
+  it("normalizes legacy orchestration-shaped values to max", () => {
+    expect(ReasoningLevelSchema.parse("ultra")).toBe("max");
+    expect(ReasoningLevelSchema.parse("ultrathink")).toBe("max");
   });
 
   it("rejects unknown values", () => {
@@ -232,7 +233,6 @@ describe("GPT-5.6 Codex catalog", () => {
       "high",
       "xhigh",
       "max",
-      "ultra",
     ]);
     expect(getCodexDefaultReasoningLevel("gpt-5.6-sol")).toBe("low");
     expect(getCodexReasoningLevels("gpt-5.6-luna")).toEqual([

@@ -60,7 +60,7 @@ function reasoningRadioGroup(page: Parameters<typeof mockWebSocketServer>[0]) {
 test.describe("Reasoning level picker in settings", () => {
   test.setTimeout(30000);
 
-  test("Claude Opus 4.7 shows all 6 tiers in correct order", async ({ page }) => {
+  test("Claude Opus 4.7 shows all 5 reasoning tiers in correct order", async ({ page }) => {
     const settings = makeSettings("claude-opus-4-7", "high");
     await mockWebSocketServer(page, {
       "settings.get": settings,
@@ -72,10 +72,10 @@ test.describe("Reasoning level picker in settings", () => {
     const radioGroup = reasoningRadioGroup(page);
     const radios = radioGroup.locator('[role="radio"]');
 
-    // All 6 tiers must appear in Low → Medium → High → X-High → Max → Ultrathink order
-    await expect(radios).toHaveCount(6);
+    // Orchestration is configured separately, so this row contains reasoning only.
+    await expect(radios).toHaveCount(5);
     const labels = await radios.allInnerTexts();
-    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max", "Ultrathink"]);
+    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max"]);
 
     // X-High and Max are both enabled for Opus 4.7
     const xhighBtn = radios.filter({ hasText: "X-High" });
@@ -96,9 +96,9 @@ test.describe("Reasoning level picker in settings", () => {
     const radioGroup = reasoningRadioGroup(page);
     const radios = radioGroup.locator('[role="radio"]');
 
-    await expect(radios).toHaveCount(6);
+    await expect(radios).toHaveCount(5);
     const labels = await radios.allInnerTexts();
-    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max", "Ultrathink"]);
+    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max"]);
 
     // Opus 4.6 supports Max but not X-High
     const xhighBtn = radios.filter({ hasText: "X-High" });
@@ -119,9 +119,9 @@ test.describe("Reasoning level picker in settings", () => {
     const radioGroup = reasoningRadioGroup(page);
     const radios = radioGroup.locator('[role="radio"]');
 
-    await expect(radios).toHaveCount(6);
+    await expect(radios).toHaveCount(5);
     const labels = await radios.allInnerTexts();
-    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max", "Ultrathink"]);
+    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max"]);
 
     // Sonnet 4.6 supports Max but not X-High
     const xhighBtn = radios.filter({ hasText: "X-High" });

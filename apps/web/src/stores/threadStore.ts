@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { ContextWindowMode, MessageMention, ReasoningLevel, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import {
@@ -87,7 +87,7 @@ interface ThreadState {
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
   loadOlderMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle, goalObjective?: string, orchestrationMode?: OrchestrationMode) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   /** Replace runningThreadIds with the authoritative server snapshot. Called on WS (re)connect. */
   hydrateRunningThreads: (ids: string[]) => void;
@@ -349,6 +349,8 @@ export function scheduleDrainAfterEdit(threadId: string): void {
             undefined,
             next.mentions,
             next.previewAnnotations,
+            next.goalObjective,
+            next.orchestrationMode,
           );
         } catch {
           void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);
@@ -628,6 +630,7 @@ export function resolveWorkspaceThreadSettings(threadId: string): ThreadSettings
     return {
       permissionMode: (thread.permission_mode as PermissionMode) ?? DEFAULT_THREAD_SETTINGS.permissionMode,
       interactionMode: (thread.interaction_mode as InteractionMode) ?? DEFAULT_THREAD_SETTINGS.interactionMode,
+      orchestrationMode: (thread.orchestration_mode as OrchestrationMode | null) ?? undefined,
       reasoningLevel: thread.reasoning_level !== null
         ? (thread.reasoning_level as ReasoningLevel)
         : undefined,
@@ -1030,7 +1033,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * message to local state, marks the thread as running, then dispatches
    * to the transport layer. On failure, rolls back the running state.
    */
-  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction, mentions, previewAnnotations) => {
+  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction, mentions, previewAnnotations, goalObjective, orchestrationMode) => {
     evictCachedRecord(threadId);
 
     // A `/goal` control form (show/clear/reset/bare) never starts a provider
@@ -1085,6 +1088,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     set((state) => {
       const settingsPatch =
         reasoningLevel !== undefined ||
+        orchestrationMode !== undefined ||
         contextWindow !== undefined ||
         thinking !== undefined ||
         codexFastMode !== undefined
@@ -1092,6 +1096,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               settings: {
                 ...state.getThreadSettings(threadId),
                 ...(reasoningLevel !== undefined && { reasoningLevel }),
+                ...(orchestrationMode !== undefined && { orchestrationMode }),
                 ...(contextWindow !== undefined && { contextWindow }),
                 ...(thinking !== undefined && { thinking }),
                 ...(codexFastMode !== undefined && { codexFastMode }),
@@ -1151,6 +1156,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planAction,
         mentions,
         previewAnnotations,
+        goalObjective,
+        orchestrationMode,
       );
     } catch (e) {
       if (planAction === "revise") {
@@ -1336,6 +1343,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const patch: Partial<ThreadSettings> = {};
     if (settings.permissionMode !== undefined) patch.permissionMode = settings.permissionMode;
     if (settings.interactionMode !== undefined) patch.interactionMode = settings.interactionMode;
+    if (settings.orchestrationMode !== undefined) patch.orchestrationMode = settings.orchestrationMode;
     if (settings.reasoningLevel !== undefined) patch.reasoningLevel = settings.reasoningLevel;
     // Use `in` check so explicit null clears the agent (null !== undefined).
     if ("copilotAgent" in settings) patch.copilotAgent = settings.copilotAgent;
@@ -1366,6 +1374,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               ...t,
               ...(patch.permissionMode !== undefined && { permission_mode: patch.permissionMode }),
               ...(patch.interactionMode !== undefined && { interaction_mode: patch.interactionMode }),
+              ...(patch.orchestrationMode !== undefined && { orchestration_mode: patch.orchestrationMode }),
               ...(patch.reasoningLevel !== undefined && { reasoning_level: patch.reasoningLevel }),
               ...("copilotAgent" in patch && { copilot_agent: patch.copilotAgent ?? null }),
               ...("contextWindow" in patch && { context_window_mode: patch.contextWindow ?? null }),
@@ -1381,6 +1390,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const transportPatch: {
       reasoningLevel?: ThreadSettings["reasoningLevel"];
       interactionMode?: ThreadSettings["interactionMode"];
+      orchestrationMode?: ThreadSettings["orchestrationMode"];
       permissionMode?: ThreadSettings["permissionMode"];
       copilotAgent?: string | null;
       contextWindow?: ContextWindowMode | null;
@@ -1390,6 +1400,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     } = {
       ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
       ...(patch.interactionMode !== undefined ? { interactionMode: patch.interactionMode } : {}),
+      ...(patch.orchestrationMode !== undefined ? { orchestrationMode: patch.orchestrationMode } : {}),
       ...(patch.reasoningLevel !== undefined ? { reasoningLevel: patch.reasoningLevel } : {}),
       ...("copilotAgent" in patch ? { copilotAgent: patch.copilotAgent } : {}),
       ...("contextWindow" in patch ? { contextWindow: patch.contextWindow } : {}),
@@ -2778,6 +2789,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                   undefined,
                   next.mentions,
                   next.previewAnnotations,
+                  next.goalObjective,
+                  next.orchestrationMode,
                 );
               } catch {
                 void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);

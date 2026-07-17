@@ -7,6 +7,8 @@ export {
   PERMISSION_MODES,
   InteractionModeSchema,
   INTERACTION_MODES,
+  OrchestrationModeSchema,
+  ORCHESTRATION_MODES,
   CopilotSubagentSourceSchema,
   COPILOT_SUBAGENT_SOURCES,
 } from "./models/enums.js";
@@ -16,6 +18,7 @@ export type {
   MessageRole,
   PermissionMode,
   InteractionMode,
+  OrchestrationMode,
   CopilotSubagentSource,
 } from "./models/enums.js";
 
@@ -55,6 +58,7 @@ export type { MessageMention } from "./models/mention.js";
 
 export {
   GoalControlsSchema,
+  GoalObjectiveSchema,
   GoalLookupReasonSchema,
   GoalLookupResultSchema,
   GoalLookupSourceSchema,
@@ -62,6 +66,7 @@ export {
   GoalStatusSchema,
   isGoalOpen,
   isGoalStatusOpen,
+  MAX_GOAL_OBJECTIVE_CHARS,
 } from "./models/goal.js";
 export type {
   GoalControls,
@@ -556,7 +561,7 @@ export * from "./providers/catalog.js";
 export * from "./providers/availability.js";
 export { CURSOR_STATIC_MODEL_FALLBACK } from "./providers/cursor-static-fallback.js";
 export { CURSOR_CLI_MODEL_SNAPSHOT } from "./providers/cursor-cli-models-snapshot.js";
-export { CODEX_STATIC_MODELS } from "./providers/codex-static-fallback.js";
+export { CODEX_STATIC_MODELS, supportsCodexUltraOrchestration } from "./providers/codex-static-fallback.js";
 
 export {
   ProviderModelInfoSchema,

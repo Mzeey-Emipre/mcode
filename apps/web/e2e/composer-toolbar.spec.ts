@@ -90,17 +90,16 @@ test.describe("Composer toolbar", () => {
     await page.waitForSelector('[contenteditable="true"]', { timeout: 30_000 });
   });
 
-  test("opens the add menu and keeps the file input available", async ({ page }) => {
+  test("opens the add menu with file and capability items", async ({ page }) => {
     await expect(page.getByTestId("composer-add")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("composer-attachment-input")).toBeAttached();
     await page.getByTestId("composer-add").click();
     const menu = page.getByTestId("composer-add-menu");
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole("button", { name: /Files/ })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: /^Files/ })).toBeVisible();
     await expect(menu.getByText("Images, PDFs, documents, and code")).toBeVisible();
-    await expect(menu.getByRole("button", { name: /Goal/ })).toHaveCount(0);
-    await expect(menu.getByRole("button", { name: /Plan mode/ })).toHaveCount(0);
-    await expect(menu.getByRole("button", { name: /Mention an agent or file/ })).toHaveCount(0);
+    await expect(menu.getByRole("menuitemcheckbox", { name: /^Plan/ })).toBeVisible();
+    await expect(menu.getByRole("menuitemcheckbox", { name: /^Goal/ })).toBeVisible();
     await expect(menu).toHaveAttribute("data-composer-autocomplete", "true");
 
     const [menuBox, composerBox] = await Promise.all([

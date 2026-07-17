@@ -61,6 +61,7 @@ export const threads = sqliteTable(
     provider: text("provider").notNull().default("claude"),
     reasoningLevel: text("reasoning_level"),
     interactionMode: text("interaction_mode"),
+    orchestrationMode: text("orchestration_mode"),
     permissionMode: text("permission_mode"),
     parentThreadId: text("parent_thread_id"),
     forkedFromMessageId: text("forked_from_message_id"),

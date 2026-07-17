@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
-import { ThreadStatusSchema, ThreadModeSchema, InteractionModeSchema, PermissionModeSchema } from "./enums.js";
+import { ThreadStatusSchema, ThreadModeSchema, InteractionModeSchema, OrchestrationModeSchema, PermissionModeSchema } from "./enums.js";
 import { ContextWindowModeSchema, ReasoningLevelSchema } from "./settings.js";
 
 /** Whether a worktree thread is on a named branch or still branchless on HEAD. */
@@ -43,6 +43,8 @@ export const ThreadSchema = lazySchema(() =>
   reasoning_level: ReasoningLevelSchema.nullable(),
   /** Interaction mode last used (chat or plan). */
   interaction_mode: InteractionModeSchema.nullable(),
+  /** Provider-agnostic proactive orchestration mode last used in this thread. */
+  orchestration_mode: OrchestrationModeSchema.nullable(),
   /** Permission mode last used (full or supervised). */
   permission_mode: PermissionModeSchema.nullable(),
   /** Context window mode last used in this thread ("200k" or "1m"). */

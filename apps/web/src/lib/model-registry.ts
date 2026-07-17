@@ -14,7 +14,6 @@ export {
   isXhighEffortModel,
   isMaxEffortModel,
   supportsEffortParameter,
-  supportsUltrathink,
   supports1MContextWindow,
   supportsThinkingToggle,
   normalizeReasoningLevelForModel,
@@ -33,7 +32,7 @@ export interface ModelProvider {
 /**
  * Reasoning effort level values accepted by the Codex app-server.
  */
-export type CodexReasoningLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+export type CodexReasoningLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /** Metadata for a selectable model in the provider registry. */
 export interface ModelDefinition {
@@ -289,7 +288,7 @@ export function getDefaultProviderId(): string {
 
 /** Valid reasoning levels for fallback validation. */
 const VALID_REASONING_LEVELS: readonly string[] = [
-  "none", "minimal", "low", "medium", "high", "max", "xhigh", "ultra", "ultrathink",
+  "none", "minimal", "low", "medium", "high", "max", "xhigh",
 ];
 
 /**
