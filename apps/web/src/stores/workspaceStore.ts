@@ -107,6 +107,8 @@ interface PendingThreadCreation {
   contextWindow?: ContextWindowMode;
   thinking?: boolean;
   codexFastMode?: boolean;
+  /** Goal objective installed atomically with this thread's first turn. */
+  goalObjective?: string;
 }
 
 const pendingThreadCreationByPlaceholderId = new Map<string, PendingThreadCreation>();
@@ -135,6 +137,7 @@ async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateA
     pending.displayContent,
     pending.mentions,
     pending.previewAnnotations,
+    pending.goalObjective,
   );
 }
 /**
@@ -224,6 +227,7 @@ interface WorkspaceState {
     displayContent?: string,
     mentions?: MessageMention[],
     previewAnnotations?: PreviewAnnotationBundle,
+    goalObjective?: string,
   ) => Promise<Thread>;
   /** Branch an existing thread into a new child with handoff context. */
   branchThread: (params: {
@@ -247,6 +251,7 @@ interface WorkspaceState {
     codexFastMode?: boolean;
     mentions?: MessageMention[];
     previewAnnotations?: PreviewAnnotationBundle;
+    goalObjective?: string;
   }) => Promise<Thread>;
   /**
    * Re-run server creation for a placeholder thread after {@link WorkspaceThread.clientError}.
@@ -772,6 +777,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     displayContent,
     mentions,
     previewAnnotations,
+    goalObjective,
   ) => {
     const workspaceId = get().activeWorkspaceId;
     if (!workspaceId) throw new Error("No workspace selected");
@@ -831,6 +837,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       codexFastMode,
       mentions,
       previewAnnotations,
+      goalObjective,
     };
 
     const captionForUi = displayContent ?? content;
@@ -953,6 +960,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       codexFastMode: params.codexFastMode,
       mentions: params.mentions,
       previewAnnotations: params.previewAnnotations,
+      goalObjective: params.goalObjective,
     };
 
     const branchCaptionForUi = params.displayContent ?? params.content;

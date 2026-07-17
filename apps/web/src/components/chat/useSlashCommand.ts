@@ -8,7 +8,7 @@ import type { SkillInfo } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 
 /** A slash command entry shown in the popup. */
-export type ComposerCommandAction = "attach-plan";
+export type ComposerCommandAction = "attach-plan" | "attach-goal";
 
 /** A slash command entry shown in the popup. */
 export interface Command {
@@ -80,8 +80,9 @@ const BUILTIN_COMMANDS: BuiltinCommand[] = [
   },
   {
     name: "goal",
-    description: "Set a goal the agent must satisfy before stopping (\"/goal clear\" to remove)",
-    namespace: "command",
+    description: "Attach Goal to the composer",
+    namespace: "mcode",
+    action: "attach-goal",
     // Multi-provider, gradual rollout: shown only for providers that support it
     // (see GOAL_PROVIDERS), hidden for everything else including no selection.
     isAvailable: (providerId) => providerId !== undefined && GOAL_PROVIDERS.has(providerId),

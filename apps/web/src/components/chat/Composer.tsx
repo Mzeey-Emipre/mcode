@@ -17,15 +17,12 @@ import {
   ListChecks,
   MoreHorizontal,
   Target,
-  Info,
-  Trash2,
   X,
   Zap,
   Folder,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogClose,
@@ -565,8 +562,8 @@ function goalStatusLabel(status: GoalState["status"]): string {
   }
 }
 
-/** Shows the active provider goal and exposes app-level goal actions. */
-export function ActiveGoalBar({
+/** Shows the active provider goal as a compact composer capability chip. */
+export function ActiveGoalChip({
   threadId,
   goal,
 }: {
@@ -698,121 +695,103 @@ export function ActiveGoalBar({
       });
   };
 
+  const goalLabel = (
+    <span className="inline-flex items-center gap-1.5 px-2 text-xs font-medium text-foreground">
+      <Target size={13} className="text-muted-foreground" aria-hidden />
+      <span>Goal</span>
+    </span>
+  );
+
   return (
-    <div
-      className="mb-2 flex min-h-9 items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/35 px-3 py-2 text-xs text-muted-foreground shadow-sm"
-      data-testid="active-goal-bar"
-    >
-      <div className="min-w-0 flex items-center gap-2">
-        <Target size={13} className="shrink-0 text-primary" aria-hidden="true" />
-        <Badge variant="secondary" size="sm" className="shrink-0">
-          {goalStatusLabel(goal.status)}
-        </Badge>
-        <span className="shrink-0 text-muted-foreground/80">·</span>
-        <span className="shrink-0 tabular-nums">{formatGoalElapsed(elapsed)}</span>
-        <span className="truncate text-muted-foreground/80">{goal.objective}</span>
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        {isClearingGoal && !detailsOpen && (
-          <span className="text-muted-foreground">Clearing...</span>
-        )}
-        {canInspect && (
-          <Popover open={detailsOpen} onOpenChange={openDetails}>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                        aria-label="Show active goal"
-                      >
-                        <Info size={13} />
-                      </Button>
-                    }
-                  />
-                }
-              />
-              <TooltipContent>Show active goal</TooltipContent>
-            </Tooltip>
-            <PopoverContent align="end" sideOffset={8} className="w-80 space-y-3 p-3 text-xs">
-              <div className="space-y-1">
-                <div className="font-medium text-foreground">{goal.objective}</div>
-                <div className="text-muted-foreground">{goalStatusLabel(goal.status)}</div>
-              </div>
-              <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
-                <span>Elapsed</span>
-                <span className="text-foreground">{formatGoalElapsed(elapsed)}</span>
-                <span>Tokens used</span>
-                <span className="text-foreground tabular-nums">{goal.tokensUsed}</span>
-                {goal.tokenBudget != null && (
-                  <>
-                    <span>Token budget</span>
-                    <span className="text-foreground tabular-nums">{goal.tokenBudget}</span>
-                  </>
-                )}
-                <span>Goal source</span>
-                <span className="text-foreground">{goal.source}</span>
-                <span>Updated</span>
-                <span className="text-foreground">{formatGoalDate(goal.updatedAt)}</span>
-                <span>Lookup source</span>
-                <span className="text-foreground">{lookupSource ?? "Refreshing"}</span>
-                {lookupReason && (
-                  <>
-                    <span>Lookup reason</span>
-                    <span className="text-foreground">{lookupReason}</span>
-                  </>
-                )}
-              </div>
-              {(isRefreshingGoal || refreshError || isClearingGoal) && (
-                <div className="text-muted-foreground">
-                  {isClearingGoal
-                    ? "Clearing..."
-                    : refreshError
-                      ? "Could not refresh goal details."
-                      : "Refreshing..."}
-                </div>
-              )}
-              {canClear && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  disabled={isClearingGoal}
-                  onClick={handleClearGoal}
-                >
-                  {isClearingGoal ? "Clearing..." : "Clear"}
-                </Button>
-              )}
-            </PopoverContent>
-          </Popover>
-        )}
-        {canClear && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                  aria-label="Clear active goal"
-                  disabled={isClearingGoal}
-                  onClick={handleClearGoal}
-                >
-                  <Trash2 size={13} />
-                </Button>
-              }
-            />
-            <TooltipContent>Clear active goal</TooltipContent>
-          </Tooltip>
-        )}
-      </div>
-    </div>
+    <Popover open={detailsOpen} onOpenChange={openDetails}>
+      <span
+        data-testid="active-goal-chip"
+        className="inline-flex h-7 shrink-0 items-center rounded-lg bg-muted/45 pr-0.5 ring-1 ring-inset ring-border/60"
+      >
+        {canInspect ? (
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                className="h-6 gap-0 rounded-md px-0 hover:bg-muted"
+                aria-label={`Show active goal: ${goal.objective}`}
+              >
+                {goalLabel}
+              </Button>
+            }
+          />
+        ) : goalLabel}
+        {canClear ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="size-6 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="Clear active goal"
+            title="Clear active goal"
+            disabled={isClearingGoal}
+            onClick={handleClearGoal}
+          >
+            <X size={12} aria-hidden />
+          </Button>
+        ) : null}
+      </span>
+      {canInspect ? (
+        <PopoverContent align="start" sideOffset={8} className="w-80 space-y-3 p-3 text-xs">
+          <div className="space-y-1">
+            <div className="font-medium text-foreground">{goal.objective}</div>
+            <div className="text-muted-foreground">{goalStatusLabel(goal.status)}</div>
+          </div>
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
+            <span>Elapsed</span>
+            <span className="text-foreground">{formatGoalElapsed(elapsed)}</span>
+            <span>Tokens used</span>
+            <span className="text-foreground tabular-nums">{goal.tokensUsed}</span>
+            {goal.tokenBudget != null ? (
+              <>
+                <span>Token budget</span>
+                <span className="text-foreground tabular-nums">{goal.tokenBudget}</span>
+              </>
+            ) : null}
+            <span>Goal source</span>
+            <span className="text-foreground">{goal.source}</span>
+            <span>Updated</span>
+            <span className="text-foreground">{formatGoalDate(goal.updatedAt)}</span>
+            <span>Lookup source</span>
+            <span className="text-foreground">{lookupSource ?? "Refreshing"}</span>
+            {lookupReason ? (
+              <>
+                <span>Lookup reason</span>
+                <span className="text-foreground">{lookupReason}</span>
+              </>
+            ) : null}
+          </div>
+          {isRefreshingGoal || refreshError || isClearingGoal ? (
+            <div className="text-muted-foreground">
+              {isClearingGoal
+                ? "Clearing..."
+                : refreshError
+                  ? "Could not refresh goal details."
+                  : "Refreshing..."}
+            </div>
+          ) : null}
+          {canClear ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full"
+              disabled={isClearingGoal}
+              onClick={handleClearGoal}
+            >
+              {isClearingGoal ? "Clearing..." : "Clear goal"}
+            </Button>
+          ) : null}
+        </PopoverContent>
+      ) : null}
+    </Popover>
   );
 }
 
@@ -868,6 +847,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [provider, setProvider] = useState<string>(getDefaultProviderId());
   const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.BUILD);
+  const [goalPending, setGoalPending] = useState(false);
   const [copilotAgent, setCopilotAgent] = useState<string | null>(null);
   // Per-thread overrides; null/undefined means inherit from settings default.
   const [contextWindow, setContextWindow] = useState<ContextWindowMode | null>(null);
@@ -928,6 +908,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     displayContent: string;
     mentions: MessageMention[];
     previewAnnotations?: PreviewAnnotationBundle;
+    goalObjective?: string;
   } | null>(null);
   const [pendingCheckoutConfirmation, setPendingCheckoutConfirmation] =
     useState<PendingCheckoutConfirmation | null>(null);
@@ -1276,6 +1257,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   );
   const activeGoal = useThreadRecord(threadId, (r) => r.goal ?? null);
 
+  useEffect(() => {
+    if (isGoalOpen(activeGoal)) setGoalPending(false);
+  }, [activeGoal]);
+
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
 
@@ -1291,6 +1276,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   // For new threads (no active thread yet), fall back to the composer-selected
   // provider so the availability banner tracks what the user is about to submit.
   const effectiveProviderId = (activeThread?.provider ?? provider) as ProviderId;
+  const goalAvailable = effectiveProviderId === "claude" || effectiveProviderId === "codex";
   const availability = useProviderAvailabilityStore((s) => s.getAvailability(effectiveProviderId));
   const providerUnusable = !!availability && (
     !availability.enabled || availability.cli.status === "not_found"
@@ -1366,6 +1352,17 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (threadId) void setThreadSettings(threadId, { interactionMode: INTERACTION_MODES.BUILD });
   }, [setMode, threadId, setThreadSettings]);
 
+  const attachGoal = useCallback(() => {
+    if (!goalAvailable || isGoalOpen(activeGoal)) return;
+    setGoalPending(true);
+    editorRef.current?.focus();
+  }, [activeGoal, goalAvailable]);
+
+  const detachPendingGoal = useCallback(() => {
+    setGoalPending(false);
+    editorRef.current?.focus();
+  }, []);
+
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
   const newThreadMode = useWorkspaceStore((s) => s.newThreadMode);
@@ -1397,6 +1394,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     onMcodeCommand: (action) => {
       if (action === "attach-plan") {
         attachPlan();
+      } else if (action === "attach-goal") {
+        attachGoal();
       }
     },
   });
@@ -1651,6 +1650,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         thinking: thinking ?? undefined,
         codexFastMode:
           provider === "codex" ? (codexFastMode === null ? undefined : codexFastMode) : undefined,
+        goalObjective: goalPending ? trimmedInput : undefined,
         replyToMessageId: replyContext?.messageId,
         quotedText: replyContext?.quotedText,
       };
@@ -1666,6 +1666,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       contextWindow,
       thinking,
       codexFastMode,
+      goalPending,
       replyContext,
     ],
   );
@@ -1747,6 +1748,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       setContextWindow(popped.contextWindow ?? null);
       setThinking(popped.thinking ?? null);
       setCodexFastMode(popped.codexFastMode !== undefined ? popped.codexFastMode : null);
+      setGoalPending(Boolean(popped.goalObjective));
 
       if (popped.browserCaptureSpillPaths?.length) {
         void releaseBrowserCaptureSpills(popped.browserCaptureSpillPaths);
@@ -2135,6 +2137,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const rawInput = composerMessage.text;
     const selectedMentions = composerMessage.mentions;
     const trimmed = rawInput.trim();
+    const submittedGoalObjective = goalPending ? trimmed : undefined;
     const outboundPreviewAnnotations = annotationScopeId
       ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
       : undefined;
@@ -2182,6 +2185,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           displayContent: trimmed,
           mentions: selectedMentions,
           previewAnnotations: effectivePreviewAnnotations,
+          goalObjective: submittedGoalObjective,
         });
         return;
       }
@@ -2211,6 +2215,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         thinking: thinking ?? undefined,
         codexFastMode:
           provider === "codex" ? (codexFastMode === null ? undefined : codexFastMode) : undefined,
+        goalObjective: submittedGoalObjective,
         replyToMessageId: replyContext?.messageId,
         quotedText: replyContext?.quotedText,
         browserCaptureSpillPaths:
@@ -2226,6 +2231,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
         setPreviewDesignModeActive(annotationScopeId, false);
       }
+      if (enqueued && submittedGoalObjective) setGoalPending(false);
       if (editingFromQueue && enqueued) {
         useToastStore
           .getState()
@@ -2377,6 +2383,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             outboundDisplay,
             selectedMentions,
             effectivePreviewAnnotations,
+            submittedGoalObjective,
           );
         onThreadCreated?.(createdThread);
       } else if (branchFromMessageId && threadId) {
@@ -2419,6 +2426,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         codexFastMode: provider === "codex" && codexFastMode !== null ? codexFastMode : undefined,
         mentions: selectedMentions,
         previewAnnotations: effectivePreviewAnnotations,
+        goalObjective: submittedGoalObjective,
       });
       onBranchModeExit?.();
       } else if (threadId) {
@@ -2440,8 +2448,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           undefined,
           selectedMentions,
           effectivePreviewAnnotations,
+          submittedGoalObjective,
         );
       }
+
+      if (submittedGoalObjective) setGoalPending(false);
 
       if (annotationScopeId && outboundPreviewAnnotations) {
         usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
@@ -2482,7 +2493,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations]);
+  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations, goalPending]);
 
   useEffect(() => {
     if (!annotationScopeId) return;
@@ -2538,6 +2549,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       undefined,
       queued.mentions,
       queued.previewAnnotations,
+      queued.goalObjective,
     );
   // modelId/access/reasoning/provider intentionally read from render-time values via closure;
   // handoffStatus is the sole reactive trigger so we don't re-fire on unrelated changes.
@@ -2777,10 +2789,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         />
       )}
 
-      {threadId && !isNewThread && (
-        <ActiveGoalBar threadId={threadId} goal={activeGoal} />
-      )}
-
       {isNewThread && (
         <div
           data-testid="new-thread-context-strip"
@@ -2975,7 +2983,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             disabled={planPending || isStaleWorktree || !!providerReason}
             isPopupOpen={isAnyPopupOpen}
             onPopupKeyDown={handlePopupKeyDown}
-            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : isNewThread ? "Do anything" : "Message Mcode..."}
+            placeholder={isStaleWorktree ? "Worktree directory no longer exists. This thread is read-only." : planPending ? "Answer the planning questions above" : goalPending ? "Describe the goal..." : branchFromMessageId ? "What should the branch work on?" : editingFromQueue ? "Edit the queued message - send to save." : replyContext ? "Type your reply..." : isAgentRunning ? "Queue a follow-up..." : isNewThread ? "Do anything" : "Message Mcode..."}
           />
           <FileTagPopup
             items={fileAutocomplete.suggestions}
@@ -3036,6 +3044,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             onAttachFiles={handleAttachPick}
             onAttachPlan={attachPlan}
             planAttached={mode === INTERACTION_MODES.PLAN}
+            onAttachGoal={attachGoal}
+            goalAttached={goalPending || isGoalOpen(activeGoal)}
+            goalAvailable={goalAvailable}
             getComposerRect={() => composerContainerRef.current?.getBoundingClientRect() ?? null}
           />
           {/* Model picker */}
@@ -3312,6 +3323,18 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
               onRemove={detachPlan}
               testId="composer-capability-plan"
             />
+          ) : null}
+
+          {goalPending ? (
+            <ComposerCapabilityChip
+              label="Goal"
+              icon={Target}
+              removeLabel="Remove Goal"
+              onRemove={detachPendingGoal}
+              testId="composer-capability-goal-pending"
+            />
+          ) : threadId && !isNewThread ? (
+            <ActiveGoalChip threadId={threadId} goal={activeGoal} />
           ) : null}
 
           {/* Spacer */}

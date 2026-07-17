@@ -207,6 +207,46 @@ describe("AgentService.sendMessage — /goal command", () => {
     expect(userMsg?.content).toBe("/goal analyse this branch");
   });
 
+  it("installs a typed composer goal without persisting slash-command text", async () => {
+    const { svc, providerStub, messageRepo } = buildService(db);
+
+    await svc.sendMessage(
+      thread.id,
+      "Analyse this branch",
+      "default",
+      "claude-sonnet-4-6",
+      [],
+      undefined,
+      "claude",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      undefined,
+      "Analyse this branch",
+    );
+
+    expect(providerStub.setGoal).toHaveBeenCalledWith(
+      `mcode-${thread.id}`,
+      "Analyse this branch",
+    );
+    expect(providerStub.sendTurn.mock.calls[0][0].message).toContain("directive");
+    const { messages } = messageRepo.listByThread(thread.id, 100);
+    expect(messages.find((message) => message.role === "user")?.content).toBe(
+      "Analyse this branch",
+    );
+  });
+
   it("native Claude /goal sends exact slash-command wire text", async () => {
     const { svc, providerStub } = buildService(db);
     providerStub.hasNativeGoalCommand.mockReturnValue(true);

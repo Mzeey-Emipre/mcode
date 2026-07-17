@@ -55,6 +55,7 @@ export type { MessageMention } from "./models/mention.js";
 
 export {
   GoalControlsSchema,
+  GoalObjectiveSchema,
   GoalLookupReasonSchema,
   GoalLookupResultSchema,
   GoalLookupSourceSchema,
@@ -62,6 +63,7 @@ export {
   GoalStatusSchema,
   isGoalOpen,
   isGoalStatusOpen,
+  MAX_GOAL_OBJECTIVE_CHARS,
 } from "./models/goal.js";
 export type {
   GoalControls,

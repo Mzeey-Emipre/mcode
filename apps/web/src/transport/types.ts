@@ -267,6 +267,7 @@ export interface McodeTransport {
     planAction?: PlanAction,
     mentions?: MessageMention[],
     previewAnnotations?: PreviewAnnotationBundle,
+    goalObjective?: string,
   ): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
@@ -291,6 +292,7 @@ export interface McodeTransport {
     displayContent?: string,
     mentions?: MessageMention[],
     previewAnnotations?: PreviewAnnotationBundle,
+    goalObjective?: string,
   ): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<void>;
   /** Respond to a tool permission request from the agent. */

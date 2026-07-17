@@ -87,7 +87,7 @@ interface ThreadState {
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
   loadOlderMessages: (threadId: string) => Promise<void>;
-  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle) => Promise<void>;
+  sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle, goalObjective?: string) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   /** Replace runningThreadIds with the authoritative server snapshot. Called on WS (re)connect. */
   hydrateRunningThreads: (ids: string[]) => void;
@@ -349,6 +349,7 @@ export function scheduleDrainAfterEdit(threadId: string): void {
             undefined,
             next.mentions,
             next.previewAnnotations,
+            next.goalObjective,
           );
         } catch {
           void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);
@@ -1030,7 +1031,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * message to local state, marks the thread as running, then dispatches
    * to the transport layer. On failure, rolls back the running state.
    */
-  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction, mentions, previewAnnotations) => {
+  sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction, mentions, previewAnnotations, goalObjective) => {
     evictCachedRecord(threadId);
 
     // A `/goal` control form (show/clear/reset/bare) never starts a provider
@@ -1151,6 +1152,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planAction,
         mentions,
         previewAnnotations,
+        goalObjective,
       );
     } catch (e) {
       if (planAction === "revise") {
@@ -2778,6 +2780,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
                   undefined,
                   next.mentions,
                   next.previewAnnotations,
+                  next.goalObjective,
                 );
               } catch {
                 void releaseBrowserCaptureSpills(next.browserCaptureSpillPaths ?? []);

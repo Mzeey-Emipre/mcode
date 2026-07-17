@@ -22,7 +22,6 @@ interface GoalCommandDeps {
 /** Matches `/goal`, optionally followed by an argument, across newlines. */
 const GOAL_COMMAND = /^\s*\/goal\b\s*(.*)$/s;
 const MAX_GOAL_OBJECTIVE_CHARS = 4000;
-
 interface ClaudeNativeGoalCommandProvider {
   hasNativeGoalCommand(sessionId: string): boolean;
   setNativeGoalMirror(sessionId: string, condition: string): GoalState;
@@ -68,6 +67,53 @@ export class GoalCommand implements McodeCommand {
     return isGoalCapable(provider);
   }
 
+  /** Prepare a typed goal objective for atomic install, dispatch, and rollback. */
+  async prepareSet(ctx: CommandContext, objective: string): Promise<CommandOutcome> {
+    const arg = objective.trim();
+    if (!isGoalCapable(ctx.provider)) {
+      throw new Error("The selected provider does not support goals.");
+    }
+    if (arg.length === 0 || arg.length > MAX_GOAL_OBJECTIVE_CHARS) {
+      throw new Error(`Goal objectives must contain 1-${MAX_GOAL_OBJECTIVE_CHARS} characters.`);
+    }
+
+    const capable = ctx.provider;
+    const session = this.sessionName(ctx.threadId);
+    const native = asClaudeNativeGoalCommandProvider(ctx.provider);
+    const useNative = native?.hasNativeGoalCommand(session) === true;
+
+    if (useNative) {
+      return {
+        kind: "rewrite",
+        content: `/goal ${arg}`,
+        onDispatch: async () => {
+          const goal = native.setNativeGoalMirror(session, arg);
+          this.broadcastGoalUpdated(ctx.threadId, goal);
+        },
+        onRollback: async () => {
+          native.clearNativeGoalMirror(session);
+          this.broadcastGoalCleared(ctx.threadId, "rollback");
+        },
+      };
+    }
+
+    return {
+      kind: "rewrite",
+      content:
+        `A goal has been set for this session: "${arg}". Treat this exactly ` +
+        `as your directive: start working toward it now. The session will not ` +
+        `stop until the goal is satisfied.`,
+      onDispatch: async () => {
+        const goal = await capable.setGoal(session, arg);
+        this.broadcastGoalUpdated(ctx.threadId, goal);
+      },
+      onRollback: async () => {
+        await capable.clearGoal(session);
+        this.broadcastGoalCleared(ctx.threadId, "rollback");
+      },
+    };
+  }
+
   /**
    * Route a `/goal` message. Returns {@link CommandOutcome} describing how the
    * caller should proceed. The SET form rewrites the wire payload and defers the
@@ -86,12 +132,12 @@ export class GoalCommand implements McodeCommand {
     const arg = match[1].trim();
     const lower = arg.toLowerCase();
     const session = this.sessionName(threadId);
-    const native = asClaudeNativeGoalCommandProvider(ctx.provider);
-    const useNative = native?.hasNativeGoalCommand(session) === true;
     const isControl =
       arg === "" || lower === "show" || lower === "clear" || lower === "reset";
 
     if (isControl) {
+      const native = asClaudeNativeGoalCommandProvider(ctx.provider);
+      const useNative = native?.hasNativeGoalCommand(session) === true;
       if (useNative) {
         const nativeContent = lower === "clear" || lower === "reset" ? "/goal off" : "/goal";
         return {
@@ -123,41 +169,7 @@ export class GoalCommand implements McodeCommand {
       return { kind: "handled" };
     }
 
-    // SET form: rewrite the wire payload so the agent starts working on the
-    // condition immediately, while the caller pins the original text for the
-    // transcript. The setGoal() install is deferred to onDispatch (run by the
-    // caller just before sendTurn) so a send failure can't leave a stale goal;
-    // onRollback clears it if the send fails.
-    if (useNative) {
-      return {
-        kind: "rewrite",
-        content: `/goal ${arg}`,
-        onDispatch: async () => {
-          const goal = native.setNativeGoalMirror(session, arg);
-          this.broadcastGoalUpdated(threadId, goal);
-        },
-        onRollback: async () => {
-          native.clearNativeGoalMirror(session);
-          this.broadcastGoalCleared(threadId, "rollback");
-        },
-      };
-    }
-
-    return {
-      kind: "rewrite",
-      content:
-        `A goal has been set for this session: "${arg}". Treat this exactly ` +
-        `as your directive: start working toward it now. The session will not ` +
-        `stop until the goal is satisfied.`,
-      onDispatch: async () => {
-        const goal = await capable.setGoal(session, arg);
-        this.broadcastGoalUpdated(threadId, goal);
-      },
-      onRollback: async () => {
-        await capable.clearGoal(session);
-        this.broadcastGoalCleared(threadId, "rollback");
-      },
-    };
+    return this.prepareSet(ctx, arg);
   }
 
   /** Broadcast a normalized goal-state update to connected clients. */

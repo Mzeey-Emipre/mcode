@@ -32,7 +32,7 @@ import { ProviderUsageInfoSchema } from "../providers/usage.js";
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
-import { GoalLookupResultSchema } from "../models/goal.js";
+import { GoalLookupResultSchema, GoalObjectiveSchema } from "../models/goal.js";
 import { PreviewAnnotationBundleSchema } from "../models/browser-preview.js";
 import {
   PullRequestCapabilitiesRequestSchema,
@@ -128,6 +128,8 @@ export const SendMessageSchema = lazySchema(() =>
      * in chat mode without the plan-questions wrapper.
      */
     planAction: PlanActionSchema().optional(),
+    /** Objective installed as a provider goal immediately before this turn dispatches. */
+    goalObjective: GoalObjectiveSchema().optional(),
   }),
 );
 
@@ -168,6 +170,8 @@ export const CreateAndSendSchema = lazySchema(() =>
      * Undefined leaves `codex_fast_mode` null (inherit global on each turn).
      */
     codexFastMode: z.boolean().optional(),
+    /** Objective installed as a provider goal immediately before the first turn dispatches. */
+    goalObjective: GoalObjectiveSchema().optional(),
     /** Source thread ID when branching from an existing thread. */
     parentThreadId: z.string().optional(),
     /** Fork-point message ID in the parent thread. Defaults to last persisted message. */

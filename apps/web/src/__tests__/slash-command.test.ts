@@ -293,6 +293,26 @@ describe("mcode side-effect dispatch", () => {
     expect(onMcodeCommand).toHaveBeenCalledWith("attach-plan");
     expect(emittedValue).toBe("");
   });
+
+  it("dispatches Goal as a composer action without inserting slash text", async () => {
+    const ref = makeAnchor();
+    const onMcodeCommand = vi.fn();
+    const { result } = renderHook(() =>
+      useSlashCommand({ anchorRef: ref, onMcodeCommand, providerId: "claude" })
+    );
+    await act(async () => { result.current.onInputChange("/goa"); });
+    await act(async () => {});
+
+    const goalCommand = result.current.items.find((item) => item.name === "goal");
+    expect(goalCommand).toBeDefined();
+
+    let emittedValue = "unchanged";
+    await act(async () => {
+      result.current.onSelect(goalCommand!, (value: string) => { emittedValue = value; });
+    });
+    expect(onMcodeCommand).toHaveBeenCalledWith("attach-goal");
+    expect(emittedValue).toBe("");
+  });
 });
 
 describe("IPC cache", () => {

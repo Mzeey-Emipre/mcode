@@ -594,6 +594,7 @@ export function createWsTransport(
       planAction?,
       mentions?,
       previewAnnotations?,
+      goalObjective?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -618,6 +619,7 @@ export function createWsTransport(
         ...(planAction !== undefined && { planAction }),
         ...(mentions !== undefined && { mentions }),
         ...(previewAnnotations !== undefined && { previewAnnotations }),
+        ...(goalObjective !== undefined && { goalObjective }),
         ...guardrails,
       });
     },
@@ -644,6 +646,7 @@ export function createWsTransport(
       displayContent?,
       mentions?,
       previewAnnotations?,
+      goalObjective?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -672,6 +675,7 @@ export function createWsTransport(
         ...(displayContent !== undefined && { displayContent }),
         ...(mentions !== undefined && { mentions }),
         ...(previewAnnotations !== undefined && { previewAnnotations }),
+        ...(goalObjective !== undefined && { goalObjective }),
         ...guardrails,
       });
     },

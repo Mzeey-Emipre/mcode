@@ -739,6 +739,7 @@ async function dispatch(
         params.planAction,
         params.mentions,
         params.previewAnnotations,
+        params.goalObjective,
       );
       return;
     case "agent.createAndSend": {
@@ -767,6 +768,7 @@ async function dispatch(
         params.displayContent ?? params.content,
         params.mentions,
         params.previewAnnotations,
+        params.goalObjective,
       );
       watchReturnedThreadWorktree(deps, thread);
       return thread;

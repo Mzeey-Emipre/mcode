@@ -17,7 +17,10 @@ describe("composer capabilities", () => {
         disabled={false}
         onAttachFiles={vi.fn()}
         onAttachPlan={onAttachPlan}
+        onAttachGoal={vi.fn()}
         planAttached={false}
+        goalAttached={false}
+        goalAvailable={true}
         getComposerRect={() => COMPOSER_RECT}
       />,
     );
@@ -26,6 +29,30 @@ describe("composer capabilities", () => {
     await user.click(screen.getByRole("button", { name: /Plan/ }));
 
     await waitFor(() => expect(onAttachPlan).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
+  });
+
+  it("attaches Goal from the composer add menu", async () => {
+    const user = userEvent.setup();
+    const onAttachGoal = vi.fn();
+
+    render(
+      <ComposerAddMenu
+        disabled={false}
+        onAttachFiles={vi.fn()}
+        onAttachPlan={vi.fn()}
+        onAttachGoal={onAttachGoal}
+        planAttached={false}
+        goalAttached={false}
+        goalAvailable={true}
+        getComposerRect={() => COMPOSER_RECT}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add to composer" }));
+    await user.click(screen.getByRole("button", { name: /Goal/ }));
+
+    await waitFor(() => expect(onAttachGoal).toHaveBeenCalledOnce());
     expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
   });
 

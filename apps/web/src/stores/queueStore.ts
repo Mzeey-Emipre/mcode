@@ -33,6 +33,8 @@ export interface QueuedMessage {
   thinking?: boolean;
   /** Codex OpenAI fast tier for this queued send; undefined inherits at dequeue. */
   codexFastMode?: boolean;
+  /** Goal objective installed atomically when this queued turn dispatches. */
+  goalObjective?: string;
   replyToMessageId?: string;
   /** Quoted text excerpt for the reply. */
   quotedText?: string;
