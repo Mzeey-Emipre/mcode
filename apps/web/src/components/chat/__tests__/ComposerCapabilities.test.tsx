@@ -158,4 +158,44 @@ describe("composer capabilities", () => {
     expect(planButton).toHaveAttribute("aria-pressed", "true");
     expect(planButton.querySelector(".lucide-check")).toBeTruthy();
   });
+
+  it("keeps titles visible while descriptions stay inline and fade", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ComposerAddMenu
+        disabled={false}
+        onAttachFiles={vi.fn()}
+        onAttachPlan={vi.fn()}
+        onAttachGoal={vi.fn()}
+        onAttachOrchestration={vi.fn()}
+        planAttached={false}
+        goalAttached={false}
+        goalAvailable={true}
+        orchestrationAttached={false}
+        orchestrationLabel="Ultracode"
+        getComposerRect={() => COMPOSER_RECT}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add to composer" }));
+
+    for (const description of [
+      "Images, PDFs, documents, and code",
+      "Explore the work and propose a plan",
+      "Set the objective for the next run",
+      "Proactively delegate work to sub-agents",
+    ]) {
+      const descriptionElement = screen.getByText(description);
+      const titleElement = descriptionElement.previousElementSibling;
+
+      expect(descriptionElement).toHaveClass("flex-1", "overflow-hidden", "whitespace-nowrap");
+      expect(descriptionElement).toHaveStyle({
+        maskImage: "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+      });
+      expect(titleElement).toHaveClass("shrink-0");
+      expect(descriptionElement.parentElement).toHaveClass("items-baseline", "overflow-hidden");
+      expect(descriptionElement.parentElement).not.toHaveClass("flex-col");
+    }
+  });
 });

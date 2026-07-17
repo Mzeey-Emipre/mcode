@@ -19,6 +19,27 @@ interface ComposerAddMenuProps {
 
 const ADD_MENU_HEIGHT = 256;
 
+interface ComposerAddMenuLabelProps {
+  title: string;
+  description: string;
+}
+
+function ComposerAddMenuLabel({ title, description }: ComposerAddMenuLabelProps) {
+  return (
+    <span className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
+      <span className="shrink-0 text-sm font-medium leading-none text-foreground">{title}</span>
+      <span
+        className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-xs font-normal leading-none text-muted-foreground"
+        style={{
+          maskImage: "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+        }}
+      >
+        {description}
+      </span>
+    </span>
+  );
+}
+
 /**
  * Compact menu for adding files or attaching capabilities to the composer.
  */
@@ -135,12 +156,10 @@ export function ComposerAddMenu({
               className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70"
             >
               <FilePlus2 size={15} className="shrink-0 text-muted-foreground" aria-hidden />
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-sm font-medium leading-none text-foreground">Files</span>
-                <span className="text-xs font-normal leading-snug text-muted-foreground">
-                  Images, PDFs, documents, and code
-                </span>
-              </span>
+              <ComposerAddMenuLabel
+                title="Files"
+                description="Images, PDFs, documents, and code"
+              />
             </Button>
             <div className="mx-2 my-1 h-px bg-border/60" />
             <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">Capabilities</div>
@@ -160,12 +179,7 @@ export function ComposerAddMenu({
                 }
                 aria-hidden
               />
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-sm font-medium leading-none text-foreground">Plan</span>
-                <span className="text-xs font-normal leading-snug text-muted-foreground">
-                  Explore the work and propose a plan
-                </span>
-              </span>
+              <ComposerAddMenuLabel title="Plan" description="Explore the work and propose a plan" />
               {planAttached ? (
                 <Check size={14} className="shrink-0 text-primary" aria-hidden />
               ) : null}
@@ -187,12 +201,10 @@ export function ComposerAddMenu({
                   }
                   aria-hidden
                 />
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="text-sm font-medium leading-none text-foreground">Goal</span>
-                  <span className="text-xs font-normal leading-snug text-muted-foreground">
-                    Set the objective for the next run
-                  </span>
-                </span>
+                <ComposerAddMenuLabel
+                  title="Goal"
+                  description="Set the objective for the next run"
+                />
                 {goalAttached ? (
                   <Check size={14} className="shrink-0 text-primary" aria-hidden />
                 ) : null}
@@ -217,14 +229,10 @@ export function ComposerAddMenu({
                   }
                   aria-hidden
                 />
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="text-sm font-medium leading-none text-foreground">
-                    {orchestrationLabel}
-                  </span>
-                  <span className="text-xs font-normal leading-snug text-muted-foreground">
-                    Proactively delegate work to sub-agents
-                  </span>
-                </span>
+                <ComposerAddMenuLabel
+                  title={orchestrationLabel}
+                  description="Proactively delegate work to sub-agents"
+                />
                 {orchestrationAttached ? (
                   <Check size={14} className="shrink-0 text-primary" aria-hidden />
                 ) : null}
