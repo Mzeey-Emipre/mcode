@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { Terminal, Zap, Puzzle, Sparkles } from "lucide-react";
 import type { Command, PopupState } from "./useSlashCommand";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
+import { EntityIcon } from "./EntityToken";
+import { Button } from "@/components/ui/button";
 
 const ITEM_HEIGHT = 44; // px per row
 const VISIBLE_ITEMS = 8;
@@ -17,6 +18,12 @@ const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
   skill: "Skills",
   plugin: "Plugins",
 };
+
+function commandDisplayLabel(command: Command): string {
+  if (command.namespace === "skill") return command.name;
+  if (command.namespace === "plugin") return command.name.split(":").at(-1) ?? command.name;
+  return `/${command.name}`;
+}
 
 /** Preserve command ordering while exposing the source context of each command. */
 function groupCommands(
@@ -229,8 +236,10 @@ function CommandRow({
   tone?: "default" | "dark";
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="sm"
       id={`slash-cmd-${cmd.name}`}
       role="option"
       aria-selected={selected}
@@ -239,7 +248,7 @@ function CommandRow({
         onSelect(cmd);
       }}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+        "h-auto w-full justify-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
         tone === "dark"
           ? selected
             ? "bg-white/[0.12]"
@@ -251,18 +260,12 @@ function CommandRow({
     >
       {/* Icon column */}
       <span className={cn(
-        "flex size-4 shrink-0 items-center justify-center",
-        tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
+        "flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset",
+        tone === "dark"
+          ? "bg-white/[0.06] text-neutral-400 ring-white/10"
+          : "bg-muted/65 text-muted-foreground ring-border/60",
       )}>
-        {cmd.namespace === "mcode" ? (
-          <Zap size={13} />
-        ) : cmd.namespace === "plugin" ? (
-          <Puzzle size={13} />
-        ) : cmd.namespace === "skill" ? (
-          <Sparkles size={13} />
-        ) : (
-          <Terminal size={13} />
-        )}
+        <EntityIcon kind={cmd.namespace} size={14} className="flex items-center justify-center" />
       </span>
 
       {/* Name + description */}
@@ -271,16 +274,18 @@ function CommandRow({
           "truncate text-sm font-medium leading-4",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
-          /{cmd.name}
+          {commandDisplayLabel(cmd)}
         </span>
         <span className={cn(
-          "truncate text-xs leading-4",
+          "overflow-hidden whitespace-nowrap text-xs font-normal leading-4",
           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
-        )}>
+        )} style={{
+          maskImage: "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+        }}>
           {cmd.description}
         </span>
       </span>
-    </button>
+    </Button>
   );
 }
 
@@ -334,21 +339,23 @@ function ErrorRow({
   return (
     <div role="alert" className="flex items-center gap-2 px-3 py-2 text-xs text-destructive">
       <span className="flex-1 truncate">Couldn't load commands: {message}</span>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         // Same pattern as the footer Refresh button: preventDefault on
         // mousedown to retain editor focus, action on click for keyboard a11y.
         onMouseDown={(e) => e.preventDefault()}
         onClick={onRetry}
         className={cn(
-          "rounded px-2 py-0.5",
+          "h-6 rounded-md px-2 text-xs",
           tone === "dark"
             ? "text-neutral-100 hover:bg-white/10"
             : "text-foreground hover:bg-accent",
         )}
       >
         Retry
-      </button>
+      </Button>
     </div>
   );
 }

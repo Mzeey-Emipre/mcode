@@ -383,7 +383,7 @@ test.describe("Bubble dark-tone visual cohesion", () => {
     expect(popupBg).toBe("rgb(30, 30, 30)");
 
     // Semantic: seeded skills are present, mcode builtins are absent
-    await expect(page.getByText("/commit")).toBeVisible();
+    await expect(listbox.getByRole("option", { name: "commit Create a git commit" })).toBeVisible();
     await expect(page.getByText("/plan")).toHaveCount(0);
 
     await page.screenshot({ path: screenshotPath("d-slash-popup"), fullPage: false });

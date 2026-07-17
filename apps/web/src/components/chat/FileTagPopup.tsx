@@ -1,12 +1,12 @@
 // apps/web/src/components/chat/FileTagPopup.tsx
 import { useRef, useEffect, useCallback, useState, memo } from "react";
 import { cn } from "@/lib/utils";
-import { getFileIcon, getFileIconColor } from "@/lib/file-icons";
 import type { MentionSuggestion } from "./useFileAutocomplete";
-import { StackedLayersIcon } from "./narrative/StackedLayersIcon";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
+import { EntityIcon } from "./EntityToken";
+import { Button } from "@/components/ui/button";
 
-const ITEM_HEIGHT = 28; // px per row (py-1.5 + 14px icon)
+const ITEM_HEIGHT = 36;
 const VISIBLE_ITEMS = 8;
 
 /** Options for the useFileTagPopup keyboard-navigation hook. */
@@ -137,18 +137,18 @@ const SuggestionRow = memo(function SuggestionRow({
 }) {
   const isFile = item.kind === "file";
   const { dir, name } = isFile ? splitPath(item.path) : { dir: "", name: item.label };
-  const Icon = isFile ? getFileIcon(item.path) : StackedLayersIcon;
-
   const isDark = tone === "dark";
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="sm"
       role="option"
       aria-selected={selected}
       data-file-item
       onClick={() => onSelect(item)}
       className={cn(
-        "group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-100",
+        "group h-auto w-full justify-start gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-100",
         isDark
           ? cn(
               "focus-visible:outline-none",
@@ -162,36 +162,44 @@ const SuggestionRow = memo(function SuggestionRow({
             ),
       )}
     >
-      <Icon
-        size={14}
-        className={cn(
-          "size-3.5 shrink-0",
-          isFile
-            ? getFileIconColor(item.path)
-            : isDark
-              ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
-              : "text-muted-foreground/55 group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
-        )}
-      />
-      <span className="min-w-0 flex-1 truncate">
-        <span className={cn(
-          isDark
-            ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
-            : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
-        )}>{dir}</span>
-        <span className={cn("font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>
+      <span className={cn(
+        "flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset",
+        isDark
+          ? "bg-white/[0.06] text-neutral-400 ring-white/10"
+          : "bg-muted/65 text-muted-foreground ring-border/60",
+      )}>
+        <EntityIcon
+          kind={item.kind}
+          filePath={isFile ? item.path : undefined}
+          size={14}
+          className="flex items-center justify-center"
+        />
       </span>
-      {item.kind === "agent" && item.description ? (
-        <span className={cn(
-          "min-w-0 flex-[1.2] truncate",
-          isDark
-            ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
-            : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
-        )}>
-          {item.description}
+      {item.kind === "agent" ? (
+        <span className="flex min-w-0 flex-1 items-baseline gap-1">
+          <span className={cn("shrink-0 font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>
+          {item.description ? (
+            <span className={cn(
+              "min-w-0 truncate",
+              isDark
+                ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
+                : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
+            )}>
+              {item.description}
+            </span>
+          ) : null}
         </span>
-      ) : null}
-    </button>
+      ) : (
+        <span className="min-w-0 flex-1 truncate">
+          <span className={cn(
+            isDark
+              ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
+              : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
+          )}>{dir}</span>
+          <span className={cn("font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>
+        </span>
+      )}
+    </Button>
   );
 });
 

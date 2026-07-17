@@ -141,8 +141,8 @@ test.describe("Slash command popup", () => {
       Math.abs((popupBox?.y ?? 0) + (popupBox?.height ?? 0) - (composerBox?.y ?? 0)),
     ).toBeLessThanOrEqual(2);
     await expect(popup.getByText("/compact")).toBeVisible();
-    await expect(popup.getByText("/superpowers:brainstorming")).toBeVisible();
-    await expect(popup.getByText("/hookify:hookify")).toBeVisible();
+    await expect(popup.getByText("brainstorming")).toBeVisible();
+    await expect(popup.getByText("hookify", { exact: true })).toBeVisible();
     await expect(popup.getByTestId("slash-command-group-mcode")).toContainText("Mcode");
     await expect(popup.getByTestId("slash-command-group-plugin")).toContainText("Plugins");
 
@@ -158,8 +158,8 @@ test.describe("Slash command popup", () => {
 
     const popup = page.locator("[data-slash-popup]");
     await expect(popup).toBeVisible();
-    await expect(popup.getByText("/superpowers:brainstorming")).toBeVisible();
-    await expect(popup.getByText("/superpowers:writing-plans")).toBeVisible();
+    await expect(popup.getByText("brainstorming")).toBeVisible();
+    await expect(popup.getByText("writing-plans")).toBeVisible();
     await expect(popup.getByText("/compact")).toHaveCount(0);
 
     await page.screenshot({
@@ -279,7 +279,7 @@ test.describe("Slash command popup", () => {
     expect(listParams?.providerId).toBe("cursor");
 
     const popup = page.locator("[data-slash-popup]");
-    await expect(popup.getByText("/cursor-plugin:deploy")).toBeVisible();
+    await expect(popup.getByText("deploy")).toBeVisible();
 
     await page.screenshot({
       path: "e2e/screenshots/slash-command/05-cursor-provider-skills.png",

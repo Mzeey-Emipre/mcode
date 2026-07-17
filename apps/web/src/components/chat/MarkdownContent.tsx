@@ -20,6 +20,7 @@ import {
   openUrlInPreview,
 } from "@/lib/open-url-in-preview";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { EntityToken, type EntityKind } from "./EntityToken";
 
 /** Pass through workspace preview URLs; otherwise use react-markdown's default sanitizer. */
 function markdownUrlTransform(value: string): string {
@@ -58,6 +59,26 @@ const EXTERNAL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 
 /** Common basename shape for a file reference shown in Markdown. */
 const FILE_BASENAME_RE = /^[^/\\]+\.[A-Za-z0-9][A-Za-z0-9-]*$/;
+
+/** Explicit inline-code syntax that safely identifies an app-side entity. */
+function resolveInlineEntity(value: string): { kind: EntityKind; label: string } | null {
+  if (/^\$[a-z][a-z0-9_-]*$/i.test(value)) {
+    return { kind: "skill", label: value };
+  }
+  if (/^(?:plugin:|plugin\/)[a-z][a-z0-9:_-]*$/i.test(value)) {
+    return { kind: "plugin", label: value };
+  }
+  if (/^@[a-z][a-z0-9_-]*$/i.test(value)) {
+    return { kind: "agent", label: value };
+  }
+  if (/^\/m:[a-z][a-z0-9:_-]*$/i.test(value)) {
+    return { kind: "mcode", label: value };
+  }
+  if (/^\/[a-z][a-z0-9:_-]*$/i.test(value)) {
+    return { kind: "command", label: value };
+  }
+  return null;
+}
 
 /** Tooltip label for the Ctrl/Cmd+click preview hint. */
 const previewHint = `${isMac ? "\u2318" : "Ctrl"}+click to open in preview`;
@@ -382,26 +403,49 @@ function makeComponents(
           );
         }
 
+        const inlineEntity = resolveInlineEntity(text);
+        if (inlineEntity) {
+          return (
+            <EntityToken
+              kind={inlineEntity.kind}
+              label={inlineEntity.label}
+              tone={isUser ? "user" : "assistant"}
+            />
+          );
+        }
+
         if (workspacePath && looksLikeWorkspaceRelativeFileRef(text)) {
           const previewUrl = mcodeWorkspacePreviewHref(text);
-          const linkClass = "text-link underline decoration-dotted hover:opacity-80 cursor-pointer";
-          const codeEl = (
-            <code
+          const entityEl = (
+            <EntityToken
+              kind="file"
+              label={text}
+              filePath={text}
+              tone={isUser ? "user" : "assistant"}
               role="link"
               tabIndex={0}
-              className={`${codeClass} ${linkClass} whitespace-nowrap`}
+              className="cursor-pointer text-link hover:underline focus-visible:outline-none focus-visible:ring-ring"
               onClick={(e) => handleLinkClick(e, previewUrl)}
               onKeyDown={(e) => { if (e.key === "Enter") handleLinkClick(e, previewUrl); }}
-            >
-              {children}
-            </code>
+            />
           );
-          if (!hasPreview()) return codeEl;
+          if (!hasPreview()) return entityEl;
           return (
             <Tooltip>
-              <TooltipTrigger render={codeEl} />
+              <TooltipTrigger render={entityEl} />
               <TooltipContent side="top" className="text-xs">{previewHint}</TooltipContent>
             </Tooltip>
+          );
+        }
+
+        if (looksLikeWorkspaceRelativeFileRef(text)) {
+          return (
+            <EntityToken
+              kind="file"
+              label={text}
+              filePath={text}
+              tone={isUser ? "user" : "assistant"}
+            />
           );
         }
 

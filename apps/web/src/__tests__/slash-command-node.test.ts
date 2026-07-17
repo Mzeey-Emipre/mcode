@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { createEditor, $createTextNode } from "lexical";
+import { createEditor, $createParagraphNode, $createTextNode, $getRoot } from "lexical";
 import {
   SlashCommandNode,
   $createSlashCommandNode,
   $isSlashCommandNode,
 } from "@/components/chat/lexical/SlashCommandNode";
+import { extractComposerMessage } from "@/components/chat/lexical/cursor-utils";
 
 function createTestEditor() {
   return createEditor({
@@ -85,6 +86,30 @@ describe("SlashCommandNode", () => {
     editor.update(() => {
       const textNode = $createTextNode("hello");
       expect($isSlashCommandNode(textNode)).toBe(false);
+    });
+  });
+
+  it("extracts namespace metadata for persisted transcript rendering", () => {
+    const editor = createTestEditor();
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        paragraph.append($createTextNode("Use "));
+        paragraph.append($createSlashCommandNode("impeccable", "skill"));
+        $getRoot().append(paragraph);
+      },
+      { discrete: true },
+    );
+
+    expect(extractComposerMessage(editor)).toEqual({
+      text: "Use /impeccable",
+      mentions: [{
+        id: "command:skill:impeccable",
+        kind: "command",
+        label: "impeccable",
+        namespace: "skill",
+        range: { start: 4, end: 15 },
+      }],
     });
   });
 });

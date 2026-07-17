@@ -47,6 +47,10 @@ export const MessageMentionSchema = z.discriminatedUnion("kind", [
     path: MentionPathSchema,
     provider: z.string().min(1).max(64).optional(),
   }),
+  MentionBaseSchema.extend({
+    kind: z.literal("command"),
+    namespace: z.enum(["skill", "mcode", "plugin", "command"]),
+  }),
 ]);
 
 /** Bounded list of typed mention metadata stored on a message. */

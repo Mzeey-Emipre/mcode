@@ -228,10 +228,28 @@ describe("FileTagPopup", () => {
     );
 
     const agentOption = screen.getByRole("option", { name: /planner/i });
-    const icon = agentOption.querySelector("svg");
-    expect(icon?.className.baseVal).toContain("text-muted-foreground/55");
-    expect(icon?.className.baseVal).not.toContain("text-primary");
+    const icon = agentOption.querySelector('[data-entity-icon="agent"]');
+    expect(icon).not.toBeNull();
+    expect(icon?.parentElement).toHaveClass("text-muted-foreground");
+    expect(icon?.parentElement).not.toHaveClass("text-primary");
     expect(agentOption.querySelector(".lucide-bot")).toBeNull();
+  });
+
+  it("keeps an agent title close to its description", () => {
+    render(
+      <FileTagPopup
+        items={items}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={0}
+      />,
+    );
+
+    const title = screen.getByText("planner");
+    const description = screen.getByText("Plans implementation work.");
+    expect(title.parentElement).toBe(description.parentElement);
+    expect(title.parentElement).toHaveClass("gap-1");
   });
 
   it("accepts selectedIndex prop and marks the correct item", () => {

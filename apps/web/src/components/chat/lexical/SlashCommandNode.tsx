@@ -1,7 +1,7 @@
 /**
  * Lexical DecoratorNode for /command slash-command chips.
  *
- * Renders an inline chip with a namespace-colored icon and the command name.
+ * Renders an inline entity token with a namespace-specific icon and the command name.
  * Serializes as `/<commandName>` for plain-text extraction.
  */
 import type { JSX } from "react";
@@ -13,9 +13,7 @@ import {
   type NodeKey,
   type SerializedLexicalNode,
 } from "lexical";
-import { Terminal, Zap, Puzzle } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { NAMESPACE_CHIP_STYLES } from "@/lib/slash-command-styles";
+import { EntityToken } from "../EntityToken";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,27 +29,12 @@ export interface SerializedSlashCommandNode extends SerializedLexicalNode {
   readonly namespace: SlashCommandNamespace;
 }
 
-// ---------------------------------------------------------------------------
-// Namespace styling
-// ---------------------------------------------------------------------------
-
-
 /** Valid namespace values for deserialisation fallback. */
 const VALID_NAMESPACES = new Set<SlashCommandNamespace>(["skill", "mcode", "plugin", "command"]);
-
-const NAMESPACE_ICONS: Record<SlashCommandNamespace, typeof Terminal> = {
-  skill: Terminal,
-  mcode: Zap,
-  plugin: Puzzle,
-  command: Terminal,
-};
 
 // ---------------------------------------------------------------------------
 // SlashCommandChip (React component rendered by decorate())
 // ---------------------------------------------------------------------------
-
-const CHIP_BASE =
-  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs align-baseline";
 
 function SlashCommandChip({
   commandName,
@@ -60,12 +43,8 @@ function SlashCommandChip({
   readonly commandName: string;
   readonly namespace: SlashCommandNamespace;
 }): JSX.Element {
-  const Icon = NAMESPACE_ICONS[namespace];
   return (
-    <span className={cn(CHIP_BASE, NAMESPACE_CHIP_STYLES[namespace])}>
-      <Icon className="size-3.5" />
-      /{commandName}
-    </span>
+    <EntityToken kind={namespace} label={`/${commandName}`} tone="composer" />
   );
 }
 

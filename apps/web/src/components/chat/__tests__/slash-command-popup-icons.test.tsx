@@ -1,5 +1,5 @@
 /** Tests for source grouping and icon correctness in SlashCommandPopup. */
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, it, expect, beforeAll } from "vitest";
 import { SlashCommandPopup } from "../SlashCommandPopup";
 import type { Command } from "../useSlashCommand";
@@ -35,6 +35,7 @@ function makeAnchorRect(): DOMRect {
 const COMMANDS: Command[] = [
   { name: "deploy", description: "Deploy command", namespace: "command" },
   { name: "my-skill", description: "A skill", namespace: "skill" },
+  { name: "figma:use", description: "A plugin skill", namespace: "plugin" },
 ];
 
 function renderPopup() {
@@ -64,6 +65,46 @@ describe("SlashCommandPopup source groups", () => {
     expect(group).toHaveTextContent("Skills");
     expect(group).toContainElement(screen.getByRole("option", { name: /my-skill/ }));
   });
+
+  it("shows capability titles without slash or plugin prefixes", () => {
+    renderPopup();
+
+    const skillRow = screen.getByRole("option", { name: /my-skill/ });
+    expect(within(skillRow).getByText("my-skill")).toBeInTheDocument();
+    expect(within(skillRow).queryByText("/my-skill")).not.toBeInTheDocument();
+
+    const pluginRow = screen.getByRole("option", { name: /A plugin skill/ });
+    expect(within(pluginRow).getByText("use")).toBeInTheDocument();
+    expect(within(pluginRow).queryByText("/figma:use")).not.toBeInTheDocument();
+  });
+
+  it("stacks capability titles above their descriptions", () => {
+    renderPopup();
+
+    const pluginRow = screen.getByRole("option", { name: /A plugin skill/ });
+    const title = within(pluginRow).getByText("use");
+    const description = within(pluginRow).getByText("A plugin skill");
+    expect(title.parentElement).toBe(description.parentElement);
+    expect(title.parentElement).toHaveClass("flex-col");
+  });
+
+  it("fades overflowing descriptions instead of showing an ellipsis", () => {
+    renderPopup();
+
+    const description = screen.getByText("A plugin skill");
+    expect(description).toHaveClass("overflow-hidden", "whitespace-nowrap");
+    expect(description).not.toHaveClass("truncate");
+    expect(description).toHaveStyle({
+      maskImage: "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+    });
+  });
+
+  it("keeps slash syntax on genuine commands", () => {
+    renderPopup();
+
+    const commandRow = screen.getByRole("option", { name: /Deploy command/ });
+    expect(within(commandRow).getByText("/deploy")).toBeInTheDocument();
+  });
 });
 
 describe("SlashCommandPopup namespace icons", () => {
@@ -74,11 +115,17 @@ describe("SlashCommandPopup namespace icons", () => {
     expect(sparklesIcon).not.toBeNull();
   });
 
-  it("command namespace renders a lucide-terminal SVG", () => {
+  it("command namespace renders a square-terminal SVG", () => {
     renderPopup();
     const commandRow = screen.getByRole("option", { name: /deploy/ });
-    const terminalIcon = commandRow.querySelector(".lucide-terminal");
+    const terminalIcon = commandRow.querySelector(".lucide-square-terminal");
     expect(terminalIcon).not.toBeNull();
+  });
+
+  it("plugin namespace renders a blocks SVG", () => {
+    renderPopup();
+    const pluginRow = screen.getByRole("option", { name: /A plugin skill/ });
+    expect(pluginRow.querySelector(".lucide-blocks")).not.toBeNull();
   });
 
   it("command namespace does NOT render a lucide-sparkles SVG", () => {
@@ -91,7 +138,7 @@ describe("SlashCommandPopup namespace icons", () => {
   it("skill namespace does NOT render a lucide-terminal SVG", () => {
     renderPopup();
     const skillRow = screen.getByRole("option", { name: /my-skill/ });
-    const terminalIcon = skillRow.querySelector(".lucide-terminal");
+    const terminalIcon = skillRow.querySelector(".lucide-square-terminal");
     expect(terminalIcon).toBeNull();
   });
 });

@@ -377,6 +377,17 @@ describe("MarkdownContent variant styling", () => {
       expect(code?.className).toContain("bg-muted");
     });
 
+    it("renders explicit skill, plugin, command, and sub-agent references as entity tokens", () => {
+      const { container } = render(
+        <MarkdownContent content="Use `$impeccable`, `plugin:figma`, `/review`, and `@reviewer_qa`." />,
+      );
+
+      expect(container.querySelector('[data-entity-token="skill"]')).toHaveTextContent("$impeccable");
+      expect(container.querySelector('[data-entity-token="plugin"]')).toHaveTextContent("plugin:figma");
+      expect(container.querySelector('[data-entity-token="command"]')).toHaveTextContent("/review");
+      expect(container.querySelector('[data-entity-token="agent"]')).toHaveTextContent("@reviewer_qa");
+    });
+
     it("renders links with cool text-link", () => {
       const { container } = render(
         <MarkdownContent content="[link](https://example.com)" />,

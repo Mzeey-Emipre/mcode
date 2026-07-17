@@ -142,6 +142,46 @@ describe("MessageBubble user messages", () => {
     });
   });
 
+  it("preserves selected entity identity in the sent user bubble", () => {
+    const content = "Use /impeccable with @reviewer_qa on @src/App.ts";
+    const commandStart = content.indexOf("/impeccable");
+    const agentStart = content.indexOf("@reviewer_qa");
+    const fileStart = content.indexOf("@src/App.ts");
+    const message: Message = {
+      ...makeMessage(content),
+      mentions: [
+        {
+          id: "command:skill:impeccable",
+          kind: "command",
+          label: "impeccable",
+          namespace: "skill",
+          range: { start: commandStart, end: commandStart + "/impeccable".length },
+        },
+        {
+          id: "agent:reviewer_qa",
+          kind: "agent",
+          label: "reviewer_qa",
+          name: "reviewer_qa",
+          path: "agents/reviewer-qa.toml",
+          provider: "codex",
+          range: { start: agentStart, end: agentStart + "@reviewer_qa".length },
+        },
+        {
+          id: "file:src/App.ts",
+          kind: "file",
+          label: "src/App.ts",
+          path: "src/App.ts",
+          range: { start: fileStart, end: fileStart + "@src/App.ts".length },
+        },
+      ],
+    };
+
+    const { container } = render(<MessageBubble message={message} />);
+    expect(container.querySelector('[data-entity-token="skill"]')).toHaveTextContent("/impeccable");
+    expect(container.querySelector('[data-entity-token="agent"]')).toHaveTextContent("@reviewer_qa");
+    expect(container.querySelector('[data-entity-token="file"]')).toHaveTextContent("@App.ts");
+  });
+
   it("renders leading /goal set commands as stripped user bubbles with a receipt", async () => {
     const { container, getByText, queryByText } = render(
       <MessageBubble message={makeMessage("/goal ship the release")} />,

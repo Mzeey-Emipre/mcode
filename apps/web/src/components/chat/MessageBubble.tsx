@@ -20,6 +20,8 @@ import { parseGoalStatusNotice } from "@/lib/goal-message";
 import { composerFeedbackReplyFallback } from "@/lib/composer-feedback";
 import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
 import { useRetriableAttachmentImage } from "./useRetriableAttachmentImage";
+import { EntityToken } from "./EntityToken";
+import { basename } from "@/lib/path";
 
 /**
  * Returns true when the assistant message body collapses to nothing visible
@@ -67,10 +69,11 @@ function MentionedUserText({
   const sorted = [...mentions].sort((a, b) => a.range.start - b.range.start);
 
   for (const mention of sorted) {
+    const rawMention = mention.kind === "command" ? `/${mention.label}` : `@${mention.label}`;
     if (
       mention.range.start < cursor ||
       mention.range.end > text.length ||
-      text.slice(mention.range.start, mention.range.end) !== `@${mention.label}`
+      text.slice(mention.range.start, mention.range.end) !== rawMention
     ) {
       continue;
     }
@@ -78,12 +81,20 @@ function MentionedUserText({
       nodes.push(text.slice(cursor, mention.range.start));
     }
     nodes.push(
-      <span
+      <EntityToken
         key={`${mention.id}-${mention.range.start}`}
-        className="rounded-md bg-foreground/10 px-1 py-0.5 font-medium"
-      >
-        {text.slice(mention.range.start, mention.range.end)}
-      </span>,
+        kind={mention.kind === "command" ? mention.namespace : mention.kind}
+        label={
+          mention.kind === "command"
+            ? rawMention
+            : mention.kind === "file"
+              ? `@${basename(mention.path)}`
+              : rawMention
+        }
+        filePath={mention.kind === "file" ? mention.path : undefined}
+        title={rawMention}
+        tone="user"
+      />,
     );
     cursor = mention.range.end;
   }
