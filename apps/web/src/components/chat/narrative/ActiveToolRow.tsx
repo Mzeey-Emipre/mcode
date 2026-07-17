@@ -4,10 +4,12 @@ import {
   TOOL_PHASE_LABELS,
   DEFAULT_ICON,
   resolveToolName,
+  isShellTool,
 } from "../tool-renderers/constants";
 import type { ToolCall } from "@/transport/types";
 import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
+import { CommandExecutionCard } from "./CommandExecutionCard";
 
 interface ActiveToolRowProps {
   toolCall: ToolCall;
@@ -18,6 +20,10 @@ interface ActiveToolRowProps {
  * No background tint - the spinning icon alone signals activity.
  */
 export function ActiveToolRow({ toolCall }: ActiveToolRowProps) {
+  if (isShellTool(toolCall.toolName)) {
+    return <CommandExecutionCard toolCall={toolCall} isActive />;
+  }
+
   const canonicalName = resolveToolName(toolCall.toolName);
   const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
   const label =
