@@ -277,9 +277,11 @@ function CommandRow({
           {commandDisplayLabel(cmd)}
         </span>
         <span className={cn(
-          "truncate text-xs font-normal leading-4",
+          "overflow-hidden whitespace-nowrap text-xs font-normal leading-4",
           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
-        )}>
+        )} style={{
+          maskImage: "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+        }}>
           {cmd.description}
         </span>
       </span>

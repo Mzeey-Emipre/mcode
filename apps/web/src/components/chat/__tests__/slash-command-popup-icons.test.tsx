@@ -88,6 +88,17 @@ describe("SlashCommandPopup source groups", () => {
     expect(title.parentElement).toHaveClass("flex-col");
   });
 
+  it("fades overflowing descriptions instead of showing an ellipsis", () => {
+    renderPopup();
+
+    const description = screen.getByText("A plugin skill");
+    expect(description).toHaveClass("overflow-hidden", "whitespace-nowrap");
+    expect(description).not.toHaveClass("truncate");
+    expect(description).toHaveStyle({
+      maskImage: "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+    });
+  });
+
   it("keeps slash syntax on genuine commands", () => {
     renderPopup();
 
