@@ -19,6 +19,12 @@ const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
   plugin: "Plugins",
 };
 
+function commandDisplayLabel(command: Command): string {
+  if (command.namespace === "skill") return command.name;
+  if (command.namespace === "plugin") return command.name.split(":").at(-1) ?? command.name;
+  return `/${command.name}`;
+}
+
 /** Preserve command ordering while exposing the source context of each command. */
 function groupCommands(
   items: Command[],
@@ -268,7 +274,7 @@ function CommandRow({
           "truncate text-sm font-medium leading-4",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
-          /{cmd.name}
+          {commandDisplayLabel(cmd)}
         </span>
         <span className={cn(
           "truncate text-xs font-normal leading-4",

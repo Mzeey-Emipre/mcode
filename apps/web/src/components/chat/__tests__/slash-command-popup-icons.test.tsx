@@ -1,5 +1,5 @@
 /** Tests for source grouping and icon correctness in SlashCommandPopup. */
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, it, expect, beforeAll } from "vitest";
 import { SlashCommandPopup } from "../SlashCommandPopup";
 import type { Command } from "../useSlashCommand";
@@ -65,6 +65,35 @@ describe("SlashCommandPopup source groups", () => {
     expect(group).toHaveTextContent("Skills");
     expect(group).toContainElement(screen.getByRole("option", { name: /my-skill/ }));
   });
+
+  it("shows capability titles without slash or plugin prefixes", () => {
+    renderPopup();
+
+    const skillRow = screen.getByRole("option", { name: /my-skill/ });
+    expect(within(skillRow).getByText("my-skill")).toBeInTheDocument();
+    expect(within(skillRow).queryByText("/my-skill")).not.toBeInTheDocument();
+
+    const pluginRow = screen.getByRole("option", { name: /A plugin skill/ });
+    expect(within(pluginRow).getByText("use")).toBeInTheDocument();
+    expect(within(pluginRow).queryByText("/figma:use")).not.toBeInTheDocument();
+  });
+
+  it("stacks capability titles above their descriptions", () => {
+    renderPopup();
+
+    const pluginRow = screen.getByRole("option", { name: /A plugin skill/ });
+    const title = within(pluginRow).getByText("use");
+    const description = within(pluginRow).getByText("A plugin skill");
+    expect(title.parentElement).toBe(description.parentElement);
+    expect(title.parentElement).toHaveClass("flex-col");
+  });
+
+  it("keeps slash syntax on genuine commands", () => {
+    renderPopup();
+
+    const commandRow = screen.getByRole("option", { name: /Deploy command/ });
+    expect(within(commandRow).getByText("/deploy")).toBeInTheDocument();
+  });
 });
 
 describe("SlashCommandPopup namespace icons", () => {
@@ -84,7 +113,7 @@ describe("SlashCommandPopup namespace icons", () => {
 
   it("plugin namespace renders a blocks SVG", () => {
     renderPopup();
-    const pluginRow = screen.getByRole("option", { name: /figma:use/ });
+    const pluginRow = screen.getByRole("option", { name: /A plugin skill/ });
     expect(pluginRow.querySelector(".lucide-blocks")).not.toBeNull();
   });
 
