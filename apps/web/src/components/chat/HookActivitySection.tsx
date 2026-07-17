@@ -30,10 +30,10 @@ export function HookActivitySection({ hooks }: { hooks: readonly HookExecution[]
                 expanded && "rotate-90",
               )}
             />
-            <span className="font-mono text-[10.5px] tracking-[0.18em] uppercase text-muted-foreground/60">
+            <span className="font-mono text-xs tracking-[0.18em] uppercase text-muted-foreground/60">
               Hooks
             </span>
-            <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground/40">
+            <span className="font-mono text-xs tabular-nums text-muted-foreground/40">
               {hooks.length}
             </span>
             <StatusDot hasError={hasError} hasRunning={hasRunning} />
@@ -93,12 +93,12 @@ function HookRowContent({ hook, hasOutput, detailOpen }: { hook: HookExecution; 
           </span>
         )}
         {hook.status === "completed" && hook.exitCode != null && hook.exitCode !== 0 && (
-          <span className="font-mono text-[10px] px-1 rounded bg-diff-remove-strong/15 text-diff-remove-strong">
+          <span className="font-mono text-xs px-1 rounded bg-diff-remove-strong/15 text-diff-remove-strong">
             exit {hook.exitCode}
           </span>
         )}
         {hook.didBlock && (
-          <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-diff-remove-strong">
+          <span className="font-mono text-xs tracking-[0.12em] uppercase text-diff-remove-strong">
             blocked
           </span>
         )}

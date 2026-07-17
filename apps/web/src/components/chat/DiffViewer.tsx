@@ -68,12 +68,12 @@ export function DiffViewer({ snapshotId, filePath, changeType = "modified" }: Di
         <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
         <FileText className="h-3 w-3 shrink-0" />
         <span className="truncate font-mono">{filePath}</span>
-        <span className="ml-auto text-[10px] opacity-60">{changeLabel}</span>
-        {loading && <span className="text-[10px]">Loading...</span>}
+        <span className="ml-auto text-xs opacity-60">{changeLabel}</span>
+        {loading && <span className="text-xs">Loading...</span>}
       </button>
 
       {expanded && diff !== null && changeType !== "binary" && (
-        <div className="max-h-[500px] overflow-auto text-[11px] font-mono leading-relaxed">
+        <div className="max-h-[500px] overflow-auto text-xs font-mono leading-relaxed">
           {visibleLines.map((line, i) => (
             <div
               key={i}

@@ -370,7 +370,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
                   className="flex min-w-0 flex-1 cursor-not-allowed items-center gap-2 rounded px-2 py-1.5 text-xs text-muted-foreground/60"
                 >
                   <span className="flex-1 truncate text-left">{m.label}</span>
-                  <span className="text-[10px] tabular-nums shrink-0">Ended {endDate}</span>
+                  <span className="text-xs tabular-nums shrink-0">Ended {endDate}</span>
                 </button>
               }
             />
@@ -414,17 +414,17 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
         >
           <span className="flex-1 truncate text-left">{m.label}</span>
           {ctxLabel && (
-            <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
+            <span className="text-xs text-muted-foreground/60 tabular-nums shrink-0">
               {ctxLabel}
             </span>
           )}
           {m.multiplier != null && (
-            <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
+            <span className="text-xs text-muted-foreground/60 tabular-nums shrink-0">
               {m.multiplier}x
             </span>
           )}
           {m.availableUntil && (
-            <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
+            <span className="text-xs text-muted-foreground/60 tabular-nums shrink-0">
               Until {new Date(`${m.availableUntil}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
             </span>
           )}
@@ -453,7 +453,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
       return (
       <div key={label}>
         <div
-          className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none"
+          className="px-3 py-1 text-xs font-medium uppercase tracking-wider text-muted-foreground/60 select-none"
           id={headingId}
         >
           {label}
@@ -483,7 +483,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
       }
       return (
         <div className="space-y-0.5">
-          <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none">
+          <div className="px-3 py-1 text-xs font-medium uppercase tracking-wider text-muted-foreground/60 select-none">
             Favorites
           </div>
           {favoritesFiltered.map((entry) => renderFavoriteRow(entry))}
@@ -510,7 +510,7 @@ export function ModelSelector({ selectedModelId, selectedProviderId, onSelect, l
         ) : (
           <>
             {showProviderTitle && (
-              <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none">
+              <div className="px-3 py-1 text-xs font-medium uppercase tracking-wider text-muted-foreground/60 select-none">
                 {p.name}
               </div>
             )}

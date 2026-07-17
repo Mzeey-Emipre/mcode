@@ -81,11 +81,11 @@ export function HookRow({ hook }: HookRowProps) {
           </span>
         )}
         badge={isRunning ? (
-          <span className="font-mono text-[0.625rem] font-medium px-1.5 py-px rounded-sm bg-primary/15 text-primary shrink-0">
+          <span className="font-mono text-xs font-medium px-1.5 py-px rounded-sm bg-primary/15 text-primary shrink-0">
             running
           </span>
         ) : isBlocked ? (
-          <span className="font-mono text-[0.625rem] font-medium px-1.5 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
+          <span className="font-mono text-xs font-medium px-1.5 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
             blocked
           </span>
         ) : undefined}
@@ -98,14 +98,14 @@ export function HookRow({ hook }: HookRowProps) {
 
         {/* Trigger label */}
         {hook.toolName && (
-          <span className="min-w-0 truncate font-mono text-[0.6875rem] text-muted-foreground/50">
+          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground/50">
             on {hook.toolName}
           </span>
         )}
 
         {/* Duration or elapsed timer - hide for sub-5ms instant hooks */}
         {(isRunning || (hook.durationMs != null && hook.durationMs >= 5)) && (
-          <span className="font-mono text-[0.6875rem] tabular-nums text-muted-foreground/50 shrink-0">
+          <span className="font-mono text-xs tabular-nums text-muted-foreground/50 shrink-0">
             {isRunning ? `${elapsedSeconds}s` : formatDuration(hook.durationMs!)}
           </span>
         )}

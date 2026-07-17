@@ -60,6 +60,8 @@ describe("narrative tool row layout classes", () => {
     const row = detail.parentElement;
     expect(row?.className).toContain("min-w-0");
     expect(row?.className).toContain("overflow-hidden");
+    expect(row?.className).toContain("text-sm");
+    expect(detail.className).toContain("text-sm");
     expect(detail.className).toContain("truncate");
     expect(detail.className).toContain("overflow-wrap");
   });
@@ -102,6 +104,22 @@ describe("narrative tool row layout classes", () => {
     fireEvent.click(screen.getByRole("button"));
     expect(container.querySelector(".lucide-terminal")).toBeTruthy();
     expect(screen.getByText("Ran command")).toBeTruthy();
+  });
+
+  it("ToolSummaryLine renders cancelled status at the mono-data text size", () => {
+    const group: ToolGroup = {
+      calls: [makeBashCall()],
+    };
+
+    render(
+      <div className={COLUMN_CLASS}>
+        <ToolSummaryLine group={group} hasError={false} hasCancelled />
+      </div>,
+    );
+
+    for (const badge of screen.getAllByText("cancelled")) {
+      expect(badge).toHaveClass("text-xs");
+    }
   });
 
   it("ToolSummaryLine shows truncation metadata for bounded output", () => {

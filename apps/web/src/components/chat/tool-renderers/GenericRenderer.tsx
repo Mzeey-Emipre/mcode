@@ -34,11 +34,11 @@ export function GenericRenderer({ toolCall, isActive }: ToolRendererProps) {
       isActive={isActive}
     >
       <div className="space-y-1.5">
-        <pre className="max-h-48 overflow-auto rounded bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground font-mono">
+        <pre className="max-h-48 overflow-auto rounded bg-muted/30 p-2 text-xs leading-relaxed text-muted-foreground font-mono">
           {JSON.stringify(toolCall.toolInput, null, 2)}
         </pre>
         {toolCall.output && (
-          <pre className="max-h-48 overflow-auto rounded bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground font-mono whitespace-pre-wrap">
+          <pre className="max-h-48 overflow-auto rounded bg-muted/30 p-2 text-xs leading-relaxed text-muted-foreground font-mono whitespace-pre-wrap">
             {toolCall.output}
           </pre>
         )}

@@ -105,7 +105,7 @@ function EmptyState({ onPromptSelect }: EmptyStateProps) {
             className="flex flex-col items-start gap-0.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5 text-left transition-colors hover:border-border/70 hover:bg-muted/40"
           >
             <span className="text-xs font-medium text-foreground/80">{ep.label}</span>
-            <span className="text-[11px] text-muted-foreground/60">{ep.description}</span>
+            <span className="text-xs text-muted-foreground/60">{ep.description}</span>
           </button>
         ))}
       </div>
@@ -166,7 +166,7 @@ function NewThreadWelcome({
               className="group h-auto min-h-24 flex-col items-start justify-between rounded-xl border-border/70 bg-transparent px-4 py-3.5 text-left shadow-none hover:border-primary/35 hover:bg-accent/45"
             >
               <Icon size={15} className="text-primary transition-transform duration-200 group-hover:-translate-y-0.5 motion-reduce:transform-none" aria-hidden />
-              <span className="max-w-32 text-wrap text-[13px] font-medium leading-5 text-foreground/90">
+              <span className="max-w-32 text-wrap text-sm font-medium leading-5 text-foreground/90">
                 {label}
               </span>
             </Button>
@@ -226,7 +226,7 @@ function ThreadPreparingShell({
                   <button
                     type="button"
                     onClick={() => useWorkspaceStore.getState().setActiveThread(thread.parent_thread_id!)}
-                    className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                    className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
                   >
                     <GitFork size={10} />
                     <span>Forked</span>
@@ -557,7 +557,7 @@ export function ChatView() {
                   <button
                     type="button"
                     onClick={() => setActiveThread(activeThread.parent_thread_id!)}
-                    className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                    className="flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
                   >
                     <GitFork size={10} />
                     <span>Forked</span>

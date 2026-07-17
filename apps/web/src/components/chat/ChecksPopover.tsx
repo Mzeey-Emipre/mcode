@@ -229,7 +229,7 @@ function RunRow({ run }: { run: CheckRun }) {
           className={cn("shrink-0", visual.iconClassName)}
         />
       ) : null}
-      <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+      <span className="min-w-0 flex-1 truncate text-sm text-foreground">
         {run.name}
       </span>
       <span className={cn("shrink-0 text-xs", visual.labelClassName)}>

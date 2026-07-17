@@ -72,7 +72,7 @@ import { useTaskStore, type TaskItem } from "@/stores/taskStore";
 import { usePlanStore } from "@/stores/planStore";
 
 const NEW_THREAD_CONTEXT_CONTROL_CLASS =
-  "h-[28px] gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none";
+  "h-[28px] gap-[6px] rounded-md px-[10px] text-xs font-medium leading-none";
 import { useDiffStore } from "@/stores/diffStore";
 import {
   hideRightPanelAdaptive,
@@ -350,7 +350,7 @@ function ComposerOptionsMenu({
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={8} className="w-60 p-2">
         {/* Mode */}
-        <div className="px-1.5 pt-1 pb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+        <div className="px-1.5 pt-1 pb-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
           Mode
         </div>
         <div className="mb-2 flex rounded-md bg-muted/40 p-0.5">
@@ -387,7 +387,7 @@ function ComposerOptionsMenu({
         </div>
 
         {/* Permissions */}
-        <div className="px-1.5 pt-1 pb-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
+        <div className="px-1.5 pt-1 pb-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
           Permissions
         </div>
         {permissionLocked ? (
@@ -449,7 +449,7 @@ function ComposerOptionsMenu({
               <ListChecks size={13} className={panelVisible ? "text-primary" : "text-muted-foreground"} />
               Plan panel
             </span>
-            <span className={cn("text-[10px] font-medium uppercase tracking-[0.1em]", panelVisible ? "text-primary" : "text-muted-foreground/60")}>
+            <span className={cn("text-xs font-medium uppercase tracking-[0.1em]", panelVisible ? "text-primary" : "text-muted-foreground/60")}>
               {panelVisible ? "On" : "Off"}
             </span>
           </Button>
@@ -2853,7 +2853,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           {activeWorkspace ? (
             <>
               <div
-                className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md pl-[10px] text-[12px] font-medium leading-none text-foreground/90"
+                className="inline-flex h-[28px] min-w-0 shrink items-center gap-[6px] rounded-md pl-[10px] text-xs font-medium leading-none text-foreground/90"
               >
                 <Folder size={14} className="shrink-0 text-muted-foreground" aria-hidden />
                 <span className="max-w-40 truncate" title={activeWorkspace.path}>
@@ -3003,7 +3003,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             out for editing. Cancel returns it to its original slot. */}
         {editingFromQueue && (
           <div className="flex items-center justify-between gap-2 border-b border-primary/20 bg-primary/5 px-3 py-1.5">
-            <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-primary/85">
+            <span className="font-mono text-xs uppercase tracking-[0.18em] text-primary/85">
               Editing
               <span className="ml-1.5 tabular-nums text-primary/55">
                 {String(editingFromQueue.originalIndex + 1).padStart(2, "0")}
@@ -3151,7 +3151,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                   ? "Fast mode"
                   : "Context window";
 
-            const sectionHeaderClass = "px-3 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none";
+            const sectionHeaderClass = "px-3 pt-1.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground/60 select-none";
             const itemClass = (active: boolean) => cn(
               "flex w-full items-center justify-between rounded px-3 py-1.5 text-xs",
               active
@@ -3186,7 +3186,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                         {activeChipLabel && (
                           <span
                             data-testid="composer-1m-badge"
-                            className="rounded-sm bg-foreground/5 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-foreground/80 ring-1 ring-inset ring-foreground/10 tabular-nums"
+                            className="rounded-sm bg-foreground/5 px-1 py-px text-xs font-medium uppercase tracking-wide text-foreground/80 ring-1 ring-inset ring-foreground/10 tabular-nums"
                           >
                             {activeChipLabel}
                           </span>
@@ -3493,7 +3493,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       {/* Queued-send hint: shown while the child thread handoff is still generating */}
       {queuedSend && (
-        <p className="px-1 pt-1 text-[10px] text-muted-foreground/60">
+        <p className="px-1 pt-1 text-xs text-muted-foreground/60">
           queued · sends when handoff lands
         </p>
       )}
@@ -3510,7 +3510,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         {showComposerStatusBar && <div className="min-h-0">
           <div className="flex items-center justify-between px-1 pt-1.5">
             {!isGitRepo && isNewThread ? (
-              <span className="flex h-6 items-center rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground/40">
+              <span className="flex h-6 items-center rounded-md px-1.5 py-0.5 text-xs text-muted-foreground/40">
                 Not a git repo
               </span>
             ) : (

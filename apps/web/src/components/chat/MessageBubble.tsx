@@ -120,7 +120,7 @@ function GoalReceipt({
     <span
       data-testid="goal-receipt"
       className={cn(
-        "inline-flex items-center gap-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.18em]",
+        "inline-flex items-center gap-1.5 font-mono text-xs font-medium uppercase tracking-[0.18em]",
         tone === "muted" ? "text-muted-foreground" : "text-primary",
         className,
       )}
@@ -157,12 +157,12 @@ function GoalPill({ label, condition, hint }: { label: string; condition?: strin
   const [expanded, setExpanded] = useState(false);
 
   const labelEl = (
-    <span className="font-mono text-[10.5px] uppercase tracking-[0.2em] text-primary">
+    <span className="font-mono text-xs uppercase tracking-[0.2em] text-primary">
       {label}
     </span>
   );
   const hintEl = hint ? (
-    <span className="shrink-0 font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted-foreground/70">
+    <span className="shrink-0 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground/70">
       {hint}
     </span>
   ) : null;
@@ -443,7 +443,7 @@ function QuoteBlock({
       onClick={onClick}
       className="mb-1.5 w-full cursor-pointer rounded-md border-l-2 border-primary/40 bg-muted/30 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/50 select-none"
     >
-      <p className="text-[10px] font-semibold text-primary/60 leading-none mb-0.5">{label}</p>
+      <p className="text-xs font-semibold text-primary/60 leading-none mb-0.5">{label}</p>
       <p className="text-xs text-muted-foreground/60 truncate italic">{displayText}</p>
     </button>
   );
@@ -676,7 +676,7 @@ export const MessageBubble = memo(function MessageBubble({
               {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
               {userDisplayText.trim() && <CopyButton content={userDisplayText} />}
             </div>
-            <div className="flex items-center gap-2 font-mono text-[10px] tabular-nums text-muted-foreground/55">
+            <div className="flex items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground/55">
               {userGoal && <GoalReceipt label="Sent as goal" tone="muted" />}
               <span>{formattedTime}</span>
             </div>
@@ -794,7 +794,7 @@ export const MessageBubble = memo(function MessageBubble({
         {assistantActionsVisible && onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
         {assistantActionsVisible && textContent.trim() && <CopyButton content={textContent} />}
         {assistantActionsVisible && (message.model || message.tokens_used != null || message.cost_usd != null || formattedTime) && (
-          <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground/55 transition-colors group-hover/msg:text-muted-foreground/80">
+          <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground/55 transition-colors group-hover/msg:text-muted-foreground/80">
             {[
               modelDisplayLabel,
               message.tokens_used != null ? `${message.tokens_used.toLocaleString()} tok` : null,

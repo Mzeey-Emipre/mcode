@@ -22,7 +22,7 @@ export function ReadRenderer({ toolCall, isActive }: ToolRendererProps) {
     >
       {lines.length > 0 && (
         <div>
-          <pre className="max-h-64 overflow-auto rounded bg-muted/30 p-2 text-[11px] leading-relaxed text-muted-foreground font-mono">
+          <pre className="max-h-64 overflow-auto rounded bg-muted/30 p-2 text-xs leading-relaxed text-muted-foreground font-mono">
             {visible.join("\n")}
           </pre>
           <ShowMoreButton

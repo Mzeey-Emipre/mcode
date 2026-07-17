@@ -273,13 +273,13 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
                 onClick={() => setActiveQuestionIndex(threadId, i)}
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/50"
               >
-                <span className="font-mono text-[10px] tabular-nums tracking-[0.12em] text-muted-foreground/45">
+                <span className="font-mono text-xs tabular-nums tracking-[0.12em] text-muted-foreground/45">
                   {formatStep(i + 1, displayQuestions.length)}
                 </span>
                 <span className="flex-1 truncate text-xs text-muted-foreground/60">
                   {prev.question}
                 </span>
-                <span className="flex-shrink-0 max-w-[140px] truncate text-[11.5px] font-medium text-muted-foreground">
+                <span className="flex-shrink-0 max-w-[140px] truncate text-xs font-medium text-muted-foreground">
                   {answerLabel}
                 </span>
                 <span className="text-xs text-[oklch(0.48_0.14_145)]" aria-hidden="true">
@@ -294,11 +294,11 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
 
       {/* Mono header: step counter + category + step dots */}
       <div className="animate-wizard-header flex items-center gap-2 mb-2">
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/45">
+        <span className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground/45">
           <span className="tabular-nums">{formatStep(displayActiveIndex + 1, displayQuestions.length)}</span>
         </span>
-        <span className="font-mono text-[8px] text-muted-foreground/25" aria-hidden="true">/</span>
-        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-primary/65">
+        <span className="font-mono text-xs text-muted-foreground/25" aria-hidden="true">/</span>
+        <span className="font-mono text-xs uppercase tracking-[0.14em] text-primary/65">
           {q.category.toLowerCase()}
         </span>
         <div className="ml-auto flex items-center gap-1">
@@ -320,7 +320,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
       <p
         key={displayActiveIndex}
         className={cn(
-          "text-[14.5px] font-medium text-foreground leading-snug mb-3 max-w-[62ch]",
+          "text-sm font-medium text-foreground leading-snug mb-3 max-w-[62ch]",
           slideDirection === "forward"
             ? "animate-wizard-question-forward"
             : "animate-wizard-question-back",
@@ -369,7 +369,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
       </div>
 
       {/* Nav row */}
-      <div className="animate-wizard-nav flex items-center justify-between font-mono text-[11px] tracking-wide">
+      <div className="animate-wizard-nav flex items-center justify-between font-mono text-xs tracking-wide">
         <div className="flex items-center gap-4 text-muted-foreground/55">
           <button
             type="button"
@@ -427,7 +427,7 @@ export function PlanQuestionWizard({ threadId }: PlanQuestionWizardProps) {
           className={cn(
             "absolute right-5 bottom-12 z-10",
             "rounded-sm border border-border/40 bg-card/95 backdrop-blur-sm",
-            "px-3 py-2 font-mono text-[10px] leading-relaxed text-muted-foreground/80",
+            "px-3 py-2 font-mono text-xs leading-relaxed text-muted-foreground/80",
             "shadow-sm animate-wizard-legend",
           )}
         >

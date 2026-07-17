@@ -105,7 +105,7 @@ function StatusBadge({ status }: StatusBadgeProps) {
   };
   return (
     <span
-      className={`font-mono text-[0.625rem] font-medium px-1.5 py-px rounded-sm ${styles[status]}`}
+      className={`font-mono text-xs font-medium px-1.5 py-px rounded-sm ${styles[status]}`}
     >
       {status}
     </span>

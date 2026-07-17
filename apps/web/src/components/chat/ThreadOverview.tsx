@@ -1307,7 +1307,7 @@ function ThreadOverviewPrActiveRow({
       status.label ? (
         <span
           data-testid="thread-overview-pr-status"
-          className="ml-6 inline-flex h-6 items-center rounded-md px-2 text-[11px] text-muted-foreground"
+          className="ml-6 inline-flex h-6 items-center rounded-md px-2 text-xs text-muted-foreground"
         >
           {status.label}
         </span>
