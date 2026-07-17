@@ -40,6 +40,15 @@ describe("UnifiedDiff Dev review", () => {
     expect(gutters[1]).toHaveTextContent("+11");
   });
 
+  it("keeps the add-comment control opaque in dark mode hover", () => {
+    render(<UnifiedDiff lines={lines} filePath="src/state.ts" />);
+
+    expect(screen.getByRole("button", { name: "Add comment on line 11" })).toHaveClass(
+      "dark:hover:bg-foreground",
+      "dark:hover:text-background",
+    );
+  });
+
   it("adds a line comment to the thread composer annotation bundle", async () => {
     const user = userEvent.setup();
     render(<UnifiedDiff lines={lines} filePath="src/state.ts" />);

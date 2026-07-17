@@ -109,7 +109,7 @@ export const UnifiedDiff = memo(function UnifiedDiff({
                   size="icon-xs"
                   aria-label={`${annotation ? "Edit" : "Add"} comment on line ${lineNumber}`}
                   className={cn(
-                    "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground hover:text-background group-hover/diff-line:pointer-events-auto group-hover/diff-line:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 motion-reduce:transition-none",
+                    "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground hover:text-background group-hover/diff-line:pointer-events-auto group-hover/diff-line:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-foreground dark:hover:text-background motion-reduce:transition-none",
                     (annotation || editing) && "pointer-events-auto opacity-100",
                   )}
                   onClick={() => setEditingTarget(editing ? null : targetKey)}
