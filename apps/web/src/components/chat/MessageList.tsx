@@ -4,6 +4,7 @@ import { ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useShallow } from "zustand/shallow";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -690,18 +691,19 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   );
 
   /**
-   * Pins the scroll element to the list tail and reveals only after the inner
-   * list height has been stable for {@link TAIL_SETTLE_STABLE_FRAMES} consecutive
-   * frames (or {@link TAIL_SETTLE_MAX_FRAMES} hard cap, whichever comes first).
+   * Pins the scroll element to the list tail. Cache-miss navigation may reveal
+   * after two frames while the same loop continues settling later row measurements;
+   * other callers reveal after the inner height stabilizes or reaches the hard cap.
    *
    * Why a settle loop: TanStack Virtual measures rows after mount via its
    * internal ResizeObserver. On long threads the estimated total size can be
    * significantly less than the measured total. A single (or few) `scrollTop =
    * scrollHeight` snap revealed before measurements complete leaves the user
    * sitting *above* the real tail. ResizeObserver-based pinning fires too late
-   * to fix the perceived first paint. Hiding the list (opacity: 0) until both
-   * `scrollHeight` and `virtualizer.getTotalSize()` stop changing means the
-   * very first thing the user sees is already at the true bottom.
+   * to fix the perceived first paint. The loop keeps snapping until
+   * `scrollHeight` and `virtualizer.getTotalSize()` stop changing. Regular
+   * positioning stays hidden during that work; cache-miss navigation reveals
+   * the anchored tail early while the same loop continues below the viewport.
    *
    * @param options.measureFirst - Re-measures and anchors the virtualizer to the tail.
    * @param options.revealEarly - Reveals the anchored tail after two frames while
@@ -1202,9 +1204,9 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       {handoffStatus === "generating" && messages.filter((m) => m.role !== "system").length <= 1 && (
         <div className="px-4 py-4 sm:px-8">
           <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "space-y-2")}>
-            <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted" />
-            <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted" />
-            <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted" />
+            <Skeleton className="h-3.5 w-3/4 animate-pulse rounded" />
+            <Skeleton className="h-3.5 w-1/2 animate-pulse rounded" />
+            <Skeleton className="h-3.5 w-2/3 animate-pulse rounded" />
           </div>
         </div>
       )}

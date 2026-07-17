@@ -13,6 +13,7 @@ import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -276,13 +277,13 @@ function ConversationLoadingState() {
     >
       <div className={`${PRIMARY_CONTENT_RAIL_CLASS} w-full space-y-5 motion-safe:animate-pulse`}>
         <div className="ml-auto space-y-2">
-          <div className="ml-auto h-3 w-2/5 rounded bg-muted/55" />
-          <div className="ml-auto h-3 w-3/5 rounded bg-muted/40" />
+          <Skeleton className="ml-auto h-3 w-2/5 rounded bg-muted/55" />
+          <Skeleton className="ml-auto h-3 w-3/5 rounded bg-muted/40" />
         </div>
         <div className="space-y-2">
-          <div className="h-3 w-1/4 rounded bg-muted/55" />
-          <div className="h-3 w-4/5 rounded bg-muted/40" />
-          <div className="h-3 w-3/5 rounded bg-muted/40" />
+          <Skeleton className="h-3 w-1/4 rounded bg-muted/55" />
+          <Skeleton className="h-3 w-4/5 rounded bg-muted/40" />
+          <Skeleton className="h-3 w-3/5 rounded bg-muted/40" />
         </div>
       </div>
     </div>

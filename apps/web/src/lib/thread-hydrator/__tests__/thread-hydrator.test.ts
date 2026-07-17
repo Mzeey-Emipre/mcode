@@ -34,7 +34,7 @@ import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { coerceTaskStatus } from "@/stores/taskStore";
 import { getTransport } from "@/transport";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
-import type { GoalState } from "@mcode/contracts";
+import type { GoalLookupResult, GoalState, TurnSnapshot } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -439,6 +439,215 @@ describe("ThreadHydrator", () => {
 
     expect(useThreadStore.getState().currentThreadId).toBe(THREAD_B);
     expect(getTestActiveMessages()).toEqual([msgB]);
+  });
+
+  it("reselects an in-flight thread immediately during A to B to A navigation", async () => {
+    const resolvers = new Map<string, (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void>();
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      (threadId: string) => new Promise((resolve) => {
+        resolvers.set(threadId, resolve);
+      }),
+    );
+
+    const loadA = hydrator.hydrate(THREAD_A, "active");
+    const loadB = hydrator.hydrate(THREAD_B, "active");
+    const reselectA = hydrator.hydrate(THREAD_A, "active");
+
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_A);
+    expect(readActiveThreadField((record) => record.loading)).toBe(true);
+
+    resolvers.get(THREAD_A)?.({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
+    resolvers.get(THREAD_B)?.({ messages: [msgB], hasMore: false, narrativeByMessage: {} });
+    await Promise.all([loadA, loadB, reselectA]);
+
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_A);
+    expect(getTestActiveMessages()).toEqual([msgA]);
+    expect(readActiveThreadField((record) => record.loading)).toBe(false);
+  });
+
+  it("keeps the final in-flight selection during A to B to A to B navigation", async () => {
+    const resolvers = new Map<string, (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void>();
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      (threadId: string) => new Promise((resolve) => {
+        resolvers.set(threadId, resolve);
+      }),
+    );
+
+    const loads = [
+      hydrator.hydrate(THREAD_A, "active"),
+      hydrator.hydrate(THREAD_B, "active"),
+      hydrator.hydrate(THREAD_A, "active"),
+      hydrator.hydrate(THREAD_B, "active"),
+    ];
+
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_B);
+
+    resolvers.get(THREAD_A)?.({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
+    resolvers.get(THREAD_B)?.({ messages: [msgB], hasMore: false, narrativeByMessage: {} });
+    await Promise.all(loads);
+
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_B);
+    expect(getTestActiveMessages()).toEqual([msgB]);
+    expect(readActiveThreadField((record) => record.loading)).toBe(false);
+  });
+
+  it("commits the conversation tail without waiting for snapshots or goal lookup", async () => {
+    let resolveSnapshots!: (value: TurnSnapshot[]) => void;
+    let resolveGoal!: (value: GoalLookupResult) => void;
+    useWorkspaceStore.setState({
+      threads: [
+        createMockThread({ id: THREAD_A, has_file_changes: true }),
+        createMockThread({ id: THREAD_B, has_file_changes: false }),
+      ],
+    });
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveSnapshots = resolve;
+      }),
+    );
+    (mockTransport.getThreadGoal as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveGoal = resolve;
+      }),
+    );
+
+    const hydration = hydrator.hydrate(THREAD_A, "active");
+
+    await vi.waitFor(() => {
+      expect(getTestActiveMessages()).toEqual([msgA]);
+      expect(readActiveThreadField((record) => record.loading)).toBe(false);
+    });
+
+    const goal = makeGoal();
+    resolveSnapshots([{
+      message_id: msgA.id,
+      files_changed: ["src/a.ts"],
+      thread_id: THREAD_A,
+      created_at: "2026-01-01T00:00:00Z",
+    } as TurnSnapshot]);
+    resolveGoal({
+      goal,
+      authoritative: false,
+      source: "codex-cache",
+      reason: "not-materialized",
+    });
+    await hydration;
+    await vi.waitFor(() => {
+      expect(readActiveThreadField((record) => record.goal)).toEqual(goal);
+      expect(readActiveThreadField((record) => record.persistedFilesChanged)).toEqual({
+        [msgA.id]: ["src/a.ts"],
+      });
+    });
+  });
+
+  it("discards deferred snapshot and goal results after their load epoch is replaced", async () => {
+    let resolveSnapshots!: (value: TurnSnapshot[]) => void;
+    let resolveGoal!: (value: GoalLookupResult) => void;
+    useWorkspaceStore.setState({
+      threads: [
+        createMockThread({ id: THREAD_A, has_file_changes: true }),
+        createMockThread({ id: THREAD_B, has_file_changes: false }),
+      ],
+    });
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveSnapshots = resolve;
+      }),
+    );
+    (mockTransport.getThreadGoal as ReturnType<typeof vi.fn>).mockImplementation(
+      (threadId: string) => threadId === THREAD_A
+        ? new Promise((resolve) => {
+            resolveGoal = resolve;
+          })
+        : Promise.resolve({
+            goal: null,
+            authoritative: false,
+            source: "codex-cache",
+            reason: "not-materialized",
+          }),
+    );
+
+    await hydrator.hydrate(THREAD_A, "active");
+    await hydrator.hydrate(THREAD_B, "active");
+
+    resolveSnapshots([{
+      message_id: msgA.id,
+      files_changed: ["src/stale.ts"],
+      thread_id: THREAD_A,
+      created_at: "2026-01-01T00:00:00Z",
+    } as TurnSnapshot]);
+    resolveGoal({
+      goal: makeGoal(),
+      authoritative: false,
+      source: "codex-cache",
+      reason: "not-materialized",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_B);
+    expect(useThreadStore.getState().records.get(THREAD_A)?.goal).toBeNull();
+    expect(useThreadStore.getState().records.get(THREAD_A)?.persistedFilesChanged).toEqual({});
+  });
+
+  it("coalesces repeated cached older-history requests by thread and cursor", async () => {
+    const tailA = Array.from({ length: 12 }, (_, index) => createMockMessage({
+      id: `tail-a-${index + 89}`,
+      thread_id: THREAD_A,
+      sequence: index + 89,
+    }));
+    const tailB = Array.from({ length: 12 }, (_, index) => createMockMessage({
+      id: `tail-b-${index + 89}`,
+      thread_id: THREAD_B,
+      sequence: index + 89,
+    }));
+    cacheRecord(THREAD_A, { ...makeCachedRecord(tailA), hasMoreMessages: true });
+    cacheRecord(THREAD_B, { ...makeCachedRecord(tailB), hasMoreMessages: true });
+    const resolvers = new Map<string, (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void>();
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      (threadId: string) => new Promise((resolve) => {
+        resolvers.set(threadId, resolve);
+      }),
+    );
+
+    for (let index = 0; index < 20; index++) {
+      await hydrator.hydrate(index % 2 === 0 ? THREAD_A : THREAD_B, "active");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(2);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_A, 88, 89);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_B, 88, 89);
+
+    const earlierA = createMockMessage({
+      id: "earlier-a-88",
+      thread_id: THREAD_A,
+      sequence: 88,
+    });
+    const earlierB = createMockMessage({
+      id: "earlier-b-88",
+      thread_id: THREAD_B,
+      sequence: 88,
+    });
+    resolvers.get(THREAD_A)?.({ messages: [earlierA], hasMore: false, narrativeByMessage: {} });
+    resolvers.get(THREAD_B)?.({ messages: [earlierB], hasMore: false, narrativeByMessage: {} });
+
+    await vi.waitFor(() => {
+      expect(getTestActiveMessages()).toEqual([earlierB, ...tailB]);
+    });
+    expect(getCachedRecord(THREAD_A)?.messages).toEqual(tailA);
   });
 
   it("background mode populates cache without touching the live store", async () => {

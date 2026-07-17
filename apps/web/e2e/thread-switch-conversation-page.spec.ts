@@ -177,6 +177,81 @@ test("thread switch cache miss hydrates messages and narrative through conversat
   expect(calls.filter((call) => call.method === "message.list" || call.method === "turn.load" || call.method === "narrative.list")).toHaveLength(0);
 });
 
+test("rapid reselection paints the tail before auxiliary thread data resolves", async ({ page }) => {
+  test.setTimeout(90_000);
+  let resolveThreadA!: () => void;
+  let resolveThreadB!: () => void;
+  let resolveSnapshots!: () => void;
+  let resolveGoal!: () => void;
+  const threads = [
+    thread("thread-a", "Thread A"),
+    thread("thread-b", "Thread B"),
+  ];
+
+  await mockWebSocketServer(page, {
+    "workspace.list": [workspace],
+    "thread.list": threads,
+    "conversation.page": (params) => {
+      const input = params as { threadId: string };
+      const result = {
+        messages: input.threadId === "thread-a"
+          ? [message("thread-a", "thread-a-tail", "assistant", "Alpha tail after reselection", 12)]
+          : [message("thread-b", "thread-b-tail", "assistant", "Beta tail", 12)],
+        hasMore: false,
+        answeredPlanMessageIds: [],
+        narrativeByMessage: {},
+      };
+      return new Promise((resolve) => {
+        const release = () => resolve(result);
+        if (input.threadId === "thread-a") resolveThreadA = release;
+        else resolveThreadB = release;
+      });
+    },
+    "snapshot.listByThread": (params) => {
+      const input = params as { threadId: string };
+      if (input.threadId !== "thread-a") return [];
+      return new Promise((resolve) => {
+        resolveSnapshots = () => resolve([]);
+      });
+    },
+    "thread.goal.get": (params) => {
+      const input = params as { threadId: string };
+      const result = {
+        goal: null,
+        authoritative: false,
+        source: "codex-cache",
+        reason: "not-materialized",
+      };
+      if (input.threadId !== "thread-a") return result;
+      return new Promise((resolve) => {
+        resolveGoal = () => resolve(result);
+      });
+    },
+  });
+
+  await page.goto("/");
+  await page.getByRole("group", { name: "Conversation Page Workspace project" }).click();
+  await page.waitForSelector("[data-testid='thread-item']");
+  const threadItems = page.locator("[data-testid='thread-item']");
+
+  await threadItems.nth(0).click();
+  await expect.poll(() => typeof resolveThreadA).toBe("function");
+  await threadItems.nth(1).click();
+  await expect.poll(() => typeof resolveThreadB).toBe("function");
+  await threadItems.nth(0).click();
+
+  await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread A");
+  await expect(page.locator("[data-testid=conversation-loading]")).toBeVisible();
+  resolveThreadA();
+  await expect(page.getByText("Alpha tail after reselection", { exact: true })).toBeVisible();
+  expect(typeof resolveSnapshots).toBe("function");
+  expect(typeof resolveGoal).toBe("function");
+
+  resolveSnapshots();
+  resolveGoal();
+  resolveThreadB();
+});
+
 test("thread switch paints the latest turn before older history finishes", async ({ page }) => {
   test.setTimeout(90_000);
   const calls: RpcCall[] = [];

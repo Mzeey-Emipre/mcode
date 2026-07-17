@@ -494,10 +494,10 @@ the user typed.
 The routing rule for server-pushed events: a client declares which threads
 it is watching, and an event carrying a thread id is delivered only to
 clients subscribed to that thread. Events without a thread id remain
-broadcast to every client. A window watching one thread never receives
-another thread's streaming traffic; on a thread switch the client
-resubscribes and hydration covers the gap. Payload validation at this seam
-has two adapters: validating (dev, logs schema drift) and pass-through
+broadcast to every client. A window's bounded watch set contains its selected
+thread and any threads with running agents, which keeps their live layers warm
+during a switch. Unrelated idle threads remain excluded. Payload validation at
+this seam has two adapters: validating (dev, logs schema drift) and pass-through
 (production). (Epic #649, slices #656/#657.)
 
 ### Grace period

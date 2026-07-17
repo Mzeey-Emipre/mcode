@@ -21,6 +21,10 @@ export interface AuxiliaryHydratorOptions {
   force?: boolean;
   /** When true, merges file-change data into the live store if this thread is current. */
   commitFileChangesToStore?: boolean;
+  /** Load epoch that may receive a deferred file-change result. */
+  expectedLoadEpoch?: number;
+  /** Skips snapshots when the caller already owns that request. */
+  skipFileChangeSnapshots?: boolean;
 }
 
 /** Collaborators injected into {@link AuxiliaryHydrator}. */
@@ -66,7 +70,13 @@ export class AuxiliaryHydrator {
     this.hydratePermissions(threadId);
     this.hydrateTasks(threadId);
     this.hydratePlans(threadId);
-    this.hydrateFileChangeSnapshots(threadId, opts.commitFileChangesToStore ?? false);
+    if (!opts.skipFileChangeSnapshots) {
+      this.hydrateFileChangeSnapshots(
+        threadId,
+        opts.commitFileChangesToStore ?? false,
+        opts.expectedLoadEpoch,
+      );
+    }
   }
 
   private transport(): ThreadHydratorTransport {
@@ -157,7 +167,11 @@ export class AuxiliaryHydrator {
    * Fetch file-change snapshots when the thread has changes but the cache entry
    * lacks file-change data (e.g. after a background prefetch).
    */
-  private hydrateFileChangeSnapshots(threadId: string, commitToStore: boolean): void {
+  private hydrateFileChangeSnapshots(
+    threadId: string,
+    commitToStore: boolean,
+    expectedLoadEpoch?: number,
+  ): void {
     const threadRecord = this.deps.getWorkspaceThread(threadId);
     if (!threadRecord?.has_file_changes) return;
 
@@ -169,6 +183,13 @@ export class AuxiliaryHydrator {
       .listSnapshots(threadId)
       .then((snapshots) => {
         if (snapshots.length === 0) return;
+
+        const state = this.deps.getState();
+        const record = getThreadRecord(state.records, threadId);
+        if (expectedLoadEpoch != null && (
+          state.currentThreadId !== threadId
+          || record.loadEpoch !== expectedLoadEpoch
+        )) return;
 
         const latestCached = getCachedRecord(threadId);
         if (!latestCached) return;
@@ -192,6 +213,7 @@ export class AuxiliaryHydrator {
         setState((state: ThreadHydratorWriteState) => {
           if (state.currentThreadId !== threadId) return {};
           const rec = getThreadRecord(state.records, threadId);
+          if (expectedLoadEpoch != null && rec.loadEpoch !== expectedLoadEpoch) return {};
           return {
             records: patchThreadRecord(state.records, threadId, {
               persistedFilesChanged: {
