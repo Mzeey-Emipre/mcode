@@ -143,34 +143,6 @@ describe("buildReasoningOptions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Ultrathink: virtual tier maps to effort "max" at SDK boundary
-  // ---------------------------------------------------------------------------
-
-  it("maps ultrathink to effort 'max' for opus-4-8", () => {
-    const result = buildReasoningOptions("ultrathink", "claude-opus-4-8");
-    expect(result).toMatchObject({ effort: "max", thinking: { type: "adaptive" } });
-  });
-
-  it("maps ultrathink to effort 'max' for opus-4-7", () => {
-    const result = buildReasoningOptions("ultrathink", "claude-opus-4-7");
-    expect(result).toMatchObject({ effort: "max", thinking: { type: "adaptive" } });
-  });
-
-  it("maps ultrathink to effort 'max' for opus-4-6", () => {
-    const result = buildReasoningOptions("ultrathink", "claude-opus-4-6");
-    expect(result).toMatchObject({ effort: "max" });
-  });
-
-  it("maps ultrathink to effort 'max' for sonnet-4-6", () => {
-    const result = buildReasoningOptions("ultrathink", "claude-sonnet-4-6");
-    expect(result).toMatchObject({ effort: "max" });
-  });
-
-  it("ignores ultrathink for haiku-4-5 (no effort param emitted)", () => {
-    expect(buildReasoningOptions("ultrathink", "claude-haiku-4-5")).toEqual({});
-  });
-
-  // ---------------------------------------------------------------------------
   // Haiku thinking toggle: boolean flag → adaptive thinking
   // ---------------------------------------------------------------------------
 

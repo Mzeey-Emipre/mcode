@@ -54,4 +54,12 @@ describe("ThreadRepo.updateSettings", () => {
     expect(thread?.orchestration_mode).toBeNull();
     expect(thread?.permission_mode).toBeNull();
   });
+
+  it("normalizes legacy orchestration-shaped reasoning values to max", () => {
+    db.prepare("UPDATE threads SET reasoning_level = ? WHERE id = ?").run("ultrathink", threadId);
+    expect(repo.findById(threadId)?.reasoning_level).toBe("max");
+
+    db.prepare("UPDATE threads SET reasoning_level = ? WHERE id = ?").run("ultra", threadId);
+    expect(repo.findById(threadId)?.reasoning_level).toBe("max");
+  });
 });

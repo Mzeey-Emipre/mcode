@@ -6,6 +6,7 @@
 import { randomUUID } from "crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
+import { ReasoningLevelSchema } from "@mcode/contracts";
 import type { Thread, RecentThread, ThreadMode, ThreadStatus, ReasoningLevel, InteractionMode, OrchestrationMode, PermissionMode, ContextWindowMode } from "@mcode/contracts";
 
 interface ThreadRow {
@@ -45,6 +46,13 @@ interface ThreadRow {
   has_file_changes: number;
 }
 
+/** Normalizes legacy reasoning values and rejects corrupted persisted state at the DB boundary. */
+function parseStoredReasoningLevel(value: string | null): ReasoningLevel | null {
+  if (value === null) return null;
+  const parsed = ReasoningLevelSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 function rowToThread(row: ThreadRow): Thread {
   return {
     id: row.id,
@@ -68,7 +76,7 @@ function rowToThread(row: ThreadRow): Thread {
     deleted_at: row.deleted_at,
     last_context_tokens: row.last_context_tokens ?? null,
     context_window: row.context_window ?? null,
-    reasoning_level: (row.reasoning_level ?? null) as ReasoningLevel | null,
+    reasoning_level: parseStoredReasoningLevel(row.reasoning_level),
     interaction_mode: (row.interaction_mode ?? null) as InteractionMode | null,
     orchestration_mode: (row.orchestration_mode ?? null) as OrchestrationMode | null,
     permission_mode: (row.permission_mode ?? null) as PermissionMode | null,

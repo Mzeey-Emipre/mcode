@@ -72,10 +72,10 @@ test.describe("Reasoning level picker in settings", () => {
     const radioGroup = reasoningRadioGroup(page);
     const radios = radioGroup.locator('[role="radio"]');
 
-    // All 6 tiers must appear in Low → Medium → High → X-High → Max → Ultrathink order
+    // All tiers must appear in Low to Max order.
     await expect(radios).toHaveCount(6);
     const labels = await radios.allInnerTexts();
-    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max", "Ultrathink"]);
+    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max"]);
 
     // X-High and Max are both enabled for Opus 4.7
     const xhighBtn = radios.filter({ hasText: "X-High" });
@@ -98,7 +98,7 @@ test.describe("Reasoning level picker in settings", () => {
 
     await expect(radios).toHaveCount(6);
     const labels = await radios.allInnerTexts();
-    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max", "Ultrathink"]);
+    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max"]);
 
     // Opus 4.6 supports Max but not X-High
     const xhighBtn = radios.filter({ hasText: "X-High" });
@@ -121,7 +121,7 @@ test.describe("Reasoning level picker in settings", () => {
 
     await expect(radios).toHaveCount(6);
     const labels = await radios.allInnerTexts();
-    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max", "Ultrathink"]);
+    expect(labels).toEqual(["Low", "Medium", "High", "X-High", "Max"]);
 
     // Sonnet 4.6 supports Max but not X-High
     const xhighBtn = radios.filter({ hasText: "X-High" });

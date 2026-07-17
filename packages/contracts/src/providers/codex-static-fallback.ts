@@ -13,8 +13,9 @@ export const CODEX_STATIC_MODELS: readonly ProviderModelInfo[] = [
     contextWindow: 372_000,
     supportsVision: true,
     supportsReasoning: true,
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
     defaultReasoningEffort: "low",
+    supportsUltraOrchestration: true,
   },
   {
     id: "gpt-5.6-terra",
@@ -23,8 +24,9 @@ export const CODEX_STATIC_MODELS: readonly ProviderModelInfo[] = [
     contextWindow: 372_000,
     supportsVision: true,
     supportsReasoning: true,
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
     defaultReasoningEffort: "medium",
+    supportsUltraOrchestration: true,
   },
   {
     id: "gpt-5.6-luna",
@@ -75,5 +77,5 @@ export function supportsCodexUltraOrchestration(modelId: string): boolean {
   const model = CODEX_STATIC_MODELS.find(
     (candidate) => modelId === candidate.id || modelId.startsWith(`${candidate.id}-`),
   );
-  return model?.supportedReasoningEfforts?.includes("ultra") === true;
+  return model?.supportsUltraOrchestration === true;
 }

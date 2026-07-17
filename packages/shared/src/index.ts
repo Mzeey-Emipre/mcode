@@ -27,7 +27,6 @@ export {
   isXhighEffortModel,
   isMaxEffortModel,
   supportsEffortParameter,
-  supportsUltrathink,
   supports1MContextWindow,
   supportsThinkingToggle,
   normalizeReasoningLevelForModel,

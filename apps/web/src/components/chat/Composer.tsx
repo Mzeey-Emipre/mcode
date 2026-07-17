@@ -43,7 +43,7 @@ import { isGoalControlCommand } from "@/lib/goal-command";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
 import { rememberComposerMode } from "@/lib/composer-mode-preference";
-import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supportsUltrathink, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
+import { getDefaultModelId, getDefaultReasoningLevel, getDefaultProviderId, isMaxEffortModel, isXhighEffortModel, supportsEffortParameter, supports1MContextWindow, supportsThinkingToggle, normalizeReasoningLevelForModel, getCodexReasoningLevels, providerSupportsReasoningLevels } from "@/lib/model-registry";
 import { ModelSelector } from "./ModelSelector";
 import { ModeSelector, ALL_MODE_OPTIONS } from "./ModeSelector";
 import type { ComposerMode, ModeOption } from "./ModeSelector";
@@ -260,13 +260,12 @@ const ATTACHMENT_INPUT_ACCEPT = attachmentAcceptAttribute();
 
 /** ReasoningLevel values as a Set for O(1) membership checks in the Codex level filter. */
 const VALID_REASONING_LEVELS_SET = new Set<string>([
-  "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "ultrathink",
+  "none", "minimal", "low", "medium", "high", "xhigh", "max",
 ]);
 
 /** Display label for a reasoning level value. */
 function reasoningLabel(level: string): string {
   if (level === "xhigh") return "X-High";
-  if (level === "ultrathink") return "Ultrathink";
   if (level === "none") return "None";
   if (level === "minimal") return "Minimal";
   return level.charAt(0).toUpperCase() + level.slice(1);
@@ -1301,9 +1300,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   // updates on send, so reading it here would leave capability menus one switch behind.
   const effectiveProviderId = provider as ProviderId;
   const goalAvailable = effectiveProviderId === "claude" || effectiveProviderId === "codex";
-  const orchestrationLabel =
-    effectiveProviderId === "codex" && supportsCodexUltraOrchestration(modelId)
-      ? "Ultra" as const
+  const orchestrationLabel = effectiveProviderId === "codex"
+    ? supportsCodexUltraOrchestration(modelId) ? "Ultra" as const : undefined
+    : effectiveProviderId === "claude" && isXhighEffortModel(modelId)
+      ? "Ultracode" as const
       : undefined;
   const availability = useProviderAvailabilityStore((s) => s.getAvailability(effectiveProviderId));
   const providerUnusable = !!availability && (
@@ -1455,7 +1455,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     anchorRef: composerContainerRef,
     cwd: workspacePath,
     providerId: effectiveProviderId,
-    orchestrationCommand: orchestrationLabel === "Ultra" ? "ultra" : undefined,
+    orchestrationCommand:
+      orchestrationLabel === "Ultra"
+        ? "ultra"
+        : orchestrationLabel === "Ultracode"
+          ? "ultracode"
+          : undefined,
     onMcodeCommand: (action) => {
       if (action === "attach-plan") {
         attachPlan();
@@ -2710,7 +2715,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       "high",
       ...(isXhighEffortModel(modelId) ? (["xhigh"] as const) : []),
       ...(isMaxEffortModel(modelId)   ? (["max"]   as const) : []),
-      ...(supportsUltrathink(modelId) ? (["ultrathink"] as const) : []),
     ];
   }, [modelId, provider]);
 

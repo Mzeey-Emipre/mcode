@@ -15,11 +15,7 @@ import {
  *   omitted entirely. If `thinking` is true and the model exposes the boolean
  *   thinking toggle, we still emit `thinking: { type: "adaptive" }` so Haiku
  *   uses its extended thinking pathway.
- * - "ultrathink" is a Mcode virtual tier — it is mapped to `effort: "max"` at
- *   the SDK boundary because the SDK's EffortLevel union does not include it.
- *   The "Ultrathink:\n" prompt prefix is applied separately by
- *   `applyUltrathinkPrefix` in the message-building path.
- * - All other levels are normalized to the highest tier the model accepts via
+ * - Levels are normalized to the highest tier the model accepts via
  *   the shared tier-ladder helper, with a warning logged on clamp.
  */
 export function buildReasoningOptions(
@@ -46,15 +42,12 @@ export function buildReasoningOptions(
     });
   }
 
-  // Ultrathink is a Mcode virtual tier; the SDK only accepts up through "max".
   // "none" / "minimal" are OpenAI Codex presets; Claude path normalizes them to "low" above.
-  const sdkEffort = normalized === "ultrathink" ? "max" : normalized;
-
   return {
     // "xhigh" is valid for claude-opus-4-7; the SDK's EffortLevel union does not
     // include "xhigh" yet, so we cast to any to avoid a compile-time rejection.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    effort: sdkEffort as any,
+    effort: normalized as any,
     thinking: { type: "adaptive" },
   };
 }

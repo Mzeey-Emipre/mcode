@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveSdkModelSlug, applyUltrathinkPrefix } from "../resolve-slug.js";
+import { resolveSdkModelSlug } from "../resolve-slug.js";
 
 describe("resolveSdkModelSlug", () => {
   // ---------------------------------------------------------------------------
@@ -50,65 +50,5 @@ describe("resolveSdkModelSlug", () => {
 
   it("returns bare slug for sonnet-4-6 with undefined mode", () => {
     expect(resolveSdkModelSlug("claude-sonnet-4-6", undefined)).toBe("claude-sonnet-4-6");
-  });
-});
-
-describe("applyUltrathinkPrefix", () => {
-  // ---------------------------------------------------------------------------
-  // Prefix applied for ultrathink + supported model
-  // ---------------------------------------------------------------------------
-
-  it("prepends 'Ultrathink:\\n' for opus-4-8 + ultrathink", () => {
-    expect(applyUltrathinkPrefix("hello", "ultrathink", "claude-opus-4-8")).toBe(
-      "Ultrathink:\nhello",
-    );
-  });
-
-  it("prepends 'Ultrathink:\\n' for opus-4-7 + ultrathink", () => {
-    expect(applyUltrathinkPrefix("hello", "ultrathink", "claude-opus-4-7")).toBe(
-      "Ultrathink:\nhello",
-    );
-  });
-
-  it("prepends 'Ultrathink:\\n' for sonnet-4-6 + ultrathink", () => {
-    expect(applyUltrathinkPrefix("hello", "ultrathink", "claude-sonnet-4-6")).toBe(
-      "Ultrathink:\nhello",
-    );
-  });
-
-  it("prepends 'Ultrathink:\\n' for opus-4-6 + ultrathink", () => {
-    expect(applyUltrathinkPrefix("hello", "ultrathink", "claude-opus-4-6")).toBe(
-      "Ultrathink:\nhello",
-    );
-  });
-
-  // ---------------------------------------------------------------------------
-  // Prefix skipped for unsupported model (Haiku) or non-ultrathink levels
-  // ---------------------------------------------------------------------------
-
-  it("does not prepend for haiku-4-5 (ultrathink unsupported)", () => {
-    expect(applyUltrathinkPrefix("hello", "ultrathink", "claude-haiku-4-5")).toBe("hello");
-  });
-
-  it("does not prepend when level is 'max'", () => {
-    expect(applyUltrathinkPrefix("hello", "max", "claude-opus-4-7")).toBe("hello");
-  });
-
-  it("does not prepend when level is 'high'", () => {
-    expect(applyUltrathinkPrefix("hello", "high", "claude-sonnet-4-6")).toBe("hello");
-  });
-
-  it("does not prepend when level is undefined", () => {
-    expect(applyUltrathinkPrefix("hello", undefined, "claude-sonnet-4-6")).toBe("hello");
-  });
-
-  // ---------------------------------------------------------------------------
-  // Idempotency: do not double-prefix
-  // ---------------------------------------------------------------------------
-
-  it("does not double-prefix an already-prefixed message", () => {
-    expect(
-      applyUltrathinkPrefix("Ultrathink:\nhello", "ultrathink", "claude-opus-4-7"),
-    ).toBe("Ultrathink:\nhello");
   });
 });

@@ -42,7 +42,6 @@ export function toCodexEffort(
 ): ReasoningEffort | undefined {
   if (orchestrationMode === "proactive") return "ultra";
   if (!level) return undefined;
-  if (level === "ultrathink") return "high";
   return level;
 }
 

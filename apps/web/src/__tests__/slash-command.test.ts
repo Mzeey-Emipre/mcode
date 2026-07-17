@@ -338,6 +338,31 @@ describe("mcode side-effect dispatch", () => {
     expect(onMcodeCommand).toHaveBeenCalledWith("attach-orchestration");
     expect(emittedValue).toBe("");
   });
+
+  it("dispatches Ultracode as a composer action without inserting slash text", async () => {
+    const ref = makeAnchor();
+    const onMcodeCommand = vi.fn();
+    const { result } = renderHook(() =>
+      useSlashCommand({
+        anchorRef: ref,
+        onMcodeCommand,
+        providerId: "claude",
+        orchestrationCommand: "ultracode",
+      })
+    );
+    await act(async () => { result.current.onInputChange("/ultrac"); });
+    await act(async () => {});
+
+    const command = result.current.items.find((item) => item.name === "ultracode");
+    expect(command).toBeDefined();
+
+    let emittedValue = "unchanged";
+    await act(async () => {
+      result.current.onSelect(command!, (value: string) => { emittedValue = value; });
+    });
+    expect(onMcodeCommand).toHaveBeenCalledWith("attach-orchestration");
+    expect(emittedValue).toBe("");
+  });
 });
 
 describe("IPC cache", () => {
