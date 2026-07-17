@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { FileEdit } from "lucide-react";
+import { ListChecks } from "lucide-react";
 import { describe, expect, it, vi } from "vitest";
 import { ComposerAddMenu } from "../ComposerAddMenu";
 import { ComposerCapabilityChip } from "../ComposerCapabilityChip";
@@ -94,7 +94,7 @@ describe("composer capabilities", () => {
     render(
       <ComposerCapabilityChip
         label="Plan"
-        icon={FileEdit}
+        icon={ListChecks}
         removeLabel="Remove Plan"
         onRemove={onRemove}
       />,
@@ -102,5 +102,60 @@ describe("composer capabilities", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove Plan" }));
     expect(onRemove).toHaveBeenCalledOnce();
+  });
+
+  it("uses capability-specific icons in the add menu", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ComposerAddMenu
+        disabled={false}
+        onAttachFiles={vi.fn()}
+        onAttachPlan={vi.fn()}
+        onAttachGoal={vi.fn()}
+        onAttachOrchestration={vi.fn()}
+        planAttached={false}
+        goalAttached={false}
+        goalAvailable={true}
+        orchestrationAttached={false}
+        orchestrationLabel="Ultra"
+        getComposerRect={() => COMPOSER_RECT}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add to composer" }));
+
+    expect(
+      screen.getByRole("button", { name: /Plan/ }).querySelector(".lucide-list-checks"),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Goal/ }).querySelector(".lucide-goal")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Ultra/ }).querySelector(".lucide-network"),
+    ).toBeTruthy();
+  });
+
+  it("marks attached capabilities as selected in the add menu", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ComposerAddMenu
+        disabled={false}
+        onAttachFiles={vi.fn()}
+        onAttachPlan={vi.fn()}
+        onAttachGoal={vi.fn()}
+        onAttachOrchestration={vi.fn()}
+        planAttached
+        goalAttached={false}
+        goalAvailable={true}
+        orchestrationAttached={false}
+        getComposerRect={() => COMPOSER_RECT}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add to composer" }));
+
+    const planButton = screen.getByRole("button", { name: /Plan/ });
+    expect(planButton).toHaveAttribute("aria-pressed", "true");
+    expect(planButton.querySelector(".lucide-check")).toBeTruthy();
   });
 });

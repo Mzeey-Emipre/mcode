@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FileEdit, FilePlus2, Plus, Target, Workflow } from "lucide-react";
+import { Check, FilePlus2, Goal, ListChecks, Network, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 
@@ -150,15 +150,25 @@ export function ComposerAddMenu({
               size="sm"
               onClick={handleAttachPlan}
               disabled={planAttached}
-              className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70"
+              aria-pressed={planAttached}
+              className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70 disabled:bg-accent/45 disabled:opacity-100"
             >
-              <FileEdit size={15} className="shrink-0 text-muted-foreground" aria-hidden />
+              <ListChecks
+                size={15}
+                className={
+                  planAttached ? "shrink-0 text-primary" : "shrink-0 text-muted-foreground"
+                }
+                aria-hidden
+              />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="text-sm font-medium leading-none text-foreground">Plan</span>
                 <span className="text-xs font-normal leading-snug text-muted-foreground">
                   Explore the work and propose a plan
                 </span>
               </span>
+              {planAttached ? (
+                <Check size={14} className="shrink-0 text-primary" aria-hidden />
+              ) : null}
             </Button>
             {goalAvailable ? (
               <Button
@@ -167,15 +177,25 @@ export function ComposerAddMenu({
                 size="sm"
                 onClick={handleAttachGoal}
                 disabled={goalAttached}
-                className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70"
+                aria-pressed={goalAttached}
+                className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70 disabled:bg-accent/45 disabled:opacity-100"
               >
-                <Target size={15} className="shrink-0 text-muted-foreground" aria-hidden />
+                <Goal
+                  size={15}
+                  className={
+                    goalAttached ? "shrink-0 text-primary" : "shrink-0 text-muted-foreground"
+                  }
+                  aria-hidden
+                />
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="text-sm font-medium leading-none text-foreground">Goal</span>
                   <span className="text-xs font-normal leading-snug text-muted-foreground">
                     Set the objective for the next run
                   </span>
                 </span>
+                {goalAttached ? (
+                  <Check size={14} className="shrink-0 text-primary" aria-hidden />
+                ) : null}
               </Button>
             ) : null}
             {orchestrationLabel ? (
@@ -185,9 +205,18 @@ export function ComposerAddMenu({
                 size="sm"
                 onClick={handleAttachOrchestration}
                 disabled={orchestrationAttached}
-                className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70"
+                aria-pressed={orchestrationAttached}
+                className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70 disabled:bg-accent/45 disabled:opacity-100"
               >
-                <Workflow size={15} className="shrink-0 text-muted-foreground" aria-hidden />
+                <Network
+                  size={15}
+                  className={
+                    orchestrationAttached
+                      ? "shrink-0 text-primary"
+                      : "shrink-0 text-muted-foreground"
+                  }
+                  aria-hidden
+                />
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="text-sm font-medium leading-none text-foreground">
                     {orchestrationLabel}
@@ -196,6 +225,9 @@ export function ComposerAddMenu({
                     Proactively delegate work to sub-agents
                   </span>
                 </span>
+                {orchestrationAttached ? (
+                  <Check size={14} className="shrink-0 text-primary" aria-hidden />
+                ) : null}
               </Button>
             ) : null}
           </div>

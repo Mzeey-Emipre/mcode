@@ -9,17 +9,16 @@ import type { PermissionMode, InteractionMode, AttachmentMeta, Thread } from "@/
 import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";
 import {
   ArrowUp,
-  FileEdit,
+  Goal,
   Lock,
   Unlock,
   ChevronDown,
   Check,
   ListChecks,
   MoreHorizontal,
-  Target,
+  Network,
   X,
   Zap,
-  Workflow,
   Folder,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -699,8 +698,8 @@ export function ActiveGoalChip({
   };
 
   const goalLabel = (
-    <span className="inline-flex items-center gap-1.5 px-2 text-xs font-medium text-foreground">
-      <Target size={13} className="text-muted-foreground" aria-hidden />
+    <span className="inline-flex items-center gap-1.5 px-2 text-xs font-semibold text-foreground">
+      <Goal size={13} className="text-primary" aria-hidden />
       <span>Goal</span>
     </span>
   );
@@ -709,7 +708,7 @@ export function ActiveGoalChip({
     <Popover open={detailsOpen} onOpenChange={openDetails}>
       <span
         data-testid="active-goal-chip"
-        className="inline-flex h-7 shrink-0 items-center rounded-lg bg-muted/45 pr-0.5 ring-1 ring-inset ring-border/60"
+        className="inline-flex h-7 shrink-0 items-center rounded-lg bg-accent/70 pr-0.5 ring-1 ring-inset ring-primary/30"
       >
         {canInspect ? (
           <PopoverTrigger
@@ -718,7 +717,7 @@ export function ActiveGoalChip({
                 type="button"
                 variant="ghost"
                 size="xs"
-                className="h-6 gap-0 rounded-md px-0 hover:bg-muted"
+                className="h-6 gap-0 rounded-md px-0 hover:bg-accent"
                 aria-label={`Show active goal: ${goal.objective}`}
               >
                 {goalLabel}
@@ -731,7 +730,7 @@ export function ActiveGoalChip({
             type="button"
             variant="ghost"
             size="icon-xs"
-            className="size-6 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="size-6 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
             aria-label="Clear active goal"
             title="Clear active goal"
             disabled={isClearingGoal}
@@ -3401,7 +3400,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           {mode === INTERACTION_MODES.PLAN && provider !== "copilot" ? (
             <ComposerCapabilityChip
               label="Plan"
-              icon={FileEdit}
+              icon={ListChecks}
               removeLabel="Remove Plan"
               onRemove={detachPlan}
               testId="composer-capability-plan"
@@ -3411,7 +3410,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           {goalPending ? (
             <ComposerCapabilityChip
               label="Goal"
-              icon={Target}
+              icon={Goal}
               removeLabel="Remove Goal"
               onRemove={detachPendingGoal}
               testId="composer-capability-goal-pending"
@@ -3423,7 +3422,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           {orchestrationMode === ORCHESTRATION_MODES.PROACTIVE && orchestrationLabel ? (
             <ComposerCapabilityChip
               label={orchestrationLabel}
-              icon={Workflow}
+              icon={Network}
               removeLabel={`Remove ${orchestrationLabel}`}
               onRemove={detachOrchestration}
               testId="composer-capability-orchestration"
