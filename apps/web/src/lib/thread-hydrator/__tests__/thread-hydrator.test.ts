@@ -747,6 +747,57 @@ describe("ThreadHydrator", () => {
     expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
   });
 
+  it("keeps a resident layer visible while reusing an in-flight background prefetch", async () => {
+    const resident = createMockMessage({
+      id: "resident-a",
+      thread_id: THREAD_A,
+      content: "resident message",
+      sequence: 1,
+    });
+    const refreshed = createMockMessage({
+      id: "refreshed-a",
+      thread_id: THREAD_A,
+      content: "refreshed message",
+      sequence: 2,
+    });
+    let resolvePage!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_B,
+      records: new Map<string, ThreadRecord>([
+        [THREAD_A, { ...createEmptyThreadRecord(), messages: [resident] }],
+        [THREAD_B, { ...createEmptyThreadRecord(), messages: [msgB] }],
+      ]),
+    });
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolvePage = resolve;
+      }),
+    );
+
+    const background = hydrator.hydrate(THREAD_A, "background");
+    await vi.waitFor(() => {
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    });
+
+    const active = hydrator.hydrate(THREAD_A, "active");
+    await Promise.resolve();
+
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_A);
+    expect(getTestActiveMessages()).toEqual([resident]);
+    expect(readActiveThreadField((record) => record.loading)).toBe(false);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+
+    resolvePage({ messages: [refreshed], hasMore: false, narrativeByMessage: {} });
+    await Promise.all([background, active]);
+
+    expect(getTestActiveMessages()).toEqual([refreshed]);
+    expect(getCachedRecord(THREAD_A)?.messages).toEqual([refreshed]);
+  });
+
   it("bumps load epoch on each hydrate so stale pagination is discarded", async () => {
     resetThreadStoreForTests({
       records: new Map<string, ThreadRecord>([

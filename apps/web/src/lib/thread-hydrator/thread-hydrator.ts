@@ -197,7 +197,9 @@ export class ThreadHydrator {
   ): Promise<void> {
     const background = this.backgroundHydrates.get(threadId);
     if (background) {
-      this.prepareActiveLoad(threadId);
+      if (!hasResidentLayer) {
+        this.prepareActiveLoad(threadId);
+      }
       await background;
 
       if (this.deps.getState().currentThreadId !== threadId) return;

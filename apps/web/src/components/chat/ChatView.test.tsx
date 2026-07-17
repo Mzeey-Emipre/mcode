@@ -363,7 +363,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     await waitFor(() => {
       expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledTimes(5);
     }, { timeout: 3000 });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 1700));
     expect(chatViewTransportMock.subscribeThread).toHaveBeenCalledTimes(5);
   });
 
