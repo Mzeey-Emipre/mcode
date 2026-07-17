@@ -2,9 +2,8 @@ import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 
-const { mockRm, mockRename, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
+const { mockRm, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
   mockRm: vi.fn(),
-  mockRename: vi.fn(),
   mockRmdir: vi.fn(),
   mockExistsSync: vi.fn(),
   mockLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -17,7 +16,6 @@ vi.mock("fs", () => ({
 
 vi.mock("fs/promises", () => ({
   rm: mockRm,
-  rename: mockRename,
   rmdir: mockRmdir,
 }));
 
@@ -161,37 +159,15 @@ describe("GitService.removeWorktree", () => {
     );
   });
 
-  it("renames directory then deletes when fs.rm fails on first path", async () => {
+  it("leaves a worktree in place for retry when another application locks it", async () => {
     execFn.mockRejectedValueOnce(new Error("git failed")); // worktree remove
-    execFn.mockResolvedValueOnce({ stdout: "", stderr: "" }); // prune
-    execFn.mockResolvedValueOnce({ stdout: "", stderr: "" }); // branch -d
-    // fs.rm fails on original path
     mockRm.mockRejectedValueOnce(Object.assign(new Error("EBUSY"), { code: "EBUSY" }));
-    mockRename.mockResolvedValue(undefined);
-    // existsSync: true (before rm attempt), true (after rm failure, before rename), false (final verification)
-    mockExistsSync
-      .mockReturnValueOnce(true)  // check before fallback rm
-      .mockReturnValueOnce(true)  // check after rm failure -> try rename
-      .mockReturnValueOnce(false); // final verification
-
-    const result = await gitService.removeWorktree("/repo", "my-worktree");
-
-    expect(mockRename).toHaveBeenCalledWith(
-      expect.stringContaining("my-worktree"),
-      expect.stringMatching(/my-worktree\.deleting-\d+$/),
-    );
-    expect(result).toBe(true);
-  });
-
-  it("returns false when both fs.rm and rename-then-delete fail", async () => {
-    execFn.mockRejectedValue(new Error("git failed"));
-    mockRm.mockRejectedValue(Object.assign(new Error("EBUSY"), { code: "EBUSY" }));
-    mockRename.mockRejectedValue(new Error("rename failed"));
     mockExistsSync.mockReturnValue(true);
 
     const result = await gitService.removeWorktree("/repo", "my-worktree");
 
     expect(result).toBe(false);
+    expect(execFn).toHaveBeenCalledTimes(1);
   });
 
   it("prunes stale metadata after manual fallback before deleting the branch", async () => {
