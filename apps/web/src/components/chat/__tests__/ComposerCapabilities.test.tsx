@@ -4,86 +4,68 @@ import { ListChecks } from "lucide-react";
 import { describe, expect, it, vi } from "vitest";
 import { ComposerAddMenu } from "../ComposerAddMenu";
 import { ComposerCapabilityChip } from "../ComposerCapabilityChip";
+import {
+  resolveComposerCapabilities,
+  type ComposerCapabilityId,
+  type ResolvedComposerCapability,
+} from "../composer-capabilities";
 
 const COMPOSER_RECT = new DOMRect(80, 80, 640, 160);
+const CLAUDE_CAPABILITIES = resolveComposerCapabilities({
+  providerId: "claude",
+  modelId: "claude-opus-4-7",
+});
+const CODEX_CAPABILITIES = resolveComposerCapabilities({
+  providerId: "codex",
+  modelId: "gpt-5.6-sol",
+});
+
+function renderAddMenu({
+  capabilities = CLAUDE_CAPABILITIES,
+  attachedCapabilityIds = new Set<ComposerCapabilityId>(),
+  onAttachCapability = vi.fn(),
+}: {
+  capabilities?: readonly ResolvedComposerCapability[];
+  attachedCapabilityIds?: ReadonlySet<ComposerCapabilityId>;
+  onAttachCapability?: (capabilityId: ComposerCapabilityId) => void;
+} = {}) {
+  return render(
+    <ComposerAddMenu
+      disabled={false}
+      onAttachFiles={vi.fn()}
+      capabilities={capabilities}
+      attachedCapabilityIds={attachedCapabilityIds}
+      onAttachCapability={onAttachCapability}
+      getComposerRect={() => COMPOSER_RECT}
+    />,
+  );
+}
 
 describe("composer capabilities", () => {
-  it("attaches Plan from the composer add menu", async () => {
+  it.each([
+    ["Plan", "plan"],
+    ["Goal", "goal"],
+  ] as const)("attaches %s from the composer add menu", async (label, capabilityId) => {
     const user = userEvent.setup();
-    const onAttachPlan = vi.fn();
-
-    render(
-      <ComposerAddMenu
-        disabled={false}
-        onAttachFiles={vi.fn()}
-        onAttachPlan={onAttachPlan}
-        onAttachGoal={vi.fn()}
-        onAttachOrchestration={vi.fn()}
-        planAttached={false}
-        goalAttached={false}
-        goalAvailable={true}
-        orchestrationAttached={false}
-        getComposerRect={() => COMPOSER_RECT}
-      />,
-    );
+    const onAttachCapability = vi.fn();
+    renderAddMenu({ onAttachCapability });
 
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
-    await user.click(screen.getByRole("button", { name: /Plan/ }));
+    await user.click(screen.getByRole("button", { name: new RegExp(label) }));
 
-    await waitFor(() => expect(onAttachPlan).toHaveBeenCalledOnce());
-    expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
-  });
-
-  it("attaches Goal from the composer add menu", async () => {
-    const user = userEvent.setup();
-    const onAttachGoal = vi.fn();
-
-    render(
-      <ComposerAddMenu
-        disabled={false}
-        onAttachFiles={vi.fn()}
-        onAttachPlan={vi.fn()}
-        onAttachGoal={onAttachGoal}
-        onAttachOrchestration={vi.fn()}
-        planAttached={false}
-        goalAttached={false}
-        goalAvailable={true}
-        orchestrationAttached={false}
-        getComposerRect={() => COMPOSER_RECT}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Add to composer" }));
-    await user.click(screen.getByRole("button", { name: /Goal/ }));
-
-    await waitFor(() => expect(onAttachGoal).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onAttachCapability).toHaveBeenCalledWith(capabilityId));
     expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
   });
 
   it("attaches Ultra from the composer add menu", async () => {
     const user = userEvent.setup();
-    const onAttachOrchestration = vi.fn();
-
-    render(
-      <ComposerAddMenu
-        disabled={false}
-        onAttachFiles={vi.fn()}
-        onAttachPlan={vi.fn()}
-        onAttachGoal={vi.fn()}
-        onAttachOrchestration={onAttachOrchestration}
-        planAttached={false}
-        goalAttached={false}
-        goalAvailable={true}
-        orchestrationAttached={false}
-        orchestrationLabel="Ultra"
-        getComposerRect={() => COMPOSER_RECT}
-      />,
-    );
+    const onAttachCapability = vi.fn();
+    renderAddMenu({ capabilities: CODEX_CAPABILITIES, onAttachCapability });
 
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
     await user.click(screen.getByRole("button", { name: /Ultra/ }));
 
-    await waitFor(() => expect(onAttachOrchestration).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onAttachCapability).toHaveBeenCalledWith("orchestration"));
     expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
   });
 
@@ -106,22 +88,7 @@ describe("composer capabilities", () => {
 
   it("uses capability-specific icons in the add menu", async () => {
     const user = userEvent.setup();
-
-    render(
-      <ComposerAddMenu
-        disabled={false}
-        onAttachFiles={vi.fn()}
-        onAttachPlan={vi.fn()}
-        onAttachGoal={vi.fn()}
-        onAttachOrchestration={vi.fn()}
-        planAttached={false}
-        goalAttached={false}
-        goalAvailable={true}
-        orchestrationAttached={false}
-        orchestrationLabel="Ultra"
-        getComposerRect={() => COMPOSER_RECT}
-      />,
-    );
+    renderAddMenu({ capabilities: CODEX_CAPABILITIES });
 
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
 
@@ -136,21 +103,7 @@ describe("composer capabilities", () => {
 
   it("marks attached capabilities as selected in the add menu", async () => {
     const user = userEvent.setup();
-
-    render(
-      <ComposerAddMenu
-        disabled={false}
-        onAttachFiles={vi.fn()}
-        onAttachPlan={vi.fn()}
-        onAttachGoal={vi.fn()}
-        onAttachOrchestration={vi.fn()}
-        planAttached
-        goalAttached={false}
-        goalAvailable={true}
-        orchestrationAttached={false}
-        getComposerRect={() => COMPOSER_RECT}
-      />,
-    );
+    renderAddMenu({ attachedCapabilityIds: new Set(["plan"]) });
 
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
 
@@ -161,22 +114,7 @@ describe("composer capabilities", () => {
 
   it("keeps titles visible while descriptions stay inline and fade", async () => {
     const user = userEvent.setup();
-
-    render(
-      <ComposerAddMenu
-        disabled={false}
-        onAttachFiles={vi.fn()}
-        onAttachPlan={vi.fn()}
-        onAttachGoal={vi.fn()}
-        onAttachOrchestration={vi.fn()}
-        planAttached={false}
-        goalAttached={false}
-        goalAvailable={true}
-        orchestrationAttached={false}
-        orchestrationLabel="Ultracode"
-        getComposerRect={() => COMPOSER_RECT}
-      />,
-    );
+    renderAddMenu();
 
     await user.click(screen.getByRole("button", { name: "Add to composer" }));
 
@@ -197,5 +135,39 @@ describe("composer capabilities", () => {
       expect(descriptionElement.parentElement).toHaveClass("items-baseline", "overflow-hidden");
       expect(descriptionElement.parentElement).not.toHaveClass("flex-col");
     }
+  });
+
+  it("hides the capability section when the provider exposes no Mcode capabilities", async () => {
+    const user = userEvent.setup();
+    renderAddMenu({ capabilities: [] });
+
+    await user.click(screen.getByRole("button", { name: "Add to composer" }));
+
+    expect(screen.queryByText("Capabilities")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Files/ })).toBeVisible();
+  });
+
+  it("focuses the first action and supports arrow, Home, and End navigation", async () => {
+    const user = userEvent.setup();
+    renderAddMenu();
+
+    const trigger = screen.getByRole("button", { name: "Add to composer" });
+    await user.click(trigger);
+
+    const files = screen.getByRole("button", { name: /Files/ });
+    const plan = screen.getByRole("button", { name: /Plan/ });
+    const ultracode = screen.getByRole("button", { name: /Ultracode/ });
+    await waitFor(() => expect(files).toHaveFocus());
+
+    await user.keyboard("{ArrowDown}");
+    expect(plan).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(ultracode).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(files).toHaveFocus();
+    await user.keyboard("{ArrowUp}");
+    expect(ultracode).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
   });
 });

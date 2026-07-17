@@ -1,23 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { Check, FilePlus2, Goal, ListChecks, Network, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
+import type {
+  ComposerCapabilityId,
+  ResolvedComposerCapability,
+} from "./composer-capabilities";
 
 interface ComposerAddMenuProps {
   disabled: boolean;
   onAttachFiles: () => void;
-  onAttachPlan: () => void;
-  planAttached: boolean;
-  onAttachGoal: () => void;
-  goalAttached: boolean;
-  goalAvailable: boolean;
-  onAttachOrchestration: () => void;
-  orchestrationAttached: boolean;
-  orchestrationLabel?: "Ultra" | "Ultracode";
+  capabilities: readonly ResolvedComposerCapability[];
+  attachedCapabilityIds: ReadonlySet<ComposerCapabilityId>;
+  onAttachCapability: (capabilityId: ComposerCapabilityId) => void;
   getComposerRect: () => DOMRect | null;
 }
 
 const ADD_MENU_HEIGHT = 256;
+
+const CAPABILITY_ICONS = {
+  plan: ListChecks,
+  goal: Goal,
+  orchestration: Network,
+} satisfies Record<ComposerCapabilityId, typeof ListChecks>;
 
 interface ComposerAddMenuLabelProps {
   title: string;
@@ -46,19 +57,15 @@ function ComposerAddMenuLabel({ title, description }: ComposerAddMenuLabelProps)
 export function ComposerAddMenu({
   disabled,
   onAttachFiles,
-  onAttachPlan,
-  planAttached,
-  onAttachGoal,
-  goalAttached,
-  goalAvailable,
-  onAttachOrchestration,
-  orchestrationAttached,
-  orchestrationLabel,
+  capabilities,
+  attachedCapabilityIds,
+  onAttachCapability,
   getComposerRect,
 }: ComposerAddMenuProps) {
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -75,6 +82,7 @@ export function ComposerAddMenu({
       if (event.key !== "Escape") return;
       setOpen(false);
       setAnchorRect(null);
+      triggerRef.current?.focus();
     };
 
     document.addEventListener("mousedown", dismiss);
@@ -84,6 +92,14 @@ export function ComposerAddMenu({
       document.removeEventListener("keydown", dismissOnEscape);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !anchorRect) return;
+    const frame = requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [anchorRect, open]);
 
   const toggleMenu = () => {
     if (open) {
@@ -101,23 +117,34 @@ export function ComposerAddMenu({
     requestAnimationFrame(onAttachFiles);
   };
 
-  const handleAttachPlan = () => {
+  const handleAttachCapability = (capabilityId: ComposerCapabilityId) => {
     setOpen(false);
     setAnchorRect(null);
-    requestAnimationFrame(onAttachPlan);
+    requestAnimationFrame(() => onAttachCapability(capabilityId));
   };
 
-  const handleAttachGoal = () => {
-    setOpen(false);
-    setAnchorRect(null);
-    requestAnimationFrame(onAttachGoal);
-  };
+  const handleMenuKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!menuRef.current || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      return;
+    }
+    const buttons = Array.from(
+      menuRef.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
+    );
+    if (buttons.length === 0) return;
 
-  const handleAttachOrchestration = () => {
-    setOpen(false);
-    setAnchorRect(null);
-    requestAnimationFrame(onAttachOrchestration);
-  };
+    event.preventDefault();
+    event.stopPropagation();
+    const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? buttons.length - 1
+          : event.key === "ArrowDown"
+            ? (Math.max(currentIndex, -1) + 1) % buttons.length
+            : (currentIndex <= 0 ? buttons.length : currentIndex) - 1;
+    buttons[nextIndex]?.focus();
+  }, []);
 
   return (
     <>
@@ -146,7 +173,7 @@ export function ComposerAddMenu({
           estimatedHeight={ADD_MENU_HEIGHT}
           attached
         >
-          <div className="p-1">
+          <div ref={menuRef} className="p-1" onKeyDown={handleMenuKeyDown}>
             <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">Attach</div>
             <Button
               type="button"
@@ -161,82 +188,44 @@ export function ComposerAddMenu({
                 description="Images, PDFs, documents, and code"
               />
             </Button>
-            <div className="mx-2 my-1 h-px bg-border/60" />
-            <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">Capabilities</div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={handleAttachPlan}
-              disabled={planAttached}
-              aria-pressed={planAttached}
-              className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70 disabled:bg-accent/45 disabled:opacity-100"
-            >
-              <ListChecks
-                size={15}
-                className={
-                  planAttached ? "shrink-0 text-primary" : "shrink-0 text-muted-foreground"
-                }
-                aria-hidden
-              />
-              <ComposerAddMenuLabel title="Plan" description="Explore the work and propose a plan" />
-              {planAttached ? (
-                <Check size={14} className="shrink-0 text-primary" aria-hidden />
-              ) : null}
-            </Button>
-            {goalAvailable ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleAttachGoal}
-                disabled={goalAttached}
-                aria-pressed={goalAttached}
-                className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70 disabled:bg-accent/45 disabled:opacity-100"
-              >
-                <Goal
-                  size={15}
-                  className={
-                    goalAttached ? "shrink-0 text-primary" : "shrink-0 text-muted-foreground"
-                  }
-                  aria-hidden
-                />
-                <ComposerAddMenuLabel
-                  title="Goal"
-                  description="Set the objective for the next run"
-                />
-                {goalAttached ? (
-                  <Check size={14} className="shrink-0 text-primary" aria-hidden />
-                ) : null}
-              </Button>
-            ) : null}
-            {orchestrationLabel ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleAttachOrchestration}
-                disabled={orchestrationAttached}
-                aria-pressed={orchestrationAttached}
-                className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70 disabled:bg-accent/45 disabled:opacity-100"
-              >
-                <Network
-                  size={15}
-                  className={
-                    orchestrationAttached
-                      ? "shrink-0 text-primary"
-                      : "shrink-0 text-muted-foreground"
-                  }
-                  aria-hidden
-                />
-                <ComposerAddMenuLabel
-                  title={orchestrationLabel}
-                  description="Proactively delegate work to sub-agents"
-                />
-                {orchestrationAttached ? (
-                  <Check size={14} className="shrink-0 text-primary" aria-hidden />
-                ) : null}
-              </Button>
+            {capabilities.length > 0 ? (
+              <>
+                <div className="mx-2 my-1 h-px bg-border/60" />
+                <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">
+                  Capabilities
+                </div>
+                {capabilities.map((capability) => {
+                  const Icon = CAPABILITY_ICONS[capability.id];
+                  const attached = attachedCapabilityIds.has(capability.id);
+                  return (
+                    <Button
+                      key={capability.id}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleAttachCapability(capability.id)}
+                      disabled={attached}
+                      aria-pressed={attached}
+                      className="h-auto w-full justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-accent/70 disabled:bg-accent/45 disabled:opacity-100"
+                    >
+                      <Icon
+                        size={15}
+                        className={
+                          attached ? "shrink-0 text-primary" : "shrink-0 text-muted-foreground"
+                        }
+                        aria-hidden
+                      />
+                      <ComposerAddMenuLabel
+                        title={capability.label}
+                        description={capability.description}
+                      />
+                      {attached ? (
+                        <Check size={14} className="shrink-0 text-primary" aria-hidden />
+                      ) : null}
+                    </Button>
+                  );
+                })}
+              </>
             ) : null}
           </div>
         </ComposerOverlaySurface>

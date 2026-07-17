@@ -1064,10 +1064,10 @@ Slash commands sit in one of three availability layers:
   by the active provider before it reaches the client. The composer does
   **not** re-filter these; they arrive already scoped.
 - **Multi-provider command** — offered to an explicit, growing set of
-  providers. `/goal` is backed by provider goal support, while `/m:plan`
+  providers. `/goal` is backed by provider goal support, while `/plan`
   applies to every provider except Copilot, which has its own native plan mode.
-  Built-in availability is declared per command in `useSlashCommand`
-  (`BuiltinCommand.isAvailable`), not scattered as inline conditionals.
+  Capability availability is resolved once by `resolveComposerCapabilities`
+  and shared by the plus menu, slash commands, and attached chips.
 - **Mcode-level command** — app-level, offered for every provider regardless
   of which one is active (e.g. `/compact`).
 

@@ -6,9 +6,13 @@ import {
 } from "@/stores/skillsStore";
 import type { SkillInfo } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
+import {
+  resolveComposerCapabilities,
+  type ComposerCapabilityAction,
+} from "./composer-capabilities";
 
 /** A slash command entry shown in the popup. */
-export type ComposerCommandAction = "attach-plan" | "attach-goal" | "attach-orchestration";
+export type ComposerCommandAction = ComposerCapabilityAction;
 
 /** A slash command entry shown in the popup. */
 export interface Command {
@@ -34,58 +38,13 @@ export type PopupState =
   | { kind: "empty" }
   | { kind: "error"; error: Error };
 
-/**
- * A built-in command plus the predicate that decides which providers see it.
- * Built-ins are the only commands gated by provider on the client: scanned
- * skills arrive already provider-scoped from the server (skill-service filters
- * by each skill's `providers[]`). Declaring availability next to the command
- * keeps the rule local instead of scattered across inline conditionals.
- *
- * Layer mapping (CONTEXT.md §App-side extensibility):
- *   - Mcode-level command   → available to every provider
- *   - Multi-provider command → available to an explicit set of providers
- */
-interface BuiltinCommand extends Command {
-  /** Whether this built-in is offered for the given provider. */
-  isAvailable: (providerId: string | undefined) => boolean;
-}
-
-/**
- * Providers that support `/goal` today. It is a gradual rollout (implemented in
- * Claude's Stop hook; Codex planned), so this is an allow-list that grows by
- * adding entries, not a Claude special-case. `/goal` is hidden for any
- * provider not in this set, including when no provider is selected.
- */
-const GOAL_PROVIDERS = new Set<string>(["claude", "codex"]);
 const MAX_SLASH_COMMAND_ITEMS = 100;
 
-const BUILTIN_COMMANDS: BuiltinCommand[] = [
-  {
-    name: "plan",
-    description: "Attach Plan to the composer",
-    namespace: "mcode",
-    action: "attach-plan",
-    // Multi-provider: every provider except Copilot, which has its own native
-    // plan mode plus repo-scoped sub-agents. TODO: once Copilot ACP exposes a
-    // native-plan/sub-agent capability, replace this hardcoded exclusion with a
-    // capability check so newly added providers opt in correctly.
-    isAvailable: (providerId) => providerId !== "copilot",
-  },
+const BUILTIN_COMMANDS: Command[] = [
   {
     name: "compact",
     description: "Summarise conversation history to free up context window",
     namespace: "command",
-    // Mcode-level: app-level summarisation, offered for every provider.
-    isAvailable: () => true,
-  },
-  {
-    name: "goal",
-    description: "Attach Goal to the composer",
-    namespace: "mcode",
-    action: "attach-goal",
-    // Multi-provider, gradual rollout: shown only for providers that support it
-    // (see GOAL_PROVIDERS), hidden for everything else including no selection.
-    isAvailable: (providerId) => providerId !== undefined && GOAL_PROVIDERS.has(providerId),
   },
 ];
 
@@ -127,8 +86,8 @@ interface UseSlashCommandOptions {
   cwd?: string;
   /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /plan for "copilot"). */
   providerId?: string;
-  /** Provider/model-specific orchestration command to expose in this composer. */
-  orchestrationCommand?: "ultra" | "ultracode";
+  /** Model ID used to resolve model-specific composer capabilities. */
+  modelId?: string;
   /**
    * Whether to include mcode built-in commands (plan, compact, goal) in the
    * command list. Default `true`. Pass `false` for contexts like the annotation
@@ -169,7 +128,7 @@ export function useSlashCommand({
   onMcodeCommand,
   cwd,
   providerId,
-  orchestrationCommand,
+  modelId,
   includeBuiltins = true,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
   const [isOpen, setIsOpen] = useState(false);
@@ -195,32 +154,25 @@ export function useSlashCommand({
   // Build the full command list only when its inputs change. Filtering stays
   // separate so keyboard selection does not rebuild every command row.
   const allCommands = useMemo(() => {
-    // Strip the predicate so the rendered list holds plain Command objects;
-    // availability has already been resolved here.
     const builtins: Command[] = includeBuiltins
-      ? BUILTIN_COMMANDS.filter((cmd) => cmd.isAvailable(providerId)).map(
-          (cmd): Command => ({
-            name: cmd.name,
-            description: cmd.description,
-            namespace: cmd.namespace,
-            action: cmd.action,
-          }),
-        )
+      ? [
+          ...resolveComposerCapabilities({ providerId, modelId }).map(
+            (capability): Command => ({
+              name: capability.slashCommand,
+              description: `Attach ${capability.label} to the composer`,
+              namespace: "mcode",
+              action: capability.action,
+            }),
+          ),
+          ...BUILTIN_COMMANDS,
+        ]
       : [];
-    if (includeBuiltins && orchestrationCommand) {
-      builtins.push({
-        name: orchestrationCommand,
-        description: `Attach ${orchestrationCommand === "ultra" ? "Ultra" : "Ultracode"} to the composer`,
-        namespace: "mcode",
-        action: "attach-orchestration",
-      });
-    }
     const commands: Command[] = [
       ...builtins,
       ...((skills ?? []).map(toCommand)),
     ];
     return sortCommands(commands);
-  }, [skills, providerId, includeBuiltins, orchestrationCommand]);
+  }, [skills, providerId, modelId, includeBuiltins]);
 
   const filtered = useMemo(() => {
     const f = filter.toLowerCase();

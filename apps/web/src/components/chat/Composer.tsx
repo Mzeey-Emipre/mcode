@@ -56,6 +56,10 @@ import { useFileAutocomplete, clearFileListCache, type MentionSuggestion } from 
 import { useFileTagPopup, FileTagPopup } from "./FileTagPopup";
 import { ComposerAddMenu } from "./ComposerAddMenu";
 import { ComposerCapabilityChip } from "./ComposerCapabilityChip";
+import {
+  resolveComposerCapabilities,
+  type ComposerCapabilityId,
+} from "./composer-capabilities";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import {
   ComposerEditor,
@@ -110,7 +114,6 @@ import {
   attachmentAcceptAttribute,
   isGoalOpen,
   ORCHESTRATION_MODES,
-  supportsCodexUltraOrchestration,
 } from "@mcode/contracts";
 import type {
   AttachedBrowserCapture,
@@ -1298,12 +1301,24 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   // Composer selection is authoritative. On existing threads the persisted row
   // updates on send, so reading it here would leave capability menus one switch behind.
   const effectiveProviderId = provider as ProviderId;
-  const goalAvailable = effectiveProviderId === "claude" || effectiveProviderId === "codex";
-  const orchestrationLabel = effectiveProviderId === "codex"
-    ? supportsCodexUltraOrchestration(modelId) ? "Ultra" as const : undefined
-    : effectiveProviderId === "claude" && isXhighEffortModel(modelId)
-      ? "Ultracode" as const
-      : undefined;
+  const composerCapabilities = useMemo(
+    () => resolveComposerCapabilities({ providerId: effectiveProviderId, modelId }),
+    [effectiveProviderId, modelId],
+  );
+  const planCapability = composerCapabilities.find((capability) => capability.id === "plan");
+  const goalCapability = composerCapabilities.find((capability) => capability.id === "goal");
+  const orchestrationCapability = composerCapabilities.find(
+    (capability) => capability.id === "orchestration",
+  );
+  const attachedCapabilityIds = useMemo(() => {
+    const ids = new Set<ComposerCapabilityId>();
+    if (mode === INTERACTION_MODES.PLAN) ids.add("plan");
+    if (goalPending || isGoalOpen(activeGoal)) ids.add("goal");
+    if (orchestrationMode === ORCHESTRATION_MODES.PROACTIVE) ids.add("orchestration");
+    return ids;
+  }, [activeGoal, goalPending, mode, orchestrationMode]);
+  const goalAvailable = goalCapability !== undefined;
+  const orchestrationLabel = orchestrationCapability?.label;
   const availability = useProviderAvailabilityStore((s) => s.getAvailability(effectiveProviderId));
   const providerUnusable = !!availability && (
     !availability.enabled || availability.cli.status === "not_found"
@@ -1411,6 +1426,39 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     editorRef.current?.focus();
   }, [setThreadSettings, threadId]);
 
+  const attachComposerCapability = useCallback(
+    (capabilityId: ComposerCapabilityId) => {
+      if (capabilityId === "plan") {
+        attachPlan();
+      } else if (capabilityId === "goal") {
+        attachGoal();
+      } else {
+        attachOrchestration();
+      }
+    },
+    [attachGoal, attachOrchestration, attachPlan],
+  );
+
+  useEffect(() => {
+    if (mode !== INTERACTION_MODES.PLAN || planCapability) return;
+    detachPlan();
+    useToastStore.getState().show(
+      "info",
+      "Plan removed",
+      "The selected provider manages Plan through its own agent selector.",
+    );
+  }, [detachPlan, mode, planCapability]);
+
+  useEffect(() => {
+    if (!goalPending || goalCapability) return;
+    setGoalPending(false);
+    useToastStore.getState().show(
+      "info",
+      "Goal removed",
+      "The selected provider does not support this capability.",
+    );
+  }, [goalCapability, goalPending]);
+
   useEffect(() => {
     if (orchestrationMode !== ORCHESTRATION_MODES.PROACTIVE || orchestrationLabel) return;
     setOrchestrationMode(ORCHESTRATION_MODES.STANDARD);
@@ -1454,12 +1502,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     anchorRef: composerContainerRef,
     cwd: workspacePath,
     providerId: effectiveProviderId,
-    orchestrationCommand:
-      orchestrationLabel === "Ultra"
-        ? "ultra"
-        : orchestrationLabel === "Ultracode"
-          ? "ultracode"
-          : undefined,
+    modelId,
     onMcodeCommand: (action) => {
       if (action === "attach-plan") {
         attachPlan();
@@ -3121,14 +3164,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           <ComposerAddMenu
             disabled={planPending || isStaleWorktree || !!providerReason}
             onAttachFiles={handleAttachPick}
-            onAttachPlan={attachPlan}
-            planAttached={mode === INTERACTION_MODES.PLAN}
-            onAttachGoal={attachGoal}
-            goalAttached={goalPending || isGoalOpen(activeGoal)}
-            goalAvailable={goalAvailable}
-            onAttachOrchestration={attachOrchestration}
-            orchestrationAttached={orchestrationMode === ORCHESTRATION_MODES.PROACTIVE}
-            orchestrationLabel={orchestrationLabel}
+            capabilities={composerCapabilities}
+            attachedCapabilityIds={attachedCapabilityIds}
+            onAttachCapability={attachComposerCapability}
             getComposerRect={() => composerContainerRef.current?.getBoundingClientRect() ?? null}
           />
           {/* Model picker */}
@@ -3397,21 +3435,21 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             />
           )}
 
-          {mode === INTERACTION_MODES.PLAN && provider !== "copilot" ? (
+          {mode === INTERACTION_MODES.PLAN && planCapability ? (
             <ComposerCapabilityChip
-              label="Plan"
+              label={planCapability.label}
               icon={ListChecks}
-              removeLabel="Remove Plan"
+              removeLabel={`Remove ${planCapability.label}`}
               onRemove={detachPlan}
               testId="composer-capability-plan"
             />
           ) : null}
 
-          {goalPending ? (
+          {goalPending && goalCapability ? (
             <ComposerCapabilityChip
-              label="Goal"
+              label={goalCapability.label}
               icon={Goal}
-              removeLabel="Remove Goal"
+              removeLabel={`Remove ${goalCapability.label}`}
               onRemove={detachPendingGoal}
               testId="composer-capability-goal-pending"
             />
@@ -3419,11 +3457,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             <ActiveGoalChip threadId={threadId} goal={activeGoal} />
           ) : null}
 
-          {orchestrationMode === ORCHESTRATION_MODES.PROACTIVE && orchestrationLabel ? (
+          {orchestrationMode === ORCHESTRATION_MODES.PROACTIVE && orchestrationCapability ? (
             <ComposerCapabilityChip
-              label={orchestrationLabel}
+              label={orchestrationCapability.label}
               icon={Network}
-              removeLabel={`Remove ${orchestrationLabel}`}
+              removeLabel={`Remove ${orchestrationCapability.label}`}
               onRemove={detachOrchestration}
               testId="composer-capability-orchestration"
             />

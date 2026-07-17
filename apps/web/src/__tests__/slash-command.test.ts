@@ -322,7 +322,7 @@ describe("mcode side-effect dispatch", () => {
         anchorRef: ref,
         onMcodeCommand,
         providerId: "codex",
-        orchestrationCommand: "ultra",
+        modelId: "gpt-5.6-sol",
       })
     );
     await act(async () => { result.current.onInputChange("/ult"); });
@@ -347,7 +347,7 @@ describe("mcode side-effect dispatch", () => {
         anchorRef: ref,
         onMcodeCommand,
         providerId: "claude",
-        orchestrationCommand: "ultracode",
+        modelId: "claude-opus-4-7",
       })
     );
     await act(async () => { result.current.onInputChange("/ultrac"); });
