@@ -293,6 +293,20 @@ describe("ProjectTree thread interactions", () => {
     );
   });
 
+  it("optically aligns the provider mark and separates it from the thread title", () => {
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+
+    const row = screen.getByRole("button", { name: /My Thread/i });
+    const provider = screen.getByLabelText("Provider, Claude");
+    const providerLeft = Number.parseFloat(provider.style.left);
+    const titleLeft = Number.parseFloat(row.style.paddingLeft);
+
+    expect(provider).toHaveClass("-mt-px");
+    expect(titleLeft - (providerLeft + 16)).toBe(4);
+  });
+
   it("offers Explorer and rename actions from the project menu", () => {
     setupStoreMocks();
 
@@ -681,11 +695,11 @@ describe("ProjectTree PR-ability gating by mode", () => {
     expect(screen.queryByTitle(/PR #42/)).toBeNull();
   });
 
-  it("renders the PR icon and number badge for a worktree thread with a pr_number", () => {
+  it("optically aligns the PR icon for a worktree thread with a pr_number", () => {
     renderWithThread(
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }),
     );
-    expect(screen.getByTitle(/PR #42/)).toBeInTheDocument();
+    expect(screen.getByTitle(/PR #42/)).toHaveClass("-mt-px");
     expect(screen.queryByText("#42")).toBeNull();
   });
 
