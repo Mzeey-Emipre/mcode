@@ -296,6 +296,24 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]._rawToolInput).toEqual({ command: "echo hi" });
     });
+
+    it("persists Codex commands beyond the old 200-character JSON summary", () => {
+      const command = `pwsh -Command \"${"Write-Output long-command;".repeat(20)}\"`;
+      seedAssistantMessage("m1", "done", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, {
+        toolCallId: "cmd-1",
+        toolName: "command_execution",
+        toolInput: { command },
+      });
+
+      store.persistNarrative(THREAD, "m1", "done", "completed");
+
+      const [record] = new ToolCallRecordRepo(db).listByMessage("m1");
+      expect(command.length).toBeGreaterThan(200);
+      expect(record.input_summary).toBe(command);
+    });
   });
 
   describe("Classification precedence + is_final_response safety net", () => {

@@ -141,7 +141,7 @@ async function dispatchAgentEvent(page: Page, event: unknown) {
 }
 
 async function expectTruncationNotice(page: Page, total: string) {
-  const summary = page.getByRole("button", { name: /Ran 1 command/ });
+  const summary = page.getByRole("button", { name: /Ran command/ });
   if (await summary.getAttribute("aria-expanded") !== "true") {
     await summary.click();
   }
