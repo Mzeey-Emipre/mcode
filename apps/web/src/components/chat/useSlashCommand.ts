@@ -8,7 +8,7 @@ import type { SkillInfo } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 
 /** A slash command entry shown in the popup. */
-export type ComposerCommandAction = "attach-plan" | "attach-goal";
+export type ComposerCommandAction = "attach-plan" | "attach-goal" | "attach-orchestration";
 
 /** A slash command entry shown in the popup. */
 export interface Command {
@@ -127,6 +127,8 @@ interface UseSlashCommandOptions {
   cwd?: string;
   /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /plan for "copilot"). */
   providerId?: string;
+  /** Provider/model-specific orchestration command to expose in this composer. */
+  orchestrationCommand?: "ultra" | "ultracode";
   /**
    * Whether to include mcode built-in commands (plan, compact, goal) in the
    * command list. Default `true`. Pass `false` for contexts like the annotation
@@ -167,6 +169,7 @@ export function useSlashCommand({
   onMcodeCommand,
   cwd,
   providerId,
+  orchestrationCommand,
   includeBuiltins = true,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
   const [isOpen, setIsOpen] = useState(false);
@@ -204,12 +207,20 @@ export function useSlashCommand({
           }),
         )
       : [];
+    if (includeBuiltins && orchestrationCommand) {
+      builtins.push({
+        name: orchestrationCommand,
+        description: `Attach ${orchestrationCommand === "ultra" ? "Ultra" : "Ultracode"} to the composer`,
+        namespace: "mcode",
+        action: "attach-orchestration",
+      });
+    }
     const commands: Command[] = [
       ...builtins,
       ...((skills ?? []).map(toCommand)),
     ];
     return sortCommands(commands);
-  }, [skills, providerId, includeBuiltins]);
+  }, [skills, providerId, includeBuiltins, orchestrationCommand]);
 
   const filtered = useMemo(() => {
     const f = filter.toLowerCase();

@@ -6,7 +6,7 @@
 import { randomUUID } from "crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
-import type { Thread, RecentThread, ThreadMode, ThreadStatus, ReasoningLevel, InteractionMode, PermissionMode, ContextWindowMode } from "@mcode/contracts";
+import type { Thread, RecentThread, ThreadMode, ThreadStatus, ReasoningLevel, InteractionMode, OrchestrationMode, PermissionMode, ContextWindowMode } from "@mcode/contracts";
 
 interface ThreadRow {
   id: string;
@@ -32,6 +32,7 @@ interface ThreadRow {
   context_window: number | null;
   reasoning_level: string | null;
   interaction_mode: string | null;
+  orchestration_mode: string | null;
   permission_mode: string | null;
   context_window_mode: string | null;
     thinking: number | null;
@@ -69,6 +70,7 @@ function rowToThread(row: ThreadRow): Thread {
     context_window: row.context_window ?? null,
     reasoning_level: (row.reasoning_level ?? null) as ReasoningLevel | null,
     interaction_mode: (row.interaction_mode ?? null) as InteractionMode | null,
+    orchestration_mode: (row.orchestration_mode ?? null) as OrchestrationMode | null,
     permission_mode: (row.permission_mode ?? null) as PermissionMode | null,
     context_window_mode:
       (row.context_window_mode ?? null) as ContextWindowMode | null,
@@ -85,7 +87,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
+  "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, orchestration_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
 
 /** Maximum active sibling paths considered during one worktree ownership decision. */
 export const MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS = 512;
@@ -165,6 +167,7 @@ export class ThreadRepo {
       context_window: null,
       reasoning_level: null,
       interaction_mode: null,
+      orchestration_mode: null,
       permission_mode: null,
       context_window_mode: null,
       thinking: null,
@@ -490,6 +493,7 @@ export class ThreadRepo {
     settings: {
       reasoning_level?: string;
       interaction_mode?: string;
+      orchestration_mode?: string;
       permission_mode?: string;
       context_window_mode?: ContextWindowMode | null;
       thinking?: boolean | null;
@@ -507,6 +511,10 @@ export class ThreadRepo {
     if (settings.interaction_mode !== undefined) {
       fields.push("interaction_mode = ?");
       values.push(settings.interaction_mode);
+    }
+    if (settings.orchestration_mode !== undefined) {
+      fields.push("orchestration_mode = ?");
+      values.push(settings.orchestration_mode);
     }
     if (settings.permission_mode !== undefined) {
       fields.push("permission_mode = ?");

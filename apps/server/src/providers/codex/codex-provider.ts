@@ -42,7 +42,7 @@ import type {
   QuotaCategory,
   SkillInfo,
 } from "@mcode/contracts";
-import { AgentEventType, CODEX_STATIC_MODELS, isGoalOpen, isVirtualBrowserContextAttachment } from "@mcode/contracts";
+import { AgentEventType, CODEX_STATIC_MODELS, isGoalOpen, isVirtualBrowserContextAttachment, supportsCodexUltraOrchestration } from "@mcode/contracts";
 import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
 import { CodexAppServer, warmCodexAppServer } from "./codex-app-server.js";
 import type { CodexApprovalRequest } from "./codex-app-server.js";
@@ -830,7 +830,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     const turnOptions = {
       model: model || undefined,
-      effort: toCodexEffort(reasoningLevel),
+      effort: toCodexEffort(
+        reasoningLevel,
+        req.orchestrationMode === "proactive" && supportsCodexUltraOrchestration(model)
+          ? "proactive"
+          : "standard",
+      ),
       ...(fastServiceTier && { serviceTier: fastServiceTier }),
     };
 

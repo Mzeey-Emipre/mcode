@@ -5,7 +5,7 @@
  * in https://github.com/openai/codex
  */
 
-import type { ReasoningLevel } from "@mcode/contracts";
+import type { OrchestrationMode, ReasoningLevel } from "@mcode/contracts";
 
 // JSON-RPC base shapes
 
@@ -36,7 +36,11 @@ export type AskForApproval = "untrusted" | "on-failure" | "on-request" | "never"
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 /** Maps mcode reasoning levels to the Codex app-server effort field. */
-export function toCodexEffort(level?: ReasoningLevel): ReasoningEffort | undefined {
+export function toCodexEffort(
+  level?: ReasoningLevel,
+  orchestrationMode: OrchestrationMode = "standard",
+): ReasoningEffort | undefined {
+  if (orchestrationMode === "proactive") return "ultra";
   if (!level) return undefined;
   if (level === "ultrathink") return "high";
   return level;

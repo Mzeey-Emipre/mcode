@@ -5,6 +5,7 @@ import type {
   MessageMention,
   PreviewAnnotationBundle,
   ReasoningLevel,
+  OrchestrationMode,
 } from "@mcode/contracts";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 
@@ -23,6 +24,8 @@ export interface QueuedMessage {
   permissionMode: PermissionMode;
   /** Reasoning effort level to apply when the message is sent. */
   reasoningLevel?: ReasoningLevel;
+  /** Provider-native proactive delegation mode for this queued turn. */
+  orchestrationMode?: OrchestrationMode;
   /** Provider to use; undefined means inherit the thread's stored provider. */
   provider?: string;
   /** Copilot sub-agent to use; undefined means inherit the thread's stored agent. */

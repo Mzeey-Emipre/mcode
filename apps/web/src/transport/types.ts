@@ -25,6 +25,7 @@ import type {
   GitCommit,
   PlanAnswer,
   InteractionMode,
+  OrchestrationMode,
   PlanAction,
   ProviderModelInfo,
   ProviderUsageInfo,
@@ -268,6 +269,7 @@ export interface McodeTransport {
     mentions?: MessageMention[],
     previewAnnotations?: PreviewAnnotationBundle,
     goalObjective?: string,
+    orchestrationMode?: OrchestrationMode,
   ): Promise<void>;
   createAndSendMessage(
     workspaceId: string,
@@ -293,6 +295,7 @@ export interface McodeTransport {
     mentions?: MessageMention[],
     previewAnnotations?: PreviewAnnotationBundle,
     goalObjective?: string,
+    orchestrationMode?: OrchestrationMode,
   ): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<void>;
   /** Respond to a tool permission request from the agent. */
@@ -341,6 +344,7 @@ export interface McodeTransport {
     settings: {
       reasoningLevel?: ReasoningLevel;
       interactionMode?: InteractionMode;
+      orchestrationMode?: OrchestrationMode;
       permissionMode?: PermissionMode;
       copilotAgent?: string | null;
       contextWindow?: ContextWindowMode | null;

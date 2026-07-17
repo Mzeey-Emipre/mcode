@@ -19,6 +19,7 @@ import {
   Target,
   X,
   Zap,
+  Workflow,
   Folder,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -109,6 +110,8 @@ import {
   isVirtualBrowserContextAttachment,
   attachmentAcceptAttribute,
   isGoalOpen,
+  ORCHESTRATION_MODES,
+  supportsCodexUltraOrchestration,
 } from "@mcode/contracts";
 import type {
   AttachedBrowserCapture,
@@ -118,6 +121,7 @@ import type {
   ReasoningLevel,
   ProviderId,
   GoalState,
+  OrchestrationMode,
 } from "@mcode/contracts";
 import { getModelContextWindow } from "@mcode/shared/model-context";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
@@ -848,6 +852,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [reasoning, setReasoning] = useState<ReasoningLevel>(getDefaultReasoningLevel());
   const [mode, setMode] = useState<InteractionMode>(INTERACTION_MODES.BUILD);
   const [goalPending, setGoalPending] = useState(false);
+  const [orchestrationMode, setOrchestrationMode] = useState<OrchestrationMode>(
+    ORCHESTRATION_MODES.STANDARD,
+  );
   const [copilotAgent, setCopilotAgent] = useState<string | null>(null);
   // Per-thread overrides; null/undefined means inherit from settings default.
   const [contextWindow, setContextWindow] = useState<ContextWindowMode | null>(null);
@@ -909,6 +916,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     mentions: MessageMention[];
     previewAnnotations?: PreviewAnnotationBundle;
     goalObjective?: string;
+    orchestrationMode?: OrchestrationMode;
   } | null>(null);
   const [pendingCheckoutConfirmation, setPendingCheckoutConfirmation] =
     useState<PendingCheckoutConfirmation | null>(null);
@@ -1083,6 +1091,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             const s = useThreadStore.getState().getThreadSettings(threadId);
             return {
               interactionMode: s.interactionMode,
+              orchestrationMode: s.orchestrationMode,
               permissionMode: s.permissionMode,
               copilotAgent: s.copilotAgent ?? null,
               contextWindow: s.contextWindow ?? null,
@@ -1092,6 +1101,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           })()
         : {
             interactionMode: INTERACTION_MODES.BUILD,
+            orchestrationMode: ORCHESTRATION_MODES.STANDARD,
             permissionMode: PERMISSION_MODES.FULL,
             copilotAgent: null,
             contextWindow: null,
@@ -1117,6 +1127,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setProvider(session.provider);
     setReasoning(session.reasoning);
     setMode(session.interactionMode);
+    setOrchestrationMode(
+      threadId
+        ? useThreadStore.getState().getThreadSettings(threadId).orchestrationMode ?? ORCHESTRATION_MODES.STANDARD
+        : ORCHESTRATION_MODES.STANDARD,
+    );
     setAccess(session.permissionMode);
     setCopilotAgent(session.copilotAgent);
     setContextWindow(session.contextWindow);
@@ -1141,6 +1156,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   }, [threadId, isNewThread, saveDraft, getDraft]);
 
   const persistedInteractionMode = useThreadRecord(threadId, (r) => r.settings.interactionMode);
+  const persistedOrchestrationMode = useThreadRecord(
+    threadId,
+    (record) => record.settings.orchestrationMode,
+  );
   const threadRecordInteractionMode = useWorkspaceThread(threadId, (t) => {
     const mode = t?.interaction_mode;
     return mode === "plan" || mode === "build" ? mode : undefined;
@@ -1154,6 +1173,11 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       setMode(resolved);
     }
   }, [threadId, persistedInteractionMode, threadRecordInteractionMode]);
+
+  useEffect(() => {
+    if (!threadId || persistedOrchestrationMode === undefined) return;
+    setOrchestrationMode(persistedOrchestrationMode);
+  }, [threadId, persistedOrchestrationMode]);
 
   // Selectors needed by the branch-mode effect below — must be declared before the effect
   // to avoid temporal dead zone errors in the dependency array.
@@ -1273,10 +1297,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const usageInfo = useThreadRecord(threadId, (r) => r.usageByProvider[activeProviderId]);
   const hasLowQuota = usageInfo?.quotaCategories.some((c) => !c.isUnlimited && c.remainingPercent < 0.2) ?? false;
 
-  // For new threads (no active thread yet), fall back to the composer-selected
-  // provider so the availability banner tracks what the user is about to submit.
-  const effectiveProviderId = (activeThread?.provider ?? provider) as ProviderId;
+  // Composer selection is authoritative. On existing threads the persisted row
+  // updates on send, so reading it here would leave capability menus one switch behind.
+  const effectiveProviderId = provider as ProviderId;
   const goalAvailable = effectiveProviderId === "claude" || effectiveProviderId === "codex";
+  const orchestrationLabel =
+    effectiveProviderId === "codex" && supportsCodexUltraOrchestration(modelId)
+      ? "Ultra" as const
+      : undefined;
   const availability = useProviderAvailabilityStore((s) => s.getAvailability(effectiveProviderId));
   const providerUnusable = !!availability && (
     !availability.enabled || availability.cli.status === "not_found"
@@ -1363,6 +1391,42 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     editorRef.current?.focus();
   }, []);
 
+  const attachOrchestration = useCallback(() => {
+    if (!orchestrationLabel) return;
+    setOrchestrationMode(ORCHESTRATION_MODES.PROACTIVE);
+    if (threadId) {
+      void setThreadSettings(threadId, {
+        orchestrationMode: ORCHESTRATION_MODES.PROACTIVE,
+      });
+    }
+    editorRef.current?.focus();
+  }, [orchestrationLabel, setThreadSettings, threadId]);
+
+  const detachOrchestration = useCallback(() => {
+    setOrchestrationMode(ORCHESTRATION_MODES.STANDARD);
+    if (threadId) {
+      void setThreadSettings(threadId, {
+        orchestrationMode: ORCHESTRATION_MODES.STANDARD,
+      });
+    }
+    editorRef.current?.focus();
+  }, [setThreadSettings, threadId]);
+
+  useEffect(() => {
+    if (orchestrationMode !== ORCHESTRATION_MODES.PROACTIVE || orchestrationLabel) return;
+    setOrchestrationMode(ORCHESTRATION_MODES.STANDARD);
+    if (threadId) {
+      void setThreadSettings(threadId, {
+        orchestrationMode: ORCHESTRATION_MODES.STANDARD,
+      });
+    }
+    useToastStore.getState().show(
+      "info",
+      "Orchestration removed",
+      "The selected provider or model does not support this capability.",
+    );
+  }, [orchestrationLabel, orchestrationMode, setThreadSettings, threadId]);
+
   const branches = useWorkspaceStore((s) => s.branches);
   const branchesLoading = useWorkspaceStore((s) => s.branchesLoading);
   const newThreadMode = useWorkspaceStore((s) => s.newThreadMode);
@@ -1391,11 +1455,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     anchorRef: composerContainerRef,
     cwd: workspacePath,
     providerId: effectiveProviderId,
+    orchestrationCommand: orchestrationLabel === "Ultra" ? "ultra" : undefined,
     onMcodeCommand: (action) => {
       if (action === "attach-plan") {
         attachPlan();
       } else if (action === "attach-goal") {
         attachGoal();
+      } else if (action === "attach-orchestration") {
+        attachOrchestration();
       }
     },
   });
@@ -1644,6 +1711,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         model: modelId,
         permissionMode: access,
         reasoningLevel: reasoning,
+        orchestrationMode,
         provider,
         copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
         contextWindow: contextWindow ?? undefined,
@@ -1661,6 +1729,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       modelId,
       access,
       reasoning,
+      orchestrationMode,
       provider,
       copilotAgent,
       contextWindow,
@@ -1743,6 +1812,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       if (popped.model) setModelId(popped.model);
       if (popped.provider) setProvider(popped.provider);
       if (popped.reasoningLevel) setReasoning(popped.reasoningLevel);
+      if (popped.orchestrationMode) setOrchestrationMode(popped.orchestrationMode);
       if (popped.permissionMode) setAccess(popped.permissionMode);
       setCopilotAgent(popped.copilotAgent ?? null);
       setContextWindow(popped.contextWindow ?? null);
@@ -2186,6 +2256,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           mentions: selectedMentions,
           previewAnnotations: effectivePreviewAnnotations,
           goalObjective: submittedGoalObjective,
+          orchestrationMode,
         });
         return;
       }
@@ -2209,6 +2280,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         model: modelId,
         permissionMode: access,
         reasoningLevel: reasoning,
+        orchestrationMode,
         provider,
         copilotAgent: provider === "copilot" ? (copilotAgent ?? undefined) : undefined,
         contextWindow: contextWindow ?? undefined,
@@ -2384,6 +2456,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             selectedMentions,
             effectivePreviewAnnotations,
             submittedGoalObjective,
+            orchestrationMode,
           );
         onThreadCreated?.(createdThread);
       } else if (branchFromMessageId && threadId) {
@@ -2427,6 +2500,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         mentions: selectedMentions,
         previewAnnotations: effectivePreviewAnnotations,
         goalObjective: submittedGoalObjective,
+        orchestrationMode,
       });
       onBranchModeExit?.();
       } else if (threadId) {
@@ -2449,6 +2523,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           selectedMentions,
           effectivePreviewAnnotations,
           submittedGoalObjective,
+          orchestrationMode,
         );
       }
 
@@ -2493,7 +2568,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations, goalPending]);
+  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, orchestrationMode, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations, goalPending]);
 
   useEffect(() => {
     if (!annotationScopeId) return;
@@ -2550,6 +2625,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       queued.mentions,
       queued.previewAnnotations,
       queued.goalObjective,
+      queued.orchestrationMode,
     );
   // modelId/access/reasoning/provider intentionally read from render-time values via closure;
   // handoffStatus is the sole reactive trigger so we don't re-fire on unrelated changes.
@@ -3047,6 +3123,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             onAttachGoal={attachGoal}
             goalAttached={goalPending || isGoalOpen(activeGoal)}
             goalAvailable={goalAvailable}
+            onAttachOrchestration={attachOrchestration}
+            orchestrationAttached={orchestrationMode === ORCHESTRATION_MODES.PROACTIVE}
+            orchestrationLabel={orchestrationLabel}
             getComposerRect={() => composerContainerRef.current?.getBoundingClientRect() ?? null}
           />
           {/* Model picker */}
@@ -3335,6 +3414,16 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             />
           ) : threadId && !isNewThread ? (
             <ActiveGoalChip threadId={threadId} goal={activeGoal} />
+          ) : null}
+
+          {orchestrationMode === ORCHESTRATION_MODES.PROACTIVE && orchestrationLabel ? (
+            <ComposerCapabilityChip
+              label={orchestrationLabel}
+              icon={Workflow}
+              removeLabel={`Remove ${orchestrationLabel}`}
+              onRemove={detachOrchestration}
+              testId="composer-capability-orchestration"
+            />
           ) : null}
 
           {/* Spacer */}

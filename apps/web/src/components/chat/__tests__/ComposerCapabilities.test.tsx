@@ -18,9 +18,11 @@ describe("composer capabilities", () => {
         onAttachFiles={vi.fn()}
         onAttachPlan={onAttachPlan}
         onAttachGoal={vi.fn()}
+        onAttachOrchestration={vi.fn()}
         planAttached={false}
         goalAttached={false}
         goalAvailable={true}
+        orchestrationAttached={false}
         getComposerRect={() => COMPOSER_RECT}
       />,
     );
@@ -42,9 +44,11 @@ describe("composer capabilities", () => {
         onAttachFiles={vi.fn()}
         onAttachPlan={vi.fn()}
         onAttachGoal={onAttachGoal}
+        onAttachOrchestration={vi.fn()}
         planAttached={false}
         goalAttached={false}
         goalAvailable={true}
+        orchestrationAttached={false}
         getComposerRect={() => COMPOSER_RECT}
       />,
     );
@@ -53,6 +57,33 @@ describe("composer capabilities", () => {
     await user.click(screen.getByRole("button", { name: /Goal/ }));
 
     await waitFor(() => expect(onAttachGoal).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
+  });
+
+  it("attaches Ultra from the composer add menu", async () => {
+    const user = userEvent.setup();
+    const onAttachOrchestration = vi.fn();
+
+    render(
+      <ComposerAddMenu
+        disabled={false}
+        onAttachFiles={vi.fn()}
+        onAttachPlan={vi.fn()}
+        onAttachGoal={vi.fn()}
+        onAttachOrchestration={onAttachOrchestration}
+        planAttached={false}
+        goalAttached={false}
+        goalAvailable={true}
+        orchestrationAttached={false}
+        orchestrationLabel="Ultra"
+        getComposerRect={() => COMPOSER_RECT}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add to composer" }));
+    await user.click(screen.getByRole("button", { name: /Ultra/ }));
+
+    await waitFor(() => expect(onAttachOrchestration).toHaveBeenCalledOnce());
     expect(screen.queryByRole("dialog", { name: "Add to composer" })).not.toBeInTheDocument();
   });
 

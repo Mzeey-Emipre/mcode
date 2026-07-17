@@ -550,6 +550,7 @@ export function createWsTransport(
         threadId,
         reasoningLevel: settings.reasoningLevel,
         interactionMode: settings.interactionMode,
+        orchestrationMode: settings.orchestrationMode,
         permissionMode: settings.permissionMode,
         copilotAgent: settings.copilotAgent,
         contextWindow: settings.contextWindow,
@@ -595,6 +596,7 @@ export function createWsTransport(
       mentions?,
       previewAnnotations?,
       goalObjective?,
+      orchestrationMode?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -620,6 +622,7 @@ export function createWsTransport(
         ...(mentions !== undefined && { mentions }),
         ...(previewAnnotations !== undefined && { previewAnnotations }),
         ...(goalObjective !== undefined && { goalObjective }),
+        ...(orchestrationMode !== undefined && { orchestrationMode }),
         ...guardrails,
       });
     },
@@ -647,6 +650,7 @@ export function createWsTransport(
       mentions?,
       previewAnnotations?,
       goalObjective?,
+      orchestrationMode?,
     ) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
@@ -676,6 +680,7 @@ export function createWsTransport(
         ...(mentions !== undefined && { mentions }),
         ...(previewAnnotations !== undefined && { previewAnnotations }),
         ...(goalObjective !== undefined && { goalObjective }),
+        ...(orchestrationMode !== undefined && { orchestrationMode }),
         ...guardrails,
       });
     },

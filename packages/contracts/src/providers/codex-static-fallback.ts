@@ -69,3 +69,11 @@ export const CODEX_STATIC_MODELS: readonly ProviderModelInfo[] = [
     defaultReasoningEffort: "medium",
   },
 ];
+
+/** Returns whether a Codex model advertises the provider-native Ultra delegation tier. */
+export function supportsCodexUltraOrchestration(modelId: string): boolean {
+  const model = CODEX_STATIC_MODELS.find(
+    (candidate) => modelId === candidate.id || modelId.startsWith(`${candidate.id}-`),
+  );
+  return model?.supportedReasoningEfforts?.includes("ultra") === true;
+}

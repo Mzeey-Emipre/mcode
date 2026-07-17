@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { WorkspaceSchema, WorkspaceEnrichmentSchema } from "../models/workspace.js";
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
-import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema } from "../models/enums.js";
+import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
 import { PaginatedMessagesSchema } from "../models/message.js";
 import { MessageMentionsSchema } from "../models/mention.js";
 import { ConversationPageSchema } from "../models/conversation-page.js";
@@ -103,6 +103,8 @@ export const SendMessageSchema = lazySchema(() =>
     provider: ProviderIdSchema.optional(),
     /** When "plan", the server wraps the message with the plan-mode question prompt. */
     interactionMode: InteractionModeSchema.optional(),
+    /** Provider-agnostic proactive delegation mode for this turn. */
+    orchestrationMode: OrchestrationModeSchema.optional(),
     /** USD budget cap for this session. 0 or absent disables. */
     maxBudgetUsd: z.number().nonnegative().finite().optional(),
     /** Maximum agent turns. 0 or absent disables. */
@@ -155,6 +157,7 @@ export const CreateAndSendSchema = lazySchema(() =>
     provider: ProviderIdSchema.optional(),
     /** When "plan", the server wraps the message with the plan-mode question prompt. */
     interactionMode: InteractionModeSchema.optional(),
+    orchestrationMode: OrchestrationModeSchema.optional(),
     /** USD budget cap for this session. 0 or absent disables. */
     maxBudgetUsd: z.number().nonnegative().finite().optional(),
     /** Maximum agent turns. 0 or absent disables. */
@@ -287,6 +290,7 @@ export const WS_METHODS = lazySchema(() => ({
       threadId: z.string(),
       reasoningLevel: ReasoningLevelSchema.optional(),
       interactionMode: InteractionModeSchema.optional(),
+      orchestrationMode: OrchestrationModeSchema.optional(),
       permissionMode: PermissionModeSchema.optional(),
       /** Copilot-specific: name of the selected sub-agent. Pass null to clear back to provider default. */
       copilotAgent: CopilotAgentNameSchema.nullable().optional(),
@@ -308,6 +312,7 @@ export const WS_METHODS = lazySchema(() => ({
       (data) =>
         data.reasoningLevel !== undefined ||
         data.interactionMode !== undefined ||
+        data.orchestrationMode !== undefined ||
         data.permissionMode !== undefined ||
         data.copilotAgent !== undefined ||
         data.contextWindow !== undefined ||
