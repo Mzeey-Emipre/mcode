@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { isPreviewAnnotationPayload } from "@mcode/contracts";
 import {
   normalizePreviewPageIdentity,
   usePreviewAnnotationStore,
@@ -38,7 +39,7 @@ function draft(overrides: Partial<PreviewDraftAnnotation> = {}): PreviewDraftAnn
 
 describe("previewAnnotationStore", () => {
   beforeEach(() => {
-    usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
+    usePreviewAnnotationStore.setState({ byThread: {}, diffByThread: {}, drafts: {} });
   });
 
   it("normalizes fragments, query order, and tracking parameters", () => {
@@ -68,11 +69,42 @@ describe("previewAnnotationStore", () => {
 
     const bundle = usePreviewAnnotationStore.getState().buildBundle("thread-1");
 
-    expect(bundle?.annotations[0]?.note).toBeUndefined();
-    expect(bundle?.annotations[0]?.changeSummary).toContain("background");
-    expect(bundle?.annotations[0]?.proposedChanges).toEqual({
+    const annotation = bundle?.annotations[0];
+    expect(annotation && isPreviewAnnotationPayload(annotation)).toBe(true);
+    if (!annotation || !isPreviewAnnotationPayload(annotation)) return;
+    expect(annotation.note).toBeUndefined();
+    expect(annotation.changeSummary).toContain("background");
+    expect(annotation.proposedChanges).toEqual({
       background: "#fff",
       fontWeight: "700",
     });
+  });
+
+  it("combines preview and diff annotations in creation order", () => {
+    const preview = usePreviewAnnotationStore
+      .getState()
+      .saveAnnotation("thread-1", draft({ note: "Align the button" }));
+    const diff = usePreviewAnnotationStore.getState().saveDiffAnnotation("thread-1", {
+      filePath: "apps/web/src/App.tsx",
+      side: "right",
+      line: 42,
+      lineContent: "return <App />;",
+      note: "Handle the loading state",
+    });
+
+    const bundle = usePreviewAnnotationStore.getState().buildBundle("thread-1");
+
+    expect(preview.displayNumber).toBe(1);
+    expect(diff.displayNumber).toBe(2);
+    expect(bundle?.annotations).toMatchObject([
+      { id: preview.id, displayNumber: 1 },
+      {
+        id: diff.id,
+        kind: "diff",
+        displayNumber: 2,
+        filePath: "apps/web/src/App.tsx",
+        line: 42,
+      },
+    ]);
   });
 });

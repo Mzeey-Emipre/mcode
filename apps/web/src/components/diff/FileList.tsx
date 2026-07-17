@@ -74,6 +74,7 @@ export function FileList({
   const [jumpTarget, setJumpTarget] = useState<{ path: string; token: number } | null>(null);
   const [highlightTarget, setHighlightTarget] = useState<{ path: string; token: number } | null>(null);
   const jumpTokenRef = useRef(0);
+  const handledExternalJumpNonceRef = useRef<number | null>(null);
   const highlightClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sortedFiles = useMemo(
     () => [...files].sort((a, b) => a.localeCompare(b)),
@@ -100,6 +101,7 @@ export function FileList({
   const setSnapshots = useDiffStore((s) => s.setSnapshots);
   const setBulkDiffExpand = useDiffStore((s) => s.setBulkDiffExpand);
   const bulkDiffExpand = useDiffStore((s) => s.bulkDiffExpand);
+  const reviewFileJumpRequest = useDiffStore((s) => s.reviewFileJumpRequest);
   // The expand/collapse toggle reflects the last bulk action, falling back to
   // the view's default expand state when none has run yet.
   const allExpanded = bulkDiffExpand?.expand ?? defaultFilesExpanded;
@@ -190,6 +192,14 @@ export function FileList({
   const clearJumpTarget = useCallback((token: number) => {
     setJumpTarget((current) => (current?.token === token ? null : current));
   }, []);
+
+  useEffect(() => {
+    if (!reviewFileJumpRequest || reviewFileJumpRequest.scopeId !== threadId) return;
+    if (handledExternalJumpNonceRef.current === reviewFileJumpRequest.nonce) return;
+    if (!sortedFiles.includes(reviewFileJumpRequest.path)) return;
+    handledExternalJumpNonceRef.current = reviewFileJumpRequest.nonce;
+    jumpToFile(reviewFileJumpRequest.path);
+  }, [jumpToFile, reviewFileJumpRequest, sortedFiles, threadId]);
 
   if (files.length === 0) {
     return (

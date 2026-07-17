@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
@@ -7,6 +7,16 @@ import { LastTurnView } from "./LastTurnView";
 import { CumulativeView } from "./CumulativeView";
 import { GitDiffView, type GitView } from "./GitDiffView";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useElementWidth } from "@/hooks/useElementWidth";
+import { WorktreeFilesPane } from "./WorktreeFilesPane";
+
+const FILES_PANEL_MIN_WIDTH = 280;
+const FILES_PANEL_DEFAULT_WIDTH = 320;
+const FILES_PANEL_WIDE_WIDTH = 480;
+const DIFF_VIEWPORT_MIN_WIDTH = 520;
+const DOCKED_FILES_MIN_WIDTH = FILES_PANEL_MIN_WIDTH + DIFF_VIEWPORT_MIN_WIDTH;
+const FLOATING_FILES_PANEL_EDGE_GAP = 48;
+const FLOATING_FILES_PANEL_FLOOR = 220;
 
 /** The threadless git working-tree view ids. */
 const GIT_VIEWS: readonly GitView[] = ["unstaged", "staged", "commit", "branch"];
@@ -23,6 +33,7 @@ function isGitView(mode: string): mode is GitView {
  * (Last turn, Cumulative). Each view renders exactly one diff.
  */
 export function DiffPanel() {
+  const panelRootRef = useRef<HTMLDivElement>(null);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const viewMode = useDiffStore((s) => s.viewMode);
@@ -48,6 +59,83 @@ export function DiffPanel() {
   );
   const setSnapshots = useDiffStore((s) => s.setSnapshots);
   const setSnapshotsLoading = useDiffStore((s) => s.setSnapshotsLoading);
+  const requestReviewFileJump = useDiffStore((s) => s.requestReviewFileJump);
+  const diffScopeId = activeThreadId ?? activeWorkspaceId;
+  const diffRevision = useDiffStore((s) =>
+    diffScopeId ? (s.diffRevisionByScope[diffScopeId] ?? 0) : 0,
+  );
+  const panelWidth = useElementWidth(panelRootRef, diffScopeId ?? undefined);
+  const filesDocked = panelWidth >= DOCKED_FILES_MIN_WIDTH;
+  const [filesVisibilityByScope, setFilesVisibilityByScope] = useState<
+    Record<string, boolean>
+  >({});
+  const filesVisible = diffScopeId
+    ? (filesVisibilityByScope[diffScopeId] ?? filesDocked)
+    : false;
+  const [filesPanelWidth, setFilesPanelWidth] = useState(FILES_PANEL_DEFAULT_WIDTH);
+  const [worktreeFiles, setWorktreeFiles] = useState<string[]>([]);
+  const [worktreeFilesLoading, setWorktreeFilesLoading] = useState(false);
+  const [worktreeFilesError, setWorktreeFilesError] = useState<string | null>(null);
+  const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null);
+
+  const setFilesVisible = useCallback(
+    (visible: boolean) => {
+      if (!diffScopeId) return;
+      setFilesVisibilityByScope((current) => ({ ...current, [diffScopeId]: visible }));
+    },
+    [diffScopeId],
+  );
+
+  const getFilesPanelMaxWidth = useCallback(
+    (panel: HTMLDivElement | null): number =>
+      Math.max(
+        FILES_PANEL_MIN_WIDTH,
+        (panel?.parentElement?.clientWidth ?? window.innerWidth) - DIFF_VIEWPORT_MIN_WIDTH,
+      ),
+    [],
+  );
+  const floatingFilesPanelMaxWidth =
+    panelWidth > 0
+      ? Math.max(FLOATING_FILES_PANEL_FLOOR, panelWidth - FLOATING_FILES_PANEL_EDGE_GAP)
+      : FILES_PANEL_DEFAULT_WIDTH;
+  const floatingFilesPanelMinWidth = Math.min(
+    FILES_PANEL_MIN_WIDTH,
+    floatingFilesPanelMaxWidth,
+  );
+  const getFloatingFilesPanelMaxWidth = useCallback(
+    (panel: HTMLDivElement | null): number =>
+      Math.max(
+        floatingFilesPanelMinWidth,
+        (panel?.parentElement?.clientWidth ?? window.innerWidth) -
+          FLOATING_FILES_PANEL_EDGE_GAP,
+      ),
+    [floatingFilesPanelMinWidth],
+  );
+
+  useEffect(() => {
+    setActiveWorktreePath(null);
+    if (!filesVisible || !activeWorkspaceId) return;
+    let cancelled = false;
+    setWorktreeFilesLoading(true);
+    setWorktreeFilesError(null);
+    void getTransport()
+      .listWorkspaceFiles(activeWorkspaceId, activeThreadId ?? undefined)
+      .then((files) => {
+        if (!cancelled) setWorktreeFiles([...files].sort((a, b) => a.localeCompare(b)));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWorktreeFiles([]);
+          setWorktreeFilesError("Could not load worktree files.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setWorktreeFilesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeThreadId, activeWorkspaceId, diffRevision, filesVisible]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -96,10 +184,14 @@ export function DiffPanel() {
   }, [activeThreadId, snapshotsPending, panelVisible, panelState, viewMode, setSnapshots]);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden min-h-0">
-      <DiffToolbar />
+    <div ref={panelRootRef} className="flex flex-1 flex-col overflow-hidden min-h-0">
+      <DiffToolbar
+        filesVisible={filesVisible}
+        onToggleFiles={() => setFilesVisible(!filesVisible)}
+      />
 
-      <ScrollArea className="flex-1 min-h-0">
+      <div className="relative flex min-h-0 flex-1">
+      <ScrollArea className="min-h-0 min-w-0 flex-1">
         {activeThreadId ? (
           // The git working-tree views are additive in a thread: they read the
           // thread's checkout (passed via threadId), alongside the turn views.
@@ -117,6 +209,48 @@ export function DiffPanel() {
           <GitDiffView view={viewMode} workspaceId={activeWorkspaceId} />
         ) : null}
       </ScrollArea>
+      {filesDocked && filesVisible ? (
+        <WorktreeFilesPane
+          files={worktreeFiles}
+          activePath={activeWorktreePath}
+          loading={worktreeFilesLoading}
+          error={worktreeFilesError}
+          width={filesPanelWidth}
+          minWidth={FILES_PANEL_MIN_WIDTH}
+          maxWidth={`calc(100% - ${DIFF_VIEWPORT_MIN_WIDTH}px)`}
+          defaultWidth={FILES_PANEL_DEFAULT_WIDTH}
+          wideWidth={FILES_PANEL_WIDE_WIDTH}
+          getMaxWidth={getFilesPanelMaxWidth}
+          onWidthChange={setFilesPanelWidth}
+          onClose={() => setFilesVisible(false)}
+          onActivate={(path) => {
+            setActiveWorktreePath(path);
+            if (diffScopeId) requestReviewFileJump(diffScopeId, path);
+          }}
+        />
+      ) : null}
+      {!filesDocked && filesVisible ? (
+        <WorktreeFilesPane
+          files={worktreeFiles}
+          activePath={activeWorktreePath}
+          loading={worktreeFilesLoading}
+          error={worktreeFilesError}
+          width={Math.min(filesPanelWidth, floatingFilesPanelMaxWidth)}
+          minWidth={floatingFilesPanelMinWidth}
+          maxWidth={`calc(100% - ${FLOATING_FILES_PANEL_EDGE_GAP}px)`}
+          defaultWidth={FILES_PANEL_DEFAULT_WIDTH}
+          wideWidth={FILES_PANEL_WIDE_WIDTH}
+          getMaxWidth={getFloatingFilesPanelMaxWidth}
+          onWidthChange={setFilesPanelWidth}
+          className="absolute inset-y-0 right-0 z-30 h-full bg-popover ring-1 ring-inset ring-border/60 animate-in slide-in-from-right-2 duration-150 motion-reduce:animate-none"
+          onClose={() => setFilesVisible(false)}
+          onActivate={(path) => {
+            setActiveWorktreePath(path);
+            if (diffScopeId) requestReviewFileJump(diffScopeId, path);
+          }}
+        />
+      ) : null}
+      </div>
     </div>
   );
 }

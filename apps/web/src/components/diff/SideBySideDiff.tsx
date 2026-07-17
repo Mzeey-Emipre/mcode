@@ -1,15 +1,27 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
 import type { ParsedDiffLine } from "@/lib/diff-parser";
 import { getFirstHunkHeaderIndex } from "@/lib/diff-parser";
 import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import {
+  usePreviewAnnotationStore,
+  type SavedDiffAnnotation,
+} from "@/stores/previewAnnotationStore";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { HunkSeparator } from "./HunkSeparator";
+import { DiffAnnotationEditor } from "./DiffAnnotationEditor";
+
+const EMPTY_DIFF_ANNOTATIONS: readonly SavedDiffAnnotation[] = [];
 
 /** Props for SideBySideDiff. */
 interface SideBySideDiffProps {
   lines: ParsedDiffLine[];
+  /** Workspace-relative file path used by Dev diff annotations. */
+  filePath?: string;
   /** File language for syntax highlighting (e.g. "typescript"). "text" disables highlighting. */
   language?: string;
   /** When true, the first hunk's hidden-line band is omitted (shown on the file header instead). */
@@ -100,29 +112,31 @@ const RIGHT_BG: Record<string, string> = {
   empty: "bg-muted/[0.04]",
 };
 
-const LEFT_GUTTER: Record<string, string> = {
-  remove: "bg-[var(--diff-remove-gutter)]",
-  context: "bg-transparent",
-  header: "bg-transparent",
-  empty: "bg-transparent",
-};
-
-const RIGHT_GUTTER: Record<string, string> = {
-  add: "bg-[var(--diff-add-gutter)]",
-  context: "bg-transparent",
-  header: "bg-transparent",
-  empty: "bg-transparent",
-};
-
 /** Side-by-side diff renderer with syntax highlighting and hunk separator bars. */
 export const SideBySideDiff = memo(function SideBySideDiff({
   lines,
+  filePath,
   language = "text",
   skipLeadingHunkSeparator = false,
 }: SideBySideDiffProps) {
   const rows = useMemo(() => buildRows(lines), [lines]);
   const theme = useShikiTheme();
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const annotations = usePreviewAnnotationStore((s) =>
+    activeThreadId
+      ? (s.diffByThread[activeThreadId] ?? EMPTY_DIFF_ANNOTATIONS)
+      : EMPTY_DIFF_ANNOTATIONS,
+  );
+  const annotationsByTarget = useMemo(
+    () =>
+      new Map(
+        annotations
+          .filter((annotation) => annotation.filePath === filePath)
+          .map((annotation) => [`${annotation.side}:${annotation.line}`, annotation]),
+      ),
+    [annotations, filePath],
+  );
+  const [editingTarget, setEditingTarget] = useState<string | null>(null);
   const lineWrap = useDiffStore((s) =>
     activeThreadId ? s.getLineWrap(activeThreadId) : true,
   );
@@ -148,14 +162,33 @@ export const SideBySideDiff = memo(function SideBySideDiff({
           }
 
           const tokens = row.left.diffIndex !== null ? getLineTokens(row.left.diffIndex) : null;
+          const targetKey = row.left.lineNo === null ? null : `left:${row.left.lineNo}`;
+          const annotation = targetKey ? annotationsByTarget.get(targetKey) : undefined;
+          const editing = targetKey !== null && editingTarget === targetKey;
 
           return (
-            <div key={i} className={`flex items-stretch ${LEFT_BG[row.left.type]}`}>
-              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground">
-                {row.left.lineNo ?? ""}
+            <div key={i}>
+            <div className={cn("group/diff-line relative flex min-h-7 items-stretch", LEFT_BG[row.left.type], editing && "ring-1 ring-inset ring-primary/70")}>
+              {activeThreadId && filePath && row.left.lineNo !== null && row.left.type !== "empty" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`${annotation ? "Edit" : "Add"} comment on line ${row.left.lineNo}`}
+                  className={cn(
+                    "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground hover:text-background group-hover/diff-line:pointer-events-auto group-hover/diff-line:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 motion-reduce:transition-none",
+                    (annotation || editing) && "pointer-events-auto opacity-100",
+                  )}
+                  onClick={() => setEditingTarget(editing ? null : targetKey)}
+                >
+                  {annotation ? <span className="font-mono text-[1rem] font-semibold tabular-nums">{annotation.displayNumber}</span> : <Plus size={16} strokeWidth={2.5} aria-hidden />}
+                </Button>
+              ) : null}
+              <span aria-hidden className="inline-grid w-10 shrink-0 select-none grid-cols-[0.75rem_1fr] items-center bg-page/35 pr-1.5 text-[1rem] tabular-nums text-muted-foreground/70">
+                <span className="text-center">{row.left.type === "remove" ? "−" : ""}</span>
+                <span className="text-right">{row.left.lineNo ?? ""}</span>
               </span>
-              <span className={`w-[2px] shrink-0 ${LEFT_GUTTER[row.left.type]}`} aria-hidden="true" />
-              <span className={`flex-1 pl-3 pr-2 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
+              <span className={`flex-1 px-2 py-1 leading-5 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
                 {row.left.type === "remove" && <span className="sr-only">Removed: </span>}
                 {tokens ? (
                   tokens.map((token, j) => (
@@ -178,6 +211,15 @@ export const SideBySideDiff = memo(function SideBySideDiff({
                 )}
               </span>
             </div>
+            {editing && activeThreadId && filePath && row.left.lineNo !== null ? (
+              <DiffAnnotationEditor
+                threadId={activeThreadId}
+                annotation={annotation}
+                target={{ filePath, side: "left", line: row.left.lineNo, lineContent: row.left.content }}
+                onClose={() => setEditingTarget(null)}
+              />
+            ) : null}
+            </div>
           );
         })}
         </div>
@@ -194,14 +236,33 @@ export const SideBySideDiff = memo(function SideBySideDiff({
           }
 
           const tokens = row.right.diffIndex !== null ? getLineTokens(row.right.diffIndex) : null;
+          const targetKey = row.right.lineNo === null ? null : `right:${row.right.lineNo}`;
+          const annotation = targetKey ? annotationsByTarget.get(targetKey) : undefined;
+          const editing = targetKey !== null && editingTarget === targetKey;
 
           return (
-            <div key={i} className={`flex items-stretch ${RIGHT_BG[row.right.type]}`}>
-              <span className="inline-flex w-10 shrink-0 select-none items-center justify-end pr-2.5 text-[10px] tabular-nums text-muted-foreground">
-                {row.right.lineNo ?? ""}
+            <div key={i}>
+            <div className={cn("group/diff-line relative flex min-h-7 items-stretch", RIGHT_BG[row.right.type], editing && "ring-1 ring-inset ring-primary/70")}>
+              {activeThreadId && filePath && row.right.lineNo !== null && row.right.type !== "empty" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`${annotation ? "Edit" : "Add"} comment on line ${row.right.lineNo}`}
+                  className={cn(
+                    "pointer-events-none absolute left-0.5 top-0.5 z-10 size-6 rounded-md bg-foreground text-background opacity-0 shadow-none transition-opacity duration-100 hover:bg-foreground hover:text-background group-hover/diff-line:pointer-events-auto group-hover/diff-line:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 motion-reduce:transition-none",
+                    (annotation || editing) && "pointer-events-auto opacity-100",
+                  )}
+                  onClick={() => setEditingTarget(editing ? null : targetKey)}
+                >
+                  {annotation ? <span className="font-mono text-[1rem] font-semibold tabular-nums">{annotation.displayNumber}</span> : <Plus size={16} strokeWidth={2.5} aria-hidden />}
+                </Button>
+              ) : null}
+              <span aria-hidden className="inline-grid w-10 shrink-0 select-none grid-cols-[0.75rem_1fr] items-center bg-page/35 pr-1.5 text-[1rem] tabular-nums text-muted-foreground/70">
+                <span className="text-center">{row.right.type === "add" ? "+" : ""}</span>
+                <span className="text-right">{row.right.lineNo ?? ""}</span>
               </span>
-              <span className={`w-[2px] shrink-0 ${RIGHT_GUTTER[row.right.type]}`} aria-hidden="true" />
-              <span className={`flex-1 pl-3 pr-2 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
+              <span className={`flex-1 px-2 py-1 leading-5 ${lineWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>
                 {row.right.type === "add" && <span className="sr-only">Added: </span>}
                 {tokens ? (
                   tokens.map((token, j) => (
@@ -223,6 +284,15 @@ export const SideBySideDiff = memo(function SideBySideDiff({
                   </span>
                 )}
               </span>
+            </div>
+            {editing && activeThreadId && filePath && row.right.lineNo !== null ? (
+              <DiffAnnotationEditor
+                threadId={activeThreadId}
+                annotation={annotation}
+                target={{ filePath, side: "right", line: row.right.lineNo, lineContent: row.right.content }}
+                onClose={() => setEditingTarget(null)}
+              />
+            ) : null}
             </div>
           );
         })}

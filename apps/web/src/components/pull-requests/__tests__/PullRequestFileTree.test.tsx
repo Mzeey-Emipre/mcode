@@ -75,6 +75,25 @@ describe("PullRequestFileTree", () => {
     expect(onActivate).toHaveBeenCalledWith("b.ts");
   });
 
+  it("renders full worktree paths without pull request status metadata", async () => {
+    const onActivate = vi.fn();
+    render(
+      <PullRequestFileTree
+        filePaths={["apps/web/App.tsx", "packages/contracts/index.ts"]}
+        activePath={null}
+        ariaLabel="Worktree files"
+        onActivate={onActivate}
+      />,
+    );
+
+    const app = screen.getByRole("treeitem", { name: "apps/web/App.tsx" });
+    app.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(onActivate).toHaveBeenCalledWith("apps/web/App.tsx");
+    expect(app.querySelector("[data-change-type]")).not.toBeInTheDocument();
+  });
+
   it("expands and collapses directories with Right and Left", async () => {
     render(
       <PullRequestFileTree

@@ -1,7 +1,10 @@
-import type { PreviewAnnotationBundle, PreviewAnnotationPayload } from "@mcode/contracts";
-import { ImageIcon, MessageCircle, X } from "lucide-react";
+import {
+  isDiffAnnotationPayload,
+  type ComposerAnnotationPayload,
+  type PreviewAnnotationBundle,
+} from "@mcode/contracts";
+import { FileCode2, ImageIcon, MessageCircle, X } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { buildStoredAttachmentImageSrc } from "@/lib/attachment-url";
@@ -14,7 +17,10 @@ function annotationCountLabel(count: number): string {
   return count === 1 ? "1 annotation" : `${count} annotations`;
 }
 
-function annotationTargetLabel(annotation: PreviewAnnotationPayload): string {
+function annotationTargetLabel(annotation: ComposerAnnotationPayload): string {
+  if (isDiffAnnotationPayload(annotation)) {
+    return `${annotation.filePath}:${annotation.line}`;
+  }
   return (
     annotation.targetContext.label?.trim() ||
     annotation.targetContext.selectorHint?.trim() ||
@@ -22,11 +28,10 @@ function annotationTargetLabel(annotation: PreviewAnnotationPayload): string {
   );
 }
 
-function annotationDetail(annotation: PreviewAnnotationPayload): string {
-  const text =
-    annotation.note?.trim() ||
-    annotation.changeSummary?.trim() ||
-    "Visual annotation";
+function annotationDetail(annotation: ComposerAnnotationPayload): string {
+  const text = isDiffAnnotationPayload(annotation)
+    ? annotation.note.trim()
+    : annotation.note?.trim() || annotation.changeSummary?.trim() || "Visual annotation";
   return text.length <= MAX_DETAIL_LENGTH
     ? text
     : `${text.slice(0, MAX_DETAIL_LENGTH - 3).trimEnd()}...`;
@@ -36,7 +41,7 @@ function AnnotationSnapshotThumbnail({ src }: { readonly src: string }) {
   const image = useRetriableAttachmentImage(src);
 
   return (
-    <span className="relative block h-14 overflow-hidden rounded-md border border-border/60 bg-muted/30">
+    <span className="relative block aspect-video w-28 shrink-0 overflow-hidden rounded-md bg-muted/35 ring-1 ring-inset ring-border/60">
       {image.failed ? (
         <span className="flex h-full w-full items-center justify-center text-muted-foreground">
           <ImageIcon size={16} aria-hidden />
@@ -47,7 +52,7 @@ function AnnotationSnapshotThumbnail({ src }: { readonly src: string }) {
             src={image.src}
             alt=""
             className={cn(
-              "h-full w-full object-cover transition-opacity",
+              "h-full w-full object-contain transition-opacity duration-150 motion-reduce:transition-none",
               image.retrying ? "opacity-0" : "opacity-100",
             )}
             loading="lazy"
@@ -102,7 +107,7 @@ export function PreviewAnnotationBundleChip({
             tabIndex={0}
             aria-label={`${label}. Annotation details available.`}
             className={cn(
-              "group relative inline-flex max-w-full items-center gap-2 rounded-lg border border-accent-foreground/10 bg-accent px-2 py-1 text-xs font-medium text-accent-foreground shadow-sm transition-colors hover:border-accent-foreground/15 hover:bg-accent/90 focus-visible:border-accent-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-foreground/20",
+              "group relative inline-flex max-w-full items-center gap-2 rounded-lg bg-accent px-2 py-1 text-xs font-medium text-accent-foreground ring-1 ring-inset ring-accent-foreground/10 transition-colors duration-150 hover:bg-accent/90 hover:ring-accent-foreground/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-foreground/25 motion-reduce:transition-none",
               className,
             )}
           >
@@ -118,7 +123,7 @@ export function PreviewAnnotationBundleChip({
                   event.stopPropagation();
                   onRemove();
                 }}
-                className="pointer-events-none absolute -right-2 -top-2 size-5 rounded-full border border-accent-foreground/10 bg-accent text-accent-foreground/70 opacity-0 shadow-sm transition-opacity hover:bg-accent-foreground/10 hover:text-accent-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+                className="pointer-events-none absolute -right-2 -top-2 size-5 rounded-full bg-accent text-accent-foreground/70 opacity-0 ring-1 ring-inset ring-accent-foreground/15 transition-opacity duration-150 hover:bg-accent-foreground/10 hover:text-accent-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 motion-reduce:transition-none"
               >
                 <X size={12} aria-hidden />
               </Button>
@@ -130,12 +135,12 @@ export function PreviewAnnotationBundleChip({
         side="top"
         align="end"
         sideOffset={8}
-        className="w-[min(22rem,calc(100vw-2rem))] max-w-none items-stretch rounded-xl border border-border/70 bg-popover p-2.5 text-popover-foreground shadow-xl"
+        className="w-[min(32rem,calc(100vw-1.6rem))] max-w-none items-stretch rounded-xl bg-popover p-3 text-popover-foreground ring-1 ring-inset ring-border/70"
         arrowClassName="bg-popover fill-popover"
       >
-        <div className="max-h-72 min-w-0 space-y-2 overflow-y-auto pr-1">
+        <div className="max-h-80 min-w-0 divide-y divide-border/45 overflow-y-auto">
           {bundle.annotations.map((annotation) => {
-            const snapshotSrc = threadId
+            const snapshotSrc = threadId && !isDiffAnnotationPayload(annotation)
               ? buildStoredAttachmentImageSrc(
                   threadId,
                   annotation.snapshot.id,
@@ -145,22 +150,23 @@ export function PreviewAnnotationBundleChip({
             return (
               <div
                 key={annotation.id}
-                className="grid min-w-0 grid-cols-[minmax(0,1fr)_4.5rem] gap-2 border-b border-border/50 pb-2 last:border-b-0 last:pb-0"
+                className="flex min-w-0 items-start gap-3 py-3 first:pt-0 last:pb-0"
               >
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2.5">
                     <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/80 text-xs font-semibold tabular-nums text-primary-foreground/90">
                       {annotation.displayNumber}
                     </span>
-                    <Badge
-                      variant="secondary"
-                      size="sm"
-                      className="min-w-0 max-w-full truncate font-mono font-normal text-muted-foreground"
-                    >
+                    {isDiffAnnotationPayload(annotation) ? (
+                      <FileCode2 size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+                    ) : (
+                      <ImageIcon size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+                    )}
+                    <span className="min-w-0 truncate font-mono text-[1.1rem] font-normal text-muted-foreground">
                       {annotationTargetLabel(annotation)}
-                    </Badge>
+                    </span>
                   </div>
-                  <p className="mt-1.5 min-w-0 whitespace-pre-wrap break-words text-xs leading-snug text-popover-foreground">
+                  <p className="mt-2 min-w-0 whitespace-pre-wrap break-words text-xs leading-5 text-popover-foreground">
                     {annotationDetail(annotation)}
                   </p>
                 </div>

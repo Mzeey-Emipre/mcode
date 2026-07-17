@@ -263,6 +263,9 @@ describe("MessageBubble user messages", () => {
       "src",
       `mcode-attachment://${threadUuid}/shot-1.png`,
     );
+    expect(await findByTestId("preview-annotation-hover-thumbnail")).toHaveClass(
+      "object-contain",
+    );
     expect(document.querySelector('[data-slot="tooltip-arrow"]')).toHaveClass(
       "bg-popover",
       "fill-popover",

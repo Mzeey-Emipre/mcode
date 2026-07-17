@@ -113,9 +113,17 @@ export function DiffContent() {
         <ScrollArea className="flex-1 min-h-0">
           {lines.length > 0 ? (
             renderMode === "unified" ? (
-              <UnifiedDiff lines={lines} language={language} />
+              <UnifiedDiff
+                lines={lines}
+                filePath={selectedFile.filePath}
+                language={language}
+              />
             ) : (
-              <SideBySideDiff lines={lines} language={language} />
+              <SideBySideDiff
+                lines={lines}
+                filePath={selectedFile.filePath}
+                language={language}
+              />
             )
           ) : (
             <div className="flex items-center justify-center py-10">
