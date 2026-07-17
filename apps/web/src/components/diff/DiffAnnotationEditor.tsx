@@ -49,14 +49,14 @@ export function DiffAnnotationEditor({
     >
       <div className="flex min-w-0 items-center gap-2">
         <MessageCircle size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-        <span className="text-xs font-medium text-foreground">Diff comment</span>
+        <span className="text-xs font-medium text-foreground">Code comment</span>
         <span className="ml-auto min-w-0 truncate font-mono text-[1.1rem] tabular-nums text-muted-foreground">
           {target.filePath}:{target.line}
         </span>
       </div>
       <Textarea
         ref={textareaRef}
-        aria-label="Diff comment"
+        aria-label="Code comment"
         value={note}
         maxLength={4_000}
         placeholder="Request a change"

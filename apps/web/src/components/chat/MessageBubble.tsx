@@ -17,6 +17,7 @@ import { AnsweredSummary } from "./plan-questions/AnsweredSummary";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 import { DeltaBlock } from "./narrative/DeltaBlock";
 import { parseGoalStatusNotice } from "@/lib/goal-message";
+import { composerFeedbackReplyFallback } from "@/lib/composer-feedback";
 import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
 import { useRetriableAttachmentImage } from "./useRetriableAttachmentImage";
 
@@ -662,11 +663,8 @@ export const MessageBubble = memo(function MessageBubble({
                 let fallback = "[Attachment]";
                 if (!userDisplayText.trim()) {
                   const firstAtt = message.attachments?.[0];
-                  if (hasPreviewAnnotations) {
-                    fallback =
-                      message.previewAnnotations?.annotations.length === 1
-                        ? "[Annotation]"
-                        : "[Annotations]";
+                  if (hasPreviewAnnotations && message.previewAnnotations) {
+                    fallback = composerFeedbackReplyFallback(message.previewAnnotations);
                   } else if (firstAtt?.mimeType.startsWith("image/")) fallback = "[Image attachment]";
                   else if (firstAtt?.mimeType === "application/pdf") fallback = "[PDF attachment]";
                   else if (firstAtt) fallback = "[File attachment]";

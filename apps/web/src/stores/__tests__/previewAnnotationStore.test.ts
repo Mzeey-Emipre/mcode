@@ -80,7 +80,7 @@ describe("previewAnnotationStore", () => {
     });
   });
 
-  it("combines preview and diff annotations in creation order", () => {
+  it("combines Preview annotations and code comments in creation order", () => {
     const preview = usePreviewAnnotationStore
       .getState()
       .saveAnnotation("thread-1", draft({ note: "Align the button" }));

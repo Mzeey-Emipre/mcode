@@ -62,7 +62,7 @@ describe("PreviewAnnotationBundleSchema", () => {
     ).toBe(true);
   });
 
-  it("accepts local diff annotations without creating screenshot attachments", () => {
+  it("accepts local code comments without creating screenshot attachments", () => {
     const bundle = {
       schemaVersion: 1 as const,
       annotations: [annotation, diffAnnotation],

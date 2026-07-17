@@ -20,7 +20,7 @@ const EMPTY_DIFF_ANNOTATIONS: readonly SavedDiffAnnotation[] = [];
 /** Props for SideBySideDiff. */
 interface SideBySideDiffProps {
   lines: ParsedDiffLine[];
-  /** Workspace-relative file path used by Dev diff annotations. */
+  /** Workspace-relative file path used by Dev diff comments. */
   filePath?: string;
   /** File language for syntax highlighting (e.g. "typescript"). "text" disables highlighting. */
   language?: string;

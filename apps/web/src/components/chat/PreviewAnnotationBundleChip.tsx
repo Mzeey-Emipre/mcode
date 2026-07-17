@@ -8,30 +8,30 @@ import { FileCode2, ImageIcon, MessageCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { buildStoredAttachmentImageSrc } from "@/lib/attachment-url";
+import {
+  composerFeedbackAccessibleLabel,
+  composerFeedbackLabel,
+} from "@/lib/composer-feedback";
 import { cn } from "@/lib/utils";
 import { useRetriableAttachmentImage } from "./useRetriableAttachmentImage";
 
 const MAX_DETAIL_LENGTH = 220;
 
-function annotationCountLabel(count: number): string {
-  return count === 1 ? "1 annotation" : `${count} annotations`;
-}
-
-function annotationTargetLabel(annotation: ComposerAnnotationPayload): string {
-  if (isDiffAnnotationPayload(annotation)) {
-    return `${annotation.filePath}:${annotation.line}`;
+function feedbackTargetLabel(item: ComposerAnnotationPayload): string {
+  if (isDiffAnnotationPayload(item)) {
+    return `${item.filePath}:${item.line}`;
   }
   return (
-    annotation.targetContext.label?.trim() ||
-    annotation.targetContext.selectorHint?.trim() ||
+    item.targetContext.label?.trim() ||
+    item.targetContext.selectorHint?.trim() ||
     "Element"
   );
 }
 
-function annotationDetail(annotation: ComposerAnnotationPayload): string {
-  const text = isDiffAnnotationPayload(annotation)
-    ? annotation.note.trim()
-    : annotation.note?.trim() || annotation.changeSummary?.trim() || "Visual annotation";
+function feedbackDetail(item: ComposerAnnotationPayload): string {
+  const text = isDiffAnnotationPayload(item)
+    ? item.note.trim()
+    : item.note?.trim() || item.changeSummary?.trim() || "Visual annotation";
   return text.length <= MAX_DETAIL_LENGTH
     ? text
     : `${text.slice(0, MAX_DETAIL_LENGTH - 3).trimEnd()}...`;
@@ -71,9 +71,9 @@ function AnnotationSnapshotThumbnail({ src }: { readonly src: string }) {
   );
 }
 
-/** Props for the compact annotation chip shown in composer and transcript surfaces. */
+/** Props for the compact feedback chip shown in composer and transcript surfaces. */
 export interface PreviewAnnotationBundleChipProps {
-  /** Saved Preview annotation payloads to summarize. */
+  /** Saved Preview annotations and code comments to summarize. */
   readonly bundle: PreviewAnnotationBundle;
   /** Thread that owns the persisted annotation screenshots. */
   readonly threadId?: string;
@@ -85,7 +85,7 @@ export interface PreviewAnnotationBundleChipProps {
   readonly testId?: string;
 }
 
-/** Renders a responsive annotation summary chip with hoverable per-annotation details. */
+/** Renders a responsive feedback summary with hoverable item details. */
 export function PreviewAnnotationBundleChip({
   bundle,
   threadId,
@@ -93,10 +93,10 @@ export function PreviewAnnotationBundleChip({
   className,
   testId = "preview-annotation-bundle-chip",
 }: PreviewAnnotationBundleChipProps) {
-  const count = bundle.annotations.length;
-  if (count === 0) return null;
+  if (bundle.annotations.length === 0) return null;
 
-  const label = annotationCountLabel(count);
+  const label = composerFeedbackLabel(bundle);
+  const accessibleLabel = composerFeedbackAccessibleLabel(bundle);
 
   return (
     <Tooltip>
@@ -105,7 +105,7 @@ export function PreviewAnnotationBundleChip({
           <div
             data-testid={testId}
             tabIndex={0}
-            aria-label={`${label}. Annotation details available.`}
+            aria-label={`${accessibleLabel}. Details available.`}
             className={cn(
               "group relative inline-flex max-w-full items-center gap-2 rounded-lg bg-accent px-2 py-1 text-xs font-medium text-accent-foreground ring-1 ring-inset ring-accent-foreground/10 transition-colors duration-150 hover:bg-accent/90 hover:ring-accent-foreground/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-foreground/25 motion-reduce:transition-none",
               className,
@@ -139,35 +139,40 @@ export function PreviewAnnotationBundleChip({
         arrowClassName="bg-popover fill-popover"
       >
         <div className="max-h-80 min-w-0 divide-y divide-border/45 overflow-y-auto">
-          {bundle.annotations.map((annotation) => {
-            const snapshotSrc = threadId && !isDiffAnnotationPayload(annotation)
+          {bundle.annotations.map((item) => {
+            const isComment = isDiffAnnotationPayload(item);
+            const snapshotSrc = threadId && !isComment
               ? buildStoredAttachmentImageSrc(
                   threadId,
-                  annotation.snapshot.id,
-                  annotation.snapshot.mimeType,
+                  item.snapshot.id,
+                  item.snapshot.mimeType,
                 )
               : null;
             return (
               <div
-                key={annotation.id}
+                key={item.id}
                 className="flex min-w-0 items-start gap-3 py-3 first:pt-0 last:pb-0"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2.5">
                     <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/80 text-xs font-semibold tabular-nums text-primary-foreground/90">
-                      {annotation.displayNumber}
+                      {item.displayNumber}
                     </span>
-                    {isDiffAnnotationPayload(annotation) ? (
+                    {isComment ? (
                       <FileCode2 size={14} className="shrink-0 text-muted-foreground" aria-hidden />
                     ) : (
                       <ImageIcon size={14} className="shrink-0 text-muted-foreground" aria-hidden />
                     )}
+                    <span className="shrink-0 text-xs font-medium text-popover-foreground">
+                      {isComment ? "Comment" : "Annotation"}
+                    </span>
+                    <span aria-hidden className="text-muted-foreground/45">·</span>
                     <span className="min-w-0 truncate font-mono text-[1.1rem] font-normal text-muted-foreground">
-                      {annotationTargetLabel(annotation)}
+                      {feedbackTargetLabel(item)}
                     </span>
                   </div>
                   <p className="mt-2 min-w-0 whitespace-pre-wrap break-words text-xs leading-5 text-popover-foreground">
-                    {annotationDetail(annotation)}
+                    {feedbackDetail(item)}
                   </p>
                 </div>
                 {snapshotSrc ? <AnnotationSnapshotThumbnail src={snapshotSrc} /> : null}

@@ -444,7 +444,7 @@ describe("Composer checkout confirmation", () => {
     );
   });
 
-  it("clears annotations and exits design mode after a successful annotation send", async () => {
+  it("clears annotations and comments after a successful feedback send", async () => {
     const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
     const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
     useWorkspaceStore.setState({
@@ -472,7 +472,7 @@ describe("Composer checkout confirmation", () => {
     render(<Composer threadId={thread.id} workspaceId="ws-1" />);
 
     expect(screen.getByTestId("composer-annotation-bundle")).toHaveTextContent(
-      "2 annotations",
+      "1 annotation · 1 comment",
     );
     expect(screen.getByTestId("composer-annotation-bundle")).toHaveClass(
       "bg-accent",

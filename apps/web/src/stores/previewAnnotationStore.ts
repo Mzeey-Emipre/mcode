@@ -41,7 +41,7 @@ export interface SavedPreviewAnnotation extends PreviewAnnotationPayload {
   readonly createdAt: number;
 }
 
-/** Saved local diff annotation with stable identity and creation ordering. */
+/** Saved local code comment with stable identity and creation ordering. */
 export interface SavedDiffAnnotation extends DiffAnnotationPayload {
   /** Stable sort key independent of display number. */
   readonly createdAt: number;
@@ -64,7 +64,7 @@ export interface DiffAnnotationInput {
 interface PreviewAnnotationStore {
   /** Saved annotation sets keyed by thread id. */
   readonly byThread: Record<string, SavedPreviewAnnotation[]>;
-  /** Saved Dev diff annotations keyed by thread id. */
+  /** Saved Dev code comments keyed by thread id. */
   readonly diffByThread: Record<string, SavedDiffAnnotation[]>;
   /** Active unsaved drafts keyed by thread id. */
   readonly drafts: Record<string, PreviewDraftAnnotation | undefined>;
@@ -205,7 +205,7 @@ export const usePreviewAnnotationStore = create<PreviewAnnotationStore>((set, ge
   saveDiffAnnotation(threadId, input, id) {
     const existing = get().diffByThread[threadId] ?? [];
     const note = input.note.trim();
-    if (!note) throw new Error("diff annotation note is required");
+    if (!note) throw new Error("code comment note is required");
     const annotation: SavedDiffAnnotation = {
       kind: "diff",
       id: id ?? crypto.randomUUID(),

@@ -45,7 +45,7 @@ describe("UnifiedDiff Dev review", () => {
     render(<UnifiedDiff lines={lines} filePath="src/state.ts" />);
 
     await user.click(screen.getByRole("button", { name: "Add comment on line 11" }));
-    await user.type(screen.getByRole("textbox", { name: "Diff comment" }), "Keep this immutable");
+    await user.type(screen.getByRole("textbox", { name: "Code comment" }), "Keep this immutable");
     await user.click(screen.getByRole("button", { name: "Add to prompt" }));
 
     expect(usePreviewAnnotationStore.getState().buildBundle("thread-1")?.annotations).toMatchObject([
