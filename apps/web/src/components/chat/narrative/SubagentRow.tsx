@@ -14,9 +14,11 @@ import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 import { buildDelegationTags } from "./subagent-delegation-tags";
 import { extractSubagentDescription } from "./extract-subagent-description";
-import { StackedLayersIcon, stackedLayersIconClassName } from "./StackedLayersIcon";
 import { DeltaBlock } from "./DeltaBlock";
 import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
+import { EntityIcon } from "../EntityToken";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface SubagentRowProps {
   toolCall: ToolCall;
@@ -42,12 +44,14 @@ function DelegationTags({ tags }: DelegationTagsProps) {
   return (
     <span className="flex items-center gap-1 shrink-0">
       {tags.map((tag) => (
-        <span
+        <Badge
           key={tag}
-          className="font-mono text-[0.625rem] font-medium px-1 py-px rounded-sm bg-muted-foreground/12 text-muted-foreground/70"
+          variant="secondary"
+          size="sm"
+          className="font-mono text-muted-foreground/70"
         >
           {tag}
-        </span>
+        </Badge>
       ))}
     </span>
   );
@@ -79,10 +83,13 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
         className="flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden px-2 py-1 text-[0.8125rem]"
         data-testid="subagent-flat-row"
       >
-        <StackedLayersIcon
-          animated={isRunning}
-          className={stackedLayersIconClassName(isRunning)}
-        />
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/65 ring-1 ring-inset ring-border/60">
+          <EntityIcon
+            kind="agent"
+            animated={isRunning}
+            className={cn("flex items-center justify-center", isRunning ? "text-primary/80" : "text-muted-foreground/60")}
+          />
+        </span>
         <span
           className={cn(
             "truncate flex-1 min-w-0",
@@ -93,9 +100,9 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
         </span>
         <DelegationTags tags={delegationTags} />
         {isErrored && (
-          <span className="font-mono text-[0.625rem] font-medium px-1 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
+          <Badge variant="destructive" size="sm" className="font-mono">
             errored
-          </span>
+          </Badge>
         )}
       </div>
     );
@@ -173,19 +180,24 @@ function ExpandableSubagentRow({
 
   return (
     <div className="min-w-0 max-w-full">
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         onClick={() => {
           userToggledRef.current = true;
           setOpen((o) => !o);
         }}
-        className={`${NARRATIVE_TOOL_ROW} w-full px-2 py-1 text-left rounded-md hover:bg-muted/30 transition-colors duration-100 text-[0.8125rem]`}
+        className={`${NARRATIVE_TOOL_ROW} h-auto w-full justify-start px-2 py-1 text-left rounded-md hover:bg-muted/30 transition-colors duration-100 text-[0.8125rem]`}
         aria-expanded={open}
       >
-        <StackedLayersIcon
-          animated={isRunning}
-          className={stackedLayersIconClassName(isRunning)}
-        />
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/65 ring-1 ring-inset ring-border/60">
+          <EntityIcon
+            kind="agent"
+            animated={isRunning}
+            className={cn("flex items-center justify-center", isRunning ? "text-primary/80" : "text-muted-foreground/60")}
+          />
+        </span>
 
         <span
           className={cn(
@@ -205,15 +217,15 @@ function ExpandableSubagentRow({
         )}
 
         {isErrored && (
-          <span className="font-mono text-[0.625rem] font-medium px-1 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
+          <Badge variant="destructive" size="sm" className="font-mono">
             errored
-          </span>
+          </Badge>
         )}
 
         <ChevronRight
           className={`h-3 w-3 text-muted-foreground/30 shrink-0 transition-transform duration-150 ${open ? "rotate-90" : ""}`}
         />
-      </button>
+      </Button>
 
       <AnimatedCollapsible open={open}>
         {finalOutput && (
@@ -276,14 +288,16 @@ function ExpandableSubagentRow({
           </div>
         )}
         {children.length > CHILD_CAP && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => setShowAll((o) => !o)}
-            className="flex items-center gap-1 pl-7 pb-1 text-[0.6875rem] text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors"
+            className="h-auto items-center gap-1 rounded-md pl-7 pb-1 text-xs text-muted-foreground/50 hover:text-muted-foreground/70 transition-colors"
           >
             <ChevronDown className={`h-2.5 w-2.5 shrink-0 transition-transform duration-150 ${showAll ? "rotate-180" : ""}`} />
             {showAll ? "Show less" : `Show all ${children.length}`}
-          </button>
+          </Button>
         )}
       </AnimatedCollapsible>
     </div>

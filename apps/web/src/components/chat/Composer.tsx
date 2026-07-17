@@ -61,6 +61,7 @@ import { ComposerAddMenu } from "./ComposerAddMenu";
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import {
   ComposerEditor,
+  $createSlashCommandNode,
   $createTypedMentionNode,
   extractComposerMessage,
   insertMentionNode,
@@ -190,14 +191,20 @@ function writeComposerContent(
     };
 
     for (const mention of sortedMentions) {
+      const mentionText = mention.kind === "command" ? `/${mention.label}` : `@${mention.label}`;
       if (
         mention.range.start < cursor ||
         mention.range.end > text.length ||
-        text.slice(mention.range.start, mention.range.end) !== `@${mention.label}`
+        text.slice(mention.range.start, mention.range.end) !== mentionText
       ) {
         continue;
       }
       appendText(text.slice(cursor, mention.range.start));
+      if (mention.kind === "command") {
+        paragraph.append($createSlashCommandNode(mention.label, mention.namespace));
+        cursor = mention.range.end;
+        continue;
+      }
       const nodeMention =
         mention.kind === "file"
           ? {

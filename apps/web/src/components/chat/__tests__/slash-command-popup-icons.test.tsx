@@ -35,6 +35,7 @@ function makeAnchorRect(): DOMRect {
 const COMMANDS: Command[] = [
   { name: "deploy", description: "Deploy command", namespace: "command" },
   { name: "my-skill", description: "A skill", namespace: "skill" },
+  { name: "figma:use", description: "A plugin skill", namespace: "plugin" },
 ];
 
 function renderPopup() {
@@ -74,11 +75,17 @@ describe("SlashCommandPopup namespace icons", () => {
     expect(sparklesIcon).not.toBeNull();
   });
 
-  it("command namespace renders a lucide-terminal SVG", () => {
+  it("command namespace renders a square-terminal SVG", () => {
     renderPopup();
     const commandRow = screen.getByRole("option", { name: /deploy/ });
-    const terminalIcon = commandRow.querySelector(".lucide-terminal");
+    const terminalIcon = commandRow.querySelector(".lucide-square-terminal");
     expect(terminalIcon).not.toBeNull();
+  });
+
+  it("plugin namespace renders a blocks SVG", () => {
+    renderPopup();
+    const pluginRow = screen.getByRole("option", { name: /figma:use/ });
+    expect(pluginRow.querySelector(".lucide-blocks")).not.toBeNull();
   });
 
   it("command namespace does NOT render a lucide-sparkles SVG", () => {
@@ -91,7 +98,7 @@ describe("SlashCommandPopup namespace icons", () => {
   it("skill namespace does NOT render a lucide-terminal SVG", () => {
     renderPopup();
     const skillRow = screen.getByRole("option", { name: /my-skill/ });
-    const terminalIcon = skillRow.querySelector(".lucide-terminal");
+    const terminalIcon = skillRow.querySelector(".lucide-square-terminal");
     expect(terminalIcon).toBeNull();
   });
 });

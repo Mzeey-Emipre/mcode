@@ -906,12 +906,12 @@ export class AgentService {
     let previousEnd = 0;
 
     for (const mention of sorted) {
-      const displayText = `@${mention.label}`;
+      const displayText = mention.kind === "command" ? `/${mention.label}` : `@${mention.label}`;
       if (
         mention.range.end > input.content.length ||
         input.content.slice(mention.range.start, mention.range.end) !== displayText
       ) {
-        throw new Error(`Invalid mention range for @${mention.label}`);
+        throw new Error(`Invalid mention range for ${displayText}`);
       }
       if (mention.range.start < previousEnd) {
         throw new Error("Mention ranges must not overlap");
@@ -925,6 +925,8 @@ export class AgentService {
         this.fileService.validateMentionPath(input.workspaceId, mention.path, input.threadId);
         continue;
       }
+
+      if (mention.kind === "command") continue;
 
       if (input.provider !== "codex") {
         throw new Error("Agent mentions are only supported by Codex");
