@@ -9,6 +9,7 @@ import {
 } from "react";
 import { ChevronDown, ChevronRight, Folder, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
@@ -88,8 +89,7 @@ function collectDirectoryIds(
 }
 
 /** Props for the virtual, keyboard-navigable pull request file tree. */
-export interface PullRequestFileTreeProps {
-  files: readonly PullRequestFile[];
+interface FileTreeBaseProps {
   activePath: string | null;
   searchActive?: boolean;
   className?: string;
@@ -97,20 +97,34 @@ export interface PullRequestFileTreeProps {
   onActivate: (path: string) => void;
 }
 
+/** Props for the virtual, keyboard-navigable path tree. */
+export type PullRequestFileTreeProps = FileTreeBaseProps &
+  (
+    | { files: readonly PullRequestFile[]; filePaths?: never }
+    | { files?: never; filePaths: readonly string[] }
+  );
+
 /** Virtual path tree and jump index for the loaded pull request Change stack. */
-export function PullRequestFileTree({
-  files,
-  activePath,
-  searchActive = false,
-  className,
-  ariaLabel = "Pull request changed files",
-  onActivate,
-}: PullRequestFileTreeProps) {
+export function PullRequestFileTree(props: PullRequestFileTreeProps) {
+  const {
+    activePath,
+    searchActive = false,
+    className,
+    ariaLabel = "Pull request changed files",
+    onActivate,
+  } = props;
+  const files = "files" in props && props.files ? props.files : [];
+  const providedFilePaths =
+    "filePaths" in props && props.filePaths ? props.filePaths : undefined;
+  const filePaths = useMemo(
+    () => providedFilePaths ?? files.map((file) => file.path),
+    [files, providedFilePaths],
+  );
   const viewportRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
   const tree = useMemo(
-    () => buildPullRequestFileTree(files.map((file) => file.path)),
-    [files],
+    () => buildPullRequestFileTree(filePaths),
+    [filePaths],
   );
   const filesByPath = useMemo(
     () => new Map(files.map((file) => [file.path, file])),
@@ -268,8 +282,7 @@ export function PullRequestFileTree({
   const renderRow = (row: PullRequestFileTreeRow, index: number) => {
     if (row.node.kind === "file") {
       const item = filesByPath.get(row.node.path);
-      if (!item) return null;
-      return (
+      return item ? (
         <PullRequestFileRow
           file={item}
           active={item.path === activePath}
@@ -285,6 +298,37 @@ export function PullRequestFileTree({
           onFocus={() => setFocusedId(row.node.id)}
           onKeyDown={(event) => handleKeyDown(event, row, index)}
         />
+      ) : (
+        <Button
+          type="button"
+          role="treeitem"
+          variant="ghost"
+          size="sm"
+          tabIndex={focusedId === row.node.id ? 0 : -1}
+          aria-label={row.node.path}
+          aria-level={row.depth}
+          aria-posinset={row.positionInSet}
+          aria-setsize={row.setSize}
+          aria-selected={row.node.path === activePath}
+          ref={(node) => {
+            if (node) rowRefs.current.set(row.node.id, node);
+            else rowRefs.current.delete(row.node.id);
+          }}
+          title={row.node.path}
+          className={cn(
+            "mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1.5 rounded-md px-2 font-mono text-xs font-normal",
+            row.node.path === activePath
+              ? "bg-muted/70 text-foreground"
+              : "text-foreground/75 hover:bg-muted/40",
+          )}
+          style={{ paddingLeft: `${Math.max(8, row.depth * 12 - 4)}px` }}
+          onClick={() => onActivate(row.node.path)}
+          onFocus={() => setFocusedId(row.node.id)}
+          onKeyDown={(event) => handleKeyDown(event, row, index)}
+        >
+          <FileTypeIcon filePath={row.node.path} size={14} />
+          <OverflowPathLabel label={row.node.name} path={row.node.path} />
+        </Button>
       );
     }
 

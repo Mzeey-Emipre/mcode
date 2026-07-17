@@ -162,7 +162,11 @@ export {
   PREVIEW_ANNOTATION_STRING_MAX,
   PreviewAnnotationVisualProposalSchema,
   PreviewAnnotationPayloadSchema,
+  DiffAnnotationPayloadSchema,
+  ComposerAnnotationPayloadSchema,
   PreviewAnnotationBundleSchema,
+  isDiffAnnotationPayload,
+  isPreviewAnnotationPayload,
   isBrowserCaptureSpillAppDataPath,
   clampMcodeBrowserCaptureV2,
   clampAttachedBrowserCaptureForOutbound,
@@ -185,6 +189,8 @@ export type {
   BrowserCaptureSpillFile,
   PreviewAnnotationVisualProposal,
   PreviewAnnotationPayload,
+  DiffAnnotationPayload,
+  ComposerAnnotationPayload,
   PreviewAnnotationBundle,
 } from "./models/browser-preview.js";
 

@@ -944,16 +944,17 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const annotationRows = usePreviewAnnotationStore((s) =>
     annotationScopeId ? s.byThread[annotationScopeId] : undefined,
   );
-  const annotationCount = annotationRows?.length ?? 0;
+  const diffAnnotationRows = usePreviewAnnotationStore((s) =>
+    annotationScopeId ? s.diffByThread[annotationScopeId] : undefined,
+  );
+  const annotationCount =
+    (annotationRows?.length ?? 0) + (diffAnnotationRows?.length ?? 0);
   const annotationBundleForDisplay = useMemo(
     () =>
-      annotationRows && annotationRows.length > 0
-        ? {
-            schemaVersion: 1 as const,
-            annotations: annotationRows.map(({ createdAt: _createdAt, ...annotation }) => annotation),
-          }
+      annotationScopeId
+        ? usePreviewAnnotationStore.getState().buildBundle(annotationScopeId)
         : undefined,
-    [annotationRows],
+    [annotationRows, annotationScopeId, diffAnnotationRows],
   );
   const setPreviewDesignModeActive = usePreviewDesignModeStore((s) => s.setActive);
 

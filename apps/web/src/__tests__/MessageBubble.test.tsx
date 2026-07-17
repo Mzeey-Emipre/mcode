@@ -93,6 +93,33 @@ function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
   };
 }
 
+function makeCodeCommentBundle(): PreviewAnnotationBundle {
+  return {
+    schemaVersion: 1,
+    annotations: [
+      {
+        kind: "diff",
+        id: "550e8400-e29b-41d4-a716-446655440002",
+        displayNumber: 1,
+        filePath: "apps/web/src/components/chat/Composer.tsx",
+        side: "right",
+        line: 946,
+        lineContent: "const diffAnnotationRows = usePreviewAnnotationStore(...);",
+        note: "Keep this review target attached to the next prompt.",
+      },
+    ],
+  };
+}
+
+function makeMixedFeedbackBundle(): PreviewAnnotationBundle {
+  const preview = makePreviewAnnotationBundle().annotations[0];
+  const comment = makeCodeCommentBundle().annotations[0];
+  return {
+    schemaVersion: 1,
+    annotations: [preview, { ...comment, displayNumber: 2 }],
+  };
+}
+
 describe("MessageBubble user messages", () => {
   it("renders user message through MarkdownContent with variant='user'", async () => {
     const { container } = render(
@@ -246,6 +273,35 @@ describe("MessageBubble user messages", () => {
     expect(queryByText("bundle")).not.toBeInTheDocument();
   });
 
+  it("labels code review feedback as comments", async () => {
+    const user = userEvent.setup();
+    const message: Message = {
+      ...makeMessage(""),
+      previewAnnotations: makeCodeCommentBundle(),
+    };
+
+    const { findByText, getByTestId } = render(<MessageBubble message={message} />);
+
+    expect(getByTestId("sent-preview-annotation-bundle-chip")).toHaveTextContent(
+      "1 comment",
+    );
+    await user.hover(getByTestId("sent-preview-annotation-bundle-chip"));
+    expect(await findByText("Comment")).toBeVisible();
+  });
+
+  it("keeps annotations and comments distinct in mixed feedback", () => {
+    const message: Message = {
+      ...makeMessage(""),
+      previewAnnotations: makeMixedFeedbackBundle(),
+    };
+
+    const { getByTestId } = render(<MessageBubble message={message} />);
+
+    expect(getByTestId("sent-preview-annotation-bundle-chip")).toHaveTextContent(
+      "1 annotation · 1 comment",
+    );
+  });
+
   it("shows each annotation screenshot thumbnail in the chip hover", async () => {
     const user = userEvent.setup();
     const threadUuid = "550e8400-e29b-41d4-a716-446655440000";
@@ -262,6 +318,9 @@ describe("MessageBubble user messages", () => {
     expect(await findByTestId("preview-annotation-hover-thumbnail")).toHaveAttribute(
       "src",
       `mcode-attachment://${threadUuid}/shot-1.png`,
+    );
+    expect(await findByTestId("preview-annotation-hover-thumbnail")).toHaveClass(
+      "object-contain",
     );
     expect(document.querySelector('[data-slot="tooltip-arrow"]')).toHaveClass(
       "bg-popover",
@@ -319,6 +378,23 @@ describe("MessageBubble user messages", () => {
     await user.click(getByLabelText("Reply to this message"));
 
     expect(onReply).toHaveBeenCalledWith("msg-1", "[Annotation]", "user");
+  });
+
+  it("uses a comment reply fallback for code-comment-only messages", async () => {
+    const user = userEvent.setup();
+    const onReply = vi.fn();
+    const message: Message = {
+      ...makeMessage(""),
+      previewAnnotations: makeCodeCommentBundle(),
+    };
+
+    const { getByLabelText } = render(
+      <MessageBubble message={message} onReply={onReply} />,
+    );
+
+    await user.click(getByLabelText("Reply to this message"));
+
+    expect(onReply).toHaveBeenCalledWith("msg-1", "[Comment]", "user");
   });
 });
 

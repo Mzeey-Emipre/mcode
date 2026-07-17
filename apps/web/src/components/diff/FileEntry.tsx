@@ -412,12 +412,14 @@ export const FileEntry = memo(function FileEntry({
               {renderMode === "unified" ? (
                 <UnifiedDiff
                   lines={visibleLines}
+                  filePath={filePath}
                   language={language}
                   skipLeadingHunkSeparator={leadingHiddenLines > 0}
                 />
               ) : (
                 <SideBySideDiff
                   lines={visibleLines}
+                  filePath={filePath}
                   language={language}
                   skipLeadingHunkSeparator={leadingHiddenLines > 0}
                 />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Files } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -8,6 +8,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getTransport } from "@/transport";
@@ -20,8 +22,16 @@ import { DiffStat } from "./DiffStat";
 
 type CommitAvailability = "loading" | "available" | "empty";
 
+/** Props for the Dev Review toolbar. */
+export interface DiffToolbarProps {
+  /** Whether the full-worktree file navigator is visible. */
+  readonly filesVisible: boolean;
+  /** Toggles the full-worktree file navigator. */
+  readonly onToggleFiles: () => void;
+}
+
 /** Toolbar for the Review tab: dual-scope view switcher + unified/side-by-side toggle. */
-export function DiffToolbar() {
+export function DiffToolbar({ filesVisible, onToggleFiles }: DiffToolbarProps) {
   const viewMode = useDiffStore((s) => s.viewMode);
   const reviewFileCount = useDiffStore((s) => s.reviewFileCount);
   const reviewDiffStat = useDiffStore((s) => s.reviewDiffStat);
@@ -243,6 +253,29 @@ export function DiffToolbar() {
       {/* Commit-or-push + Create-PR (worktree threads only). Wrap / split / jump
           now live on the file-list bar below. */}
       <div className="flex items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={filesVisible ? "Hide worktree files" : "Show worktree files"}
+                aria-pressed={filesVisible}
+                className={cn(
+                  "rounded-md text-muted-foreground",
+                  filesVisible && "bg-muted/60 text-foreground",
+                )}
+                onClick={onToggleFiles}
+              >
+                <Files size={13} aria-hidden />
+              </Button>
+            }
+          />
+          <TooltipContent side="bottom" className="text-xs">
+            {filesVisible ? "Hide worktree files" : "Show worktree files"}
+          </TooltipContent>
+        </Tooltip>
         {activeThread && <ReviewActions thread={activeThread} />}
       </div>
 
