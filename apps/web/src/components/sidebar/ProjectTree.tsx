@@ -1244,7 +1244,7 @@ function VirtualizedThreadList({
                 ? "bg-accent text-foreground"
                 : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
             )}
-            style={{ paddingLeft: `${38 + depth * 12}px` }}
+            style={{ paddingLeft: `${42 + depth * 12}px` }}
           >
             {prable && thread.pr_number != null
               ? (() => {
@@ -1254,7 +1254,7 @@ function VirtualizedThreadList({
                   return (
                     <span
                       title={`PR #${thread.pr_number} \u2013 ${thread.pr_status ?? "open"}`}
-                      className="absolute left-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center"
+                      className="absolute left-1.5 top-1/2 -mt-px flex h-4 w-4 -translate-y-1/2 items-center justify-center"
                     >
                       <PrIcon size={12} className={prColor} />
                     </span>
@@ -1264,7 +1264,7 @@ function VirtualizedThreadList({
             <span
               aria-label={`Provider, ${providerMeta.label}`}
               className={cn(
-                "absolute top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center",
+                "absolute top-1/2 -mt-px flex h-4 w-4 -translate-y-1/2 items-center justify-center",
                 providerMeta.color,
                 scaffoldDim,
               )}

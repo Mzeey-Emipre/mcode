@@ -189,14 +189,49 @@ test.describe("Sidebar thread preview", () => {
     // PR icons pin to a fixed left column (aligned with the workspace chevron);
     // the provider icon sits in the row's indent, between the PR column and the title.
     const prIcon = await prRow.getByTitle(/PR #42/).boundingBox();
-    const directProvider = await directRow.getByLabel("Provider, Claude").boundingBox();
-    const prProvider = await prRow.getByLabel("Provider, Claude").boundingBox();
+    const prIconMark = await prRow
+      .getByTitle(/PR #42/)
+      .locator("svg")
+      .boundingBox();
+    const directProvider = await directRow
+      .getByLabel("Provider, Claude")
+      .boundingBox();
+    const directProviderMark = await directRow
+      .getByLabel("Provider, Claude")
+      .locator("svg")
+      .boundingBox();
+    const prProvider = await prRow
+      .getByLabel("Provider, Claude")
+      .boundingBox();
     expect(prIcon).not.toBeNull();
+    expect(prIconMark).not.toBeNull();
     expect(directProvider).not.toBeNull();
+    expect(directProviderMark).not.toBeNull();
     expect(prProvider).not.toBeNull();
-    expect(Math.abs((directProvider?.x ?? 0) - (prProvider?.x ?? 0))).toBeLessThanOrEqual(1);
-    expect((prIcon?.x ?? 0) + (prIcon?.width ?? 0)).toBeLessThanOrEqual((prProvider?.x ?? 0) + 1);
-    expect((prProvider?.x ?? 0) + (prProvider?.width ?? 0)).toBeLessThanOrEqual((prTitle?.x ?? 0) + 1);
+    expect(
+      Math.abs((directProvider?.x ?? 0) - (prProvider?.x ?? 0)),
+    ).toBeLessThanOrEqual(1);
+    expect((prIcon?.x ?? 0) + (prIcon?.width ?? 0)).toBeLessThanOrEqual(
+      (prProvider?.x ?? 0) + 1,
+    );
+    const providerToTitleGap =
+      (directTitle?.x ?? 0) -
+      ((directProvider?.x ?? 0) + (directProvider?.width ?? 0));
+    expect(providerToTitleGap).toBeGreaterThanOrEqual(3.5);
+    expect(providerToTitleGap).toBeLessThanOrEqual(4.5);
+    const titleCenterY =
+      (directTitle?.y ?? 0) + (directTitle?.height ?? 0) / 2;
+    const providerCenterY =
+      (directProviderMark?.y ?? 0) +
+      (directProviderMark?.height ?? 0) / 2;
+    expect(titleCenterY - providerCenterY).toBeGreaterThanOrEqual(0.5);
+    expect(titleCenterY - providerCenterY).toBeLessThanOrEqual(1.5);
+    const prIconCenterY =
+      (prIconMark?.y ?? 0) + (prIconMark?.height ?? 0) / 2;
+    const prTitleCenterY =
+      (prTitle?.y ?? 0) + (prTitle?.height ?? 0) / 2;
+    expect(prTitleCenterY - prIconCenterY).toBeGreaterThanOrEqual(0.5);
+    expect(prTitleCenterY - prIconCenterY).toBeLessThanOrEqual(1.5);
 
     await expect(page.locator('[data-testid="thread-item"][data-thread-id="thread-worktree"]').getByLabel("Running")).toBeVisible();
     await expect(page.locator('[data-testid="thread-item"][data-thread-id="thread-completed"]').getByLabel("Completed")).toBeVisible();
