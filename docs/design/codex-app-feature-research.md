@@ -19,7 +19,6 @@ The best near-term opportunities are:
 5. Inspect, steer, and stop controls for running sub-agents.
 6. `mcode://` links that open a project, prefill a prompt, and select a work mode.
 7. Bounded terminal-output context that an agent can inspect on request.
-8. Import of projects and reusable configuration from other agent tools.
 
 ## Existing Mcode behavior to preserve
 
@@ -113,20 +112,9 @@ Mcode opportunity:
 - Send a bounded tail with shell, directory, command boundary, exit status, and truncation markers.
 - Let the user select one shell and keep output out of context until requested.
 
-### 8. Import from other agent tools
-
-Codex can import instruction files, settings, skills, plugins, projects, recent chats, MCP servers, hooks, slash commands, and sub-agent definitions from supported tools without deleting the existing setup. [OpenAI: Import](https://learn.chatgpt.com/docs/import)
-
-Mcode opportunity:
-
-- Detect Claude, Codex, Cursor, Copilot, and OpenCode configuration with a read-only scan.
-- Preview mappings into Mcode's provider, skill, plugin, hook, command, and project concepts.
-- Show conflicts and unsupported fields, keep sources untouched, and generate a reversible receipt.
-- Offer project-by-project import.
-
 ## Priority 1 opportunities
 
-### 9. A closed visual QA loop
+### 8. A closed visual QA loop
 
 Codex's built-in browser combines page preview, element or region comments, screenshot capture, style adjustment, and optional Chrome DevTools Protocol access for DOM, console, network, and performance diagnosis. Computer Use can then click, type, and verify the rendered result. [OpenAI: Browser](https://learn.chatgpt.com/docs/browser)
 
@@ -136,7 +124,7 @@ Mcode opportunity:
 - Attach bounded console errors, failed requests, DOM target data, and a before screenshot.
 - Rerun the saved state after changes and capture the result in one verification receipt.
 
-### 10. Worktree snapshots and recovery
+### 9. Worktree snapshots and recovery
 
 Codex can move a chat between Local and its associated worktree, copy selected ignored files through `.worktreeinclude`, retain permanent worktrees, and snapshot a managed worktree before automatic deletion so it can be restored. The documented default keeps the 15 most recent managed worktrees. [OpenAI: Worktrees](https://learn.chatgpt.com/docs/environments/git-worktrees)
 
@@ -147,7 +135,7 @@ Mcode opportunity:
 - Show storage, last activity, branch state, and recoverability before cleanup.
 - Restore missing worktrees and allowlist ignored setup files for new ones.
 
-### 11. Reviewable cross-thread memory
+### 10. Reviewable cross-thread memory
 
 Codex local memories are opt-in and separate from ChatGPT web memory. Codex generates them after eligible chats become idle, stores them under the Codex home directory, provides per-chat controls for using or contributing memory, and documents secret redaction and rate-limit guards. The feature is off by default. [OpenAI: Memories](https://learn.chatgpt.com/docs/customization/memories)
 
@@ -158,7 +146,7 @@ Mcode opportunity:
 - Separate preferences, project facts, commands, and temporary observations.
 - Show injected memories with exclude and delete controls; keep required rules in repository docs.
 
-### 12. Dictation with an editable transcript
+### 11. Dictation with an editable transcript
 
 Codex exposes speech dictation from the desktop app and a keyboard shortcut for it. [OpenAI: Best practices](https://learn.chatgpt.com/guides/best-practices) [OpenAI: Desktop app commands](https://learn.chatgpt.com/docs/reference/commands)
 
@@ -168,7 +156,7 @@ Mcode opportunity:
 - Insert an editable, unsent transcript and correct known code identifiers and paths.
 - Keep audio ephemeral unless explicitly saved.
 
-### 13. Return-to-work affordances
+### 12. Return-to-work affordances
 
 Codex supports completion notifications, context-aware suggested prompts, archived-chat recovery, a detached chat window, and Always on top. It also exposes usage insights in the profile. [OpenAI: Desktop app settings](https://learn.chatgpt.com/docs/reference/settings)
 
@@ -179,7 +167,7 @@ Mcode opportunity:
 - Add a compact always-on-top thread window for monitoring one running task.
 - Keep social profile mechanics out of scope; show operational usage and cost insights instead.
 
-### 14. Plugin installation that resumes the task
+### 13. Plugin installation that resumes the task
 
 A Codex deep link can open a plugin-backed chat with an encoded plugin mention. If the plugin is available but missing, the app can install and connect it, then continue the same chat. The prompt is still user-submitted. [OpenAI: Desktop app commands](https://learn.chatgpt.com/docs/reference/commands)
 
@@ -189,7 +177,7 @@ Mcode opportunity:
 - Preserve draft, attachments, provider settings, and worktree during installation.
 - Resume at the blocked step, keeping skill, plugin, MCP server, and provider distinct.
 
-### 15. Direct editing beside agent patches
+### 14. Direct editing beside agent patches
 
 OpenAI's 2026-07-09 release added code and Markdown editing, selected-content revision, inline annotations, and in-place patch review to the desktop app. It also introduced PR Chat for questions, feedback, proposed patches, and accept or reject decisions. [OpenAI announcement](https://openai.com/index/chatgpt-for-your-most-ambitious-work/) [OpenAI: Codex changelog](https://learn.chatgpt.com/docs/changelog)
 
@@ -200,7 +188,7 @@ Mcode opportunity:
 - Open PR comments as editable patch proposals that users can accept, reject, or send to an agent.
 - Recompute Review after save without losing comments or scroll position.
 
-### 16. File and artifact workspace
+### 15. File and artifact workspace
 
 The desktop app can preview documents, spreadsheets, images, PDFs, Markdown, and generated files. Recent releases added sidebar previews, artifact cards, file tabs, file search, and direct editing. [OpenAI: Desktop app](https://learn.chatgpt.com/docs/app) [OpenAI: Codex changelog](https://learn.chatgpt.com/docs/changelog)
 
@@ -213,31 +201,31 @@ Mcode opportunity:
 
 ## Research tracks, not immediate implementation tickets
 
-### 17. Multi-repository projects
+### 16. Multi-repository projects
 
 The current desktop release supports multiple repositories in one project, but OpenAI's public announcement does not define combined diff behavior, branch ownership, worktree rules, or cross-repository commit and pull request flows. [OpenAI announcement](https://openai.com/index/chatgpt-for-your-most-ambitious-work/)
 
 Potential Mcode use: a portfolio project that groups several existing workspaces for one task while preserving a separate checkout, permission boundary, diff, and commit history for each repository. This conflicts with the current one-workspace-to-one-folder domain rule and needs a domain design before implementation.
 
-### 18. Mobile Remote, SSH, and host handoff
+### 17. Mobile Remote, SSH, and host handoff
 
 Codex Mobile Remote can start or continue work on a paired Windows or Mac host, send follow-ups, answer questions, approve actions, and inspect diffs, terminal output, tests, and screenshots. The desktop app can also discover SSH aliases and hand a chat and its Git state to a matching project on another host. [OpenAI: Remote connections](https://learn.chatgpt.com/docs/remote-connections) [OpenAI: Codex changelog](https://learn.chatgpt.com/docs/changelog)
 
 Potential Mcode use: a read-first remote companion for monitoring threads, answering plan questions, reviewing diffs, and approving a bounded request. Remote shell and Git-state handoff need separate authentication, encryption, host identity, and recovery designs.
 
-### 19. Computer Use
+### 18. Computer Use
 
 Codex Computer Use can operate Windows and macOS graphical apps, take screenshots, and work across applications. On Windows it takes over the foreground desktop. It maintains app-specific allow decisions and cannot control terminal apps, automate ChatGPT itself, approve administrator prompts, or grant security permissions. [OpenAI: Computer Use](https://learn.chatgpt.com/docs/computer-use)
 
 Potential Mcode use: live verification of Electron, desktop, simulator, and browser flows. This needs a separate security design covering app allowlists, prompt injection, screenshots, clipboard access, cancellation, and visible audit receipts. A structured plugin or test API should remain the default when one exists.
 
-### 20. Record a workflow into a skill
+### 19. Record a workflow into a skill
 
 Codex Record & Replay watches a demonstrated macOS workflow and drafts a reusable skill with inputs, steps, and verification. It can combine Computer Use, browser actions, and plugins. The documented release is unavailable on Windows and initially excludes the United Kingdom, EEA, and Switzerland. [OpenAI: Record & Replay](https://learn.chatgpt.com/docs/extend/record-and-replay)
 
 Potential Mcode use: record a verification or release procedure, then convert it into a provider-neutral skill. Research should begin with a deterministic browser or terminal recording before broad desktop capture.
 
-### 21. Frontmost-window capture
+### 20. Frontmost-window capture
 
 Codex Appshots can attach the frontmost macOS window as an image plus accessible text, including text exposed outside the visible scroll area. It can append consecutive captures to a recent chat. [OpenAI: Appshots](https://learn.chatgpt.com/docs/appshots)
 
@@ -259,8 +247,7 @@ The documentation establishes product intent, not the exact behavior of the inst
 10. Which Browser, Computer Use, Scheduled, and memory features are hidden behind rollout, plan, region, or workspace policy.
 11. How multiple repositories are added, permissioned, diffed, branched, and committed inside one project.
 12. How direct editor autosave, undo, patch proposals, stale diffs, and concurrent agent changes behave.
-13. How imports map conflicts, preserve source configuration, and report unsupported settings.
-14. How Mobile Remote reconnects, attributes approvals, streams terminal output, and handles host loss.
+13. How Mobile Remote reconnects, attributes approvals, streams terminal output, and handles host loss.
 
 Appshots and Record & Replay cannot be verified in the current Windows and United Kingdom environment under the documented availability rules.
 
@@ -280,8 +267,6 @@ These first-party screenshots preserve the visible reference state used during t
 | Custom theme comparison | ![Codex custom themes](codex-app-feature-research/custom-themes.webp) | [Desktop app settings](https://learn.chatgpt.com/docs/reference/settings) |
 | Memory documentation reference | ![OpenAI memory documentation reference](codex-app-feature-research/memory-doc.png) | [Memories](https://learn.chatgpt.com/docs/customization/memories) |
 | Record and Replay documentation reference | ![OpenAI Record and Replay documentation reference](codex-app-feature-research/record-and-replay-doc.png) | [Record and Replay](https://learn.chatgpt.com/docs/extend/record-and-replay) |
-| Agent import source selection | ![Codex agent import source selection](codex-app-feature-research/import-source.png) | [Import from another agent](https://learn.chatgpt.com/docs/import) |
-| Agent import item selection | ![Codex agent import item selection](codex-app-feature-research/import-overview.png) | [Import from another agent](https://learn.chatgpt.com/docs/import) |
 
 ## Source notes
 
