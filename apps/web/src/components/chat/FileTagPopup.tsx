@@ -175,24 +175,30 @@ const SuggestionRow = memo(function SuggestionRow({
           className="flex items-center justify-center"
         />
       </span>
-      <span className="min-w-0 flex-1 truncate">
-        <span className={cn(
-          isDark
-            ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
-            : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
-        )}>{dir}</span>
-        <span className={cn("font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>
-      </span>
-      {item.kind === "agent" && item.description ? (
-        <span className={cn(
-          "min-w-0 flex-[1.2] truncate",
-          isDark
-            ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
-            : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
-        )}>
-          {item.description}
+      {item.kind === "agent" ? (
+        <span className="flex min-w-0 flex-1 items-baseline gap-1">
+          <span className={cn("shrink-0 font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>
+          {item.description ? (
+            <span className={cn(
+              "min-w-0 truncate",
+              isDark
+                ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
+                : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
+            )}>
+              {item.description}
+            </span>
+          ) : null}
         </span>
-      ) : null}
+      ) : (
+        <span className="min-w-0 flex-1 truncate">
+          <span className={cn(
+            isDark
+              ? "text-neutral-400 group-hover:text-neutral-300 group-aria-selected:text-neutral-300"
+              : "text-muted-foreground group-hover:text-accent-foreground/70 group-focus-visible:text-accent-foreground/70 group-aria-selected:text-accent-foreground/70",
+          )}>{dir}</span>
+          <span className={cn("font-medium", isDark ? "text-neutral-100" : "")}>{name}</span>
+        </span>
+      )}
     </Button>
   );
 });

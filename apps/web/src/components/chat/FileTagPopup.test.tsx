@@ -235,6 +235,23 @@ describe("FileTagPopup", () => {
     expect(agentOption.querySelector(".lucide-bot")).toBeNull();
   });
 
+  it("keeps an agent title close to its description", () => {
+    render(
+      <FileTagPopup
+        items={items}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={0}
+      />,
+    );
+
+    const title = screen.getByText("planner");
+    const description = screen.getByText("Plans implementation work.");
+    expect(title.parentElement).toBe(description.parentElement);
+    expect(title.parentElement).toHaveClass("gap-1");
+  });
+
   it("accepts selectedIndex prop and marks the correct item", () => {
     render(
       <FileTagPopup
