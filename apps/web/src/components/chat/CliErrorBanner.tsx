@@ -82,7 +82,7 @@ export function CliErrorBanner({ error, onDismiss, onOpenSettings }: CliErrorBan
           {/* Install command */}
           {installCmd && (
             <div className="flex items-center gap-2">
-              <code className="flex-1 rounded bg-muted/60 px-2.5 py-1 font-mono text-[11px] text-foreground/80 border border-border/40">
+              <code className="flex-1 rounded bg-muted/60 px-2.5 py-1 font-mono text-xs text-foreground/80 border border-border/40">
                 {installCmd}
               </code>
               <button
@@ -102,7 +102,7 @@ export function CliErrorBanner({ error, onDismiss, onOpenSettings }: CliErrorBan
 
           {/* Settings hint */}
           {settingsHint && (
-            <p className="text-[11px] text-muted-foreground/70">
+            <p className="text-xs text-muted-foreground/70">
               {settingsHint.replace(/(?:in |at )?Settings > [^.\n]+\.?/, "").trim()}{" "}
               <button
                 type="button"

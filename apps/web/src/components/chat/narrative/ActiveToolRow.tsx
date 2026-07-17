@@ -27,7 +27,7 @@ export function ActiveToolRow({ toolCall }: ActiveToolRowProps) {
   const detail = extractToolInputDetail(toolCall);
 
   return (
-    <div className={`${NARRATIVE_TOOL_ROW} px-2 py-1 text-[0.8125rem]`}>
+    <div className={`${NARRATIVE_TOOL_ROW} px-2 py-1 text-sm`}>
       <Icon className="w-3.5 h-3.5 shrink-0 text-muted-foreground/60" />
       <span className="font-medium text-foreground shrink-0">{label}</span>
       <span className={narrativeToolDetailClass("sm")} title={detail}>

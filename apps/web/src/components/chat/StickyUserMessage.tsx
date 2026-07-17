@@ -152,7 +152,7 @@ export function StickyUserMessage({
                 </span>
                 <span
                   aria-hidden
-                  className="mt-1 inline-flex items-center gap-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
+                  className="mt-1 inline-flex items-center gap-0.5 font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground"
                 >
                   <ChevronDown
                     size={11}

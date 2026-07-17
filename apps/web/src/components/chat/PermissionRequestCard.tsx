@@ -127,7 +127,7 @@ export function PermissionRequestCard({
       {/* Input preview */}
       <pre
         className={cn(
-          "text-[0.7rem] leading-relaxed text-muted-foreground/80",
+          "text-xs leading-relaxed text-muted-foreground/80",
           "bg-muted/30 rounded px-2 py-1.5",
           "max-h-[120px] overflow-y-auto scrollbar-on-hover",
           "whitespace-pre-wrap break-all font-mono",
@@ -179,7 +179,7 @@ export function PermissionRequestCard({
                 <Zap size={12} className="text-amber-500 shrink-0" />
                 <div className="flex flex-col">
                   <span className="text-xs font-medium">Allow once</span>
-                  <span className="text-[10px] text-muted-foreground">Prompt again next time</span>
+                  <span className="text-xs text-muted-foreground">Prompt again next time</span>
                 </div>
                 {allowMode === "allow" && <Check size={11} className="ml-auto text-primary" />}
               </DropdownMenuItem>
@@ -191,7 +191,7 @@ export function PermissionRequestCard({
                 <Clock size={12} className="text-blue-400 shrink-0" />
                 <div className="flex flex-col">
                   <span className="text-xs font-medium">Allow in session</span>
-                  <span className="text-[10px] text-muted-foreground">Skip prompts this session</span>
+                  <span className="text-xs text-muted-foreground">Skip prompts this session</span>
                 </div>
                 {allowMode === "allow-session" && <Check size={11} className="ml-auto text-primary" />}
               </DropdownMenuItem>

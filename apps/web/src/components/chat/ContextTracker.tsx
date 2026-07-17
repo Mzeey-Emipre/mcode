@@ -108,7 +108,7 @@ export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, 
             <span
               className={cn(
                 "absolute inset-0 flex items-center justify-center",
-                "text-[7px] font-semibold leading-none select-none",
+                "text-xs font-semibold leading-none select-none",
                 text,
               )}
             >
@@ -119,12 +119,12 @@ export function ContextTracker({ tokensIn, contextWindow, totalProcessedTokens, 
       />
       <TooltipContent side="top" sideOffset={6}>
         <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold tracking-widest uppercase opacity-50">
+          <span className="text-xs font-semibold tracking-widest uppercase opacity-50">
             Context Window
           </span>
           <span className="text-xs font-medium">{tooltipLine}</span>
           {totalProcessedTokens != null && totalProcessedTokens > tokensIn && (
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               Total processed: {abbrev(totalProcessedTokens)} tokens
             </span>
           )}

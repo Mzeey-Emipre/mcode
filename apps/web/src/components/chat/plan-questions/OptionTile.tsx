@@ -73,7 +73,7 @@ export function OptionTile({
         <span
           aria-hidden="true"
           className={cn(
-            "font-mono text-[10px] leading-none w-2.5 flex-shrink-0",
+            "font-mono text-xs leading-none w-2.5 flex-shrink-0",
             "transition-[opacity,transform] duration-200 ease-out",
             selected
               ? "opacity-100 translate-x-0 text-primary"
@@ -96,7 +96,7 @@ export function OptionTile({
               {option.title}
             </span>
             {isRecommended && (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-primary/65 leading-none">
+              <span className="text-xs font-mono uppercase tracking-wider text-primary/65 leading-none">
                 · recommended
               </span>
             )}

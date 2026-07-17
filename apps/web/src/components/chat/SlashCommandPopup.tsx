@@ -268,13 +268,13 @@ function CommandRow({
       {/* Name + description */}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className={cn(
-          "truncate text-[13px] font-medium leading-4",
+          "truncate text-sm font-medium leading-4",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
           /{cmd.name}
         </span>
         <span className={cn(
-          "truncate text-[11px] leading-4",
+          "truncate text-xs leading-4",
           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
         )}>
           {cmd.description}

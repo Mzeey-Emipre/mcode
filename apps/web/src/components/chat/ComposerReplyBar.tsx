@@ -19,7 +19,7 @@ export function ComposerReplyBar({ sourceRole, previewText, onDismiss }: Compose
     <div className="flex items-start gap-2 px-3 py-2 animate-fade-up-in">
       <Reply className="mt-0.5 size-3.5 shrink-0 text-primary/70 scale-x-[-1]" />
       <div className="min-w-0 flex-1 border-l-2 border-primary/40 pl-2">
-        <p className="text-[11px] font-medium text-muted-foreground/60 leading-none mb-0.5">
+        <p className="text-xs font-medium text-muted-foreground/60 leading-none mb-0.5">
           Replying to {sourceRole}
         </p>
         <p className="text-xs text-muted-foreground/50 truncate italic">

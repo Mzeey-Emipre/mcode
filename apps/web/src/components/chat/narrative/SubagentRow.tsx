@@ -44,7 +44,7 @@ function DelegationTags({ tags }: DelegationTagsProps) {
       {tags.map((tag) => (
         <span
           key={tag}
-          className="font-mono text-[0.625rem] font-medium px-1 py-px rounded-sm bg-muted-foreground/12 text-muted-foreground/70"
+          className="font-mono text-xs font-medium px-1 py-px rounded-sm bg-muted-foreground/12 text-muted-foreground/70"
         >
           {tag}
         </span>
@@ -76,7 +76,7 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
   if (!hasChildren && !finalOutput) {
     return (
       <div
-        className="flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden px-2 py-1 text-[0.8125rem]"
+        className="flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden px-2 py-1 text-sm"
         data-testid="subagent-flat-row"
       >
         <StackedLayersIcon
@@ -93,7 +93,7 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
         </span>
         <DelegationTags tags={delegationTags} />
         {isErrored && (
-          <span className="font-mono text-[0.625rem] font-medium px-1 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
+          <span className="font-mono text-xs font-medium px-1 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
             errored
           </span>
         )}
@@ -179,7 +179,7 @@ function ExpandableSubagentRow({
           userToggledRef.current = true;
           setOpen((o) => !o);
         }}
-        className={`${NARRATIVE_TOOL_ROW} w-full px-2 py-1 text-left rounded-md hover:bg-muted/30 transition-colors duration-100 text-[0.8125rem]`}
+        className={`${NARRATIVE_TOOL_ROW} w-full px-2 py-1 text-left rounded-md hover:bg-muted/30 transition-colors duration-100 text-sm`}
         aria-expanded={open}
       >
         <StackedLayersIcon
@@ -199,13 +199,13 @@ function ExpandableSubagentRow({
         <DelegationTags tags={delegationTags} />
 
         {metaText && (
-          <span className="font-mono text-[0.6875rem] text-muted-foreground/50 shrink-0">
+          <span className="font-mono text-xs text-muted-foreground/50 shrink-0">
             {!isRunning ? `· ${metaText}` : metaText}
           </span>
         )}
 
         {isErrored && (
-          <span className="font-mono text-[0.625rem] font-medium px-1 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
+          <span className="font-mono text-xs font-medium px-1 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
             errored
           </span>
         )}
@@ -260,7 +260,7 @@ function ExpandableSubagentRow({
             const detail = extractToolInputDetail(tc);
 
             return (
-              <li key={tc.id} className={`${NARRATIVE_TOOL_ROW} py-px text-[0.8125rem]`}>
+              <li key={tc.id} className={`${NARRATIVE_TOOL_ROW} py-px text-sm`}>
                 <Icon className={`w-3 h-3 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground/50"}`} />
                 <span className={`shrink-0 ${isActive ? "text-foreground" : "text-muted-foreground/70"}`}>{label}</span>
                 <span className={narrativeToolDetailClass("sm")} title={detail}>
@@ -279,7 +279,7 @@ function ExpandableSubagentRow({
           <button
             type="button"
             onClick={() => setShowAll((o) => !o)}
-            className="flex items-center gap-1 pl-7 pb-1 text-[0.6875rem] text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors"
+            className="flex items-center gap-1 pl-7 pb-1 text-xs text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors"
           >
             <ChevronDown className={`h-2.5 w-2.5 shrink-0 transition-transform duration-150 ${showAll ? "rotate-180" : ""}`} />
             {showAll ? "Show less" : `Show all ${children.length}`}

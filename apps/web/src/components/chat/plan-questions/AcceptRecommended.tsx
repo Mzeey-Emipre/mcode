@@ -57,7 +57,7 @@ export function AcceptRecommended({
       disabled={disabled}
       data-testid={testId}
       className={cn(
-        "inline-flex items-center gap-1.5 text-[11px] font-mono",
+        "inline-flex items-center gap-1.5 text-xs font-mono",
         "text-primary/65 hover:text-primary",
         "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-primary/65",
         "transition-colors duration-150 ease-out",

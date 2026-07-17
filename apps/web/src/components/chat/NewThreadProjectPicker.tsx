@@ -47,7 +47,7 @@ export function NewThreadProjectPicker({
               size="sm"
               data-testid="new-thread-project-picker"
               aria-expanded={open}
-              className="h-[28px] gap-[6px] rounded-md px-[10px] text-[12px] font-medium leading-none text-foreground/90 hover:bg-accent/70"
+              className="h-[28px] gap-[6px] rounded-md px-[10px] text-xs font-medium leading-none text-foreground/90 hover:bg-accent/70"
             >
               <Folder size={14} className="size-3.5 text-muted-foreground" aria-hidden />
               Choose project
@@ -73,7 +73,7 @@ export function NewThreadProjectPicker({
                   beginNewThread(workspace.id);
                   setOpen(false);
                 }}
-                className="gap-2.5 px-2 py-1.5 text-[13px]"
+                className="gap-2.5 px-2 py-1.5 text-sm"
               >
                 <Folder size={13} className="text-muted-foreground" aria-hidden />
                 <span className="truncate">{workspace.name}</span>
@@ -87,7 +87,7 @@ export function NewThreadProjectPicker({
             variant="ghost"
             size="sm"
             onClick={handleAddProject}
-            className="h-8 w-full justify-start gap-2 px-2 text-[13px] font-normal"
+            className="h-8 w-full justify-start gap-2 px-2 text-sm font-normal"
           >
             <Plus size={13} className="text-muted-foreground" aria-hidden />
             New project

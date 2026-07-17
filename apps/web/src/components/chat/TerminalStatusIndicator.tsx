@@ -24,7 +24,7 @@ export function TerminalStatusIndicator() {
       type="button"
       aria-label="Toggle terminal"
       onClick={togglePanel}
-      className="flex cursor-pointer items-center gap-1.5 text-[11px] hover:opacity-80"
+      className="flex cursor-pointer items-center gap-1.5 text-xs hover:opacity-80"
     >
       <Spinner size={12} className="text-muted-foreground" style={SLOW_SPIN_STYLE} />
       <span className="flex items-center gap-1.5 text-muted-foreground font-medium">

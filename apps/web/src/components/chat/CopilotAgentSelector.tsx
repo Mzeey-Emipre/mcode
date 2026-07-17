@@ -72,7 +72,7 @@ function AgentItem({
       </span>
       <span className="flex flex-col gap-0.5">
         <span className="font-medium leading-none">{agent.displayName}</span>
-        <span className="text-[11px] leading-snug text-muted-foreground">
+        <span className="text-xs leading-snug text-muted-foreground">
           {agent.description}
         </span>
       </span>
@@ -83,7 +83,7 @@ function AgentItem({
 /** Section label rendered as all-caps category header with a separator line. */
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <DropdownMenuLabel className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+    <DropdownMenuLabel className="px-2 pb-1 pt-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">
       {children}
     </DropdownMenuLabel>
   );
