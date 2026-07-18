@@ -86,6 +86,7 @@ import {
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { useSkillsStore } from "@/stores/skillsStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { useDiffStore } from "@/stores/diffStore";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -333,6 +334,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    useDiffStore.setState({ previewUrlByThread: {} });
     useSkillsStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
     mockUsePreviewTabs.mockReturnValue({
@@ -519,6 +521,45 @@ describe("PreviewPanel: full panel state", () => {
       view.unmount();
     } finally {
       consoleError.mockRestore();
+      restoreWebviewMethods();
+    }
+  });
+
+  it("preserves a page for a title-only event and clears it on authoritative blank navigation", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "https://example.com" }),
+    );
+    useDiffStore.setState({
+      previewUrlByThread: { "thread-1": "https://example.com" },
+    });
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => "about:blank",
+    });
+
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+      const webview = await screen.findByTestId("preview-webview");
+      const titleEvent = new Event("page-title-updated") as Event & { title?: string };
+      Object.defineProperty(titleEvent, "title", { value: "Example" });
+      fireEvent(webview, titleEvent);
+      expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(
+        "https://example.com",
+      );
+
+      const blankEvent = new Event("did-navigate") as Event & { url?: string };
+      Object.defineProperty(blankEvent, "url", { value: "about:blank" });
+      fireEvent(webview, blankEvent);
+      await waitFor(() => {
+        expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe("");
+      });
+    } finally {
       restoreWebviewMethods();
     }
   });

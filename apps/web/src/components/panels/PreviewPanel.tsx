@@ -1846,10 +1846,13 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     (status: PreviewPageStatus): void => {
       setWebviewPageStatus(status);
       const url = status.url;
-      if (url === null) return;
-      const persistedUrl = !url.startsWith("about:") && !url.startsWith("chrome-error://")
-        ? url
-        : "";
+      // Title events can arrive without a readable guest URL. They refine the
+      // current page and must not erase it, while a titleless null status is an
+      // authoritative blank or failed navigation and clears persisted state.
+      if (url === null && status.title !== null) return;
+      const persistedUrl = url === null || url.startsWith("about:") || url.startsWith("chrome-error://")
+        ? ""
+        : url;
       useDiffStore.getState().setPreviewUrlForThread(threadId, persistedUrl);
     },
     [threadId],
