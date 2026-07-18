@@ -878,6 +878,40 @@ The embedded in-app browser panel that renders a web URL or a local file.
 It is the **Browser** tab type within the workspace-global right panel.
 Distinct from opening the page in the user's external browser.
 
+### Browser automation
+Provider-neutral agent control of a live Preview tab. Browser automation uses
+the same page the user can see, so agent actions, page state, and debugging
+evidence stay attached to one shared browser session.
+Providers use the typed, scoped Browser gateway. The former raw browser-use
+pipe is disabled unless desktop startup receives the hidden rollback variable
+`MCODE_ENABLE_LEGACY_BROWSER_USE_PIPE=1`.
+_Avoid_: a hidden agent-only browser
+
+### Browser automation host
+The running Mcode client that makes its live Preview tabs available for Browser
+automation. A host advertises only tabs that it currently owns and can stop
+advertising a tab when that page is replaced, discarded, or closed.
+_Avoid_: treating a saved Preview tab record as a live automation target
+
+### Browser controller
+The current actor with control of a Preview tab: the user, an agent, or neither.
+Direct user input takes control from the agent and stops the active Browser
+automation action for that tab.
+_Avoid_: allowing agent input to compete with user input
+
+### Browser automation snapshot
+A bounded, point-in-time description of a Preview tab for an agent. It can
+include visible text, interactive elements, accessibility information,
+diagnostic entries, recent actions, and a screenshot. Truncation is part of the
+snapshot so the agent can tell when it received a partial view.
+_Avoid_: treating a snapshot as a permanent page model
+
+### Browser diagnostic entry
+A bounded console or network observation captured from a live Preview tab for
+agent debugging. Sensitive URL details are removed before the entry crosses the
+Preview boundary.
+_Avoid_: exposing raw browser debugging protocol traffic to a provider
+
 ### Preview annotation
 A saved request anchored to part of the Preview page. It can carry note text,
 proposed changes for that page target, or both; the annotation bubble is only
