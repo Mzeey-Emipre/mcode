@@ -546,6 +546,11 @@ describe("PreviewPanel: full panel state", () => {
     try {
       render(<PreviewPanel threadId="thread-1" />);
       const webview = await screen.findByTestId("preview-webview");
+      fireEvent(webview, new Event("did-start-loading"));
+      expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(
+        "https://example.com",
+      );
+
       const titleEvent = new Event("page-title-updated") as Event & { title?: string };
       Object.defineProperty(titleEvent, "title", { value: "Example" });
       fireEvent(webview, titleEvent);

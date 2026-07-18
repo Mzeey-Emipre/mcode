@@ -1849,7 +1849,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
       // Title events can arrive without a readable guest URL. They refine the
       // current page and must not erase it, while a titleless null status is an
       // authoritative blank or failed navigation and clears persisted state.
-      if (url === null && status.title !== null) return;
+      if (url === null && (status.title !== null || status.phase === "loading")) return;
       const persistedUrl = url === null || url.startsWith("about:") || url.startsWith("chrome-error://")
         ? ""
         : url;
