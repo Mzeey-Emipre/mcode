@@ -1846,7 +1846,8 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     (status: PreviewPageStatus): void => {
       setWebviewPageStatus(status);
       const url = status.url;
-      const persistedUrl = url && !url.startsWith("about:") && !url.startsWith("chrome-error://")
+      if (url === null) return;
+      const persistedUrl = !url.startsWith("about:") && !url.startsWith("chrome-error://")
         ? url
         : "";
       useDiffStore.getState().setPreviewUrlForThread(threadId, persistedUrl);

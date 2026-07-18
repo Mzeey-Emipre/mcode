@@ -703,7 +703,7 @@ test.describe("PreviewPanel: loaded header", () => {
     await expect(page.getByLabel("Open in system browser")).toBeVisible();
   });
 
-  test("the overflow kebab lists the relocated tools in order with Soon stubs", async ({ page }) => {
+  test("the overflow kebab enables DevTools and keeps the device toolbar stubbed", async ({ page }) => {
     await page.getByLabel("More browser tools").click();
     const menu = page.getByTestId("browser-overflow-menu");
     await expect(menu).toBeVisible();
@@ -719,10 +719,8 @@ test.describe("PreviewPanel: loaded header", () => {
     await expect(menu.getByText("Zoom")).toBeVisible();
     await expect(menu.getByText("Clear cookies")).toBeVisible();
     await expect(menu.getByText("Clear cache")).toBeVisible();
-    // The two future tools are present but disabled.
-    await expect(menu.getByText("Developer tools").locator("..")).toHaveAttribute(
+    await expect(menu.getByText("Developer tools").locator("..")).not.toHaveAttribute(
       "data-disabled",
-      "",
     );
     await expect(menu.getByText("Show device toolbar").locator("..")).toHaveAttribute(
       "data-disabled",

@@ -63,9 +63,9 @@ function SoonTag() {
 /**
  * Overflow menu for the browser header. Holds the rarely-used tools that the
  * minimal header deliberately omits, in the order set by the right-panel epic:
- * New page, Force reload, Dump page content, Region capture, Developer tools
- * (disabled "Soon" stub), Show device toolbar (disabled "Soon" stub), Zoom,
- * Clear cookies, Clear cache. Keeps the everyday header to back/forward, the
+ * New page, Force reload, Dump page content, Region capture, Developer tools,
+ * Show device toolbar (disabled "Soon" stub), Zoom, Clear cookies, and Clear
+ * cache. Keeps the everyday header to back/forward, the
  * URL, design, and screenshot.
  *
  * While open it suppresses the native Electron BrowserView (which paints above

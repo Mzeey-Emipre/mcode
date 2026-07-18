@@ -199,7 +199,7 @@ export function interruptBrowserAutomationTarget(
   tabId: string,
   reason: BrowserAutomationInterruptionReason,
 ): void {
-  const bridge = window.desktopBridge?.preview.automation;
+  const bridge = window.desktopBridge?.preview?.automation;
   if (!bridge) return;
   const key = browserAutomationTargetKey(threadId, tabId);
   if (pendingInterruptions.has(key)) return;

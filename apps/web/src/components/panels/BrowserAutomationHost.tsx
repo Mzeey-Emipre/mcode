@@ -327,7 +327,7 @@ export function BrowserAutomationHost() {
   }, []);
 
   useEffect(() => {
-    if (!stableHostId || !window.desktopBridge?.preview.automation) return;
+    if (!stableHostId || !window.desktopBridge?.preview?.automation) return;
     if (connectionStatus !== "connected" || workspaceIds.length === 0) {
       leaseRef.current = null;
       useBrowserAutomationStore.getState().setRegistered(false);
@@ -382,7 +382,7 @@ export function BrowserAutomationHost() {
     const lease = leaseRef.current;
     if (!lease || connectionStatus !== "connected") return;
     let cancelled = false;
-    const bridge = window.desktopBridge?.preview.automation;
+    const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge) return;
     const targets = [...liveTargets.values()].slice(0, 64);
     void Promise.all(targets.map(async (candidate) => {
@@ -437,7 +437,7 @@ export function BrowserAutomationHost() {
   }, [connectionStatus, workspaceSignature, liveTargets.size, registered]);
 
   useEffect(() => {
-    const bridge = window.desktopBridge?.preview.automation;
+    const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge) return;
     const unsubscribeRequest = pushEmitter.on("browserAutomation.request", (input) => {
       const payload = input as { hostId?: unknown; generation?: unknown; dispatch?: unknown };
@@ -500,7 +500,7 @@ export function BrowserAutomationHost() {
   }, []);
 
   useEffect(() => {
-    const bridge = window.desktopBridge?.preview.automation;
+    const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge) return;
     return pushEmitter.on("browserAutomation.bootstrap", (input) => {
       const payload = input as { hostId?: unknown; generation?: unknown; request?: unknown };
@@ -595,7 +595,7 @@ export function BrowserAutomationHost() {
           diff.setRightPanelTab(request.workspaceId, request.threadId, "preview");
         }
         await afterBrowserLayout();
-        const listed = await window.desktopBridge?.preview.tabs.list?.(request.threadId);
+        const listed = await window.desktopBridge?.preview?.tabs.list?.(request.threadId);
         if (listed?.ok && listed.data.threadId === request.threadId) {
           usePreviewTabsStore.getState().setTabSet(request.threadId, listed.data);
         }
@@ -668,7 +668,7 @@ export function BrowserAutomationHost() {
       }).finally(() => {
         void restoreBackgroundContext();
         if (createdTabId && !bootstrapSucceeded) {
-          void window.desktopBridge?.preview.tabs.close?.(request.threadId, createdTabId);
+          void window.desktopBridge?.preview?.tabs.close?.(request.threadId, createdTabId);
         }
         window.clearTimeout(deadlineTimer);
         if (bootstrapAbortRef.current.get(key) === controller) bootstrapAbortRef.current.delete(key);
@@ -681,7 +681,7 @@ export function BrowserAutomationHost() {
   }, []);
 
   useEffect(() => {
-    const bridge = window.desktopBridge?.preview.automation;
+    const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge) return;
     return bridge.onControllerChanged((controller) => {
       useBrowserAutomationStore.getState().setController(controller);
@@ -720,7 +720,7 @@ export function BrowserAutomationHost() {
       if (cancelledRef.current.has(key)) continue;
       cancelledRef.current.add(key);
       recorderRef.current.cancel(dispatch);
-      void window.desktopBridge?.preview.automation.cancel(dispatch.request.requestId);
+      void window.desktopBridge?.preview?.automation.cancel(dispatch.request.requestId);
       void getTransport().cancelBrowserAutomationRequest(
         lease.hostId,
         lease.generation,
@@ -764,7 +764,7 @@ export function BrowserAutomationHost() {
       if (cancelledRef.current.has(key)) continue;
       cancelledRef.current.add(key);
       recorderRef.current.cancel(dispatch);
-      void window.desktopBridge?.preview.automation.cancel(dispatch.request.requestId);
+      void window.desktopBridge?.preview?.automation.cancel(dispatch.request.requestId);
       if (lease) {
         void getTransport().cancelBrowserAutomationRequest(
           lease.hostId,

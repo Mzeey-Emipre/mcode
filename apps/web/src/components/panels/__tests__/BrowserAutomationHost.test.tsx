@@ -209,6 +209,17 @@ describe("BrowserAutomationHost", () => {
     delete window.desktopBridge;
   });
 
+  it("stays inactive when a partial desktop bridge omits preview automation", async () => {
+    window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+
+    const view = render(<BrowserAutomationHost />);
+
+    await act(async () => Promise.resolve());
+    expect(harness.transport.registerBrowserAutomationHost).not.toHaveBeenCalled();
+    expect(view.container).toBeEmptyDOMElement();
+    view.unmount();
+  });
+
   it("re-registers after reconnect and suppresses a response from the stale generation", async () => {
     const first = deferred<BrowserAutomationResponse>();
     execute.mockReturnValueOnce(first.promise);
