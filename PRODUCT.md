@@ -75,7 +75,7 @@ Every action has a keystroke. F2 renames in place, Cmd+1..9 switches threads, Cm
 
 ### 5. Quiet over loud.
 
-The interface rewards inactivity. When nothing is happening, the app looks calm. When something is happening, exactly one element changes — a dot pulses, a row enters, a number ticks. Nothing else moves. Decoration that competes with the data is hostile.
+The interface stays calm at rest. During a state change, one signal leads: a dot pulses, a row enters, or a number ticks. Supporting motion may preserve continuity or show cause and effect, but it shares the same timing and does not compete with the data.
 
 ### 6. Anticipate the next step.
 
@@ -162,7 +162,7 @@ Before shipping a feature, hold it against three questions:
 
 **Three words: editorial, quiet, instrument-grade.**
 
-The register is editorial and typeset, closer to a well-made code editor or a terminal than a CRM or a SaaS dashboard. The voice is technical and never consumer-softened: "Errored", "Idle", "Empty", not "Oops, something went wrong." No emoji, no hand-holding. The interface is calm at rest; when something happens, exactly one element moves (a dot pulses, a row enters, a number ticks) and nothing else.
+The register is editorial and typeset, closer to a well-made code editor or terminal than a CRM or SaaS dashboard. The voice is technical and never consumer-softened: "Errored", "Idle", "Empty", not "Oops, something went wrong." No emoji or hand-holding. The interface stays calm at rest. State changes use one dominant signal, with restrained supporting motion for cause and effect.
 
 The emotional goal: a senior developer at 11pm feels in control and unhurried, reading an instrument, not being marketed to.
 

@@ -59,10 +59,10 @@ Shadows are subtle. Cards have a quiet inner ring rather than a heavy drop shado
 
 ### Typography is the design
 
-There is no illustration in Mcode. There are no marketing graphics, no decorative shapes, no patterns, no gradients. The typographic system **is** the design. Choose body and mono families that feel like a well-typeset book, not like a default OS picker.
+Typography carries most of Mcode's identity. Marketing graphics, decorative shapes, patterns, and ornamental gradients do not belong in routine workspaces. Restrained illustration or diagrams may teach a concept or clarify a state. Choose body and mono families that feel well typeset, not like a default OS picker.
 
 Use tiny mono small-caps for true technical index labels, machine facts, and
-empty-state captions. Do not use them as a default heading treatment for every
+compact metadata when the treatment improves scanning. Do not use them as a default heading treatment for every
 section or action. Interactive and content headings use sentence case.
 Numbers, hashes, and timestamps are tabular monospace so they line up
 vertically. Body text is compact enough for scanning and comfortable enough to
@@ -70,7 +70,7 @@ read in a long session.
 
 ### Empty states earn their place
 
-When there's nothing to show, do not show an illustration of an empty box. Set a single typographic glyph — `◌`, `⊘`, `⊕`, `∅`, `⌂` — at low opacity, with a small-caps mono caption underneath. The glyph is a quiet anchor, not a mascot. The caption uses technical language: "Empty thread", "No active runs", "Awaiting agent."
+When there is nothing to show, explain the condition and the next useful move. First use, filtered results, completed work, unavailable data, and quiet resting states can use different compositions. A glyph, diagram, message, or restrained illustration may support the meaning. Keep the copy technical. Show one action when the user can resolve the state.
 
 ## 5. Information Density Without Uniform Compression
 
@@ -216,7 +216,7 @@ Things you should bring fresh thinking to:
 - **The transitions between states.** What does it feel like when an agent finishes a long run? When a thread becomes active? When the user switches projects? These moments can have texture without breaking the quiet register.
 - **The composer as a drafting surface.** Right now it is a text input with controls below. What else could it be? A drafting board with chips and tags? A surface that responds visually to mode changes?
 - **The visualization of long agent runs.** A 200-message thread is hard to navigate. Could there be a vertical rail showing the shape of the conversation — tool calls vs replies, errors vs successes, time gaps?
-- **The empty states.** Each one is an opportunity for typographic personality, as long as it stays inside the register (mono, small-caps, technical copy, low contrast).
+- **The empty states.** Match the composition to why content is absent. Typography, diagrams, restrained illustration, and contextual actions can add personality within the technical register.
 - **The "what's running" overview.** A bird's-eye glance at every active agent across every project. Could be a single thin row at the top. Could be a compressed sidebar mode. Up to you.
 - **Dead time.** What does the app look like when nothing is happening? Most apps don't think about this. Mcode should reward inactivity with calm.
 - **The web-only context.** When Mcode runs in a browser away from the user's main machine, what changes? What's the experience of checking on agents from a phone or a borrowed laptop? The desktop is the primary canvas, but the web shouldn't feel like an afterthought.
