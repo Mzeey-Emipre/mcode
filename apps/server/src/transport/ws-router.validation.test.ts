@@ -843,6 +843,80 @@ describe("routeMessage thread.syncPrs", () => {
     );
     expect(watch).toHaveBeenCalledWith("named-thread", 42, "feat/named", "C:/repo");
   });
+
+  it("refreshes linked pull requests through one batch and stops terminal watchers", async () => {
+    const checks = { aggregate: "passing" as const, runs: [], fetchedAt: 1 };
+    const getPullRequestWatchSnapshots = vi.fn().mockResolvedValue([
+      { threadId: "thread-1", prNumber: 41, state: "OPEN", checks },
+      { threadId: "thread-2", prNumber: 42, state: "MERGED", checks },
+    ]);
+    const watch = vi.fn();
+    const refresh = vi.fn();
+    const unwatch = vi.fn();
+    const deps = {
+      workspaceService: {
+        findById: vi.fn().mockReturnValue({
+          id: "ws-1",
+          path: "C:/repo",
+          is_git_repo: true,
+        }),
+      },
+      threadService: {
+        list: vi.fn().mockReturnValue([
+          {
+            id: "thread-1",
+            branch: "feat/one",
+            mode: "worktree",
+            checkout_state: "named",
+            pr_number: 41,
+            pr_status: "OPEN",
+          },
+          {
+            id: "thread-2",
+            branch: "feat/two",
+            mode: "worktree",
+            checkout_state: "named",
+            pr_number: 42,
+            pr_status: "OPEN",
+          },
+        ]),
+        linkPr: vi.fn(),
+      },
+      githubService: {
+        getPullRequestWatchSnapshots,
+        getBranchPr: vi.fn(),
+      },
+      ciWatcherService: { watch, refresh, unwatch },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-sync-linked",
+        method: "thread.syncPrs",
+        params: { workspaceId: "ws-1" },
+      }),
+      deps,
+    );
+
+    expect(getPullRequestWatchSnapshots).toHaveBeenCalledTimes(1);
+    expect(getPullRequestWatchSnapshots).toHaveBeenCalledWith([
+      { threadId: "thread-1", prNumber: 41, repoPath: "C:/repo" },
+      { threadId: "thread-2", prNumber: 42, repoPath: "C:/repo" },
+    ]);
+    expect(deps.githubService.getBranchPr).not.toHaveBeenCalled();
+    expect(response.result).toEqual([
+      { threadId: "thread-2", prNumber: 42, prStatus: "MERGED" },
+    ]);
+    expect(watch).toHaveBeenCalledWith(
+      "thread-1",
+      41,
+      "feat/one",
+      "C:/repo",
+      { skipInitialFetch: true },
+    );
+    expect(refresh).toHaveBeenCalledWith("thread-1", checks);
+    expect(unwatch).toHaveBeenCalledWith("thread-2");
+  });
 });
 
 describe("routeMessage github.checkStatus", () => {

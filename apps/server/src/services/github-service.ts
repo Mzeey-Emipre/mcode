@@ -7,8 +7,27 @@
 import { injectable, inject } from "tsyringe";
 import { execFile, type ChildProcess } from "child_process";
 import type { PrInfo, PrDetail, ChecksStatus, CheckRun } from "@mcode/contracts";
+import { logger } from "@mcode/shared";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { killProcessTree } from "./process-kill.js";
+
+const MAX_PULL_REQUESTS_PER_WATCH_BATCH = 25;
+const MAX_CHECK_CONTEXTS_PER_PULL_REQUEST = 100;
+
+/** One linked thread whose pull request lifecycle and checks need refreshing. */
+export interface PullRequestWatchTarget {
+  threadId: string;
+  prNumber: number;
+  repoPath: string;
+}
+
+/** One watched pull request snapshot returned from GitHub. */
+export interface PullRequestWatchSnapshot {
+  threadId: string;
+  prNumber: number;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  checks: ChecksStatus;
+}
 
 /**
  * Handles GitHub PR lookups and listing via the `gh` CLI.
@@ -517,6 +536,133 @@ export class GithubService {
   }
 
   /**
+   * Fetch lifecycle state and check runs for many linked threads in bounded GraphQL batches.
+   * Threads in the same repository share one GitHub request per batch, and duplicate PR
+   * identities are queried once before their result is fanned back out to each thread.
+   */
+  async getPullRequestWatchSnapshots(
+    targets: readonly PullRequestWatchTarget[],
+  ): Promise<PullRequestWatchSnapshot[]> {
+    if (targets.length === 0) return [];
+    for (const target of targets) {
+      if (
+        target.threadId.length === 0
+        || !Number.isInteger(target.prNumber)
+        || target.prNumber <= 0
+        || target.repoPath.length === 0
+      ) {
+        throw new Error("Pull request watch targets require a thread, PR number, and repository path");
+      }
+    }
+
+    const repositoryGroups = groupWatchTargetsByRepository(targets);
+    const groupResults = await Promise.allSettled(
+      repositoryGroups.map((group) => this.fetchRepositoryWatchSnapshots(group)),
+    );
+
+    return groupResults.flatMap((result, index) => {
+      if (result.status === "fulfilled") return result.value;
+      logger.debug("Pull request watch batch failed", {
+        repoPath: repositoryGroups[index]?.repoPath,
+        error: String(result.reason),
+      });
+      return [];
+    });
+  }
+
+  private async fetchRepositoryWatchSnapshots(
+    group: PullRequestWatchRepositoryGroup,
+  ): Promise<PullRequestWatchSnapshot[]> {
+    const slug = await this.resolveRepoSlug(group.repoPath);
+    const [owner, repository] = slug.split("/");
+    if (!owner || !repository) throw new Error(`Unexpected repository slug: ${slug}`);
+
+    const targetsByPullRequest = new Map<number, PullRequestWatchTarget[]>();
+    for (const target of group.targets) {
+      const matchingTargets = targetsByPullRequest.get(target.prNumber) ?? [];
+      matchingTargets.push(target);
+      targetsByPullRequest.set(target.prNumber, matchingTargets);
+    }
+
+    const uniquePullRequestNumbers = [...targetsByPullRequest.keys()];
+    const snapshots: PullRequestWatchSnapshot[] = [];
+    for (
+      let offset = 0;
+      offset < uniquePullRequestNumbers.length;
+      offset += MAX_PULL_REQUESTS_PER_WATCH_BATCH
+    ) {
+      const batchNumbers = uniquePullRequestNumbers.slice(
+        offset,
+        offset + MAX_PULL_REQUESTS_PER_WATCH_BATCH,
+      );
+      const snapshotsByNumber = await this.runPullRequestWatchBatch(
+        group.repoPath,
+        owner,
+        repository,
+        batchNumbers,
+      );
+      for (const [prNumber, snapshot] of snapshotsByNumber) {
+        for (const target of targetsByPullRequest.get(prNumber) ?? []) {
+          snapshots.push({ ...snapshot, threadId: target.threadId });
+        }
+      }
+    }
+    return snapshots;
+  }
+
+  private async runPullRequestWatchBatch(
+    repoPath: string,
+    owner: string,
+    repository: string,
+    prNumbers: readonly number[],
+  ): Promise<Map<number, Omit<PullRequestWatchSnapshot, "threadId">>> {
+    const query = buildPullRequestWatchQuery(prNumbers.length);
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${query}`,
+      "-f",
+      `owner=${owner}`,
+      "-f",
+      `repository=${repository}`,
+    ];
+    for (const [index, prNumber] of prNumbers.entries()) {
+      args.push("-F", `number${index}=${prNumber}`);
+    }
+
+    await this.acquire();
+    try {
+      const stdout = await new Promise<string>((resolve, reject) => {
+        let tracked: TrackedGithubProcess | null = null;
+        const child = execFile(
+          "gh",
+          args,
+          {
+            cwd: repoPath,
+            encoding: "utf-8",
+            timeout: 15_000,
+            maxBuffer: 2 * 1024 * 1024,
+            windowsHide: true,
+          },
+          (error, output) => {
+            tracked?.finish();
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve(output);
+          },
+        );
+        tracked = this.trackProcess(child, { repoPath });
+      });
+      return parsePullRequestWatchBatch(stdout, prNumbers);
+    } finally {
+      this.release();
+    }
+  }
+
+  /**
    * Resolve the GitHub owner/repo slug for a local repository path.
    * Results are cached for 30 minutes (SLUG_TTL_MS) to handle repo renames gracefully.
    * Validates the returned value matches `owner/repo` format before caching.
@@ -632,10 +778,199 @@ interface CheckRunsInflight {
   cancelled: boolean;
 }
 
+interface PullRequestWatchRepositoryGroup {
+  repoPath: string;
+  targets: PullRequestWatchTarget[];
+}
+
+interface RawWatchCheckRun {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  appId: number;
+}
+
 function noChecks(): ChecksStatus {
   return { aggregate: "no_checks", runs: [], fetchedAt: Date.now() };
 }
 
 function normalizeRepoPath(repoPath: string | null | undefined): string | null {
   return repoPath ? repoPath.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() : null;
+}
+
+function groupWatchTargetsByRepository(
+  targets: readonly PullRequestWatchTarget[],
+): PullRequestWatchRepositoryGroup[] {
+  const groups = new Map<string, PullRequestWatchRepositoryGroup>();
+  for (const target of targets) {
+    const key = normalizeRepoPath(target.repoPath) ?? target.repoPath;
+    const group = groups.get(key) ?? { repoPath: target.repoPath, targets: [] };
+    group.targets.push(target);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+function buildPullRequestWatchQuery(prCount: number): string {
+  const numberVariables = Array.from(
+    { length: prCount },
+    (_, index) => `$number${index}: Int!`,
+  ).join("\n");
+  const pullRequests = Array.from({ length: prCount }, (_, index) => `
+    pr${index}: pullRequest(number: $number${index}) {
+      number
+      state
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: ${MAX_CHECK_CONTEXTS_PER_PULL_REQUEST}) {
+                nodes {
+                  __typename
+                  ... on CheckRun {
+                    name
+                    status
+                    conclusion
+                    startedAt
+                    completedAt
+                    checkSuite { app { databaseId } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }`).join("\n");
+
+  return `query PullRequestWatchBatch(
+    $owner: String!
+    $repository: String!
+    ${numberVariables}
+  ) {
+    repository(owner: $owner, name: $repository) {${pullRequests}
+    }
+  }`;
+}
+
+function parsePullRequestWatchBatch(
+  stdout: string,
+  expectedPrNumbers: readonly number[],
+): Map<number, Omit<PullRequestWatchSnapshot, "threadId">> {
+  const envelope = JSON.parse(stdout) as unknown;
+  if (!isRecord(envelope) || !isRecord(envelope.data) || !isRecord(envelope.data.repository)) {
+    throw new Error("GitHub returned an invalid pull request watch response");
+  }
+
+  const fetchedAt = Date.now();
+  const snapshots = new Map<number, Omit<PullRequestWatchSnapshot, "threadId">>();
+  for (const [index, expectedPrNumber] of expectedPrNumbers.entries()) {
+    const pullRequest = envelope.data.repository[`pr${index}`];
+    if (pullRequest === null) continue;
+    if (!isRecord(pullRequest)) {
+      throw new Error(`GitHub returned invalid data for pull request ${expectedPrNumber}`);
+    }
+    if (pullRequest.number !== expectedPrNumber || !isPullRequestState(pullRequest.state)) {
+      throw new Error(`GitHub returned mismatched data for pull request ${expectedPrNumber}`);
+    }
+
+    const rawChecks = readWatchCheckRuns(pullRequest);
+    snapshots.set(expectedPrNumber, {
+      prNumber: expectedPrNumber,
+      state: pullRequest.state,
+      checks: summarizeWatchCheckRuns(rawChecks, fetchedAt),
+    });
+  }
+  return snapshots;
+}
+
+function readWatchCheckRuns(pullRequest: Record<string, unknown>): RawWatchCheckRun[] {
+  const commits = isRecord(pullRequest.commits) && Array.isArray(pullRequest.commits.nodes)
+    ? pullRequest.commits.nodes
+    : [];
+  const latestCommit = commits.at(0);
+  if (!isRecord(latestCommit) || !isRecord(latestCommit.commit)) return [];
+  const rollup = latestCommit.commit.statusCheckRollup;
+  if (!isRecord(rollup) || !isRecord(rollup.contexts) || !Array.isArray(rollup.contexts.nodes)) {
+    return [];
+  }
+
+  return rollup.contexts.nodes.flatMap((node) => {
+    if (!isRecord(node) || node.__typename !== "CheckRun" || typeof node.name !== "string") {
+      return [];
+    }
+    const app = isRecord(node.checkSuite) && isRecord(node.checkSuite.app)
+      ? node.checkSuite.app
+      : null;
+    return [{
+      name: node.name,
+      status: typeof node.status === "string" ? node.status : "IN_PROGRESS",
+      conclusion: typeof node.conclusion === "string" ? node.conclusion : null,
+      startedAt: typeof node.startedAt === "string" ? node.startedAt : null,
+      completedAt: typeof node.completedAt === "string" ? node.completedAt : null,
+      appId: app && typeof app.databaseId === "number" ? app.databaseId : 0,
+    }];
+  });
+}
+
+function summarizeWatchCheckRuns(
+  rawChecks: readonly RawWatchCheckRun[],
+  fetchedAt: number,
+): ChecksStatus {
+  const latestChecks = new Map<string, RawWatchCheckRun>();
+  for (const check of rawChecks) {
+    const key = `${check.name}\0${check.appId}`;
+    const existing = latestChecks.get(key);
+    if (!existing || (check.startedAt ?? "") > (existing.startedAt ?? "")) {
+      latestChecks.set(key, check);
+    }
+  }
+
+  const runs = [...latestChecks.values()].map<CheckRun>((check) => {
+    const status: CheckRun["status"] = check.status === "COMPLETED"
+      ? "completed"
+      : check.status === "QUEUED"
+        ? "queued"
+        : "in_progress";
+    const conclusion = normalizeWatchConclusion(check.conclusion);
+    const durationMs = status === "completed" && check.startedAt && check.completedAt
+      ? new Date(check.completedAt).getTime() - new Date(check.startedAt).getTime()
+      : null;
+    return { name: check.name, status, conclusion, durationMs, startedAt: check.startedAt };
+  });
+
+  let aggregate: ChecksStatus["aggregate"];
+  if (runs.length === 0) {
+    aggregate = "no_checks";
+  } else if (runs.some((run) => run.conclusion === "failure" || run.conclusion === "timed_out")) {
+    aggregate = "failing";
+  } else if (runs.some((run) => run.status !== "completed")) {
+    aggregate = "pending";
+  } else if (runs.some((run) => run.conclusion === "success")) {
+    aggregate = "passing";
+  } else {
+    aggregate = "no_checks";
+  }
+  return { aggregate, runs, fetchedAt };
+}
+
+function normalizeWatchConclusion(conclusion: string | null): CheckRun["conclusion"] {
+  if (conclusion === null) return null;
+  const normalized = conclusion.toLowerCase();
+  if (normalized === "success") return "success";
+  if (normalized === "cancelled") return "cancelled";
+  if (normalized === "skipped") return "skipped";
+  if (normalized === "timed_out") return "timed_out";
+  if (normalized === "neutral") return "neutral";
+  return "failure";
+}
+
+function isPullRequestState(value: unknown): value is PullRequestWatchSnapshot["state"] {
+  return value === "OPEN" || value === "CLOSED" || value === "MERGED";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -486,6 +486,106 @@ describe("GithubService.getCheckRuns", () => {
   });
 });
 
+describe("GithubService.getPullRequestWatchSnapshots", () => {
+  let ghService: GithubService;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockKillProcessTree.mockResolvedValue(undefined);
+    ghService = new GithubService({} as WorkspaceRepo);
+    vi.spyOn(ghService, "resolveRepoSlug").mockResolvedValue("owner/test-repo");
+  });
+
+  it("fetches two pull request snapshots in one GraphQL subprocess", async () => {
+    mockExecFile.mockImplementation(
+      (_cmd: string, args: string[], _opts: unknown, cb: CallbackFn) => {
+        expect(args.slice(0, 2)).toEqual(["api", "graphql"]);
+        expect(args.find((arg) => arg.startsWith("query="))).toContain("pr0: pullRequest");
+        expect(args.find((arg) => arg.startsWith("query="))).toContain("pr1: pullRequest");
+        cb(null, JSON.stringify({
+          data: {
+            repository: {
+              pr0: {
+                number: 41,
+                state: "OPEN",
+                commits: {
+                  nodes: [{
+                    commit: {
+                      statusCheckRollup: {
+                        contexts: {
+                          nodes: [{
+                            __typename: "CheckRun",
+                            name: "test",
+                            status: "IN_PROGRESS",
+                            conclusion: null,
+                            startedAt: "2026-07-18T10:00:00Z",
+                            completedAt: null,
+                            checkSuite: { app: { databaseId: 15368 } },
+                          }],
+                        },
+                      },
+                    },
+                  }],
+                },
+              },
+              pr1: {
+                number: 42,
+                state: "MERGED",
+                commits: { nodes: [] },
+              },
+            },
+          },
+        }), "");
+      },
+    );
+
+    const snapshots = await ghService.getPullRequestWatchSnapshots([
+      { threadId: "thread-1", prNumber: 41, repoPath: "/repo" },
+      { threadId: "thread-2", prNumber: 42, repoPath: "/repo" },
+    ]);
+
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[0]).toMatchObject({
+      threadId: "thread-1",
+      prNumber: 41,
+      state: "OPEN",
+      checks: { aggregate: "pending" },
+    });
+    expect(snapshots[1]).toMatchObject({
+      threadId: "thread-2",
+      prNumber: 42,
+      state: "MERGED",
+      checks: { aggregate: "no_checks" },
+    });
+  });
+
+  it("queries a duplicated pull request once and fans the snapshot out to both threads", async () => {
+    mockExecFile.mockImplementation(
+      (_cmd: string, args: string[], _opts: unknown, cb: CallbackFn) => {
+        const query = args.find((arg) => arg.startsWith("query=")) ?? "";
+        expect(query).toContain("pr0: pullRequest");
+        expect(query).not.toContain("pr1: pullRequest");
+        cb(null, JSON.stringify({
+          data: {
+            repository: {
+              pr0: { number: 41, state: "OPEN", commits: { nodes: [] } },
+            },
+          },
+        }), "");
+      },
+    );
+
+    const snapshots = await ghService.getPullRequestWatchSnapshots([
+      { threadId: "thread-1", prNumber: 41, repoPath: "C:\\Repo" },
+      { threadId: "thread-2", prNumber: 41, repoPath: "c:/repo/" },
+    ]);
+
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
+    expect(snapshots.map((snapshot) => snapshot.threadId)).toEqual(["thread-1", "thread-2"]);
+  });
+});
+
 describe("GithubService.resolveRepoSlug", () => {
   let ghService: GithubService;
 

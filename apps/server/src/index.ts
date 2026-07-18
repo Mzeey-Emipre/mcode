@@ -315,6 +315,13 @@ ipcServer.onConnection((port) => {
 const ciWatcherService = new CiWatcherService(githubService, (channel, data) => {
   broadcast(channel as Parameters<typeof broadcast>[0], data as Parameters<typeof broadcast>[1]);
   portPush.send(channel as Parameters<typeof portPush.send>[0], data as Parameters<typeof portPush.send>[1]);
+}, ({ threadId, prNumber, state }) => {
+  const thread = threadRepo.findById(threadId);
+  if (thread?.pr_number !== prNumber) return;
+  threadService.linkPr(threadId, prNumber, state);
+  const payload = { threadId, prNumber, prStatus: state };
+  broadcast("thread.prLinked", payload);
+  portPush.send("thread.prLinked", payload);
 });
 gitWatcherService.setThreadCheckoutChangedListener((threadId) => {
   ciWatcherService.unwatch(threadId);

@@ -558,8 +558,50 @@ async function dispatch(
       const workspace = deps.workspaceService.findById(params.workspaceId);
       if (!workspace) return [];
       const results: Array<{ threadId: string; prNumber: number; prStatus: string }> = [];
+
+      const linkedThreads = needsCheck.filter(
+        (thread): thread is typeof thread & { pr_number: number } => thread.pr_number != null,
+      );
+      const linkedThreadsById = new Map(linkedThreads.map((thread) => [thread.id, thread]));
+      const linkedSnapshots = linkedThreads.length === 0
+        ? []
+        : await deps.githubService.getPullRequestWatchSnapshots(
+            linkedThreads.map((thread) => ({
+              threadId: thread.id,
+              prNumber: thread.pr_number,
+              repoPath: workspace.path,
+            })),
+          );
+      for (const snapshot of linkedSnapshots) {
+        const thread = linkedThreadsById.get(snapshot.threadId);
+        if (!thread) continue;
+        const statusChanged = thread.pr_status?.toLowerCase() !== snapshot.state.toLowerCase();
+        if (statusChanged) {
+          deps.threadService.linkPr(thread.id, snapshot.prNumber, snapshot.state);
+          results.push({
+            threadId: thread.id,
+            prNumber: snapshot.prNumber,
+            prStatus: snapshot.state,
+          });
+        }
+
+        if (snapshot.state === "OPEN") {
+          deps.ciWatcherService.watch(
+            thread.id,
+            snapshot.prNumber,
+            thread.branch,
+            workspace.path,
+            { skipInitialFetch: true },
+          );
+          deps.ciWatcherService.refresh(thread.id, snapshot.checks);
+        } else {
+          deps.ciWatcherService.unwatch(thread.id);
+        }
+      }
+
+      const unlinkedThreads = needsCheck.filter((thread) => thread.pr_number == null);
       await Promise.allSettled(
-        needsCheck.map(async (t) => {
+        unlinkedThreads.map(async (t) => {
           const pr = await deps.githubService.getBranchPr(t.branch, workspace.path);
           if (pr) {
             const numberChanged = t.pr_number !== pr.number;
