@@ -573,8 +573,10 @@ async function dispatch(
             })),
           );
       for (const snapshot of linkedSnapshots) {
-        const thread = linkedThreadsById.get(snapshot.threadId);
-        if (!thread) continue;
+        const requestedThread = linkedThreadsById.get(snapshot.threadId);
+        if (!requestedThread) continue;
+        const thread = deps.threadService.findById(snapshot.threadId);
+        if (!thread || thread.pr_number !== snapshot.prNumber) continue;
         const statusChanged = thread.pr_status?.toLowerCase() !== snapshot.state.toLowerCase();
         if (statusChanged) {
           deps.threadService.linkPr(thread.id, snapshot.prNumber, snapshot.state);

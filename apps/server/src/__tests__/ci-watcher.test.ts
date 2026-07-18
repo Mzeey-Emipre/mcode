@@ -152,6 +152,38 @@ describe("CiWatcherService", () => {
     });
   });
 
+  it("ignores a stale snapshot after the thread is relinked", async () => {
+    mockGithubService.getPullRequestWatchSnapshots.mockResolvedValue([{
+      threadId: "t1",
+      prNumber: 41,
+      state: "MERGED",
+      checks: makeChecks("passing"),
+    }]);
+    watcher.watch("t1", 42, "feature-2", "/repo", { skipInitialFetch: true });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(watcher.isWatching("t1")).toBe(true);
+    expect(mockPullRequestStateChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps polling a terminal pull request when persisting its state fails", async () => {
+    mockGithubService.getPullRequestWatchSnapshots.mockResolvedValue([{
+      threadId: "t1",
+      prNumber: 41,
+      state: "CLOSED",
+      checks: makeChecks("no_checks"),
+    }]);
+    mockPullRequestStateChange.mockImplementation(() => {
+      throw new Error("database unavailable");
+    });
+    watcher.watch("t1", 41, "feature-1", "/repo", { skipInitialFetch: true });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(watcher.isWatching("t1")).toBe(true);
+  });
+
   it("does NOT broadcast when state is unchanged", async () => {
     const passing = makeChecks("passing");
     mockGithubService.getCheckRuns.mockResolvedValue(passing);

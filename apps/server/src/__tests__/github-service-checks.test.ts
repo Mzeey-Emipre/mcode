@@ -584,6 +584,136 @@ describe("GithubService.getPullRequestWatchSnapshots", () => {
     expect(mockExecFile).toHaveBeenCalledTimes(1);
     expect(snapshots.map((snapshot) => snapshot.threadId)).toEqual(["thread-1", "thread-2"]);
   });
+
+  it("keeps case-distinct POSIX repository paths in separate batches", async () => {
+    mockExecFile.mockImplementation(
+      (_cmd: string, args: string[], _opts: unknown, cb: CallbackFn) => {
+        const number = Number(args.find((arg) => arg.startsWith("number0="))?.split("=")[1]);
+        cb(null, JSON.stringify({
+          data: {
+            repository: {
+              pr0: { number, state: "OPEN", commits: { nodes: [] } },
+            },
+          },
+        }), "");
+      },
+    );
+
+    await ghService.getPullRequestWatchSnapshots([
+      { threadId: "thread-upper", prNumber: 41, repoPath: "/repo/A" },
+      { threadId: "thread-lower", prNumber: 42, repoPath: "/repo/a" },
+    ]);
+
+    expect(mockExecFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds repository work before resolving slugs", async () => {
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let maxActive = 0;
+    vi.mocked(ghService.resolveRepoSlug).mockImplementation(() => new Promise((resolve) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      const slugNumber = releases.length;
+      releases.push(() => {
+        active--;
+        resolve(`owner/repo-${slugNumber}`);
+      });
+    }));
+    mockExecFile.mockImplementation(
+      (_cmd: string, args: string[], _opts: unknown, cb: CallbackFn) => {
+        const number = Number(args.find((arg) => arg.startsWith("number0="))?.split("=")[1]);
+        cb(null, JSON.stringify({
+          data: {
+            repository: {
+              pr0: { number, state: "OPEN", commits: { nodes: [] } },
+            },
+          },
+        }), "");
+      },
+    );
+
+    const pending = ghService.getPullRequestWatchSnapshots(
+      Array.from({ length: 5 }, (_, index) => ({
+        threadId: `thread-${index}`,
+        prNumber: index + 1,
+        repoPath: `/repo/${index}`,
+      })),
+    );
+
+    await waitFor(() => releases.length === 3, "expected the fixed worker pool to fill");
+    expect(maxActive).toBe(3);
+    for (let index = 0; index < 5; index++) {
+      await waitFor(() => releases.length > index, `expected repository worker ${index}`);
+      releases[index]();
+    }
+    await pending;
+    expect(maxActive).toBe(3);
+  });
+
+  it("does not start queued repository work after global cancellation", async () => {
+    const started: string[] = [];
+    const rejecters: Array<(error: Error) => void> = [];
+    vi.mocked(ghService.resolveRepoSlug).mockImplementation((repoPath) => new Promise((_, reject) => {
+      started.push(repoPath);
+      rejecters.push(reject);
+    }));
+
+    const pending = ghService.getPullRequestWatchSnapshots(
+      Array.from({ length: 5 }, (_, index) => ({
+        threadId: `thread-${index}`,
+        prNumber: index + 1,
+        repoPath: `/repo/${index}`,
+      })),
+    );
+
+    await waitFor(() => started.length === 3, "expected the fixed worker pool to fill");
+    await ghService.cancelAllInFlight();
+    for (const reject of rejecters) reject(new Error("cancelled"));
+    await pending;
+
+    expect(started).toHaveLength(3);
+  });
+
+  it("skips queued work for a repository after teardown", async () => {
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    vi.mocked(ghService.resolveRepoSlug).mockImplementation((repoPath) => new Promise((resolve) => {
+      started.push(repoPath);
+      releases.push(() => resolve("owner/repo"));
+    }));
+    mockExecFile.mockImplementation(
+      (_cmd: string, args: string[], _opts: unknown, cb: CallbackFn) => {
+        const number = Number(args.find((arg) => arg.startsWith("number0="))?.split("=")[1]);
+        cb(null, JSON.stringify({
+          data: {
+            repository: {
+              pr0: { number, state: "OPEN", commits: { nodes: [] } },
+            },
+          },
+        }), "");
+      },
+    );
+
+    const pending = ghService.getPullRequestWatchSnapshots(
+      Array.from({ length: 5 }, (_, index) => ({
+        threadId: `thread-${index}`,
+        prNumber: index + 1,
+        repoPath: `/repo/${index}`,
+      })),
+    );
+
+    await waitFor(() => started.length === 3, "expected the fixed worker pool to fill");
+    await ghService.cancelForRepoPath("/repo/3");
+    for (let index = 0; index < 4; index++) {
+      await waitFor(() => releases.length > index, `expected repository worker ${index}`);
+      releases[index]();
+    }
+    await pending;
+
+    expect(started).not.toContain("/repo/3");
+    expect(started).toContain("/repo/4");
+  });
 });
 
 describe("GithubService.resolveRepoSlug", () => {

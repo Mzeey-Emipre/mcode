@@ -337,13 +337,14 @@ export class CiWatcherService {
   }
 
   private applyWatchSnapshot(entry: WatchEntry, snapshot: PullRequestWatchSnapshot): void {
+    if (entry.prNumber !== snapshot.prNumber) return;
     if (snapshot.state === "CLOSED" || snapshot.state === "MERGED") {
-      this.unwatch(entry.threadId);
       this.onPullRequestStateChange?.({
         threadId: entry.threadId,
         prNumber: entry.prNumber,
         state: snapshot.state,
       });
+      this.unwatch(entry.threadId);
       return;
     }
     this.refresh(entry.threadId, snapshot.checks);

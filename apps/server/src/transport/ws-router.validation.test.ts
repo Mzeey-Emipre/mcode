@@ -880,6 +880,24 @@ describe("routeMessage thread.syncPrs", () => {
             pr_status: "OPEN",
           },
         ]),
+        findById: vi.fn().mockImplementation((threadId: string) => ({
+          "thread-1": {
+            id: "thread-1",
+            branch: "feat/one",
+            mode: "worktree",
+            checkout_state: "named",
+            pr_number: 41,
+            pr_status: "OPEN",
+          },
+          "thread-2": {
+            id: "thread-2",
+            branch: "feat/two",
+            mode: "worktree",
+            checkout_state: "named",
+            pr_number: 42,
+            pr_status: "OPEN",
+          },
+        })[threadId] ?? null),
         linkPr: vi.fn(),
       },
       githubService: {
@@ -916,6 +934,67 @@ describe("routeMessage thread.syncPrs", () => {
     );
     expect(refresh).toHaveBeenCalledWith("thread-1", checks);
     expect(unwatch).toHaveBeenCalledWith("thread-2");
+  });
+
+  it("ignores a linked snapshot when the thread was relinked during the request", async () => {
+    const checks = { aggregate: "passing" as const, runs: [], fetchedAt: 1 };
+    const linkPr = vi.fn();
+    const watch = vi.fn();
+    const refresh = vi.fn();
+    const unwatch = vi.fn();
+    const deps = {
+      workspaceService: {
+        findById: vi.fn().mockReturnValue({
+          id: "ws-1",
+          path: "C:/repo",
+          is_git_repo: true,
+        }),
+      },
+      threadService: {
+        list: vi.fn().mockReturnValue([{
+          id: "thread-1",
+          branch: "feat/one",
+          mode: "worktree",
+          checkout_state: "named",
+          pr_number: 41,
+          pr_status: "OPEN",
+        }]),
+        findById: vi.fn().mockReturnValue({
+          id: "thread-1",
+          branch: "feat/relinked",
+          mode: "worktree",
+          checkout_state: "named",
+          pr_number: 99,
+          pr_status: "OPEN",
+        }),
+        linkPr,
+      },
+      githubService: {
+        getPullRequestWatchSnapshots: vi.fn().mockResolvedValue([{
+          threadId: "thread-1",
+          prNumber: 41,
+          state: "MERGED",
+          checks,
+        }]),
+        getBranchPr: vi.fn(),
+      },
+      ciWatcherService: { watch, refresh, unwatch },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-sync-stale",
+        method: "thread.syncPrs",
+        params: { workspaceId: "ws-1" },
+      }),
+      deps,
+    );
+
+    expect(response.result).toEqual([]);
+    expect(linkPr).not.toHaveBeenCalled();
+    expect(watch).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(unwatch).not.toHaveBeenCalled();
   });
 });
 

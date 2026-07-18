@@ -49,6 +49,8 @@ export class GithubService {
   private readonly checkRunsInflight = new Map<string, CheckRunsInflight>();
   /** Live gh subprocesses keyed by the repository path that owns their cwd. */
   private readonly activeProcesses = new Set<TrackedGithubProcess>();
+  /** Active batched watch requests, including repository work waiting for a worker. */
+  private readonly pullRequestWatchRequests = new Set<PullRequestWatchRequest>();
 
   /** Maximum number of gh subprocesses that may run concurrently. */
   private readonly maxConcurrent = 3;
@@ -85,6 +87,11 @@ export class GithubService {
    */
   async cancelForRepoPath(repoPath: string): Promise<void> {
     const normalized = normalizeRepoPath(repoPath);
+    if (normalized) {
+      for (const request of this.pullRequestWatchRequests) {
+        request.cancelledRepoPaths.add(normalized);
+      }
+    }
     for (const [key, inflight] of this.checkRunsInflight) {
       if (inflight.repoPath !== normalized) continue;
       inflight.cancelled = true;
@@ -96,6 +103,9 @@ export class GithubService {
 
   /** Cancel every in-flight gh subprocess owned by this service. */
   async cancelAllInFlight(): Promise<void> {
+    for (const request of this.pullRequestWatchRequests) {
+      request.cancelled = true;
+    }
     for (const inflight of this.checkRunsInflight.values()) {
       inflight.cancelled = true;
       inflight.resolve(noChecks());
@@ -556,24 +566,54 @@ export class GithubService {
     }
 
     const repositoryGroups = groupWatchTargetsByRepository(targets);
-    const groupResults = await Promise.allSettled(
-      repositoryGroups.map((group) => this.fetchRepositoryWatchSnapshots(group)),
+    const request: PullRequestWatchRequest = {
+      cancelled: false,
+      cancelledRepoPaths: new Set(),
+    };
+    const groupResults = new Array<PullRequestWatchSnapshot[] | undefined>(
+      repositoryGroups.length,
     );
+    let nextGroupIndex = 0;
+    this.pullRequestWatchRequests.add(request);
 
-    return groupResults.flatMap((result, index) => {
-      if (result.status === "fulfilled") return result.value;
-      logger.debug("Pull request watch batch failed", {
-        repoPath: repositoryGroups[index]?.repoPath,
-        error: String(result.reason),
-      });
-      return [];
-    });
+    try {
+      const workerCount = Math.min(this.maxConcurrent, repositoryGroups.length);
+      await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (!request.cancelled) {
+          const groupIndex = nextGroupIndex++;
+          const group = repositoryGroups[groupIndex];
+          if (!group) return;
+          if (this.isPullRequestWatchCancelled(request, group.repoPath)) continue;
+
+          await this.acquire();
+          try {
+            if (this.isPullRequestWatchCancelled(request, group.repoPath)) continue;
+            groupResults[groupIndex] = await this.fetchRepositoryWatchSnapshots(group, request);
+          } catch (error) {
+            if (!this.isPullRequestWatchCancelled(request, group.repoPath)) {
+              logger.debug("Pull request watch batch failed", {
+                repoPath: group.repoPath,
+                error: String(error),
+              });
+            }
+          } finally {
+            this.release();
+          }
+        }
+      }));
+      return groupResults.flatMap((result) => result ?? []);
+    } finally {
+      this.pullRequestWatchRequests.delete(request);
+    }
   }
 
   private async fetchRepositoryWatchSnapshots(
     group: PullRequestWatchRepositoryGroup,
+    request: PullRequestWatchRequest,
   ): Promise<PullRequestWatchSnapshot[]> {
+    if (this.isPullRequestWatchCancelled(request, group.repoPath)) return [];
     const slug = await this.resolveRepoSlug(group.repoPath);
+    if (this.isPullRequestWatchCancelled(request, group.repoPath)) return [];
     const [owner, repository] = slug.split("/");
     if (!owner || !repository) throw new Error(`Unexpected repository slug: ${slug}`);
 
@@ -591,6 +631,7 @@ export class GithubService {
       offset < uniquePullRequestNumbers.length;
       offset += MAX_PULL_REQUESTS_PER_WATCH_BATCH
     ) {
+      if (this.isPullRequestWatchCancelled(request, group.repoPath)) return [];
       const batchNumbers = uniquePullRequestNumbers.slice(
         offset,
         offset + MAX_PULL_REQUESTS_PER_WATCH_BATCH,
@@ -600,7 +641,9 @@ export class GithubService {
         owner,
         repository,
         batchNumbers,
+        request,
       );
+      if (this.isPullRequestWatchCancelled(request, group.repoPath)) return [];
       for (const [prNumber, snapshot] of snapshotsByNumber) {
         for (const target of targetsByPullRequest.get(prNumber) ?? []) {
           snapshots.push({ ...snapshot, threadId: target.threadId });
@@ -615,6 +658,7 @@ export class GithubService {
     owner: string,
     repository: string,
     prNumbers: readonly number[],
+    request: PullRequestWatchRequest,
   ): Promise<Map<number, Omit<PullRequestWatchSnapshot, "threadId">>> {
     const query = buildPullRequestWatchQuery(prNumbers.length);
     const args = [
@@ -631,35 +675,40 @@ export class GithubService {
       args.push("-F", `number${index}=${prNumber}`);
     }
 
-    await this.acquire();
-    try {
-      const stdout = await new Promise<string>((resolve, reject) => {
-        let tracked: TrackedGithubProcess | null = null;
-        const child = execFile(
-          "gh",
-          args,
-          {
-            cwd: repoPath,
-            encoding: "utf-8",
-            timeout: 15_000,
-            maxBuffer: 2 * 1024 * 1024,
-            windowsHide: true,
-          },
-          (error, output) => {
-            tracked?.finish();
-            if (error) {
-              reject(error);
-              return;
-            }
-            resolve(output);
-          },
-        );
-        tracked = this.trackProcess(child, { repoPath });
-      });
-      return parsePullRequestWatchBatch(stdout, prNumbers);
-    } finally {
-      this.release();
-    }
+    if (this.isPullRequestWatchCancelled(request, repoPath)) return new Map();
+    const stdout = await new Promise<string>((resolve, reject) => {
+      let tracked: TrackedGithubProcess | null = null;
+      const child = execFile(
+        "gh",
+        args,
+        {
+          cwd: repoPath,
+          encoding: "utf-8",
+          timeout: 15_000,
+          maxBuffer: 2 * 1024 * 1024,
+          windowsHide: true,
+        },
+        (error, output) => {
+          tracked?.finish();
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(output);
+        },
+      );
+      tracked = this.trackProcess(child, { repoPath });
+    });
+    return parsePullRequestWatchBatch(stdout, prNumbers);
+  }
+
+  private isPullRequestWatchCancelled(
+    request: PullRequestWatchRequest,
+    repoPath: string,
+  ): boolean {
+    const normalized = normalizeRepoPath(repoPath);
+    return request.cancelled
+      || (normalized !== null && request.cancelledRepoPaths.has(normalized));
   }
 
   /**
@@ -783,6 +832,11 @@ interface PullRequestWatchRepositoryGroup {
   targets: PullRequestWatchTarget[];
 }
 
+interface PullRequestWatchRequest {
+  cancelled: boolean;
+  cancelledRepoPaths: Set<string>;
+}
+
 interface RawWatchCheckRun {
   name: string;
   status: string;
@@ -797,7 +851,12 @@ function noChecks(): ChecksStatus {
 }
 
 function normalizeRepoPath(repoPath: string | null | undefined): string | null {
-  return repoPath ? repoPath.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() : null;
+  if (!repoPath) return null;
+  const normalized = repoPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const isWindowsStyle = repoPath.includes("\\")
+    || /^[A-Za-z]:\//.test(normalized)
+    || normalized.startsWith("//");
+  return isWindowsStyle ? normalized.toLowerCase() : normalized;
 }
 
 function groupWatchTargetsByRepository(
