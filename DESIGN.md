@@ -260,7 +260,7 @@ Light theme mirrors this on cool neutrals: page `oklch(0.955 0.005 260)`, backgr
 
 ## 4. Elevation
 
-Flat by default. Depth begins with **tonal layering**. The signature move: `--page` sits a few percent below (dark) or above (light) `--background`; floating panels (`--card`, `--popover`) step further along the ramp. Use quiet hairlines for dense boundaries, toolbars, diff hunks, resize seams, and adjacent rows when tone is insufficient.
+Flat by default. Depth begins with **tonal layering**. The signature move: `--page` sits one step below `--background` in both themes; floating panels (`--card`, `--popover`) step further along the ramp. Use quiet hairlines for dense boundaries, toolbars, diff hunks, resize seams, and adjacent rows when tone is insufficient.
 
 Transient layers, drag surfaces, and overlays may use a restrained tokenized shadow when tone and hairlines are insufficient. Shadows do not decorate permanent content.
 

@@ -64,9 +64,10 @@ Typography carries most of Mcode's identity. Marketing graphics, decorative shap
 Use tiny mono small-caps for true technical index labels, machine facts, and
 compact metadata when the treatment improves scanning. Do not use them as a default heading treatment for every
 section or action. Interactive and content headings use sentence case.
-Numbers, hashes, and timestamps are tabular monospace so they line up
-vertically. Body text is compact enough for scanning and comfortable enough to
-read in a long session.
+Machine-authored numbers, hashes, and timestamps use tabular monospace when
+alignment improves scanning. Numerals in prose and human-facing labels remain
+Public Sans. Body text is compact enough for scanning and comfortable enough
+to read in a long session.
 
 ### Empty states earn their place
 
