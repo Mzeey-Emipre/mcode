@@ -215,16 +215,16 @@ A warm amber accent rationed over a matte cool-slate canvas, with a sage/clay pa
 - **Muted Ink** (`oklch(0.65 0.005 260)`): Secondary text, meta, captions. Holds ≥4.5:1 on slate surfaces; do not push muted text lighter "for elegance."
 - **Slate Page** (`oklch(0.12 0.005 260)`): The darkest layer, page chrome. Panels sit *above* it.
 - **Slate Background** (`oklch(0.16 0.005 260)`): App background, one step up from page.
-- **Slate Card** (`oklch(0.19 0.005 260)`): Floating panels, popovers, cards — lifted off the background by tone, not by shadow.
+- **Slate Card** (`oklch(0.19 0.005 260)`): Floating panels, popovers, and cards. Tone separates layers first; transient layers may add restrained elevation.
 - **Slate Muted / Accent** (`oklch(0.22–0.24 0.005 260)`): Hover fills, secondary surfaces, input wells, selection backgrounds.
 - **Slate Border** (`oklch(0.28 0.005 260)`): The rare explicit hairline, only where tonal lift cannot carry the separation.
 
-Light theme mirrors this on cool neutrals: page `oklch(0.955 0.005 260)`, background `oklch(0.99 0.005 260)`, card `oklch(0.985 0.005 260)`, all at hue 260 with 0.005 chroma so the lamp remains a point accent instead of tinting the surface system.
+Light theme mirrors this on cool neutrals: page `oklch(0.955 0.005 260)`, background `oklch(0.99 0.005 260)`, card `oklch(0.985 0.005 260)`, all at hue 260 with 0.005 chroma so the neutral foundation remains coherent.
 
 ### Named Rules
-**The One Lamp Rule.** Filament Amber is the only brand color. It appears on a small fraction of any screen: the active row, the primary action, the live dot. Its rarity is what makes a glance land. Adding a second accent for variety breaks the instrument.
+**The One Lamp Rule.** Filament Amber is Mcode's primary brand color. Use it sparingly for active rows, primary actions, and live indicators. Contextual surfaces may use a restrained tint for state, ownership, or task posture while remaining subordinate to amber.
 
-**The Cold-Surface Rule.** Anything with area is cold; only points of light are warm. Surfaces, fills, and blocks of content, including the user's message bubble, are slate neutrals. Filament Amber is confined to point-scale accents: a dot, a button, a cursor, an active row. Functional affordances that are not brand moments, such as links, focus, and charts, take the cool family (`cool-link`, `cool-ring`). If a warm color covers more than a control's worth of pixels, it is wrong.
+**The Earned-Color Rule.** Slate neutrals are the surface default. A bounded region may carry color to clarify state, ownership, mode, or task posture. Amber stays concentrated in primary actions and live indicators; links, focus, and charts use the cool family (`cool-link`, `cool-ring`). Area color must carry meaning.
 
 **The Semantic-Only Sage/Clay Rule.** Sage and clay are never decoration. They mean addition/good and removal/error. A green that does not mean "added or succeeded" and a red that does not mean "removed or errored" are forbidden.
 
@@ -235,7 +235,7 @@ Light theme mirrors this on cool neutrals: page `oklch(0.955 0.005 260)`, backgr
 **Display / Body Font:** Public Sans (with `ui-sans-serif, system-ui, -apple-system, sans-serif`)
 **Label / Mono Font:** SF Mono (with `Cascadia Code, Consolas, monospace`)
 
-**Character:** A single humanist sans does the human-facing work: headings, prose, controls, and captions. Monospace is not a "developer vibe"; it is reserved for facts a machine produced. The contrast between the two is the entire type system: if it came from a person, it is Public Sans; if it is a SHA, a count, a timestamp, or a status label, it is mono.
+**Character:** A single humanist sans handles headings, prose, controls, captions, and incidental numerals. Monospace supports code, identifiers, and aligned values where fixed-width characters improve scanning. It is a functional contrast, not a decorative "developer vibe."
 
 ### Hierarchy
 - **H1** (Public Sans, 600, `4.8rem / 5.6rem`): Rare screen-level or document-level heading. Use only when the surface has room to carry it.
@@ -252,17 +252,17 @@ Light theme mirrors this on cool neutrals: page `oklch(0.955 0.005 260)`, backgr
 - **Mono Data** (mono, 400, `1.2rem / 1.6rem`, tabular-nums): SHAs, file counts, timestamps, durations. Always `tabular-nums` so columns of numerals align.
 
 ### Named Rules
-**The Mono-Is-Machine Rule.** Monospace marks machine-authored facts only. Prose in mono, or numerals in Public Sans, is a category error. Counts and timestamps additionally take `tabular-nums`.
+**The Mono-Is-Scannable-Data Rule.** Use monospace for code, identifiers, timestamps, and aligned values. Keep numerals in Public Sans inside prose or human-facing labels. Tabular data uses `tabular-nums`.
 
-**The Fixed-Type Rule.** Product UI uses fixed rem sizes, never fluid type. H1 through H6 are available for document and spacious panel hierarchy, but dense app chrome defaults to Body SM or Body MD. Do not invent in-between sizes.
+**The Fixed-Type Rule.** Product UI starts with the documented rem scale. H1 through H6 serve documents and spacious panels; dense chrome defaults to Body SM or Body MD. Add a named optical size when the existing steps fail at the available width.
 
 **The Decimal Rem Rule.** The root font size is `62.5%`, making `1rem` equal to 10px in default browser settings. Express fixed dimensions in rem or em whenever practical, so `12px` becomes `1.2rem`, `32px` becomes `3.2rem`, and `48px` becomes `4.8rem`. Use raw px only for true hairlines, bitmap dimensions, canvas pixels, and sub-pixel optical fixes.
 
 ## 4. Elevation
 
-Flat by default. Depth is conveyed by **tonal layering**, not shadows. The signature move: `--page` sits a few percent below (dark) or above (light) `--background`, and floating panels (`--card`, `--popover`) step further along the lightness ramp so they read as lifted off the chrome. Use tonal separation for macro surfaces. Use quiet hairlines for dense internal boundaries, toolbars, diff hunks, resize seams, and adjacent rows when tone alone does not make the structure clear.
+Flat by default. Depth begins with **tonal layering**. The signature move: `--page` sits one step below `--background` in both themes; floating panels (`--card`, `--popover`) step further along the ramp. Use quiet hairlines for dense boundaries, toolbars, diff hunks, resize seams, and adjacent rows when tone is insufficient.
 
-Shadows exist only as a response to interactive state, never as ambient decoration.
+Transient layers, drag surfaces, and overlays may use a restrained tokenized shadow when tone and hairlines are insufficient. Shadows do not decorate permanent content.
 
 ### Shadow Vocabulary
 - **Focus ring** (`box-shadow: 0 0 0 3px oklch(0.62 0.19 264 / 0.2)`): The cool-ring focus affordance on inputs and buttons.
@@ -272,7 +272,7 @@ Shadows exist only as a response to interactive state, never as ambient decorati
 ### Named Rules
 **The Tonal-Lift Rule.** Separate major surfaces with a step on the lightness ramp. Use `--border` for compact internal structure where neighboring elements share a tone or where a resize, diff, toolbar, or row boundary must remain legible.
 
-**The Shadow-Is-State Rule.** Surfaces are flat at rest. A shadow appears only on focus or as a one-off boundary cue. Resting drop shadows under cards are forbidden.
+**The Earned-Elevation Rule.** Permanent panes rely on tone and hairlines. Transient layers may use restrained elevation when it clarifies stacking or interaction. Resting content has no decorative shadow.
 
 ## 5. Components
 
@@ -280,10 +280,10 @@ Shadows exist only as a response to interactive state, never as ambient decorati
 - **Shape:** Gently rounded (`var(--radius-lg)`, 10px); smaller sizes step down to `min(var(--radius-md), 12px)`.
 - **Control scale:** Small is `3.2rem` (32px), medium is `4.8rem` (48px), large is `5.6rem` (56px). Default dense toolbar buttons use small. Medium is for primary row actions and dialogs. Large is rare and belongs only to spacious confirmation or onboarding surfaces.
 - **Icon-button scale:** Small is `3.2rem` (32px), medium is `4.8rem` (48px), large is `5.6rem` (56px). Icon-only buttons use the same outer box scale as text buttons so hit targets stay predictable.
-- **Icon scale:** Small icons are `1.6rem` (16px), medium icons are `2.4rem` (24px), large icons are `3.2rem` (32px). Do not invent intermediate icon sizes unless the source artwork demands optical correction.
+- **Icon scale:** Small icons are `1.6rem` (16px), medium icons `2.4rem` (24px), and large icons `3.2rem` (32px). Use a named optical size when geometry, weight, or density requires one.
 - **Primary:** Filament Amber fill, ink text, small height `3.2rem`, horizontal padding `1.2rem`, `text-sm font-medium`. Hover drops opacity to 80%.
 - **Ghost / Secondary:** Transparent or slate-secondary fill; hover lifts to `--muted`. Ghost is the default for dense toolbars — most buttons are not primary.
-- **Hover / Focus:** `transition-all`; `active:translate-y-px` for a tactile press; focus-visible draws `ring-3 ring-ring/50` plus a border shift. Destructive uses a 10% destructive tint, not a solid red fill.
+- **Hover / Focus:** `active:translate-y-px` provides a tactile press; focus-visible draws `ring-3 ring-ring/50` plus a border shift. Destructive uses a 10% tint.
 
 ### Inputs / Fields
 - **Style:** Slate-accent well (`--input`), 10px radius, no heavy stroke; the well's tone separates it from the panel.
@@ -295,7 +295,7 @@ Shadows exist only as a response to interactive state, never as ambient decorati
 - **Workspace panes:** Edge-to-edge, square to the app shell, and resizable where the user compares or inspects content. Do not wrap a primary work area in a decorative card.
 - **Floating panels:** 14px (`--radius-xl`) for transient overlays, popovers, dialogs, and narrow layouts where a docked pane floats over the work area.
 - **Background:** Workspace panes use the page/background layers. Floating panels use `--card` / `--popover`, lifted by tone.
-- **Shadow Strategy:** None at rest (see Elevation). Separation is tonal.
+- **Shadow Strategy:** Tonal separation first. Transient panels may use the shared elevation treatment when needed.
 - **Border:** Quiet hairlines are allowed for dense internal structure. Never a colored side-stripe.
 - **Internal Padding:** 12px (`0.75rem`) typical. Repeated list rows may use less, while writing, reading, and decision surfaces should preserve comfortable structure.
 - **Containment depth:** A discrete object may use one contained surface. Its
@@ -324,7 +324,7 @@ Shadows exist only as a response to interactive state, never as ambient decorati
 The smallest and most important component. A 6px dot whose tokenized color is the entire status message. Running pulses lamp via `color-mix(in oklch, var(--primary), transparent 85%)`; idle is steady sage; errored is steady clay. It must be legible and distinguishable at flick-speed and at 100% zoom. It is never accompanied by a colored chip or a word when the dot alone suffices.
 
 ### Empty States (signature)
-A single large glyph (28px `font-mono`, `text-muted-foreground/15`: ◌, ⊘, ⊕, ⌂) over a small-caps mono caption (10.5px, `tracking-[0.18em]`, `text-muted-foreground/40`). No illustrations, no "Nothing here yet!" hand-holding, no primary CTA. The glyph and the technical caption are the whole empty state.
+Empty states explain why content is absent and what can happen next. Match first use, filtered results, completed work, unavailable data, and quiet resting states with suitable compositions. A glyph, diagram, message, or restrained illustration may clarify the state. Use technical copy. Show one nearby action when the user can resolve the condition.
 
 ### Next-Step Slot (signature)
 The interface expression of the "Anticipate the next step" product principle. A thin slot at the seam between the narrative and the composer, in the same place in every thread. When the thread reaches a state with a likely next move, the slot shows it: a single Filament Amber primary action (`View diff`, `Re-run`, `Switch to Build`) with any other valid moves beside it as quiet ghost buttons. When there is no next move, the slot collapses to nothing, no empty chrome. The primary is bound to a consistent accept key (Tab) so the gesture is the same everywhere. Safe, single-outcome transitions (add project -> new chat) do not render here; they auto-advance, landing the user on the next surface with one quiet cue (the breadcrumb lights briefly), per Quiet-over-loud.
@@ -337,12 +337,12 @@ The interface expression of the "Anticipate the next step" product principle. A 
 ## 6. Do's and Don'ts
 
 ### Do:
-- **Do** use the 4-point spacing scale: `0.4rem` (4px), `0.8rem` (8px), `1.2rem` (12px), `1.6rem` (16px), `2.4rem` (24px), `3.2rem` (32px), `4.8rem` (48px), and `5.6rem` (56px).
+- **Do** use a 4-point base rhythm. Add a named optical value when content, alignment, or control geometry requires it.
 - **Do** write fixed dimensions in rem or em where practical. With the `62.5%` root, divide px by 10 to get the rem value.
-- **Do** keep buttons, icon buttons, and icons on their named small, medium, and large scales.
-- **Do** ration Filament Amber. One accent, small footprint, reserved for the active row, the primary action, and live indicators.
+- **Do** start buttons and icons on their named scales, then use named optical variants where the geometry does not fit.
+- **Do** ration Filament Amber. Reserve it for the active row, the primary action, and live indicators. Bounded tinted regions must communicate state, ownership, mode, or task posture.
 - **Do** carry separation with tonal lift; step a surface along the lightness ramp before adding a line.
-- **Do** set SHAs, counts, timestamps, and status labels in mono, with `tabular-nums` for any numerals.
+- **Do** set SHAs, code, timestamps, and aligned data in mono. Use `tabular-nums` where values need columnar comparison.
 - **Do** use full row-fill (`bg-accent`) for selection, and indentation alone for tree depth.
 - **Do** set hyperlinks and link-styled text in Cool Link (`text-link`), never amber. Cold for plumbing, warm for the lamp.
 - **Do** write technical copy: "Errored", "Idle", "Empty". Match PRODUCT.md's voice.
@@ -354,20 +354,20 @@ The interface expression of the "Anticipate the next step" product principle. A 
 - **Do** render the meaning of implementation metadata. Replace raw wire syntax
   with a familiar label, separator, diagram, disclosure, or status.
 - **Do** give every animation a `prefers-reduced-motion` alternative, and reuse the existing `wizard-*` and `narrative-*` curves (`cubic-bezier(0.25, 1, 0.5, 1)` and `cubic-bezier(0.22, 1, 0.36, 1)`) rather than inventing new ones.
-- **Do** use the documented type scale exactly; dense chrome defaults to Body SM or Body MD, while H1-H6 are reserved for document and spacious panel hierarchy.
+- **Do** start with the documented type scale. Dense chrome defaults to Body SM or Body MD; H1-H6 serve documents and spacious panels. Name any optical addition.
 - **Do** elevate exactly one next-step per state in Filament Amber, bound to the Tab accept key, and auto-advance only single-outcome transitions.
 
 ### Don't:
-- **Don't** add off-scale gaps or control sizes for visual convenience. If a value is not a 4px step, it needs an optical reason.
+- **Don't** add arbitrary gaps or control sizes. Follow the 4-point rhythm and document optical exceptions so they can be reused consistently.
 - **Don't** mix px and rem for the same sizing system. Raw px is reserved for hairlines, bitmap dimensions, canvas pixels, and sub-pixel fixes.
 - **Don't** use `border-left` or `border-right` greater than 1px as a colored accent stripe on rows, cards, callouts, or alerts. Selection is a row-fill.
 - **Don't** add nested guide rails (`border-l border-border/50 pl-2`) for tree indentation. Indentation alone.
 - **Don't** use gradient text (`background-clip: text` over a gradient). Solid colors only.
 - **Don't** use glassmorphism, decorative glow borders, or resting drop shadows on cards.
-- **Don't** introduce a second brand accent, or use green/red for anything other than added-or-good / removed-or-errored.
+- **Don't** introduce a decorative accent with no semantic role, or use green/red for anything other than added-or-good / removed-or-errored.
 - **Don't** soften copy into consumer language ("Oops, something went wrong"), add emoji decoration, or use colorful status chips where a tinted dot suffices.
 - **Don't** use raw Tailwind state colors (`bg-yellow-500`, `bg-green-500`). Use the tokenized diff/status colors.
-- **Don't** fill a content surface with the lamp color (`bg-primary` on message bubbles, panels, or any block of prose). Lamp at area scale violates the Cold-Surface Rule; content surfaces are slate neutrals.
+- **Don't** fill a content surface with Filament Amber unless the area itself communicates a state or task posture. Area color must follow the Earned-Color Rule and preserve readable contrast.
 - **Don't** pad with marketing whitespace or build a hero-metric layout. This is a dense instrument, not a landing page.
 - **Don't** interpret "centered everything" as a ban on centered content columns. The ban is about centered text and templated compositions, not a shared pane axis.
 - **Don't** replace a resizable panel with a dropdown, picker, or modal as a responsive shortcut.
