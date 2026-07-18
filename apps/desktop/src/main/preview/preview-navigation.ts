@@ -424,16 +424,6 @@ export function registerNavigationHandlers(): void {
     }
   });
 
-  ipcMain.handle("preview:open-guest-devtools", (_event) => {
-    const win = BrowserWindow.fromWebContents(_event.sender);
-    if (!win || win.isDestroyed()) return;
-    const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return;
-    // Detached so the DevTools window does not steal pixels from the surfaceRef
-    // region (which the BrowserView is locked onto).
-    s.view.webContents.openDevTools({ mode: "detach" });
-  });
-
   ipcMain.handle("preview:get-navigation-state", (_event) => {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return { canGoBack: false, canGoForward: false };

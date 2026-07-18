@@ -1,0 +1,636 @@
+import { describe, expect, it } from "vitest";
+import {
+  BROWSER_AUTOMATION_CONTRACT_VERSION,
+  BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS,
+  BROWSER_AUTOMATION_ERROR_CODES,
+  BROWSER_AUTOMATION_MAX_AX_NODES,
+  BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES,
+  BROWSER_AUTOMATION_MAX_ELEMENTS,
+  BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES,
+  BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
+  BROWSER_AUTOMATION_MAX_RECORDING_BYTES,
+  BROWSER_AUTOMATION_MAX_RESULT_BYTES,
+  BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH,
+  BROWSER_AUTOMATION_MAX_TIMEOUT_MS,
+  BROWSER_AUTOMATION_MAX_TYPED_TEXT_CHARS,
+  BROWSER_AUTOMATION_MAX_URL_CHARS,
+  BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS,
+  BROWSER_AUTOMATION_OPERATION_METADATA,
+  BROWSER_AUTOMATION_OPERATIONS,
+  BrowserAutomationCredentialClaimsSchema,
+  BrowserAutomationDiagnosticLocationSchema,
+  BrowserAutomationHostDispatchTargetSchema,
+  BrowserAutomationHostDispatchSchema,
+  BrowserAutomationHostRegistrationSchema,
+  BrowserAutomationRequestSchema,
+  BrowserAutomationResultSchema,
+  BrowserAutomationResponseSchema,
+  BrowserAutomationSnapshotSchema,
+  BrowserAutomationTargetSchema,
+  BrowserAutomationUrlSchema,
+} from "../browser-automation.js";
+
+const requestBase = {
+  contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+  workspaceId: "workspace-1",
+  threadId: "thread-1",
+  providerSessionId: "provider-session-1",
+  providerInstanceId: "provider-instance-1",
+  requestId: "request-1",
+  sequence: 0,
+  deadline: Date.now() + 60_000,
+  expectedControlEpoch: 0,
+};
+
+const target = { role: "button", accessibleName: "Submit" };
+
+const argsByOperation = {
+  status: {},
+  open: {},
+  navigate: { url: "https://example.test/path" },
+  resize: { width: 1_280, height: 720 },
+  snapshot: {},
+  screenshot: {},
+  click: { target },
+  type: { target, text: "hello" },
+  press: { key: "Enter" },
+  scroll: { deltaY: 500 },
+  waitFor: { target },
+  console: {},
+  network: {},
+  accessibility: {},
+  performance: {},
+  evaluate: { expression: "document.title" },
+  recordingStart: {},
+  recordingStop: {},
+} satisfies Record<(typeof BROWSER_AUTOMATION_OPERATIONS)[number], object>;
+
+const noTruncation = { truncated: false };
+const snapshot = {
+  url: "https://example.test/",
+  title: "Example",
+  loading: false,
+  visibleText: "Example",
+  visibleTextTruncation: noTruncation,
+  elements: [],
+  elementsTruncation: noTruncation,
+  accessibility: [],
+  accessibilityTruncation: noTruncation,
+  console: [],
+  consoleTruncation: noTruncation,
+  network: [],
+  networkTruncation: noTruncation,
+  actions: [],
+  actionsTruncation: noTruncation,
+};
+
+const actionResult = (operation: string) => ({
+  operation,
+  url: "https://example.test/",
+  title: "Example",
+  controlEpoch: 1,
+});
+
+const resultByOperation = {
+  status: {
+    operation: "status",
+    available: true,
+    active: true,
+    tabId: "tab-1",
+    url: "about:blank",
+    loading: false,
+    focused: true,
+    viewport: { width: 1_280, height: 720 },
+    capabilities: [...BROWSER_AUTOMATION_OPERATIONS],
+  },
+  open: actionResult("open"),
+  navigate: actionResult("navigate"),
+  resize: { operation: "resize", width: 1_280, height: 720, controlEpoch: 1 },
+  snapshot: { operation: "snapshot", snapshot, controlEpoch: 1 },
+  screenshot: {
+    operation: "screenshot",
+    screenshot: {
+      mediaType: "image/png",
+      dataBase64: "cG5n",
+      width: 1,
+      height: 1,
+      truncation: noTruncation,
+    },
+    controlEpoch: 1,
+  },
+  click: actionResult("click"),
+  type: actionResult("type"),
+  press: actionResult("press"),
+  scroll: actionResult("scroll"),
+  waitFor: actionResult("waitFor"),
+  console: { operation: "console", entries: [], truncation: noTruncation },
+  network: { operation: "network", entries: [], truncation: noTruncation },
+  accessibility: { operation: "accessibility", nodes: [], truncation: noTruncation },
+  performance: {
+    operation: "performance",
+    metrics: {
+      capturedAt: 1,
+      navigation: { timeToFirstByteMs: 10, domContentLoadedMs: 20, loadMs: 30 },
+      resources: { count: 1, transferBytes: 100, decodedBodyBytes: 200 },
+      responsiveness: { longTaskCount: 0, totalBlockingTimeMs: 0 },
+      memory: { usedJsHeapBytes: 1, totalJsHeapBytes: 2, jsHeapLimitBytes: 3 },
+    },
+    controlEpoch: 1,
+  },
+  evaluate: { operation: "evaluate", valueJson: "null", controlEpoch: 1 },
+  recordingStart: {
+    operation: "recordingStart",
+    recordingId: "recording-1",
+    startedAt: 1,
+    controlEpoch: 1,
+  },
+  recordingStop: {
+    operation: "recordingStop",
+    recordingId: "recording-1",
+    mediaType: "video/webm",
+    dataBase64: "dmlkZW8=",
+    durationMs: 1,
+    truncation: noTruncation,
+    controlEpoch: 1,
+  },
+} satisfies Record<(typeof BROWSER_AUTOMATION_OPERATIONS)[number], object>;
+
+describe("browser automation operation contract", () => {
+  it("defines exactly the 18 specified operations and MCP names", () => {
+    expect(BROWSER_AUTOMATION_OPERATIONS).toHaveLength(18);
+    expect(Object.keys(BROWSER_AUTOMATION_OPERATION_METADATA)).toEqual([
+      ...BROWSER_AUTOMATION_OPERATIONS,
+    ]);
+    for (const operation of BROWSER_AUTOMATION_OPERATIONS) {
+      expect(BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName).toMatch(/^browser_/);
+      expect(BROWSER_AUTOMATION_OPERATION_METADATA[operation].operation).toBe(operation);
+    }
+  });
+
+  it("classifies privileged, input, and diagnostic operations", () => {
+    expect(BROWSER_AUTOMATION_OPERATION_METADATA.evaluate.annotations).toEqual({
+      readOnly: false,
+      destructive: true,
+      idempotent: false,
+      openWorld: true,
+      privileged: true,
+    });
+    for (const operation of ["click", "type", "press", "scroll"] as const) {
+      expect(BROWSER_AUTOMATION_OPERATION_METADATA[operation].annotations.destructive).toBe(true);
+      expect(BROWSER_AUTOMATION_OPERATION_METADATA[operation].annotations.openWorld).toBe(true);
+    }
+    expect(BROWSER_AUTOMATION_OPERATION_METADATA.resize.annotations.openWorld).toBe(true);
+    for (const operation of [
+      "status",
+      "snapshot",
+      "screenshot",
+      "waitFor",
+      "console",
+      "network",
+      "accessibility",
+      "performance",
+    ] as const) {
+      expect(BROWSER_AUTOMATION_OPERATION_METADATA[operation].annotations.readOnly).toBe(true);
+    }
+  });
+
+  it.each(BROWSER_AUTOMATION_OPERATIONS)("parses a scoped %s request", (operation) => {
+    const parsed = BrowserAutomationRequestSchema().parse({
+      ...requestBase,
+      operation,
+      args: argsByOperation[operation],
+    });
+    expect(parsed.operation).toBe(operation);
+  });
+
+  it.each(BROWSER_AUTOMATION_OPERATIONS)("parses an exhaustive %s result", (operation) => {
+    const parsed = BrowserAutomationResponseSchema().safeParse({
+      contractVersion: 1,
+      requestId: "request-1",
+      sequence: 0,
+      ok: true,
+      result: resultByOperation[operation],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects mismatched operation arguments", () => {
+    expect(
+      BrowserAutomationRequestSchema().safeParse({
+        ...requestBase,
+        operation: "navigate",
+        args: { target },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps diagnostic inspection requests read-only", () => {
+    for (const operation of ["console", "network"] as const) {
+      expect(
+        BrowserAutomationRequestSchema().safeParse({
+          ...requestBase,
+          operation,
+          args: { clear: true },
+        }).success,
+      ).toBe(false);
+    }
+  });
+});
+
+describe("browser automation boundaries", () => {
+  it("allows only credential-free HTTP(S) URLs within the length limit", () => {
+    const urlPrefix = "https://example.test/";
+    const maximumUrl = `${urlPrefix}${"a".repeat(BROWSER_AUTOMATION_MAX_URL_CHARS - urlPrefix.length)}`;
+    expect(BrowserAutomationUrlSchema().safeParse("https://example.test/").success).toBe(true);
+    expect(BrowserAutomationUrlSchema().safeParse("http://localhost:5173/").success).toBe(true);
+    expect(BrowserAutomationUrlSchema().safeParse(maximumUrl).success).toBe(true);
+    expect(BrowserAutomationUrlSchema().safeParse(`${maximumUrl}a`).success).toBe(false);
+    expect(BrowserAutomationUrlSchema().safeParse("file:///etc/passwd").success).toBe(false);
+    expect(BrowserAutomationUrlSchema().safeParse("javascript:alert(1)").success).toBe(false);
+    expect(BrowserAutomationUrlSchema().safeParse("https://user:pass@example.test/").success).toBe(
+      false,
+    );
+  });
+
+  it("accepts exactly one complete target strategy", () => {
+    for (const valid of [
+      { semanticId: "element-1" },
+      { role: "button", accessibleName: "Save" },
+      { cssSelector: "#save" },
+      { x: 10, y: 20 },
+    ]) {
+      expect(BrowserAutomationTargetSchema().safeParse(valid).success).toBe(true);
+    }
+    for (const invalid of [
+      {},
+      { role: "button" },
+      { x: 10 },
+      { semanticId: "element-1", cssSelector: "#save" },
+      { role: "button", accessibleName: "Save", x: 10, y: 20 },
+    ]) {
+      expect(BrowserAutomationTargetSchema().safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it("accepts sanitized diagnostic locations across browser source schemes", () => {
+    for (const location of [
+      "https://example.test/app.js",
+      "file:///C:/src/app.ts",
+      "webpack://app/src/index.ts",
+      "node:internal/modules/cjs/loader",
+      "devtools://devtools/bundled/inspector.js",
+      "chrome-extension://abcdefghijklmnop/script.js",
+      "blob:https://example.test/2c0f",
+      "about:blank",
+      "data:[redacted]",
+    ]) {
+      expect(BrowserAutomationDiagnosticLocationSchema().safeParse(location).success).toBe(true);
+    }
+    for (const location of [
+      "https://user:pass@example.test/app.js",
+      "https://example.test/app.js?token=secret",
+      "https://example.test/app.js#secret",
+      "blob:https://user:pass@example.test/2c0f",
+      "data:text/javascript,secret",
+      "custom://example.test/app.js",
+    ]) {
+      expect(BrowserAutomationDiagnosticLocationSchema().safeParse(location).success).toBe(false);
+    }
+  });
+
+  it("validates an exact host dispatch target", () => {
+    const dispatchTarget = {
+      desktopInstanceId: "desktop-1",
+      windowId: 1,
+      connectionGeneration: 2,
+      threadId: "thread-1",
+      tabId: "tab-1",
+      targetGeneration: 3,
+      active: true,
+      focused: true,
+      lastUsedAt: 10,
+    };
+    expect(BrowserAutomationHostDispatchTargetSchema().safeParse(dispatchTarget).success).toBe(true);
+    for (const invalid of [
+      { ...dispatchTarget, desktopInstanceId: "" },
+      { ...dispatchTarget, windowId: 0 },
+      { ...dispatchTarget, connectionGeneration: 0 },
+      { ...dispatchTarget, threadId: "" },
+      { ...dispatchTarget, tabId: "" },
+      { ...dispatchTarget, targetGeneration: -1 },
+      { ...dispatchTarget, unexpected: true },
+    ]) {
+      expect(BrowserAutomationHostDispatchTargetSchema().safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it("binds a host dispatch to one scope, connection, and target generation", () => {
+    const dispatch = {
+      scope: {
+        workspaceId: requestBase.workspaceId,
+        threadId: requestBase.threadId,
+        providerSessionId: requestBase.providerSessionId,
+        providerInstanceId: requestBase.providerInstanceId,
+      },
+      connection: {
+        desktopInstanceId: "desktop-1",
+        windowId: 1,
+        connectionGeneration: 2,
+        targetGeneration: 3,
+      },
+      request: { ...requestBase, operation: "status", args: {} },
+      target: {
+        desktopInstanceId: "desktop-1",
+        windowId: 1,
+        connectionGeneration: 2,
+        threadId: requestBase.threadId,
+        tabId: "tab-1",
+        targetGeneration: 3,
+        active: true,
+        focused: true,
+        lastUsedAt: 10,
+      },
+    };
+
+    expect(BrowserAutomationHostDispatchSchema().safeParse(dispatch).success).toBe(true);
+    expect(
+      BrowserAutomationHostDispatchSchema().safeParse({ ...dispatch, target: undefined }).success,
+    ).toBe(false);
+    expect(
+      BrowserAutomationHostDispatchSchema().safeParse({
+        ...dispatch,
+        target: { ...dispatch.target, threadId: "another-thread" },
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserAutomationHostDispatchSchema().safeParse({
+        ...dispatch,
+        target: { ...dispatch.target, targetGeneration: 2 },
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserAutomationHostDispatchSchema().safeParse({
+        ...dispatch,
+        target: { ...dispatch.target, connectionGeneration: 1 },
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserAutomationHostDispatchSchema().safeParse({
+        ...dispatch,
+        scope: { ...dispatch.scope, providerSessionId: "another-session" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("enforces timeout, typed-text, expression, and screenshot request limits", () => {
+    const parse = (operation: string, args: object) =>
+      BrowserAutomationRequestSchema().safeParse({ ...requestBase, operation, args }).success;
+
+    expect(parse("click", { target, timeoutMs: BROWSER_AUTOMATION_MAX_TIMEOUT_MS })).toBe(true);
+    expect(parse("click", { target, timeoutMs: BROWSER_AUTOMATION_MAX_TIMEOUT_MS + 1 })).toBe(false);
+    expect(parse("type", { text: "a".repeat(BROWSER_AUTOMATION_MAX_TYPED_TEXT_CHARS) })).toBe(true);
+    expect(parse("type", { text: "a".repeat(BROWSER_AUTOMATION_MAX_TYPED_TEXT_CHARS + 1) })).toBe(
+      false,
+    );
+    expect(parse("evaluate", { expression: "a".repeat(BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES) })).toBe(
+      true,
+    );
+    expect(
+      parse("evaluate", { expression: "a".repeat(BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES + 1) }),
+    ).toBe(false);
+    expect(parse("screenshot", { maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH })).toBe(true);
+    expect(parse("screenshot", { maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH + 1 })).toBe(
+      false,
+    );
+  });
+
+  it("applies the 15 second timeout default", () => {
+    const parsed = BrowserAutomationRequestSchema().parse({
+      ...requestBase,
+      operation: "click",
+      args: { target },
+    });
+    expect(parsed.args.timeoutMs).toBe(BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS);
+  });
+
+  it("bounds snapshot text, semantic elements, accessibility, and diagnostics", () => {
+    const assertBounded = (field: string, allowed: unknown, rejected: unknown) => {
+      expect(BrowserAutomationSnapshotSchema().safeParse({ ...snapshot, [field]: allowed }).success).toBe(
+        true,
+      );
+      expect(BrowserAutomationSnapshotSchema().safeParse({ ...snapshot, [field]: rejected }).success).toBe(
+        false,
+      );
+    };
+    assertBounded(
+      "visibleText",
+      "a".repeat(BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS),
+      "a".repeat(BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS + 1),
+    );
+
+    const elements = Array.from({ length: BROWSER_AUTOMATION_MAX_ELEMENTS + 1 }, (_, index) => ({
+          semanticId: `element-${index}`,
+          role: "button",
+          accessibleName: "Button",
+          disabled: false,
+          bounds: { x: 0, y: 0, width: 1, height: 1 },
+        }));
+    assertBounded("elements", elements.slice(0, BROWSER_AUTOMATION_MAX_ELEMENTS), elements);
+
+    const accessibility = Array.from(
+      { length: BROWSER_AUTOMATION_MAX_AX_NODES + 1 },
+      (_, index) => ({
+            nodeId: `node-${index}`,
+            role: "text",
+            name: "Text",
+            depth: 0,
+            ignored: false,
+          }),
+    );
+    assertBounded(
+      "accessibility",
+      accessibility.slice(0, BROWSER_AUTOMATION_MAX_AX_NODES),
+      accessibility,
+    );
+
+    const actions = Array.from(
+      { length: BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES + 1 },
+      () => ({ timestamp: 1, operation: "click", outcome: "succeeded" }),
+    );
+    assertBounded("actions", actions.slice(0, BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES), actions);
+
+    const consoleEntries = Array.from(
+      { length: BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES + 1 },
+      () => ({ timestamp: 1, level: "info", text: "Loaded" }),
+    );
+    assertBounded(
+      "console",
+      consoleEntries.slice(0, BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES),
+      consoleEntries,
+    );
+
+    const networkEntries = Array.from(
+      { length: BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES + 1 },
+      () => ({
+        timestamp: 1,
+        url: "https://example.test/resource.js",
+        method: "GET",
+        status: 200,
+        failed: false,
+      }),
+    );
+    assertBounded(
+      "network",
+      networkEntries.slice(0, BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES),
+      networkEntries,
+    );
+  });
+
+  it("requires coherent truncation metadata for snapshot collections", () => {
+    expect(
+      BrowserAutomationSnapshotSchema().safeParse({
+        ...snapshot,
+        console: [{ timestamp: 1, level: "info", text: "Loaded" }],
+        consoleTruncation: { truncated: true, originalCount: 1, reason: "entry-limit" },
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserAutomationSnapshotSchema().safeParse({
+        ...snapshot,
+        networkTruncation: { truncated: false, originalCount: 0, reason: "entry-limit" },
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserAutomationSnapshotSchema().safeParse({
+        ...snapshot,
+        actions: [{ timestamp: 1, operation: "click", outcome: "succeeded" }],
+        actionsTruncation: { truncated: true, originalCount: 2 },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("bounds host concurrency and rejects duplicate capabilities", () => {
+    const registration = {
+      contractVersion: 1,
+      hostId: "host-1",
+      desktopInstanceId: "desktop-1",
+      worktreeIdentity: "worktree-1",
+      workspaceIds: ["workspace-1"],
+      capabilities: [{ operation: "status", available: true }],
+      maxPendingRequests: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
+      connectedAt: 1,
+    };
+    expect(BrowserAutomationHostRegistrationSchema().safeParse(registration).success).toBe(true);
+    expect(
+      BrowserAutomationHostRegistrationSchema().safeParse({
+        ...registration,
+        maxPendingRequests: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      BrowserAutomationHostRegistrationSchema().safeParse({
+        ...registration,
+        capabilities: [
+          { operation: "status", available: true },
+          { operation: "status", available: true },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires expiring credential claims with unique operations", () => {
+    const claims = {
+      contractVersion: 1,
+      credentialId: "credential-1",
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      providerSessionId: "session-1",
+      providerInstanceId: "instance-1",
+      operations: ["status", "snapshot"],
+      issuedAt: 10,
+      expiresAt: 20,
+    };
+    expect(BrowserAutomationCredentialClaimsSchema().safeParse(claims).success).toBe(true);
+    expect(
+      BrowserAutomationCredentialClaimsSchema().safeParse({ ...claims, expiresAt: 10 }).success,
+    ).toBe(false);
+    expect(
+      BrowserAutomationCredentialClaimsSchema().safeParse({
+        ...claims,
+        operations: ["status", "status"],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects success responses over 512 KiB", () => {
+    const response = {
+      contractVersion: 1,
+      requestId: "request-1",
+      sequence: 0,
+      ok: true,
+      result: {
+        operation: "recordingStop",
+        recordingId: "recording-1",
+        mediaType: "video/webm",
+        dataBase64: "a".repeat(BROWSER_AUTOMATION_MAX_RESULT_BYTES),
+        durationMs: 1,
+        truncation: noTruncation,
+        controlEpoch: 1,
+      },
+    };
+    expect(BrowserAutomationResponseSchema().safeParse(response).success).toBe(false);
+  });
+
+  it("bounds valid recording base64 by decoded size in the result schema", () => {
+    const encodeZeroBytes = (byteCount: number): string => {
+      const completeGroups = Math.floor(byteCount / 3);
+      const remainder = byteCount % 3;
+      return `${"AAAA".repeat(completeGroups)}${remainder === 1 ? "AA==" : remainder === 2 ? "AAA=" : ""}`;
+    };
+    const result = (dataBase64: string) => ({
+      operation: "recordingStop",
+      recordingId: "recording-1",
+      mediaType: "video/webm",
+      dataBase64,
+      durationMs: 1,
+      truncation: noTruncation,
+      controlEpoch: 1,
+    });
+
+    expect(
+      BrowserAutomationResultSchema().safeParse(
+        result(encodeZeroBytes(BROWSER_AUTOMATION_MAX_RECORDING_BYTES)),
+      ).success,
+    ).toBe(true);
+    expect(
+      BrowserAutomationResultSchema().safeParse(
+        result(encodeZeroBytes(BROWSER_AUTOMATION_MAX_RECORDING_BYTES + 1)),
+      ).success,
+    ).toBe(false);
+    expect(BrowserAutomationResultSchema().safeParse(result("not-base64")).success).toBe(false);
+  });
+
+  it.each(BROWSER_AUTOMATION_ERROR_CODES)("accepts the stable %s error code", (code) => {
+    expect(
+      BrowserAutomationResponseSchema().safeParse({
+        contractVersion: 1,
+        requestId: "request-1",
+        sequence: 0,
+        ok: false,
+        error: { code, message: "Safe failure detail", retryable: false },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects unknown error codes", () => {
+    expect(
+      BrowserAutomationResponseSchema().safeParse({
+        contractVersion: 1,
+        requestId: "request-1",
+        sequence: 0,
+        ok: false,
+        error: { code: "UNKNOWN", message: "Safe failure detail", retryable: false },
+      }).success,
+    ).toBe(false);
+  });
+});

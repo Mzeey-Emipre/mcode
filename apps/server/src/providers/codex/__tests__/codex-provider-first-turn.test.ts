@@ -14,10 +14,15 @@ vi.mock("../codex-version.js", () => ({
   meetsMinVersion: () => true,
 }));
 
-const { sendTurnMock, listSkillsMock, appServers } = vi.hoisted(() => ({
+const { sendTurnMock, listSkillsMock, appServers, startError } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue("turn-test-id"),
   listSkillsMock: vi.fn().mockResolvedValue({ data: [] }),
-  appServers: [] as Array<import("events").EventEmitter & { isAlive: boolean; options: unknown }>,
+  appServers: [] as Array<import("events").EventEmitter & {
+    isAlive: boolean;
+    options: Record<string, unknown>;
+    spawnedEnv?: Record<string, string>;
+  }>,
+  startError: { current: null as Error | null },
 }));
 
 vi.mock("../codex-app-server.js", async () => {
@@ -26,13 +31,19 @@ vi.mock("../codex-app-server.js", async () => {
     isAlive = true;
     threadId = "sdk-thread-1";
     resumeFailed = false;
-    options: unknown;
+    options: Record<string, unknown>;
     constructor(options: unknown) {
       super();
-      this.options = options;
+      this.options = options as Record<string, unknown>;
       appServers.push(this);
     }
-    async start(): Promise<void> {}
+    spawnedEnv?: Record<string, string>;
+    async start(): Promise<void> {
+      const getSpawnEnv = (this.options as { getSpawnEnv?: () => Record<string, string> }).getSpawnEnv;
+      const env = getSpawnEnv?.();
+      this.spawnedEnv = env ? { ...env } : undefined;
+      if (startError.current) throw startError.current;
+    }
     async sendTurn(input: unknown, turnOptions: unknown): Promise<string> {
       return sendTurnMock(input, turnOptions);
     }
@@ -51,14 +62,19 @@ import { CodexProvider } from "../codex-provider.js";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { stubEnvService } from "../../../__tests__/stub-env-service.js";
+import { BrowserAutomationAccessService } from "../../../services/browser-automation/access-service.js";
 
-function makeProvider(skillList: (...args: unknown[]) => unknown[] = vi.fn(() => [])): CodexProvider {
+function makeProvider(
+  skillList: (...args: unknown[]) => unknown[] = vi.fn(() => []),
+  browserAutomationAccess = new BrowserAutomationAccessService(),
+): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
     { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
     { list: skillList } as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
+    browserAutomationAccess,
   );
 }
 
@@ -76,6 +92,63 @@ describe("CodexProvider first turn on new session", () => {
     listSkillsMock.mockReset();
     listSkillsMock.mockResolvedValue({ data: [] });
     appServers.length = 0;
+    startError.current = null;
+  });
+
+  it("passes loopback browser MCP config and a child-only bearer token", async () => {
+    const access = new BrowserAutomationAccessService();
+    access.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = makeProvider(undefined, access);
+
+    await provider.sendTurn({
+      sessionId,
+      workspaceId: "workspace-test",
+      threadId,
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    const server = appServers.at(-1)!;
+    expect(server.options.configOverrides).toEqual([
+      'mcp_servers.mcode-browser.url="http://127.0.0.1:19400/mcp"',
+      'mcp_servers.mcode-browser.bearer_token_env_var="MCODE_BROWSER_MCP_TOKEN"',
+    ]);
+    expect(server.spawnedEnv?.MCODE_BROWSER_MCP_TOKEN).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await provider.stopSession(sessionId);
+    expect(access.credentials.size()).toBe(0);
+  });
+
+  it("revokes a browser credential when app-server startup fails", async () => {
+    const access = new BrowserAutomationAccessService();
+    access.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    startError.current = new Error("handshake failed");
+    const provider = makeProvider(undefined, access);
+
+    await provider.sendTurn({
+      sessionId: "mcode-browser-spawn-failure",
+      workspaceId: "workspace-test",
+      threadId: "browser-spawn-failure",
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    expect(access.credentials.size()).toBe(0);
   });
 
   it("sent turn/start after spawn when the runtime pool registers on the next tick", async () => {
@@ -89,6 +162,7 @@ describe("CodexProvider first turn on new session", () => {
 
     await provider.sendTurn({
       sessionId,
+      workspaceId: "workspace-test",
       threadId,
       message: "hey",
       cwd: process.cwd(),
@@ -121,6 +195,7 @@ describe("CodexProvider first turn on new session", () => {
 
     await provider.sendTurn({
       sessionId: "mcode-ultra-sol",
+      workspaceId: "workspace-test",
       threadId: "ultra-sol",
       message: "delegate this work",
       cwd: process.cwd(),
@@ -140,6 +215,7 @@ describe("CodexProvider first turn on new session", () => {
     sendTurnMock.mockClear();
     await provider.sendTurn({
       sessionId: "mcode-ultra-luna",
+      workspaceId: "workspace-test",
       threadId: "ultra-luna",
       message: "delegate this work",
       cwd: process.cwd(),
@@ -171,6 +247,7 @@ describe("CodexProvider first turn on new session", () => {
 
     void provider.sendTurn({
       sessionId: supersedeSessionId,
+      workspaceId: "workspace-test",
       threadId: supersedeThreadId,
       message: "hey",
       cwd: process.cwd(),
@@ -219,6 +296,7 @@ describe("CodexProvider first turn on new session", () => {
 
     await provider.sendTurn({
       sessionId: "mcode-skill-turn",
+      workspaceId: "workspace-test",
       threadId: "skill-turn",
       message: "/browser:control-in-app-browser inspect localhost",
       cwd: process.cwd(),
@@ -243,6 +321,7 @@ describe("CodexProvider first turn on new session", () => {
 
     await provider.sendTurn({
       sessionId: "mcode-mentioned-file",
+      workspaceId: "workspace-test",
       threadId: "mentioned-file",
       message: "check @src/app.ts",
       mentions: [{
@@ -274,6 +353,7 @@ describe("CodexProvider first turn on new session", () => {
 
     await provider.sendTurn({
       sessionId: "mcode-mentioned-agent",
+      workspaceId: "workspace-test",
       threadId: "mentioned-agent",
       message: "ask @planner",
       mentions: [{
@@ -321,6 +401,7 @@ describe("CodexProvider first turn on new session", () => {
 
       await provider.sendTurn({
         sessionId: "mcode-prompt-turn",
+        workspaceId: "workspace-test",
         threadId: "prompt-turn",
         message: '/prompts:draftpr FILES="src/a.ts src/b.ts" PR_TITLE="Add files"',
         cwd: process.cwd(),
@@ -360,6 +441,7 @@ describe("CodexProvider first turn on new session", () => {
 
       await provider.sendTurn({
         sessionId: "mcode-missing-prompt",
+        workspaceId: "workspace-test",
         threadId: "missing-prompt",
         message: "/prompts:draftpr src/a.ts",
         cwd: process.cwd(),
@@ -388,6 +470,7 @@ describe("CodexProvider first turn on new session", () => {
 
     await provider.sendTurn({
       sessionId: "mcode-unknown-slash",
+      workspaceId: "workspace-test",
       threadId: "unknown-slash",
       message: "/goal clear",
       cwd: process.cwd(),
@@ -446,6 +529,7 @@ describe("CodexProvider first turn on new session", () => {
 
     await provider.sendTurn({
       sessionId: "mcode-native-skills",
+      workspaceId: "workspace-test",
       threadId: "native-skills",
       message: "hello",
       cwd,

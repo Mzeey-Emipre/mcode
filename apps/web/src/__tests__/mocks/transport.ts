@@ -92,6 +92,14 @@ export function createMockMessage(overrides?: Partial<Message>): Message {
 }
 
 export const mockTransport: McodeTransport = {
+  registerBrowserAutomationHost: vi.fn().mockResolvedValue({
+    generation: 1,
+    desktopInstanceId: "desktop-test",
+  }),
+  updateBrowserAutomationHostTargets: vi.fn().mockResolvedValue(undefined),
+  respondToBrowserAutomationRequest: vi.fn().mockResolvedValue(undefined),
+  heartbeatBrowserAutomationHost: vi.fn().mockResolvedValue(undefined),
+  cancelBrowserAutomationRequest: vi.fn().mockResolvedValue(undefined),
   createWorkspace: vi.fn(),
   listWorkspaces: vi.fn().mockResolvedValue([]),
   renameWorkspace: vi.fn().mockResolvedValue(createMockWorkspace()),

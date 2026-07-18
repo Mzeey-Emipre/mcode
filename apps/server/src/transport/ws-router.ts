@@ -9,6 +9,7 @@ import { mkdir, readdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { homedir, tmpdir } from "os";
 import type { WebSocket } from "ws";
+import type { IncomingMessage } from "http";
 
 import {
   WS_METHODS,
@@ -81,6 +82,8 @@ import type { ThreadTeardownService } from "../services/thread-teardown-service.
 import type { PullRequestService } from "../services/pull-requests/pull-request-service.js";
 import type { PullRequestMutationService } from "../services/pull-requests/pull-request-mutation-service.js";
 import type { ReviewWorktreeService } from "../services/pull-requests/review-worktree-service.js";
+import type { BrowserAutomationBroker } from "../services/browser-automation/broker.js";
+import type { BrowserAutomationHostConnectionAuthorization } from "../services/browser-automation/broker.js";
 
 const DEFAULT_PULL_REQUEST_CONNECTION = {};
 
@@ -171,6 +174,12 @@ async function discoverCodexAgents(deps: RouterDeps, workspaceId?: string, threa
 
 /** Service dependencies for the router. */
 export interface RouterDeps {
+  /** Routes browser operations to renderer hosts when visible-browser automation is enabled. */
+  browserAutomationBroker?: BrowserAutomationBroker;
+  /** Resolves trusted browser-host identity and workspace scope from an authenticated connection. */
+  resolveBrowserAutomationHostAuthorization: (
+    request: IncomingMessage,
+  ) => BrowserAutomationHostConnectionAuthorization | null;
   workspaceService: WorkspaceService;
   threadService: ThreadService;
   agentService: AgentService;
@@ -239,7 +248,7 @@ export interface RouterDeps {
 export async function routeMessage(
   raw: string,
   deps: RouterDeps,
-  context: { client?: WebSocket } = {},
+  context: { client?: WebSocket; browserAutomationAuthorization?: BrowserAutomationHostConnectionAuthorization | null } = {},
 ): Promise<WebSocketResponse> {
   let request: WebSocketRequest;
   try {
@@ -397,9 +406,61 @@ async function dispatch(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: any,
   deps: RouterDeps,
-  context: { client?: WebSocket },
+  context: { client?: WebSocket; browserAutomationAuthorization?: BrowserAutomationHostConnectionAuthorization | null },
 ): Promise<unknown> {
   switch (method) {
+    case "browserAutomation.host.register": {
+      if (!context.client || !deps.browserAutomationBroker) {
+        throw new Error("Browser automation host registration is unavailable");
+      }
+      return deps.browserAutomationBroker.registerHost(
+        context.client,
+        params.registration,
+        context.browserAutomationAuthorization ?? null,
+      );
+    }
+    case "browserAutomation.host.updateTargets":
+      if (!context.client || !deps.browserAutomationBroker) {
+        throw new Error("Browser automation host target update is unavailable");
+      }
+      deps.browserAutomationBroker.updateTargets(
+        context.client,
+        params.hostId,
+        params.generation,
+        params.targets,
+      );
+      return;
+    case "browserAutomation.host.respond":
+      if (!context.client || !deps.browserAutomationBroker) {
+        throw new Error("Browser automation host response is unavailable");
+      }
+      deps.browserAutomationBroker.respond(
+        context.client,
+        params.hostId,
+        params.generation,
+        params.response,
+        params.target,
+      );
+      return;
+    case "browserAutomation.host.heartbeat":
+      if (!context.client || !deps.browserAutomationBroker) {
+        throw new Error("Browser automation host heartbeat is unavailable");
+      }
+      deps.browserAutomationBroker.heartbeat(context.client, params.hostId, params.generation);
+      return;
+    case "browserAutomation.host.cancel":
+      if (!context.client || !deps.browserAutomationBroker) {
+        throw new Error("Browser automation host cancellation is unavailable");
+      }
+      deps.browserAutomationBroker.cancelFromHost(
+        context.client,
+        params.hostId,
+        params.generation,
+        params.requestId,
+        params.sequence,
+        params.reason,
+      );
+      return;
     case "push.subscribeThread":
       if (context.client) {
         subscribeClientToThread(context.client, params.threadId);

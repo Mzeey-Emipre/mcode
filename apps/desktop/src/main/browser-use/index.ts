@@ -17,6 +17,8 @@ import { BrowserUsePipeServer, resolveConfiguredPipePath } from "./pipe-server.j
 export { BrowserUsePipeServer, resolveConfiguredPipePath, resolveDefaultPipePath } from "./pipe-server.js";
 export type { BrowserHostBridge } from "./host-bridge.js";
 
+export { LEGACY_BROWSER_USE_PIPE_ENV, shouldStartLegacyBrowserUseBridge } from "./rollout.js";
+
 let server: BrowserUsePipeServer | null = null;
 let hostBridge: BrowserHostBridge | null = null;
 

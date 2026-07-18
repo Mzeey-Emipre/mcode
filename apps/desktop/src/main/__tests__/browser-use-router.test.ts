@@ -203,4 +203,14 @@ describe("TabIdMap", () => {
     map.untrack("t", "A");
     expect(map.byTrackedId(t.id)).toBeNull();
   });
+
+  it("does not collide when thread and tab ids contain delimiters", async () => {
+    const { TabIdMap } = await import("../browser-use/tab-id-map.js");
+    const map = new TabIdMap();
+    const first = map.track("a:b", "c");
+    const second = map.track("a", "b:c");
+    expect(first.id).not.toBe(second.id);
+    expect(map.byTrackedId(first.id)).toMatchObject({ threadId: "a:b", tabId: "c" });
+    expect(map.byTrackedId(second.id)).toMatchObject({ threadId: "a", tabId: "b:c" });
+  });
 });

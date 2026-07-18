@@ -12,7 +12,7 @@ import type { BrowserWindow, WebContents } from "electron";
 import { BrowserWindow as ElectronBrowserWindow } from "electron";
 import { logger } from "@mcode/shared";
 import { ensureThreadTabSet, sessions, type TabState } from "../preview/preview-session.js";
-import { findAdoptedWebContents } from "../preview/preview-webview-adopt.js";
+import { findAdoptedWebContentsForWindow } from "../preview/preview-webview-adopt.js";
 
 /** Snapshot of the currently-visible preview, or null if none. */
 export interface BrowserHostSnapshot {
@@ -76,18 +76,6 @@ function locateTab(threadId: string, tabId: string): {
   win: BrowserWindow;
   webContents: WebContents | null;
 } | null {
-  // Phase D: an adopted renderer-hosted <webview> wins over any
-  // BrowserView-backed live view for the same slot.
-  const adopted = findAdoptedWebContents(threadId, tabId);
-  if (adopted) {
-    for (const win of ElectronBrowserWindow.getAllWindows()) {
-      const s = sessions.get(win.id);
-      if (s && s.tabsByThread.has(threadId)) {
-        return { win, webContents: adopted };
-      }
-    }
-  }
-
   for (const win of ElectronBrowserWindow.getAllWindows()) {
     const s = sessions.get(win.id);
     if (!s) continue;
@@ -95,6 +83,8 @@ function locateTab(threadId: string, tabId: string): {
     if (!set) continue;
     const tab = set.tabs.find((t) => t.id === tabId);
     if (!tab) continue;
+    const adopted = findAdoptedWebContentsForWindow(win.id, threadId, tabId);
+    if (adopted) return { win, webContents: adopted };
     // Slice 2: every warm tab carries its own WebContentsView, so the bridge
     // can target inactive tabs too. Returns null only when the tab is cold
     // (never mounted) or its webContents has been destroyed.
@@ -123,7 +113,7 @@ export function createPreviewSessionBackedHostBridge(): BrowserHostBridge {
   /** Per-(threadId,tabId) "debugger.on('message') disposer" to remove on detach. */
   const debuggerMessageDisposerByTabKey = new Map<string, () => void>();
 
-  const tabKey = (threadId: string, tabId: string): string => `${threadId}:${tabId}`;
+  const tabKey = (threadId: string, tabId: string): string => JSON.stringify([threadId, tabId]);
 
   function dispatchCdpEvent(threadId: string, tabId: string, method: string, params?: unknown) {
     const bag = cdpListenersByTabKey.get(tabKey(threadId, tabId));

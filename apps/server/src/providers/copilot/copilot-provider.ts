@@ -34,6 +34,12 @@ import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
+import {
+  BrowserAutomationAccessService,
+  browserAutomationPermissionCapability,
+  type BrowserAutomationAccessRequest,
+  type BrowserAutomationCredentialMetadata,
+} from "../../services/browser-automation/access-service.js";
 import type {
   IAgentProvider,
   ISessionEvictable,
@@ -48,7 +54,10 @@ import type {
   ProviderUsageInfo,
   CompletionOptions,
 } from "@mcode/contracts";
-import { AgentEventType } from "@mcode/contracts";
+import {
+  AgentEventType,
+  BROWSER_AUTOMATION_OPERATION_METADATA,
+} from "@mcode/contracts";
 
 /** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);
@@ -162,6 +171,12 @@ interface CopilotSessionState {
    * busy check (the drift this migration converges).
    */
   turnActive: boolean;
+  /** Non-secret browser credential lifecycle metadata for this main session. */
+  browserCredential?: BrowserAutomationCredentialMetadata;
+  /** Workspace fixed to this SDK session at creation. */
+  workspaceId: string;
+  /** Browser permission class fixed to this SDK session at creation. */
+  browserPermissionCapability: "observe" | "interact" | "privileged";
 }
 
 /** GitHub Copilot SDK adapter implementing IAgentProvider with callback-based event mapping. */
@@ -195,6 +210,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    * sessionId.
    */
   private pendingSpawnTurns = new Map<string, { message: string; model?: string; copilotAgent?: string }>();
+  /** Browser scope staged only until a fresh normal SDK session starts. */
+  private pendingBrowserAccess = new Map<string, BrowserAutomationAccessRequest>();
   /** Serialises concurrent refreshClient() calls so only one rebuild runs at a time. */
   private clientStartLock: Promise<void> = Promise.resolve();
 
@@ -207,6 +224,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(EnvService) private readonly envService: EnvService,
+    @inject(BrowserAutomationAccessService)
+    private readonly browserAutomationAccess: BrowserAutomationAccessService = new BrowserAutomationAccessService(),
   ) {
     super();
     this.runtime = new SessionRuntime<CopilotSessionState>(this, {
@@ -681,6 +700,17 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     if (req.resumeFrom !== undefined) {
       this.sdkSessionIds.set(req.sessionId, req.resumeFrom);
     }
+    this.pendingBrowserAccess.set(req.sessionId, {
+      providerId: this.id,
+      providerSessionId: req.resumeFrom ?? req.sessionId,
+      mcodeSessionId: req.sessionId,
+      threadId: req.threadId,
+      workspaceId: req.workspaceId,
+      permissionCapability: browserAutomationPermissionCapability(
+        req.permissionMode,
+        req.interactionMode,
+      ),
+    });
     const params = {
       sessionId: req.sessionId,
       message: req.message,
@@ -730,6 +760,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       }
 
       throw e;
+    } finally {
+      this.pendingBrowserAccess.delete(req.sessionId);
     }
   }
 
@@ -763,6 +795,17 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // both passed the first check don't each create a new SDK session for the
     // same sessionId.
     const existing = this.runtime.get(sessionId);
+    const browserScope = this.pendingBrowserAccess.get(sessionId);
+    if (
+      existing &&
+      browserScope &&
+      this.browserAutomationAccess.isConfigured() &&
+      (existing.workspaceId !== browserScope.workspaceId ||
+        existing.browserPermissionCapability !== browserScope.permissionCapability ||
+        (existing.browserCredential && existing.browserCredential.expiresAt <= Date.now()))
+    ) {
+      await this.runtime.stop(sessionId);
+    }
 
     // Stage the per-turn options (model, agent routing) so `spawn` can build a
     // fresh session correctly. The turn itself is run here after `acquire`
@@ -781,9 +824,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       });
     } catch (e: unknown) {
       this.pendingSpawnTurns.delete(sessionId);
+      this.pendingBrowserAccess.delete(sessionId);
       throw e;
     }
     this.pendingSpawnTurns.delete(sessionId);
+    this.pendingBrowserAccess.delete(sessionId);
     this.runtime.recordUsage(sessionId);
 
     // A stop requested before the session finished spawning: `spawn` already
@@ -841,6 +886,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
     const staged = this.pendingSpawnTurns.get(sessionId);
     const copilotAgent = staged?.copilotAgent;
+    const browserScope = this.pendingBrowserAccess.get(sessionId);
+    const browserGrant = browserScope ? this.browserAutomationAccess.issue(browserScope) : null;
 
     let session: CopilotSession;
 
@@ -873,61 +920,92 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       ...(customAgents.length > 0 && { customAgents }),
       ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
       ...(userInstructions && { systemMessage: { content: userInstructions } }),
+      ...(browserGrant && {
+        mcpServers: {
+          "mcode-browser": {
+            type: "http" as const,
+            url: browserGrant.mcpUrl,
+            headers: { Authorization: `Bearer ${browserGrant.token}` },
+            tools: browserGrant.allowedOperations.map(
+              (operation) => BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
+            ),
+          },
+        },
+      }),
     };
 
-    if (resumeFrom) {
-      try {
-        session = await client.resumeSession(resumeFrom, sessionBase);
-        logger.info("Resumed Copilot session", { sessionId, sdkSessionId: resumeFrom });
-      } catch (err) {
-        logger.warn("CopilotProvider: resume failed, starting fresh session", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        this.sdkSessionIds.delete(sessionId);
+    try {
+      if (resumeFrom) {
+        try {
+          session = await client.resumeSession(resumeFrom, sessionBase);
+          logger.info("Resumed Copilot session", { sessionId, sdkSessionId: resumeFrom });
+        } catch (err) {
+          logger.warn("CopilotProvider: resume failed, starting fresh session", {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          this.sdkSessionIds.delete(sessionId);
+          session = await client.createSession(sessionBase);
+        }
+      } else {
         session = await client.createSession(sessionBase);
       }
-    } else {
-      session = await client.createSession(sessionBase);
+    } catch (error) {
+      if (browserGrant) this.browserAutomationAccess.revokeCredential(browserGrant.credentialId);
+      throw error;
     }
 
-    // Route to the appropriate Copilot SDK API based on the selected sub-agent.
-    // Built-in modes use session.rpc.mode.set(); custom YAML agents use session.rpc.agent.select().
-    if (copilotAgent) {
-      if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
-        await session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
-        logger.info("CopilotProvider: set built-in mode", { sessionId, mode: copilotAgent });
-      } else {
-        await session.rpc.agent.select({ name: copilotAgent });
-        logger.info("CopilotProvider: selected custom agent", { sessionId, agent: copilotAgent });
+    try {
+      // Route to the appropriate Copilot SDK API based on the selected sub-agent.
+      // Built-in modes use session.rpc.mode.set(); custom YAML agents use session.rpc.agent.select().
+      if (copilotAgent) {
+        if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
+          await session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
+          logger.info("CopilotProvider: set built-in mode", { sessionId, mode: copilotAgent });
+        } else {
+          await session.rpc.agent.select({ name: copilotAgent });
+          logger.info("CopilotProvider: selected custom agent", { sessionId, agent: copilotAgent });
+        }
       }
+
+      // Capture the SDK session ID for future resume and notify the service layer
+      const sdkId = session.sessionId;
+      if (sdkId && !this.sdkSessionIds.has(sessionId)) {
+        this.sdkSessionIds.set(sessionId, sdkId);
+        logger.info("Captured Copilot SDK session ID", { sessionId, sdkId });
+        this.emit("event", {
+          type: "system",
+          threadId,
+          subtype: "sdk_session_id:" + sdkId,
+        } satisfies AgentEvent);
+      }
+
+      const state: CopilotSessionState = {
+        session,
+        lastUsedAt: Date.now(),
+        turnActive: false,
+        workspaceId: browserScope?.workspaceId ?? "unknown-workspace",
+        browserPermissionCapability: browserScope?.permissionCapability ?? "interact",
+        ...(browserGrant && {
+          browserCredential: {
+            credentialId: browserGrant.credentialId,
+            expiresAt: browserGrant.expiresAt,
+          },
+        }),
+      };
+
+      if (this.pendingStops.has(sessionId)) {
+        logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
+        session.disconnect().catch(() => {});
+        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      }
+
+      return { state, pids: [] };
+    } catch (error) {
+      if (browserGrant) this.browserAutomationAccess.revokeCredential(browserGrant.credentialId);
+      await session.disconnect().catch(() => {});
+      throw error;
     }
-
-    // Capture the SDK session ID for future resume and notify the service layer
-    const sdkId = session.sessionId;
-    if (sdkId && !this.sdkSessionIds.has(sessionId)) {
-      this.sdkSessionIds.set(sessionId, sdkId);
-      logger.info("Captured Copilot SDK session ID", { sessionId, sdkId });
-      this.emit("event", {
-        type: "system",
-        threadId,
-        subtype: "sdk_session_id:" + sdkId,
-      } satisfies AgentEvent);
-    }
-
-    const state: CopilotSessionState = {
-      session,
-      lastUsedAt: Date.now(),
-      turnActive: false,
-    };
-
-    if (this.pendingStops.has(sessionId)) {
-      logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
-      session.disconnect().catch(() => {});
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
-    }
-
-    return { state, pids: [] };
   }
 
   /**
@@ -956,6 +1034,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    * disconnect, so this is guarded against a double-disconnect.
    */
   async close(state: CopilotSessionState): Promise<void> {
+    if (state.browserCredential) {
+      this.browserAutomationAccess.revokeCredential(state.browserCredential.credentialId);
+    }
     try {
       await state.session.disconnect();
     } catch (err) {
@@ -1064,13 +1145,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         // tool.execution_complete - tool has finished
         unsubscribers.push(
           session.on("tool.execution_complete", (event) => {
-            const { toolCallId, success, result } = event.data;
+            const { toolCallId, success, result, error } = event.data;
             toolStartTimes.delete(toolCallId);
             this.emit("event", {
               type: "toolResult",
               threadId,
               toolCallId,
-              output: result?.content ?? "",
+              output: result?.detailedContent ?? result?.content ?? error?.message ?? "",
               isError: !success,
             } satisfies AgentEvent);
           }),
@@ -1286,6 +1367,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     );
     this.sdkSessionIds.clear();
     this.pendingSpawnTurns.clear();
+    this.pendingBrowserAccess.clear();
     this.contextWindowBySession.clear();
 
     if (this.client) {

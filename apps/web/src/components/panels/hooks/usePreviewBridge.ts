@@ -39,6 +39,8 @@ export interface UsePreviewBridgeOptions {
   readonly surfaceRef: RefObject<HTMLDivElement | null>;
   /** Force the native preview surface hidden while another renderer owns it. */
   readonly forceHidden?: boolean;
+  /** Disable every global native-preview subscription for automation-only webviews. */
+  readonly automationOnly?: boolean;
 }
 
 /** State and callbacks returned by {@link usePreviewBridge}. */
@@ -93,6 +95,7 @@ export function usePreviewBridge({
   workspaceId,
   surfaceRef,
   forceHidden = false,
+  automationOnly = false,
 }: UsePreviewBridgeOptions): PreviewBridgeState {
   const [inputUrl, setInputUrl] = useState("");
   const [navError, setNavError] = useState<string | null>(null);
@@ -148,15 +151,17 @@ export function usePreviewBridge({
   }, [threadId]);
 
   const refreshNav = useCallback(async () => {
+    if (automationOnly) return;
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
     const s = await preview.getNavigationState();
     setCanBack(s.canGoBack);
     setCanFwd(s.canGoForward);
-  }, []);
+  }, [automationOnly]);
 
   const pushSync = useCallback(
     async (visible: boolean) => {
+      if (automationOnly) return;
       const preview = window.desktopBridge?.preview;
       if (!preview) return;
       const el = surfaceRef.current;
@@ -205,7 +210,7 @@ export function usePreviewBridge({
         workspaceId: workspaceId ?? null,
       });
     },
-    [threadId, workspaceId, surfaceRef, forceHidden],
+    [threadId, workspaceId, surfaceRef, forceHidden, automationOnly],
   );
 
   const pushSyncRef = useRef(pushSync);
@@ -214,6 +219,7 @@ export function usePreviewBridge({
   refreshNavRef.current = refreshNav;
 
   useEffect(() => {
+    if (automationOnly) return;
     const preview = window.desktopBridge?.preview;
     if (!preview?.onPageStatus) return;
     const unsub = preview.onPageStatus((status) => {
@@ -253,7 +259,7 @@ export function usePreviewBridge({
       void refreshNav();
     });
     return unsub;
-  }, [threadId, refreshNav]);
+  }, [threadId, refreshNav, automationOnly]);
 
   // While any modal/dialog overlay is open in the renderer the native
   // WebContentsView must be detached: it composites above all HTML and would
@@ -274,6 +280,7 @@ export function usePreviewBridge({
   }, [pageStatus.phase]);
 
   useEffect(() => {
+    if (automationOnly) return;
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
     const el = surfaceRef.current;
@@ -302,9 +309,9 @@ export function usePreviewBridge({
       ro.disconnect();
       window.removeEventListener("resize", schedule);
       if (raf) cancelAnimationFrame(raf);
-      void pushSyncRef.current(false);
+      void pushSync(false);
     };
-  }, []);
+  }, [automationOnly, forceHidden, threadId, workspaceId]);
 
   const onGoBack = useCallback(async () => {
     const preview = window.desktopBridge?.preview;
@@ -339,26 +346,39 @@ export function usePreviewBridge({
   }, [pushSync, refreshNav]);
 
   const onClearCookies = useCallback(async () => {
-    await window.desktopBridge?.preview?.clearCookies();
-  }, []);
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return;
+    await pushSync(true);
+    await preview.clearCookies();
+  }, [pushSync]);
 
   const onClearCache = useCallback(async () => {
-    await window.desktopBridge?.preview?.clearCache();
-  }, []);
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return;
+    await pushSync(true);
+    await preview.clearCache();
+  }, [pushSync]);
 
   const onGetZoom = useCallback(async () => {
-    return (await window.desktopBridge?.preview?.getZoom()) ?? 1;
-  }, []);
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return 1;
+    await pushSync(true);
+    return preview.getZoom();
+  }, [pushSync]);
 
   const onSetZoom = useCallback(async (factor: number) => {
-    return (await window.desktopBridge?.preview?.setZoom(factor)) ?? 1;
-  }, []);
+    const preview = window.desktopBridge?.preview;
+    if (!preview) return 1;
+    await pushSync(true);
+    return preview.setZoom(factor);
+  }, [pushSync]);
 
   const onOpenExternal = useCallback(async () => {
     const preview = window.desktopBridge?.preview;
     if (!preview) return;
+    await pushSync(true);
     await preview.openExternal();
-  }, []);
+  }, [pushSync]);
 
   const resolveNavigation = useCallback(
     async (url: string): Promise<PreviewResolveNavigationResult> => {
@@ -380,13 +400,13 @@ export function usePreviewBridge({
       if (!preview) return;
       setInputUrl(url);
       setNavError(null);
-      void preview.navigate(url, basePath).then((r) => {
+      void pushSync(true).then(() => preview.navigate(url, basePath)).then((r) => {
         if (!r.ok) setNavError(formatNavError(r.error));
       }).catch(() => {
         setNavError("Navigation failed.");
       });
     },
-    [basePath],
+    [basePath, pushSync],
   );
 
   return {

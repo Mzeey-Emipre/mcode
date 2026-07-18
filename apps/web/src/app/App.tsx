@@ -28,6 +28,7 @@ import { ToastContainer } from "@/components/Toast";
 import type { SettingsSection } from "@/components/settings/settings-nav";
 import { TerminalPoolHost } from "@/components/terminal/TerminalPoolHost";
 import { TerminalPoolSlotProvider } from "@/components/terminal/TerminalPoolSlotContext";
+import { BrowserAutomationHost } from "@/components/panels/BrowserAutomationHost";
 
 const LazySettingsView = lazy(async () => {
   const m = await import("@/components/settings/SettingsView");
@@ -426,6 +427,7 @@ export function App() {
         </div>
       </div>
       <TerminalPoolHost />
+      <BrowserAutomationHost />
       <Suspense fallback={null}>
         <LazyCommandPalette />
       </Suspense>

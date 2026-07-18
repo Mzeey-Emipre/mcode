@@ -47,6 +47,12 @@ import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { listDirectChildren } from "../../services/process-kill.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
+import {
+  BrowserAutomationAccessService,
+  browserAutomationPermissionCapability,
+  type BrowserAutomationAccessRequest,
+  type BrowserAutomationCredentialMetadata,
+} from "../../services/browser-automation/access-service.js";
 import type { SessionForker } from "@mcode/contracts";
 import { parseClaudeGoalCommandResult } from "./claude-goal-command-parser.js";
 
@@ -141,6 +147,12 @@ interface ClaudeSessionState {
    * same user turn continues.
    */
   hasFiredToolThisTurn: boolean;
+  /** Non-secret browser credential lifecycle metadata for this main session. */
+  browserCredential?: BrowserAutomationCredentialMetadata;
+  /** Workspace fixed to this SDK query at spawn. */
+  workspaceId: string;
+  /** Browser permission class fixed to this SDK query at spawn. */
+  browserPermissionCapability: "observe" | "interact" | "privileged";
 }
 
 /**
@@ -327,6 +339,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   private readonly runtime: SessionRuntime<ClaudeSessionState>;
   /** Per-turn payload staged for `spawn` to run a fresh session's first turn. */
   private pendingSpawnTurns = new Map<string, PendingSpawnTurn>();
+  /** Browser scope staged only until a fresh normal SDK query starts. */
+  private pendingBrowserAccess = new Map<string, BrowserAutomationAccessRequest>();
   private sdkSessionIds = new Map<string, string>();
   /**
    * Tail of the most recent stderr emitted by each session's Claude Code
@@ -399,6 +413,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     // pipeline-issued handoff grants are visible here.
     @inject(ScopedPreGrantService)
     private readonly scopedPreGrant: ScopedPreGrantService = new ScopedPreGrantService(),
+    @inject(BrowserAutomationAccessService)
+    private readonly browserAutomationAccess: BrowserAutomationAccessService = new BrowserAutomationAccessService(),
   ) {
     super();
     this.runtime = new SessionRuntime<ClaudeSessionState>(this, {
@@ -431,6 +447,17 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     if (req.resumeFrom !== undefined) {
       this.sdkSessionIds.set(req.sessionId, req.resumeFrom);
     }
+    this.pendingBrowserAccess.set(req.sessionId, {
+      providerId: this.id,
+      providerSessionId: req.resumeFrom ?? req.sessionId,
+      mcodeSessionId: req.sessionId,
+      threadId: req.threadId,
+      workspaceId: req.workspaceId,
+      permissionCapability: browserAutomationPermissionCapability(
+        req.permissionMode,
+        req.interactionMode,
+      ),
+    });
     const params = {
       sessionId: req.sessionId,
       message: req.message,
@@ -455,6 +482,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         error: String(e),
       });
       throw e;
+    } finally {
+      this.pendingBrowserAccess.delete(req.sessionId);
     }
   }
 
@@ -877,6 +906,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     } = params;
 
     const existing = this.runtime.get(sessionId);
+    const browserScope = this.pendingBrowserAccess.get(sessionId);
     const isBypass = permissionMode === "full";
     const sdkPermissionMode = isBypass
       ? ("bypassPermissions" as const)
@@ -908,7 +938,12 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       existing !== undefined &&
       existing.poisoned !== true &&
       existing.permissionMode === permissionMode &&
-      existing.contextWindowMode === contextWindowMode;
+      existing.contextWindowMode === contextWindowMode &&
+      (!this.browserAutomationAccess.isConfigured() ||
+        !browserScope ||
+        (existing.workspaceId === browserScope.workspaceId &&
+          existing.browserPermissionCapability === browserScope.permissionCapability &&
+          (!existing.browserCredential || existing.browserCredential.expiresAt > Date.now())));
 
     if (existing && !reusable) {
       logger.info("Session spawn parameters changed, recreating session", {
@@ -1375,6 +1410,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       contextWindowMode,
       orchestrationMode,
     } = staged;
+    const browserScope = this.pendingBrowserAccess.get(sessionId);
+    const browserGrant = browserScope ? this.browserAutomationAccess.issue(browserScope) : null;
 
     // Capture the subprocess stderr tail so a non-zero exit (which the SDK
     // reports as a bare "process exited with code N") carries the actual CLI
@@ -1386,9 +1423,20 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       this.recentStderr.set(sessionId, next);
     };
 
+    const browserOptions = browserGrant
+      ? {
+          mcpServers: {
+            "mcode-browser": {
+              type: "http" as const,
+              url: browserGrant.mcpUrl,
+              headers: { Authorization: `Bearer ${browserGrant.token}` },
+            },
+          },
+        }
+      : {};
     const options = resume
-      ? { ...baseOptions, resume: resumeId, stderr: captureStderr }
-      : { ...baseOptions, sessionId: uuid, stderr: captureStderr };
+      ? { ...baseOptions, ...browserOptions, resume: resumeId, stderr: captureStderr }
+      : { ...baseOptions, ...browserOptions, sessionId: uuid, stderr: captureStderr };
 
     const queue = createPromptQueue();
 
@@ -1409,7 +1457,13 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       }
     }
 
-    const q = this.withSdkSpawnEnv(() => sdkQuery({ prompt: queue.iterable, options }));
+    let q: Query;
+    try {
+      q = this.withSdkSpawnEnv(() => sdkQuery({ prompt: queue.iterable, options }));
+    } catch (error) {
+      if (browserGrant) this.browserAutomationAccess.revokeCredential(browserGrant.credentialId);
+      throw error;
+    }
 
     // Discover the newly-spawned child PID(s) so the runtime can JobObject-
     // attach and taskkill them. Mirrors the old `labelSdkSubprocess` diff, but
@@ -1440,6 +1494,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       lastUsedAt: Date.now(),
       pendingToolUses: new Set<string>(),
       hasFiredToolThisTurn: false,
+      workspaceId: browserScope?.workspaceId ?? "unknown-workspace",
+      browserPermissionCapability: browserScope?.permissionCapability ?? "interact",
+      ...(browserGrant && {
+        browserCredential: {
+          credentialId: browserGrant.credentialId,
+          expiresAt: browserGrant.expiresAt,
+        },
+      }),
     };
 
     // Start the stream loop and push the first prompt. The loop is async and
@@ -1479,6 +1541,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
   /** Provider teardown: close the SDK query handle. */
   close(state: ClaudeSessionState): void {
+    if (state.browserCredential) {
+      this.browserAutomationAccess.revokeCredential(state.browserCredential.credentialId);
+    }
     state.query.close();
   }
 
@@ -2694,6 +2759,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       logger.warn("Claude runtime shutdown failed", { error: String(err) });
     });
     this.pendingSpawnTurns.clear();
+    this.pendingBrowserAccess.clear();
     this.sdkSessionIds.clear();
     this.goalsBySession.clear();
     this.nativeGoalsBySession.clear();

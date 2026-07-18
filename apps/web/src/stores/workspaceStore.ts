@@ -16,6 +16,10 @@ import { useComposerDraftStore } from "./composerDraftStore";
 import { useDiffStore } from "./diffStore";
 import { usePreviewReferenceQueueStore } from "./previewReferenceQueueStore";
 import { usePreviewTabsStore } from "./previewTabsStore";
+import {
+  releaseBrowserAutomationThreadScope,
+  releaseBrowserAutomationWorkspaceScopes,
+} from "./browserAutomationStore";
 import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode, OrchestrationMode } from "@mcode/contracts";
 import { sanitizeCustomBranchInput } from "@/lib/branch-name";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
@@ -513,6 +517,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         .map((t) => t.id);
       await Promise.all(deletedThreadIds.map((tid) => clearPreviewResources(tid)));
       await getTransport().deleteWorkspace(id);
+      releaseBrowserAutomationWorkspaceScopes(id);
       bumpThreadListMutationEpoch(id);
       const draftStore = useComposerDraftStore.getState();
       const taskStore = useTaskStore.getState();
@@ -553,6 +558,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   removeWorkspaceFromState: (id) => {
+    releaseBrowserAutomationWorkspaceScopes(id);
     set((state) => ({
       workspaces: state.workspaces.filter((w) => w.id !== id),
       activeWorkspaceId: state.activeWorkspaceId === id ? null : state.activeWorkspaceId,
@@ -1062,6 +1068,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   dismissPreparingThread: (placeholderId) => {
+    releaseBrowserAutomationThreadScope(placeholderId);
     pendingThreadCreationByPlaceholderId.delete(placeholderId);
     useThreadStore.getState().clearThreadState(placeholderId);
     set((state) => ({
@@ -1085,6 +1092,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const isClientOnly = !!(row?.clientPreparing || row?.clientError);
 
       if (isClientOnly) {
+        releaseBrowserAutomationThreadScope(threadId);
         await clearPreviewResources(threadId);
         if (workspaceIdForEpoch) {
           bumpThreadListMutationEpoch(workspaceIdForEpoch);
@@ -1114,6 +1122,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
       await clearPreviewResources(threadId);
       await getTransport().deleteThread(threadId, cleanupWorktree);
+      releaseBrowserAutomationThreadScope(threadId);
       if (workspaceIdForEpoch) {
         bumpThreadListMutationEpoch(workspaceIdForEpoch);
       }

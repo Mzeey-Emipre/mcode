@@ -4,9 +4,13 @@ import {
   ArrowRight,
   ArrowUpRight,
   Camera,
+  Bot,
+  Hand,
   PenTool,
   RotateCw,
+  Square,
 } from "lucide-react";
+import type { BrowserAutomationControllerState } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
 import { ICON_HIT_SLOP } from "@/lib/ui-hit-target";
 import { Button } from "@/components/ui/button";
@@ -69,8 +73,18 @@ export interface BrowserHeaderProps {
   readonly onGetZoom: () => Promise<number>;
   /** Set the guest's zoom factor (kebab). */
   readonly onSetZoom: (factor: number) => Promise<number>;
+  /** Open detached DevTools for the active adopted guest. */
+  readonly onOpenDevTools?: () => void;
   /** Whether overflow overlays must hide the native preview layer. */
   readonly suppressPreviewForOverlays?: boolean;
+  /** Current controller for the active visible Browser tab. */
+  readonly automationController?: BrowserAutomationControllerState | null;
+  /** True while the active tab owns an in-flight browser operation. */
+  readonly automationBusy?: boolean;
+  /** Stop only the active tab's browser operation. */
+  readonly onStopAutomation?: () => void;
+  /** Transfer browser control when the human focuses the omnibox. */
+  readonly onHumanFocus?: () => void;
 }
 
 /**
@@ -114,7 +128,12 @@ export function BrowserHeader({
   onClearCache,
   onGetZoom,
   onSetZoom,
+  onOpenDevTools = () => undefined,
   suppressPreviewForOverlays = true,
+  automationController = null,
+  automationBusy = false,
+  onStopAutomation,
+  onHumanFocus,
 }: BrowserHeaderProps) {
   const {
     displayValue,
@@ -251,6 +270,7 @@ export function BrowserHeader({
             onChange={(e) => onChange(e.target.value)}
             onFocus={() => {
               setFocused(true);
+              onHumanFocus?.();
               onFocus();
             }}
             onBlur={() => {
@@ -304,6 +324,37 @@ export function BrowserHeader({
       </div>
 
       {/* Right cluster: page actions (loaded) + the overflow kebab. */}
+      {automationController && automationController.controller !== "none" ? (
+        <div
+          className={cn(
+            "flex h-7 shrink-0 items-center gap-1 rounded-sm border px-1.5 text-[11px] font-medium",
+            automationController.controller === "agent"
+              ? "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+              : "border-border/60 bg-muted/50 text-muted-foreground",
+          )}
+          role="status"
+          aria-live="polite"
+          data-testid="browser-controller-badge"
+        >
+          {automationController.controller === "agent" ? (
+            <Bot size={13} aria-hidden />
+          ) : (
+            <Hand size={13} aria-hidden />
+          )}
+          <span>{automationController.controller === "agent" ? "Agent" : "You"}</span>
+          {automationController.controller === "agent" && automationBusy && onStopAutomation ? (
+            <button
+              type="button"
+              className="ml-0.5 inline-flex size-5 items-center justify-center rounded-sm text-current hover:bg-amber-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={onStopAutomation}
+              aria-label="Stop browser automation"
+              title="Stop browser automation"
+            >
+              <Square size={10} fill="currentColor" aria-hidden />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {hasLoadedPage ? (
         <>
           <Tooltip>
@@ -384,6 +435,7 @@ export function BrowserHeader({
         onClearCache={onClearCache}
         onGetZoom={onGetZoom}
         onSetZoom={onSetZoom}
+        onOpenDevTools={onOpenDevTools}
         suppressPreviewForOverlays={suppressPreviewForOverlays}
       />
     </div>

@@ -27,6 +27,40 @@ import { ensureTerminalForScope } from "@/lib/ensure-terminal";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
+import {
+  BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
+
+/** One thread/workspace Browser panel retained by the warm LRU pool. */
+export interface WarmPreviewScope {
+  readonly scopeId: string;
+  readonly workspaceId: string;
+  readonly lastUsedAt: number;
+}
+
+/**
+ * Retain active and agent-busy Browser scopes, then fill the warm budget by
+ * recency. Busy scopes are leased until their operation settles.
+ */
+export function reconcileWarmPreviewScopes(
+  previous: readonly WarmPreviewScope[],
+  next: WarmPreviewScope | null,
+  busyScopeIds: ReadonlySet<string>,
+): readonly WarmPreviewScope[] {
+  const byId = new Map(previous.map((scope) => [scope.scopeId, scope]));
+  if (next) byId.set(next.scopeId, next);
+  const ordered = [...byId.values()].sort((left, right) => right.lastUsedAt - left.lastUsedAt);
+  const leased = ordered.filter(
+    (scope) => scope.scopeId === next?.scopeId || busyScopeIds.has(scope.scopeId),
+  );
+  const selected = new Map(leased.map((scope) => [scope.scopeId, scope]));
+  for (const scope of ordered) {
+    if (selected.size >= BROWSER_AUTOMATION_WARM_TARGET_LIMIT) break;
+    selected.set(scope.scopeId, scope);
+  }
+  return [...selected.values()];
+}
 
 /**
  * Tracks whether the Changes tab has unreviewed new files for the active
@@ -107,6 +141,15 @@ export function RightPanel() {
   // workspace itself in the threadless new-thread view (where they run against
   // the local workspace root). Their stores treat this as an opaque scope key.
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
+  const activeBrowserRequests = useBrowserAutomationStore((state) => state.activeRequests);
+  const automationHostedScopeIds = useBrowserAutomationStore((state) => state.hostedScopeIds);
+  const busyPreviewScopeIds = useMemo(
+    () => new Set(
+      [...activeBrowserRequests.values()].map(({ dispatch }) => dispatch.target.threadId),
+    ),
+    [activeBrowserRequests],
+  );
+  const [warmPreviewScopes, setWarmPreviewScopes] = useState<readonly WarmPreviewScope[]>([]);
 
   // The Browser tab's open pages drive the rail's page switcher. The store is
   // seeded by the mounted PreviewPanel; reading it here lets the rail render
@@ -145,6 +188,15 @@ export function RightPanel() {
   const previewActive = activeTab === "preview" && openTabs.includes("preview");
   const terminalActive =
     activeTab === "terminal" && openTabs.includes("terminal");
+
+  useEffect(() => {
+    const next = previewActive && panelScopeId && activeWorkspaceId
+      ? { scopeId: panelScopeId, workspaceId: activeWorkspaceId, lastUsedAt: Date.now() }
+      : null;
+    setWarmPreviewScopes((previous) =>
+      reconcileWarmPreviewScopes(previous, next, busyPreviewScopeIds),
+    );
+  }, [activeWorkspaceId, busyPreviewScopeIds, panelScopeId, previewActive]);
 
   const isChangesActive = panelVisible && changesActive;
   const changesFresh = useChangesFreshness(
@@ -312,12 +364,31 @@ export function RightPanel() {
           >
             <DiffPanel />
           </div>
-          {previewActive && panelScopeId && (
-            <PreviewPanel
-              threadId={panelScopeId}
-              workspaceId={activeWorkspaceId}
-            />
-          )}
+          {warmPreviewScopes.map((scope) => {
+            const visible = previewActive && scope.scopeId === panelScopeId;
+            return (
+              <div
+                key={scope.scopeId}
+                data-preview-scope={scope.scopeId}
+                className={visible ? "flex min-h-0 flex-1" : "hidden"}
+                aria-hidden={!visible}
+                inert={!visible ? true : undefined}
+              >
+                {automationHostedScopeIds.has(scope.scopeId) ? (
+                  <div
+                    data-automation-preview-dock={scope.scopeId}
+                    data-visible={visible ? "true" : "false"}
+                    className="min-h-0 min-w-0 flex-1"
+                  />
+                ) : (
+                  <PreviewPanel
+                    threadId={scope.scopeId}
+                    workspaceId={scope.workspaceId}
+                  />
+                )}
+              </div>
+            );
+          })}
           <div
             className={cn(
               "absolute inset-0 flex min-h-0 flex-row overflow-hidden",

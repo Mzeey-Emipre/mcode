@@ -6,6 +6,13 @@ import {
   useRef,
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
+import {
+  interruptBrowserAutomationTarget,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
+
+const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
+const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
 
 /**
  * Renderer-hosted Electron `<webview>` that the host process can adopt by
@@ -18,10 +25,13 @@ import type { PreviewPageStatus } from "@mcode/contracts";
  * tabs that don't request a webview keep the BrowserView path unchanged.
  */
 export interface PreviewWebviewProps {
+  /** Workspace that authorizes this visible target. Defaults to the threadless scope id. */
+  readonly workspaceId?: string;
   readonly threadId: string;
   readonly tabId: string;
   readonly src: string;
   readonly className?: string;
+  readonly viewport?: { readonly width: number; readonly height: number };
   readonly onPageStatus?: (status: PreviewPageStatus) => void;
   readonly onNavigationStateChange?: (state: {
     canGoBack: boolean;
@@ -69,6 +79,8 @@ type WebviewEvent = Event & {
   readonly validatedURL?: string;
   readonly errorCode?: number;
   readonly errorDescription?: string;
+  readonly channel?: string;
+  readonly args?: readonly unknown[];
 };
 
 function realUrl(url: string | null | undefined): string | null {
@@ -88,9 +100,11 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
   function PreviewWebview(
     {
       threadId,
+      workspaceId = threadId,
       tabId,
       src,
       className,
+      viewport,
       onPageStatus,
       onNavigationStateChange,
     },
@@ -229,6 +243,9 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
             webContentsId: wcId,
             threadId,
             tabId,
+          }).then((result) => {
+            if (cancelled || !result.ok) return;
+            useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
           });
         }
       } catch {
@@ -244,9 +261,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       } catch {
         /* webview gone */
       }
+      useBrowserAutomationStore.getState().unregisterTarget(threadId, tabId);
       void window.desktopBridge?.preview?.releaseWebview?.({ threadId, tabId });
     };
-  }, [threadId, tabId]);
+  }, [threadId, tabId, workspaceId]);
 
   useEffect(() => {
     const el = ref.current;
@@ -255,6 +273,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     const onStart = () => emitStatus("loading");
     const onDomReady = () => {
       domReadyRef.current = true;
+      useBrowserAutomationStore.getState().refreshTarget(threadId, tabId);
       if (pendingReloadRef.current) {
         pendingReloadRef.current = false;
         el.reload?.();
@@ -299,7 +318,14 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       });
       emitNavigationState();
     };
-
+    const onIpcMessage = (ev: WebviewEvent) => {
+      if (ev.channel !== PREVIEW_GUEST_HUMAN_INPUT_CHANNEL) return;
+      const message = ev.args?.[0];
+      if (!message || typeof message !== "object" || Array.isArray(message)) return;
+      const kind = (message as { kind?: unknown }).kind;
+      if (typeof kind !== "string" || !HUMAN_INPUT_KINDS.has(kind)) return;
+      interruptBrowserAutomationTarget(threadId, tabId, "human-interrupted");
+    };
     el.addEventListener("did-start-loading", onStart);
     el.addEventListener("dom-ready", onDomReady);
     el.addEventListener("did-stop-loading", onStop);
@@ -308,6 +334,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     el.addEventListener("page-title-updated", onTitle);
     el.addEventListener("page-favicon-updated", onFavicon);
     el.addEventListener("did-fail-load", onFail);
+    el.addEventListener("ipc-message", onIpcMessage);
     return () => {
       el.removeEventListener("did-start-loading", onStart);
       el.removeEventListener("dom-ready", onDomReady);
@@ -317,8 +344,9 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       el.removeEventListener("page-title-updated", onTitle);
       el.removeEventListener("page-favicon-updated", onFavicon);
       el.removeEventListener("did-fail-load", onFail);
+      el.removeEventListener("ipc-message", onIpcMessage);
     };
-  }, [emitNavigationState, emitStatus, onPageStatus, readTitle, readUrl]);
+  }, [emitNavigationState, emitStatus, onPageStatus, readTitle, readUrl, tabId, threadId]);
 
   // Use createElement via React JSX since <webview> is a custom Chromium
   // element; React 19 will pass unknown attributes through unchanged.
@@ -336,8 +364,8 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       className={className}
       style={{
         display: "inline-flex",
-        width: "100%",
-        height: "100%",
+        width: viewport?.width ?? "100%",
+        height: viewport?.height ?? "100%",
         minWidth: 0,
         minHeight: 0,
       }}

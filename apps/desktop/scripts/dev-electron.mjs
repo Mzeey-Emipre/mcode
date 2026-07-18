@@ -48,6 +48,7 @@ const runtimeStateEnv = buildRuntimeStateEnv(repoRoot, {
 /** Paths to Electron main/preload bundles and server bundle (restart triggers). */
 const mainOutFile = resolve(projectRoot, "dist/main/main.cjs");
 const preloadOutFile = resolve(projectRoot, "dist/preload/preload.cjs");
+const guestPreloadOutFile = resolve(projectRoot, "dist/preload/preview-guest-preload.cjs");
 const serverOutFile = resolve(projectRoot, "dist/server/server.cjs");
 
 /** Shared esbuild options. */
@@ -135,6 +136,12 @@ const entries = [
     ...shared,
     entryPoints: [resolve(projectRoot, "src/main/preload.ts")],
     outfile: resolve(projectRoot, "dist/preload/preload.cjs"),
+    external: ["electron"],
+  },
+  {
+    ...shared,
+    entryPoints: [resolve(projectRoot, "src/main/preview/preview-guest-preload.ts")],
+    outfile: guestPreloadOutFile,
     external: ["electron"],
   },
 ];
@@ -370,6 +377,7 @@ function scheduleElectronRestart(reason) {
 
 watch(mainOutFile, () => scheduleElectronRestart("main bundle updated"));
 watch(preloadOutFile, () => scheduleElectronRestart("preload bundle updated"));
+watch(guestPreloadOutFile, () => scheduleElectronRestart("preview guest preload bundle updated"));
 watch(serverOutFile, () => scheduleElectronRestart("server bundle updated"));
 
 // -------------------------------------------------------------------------

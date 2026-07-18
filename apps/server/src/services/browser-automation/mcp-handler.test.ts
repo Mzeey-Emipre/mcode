@@ -1,0 +1,244 @@
+import { createServer, type Server } from "http";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BROWSER_AUTOMATION_OPERATIONS } from "@mcode/contracts";
+import type { BrowserAutomationBroker } from "./broker.js";
+import { BrowserAutomationCredentialRegistry } from "./credential-registry.js";
+import { BrowserAutomationMcpHandler } from "./mcp-handler.js";
+
+describe("BrowserAutomationMcpHandler", () => {
+  let server: Server;
+  let endpoint: string;
+  let token: string;
+  let credentialId: string;
+  let credentials: BrowserAutomationCredentialRegistry;
+  let handler: BrowserAutomationMcpHandler;
+  let execute: ReturnType<typeof vi.fn>;
+  let cancelFromProvider: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    credentials = new BrowserAutomationCredentialRegistry();
+    const issued = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "provider-session",
+      mcodeSessionId: "mcode-session",
+      threadId: "thread-a",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "privileged",
+      allowedOperations: [...BROWSER_AUTOMATION_OPERATIONS],
+    });
+    token = issued.token;
+    credentialId = issued.credentialId;
+    execute = vi.fn(async (_claims, request) => ({
+      contractVersion: 1,
+      requestId: request.requestId,
+      sequence: request.sequence,
+      ok: true,
+      result: {
+        operation: "status",
+        available: true,
+        active: true,
+        url: "https://example.test/",
+        loading: false,
+        focused: true,
+        viewport: { width: 1280, height: 720 },
+        capabilities: ["status"],
+      },
+    }));
+    cancelFromProvider = vi.fn(() => false);
+    handler = new BrowserAutomationMcpHandler({
+      credentials,
+      broker: { execute, cancelFromProvider } as unknown as BrowserAutomationBroker,
+      now: () => 1_000,
+      maxSequenceEntries: 1,
+    });
+    server = createServer((req, res) => {
+      void handler.handle(req, res);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Test server did not bind a TCP port");
+    endpoint = `http://127.0.0.1:${address.port}/mcp`;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  });
+
+  async function post(body: string, authorization = `Bearer ${token}`): Promise<Response> {
+    return fetch(endpoint, { method: "POST", headers: { authorization, "content-type": "application/json" }, body });
+  }
+
+  it("publishes all tools with MCP safety annotations", async () => {
+    const response = await post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }));
+    const payload = await response.json() as any;
+    expect(response.status).toBe(200);
+    expect(payload.result.tools).toHaveLength(18);
+    expect(payload.result.tools.find((tool: any) => tool.name === "browser_status").annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(payload.result.tools.find((tool: any) => tool.name === "browser_evaluate").annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    });
+  });
+
+  it("advertises only the operations allowed by the authenticated credential", async () => {
+    const observe = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "observe-provider",
+      mcodeSessionId: "observe-mcode",
+      threadId: "thread-observe",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "observe",
+      allowedOperations: ["status", "snapshot"],
+    });
+    const response = await post(
+      JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+      `Bearer ${observe.token}`,
+    );
+    const payload = await response.json() as any;
+    expect(payload.result.tools.map((tool: any) => tool.name)).toEqual([
+      "browser_status",
+      "browser_snapshot",
+    ]);
+  });
+
+  it("binds tool requests to credential scope instead of accepting caller scope", async () => {
+    const response = await post(JSON.stringify({ jsonrpc: "2.0", id: "call", method: "tools/call", params: { name: "browser_status" } }));
+    expect(response.status).toBe(200);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]?.[1]).toMatchObject({
+      workspaceId: "workspace-a",
+      threadId: "thread-a",
+      providerSessionId: "provider-session",
+      providerInstanceId: "mcode-session",
+      operation: "status",
+    });
+  });
+
+  it("negotiates both supported MCP protocol versions", async () => {
+    for (const protocolVersion of ["2024-11-05", "2025-03-26"]) {
+      const response = await post(JSON.stringify({ jsonrpc: "2.0", id: protocolVersion, method: "initialize", params: { protocolVersion } }));
+      expect((await response.json() as any).result.protocolVersion).toBe(protocolVersion);
+    }
+  });
+
+  it("bounds and explicitly releases per-credential sequence state", async () => {
+    await post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "browser_status" } }));
+    const second = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "provider-session-2",
+      mcodeSessionId: "mcode-session-2",
+      threadId: "thread-b",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "observe",
+      allowedOperations: ["status"],
+    });
+    await post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "browser_status" } }), `Bearer ${second.token}`);
+    expect(handler.releaseCredential(credentialId)).toBe(false);
+    expect(handler.releaseCredential(second.credentialId)).toBe(true);
+    expect(handler.releaseCredential(second.credentialId)).toBe(false);
+  });
+
+  it("returns the same unauthorized response for missing and wrong bearer credentials", async () => {
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    const missing = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body });
+    const wrong = await post(body, "Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(missing.status).toBe(401);
+    expect(wrong.status).toBe(401);
+    expect(await missing.text()).toBe(await wrong.text());
+  });
+
+  it("rejects malformed, hostile, and oversized requests before broker execution", async () => {
+    const malformed = await post("{not-json");
+    expect(malformed.status).toBe(400);
+    const hostile = await post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "browser_status", arguments: { threadId: "thread-b" } } }));
+    expect((await hostile.json() as any).error.code).toBe(-32602);
+    const oversized = await post(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "browser_status", arguments: { padding: "x".repeat(256 * 1_024) } } }));
+    expect(oversized.status).toBe(413);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("enforces POST for the MCP route", async () => {
+    const response = await fetch(endpoint, { method: "GET", headers: { authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+  });
+
+  it("maps MCP cancellation notifications to the exact active broker request", async () => {
+    execute.mockImplementationOnce((_claims, request) => new Promise((resolve) => {
+      cancelFromProvider.mockImplementationOnce(() => {
+        resolve({
+          contractVersion: 1,
+          requestId: request.requestId,
+          sequence: request.sequence,
+          ok: false,
+          error: { code: "OPERATION_CANCELLED", message: "cancelled", retryable: false },
+        });
+        return true;
+      });
+    }));
+    const call = post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "provider-call-1",
+      method: "tools/call",
+      params: { name: "browser_status" },
+    }));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+    const internalRequest = execute.mock.calls[0]![1];
+    const cancelled = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: "provider-call-1", reason: "user stopped" },
+    }));
+
+    expect(cancelled.status).toBe(202);
+    expect(cancelFromProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ credentialId }),
+      internalRequest.requestId,
+      internalRequest.sequence,
+    );
+    await expect(call).resolves.toHaveProperty("status", 200);
+  });
+
+  it("cancels broker work when the HTTP response disconnects", async () => {
+    execute.mockImplementationOnce((_claims, request) => new Promise((resolve) => {
+      cancelFromProvider.mockImplementationOnce(() => {
+        resolve({
+          contractVersion: 1,
+          requestId: request.requestId,
+          sequence: request.sequence,
+          ok: false,
+          error: { code: "OPERATION_CANCELLED", message: "disconnected", retryable: false },
+        });
+        return true;
+      });
+    }));
+    const controller = new AbortController();
+    const pendingFetch = fetch(endpoint, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 77,
+        method: "tools/call",
+        params: { name: "browser_status" },
+      }),
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+    const internalRequest = execute.mock.calls[0]![1];
+    controller.abort();
+    await expect(pendingFetch).rejects.toThrow();
+    await vi.waitFor(() => expect(cancelFromProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ credentialId }),
+      internalRequest.requestId,
+      internalRequest.sequence,
+    ));
+  });
+});

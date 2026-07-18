@@ -52,6 +52,8 @@ export interface ProviderOptionsByProvider {
 export interface TurnRequest<P extends ProviderId = ProviderId> {
   /** SDK session name, currently `mcode-${threadId}`. */
   sessionId: string;
+  /** Workspace that owns the thread and any visible-browser automation scope. */
+  workspaceId: string;
   /** Owning thread id. */
   threadId: string;
   /** User input text (already wire-wrapped by the orchestrator when needed). */

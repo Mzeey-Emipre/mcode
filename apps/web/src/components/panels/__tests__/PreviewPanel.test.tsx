@@ -304,7 +304,7 @@ describe("PreviewPanel: full panel state", () => {
           .mockResolvedValue({ canGoBack: false, canGoForward: false }),
         onPageStatus: vi.fn().mockReturnValue(() => {}),
         cancelCapture: vi.fn().mockResolvedValue(undefined),
-        adoptWebview: vi.fn().mockResolvedValue(undefined),
+        adoptWebview: vi.fn().mockResolvedValue({ ok: true }),
         releaseWebview: vi.fn().mockResolvedValue(undefined),
         design: {
           setAnnotationGuard: vi.fn().mockResolvedValue({ ok: true }),
@@ -473,6 +473,54 @@ describe("PreviewPanel: full panel state", () => {
     expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
       expect.objectContaining({ forceHidden: true }),
     );
+  });
+
+  it("keeps an about:blank live tab stable while the persisted URL is empty", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    mockUsePreviewBridge.mockReturnValue(mockBridgeState({ storedUrl: "" }));
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "blank-tab",
+        tabs: [{
+          id: "blank-tab",
+          threadId: "thread-1",
+          title: null,
+          url: "about:blank",
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        }],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => "about:blank",
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const view = render(<PreviewPanel threadId="thread-1" />);
+      const firstWebview = await screen.findByTestId("preview-webview");
+      expect(firstWebview).toHaveAttribute("data-tab-id", "blank-tab");
+      fireEvent(firstWebview, new Event("did-stop-loading"));
+      view.rerender(<PreviewPanel threadId="thread-1" />);
+      await waitFor(() => expect(screen.getByTestId("preview-webview")).toBe(firstWebview));
+      expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
+        "Maximum update depth exceeded",
+      );
+      view.unmount();
+    } finally {
+      consoleError.mockRestore();
+      restoreWebviewMethods();
+    }
   });
 
   it("keeps warm webview pages mounted while switching the active tab", () => {

@@ -69,6 +69,11 @@ import type { AgentEvent } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
 import type Database from "better-sqlite3";
 import type { JobObject } from "./services/job-object.js";
+import {
+  BrowserAutomationAccessService,
+  BrowserAutomationBroker,
+  BrowserAutomationMcpHandler,
+} from "./services/browser-automation/index.js";
 
 // process.title affects `ps`/`top`/`htop` output on Unix and the console window
 // title. On Windows, Task Manager pulls the display name from the binary's
@@ -206,6 +211,20 @@ applyDevGitCheckoutEnv();
 
 // Initialize DI container (PtyPidRegistry needs the data dir path at construction time)
 const container = setupContainer(getMcodeDir());
+
+const browserAutomationAccess = container.resolve(BrowserAutomationAccessService);
+const browserAutomationBroker = new BrowserAutomationBroker({});
+const browserAutomationMcpHandler = new BrowserAutomationMcpHandler({
+  credentials: browserAutomationAccess.credentials,
+  broker: browserAutomationBroker,
+});
+browserAutomationAccess.onCredentialRevoked((revocation) => {
+  browserAutomationMcpHandler.releaseCredential(revocation.credentialId);
+  browserAutomationBroker.releaseProviderSession(
+    revocation.providerId,
+    revocation.providerSessionId,
+  );
+});
 
 // Resolve services
 const workspaceService = container.resolve(WorkspaceService);
@@ -610,10 +629,17 @@ const { httpServer, wss } = createWsServer({
   recapService,
   handoffStorage,
   threadTeardownService,
+  browserAutomationBroker,
+  browserAutomationMcpHandler,
   authToken: AUTH_TOKEN,
   singleInstance: SINGLE_INSTANCE,
   instanceToken: INSTANCE_TOKEN,
   worktreeIdentity: WORKTREE_IDENTITY,
+  resolveBrowserAutomationHostAuthorization: () => ({
+    desktopInstanceId: randomUUID(),
+    worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
+    allowedWorkspaceIds: workspaceService.list().map((workspace) => workspace.id),
+  }),
   shutdown: requestShutdown,
 });
 
@@ -633,6 +659,12 @@ function listen(port: number, attempt = 1): void {
   });
   httpServer.listen(port, HOST, () => {
     logger.info(`Mcode server listening on ${HOST}:${port}`);
+
+    const browserMcpHost = HOST === "::1" ? "[::1]" : "127.0.0.1";
+    browserAutomationAccess.configure({
+      mcpUrl: `http://${browserMcpHost}:${port}/mcp`,
+      worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
+    });
 
     // Write lock file so other instances can discover this server
     try {
@@ -738,6 +770,7 @@ async function shutdown(): Promise<void> {
 
   // 3. Shutdown provider registry
   providerRegistry.shutdown();
+  browserAutomationAccess.shutdown();
 
   // 4. Mark active threads as interrupted
   threadService.markActiveThreadsInterrupted(activeThreadIds);

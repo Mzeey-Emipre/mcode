@@ -17,6 +17,8 @@ import { extractToken, buildAuthCookie } from "./auth";
 import { createReadStream, existsSync } from "fs";
 import { join } from "path";
 import { getMcodeDir } from "@mcode/shared";
+import type { BrowserAutomationMcpHandler } from "../services/browser-automation/mcp-handler.js";
+import type { BrowserAutomationHostConnectionAuthorization } from "../services/browser-automation/broker.js";
 
 /** Constant-time string comparison to prevent timing attacks on token validation. */
 function safeTokenEqual(a: string, b: string): boolean {
@@ -47,13 +49,28 @@ const ATTACHMENT_EXT_MIME: Record<string, string> = {
   odp: "application/vnd.oasis.opendocument.presentation",
 };
 
-type WsServerDeps = RouterDeps & {
+export type WsServerDeps = RouterDeps & {
   authToken: string;
   singleInstance?: boolean;
   instanceToken?: string | null;
   worktreeIdentity?: string | null;
   shutdown: () => void;
+  /** Handles the loopback-only browser MCP route when the feature is enabled. */
+  browserAutomationMcpHandler?: BrowserAutomationMcpHandler;
 };
+
+/** Refreshes mutable workspace authorization while preserving one connection's desktop identity. */
+export function refreshBrowserAutomationHostAuthorization(
+  current: BrowserAutomationHostConnectionAuthorization | null,
+  stableDesktopInstanceId: string | null,
+): BrowserAutomationHostConnectionAuthorization | null {
+  if (!current) return null;
+  return {
+    ...current,
+    desktopInstanceId: stableDesktopInstanceId ?? current.desktopInstanceId,
+    allowedWorkspaceIds: [...current.allowedWorkspaceIds],
+  };
+}
 
 type InstanceCheckResult =
   | { ok: true }
@@ -104,6 +121,16 @@ export function createWsServer(deps: WsServerDeps): {
   wss: WebSocketServer;
 } {
   const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    if (new URL(req.url ?? "/", "http://localhost").pathname === "/mcp" && deps.browserAutomationMcpHandler) {
+      void deps.browserAutomationMcpHandler.handle(req, res).catch((error: unknown) => {
+        logger.error("Browser automation MCP request failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }));
+      });
+      return;
+    }
     const token = extractToken(req);
 
     if (req.method === "GET" && req.url?.startsWith("/health")) {
@@ -111,6 +138,12 @@ export function createWsServer(deps: WsServerDeps): {
         status: "ok",
         activeAgents: deps.agentService.activeCount(),
       };
+      if (deps.browserAutomationBroker) {
+        body.browserAutomation = {
+          ...deps.browserAutomationBroker.status(),
+          reliability: deps.browserAutomationBroker.reliabilityStatus(),
+        };
+      }
       if (!deps.singleInstance) {
         // Shared-server mode keeps the legacy localhost token recovery path.
         body.authToken = deps.authToken;
@@ -246,6 +279,21 @@ export function createWsServer(deps: WsServerDeps): {
 
     logger.info("WebSocket client connected");
     addClient(ws);
+    let browserAutomationDesktopInstanceId: string | null = null;
+
+    const resolveCurrentBrowserAutomationAuthorization = (): ReturnType<WsServerDeps["resolveBrowserAutomationHostAuthorization"]> => {
+      try {
+        const current = deps.resolveBrowserAutomationHostAuthorization(req);
+        if (!current) return null;
+        browserAutomationDesktopInstanceId ??= current.desktopInstanceId;
+        return refreshBrowserAutomationHostAuthorization(current, browserAutomationDesktopInstanceId);
+      } catch (error) {
+        logger.warn("Browser automation host authorization could not be derived", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    };
 
     /** Pending binary upload header for this connection. */
     let pendingBinaryHeader: BinaryUploadHeader | null = null;
@@ -328,7 +376,10 @@ export function createWsServer(deps: WsServerDeps): {
         // Not JSON or not a header — fall through to normal routing
       }
 
-      routeMessage(raw, deps, { client: ws })
+      routeMessage(raw, deps, {
+        client: ws,
+        browserAutomationAuthorization: resolveCurrentBrowserAutomationAuthorization(),
+      })
         .then((response) => {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(response));
@@ -343,11 +394,13 @@ export function createWsServer(deps: WsServerDeps): {
 
     ws.on("close", () => {
       logger.info("WebSocket client disconnected");
+      deps.browserAutomationBroker?.disconnect(ws);
       removeClient(ws);
     });
 
     ws.on("error", (err) => {
       logger.error("WebSocket error", { error: err.message });
+      deps.browserAutomationBroker?.disconnect(ws);
       removeClient(ws);
     });
   });

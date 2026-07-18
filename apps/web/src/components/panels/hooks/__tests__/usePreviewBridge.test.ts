@@ -162,6 +162,78 @@ describe("usePreviewBridge", () => {
     expect(result.current.faviconUrl).toBeNull();
   });
 
+  it("keeps global native page status out of automation-only background threads", async () => {
+    const callbacks: Array<(status: { url: string | null; title: string | null; favicon: string | null; phase: "loaded" }) => void> = [];
+    const mockPreview = makeMockPreview();
+    mockPreview.onPageStatus.mockImplementation((callback) => {
+      callbacks.push(callback);
+      return () => undefined;
+    });
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+
+    renderHook(() => usePreviewBridge({
+      threadId: "visible-thread",
+      workspaceId: "ws-1",
+      surfaceRef: makeSurfaceRef(),
+    }));
+    renderHook(() => usePreviewBridge({
+      threadId: "background-thread",
+      workspaceId: "ws-1",
+      surfaceRef: makeSurfaceRef(),
+      automationOnly: true,
+    }));
+
+    expect(mockPreview.onPageStatus).toHaveBeenCalledOnce();
+    await act(async () => {
+      callbacks[0]?.({
+        url: "https://visible.example/",
+        title: "Visible",
+        favicon: null,
+        phase: "loaded",
+      });
+    });
+    expect(mockSetPreviewUrlForThread).toHaveBeenCalledWith(
+      "visible-thread",
+      "https://visible.example/",
+    );
+    expect(mockSetPreviewUrlForThread).not.toHaveBeenCalledWith(
+      "background-thread",
+      expect.anything(),
+    );
+  });
+
+  it("syncs an exact hosted thread only while its persistent dock is visible", async () => {
+    const mockPreview = makeMockPreview();
+    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
+    const surfaceRef = makeSurfaceRef();
+    const { rerender } = renderHook(
+      ({ automationOnly }: { automationOnly: boolean }) => usePreviewBridge({
+        threadId: "hosted-thread",
+        workspaceId: "ws-1",
+        surfaceRef,
+        automationOnly,
+      }),
+      { initialProps: { automationOnly: true } },
+    );
+    await flushRaf();
+    expect(mockPreview.sync).not.toHaveBeenCalled();
+
+    rerender({ automationOnly: false });
+    await flushRaf();
+    expect(mockPreview.sync).toHaveBeenCalledWith(expect.objectContaining({
+      visible: true,
+      threadId: "hosted-thread",
+    }));
+
+    mockPreview.sync.mockClear();
+    rerender({ automationOnly: true });
+    await flushRaf();
+    expect(mockPreview.sync).toHaveBeenCalledWith(expect.objectContaining({
+      visible: false,
+      threadId: "hosted-thread",
+    }));
+  });
+
   it("calls preview.sync with visible:true on mount (via ResizeObserver RAF)", async () => {
     const mockPreview = makeMockPreview();
     window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;

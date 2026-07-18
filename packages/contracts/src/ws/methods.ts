@@ -64,6 +64,11 @@ import {
   PullRequestMergeRequestSchema,
   PullRequestMergeResultSchema,
 } from "../pull-requests.js";
+import {
+  BrowserAutomationHostRegistrationSchema,
+  BrowserAutomationHostDispatchTargetSchema,
+  BrowserAutomationResponseSchema,
+} from "../models/browser-automation.js";
 
 /** Maximum recap input messages accepted by recap.generate. */
 export const RECAP_MAX_MESSAGES = 80;
@@ -197,6 +202,63 @@ export type CreateAndSendResult = z.infer<ReturnType<typeof CreateAndSendResultS
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
 export const WS_METHODS = lazySchema(() => ({
+  /** Registers this WebSocket as a visible-browser automation host. */
+  "browserAutomation.host.register": {
+    params: z.object({ registration: BrowserAutomationHostRegistrationSchema() }).strict(),
+    result: z
+      .object({
+        generation: z.number().int().positive(),
+        desktopInstanceId: z.string().min(1).max(256),
+      })
+      .strict(),
+  },
+  /** Replaces the exact desktop-main-derived targets owned by this host connection. */
+  "browserAutomation.host.updateTargets": {
+    params: z
+      .object({
+        hostId: z.string().min(1).max(256),
+        generation: z.number().int().positive(),
+        targets: z.array(BrowserAutomationHostDispatchTargetSchema()).max(64),
+      })
+      .strict(),
+    result: z.void(),
+  },
+  /** Resolves one browser request previously directed to this host. */
+  "browserAutomation.host.respond": {
+    params: z
+      .object({
+        hostId: z.string().min(1).max(256),
+        generation: z.number().int().positive(),
+        response: BrowserAutomationResponseSchema(),
+        target: BrowserAutomationHostDispatchTargetSchema().optional(),
+      })
+      .strict(),
+    result: z.void(),
+  },
+  /** Renews liveness for a registered browser host. */
+  "browserAutomation.host.heartbeat": {
+    params: z
+      .object({
+        hostId: z.string().min(1).max(256),
+        generation: z.number().int().positive(),
+        observedAt: z.number().int().nonnegative(),
+      })
+      .strict(),
+    result: z.void(),
+  },
+  /** Interrupts one in-flight browser request owned by this host. */
+  "browserAutomation.host.cancel": {
+    params: z
+      .object({
+        hostId: z.string().min(1).max(256),
+        generation: z.number().int().positive(),
+        requestId: z.string().min(1).max(256),
+        sequence: z.number().int().nonnegative(),
+        reason: z.enum(["human-interrupted", "user-stopped", "host-shutdown"]),
+      })
+      .strict(),
+    result: z.void(),
+  },
   "workspace.list": {
     params: z.object({}),
     result: z.array(WorkspaceSchema()),

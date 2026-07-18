@@ -45,6 +45,8 @@ export interface BrowserOverflowMenuProps {
   readonly onGetZoom: () => Promise<number>;
   /** Set the guest's zoom factor; resolves to the clamped factor applied. */
   readonly onSetZoom: (factor: number) => Promise<number>;
+  /** Open detached DevTools for the adopted active guest. */
+  readonly onOpenDevTools: () => void;
   /** Whether this menu must hide the native preview layer while open. */
   readonly suppressPreviewForOverlays?: boolean;
 }
@@ -80,6 +82,7 @@ export function BrowserOverflowMenu({
   onClearCache,
   onGetZoom,
   onSetZoom,
+  onOpenDevTools,
   suppressPreviewForOverlays = true,
 }: BrowserOverflowMenuProps) {
   const [open, setOpen] = useState(false);
@@ -174,14 +177,12 @@ export function BrowserOverflowMenu({
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          disabled
-          className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs"
+          disabled={!hasLoadedPage}
+          className="gap-2 px-3 py-1.5 text-xs"
+          onClick={onOpenDevTools}
         >
-          <span className="flex items-center gap-2">
-            <Code2 size={14} className="text-muted-foreground" aria-hidden />
-            Developer tools
-          </span>
-          <SoonTag />
+          <Code2 size={14} className="text-muted-foreground" aria-hidden />
+          Developer tools
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import type { BrowserTabSet } from "@mcode/contracts";
 import { usePreviewFocusStore } from "./previewFocusStore";
+import { useBrowserAutomationStore } from "./browserAutomationStore";
 
 /**
  * Live chrome for the active preview page, sourced from `preview:page-status`.
@@ -87,8 +88,8 @@ interface PreviewTabsState {
   /** Merge renderer-observed chrome into one tab's persisted renderer mirror. */
   updateTabChrome: (scopeId: string, tabId: string, chrome: PreviewLiveChrome) => void;
 
-  /** Create a new page on the scope's browser and focus the omnibox for it. */
-  createPage: (scopeId: string) => Promise<void>;
+  /** Create a new page and optionally suppress human-focused omnibox behavior. */
+  createPage: (scopeId: string, options?: { readonly focusOmnibox?: boolean }) => Promise<string | null>;
   /** Activate (switch to) a page within the scope's browser. */
   activatePage: (scopeId: string, tabId: string) => Promise<void>;
   /**
@@ -163,16 +164,19 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       };
     }),
 
-  createPage: async (scopeId) => {
+  createPage: async (scopeId, options) => {
     const tabs = bridgeTabs();
-    if (!tabs) return;
+    if (!tabs) return null;
     const r = await tabs.create(scopeId, true);
     if (r.ok) {
       get().setTabSet(scopeId, r.data.tabs);
+      useBrowserAutomationStore.getState().refreshTarget(scopeId, r.data.tabId);
       // A freshly-created page is empty; drop the cursor into the URL field so
       // the user can type immediately (matches the panel-open shortcut's UX).
-      usePreviewFocusStore.getState().requestOmniboxFocus();
+      if (options?.focusOmnibox !== false) usePreviewFocusStore.getState().requestOmniboxFocus();
+      return r.data.tabId;
     }
+    return null;
   },
 
   activatePage: async (scopeId, tabId) => {
@@ -182,7 +186,10 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     // stale overlay so it does not paint the prior page's favicon onto it.
     get().setLiveChrome(scopeId, null);
     const r = await tabs.activate(scopeId, tabId);
-    if (r.ok) get().setTabSet(scopeId, r.data);
+    if (r.ok) {
+      get().setTabSet(scopeId, r.data);
+      useBrowserAutomationStore.getState().refreshTarget(scopeId, tabId);
+    }
   },
 
   closePage: async (scopeId, tabId, opts) => {

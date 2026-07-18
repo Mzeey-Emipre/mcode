@@ -187,6 +187,38 @@ describe("/health endpoint", () => {
     expect((body as Record<string, unknown>).activeAgents).toBe(2);
   });
 
+  it("exposes content-free browser automation reliability diagnostics", async () => {
+    const deps = makeMinimalDeps({
+      browserAutomationBroker: {
+        status: () => ({ hosts: 1, pending: 2, assignments: 3 }),
+        reliabilityStatus: () => ({
+          dispatched: 4,
+          succeeded: 2,
+          failed: 2,
+          timedOut: 1,
+          interrupted: 0,
+          truncated: 1,
+          hostLosses: 1,
+          capacityRejected: 0,
+          latencyTotalMs: 40,
+          latencyMaxMs: 25,
+        }),
+      } as never,
+    });
+    ({ httpServer: server } = createWsServer(deps));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    const { body } = await getHealth(server);
+    const browserAutomation = (body as { browserAutomation?: unknown }).browserAutomation;
+    expect(browserAutomation).toEqual({
+      hosts: 1,
+      pending: 2,
+      assignments: 3,
+      reliability: expect.objectContaining({ dispatched: 4, timedOut: 1, hostLosses: 1 }),
+    });
+    expect(JSON.stringify(browserAutomation)).not.toMatch(/url|thread|credential/i);
+  });
+
 });
 
 describe("single-instance WebSocket attachment", () => {

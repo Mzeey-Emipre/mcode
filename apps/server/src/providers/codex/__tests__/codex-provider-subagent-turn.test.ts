@@ -48,6 +48,7 @@ async function startSession(
 ): Promise<PoolEntry> {
   await provider.sendTurn({
     sessionId,
+    workspaceId: "workspace-test",
     threadId,
     message: "hey",
     cwd: process.cwd(),

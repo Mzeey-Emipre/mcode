@@ -23,12 +23,20 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
+  type McpServer,
 } from "@agentclientprotocol/sdk";
 
 import { SettingsService } from "../../services/settings-service.js";
 import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
+import {
+  BrowserAutomationAccessService,
+  browserAutomationPermissionCapability,
+  type BrowserAutomationAccessRequest,
+  type BrowserAutomationAccessGrant,
+  type BrowserAutomationCredentialMetadata,
+} from "../../services/browser-automation/access-service.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
@@ -165,6 +173,14 @@ interface CursorAcpSessionEntry {
   cursorModelAppliedPair: { acpSessionId: string; modelId: string } | null;
   /** Set immediately before issuing ACP cancel while a prompt is in flight (explicit Stop vs noisy upstream errors). */
   pendingUserStopAbort: boolean;
+  /** Whether this ACP version advertised HTTP MCP session support. */
+  browserHttpMcpSupported: boolean;
+  /** Non-secret browser credential lifecycle metadata for this main session. */
+  browserCredential?: BrowserAutomationCredentialMetadata;
+  /** Workspace fixed to this provider process at spawn. */
+  workspaceId: string;
+  /** Browser permission class fixed to this provider process at spawn. */
+  browserPermissionCapability: "observe" | "interact" | "privileged";
 }
 
 /**
@@ -176,6 +192,27 @@ interface CursorAcpSessionEntry {
  * attachment, and the hard `taskkill` of the child PID surfaced from `spawn`.
  */
 type CursorSessionState = CursorAcpSessionEntry;
+
+/** Builds the ACP HTTP MCP descriptor for one short-lived browser grant. */
+export function buildCursorBrowserMcpServers(
+  grant: BrowserAutomationAccessGrant | null,
+): McpServer[] {
+  return grant
+    ? [{
+        type: "http",
+        name: "mcode-browser",
+        url: grant.mcpUrl,
+        headers: [{ name: "Authorization", value: `Bearer ${grant.token}` }],
+      }]
+    : [];
+}
+
+/** Returns true only when the ACP initialize response explicitly supports HTTP MCP. */
+export function cursorSupportsHttpMcp(initializeResult: {
+  agentCapabilities?: { mcpCapabilities?: { http?: boolean } };
+}): boolean {
+  return initializeResult.agentCapabilities?.mcpCapabilities?.http === true;
+}
 
 /** Cursor ACP (Agent Communication Protocol) adapter implementing IAgentProvider via a MCP subprocess per session. */
 @injectable()
@@ -216,12 +253,16 @@ export class CursorProvider
    * in `spawn`, pruned in `close`.
    */
   private liveSessionIds = new Set<string>();
+  /** Browser scope staged only until a fresh normal ACP session opens. */
+  private pendingBrowserAccess = new Map<string, BrowserAutomationAccessRequest>();
 
   constructor(
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject(SkillService) private readonly skillService: SkillService,
     @inject(EnvService) private readonly envService: EnvService,
     @inject("JobObject") private readonly jobObject: JobObject,
+    @inject(BrowserAutomationAccessService)
+    private readonly browserAutomationAccess: BrowserAutomationAccessService = new BrowserAutomationAccessService(),
   ) {
     super();
     this.runtime = new SessionRuntime<CursorSessionState>(this, {
@@ -266,6 +307,10 @@ export class CursorProvider
     }
 
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+    const browserPermissionCapability = browserAutomationPermissionCapability(
+      permissionMode,
+      req.interactionMode,
+    );
 
     // interactionMode absorbs the retired setPlanQuestionMode: a plan-mode Turn
     // suppresses Cursor's native auto-answer of ask_question; build clears it.
@@ -275,6 +320,25 @@ export class CursorProvider
     } else {
       this.planQuestionModeThreads.delete(threadId);
     }
+
+    const existing = this.runtime.get(sessionId);
+    if (
+      existing &&
+      this.browserAutomationAccess.isConfigured() &&
+      (existing.workspaceId !== req.workspaceId ||
+        existing.browserPermissionCapability !== browserPermissionCapability ||
+        (existing.browserCredential && existing.browserCredential.expiresAt <= Date.now()))
+    ) {
+      await this.runtime.stop(sessionId);
+    }
+    this.pendingBrowserAccess.set(sessionId, {
+      providerId: this.id,
+      providerSessionId: req.resumeFrom ?? sessionId,
+      mcodeSessionId: sessionId,
+      threadId: req.threadId,
+      workspaceId: req.workspaceId,
+      permissionCapability: browserPermissionCapability,
+    });
 
     let entry: CursorSessionState;
     try {
@@ -289,12 +353,14 @@ export class CursorProvider
         resumeFrom: resume ? this.sdkSessionIds.get(sessionId) : undefined,
       });
     } catch (err) {
+      this.pendingBrowserAccess.delete(sessionId);
       const errMsg = err instanceof Error ? err.message : String(err);
       logger.error("Cursor ACP spawn failed", { sessionId, error: errMsg });
       this.emit("event", { type: AgentEventType.Error, threadId, error: errMsg } satisfies AgentEvent);
       this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
+    this.pendingBrowserAccess.delete(sessionId);
 
     // A stop requested before the session finished spawning: tear it down now.
     if (this.pendingStops.delete(sessionId)) {
@@ -366,6 +432,7 @@ export class CursorProvider
     this.planQuestionModeThreads.clear();
     this.sdkSessionIds.clear();
     this.liveSessionIds.clear();
+    this.pendingBrowserAccess.clear();
     logger.info("CursorProvider shutdown complete");
   }
 
@@ -439,6 +506,20 @@ export class CursorProvider
     const pm: "full" | "default" = permissionMode === "full" ? "full" : "default";
     const settings = this.settingsService.get();
     const state = await this.spawnChild(sessionId, threadId, cwd, pm, settings);
+    const browserScope = this.pendingBrowserAccess.get(sessionId);
+    const browserGrant = state.browserHttpMcpSupported && browserScope
+      ? this.browserAutomationAccess.issue(browserScope)
+      : null;
+    if (
+      browserScope &&
+      this.browserAutomationAccess.isConfigured() &&
+      !state.browserHttpMcpSupported
+    ) {
+      logger.info("Cursor ACP does not advertise HTTP MCP; browser automation is unavailable", {
+        threadId,
+      });
+    }
+    const mcpServers = buildCursorBrowserMcpServers(browserGrant);
 
     // Open the logical ACP session up front so reuse paths see a ready
     // `acpSessionId`. `runTurn`'s own `openLogicalSession` call then early-returns.
@@ -446,8 +527,15 @@ export class CursorProvider
     // it cannot kill it on `stop`. Tear the child down here before rethrowing
     // so the subprocess does not leak.
     try {
-      await this.openLogicalSession(state, resumeFrom !== undefined);
+      await this.openLogicalSession(state, resumeFrom !== undefined, mcpServers);
+      if (browserGrant) {
+        state.browserCredential = {
+          credentialId: browserGrant.credentialId,
+          expiresAt: browserGrant.expiresAt,
+        };
+      }
     } catch (err) {
+      if (browserGrant) this.browserAutomationAccess.revokeCredential(browserGrant.credentialId);
       this.liveSessionIds.delete(sessionId);
       try {
         state.child.kill();
@@ -486,6 +574,9 @@ export class CursorProvider
   close(state: CursorSessionState): void {
     this.cancelPendingForThread(state.mcodeSessionId);
     this.liveSessionIds.delete(state.mcodeSessionId);
+    if (state.browserCredential) {
+      this.browserAutomationAccess.revokeCredential(state.browserCredential.credentialId);
+    }
   }
 
   /** A pooled session must be discarded before reuse if the child died or the cwd/permission mode changed. */
@@ -549,6 +640,10 @@ export class CursorProvider
     const entry: Omit<CursorAcpSessionEntry, "connection"> & {
       connection?: CursorAcpSessionEntry["connection"];
     } = {
+      workspaceId: this.pendingBrowserAccess.get(mcodeSessionId)?.workspaceId ?? "unknown-workspace",
+      browserPermissionCapability:
+        this.pendingBrowserAccess.get(mcodeSessionId)?.permissionCapability ?? "interact",
+      browserHttpMcpSupported: false,
       mcodeSessionId,
       threadId,
       child,
@@ -599,7 +694,7 @@ export class CursorProvider
       void this.runtime.stop(mcodeSessionId);
     });
 
-    await this.acpHandshake(connection, threadId);
+    entry.browserHttpMcpSupported = await this.acpHandshake(connection, threadId);
 
     return entry as CursorAcpSessionEntry;
   }
@@ -609,7 +704,7 @@ export class CursorProvider
    * fresh connection. Shared by the pooled session spawn and the throwaway
    * side-channel transport.
    */
-  private async acpHandshake(connection: ClientSideConnection, threadId: string): Promise<void> {
+  private async acpHandshake(connection: ClientSideConnection, threadId: string): Promise<boolean> {
     const initResult = await connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientInfo: { name: "mcode", title: "Mcode", version: "0.0.1" },
@@ -629,6 +724,7 @@ export class CursorProvider
         });
       });
     }
+    return cursorSupportsHttpMcp(initResult);
   }
 
   private buildAcpClient(entry: CursorAcpSessionEntry): Client {
@@ -843,7 +939,11 @@ export class CursorProvider
   }
 
   /** Ensures `entry.acpSessionId` is ready (new or load). */
-  private async openLogicalSession(entry: CursorAcpSessionEntry, resume: boolean): Promise<void> {
+  private async openLogicalSession(
+    entry: CursorAcpSessionEntry,
+    resume: boolean,
+    mcpServers: McpServer[] = [],
+  ): Promise<void> {
     if (entry.acpSessionId) return;
 
     const stored = this.sdkSessionIds.get(entry.mcodeSessionId);
@@ -853,7 +953,7 @@ export class CursorProvider
       try {
         await entry.connection.loadSession({
           cwd: entry.cwd,
-          mcpServers: [],
+          mcpServers,
           sessionId: stored,
         });
         acpId = stored;
@@ -864,14 +964,14 @@ export class CursorProvider
         });
         const created = await entry.connection.newSession({
           cwd: entry.cwd,
-          mcpServers: [],
+          mcpServers,
         });
         acpId = created.sessionId;
       }
     } else {
       const created = await entry.connection.newSession({
         cwd: entry.cwd,
-        mcpServers: [],
+        mcpServers,
       });
       acpId = created.sessionId;
     }

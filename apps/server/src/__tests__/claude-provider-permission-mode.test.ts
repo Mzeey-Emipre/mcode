@@ -82,6 +82,7 @@ vi.mock("@mcode/shared", async (importOriginal) => {
 import { ClaudeProvider } from "../providers/claude/claude-provider";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
+import { BrowserAutomationAccessService } from "../services/browser-automation/access-service.js";
 
 describe("ClaudeProvider permission mode changes", () => {
   let provider: ClaudeProvider;
@@ -93,6 +94,38 @@ describe("ClaudeProvider permission mode changes", () => {
     flagSettingsCalls.length = 0;
     mockQuery.mockImplementation(makeFakeSdkQuery(sdkCalls, flagSettingsCalls));
     provider = new ClaudeProvider(stubEnvService(), stubJobObject());
+  });
+
+  it("passes browser MCP through query options without touching process.env", async () => {
+    const access = new BrowserAutomationAccessService();
+    access.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    provider = new ClaudeProvider(stubEnvService(), stubJobObject(), undefined, access);
+
+    await provider.sendTurn({
+      sessionId: "mcode-browser-claude",
+      workspaceId: "workspace-test",
+      threadId: "browser-claude",
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "claude-sonnet-4-6",
+      permissionMode: "supervised",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+
+    expect(sdkCalls[0]!.options.mcpServers).toMatchObject({
+      "mcode-browser": {
+        type: "http",
+        url: "http://127.0.0.1:19400/mcp",
+        headers: { Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{40,}$/) },
+      },
+    });
+    expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
+    await provider.stopSession("mcode-browser-claude");
+    expect(access.credentials.size()).toBe(0);
   });
 
   it("reuses the session when permissionMode is unchanged", async () => {

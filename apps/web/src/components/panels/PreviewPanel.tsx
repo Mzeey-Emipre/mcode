@@ -74,6 +74,12 @@ import {
 import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useWorkspaceThread } from "@/stores/workspace-selectors";
+import {
+  browserAutomationTargetKey,
+  interruptBrowserAutomationTarget,
+  selectWarmBrowserTabIds,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -1517,6 +1523,8 @@ export interface PreviewPanelProps {
   readonly threadId: string;
   /** Active workspace id; scopes spill files under the Mcode app data dir (not the project tree). */
   readonly workspaceId?: string | null;
+  /** Mount only renderer-owned automation webviews, without native preview events. */
+  readonly automationOnly?: boolean;
 }
 
 /**
@@ -1529,7 +1537,7 @@ export interface PreviewPanelProps {
  * would hide in-surface overlays. In web-only builds without
  * `desktopBridge.preview`, renders an explanatory empty state.
  */
-export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
+export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
 
@@ -1673,12 +1681,15 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     workspaceId,
     surfaceRef,
     forceHidden: showWebviewPreview,
+    automationOnly,
   });
   const [webviewSrcByTab, setWebviewSrcByTab] = useState<Record<string, string | null>>({});
   const webviewSrcRef = useRef<string | null>(null);
   const setTrackedWebviewSrc = useCallback((tabId: string, nextSrc: string | null): void => {
     webviewSrcRef.current = nextSrc;
-    setWebviewSrcByTab((prev) => ({ ...prev, [tabId]: nextSrc }));
+    setWebviewSrcByTab((prev) => (
+      (prev[tabId] ?? null) === nextSrc ? prev : { ...prev, [tabId]: nextSrc }
+    ));
   }, []);
   const [webviewNavError, setWebviewNavError] = useState<string | null>(null);
   const [webviewCanBack, setWebviewCanBack] = useState(false);
@@ -1727,14 +1738,15 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   // "New page" action for the header. Page switching/closing is driven from the
   // activity rail (the page switcher), so this panel no longer renders a strip.
   const tabs = usePreviewTabs(threadId);
+  const automationControllers = useBrowserAutomationStore((state) => state.controllers);
+  const automationActiveRequests = useBrowserAutomationStore((state) => state.activeRequests);
+  const automationViewports = useBrowserAutomationStore((state) => state.viewportByTarget);
   const activeWebviewTabId =
     tabs.tabSet?.activeTabId ?? PREVIEW_WEBVIEW_FALLBACK_TAB_ID;
   const activeWebviewTab = tabs.tabSet?.tabs.find(
     (tab) => tab.id === activeWebviewTabId,
   );
   const activeWebviewTabUrl = activeWebviewTab?.url ?? null;
-  const activeWebviewTabTitle = activeWebviewTab?.title ?? null;
-  const activeWebviewTabFavicon = activeWebviewTab?.faviconUrl ?? null;
   const activeWebviewSrc =
     webviewSrcByTab[activeWebviewTabId] ?? activeWebviewTabUrl;
   const warmWebviewTabs = useMemo(() => {
@@ -1749,13 +1761,38 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               },
             ]
           : [];
+    const warmIds = selectWarmBrowserTabIds(sourceTabs, threadId, activeWebviewTabId);
     return sourceTabs
+      .filter((tab) => warmIds.has(tab.id))
       .map((tab) => ({
         id: tab.id,
         src: webviewSrcByTab[tab.id] ?? tab.url ?? null,
       }))
       .filter((tab): tab is { id: string; src: string } => !!tab.src);
-  }, [activeWebviewSrc, activeWebviewTabId, tabs.tabSet, webviewSrcByTab]);
+  }, [
+    activeWebviewSrc,
+    activeWebviewTabId,
+    automationActiveRequests,
+    tabs.tabSet,
+    threadId,
+    webviewSrcByTab,
+  ]);
+  const activeAutomationController = automationControllers.get(
+    browserAutomationTargetKey(threadId, activeWebviewTabId),
+  );
+  const activeAutomationRequest = [...automationActiveRequests.values()].find(
+    ({ dispatch }) =>
+      dispatch.target.threadId === threadId && dispatch.target.tabId === activeWebviewTabId,
+  );
+  const automationPointer = (() => {
+    if (activeAutomationController?.pointer) return activeAutomationController.pointer;
+    const request = activeAutomationRequest?.dispatch.request;
+    if (!request || !("target" in request.args)) return null;
+    const target = request.args.target;
+    return target && "x" in target && "y" in target
+      ? { x: target.x, y: target.y }
+      : null;
+  })();
   const activeWebviewRef = useCallback(
     (): PreviewWebviewHandle | null =>
       webviewRefs.current[activeWebviewTabId] ?? null,
@@ -1770,39 +1807,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     if (!showWebviewPreview) return;
     if (!activeWebviewTabUrl) return;
     const active = activeWebviewRef();
-    const nextUrl = active?.getUrl() || activeWebviewSrc || activeWebviewTabUrl;
     const nextCanBack = active?.canGoBack() ?? false;
     const nextCanFwd = active?.canGoForward() ?? false;
-    setWebviewPageStatus((status) => {
-      if (
-        status.phase === "error" &&
-        (status.url === nextUrl || status.url === activeWebviewTabUrl)
-      ) {
-        return status;
-      }
-      if (
-        status.url === nextUrl &&
-        status.title === activeWebviewTabTitle &&
-        status.favicon === activeWebviewTabFavicon &&
-        status.phase === "loaded" &&
-        status.error === undefined
-      ) {
-        return status;
-      }
-      return {
-        url: nextUrl,
-        title: activeWebviewTabTitle,
-        favicon: activeWebviewTabFavicon,
-        phase: "loaded",
-      };
-    });
     setWebviewCanBack((value) => (value === nextCanBack ? value : nextCanBack));
     setWebviewCanFwd((value) => (value === nextCanFwd ? value : nextCanFwd));
   }, [
     activeWebviewRef,
-    activeWebviewSrc,
-    activeWebviewTabFavicon,
-    activeWebviewTabTitle,
     activeWebviewTabUrl,
     showWebviewPreview,
   ]);
@@ -1812,12 +1822,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     const stored = bridge.storedUrl.trim();
     if (!stored) {
       setTrackedWebviewSrc(activeWebviewTabId, null);
-      setWebviewPageStatus({
-        url: null,
-        title: null,
-        favicon: null,
-        phase: "loaded",
-      });
+      setWebviewPageStatus((status) => (
+        status.url === null && status.title === null && status.favicon === null &&
+        status.phase === "loaded" && status.error === undefined
+          ? status
+          : { url: null, title: null, favicon: null, phase: "loaded" }
+      ));
       return;
     }
     if (activeWebviewRef()?.getUrl() === stored) return;
@@ -1835,9 +1845,11 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const onWebviewPageStatus = useCallback(
     (status: PreviewPageStatus): void => {
       setWebviewPageStatus(status);
-      if (status.url) {
-        useDiffStore.getState().setPreviewUrlForThread(threadId, status.url);
-      }
+      const url = status.url;
+      const persistedUrl = url && !url.startsWith("about:") && !url.startsWith("chrome-error://")
+        ? url
+        : "";
+      useDiffStore.getState().setPreviewUrlForThread(threadId, persistedUrl);
     },
     [threadId],
   );
@@ -2467,22 +2479,59 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             captureBusy={capture.captureBusy}
             regionBusy={capture.regionBusy}
             focusRequest={omniboxFocusTick}
-            onNavigate={effectiveNavigate}
-            onGoBack={effectiveGoBack}
-            onGoForward={effectiveGoForward}
-            onReload={effectiveReload}
+            onNavigate={(url) => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveNavigate(url);
+            }}
+            onGoBack={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveGoBack();
+            }}
+            onGoForward={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveGoForward();
+            }}
+            onReload={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveReload();
+            }}
             onOpenExternal={effectiveOpenExternal}
             onToggleDesign={onToggleDesignMode}
             onScreenshot={capture.onAddPictureReference}
-            onNewPage={tabs.newTab}
-            onForceReload={effectiveForceReload}
+            onNewPage={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              tabs.newTab();
+            }}
+            onForceReload={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveForceReload();
+            }}
             onRegionCapture={capture.onAddRegionPictureReference}
             onDumpContent={capture.onAddPageContextOnly}
             onClearCookies={bridge.onClearCookies}
             onClearCache={bridge.onClearCache}
             onGetZoom={effectiveGetZoom}
             onSetZoom={effectiveSetZoom}
+            onOpenDevTools={() => {
+              void window.desktopBridge?.preview.openGuestDevTools({
+                threadId,
+                tabId: activeWebviewTabId,
+              });
+            }}
             suppressPreviewForOverlays={!showWebviewPreview}
+            automationController={activeAutomationController ?? null}
+            automationBusy={activeAutomationRequest !== undefined}
+            onHumanFocus={() => {
+              if (activeAutomationController?.controller !== "agent") return;
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+            }}
+            onStopAutomation={() =>
+              interruptBrowserAutomationTarget(
+                threadId,
+                activeWebviewTabId,
+                "user-stopped",
+              )
+            }
           />
         )}
       </div>
@@ -2566,8 +2615,10 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                   webviewRefs.current[tab.id] = handle;
                 }}
                 threadId={threadId}
+                workspaceId={workspaceId ?? threadId}
                 tabId={tab.id}
                 src={tab.src}
+                viewport={automationViewports.get(browserAutomationTargetKey(threadId, tab.id))}
                 className={cn(
                   "absolute inset-0 h-full w-full",
                   tab.id === activeWebviewTabId
@@ -2591,6 +2642,14 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               />
             ))}
           </div>
+        ) : null}
+        {activeAutomationController?.controller === "agent" && automationPointer ? (
+          <div
+            data-testid="browser-automation-pointer"
+            className="pointer-events-none absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-amber-500 shadow-sm motion-reduce:transition-none"
+            style={{ left: automationPointer.x, top: automationPointer.y }}
+            aria-hidden
+          />
         ) : null}
         {visiblePageAnnotations.map((annotation) => {
           const targetLabel =

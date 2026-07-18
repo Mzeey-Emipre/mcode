@@ -105,6 +105,7 @@ import which from "which";
 import { CopilotProvider } from "../providers/copilot/copilot-provider.js";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
+import { BrowserAutomationAccessService } from "../services/browser-automation/access-service.js";
 
 /** Minimal SettingsService stub. */
 function makeSettingsService(cliPath = "") {
@@ -230,6 +231,46 @@ describe("CopilotProvider bootstrap", () => {
       // CopilotClient constructor called only once
       expect(MockCopilotClient.mock.calls).toHaveLength(1);
     });
+  });
+
+  it("configures only permission-compatible visible-browser MCP tools on a normal session", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+    const access = new BrowserAutomationAccessService();
+    access.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      access,
+    );
+
+    await provider.sendTurn({
+      sessionId: "mcode-browser-copilot",
+      workspaceId: "workspace-test",
+      threadId: "browser-copilot",
+      message: "inspect the page",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    const config = mockClient.createSession.mock.calls[0]![0];
+    expect(config.mcpServers["mcode-browser"]).toMatchObject({
+      type: "http",
+      url: "http://127.0.0.1:19400/mcp",
+      headers: { Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{40,}$/) },
+    });
+    expect(config.mcpServers["mcode-browser"].tools).toHaveLength(17);
+    expect(config.mcpServers["mcode-browser"].tools).not.toContain("browser_evaluate");
+    await provider.stopSession("mcode-browser-copilot");
+    expect(access.credentials.size()).toBe(0);
   });
 
   describe("error translation", () => {
@@ -677,6 +718,57 @@ describe("CopilotProvider assistant.message phase filtering", () => {
     // Response message is still emitted
     const msgEvts = events.filter((e) => e.type === "message");
     expect(msgEvts).toHaveLength(1);
+  });
+});
+
+describe("CopilotProvider tool completion output", () => {
+  it("preserves the provider error message when a tool fails without a result", async () => {
+    const { events } = await runWithMockSession([
+      {
+        name: "tool.execution_complete",
+        data: {
+          toolCallId: "browser-open-1",
+          success: false,
+          error: { message: "Browser target did not attach", code: "TOOL_ERROR" },
+        },
+      },
+    ]);
+
+    const result = events.find((event) => event.type === "toolResult");
+    expect(result).toMatchObject({
+      type: "toolResult",
+      toolCallId: "browser-open-1",
+      output: "Browser target did not attach",
+      isError: true,
+    });
+  });
+
+  it("prefers detailed UI output while retaining concise result fallback", async () => {
+    const { events } = await runWithMockSession([
+      {
+        name: "tool.execution_complete",
+        data: {
+          toolCallId: "browser-snapshot-1",
+          success: true,
+          result: { content: "concise", detailedContent: "complete diagnostics" },
+        },
+      },
+      {
+        name: "tool.execution_complete",
+        data: {
+          toolCallId: "browser-status-1",
+          success: true,
+          result: { content: "status only" },
+        },
+      },
+    ]);
+
+    expect(events.filter((event) => event.type === "toolResult")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toolCallId: "browser-snapshot-1", output: "complete diagnostics" }),
+        expect.objectContaining({ toolCallId: "browser-status-1", output: "status only" }),
+      ]),
+    );
   });
 });
 

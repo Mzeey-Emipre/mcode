@@ -76,9 +76,20 @@ import { GithubPullRequestClient } from "./services/pull-requests/github-pull-re
 import { PullRequestService } from "./services/pull-requests/pull-request-service.js";
 import { PullRequestMutationService } from "./services/pull-requests/pull-request-mutation-service.js";
 import { ReviewWorktreeService } from "./services/pull-requests/review-worktree-service.js";
+import {
+  BrowserAutomationAccessService,
+  BrowserAutomationCredentialRegistry,
+} from "./services/browser-automation/index.js";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(mcodeDir: string): typeof container {
+  const browserAutomationCredentials = new BrowserAutomationCredentialRegistry();
+  container.registerInstance(BrowserAutomationCredentialRegistry, browserAutomationCredentials);
+  container.registerInstance(
+    BrowserAutomationAccessService,
+    new BrowserAutomationAccessService(browserAutomationCredentials),
+  );
+
   // PtyPidRegistry — registered before TerminalService because it is injected into it
   container.register("PtyPidRegistry", {
     useValue: new PtyPidRegistry(mcodeDir),

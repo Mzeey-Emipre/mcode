@@ -7,7 +7,7 @@
  * extends `BaseWindow` so the same window reference works for both APIs.
  */
 
-import { BrowserWindow, WebContentsView, shell } from "electron";
+import { BrowserWindow, WebContentsView } from "electron";
 import { logger } from "@mcode/shared";
 import {
   type PreviewSession,
@@ -168,17 +168,7 @@ export function ensureTabView(
     }
   });
 
-  view.webContents.setWindowOpenHandler((details) => {
-    try {
-      const u = new URL(details.url);
-      if (u.protocol === "http:" || u.protocol === "https:") {
-        void shell.openExternal(details.url);
-      }
-    } catch {
-      // ignore malformed URLs
-    }
-    return { action: "deny" };
-  });
+  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
   view.webContents.on("will-navigate", (event, navigationUrl) => {
     if (win.isDestroyed() || view.webContents.isDestroyed()) return;

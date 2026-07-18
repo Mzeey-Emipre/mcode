@@ -41,6 +41,9 @@ import type {
   ConversationPage,
   MessageMention,
   GoalLookupResult,
+  BrowserAutomationHostRegistration,
+  BrowserAutomationHostDispatchTarget,
+  BrowserAutomationResponse,
   PreviewAnnotationBundle,
   PullRequestCapabilitiesRequest,
   PullRequestCapabilitiesResult,
@@ -197,6 +200,38 @@ export interface OpenInApp {
 
 /** Transport interface consumed by the web app to communicate with the backend. */
 export interface McodeTransport {
+  /** Register this renderer connection as an authorized visible-browser host. */
+  registerBrowserAutomationHost(
+    registration: BrowserAutomationHostRegistration,
+  ): Promise<{ generation: number; desktopInstanceId: string }>;
+  /** Replace the exact desktop-main-derived targets owned by this connection. */
+  updateBrowserAutomationHostTargets(
+    hostId: string,
+    generation: number,
+    targets: readonly BrowserAutomationHostDispatchTarget[],
+  ): Promise<void>;
+  /** Return one validated browser operation result to the broker. */
+  respondToBrowserAutomationRequest(
+    hostId: string,
+    generation: number,
+    response: BrowserAutomationResponse,
+    target?: BrowserAutomationHostDispatchTarget,
+  ): Promise<void>;
+  /** Renew the browser host lease. */
+  heartbeatBrowserAutomationHost(
+    hostId: string,
+    generation: number,
+    observedAt: number,
+  ): Promise<void>;
+  /** Interrupt one in-flight request from the visible Browser. */
+  cancelBrowserAutomationRequest(
+    hostId: string,
+    generation: number,
+    requestId: string,
+    sequence: number,
+    reason: "human-interrupted" | "user-stopped" | "host-shutdown",
+  ): Promise<void>;
+
   // Workspace commands
   createWorkspace(name: string, path: string): Promise<Workspace>;
   listWorkspaces(): Promise<Workspace[]>;
