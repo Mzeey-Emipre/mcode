@@ -6,7 +6,11 @@
 import { randomUUID } from "crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
-import type { TurnSnapshot } from "@mcode/contracts";
+import {
+  TurnFileEffectSummarySchema,
+  type TurnFileEffectSummary,
+  type TurnSnapshot,
+} from "@mcode/contracts";
 
 /** Row shape returned by SQLite for the turn_snapshots table. */
 interface TurnSnapshotRow {
@@ -16,6 +20,7 @@ interface TurnSnapshotRow {
   ref_before: string;
   ref_after: string;
   files_changed: string;
+  file_effects: string;
   worktree_path: string | null;
   created_at: string;
 }
@@ -27,6 +32,7 @@ export interface CreateTurnSnapshotInput {
   refBefore: string;
   refAfter: string;
   filesChanged: string[];
+  fileEffects?: TurnFileEffectSummary;
   worktreePath: string | null;
 }
 
@@ -39,6 +45,16 @@ function safeParseArray(json: string): string[] {
   }
 }
 
+function safeParseFileEffects(json: string): TurnFileEffectSummary {
+  try {
+    const parsed = TurnFileEffectSummarySchema().safeParse(JSON.parse(json));
+    if (parsed.success) return parsed.data;
+  } catch {
+    // Corrupt legacy metadata is treated as an empty authored summary.
+  }
+  return { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] };
+}
+
 function rowToTurnSnapshot(row: TurnSnapshotRow): TurnSnapshot {
   return {
     id: row.id,
@@ -47,13 +63,14 @@ function rowToTurnSnapshot(row: TurnSnapshotRow): TurnSnapshot {
     ref_before: row.ref_before,
     ref_after: row.ref_after,
     files_changed: safeParseArray(row.files_changed),
+    file_effects: safeParseFileEffects(row.file_effects),
     worktree_path: row.worktree_path,
     created_at: row.created_at,
   };
 }
 
 const TURN_SNAPSHOT_COLUMNS =
-  "id, message_id, thread_id, ref_before, ref_after, files_changed, worktree_path, created_at";
+  "id, message_id, thread_id, ref_before, ref_after, files_changed, file_effects, worktree_path, created_at";
 
 /** Repository for turn snapshot creation and retrieval against SQLite. */
 @injectable()
@@ -66,7 +83,7 @@ export class TurnSnapshotRepo {
 
   constructor(@inject("Database") db: Database.Database) {
     this.stmtInsert = db.prepare(
-      "INSERT INTO turn_snapshots (id, message_id, thread_id, ref_before, ref_after, files_changed, worktree_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO turn_snapshots (id, message_id, thread_id, ref_before, ref_after, files_changed, file_effects, worktree_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     this.stmtGetById = db.prepare(
       `SELECT ${TURN_SNAPSHOT_COLUMNS} FROM turn_snapshots WHERE id = ?`,
@@ -87,6 +104,13 @@ export class TurnSnapshotRepo {
     const id = randomUUID();
     const now = new Date().toISOString();
     const filesChangedJson = JSON.stringify(input.filesChanged);
+    const fileEffects = TurnFileEffectSummarySchema().parse(input.fileEffects ?? {
+      revision: 0,
+      fileCount: 0,
+      additions: 0,
+      deletions: 0,
+      effects: [],
+    });
 
     this.stmtInsert.run(
       id,
@@ -95,6 +119,7 @@ export class TurnSnapshotRepo {
       input.refBefore,
       input.refAfter,
       filesChangedJson,
+      JSON.stringify(fileEffects),
       input.worktreePath,
       now,
     );
@@ -106,6 +131,7 @@ export class TurnSnapshotRepo {
       ref_before: input.refBefore,
       ref_after: input.refAfter,
       files_changed: input.filesChanged,
+      file_effects: fileEffects,
       worktree_path: input.worktreePath,
       created_at: now,
     };

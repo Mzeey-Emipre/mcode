@@ -10,7 +10,10 @@ import { getTransportPayloadValidator } from "./payload-validation.js";
 
 const clients = new Set<WebSocket>();
 const threadSubscriptions = new Map<WebSocket, Set<string>>();
-const SUBSCRIPTION_SCOPED_CHANNELS = new Set<WsChannelName>(["agent.event"]);
+const SUBSCRIPTION_SCOPED_CHANNELS = new Set<WsChannelName>([
+  "agent.event",
+  "turn.fileEffectsUpdated",
+]);
 
 let _sessionCount = 0;
 const sessionChangeListeners: ((count: number) => void)[] = [];

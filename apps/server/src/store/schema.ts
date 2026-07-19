@@ -256,6 +256,7 @@ export const turnSnapshots = sqliteTable(
     refBefore: text("ref_before").notNull(),
     refAfter: text("ref_after").notNull(),
     filesChanged: text("files_changed").notNull().default("[]"),
+    fileEffects: text("file_effects").notNull().default('{"revision":0,"fileCount":0,"additions":0,"deletions":0,"effects":[]}'),
     worktreePath: text("worktree_path"),
     createdAt: text("created_at").notNull().default(timestampDefault),
   },

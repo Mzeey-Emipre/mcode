@@ -55,6 +55,8 @@ export const AgentEventSchema = lazySchema(() =>
        *  Used by the client to populate `runningThreadIds` for live-session UI indicators. */
       type: z.literal(AgentEventType.TurnStarted),
       threadId: z.string(),
+      /** Server tracker generation that owns live file effects for this turn. */
+      fileEffectTurnId: z.string().optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.Message),

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -149,6 +149,47 @@ describe("SnapshotService integration", () => {
     expect(fileStat).toBeDefined();
     expect(fileStat!.additions).toBe(expectedLineCount);
     expect(fileStat!.deletions).toBe(0);
+  }, GIT_OPERATION_TIMEOUT_MS);
+
+  it("scopes historical diffs and stats to attributed paths", async () => {
+    const refBefore = await service.captureRef(tmpDir);
+    writeFileSync(join(tmpDir, "authored.txt"), "agent change\n");
+    writeFileSync(join(tmpDir, "unrelated.txt"), "git pull change\n");
+    const refAfter = await service.captureRef(tmpDir);
+
+    const diff = await service.getDiff(
+      tmpDir,
+      refBefore,
+      refAfter,
+      undefined,
+      undefined,
+      ["authored.txt"],
+    );
+    const stats = await service.getDiffStats(tmpDir, refBefore, refAfter, ["authored.txt"]);
+
+    expect(diff).toContain("authored.txt");
+    expect(diff).not.toContain("unrelated.txt");
+    expect(stats.map((entry) => entry.filePath)).toEqual(["authored.txt"]);
+  }, GIT_OPERATION_TIMEOUT_MS);
+
+  it("keeps both sides of a rename when opening the renamed file", async () => {
+    const refBefore = await service.captureRef(tmpDir);
+    renameSync(join(tmpDir, "existing.txt"), join(tmpDir, "renamed.txt"));
+    const refAfter = await service.captureRef(tmpDir);
+
+    const diff = await service.getDiff(
+      tmpDir,
+      refBefore,
+      refAfter,
+      "renamed.txt",
+      undefined,
+      ["renamed.txt", "existing.txt"],
+      [["renamed.txt", "existing.txt"]],
+    );
+
+    expect(diff).toContain("similarity index 100%");
+    expect(diff).toContain("rename from existing.txt");
+    expect(diff).toContain("rename to renamed.txt");
   }, GIT_OPERATION_TIMEOUT_MS);
 
   it("gitignored files are excluded from getFilesChanged", async () => {

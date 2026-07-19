@@ -1,4 +1,4 @@
-import type { Settings, ProviderAvailability } from "@mcode/contracts";
+import type { Settings, ProviderAvailability, TurnFileEffectSummary } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { pushEmitter } from "./ws-transport";
 import { getTransport } from "@/transport";
@@ -341,12 +341,26 @@ export function startPushListeners(): void {
 
   // turn.persisted: server has persisted tool calls for a completed turn
   unsubs.push(
+    pushEmitter.on("turn.fileEffectsUpdated", (data) => {
+      const payload = data as { threadId: string; turnId: string; summary: TurnFileEffectSummary };
+      useThreadStore.getState().handleFileEffectsUpdated(
+        payload.threadId,
+        payload.turnId,
+        payload.summary,
+      );
+    }),
+  );
+
+  // turn.persisted: server has persisted tool calls for a completed turn
+  unsubs.push(
     pushEmitter.on("turn.persisted", (data) => {
       const payload = data as {
         threadId: string;
+        turnId?: string | null;
         messageId: string;
         toolCallCount: number;
         filesChanged: string[];
+        fileEffects?: TurnFileEffectSummary;
       };
       useThreadStore.getState().handleTurnPersisted(payload);
 

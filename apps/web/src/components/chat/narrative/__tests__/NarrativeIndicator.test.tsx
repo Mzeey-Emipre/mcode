@@ -99,4 +99,22 @@ describe("NarrativeIndicator exit lifecycle", () => {
     });
     expect(container.querySelector('[data-state="running"]')).not.toBeNull();
   });
+
+  it("keeps file facts out of the narrative status line", () => {
+    const misplacedFileEffects = {
+      fileEffects: { revision: 1, fileCount: 1, additions: 4, deletions: 2, effects: [] },
+    };
+    render(
+      <NarrativeIndicator
+        stepCount={2}
+        subagentCount={0}
+        activeToolCalls={[]}
+        isAgentRunning
+        {...misplacedFileEffects}
+      />,
+    );
+    expect(screen.queryByText("1 file changed")).not.toBeInTheDocument();
+    expect(screen.queryByText("+4")).not.toBeInTheDocument();
+    expect(screen.queryByText("−2")).not.toBeInTheDocument();
+  });
 });

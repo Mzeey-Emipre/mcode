@@ -167,4 +167,29 @@ describe("TurnSnapshotRepo", () => {
 
     expect(repo.getByMessage(messageId)).toBeNull();
   });
+
+  it("returns an empty file summary when persisted effects fail contract validation", () => {
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO turn_snapshots (id, message_id, thread_id, ref_before, ref_after, files_changed, file_effects, worktree_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "corrupt-effects",
+      messageId,
+      threadId,
+      "before",
+      "after",
+      "[]",
+      JSON.stringify({ revision: 1, fileCount: 1, additions: 0, deletions: 0, effects: [null] }),
+      null,
+      now,
+    );
+
+    expect(repo.getById("corrupt-effects")?.file_effects).toEqual({
+      revision: 0,
+      fileCount: 0,
+      additions: 0,
+      deletions: 0,
+      effects: [],
+    });
+  });
 });

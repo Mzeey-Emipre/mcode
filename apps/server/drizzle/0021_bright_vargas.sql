@@ -1,0 +1,1 @@
+ALTER TABLE `turn_snapshots` ADD `file_effects` text DEFAULT '{"revision":0,"fileCount":0,"additions":0,"deletions":0,"effects":[]}' NOT NULL;

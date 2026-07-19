@@ -8,6 +8,7 @@ import type {
   PlanAnswer,
   ProviderUsageInfo,
   GoalState,
+  TurnFileEffectSummary,
 } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
@@ -87,6 +88,10 @@ export interface ThreadRecord {
   persistedToolCallCounts: Record<string, number>;
   persistedFilesChanged: Record<string, string[]>;
   latestTurnWithChanges: string | null;
+  /** Live or just-finalized agent-attributed file-effect aggregate for the current turn. */
+  fileEffectSummary: TurnFileEffectSummary;
+  /** Server tracker generation that owns the live file-effect aggregate. */
+  fileEffectTurnId: string;
   serverMessageIds: Record<string, string>;
   narrativeByMessage: ThreadNarrativeByMessage;
   answeredPlanMessageIds: Set<string>;
@@ -149,6 +154,8 @@ export function createEmptyThreadRecord(): ThreadRecord {
     persistedToolCallCounts: {},
     persistedFilesChanged: {},
     latestTurnWithChanges: null,
+    fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
+    fileEffectTurnId: "",
     serverMessageIds: {},
     narrativeByMessage: {},
     answeredPlanMessageIds: new Set(),

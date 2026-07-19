@@ -118,3 +118,85 @@ describe("SnapshotService.validateRef", () => {
     expect(fake.calls).toHaveLength(0);
   });
 });
+
+describe("SnapshotService ref and numstat validation", () => {
+  it("rejects flag-shaped refs before invoking Git", async () => {
+    const fake = new FakeGitExecutor();
+    const service = new SnapshotService(fake);
+
+    await expect(service.getFileAtRef("/repo", "--batch", "file.txt")).resolves.toEqual({
+      kind: "missing",
+    });
+    await expect(service.getFilesChanged("/repo", "--output=x", "after")).resolves.toEqual([]);
+    await expect(service.getDiff("/repo", "--output=x", "after")).resolves.toBe("");
+    await expect(service.getDiffStats("/repo", "before", "--output=x")).resolves.toEqual([]);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("returns destination paths for simple and brace-form numstat renames", async () => {
+    const executor: GitExecutor = {
+      async exec() {
+        return {
+          stdout: "0\t0\told.txt => new.txt\n1\t2\tarch/{i386 => x86}/Makefile\n",
+          stderr: "",
+        };
+      },
+    };
+    const service = new SnapshotService(executor);
+
+    await expect(service.getDiffStats("/repo", "before", "after")).resolves.toEqual([
+      { filePath: "new.txt", additions: 0, deletions: 0 },
+      { filePath: "arch/x86/Makefile", additions: 1, deletions: 2 },
+    ]);
+  });
+});
+
+describe("SnapshotService attributed path batching", () => {
+  it("includes paths beyond the first 512 without exceeding per-call bounds", async () => {
+    const calls: string[][] = [];
+    const executor: GitExecutor = {
+      async exec(args) {
+        calls.push([...args]);
+        const lastPathspec = args.at(-1) ?? "";
+        return { stdout: `diff for ${lastPathspec}\n`, stderr: "" };
+      },
+    };
+    const service = new SnapshotService(executor);
+    const paths = Array.from({ length: 600 }, (_, index) => `src/file-${index}.ts`);
+
+    const diff = await service.getDiff("/repo", "before", "after", undefined, undefined, paths);
+
+    expect(calls).toHaveLength(5);
+    expect(calls.every((args) => args.filter((arg) => arg.startsWith(":(literal)")).length <= 128)).toBe(true);
+    expect(calls.flat()).toContain(":(literal)src/file-599.ts");
+    expect(diff).toContain(":(literal)src/file-599.ts");
+  });
+
+  it("keeps rename pairs together when a batch boundary is reached", async () => {
+    const calls: string[][] = [];
+    const executor: GitExecutor = {
+      async exec(args) {
+        calls.push([...args]);
+        return { stdout: "", stderr: "" };
+      },
+    };
+    const service = new SnapshotService(executor);
+    const singles = Array.from({ length: 127 }, (_, index) => [`src/file-${index}.ts`]);
+    const renamePair = ["src/new-name.ts", "src/old-name.ts"];
+    const groups = [...singles, renamePair];
+
+    await service.getDiff(
+      "/repo",
+      "before",
+      "after",
+      undefined,
+      undefined,
+      groups.flat(),
+      groups,
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain(":(literal)src/new-name.ts");
+    expect(calls[1]).toContain(":(literal)src/old-name.ts");
+  });
+});

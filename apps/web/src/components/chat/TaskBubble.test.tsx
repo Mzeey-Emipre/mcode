@@ -94,4 +94,35 @@ describe("getTaskAggregateStatus", () => {
 
     expect(viewport).toHaveClass("overflow-x-hidden", "overflow-y-auto", "scroll-py-2");
   });
+
+  it("renders live file, addition, and deletion facts beside step progress", () => {
+    render(
+      <TaskBubble
+        tasks={[item("one", "completed", "Finish one")]}
+        fileEffects={{
+          revision: 3,
+          fileCount: 20,
+          additions: 1211,
+          deletions: 195,
+          effects: [],
+        }}
+      />,
+    );
+    const bubble = screen.getByTestId("task-bubble");
+    expect(bubble).toHaveTextContent("1/1 steps");
+    expect(bubble).toHaveTextContent("20 files changed");
+    expect(bubble).toHaveTextContent("+1211");
+    expect(bubble).toHaveTextContent("−195");
+  });
+
+  it("uses singular file copy and omits zero line facts", () => {
+    render(
+      <TaskBubble
+        tasks={[item("one", "in_progress", "Finish one")]}
+        fileEffects={{ revision: 1, fileCount: 1, additions: 0, deletions: 0, effects: [] }}
+      />,
+    );
+    expect(screen.getByTestId("task-bubble")).toHaveTextContent("1 file changed");
+    expect(screen.getByTestId("task-bubble")).not.toHaveTextContent("+0");
+  });
 });

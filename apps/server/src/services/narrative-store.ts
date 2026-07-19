@@ -683,20 +683,32 @@ export class NarrativeStore {
 
   /** Generate a human-readable summary of tool input. */
   private summarizeInput(toolName: string, input: Record<string, unknown>): string {
-    switch (toolName) {
-      case "Read":
-      case "Edit":
-      case "Write":
+    switch (toolName.toLowerCase()) {
+      case "read":
+      case "edit":
+      case "write":
         return String(input.file_path ?? input.filePath ?? "");
-      case "Bash":
-      case "Shell":
-      case "Terminal":
+      case "move":
+      case "rename": {
+        const source = input.oldPath ?? input.old_path ?? input.oldFilePath
+          ?? input.sourcePath ?? input.source_path ?? input.source ?? input.from;
+        const destination = input.newPath ?? input.new_path ?? input.destinationPath
+          ?? input.destination_path ?? input.destination ?? input.to ?? input.path
+          ?? input.file_path ?? input.filePath ?? input.target_file ?? input.targetFile;
+        return [source, destination]
+          .filter((value): value is string => typeof value === "string")
+          .join(" -> ")
+          .slice(0, 200);
+      }
+      case "bash":
+      case "shell":
+      case "terminal":
       case "command_execution":
         return String(input.command ?? "").slice(0, MAX_PERSISTED_COMMAND_CHARS);
-      case "Grep":
-      case "Glob":
+      case "grep":
+      case "glob":
         return String(input.pattern ?? "");
-      case "Agent":
+      case "agent":
         return String(input.description ?? "").slice(0, 100);
       default:
         return JSON.stringify(input).slice(0, 200);

@@ -15,6 +15,7 @@ import { randomUUID } from "crypto";
 import { execFileSync } from "child_process";
 import { killOrphanedServer, reapOrphanedPtys } from "./services/orphan-cleanup";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
+import { sanitizePublicToolInput } from "./services/public-tool-input";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
@@ -470,6 +471,11 @@ for (const provider of providerRegistry.resolveAll()) {
 
     let enrichedEvent = event;
 
+    if (event.type === AgentEventType.TurnStarted) {
+      const fileEffectTurnId = agentService.getCurrentFileEffectTurnId(event.threadId);
+      if (fileEffectTurnId) enrichedEvent = { ...event, fileEffectTurnId };
+    }
+
     // Enrich non-Agent tool calls with their parent Agent ID.
     // Prefer the SDK-provided parent_tool_use_id on the event (set by the
     // provider when the SDK message carries it). This is the only correct
@@ -513,6 +519,21 @@ for (const provider of providerRegistry.resolveAll()) {
       enrichedEvent = {
         ...event,
         error: normalizeAgentProviderError(providerForThread, event.error ?? ""),
+      };
+    }
+
+    // Provider mutation evidence may contain full before/after text for server-side
+    // verification. Keep that content inside AgentService and send only bounded,
+    // content-free tool metadata to clients.
+    if (enrichedEvent.type === AgentEventType.ToolUse) {
+      enrichedEvent = {
+        ...enrichedEvent,
+        toolInput: sanitizePublicToolInput(enrichedEvent.toolInput, enrichedEvent.toolName),
+      };
+    } else if (enrichedEvent.type === AgentEventType.ToolResult && enrichedEvent.toolInput) {
+      enrichedEvent = {
+        ...enrichedEvent,
+        toolInput: sanitizePublicToolInput(enrichedEvent.toolInput),
       };
     }
 

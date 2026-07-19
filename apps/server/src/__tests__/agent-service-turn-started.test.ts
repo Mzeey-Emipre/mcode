@@ -186,6 +186,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       (e) => e.type === AgentEventType.TurnStarted,
     ).length;
     expect(turnStartedCount, "turnStarted must be emitted exactly once").toBe(1);
+    expect(svc.getCurrentFileEffectTurnId(thread.id)).toMatch(/^\d+$/);
 
     expect(svc.activeThreadIds()).toContain(thread.id);
 

@@ -108,6 +108,14 @@ export { TurnSnapshotSchema } from "./models/turn-snapshot.js";
 export type { TurnSnapshot } from "./models/turn-snapshot.js";
 
 export {
+  FileEffectKindSchema,
+  FileEffectSchema,
+  TurnFileEffectSummarySchema,
+  MAX_TURN_FILE_EFFECTS,
+} from "./models/file-effect.js";
+export type { FileEffect, TurnFileEffectSummary } from "./models/file-effect.js";
+
+export {
   SettingsSchema,
   PartialSettingsSchema,
   getDefaultSettings,
