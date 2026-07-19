@@ -301,10 +301,7 @@ describe("Composer checkout confirmation", () => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     lastComposerText = "";
-    resetThreadStoreForTests({
-      records: seedThreadRecord("thread-1"),
-      runningThreadIds: new Set(),
-    });
+    resetThreadStoreForTests({ runningThreadIds: new Set() });
     useQueueStore.setState({ queues: {}, toast: null, editingThreadId: null });
     usePreviewAnnotationStore.setState({ byThread: {}, diffByThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });

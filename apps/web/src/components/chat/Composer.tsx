@@ -850,7 +850,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     threadId ? s.taskBubbleByThread[threadId] ?? EMPTY_TASK_BUBBLE_TASKS : EMPTY_TASK_BUBBLE_TASKS,
   );
   const fileEffectSummary = useThreadStore((s) =>
-    threadId ? getThreadRecord(s.records, threadId).fileEffectSummary : undefined,
+    threadId ? s.records.get(threadId)?.fileEffectSummary : undefined,
   );
 
   const [input, setInput] = useState("");
