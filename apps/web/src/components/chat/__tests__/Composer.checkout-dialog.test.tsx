@@ -133,7 +133,11 @@ vi.mock("../CopilotAgentSelector", () => ({
 }));
 
 vi.mock("../AttachmentPreview", () => ({
-  AttachmentPreview: () => <div />,
+  AttachmentPreview: ({ attachments }: { attachments: Array<{ name: string }> }) => (
+    <div data-testid="attachment-preview">
+      {attachments.map((attachment) => attachment.name).join(",")}
+    </div>
+  ),
 }));
 
 vi.mock("../FileTagPopup", () => ({
@@ -633,6 +637,15 @@ describe("Composer checkout confirmation", () => {
     });
 
     const user = userEvent.setup();
+    window.desktopBridge = {
+      getPathForFile: () => "C:\\tmp\\handoff.txt",
+    } as unknown as typeof window.desktopBridge;
+    await user.upload(
+      screen.getByTestId("composer-attachment-input"),
+      new File(["handoff context"], "handoff.txt", { type: "text/plain" }),
+    );
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
+    expect(screen.getByTestId("attachment-preview")).toHaveTextContent("handoff.txt");
     await user.type(screen.getByLabelText("Message Mcode"), "Queued follow-up");
     await user.click(screen.getByLabelText("Send message"));
     expect(mockTransport.sendMessage).not.toHaveBeenCalled();
@@ -647,9 +660,17 @@ describe("Composer checkout confirmation", () => {
 
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
     expect(screen.queryByTestId("composer-annotation-bundle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("attachment-preview")).toBeEmptyDOMElement();
     expect(usePreviewAnnotationStore.getState().byThread[thread.id] ?? []).toEqual([]);
     expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(false);
     const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(sendCall?.[4]).toEqual([
+      expect.objectContaining({
+        name: "handoff.txt",
+        mimeType: "text/plain",
+        sourcePath: "C:\\tmp\\handoff.txt",
+      }),
+    ]);
     expect(sendCall?.[17]).toMatchObject({
       schemaVersion: 1,
       annotations: [

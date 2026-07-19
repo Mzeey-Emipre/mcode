@@ -2667,6 +2667,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setInput("");
     setMentions([]);
     clearDraftFromStore(threadId);
+    const currentAttachments = collectAndClearAttachments();
     if (annotationScopeId && queued.previewAnnotations) {
       usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
       setPreviewDesignModeActive(annotationScopeId, false);
@@ -2683,7 +2684,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       queued.content,
       modelId,
       access,
-      undefined,
+      currentAttachments.length > 0 ? currentAttachments : undefined,
       queued.displayContent,
       reasoning,
       provider,
