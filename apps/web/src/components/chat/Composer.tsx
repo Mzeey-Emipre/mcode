@@ -2489,6 +2489,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       if (threadId) clearDraftFromStore(threadId);
       // Hide the reply bar with the composer reset; sendMessage still receives reply IDs from this render.
       if (threadId) clearReply(threadId);
+      if (annotationScopeId && outboundPreviewAnnotations) {
+        usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+        setPreviewDesignModeActive(annotationScopeId, false);
+      }
 
       if (isNewThread && workspaceId) {
         setNewThreadMode(submittedNewThreadMode);
@@ -2588,11 +2592,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       if (submittedGoalObjective) setGoalPending(false);
 
-      if (annotationScopeId && outboundPreviewAnnotations) {
-        usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
-        setPreviewDesignModeActive(annotationScopeId, false);
-      }
-
       // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
       const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
       if (loaded && (mode !== settings.agent.defaults.mode || access !== settings.agent.defaults.permission)) {
@@ -2665,6 +2664,20 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const queued = queuedSendRef.current;
     if (!queued) return;
     setQueuedSend(null);
+    setInput("");
+    setMentions([]);
+    clearDraftFromStore(threadId);
+    if (annotationScopeId && queued.previewAnnotations) {
+      usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+      setPreviewDesignModeActive(annotationScopeId, false);
+    }
+    if (editorRef.current) {
+      editorRef.current.update(() => {
+        const root = $getRoot();
+        root.clear();
+        root.append($createParagraphNode());
+      });
+    }
     useThreadStore.getState().sendMessage(
       threadId,
       queued.content,
