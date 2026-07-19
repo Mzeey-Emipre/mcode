@@ -59,6 +59,12 @@ import {
   isProviderAvailabilityError,
 } from "../services/provider-availability-errors.js";
 import type { ProviderAvailabilityService } from "../services/provider-availability-service.js";
+import {
+  attributedWorkspacePathGroups,
+  attributedWorkspacePaths,
+  collectAttributedWorkspacePathGroups,
+  collectAttributedWorkspacePaths,
+} from "../services/snapshot-attribution.js";
 
 const PREVIEW_ANNOTATION_FENCE_START = "<!-- mcode-preview-annotations:v1";
 const PREVIEW_ANNOTATION_FENCE_END = "mcode-preview-annotations:end -->";
@@ -1066,7 +1072,20 @@ async function dispatch(
         if (!ws) throw new Error(`Workspace not found: ${snapshotThread.workspace_id}`);
         snapshotCwd = deps.gitService.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
       }
-      return await deps.snapshotService.getDiff(snapshotCwd, snapshot.ref_before, snapshot.ref_after, params.filePath, params.maxLines);
+      const attributedPaths = attributedWorkspacePaths(snapshot);
+      const attributedPathGroups = attributedWorkspacePathGroups(snapshot);
+      if (params.filePath && !attributedPaths.some(
+        (path) => path.replaceAll("\\", "/") === params.filePath!.replaceAll("\\", "/"),
+      )) return "";
+      return await deps.snapshotService.getDiff(
+        snapshotCwd,
+        snapshot.ref_before,
+        snapshot.ref_after,
+        params.filePath,
+        params.maxLines,
+        attributedPaths,
+        attributedPathGroups,
+      );
     }
     case "snapshot.getDiffStats": {
       const snapshot = deps.turnSnapshotRepo.getById(params.snapshotId);
@@ -1081,7 +1100,13 @@ async function dispatch(
         if (!ws) throw new Error(`Workspace not found: ${snapshotThread.workspace_id}`);
         snapshotCwd = deps.gitService.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
       }
-      return await deps.snapshotService.getDiffStats(snapshotCwd, snapshot.ref_before, snapshot.ref_after);
+      return await deps.snapshotService.getDiffStats(
+        snapshotCwd,
+        snapshot.ref_before,
+        snapshot.ref_after,
+        attributedWorkspacePaths(snapshot),
+        attributedWorkspacePathGroups(snapshot),
+      );
     }
     case "snapshot.cleanup":
       return { removed: deps.turnSnapshotRepo.deleteExpired(
@@ -1092,8 +1117,15 @@ async function dispatch(
     case "snapshot.getCumulativeDiff": {
       const snapshots = deps.turnSnapshotRepo.listByThread(params.threadId);
       if (snapshots.length === 0) return "";
-      const first = snapshots[0];
-      const last = snapshots[snapshots.length - 1];
+      const withGitRefs = snapshots.filter((snapshot) => snapshot.ref_before && snapshot.ref_after);
+      if (withGitRefs.length === 0) return "";
+      const first = withGitRefs[0];
+      const last = withGitRefs[withGitRefs.length - 1];
+      const attributedPaths = collectAttributedWorkspacePaths(withGitRefs);
+      const attributedPathGroups = collectAttributedWorkspacePathGroups(withGitRefs);
+      if (params.filePath && !attributedPaths.some(
+        (path) => path.replaceAll("\\", "/") === params.filePath!.replaceAll("\\", "/"),
+      )) return "";
       let cwd: string;
       if (first.worktree_path) {
         cwd = first.worktree_path;
@@ -1110,6 +1142,8 @@ async function dispatch(
         last.ref_after,
         params.filePath,
         params.maxLines,
+        attributedPaths,
+        attributedPathGroups,
       );
     }
 

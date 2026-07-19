@@ -155,6 +155,13 @@
       "when": 1784255902625,
       "tag": "0020_normalize_reasoning_modes",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1784398924316,
+      "tag": "0021_bright_vargas",
+      "breakpoints": true
     }
   ]
 }

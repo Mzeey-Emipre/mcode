@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TurnFileEffectSummarySchema } from "./file-effect.js";
 
 /** Git snapshot refs for reconstructing diffs on demand. */
 export const TurnSnapshotSchema = z.object({
@@ -8,6 +9,7 @@ export const TurnSnapshotSchema = z.object({
   ref_before: z.string(),
   ref_after: z.string(),
   files_changed: z.array(z.string()),
+  file_effects: TurnFileEffectSummarySchema().optional(),
   worktree_path: z.string().nullable(),
   created_at: z.string(),
 });

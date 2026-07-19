@@ -469,6 +469,14 @@ function mapAcpToolCallUpdated(
     toolCallId: update.toolCallId,
     output,
     isError,
+    ...(diffs.length > 0 && Array.isArray(toolInput._mcodeFileMutations)
+      ? {
+          toolInput: {
+            _mcodeToolName: toolName,
+            _mcodeFileMutations: toolInput._mcodeFileMutations,
+          },
+        }
+      : {}),
   });
   return events;
 }

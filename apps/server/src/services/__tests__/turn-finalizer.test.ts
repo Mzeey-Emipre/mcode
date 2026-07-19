@@ -12,6 +12,7 @@ import type { ThreadRepo } from "../../repositories/thread-repo";
 import type { SnapshotService } from "../snapshot-service";
 import type { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo";
 import type { TurnOutcome } from "../turn-outcome";
+import type { TurnFileTracker } from "../turn-file-tracker";
 import { broadcast } from "../../transport/push";
 
 vi.mock("../../transport/push.js", () => ({ broadcast: vi.fn() }));
@@ -118,6 +119,7 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
 
     expect(broadcast).toHaveBeenCalledWith("turn.persisted", {
       threadId: THREAD,
+      turnId: null,
       messageId: "m1",
       toolCallCount: 1,
       filesChanged: [],
@@ -405,7 +407,10 @@ describe("TurnFinalizer.hasRecordableActivity — TurnSubstance predicate", () =
  * has_file_changes flag update.
  */
 describe("TurnFinalizer.finalize — git snapshot write", () => {
-  function build(filesChanged: string[]) {
+  function build(
+    filesChanged: string[],
+    options?: { refAfter?: string; fileTracker?: TurnFileTracker },
+  ) {
     const runSpy = vi.fn();
     const messageRepo = {
       listByThread: vi.fn(() => ({
@@ -421,7 +426,7 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
       clearTurn: vi.fn(),
     } as unknown as NarrativeStore;
     const snapshotService = {
-      captureRef: vi.fn(() => Promise.resolve("def222")),
+      captureRef: vi.fn(() => Promise.resolve(options?.refAfter ?? "def222")),
       getFilesChanged: vi.fn(() => Promise.resolve(filesChanged)),
     } as unknown as SnapshotService;
     const turnSnapshotRepo = { create: vi.fn() } as unknown as TurnSnapshotRepo;
@@ -436,8 +441,9 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
       snapshotService,
       turnSnapshotRepo,
       db,
+      options?.fileTracker,
     );
-    return { finalizer, db, turnSnapshotRepo, runSpy };
+    return { finalizer, db, snapshotService, turnSnapshotRepo, runSpy };
   }
 
   beforeEach(() => {
@@ -576,5 +582,111 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
     await finalizer.finalize(THREAD, "completed");
 
     expect(db.prepare).not.toHaveBeenCalled();
+  });
+
+  it("persists an empty authored summary when the repository ref is unchanged", async () => {
+    const emptySummary = { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] };
+    const fileTracker = {
+      finalizeTurn: vi.fn(async () => emptySummary),
+      clearTurn: vi.fn(),
+    } as unknown as TurnFileTracker;
+    const { finalizer, turnSnapshotRepo } = build([], { refAfter: "abc111", fileTracker });
+    finalizer.recordTurnRef(THREAD, "abc111", "/workspace", 1);
+
+    await finalizer.finalize(THREAD, "completed");
+
+    expect(turnSnapshotRepo.create).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: "msg-1",
+      refBefore: "abc111",
+      refAfter: "abc111",
+      filesChanged: [],
+      fileEffects: emptySummary,
+    }));
+  });
+
+  it("persists external effects when Git refs are unavailable", async () => {
+    const fileEffects = {
+      revision: 1,
+      fileCount: 1,
+      additions: 0,
+      deletions: 0,
+      effects: [{
+        path: "C:/outside.txt",
+        kind: "edited" as const,
+        scope: "external" as const,
+        additions: null,
+        deletions: null,
+        binary: false,
+        toolCallIds: ["edit"],
+      }],
+    };
+    const fileTracker = {
+      finalizeTurn: vi.fn(async () => fileEffects),
+      clearTurn: vi.fn(),
+    } as unknown as TurnFileTracker;
+    const { finalizer, snapshotService, turnSnapshotRepo, runSpy } = build([], { fileTracker });
+    finalizer.recordTurnRef(THREAD, null, "/workspace", 1);
+
+    await finalizer.finalize(THREAD, "completed");
+
+    expect(snapshotService.captureRef).not.toHaveBeenCalled();
+    expect(turnSnapshotRepo.create).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: "msg-1",
+      refBefore: "",
+      refAfter: "",
+      filesChanged: [],
+      fileEffects,
+    }));
+    expect(runSpy).toHaveBeenCalledWith(THREAD);
+  });
+
+  it("uses a late ref update pinned before finalization waits", async () => {
+    let releasePrerequisite: (() => void) | undefined;
+    const prerequisite = new Promise<void>((resolve) => {
+      releasePrerequisite = resolve;
+    });
+    const { finalizer, turnSnapshotRepo } = build(["late.ts"]);
+    finalizer.recordTurnRef(THREAD, null, "/workspace", 1);
+
+    const finalized = finalizer.finalize(THREAD, "completed", prerequisite);
+    finalizer.recordTurnRef(THREAD, "captured-before", "/workspace", 1);
+    releasePrerequisite?.();
+    await finalized;
+
+    expect(turnSnapshotRepo.create).toHaveBeenCalledWith(expect.objectContaining({
+      refBefore: "captured-before",
+      refAfter: "def222",
+      filesChanged: ["late.ts"],
+    }));
+  });
+
+  it("keeps out-of-order ref captures attached to their own generations", async () => {
+    let releaseFirst: (() => void) | undefined;
+    let releaseSecond: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const { finalizer, turnSnapshotRepo } = build(["tracked.ts"]);
+    finalizer.recordTurnRef(THREAD, null, "/workspace", 1);
+    const first = finalizer.finalize(THREAD, "completed", firstGate);
+    finalizer.recordTurnRef(THREAD, null, "/workspace", 2);
+    const second = finalizer.finalize(THREAD, "completed", secondGate);
+
+    finalizer.recordTurnRef(THREAD, "second-before", "/workspace", 2);
+    finalizer.recordTurnRef(THREAD, "first-before", "/workspace", 1);
+    releaseFirst?.();
+    await first;
+    releaseSecond?.();
+    await second;
+
+    expect(turnSnapshotRepo.create).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      refBefore: "first-before",
+    }));
+    expect(turnSnapshotRepo.create).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      refBefore: "second-before",
+    }));
   });
 });

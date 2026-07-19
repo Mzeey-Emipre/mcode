@@ -43,6 +43,7 @@ import { MessageRepo } from "../repositories/message-repo";
 import { HookExecutionRepo, type CreateHookExecutionInput } from "../repositories/hook-execution-repo";
 import { NarrativeStore } from "./narrative-store.js";
 import { TurnFinalizer } from "./turn-finalizer.js";
+import { TurnFileTracker } from "./turn-file-tracker.js";
 import { PlanQuestionService } from "./plan-question-service.js";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
@@ -220,6 +221,20 @@ export class AgentService {
    * {@link TurnFinalizer.finalize} from each turn-end path.
    */
   private readonly turnFinalizer: TurnFinalizer;
+  /** Explicit provider mutation tracker used for authored file effects. */
+  private readonly turnFileTracker: TurnFileTracker;
+  /** Tracker initialization for the active generation of each thread. */
+  private readonly fileTrackingSetupByThread = new Map<string, Promise<void>>();
+  /** Serializes provider file events behind tracker initialization. */
+  private readonly fileTrackingActivityByThread = new Map<string, Promise<void>>();
+  /** Pre-turn Git capture that may continue after an auto-resumed tracker becomes ready. */
+  private readonly fileTrackingRefCaptureByThread = new Map<string, Promise<void>>();
+  /** Prevents a resumed turn from replacing the prior generation before persistence. */
+  private readonly fileTrackingFinalizationByThread = new Map<string, Promise<void>>();
+  /** Holds a resumed provider event stream until the preceding turn is persisted. */
+  private readonly providerEventBarrierByThread = new Map<string, Promise<void>>();
+  /** Provider events whose file-tracking portion ran before deferred narrative handling. */
+  private readonly earlyFileTrackingEvents = new WeakSet<object>();
   /**
    * Classifies a failed send as transient or fatal and caps the automatic
    * retry, so a brief flake doesn't cost the user a manual re-send while a
@@ -340,6 +355,12 @@ export class AgentService {
     private readonly planQuestionService: PlanQuestionService,
     @inject(FileService) private readonly fileService?: FileService,
   ) {
+    this.turnFileTracker = new TurnFileTracker(
+      (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
+      (threadId, turnId, summary) => {
+        broadcast("turn.fileEffectsUpdated", { threadId, turnId, summary });
+      },
+    );
     this.turnFinalizer = new TurnFinalizer(
       this.messageRepo,
       this.threadRepo,
@@ -347,12 +368,82 @@ export class AgentService {
       this.snapshotService,
       this.turnSnapshotRepo,
       this.db,
+      this.turnFileTracker,
     );
     this.goalCommand = new GoalCommand(
       { messageRepo: this.messageRepo, db: this.db },
       broadcast,
     );
     this.commandRouter = new CommandRouter([this.goalCommand]);
+  }
+
+  /** Initialize file tracking once for the active turn, including provider-originated resumes. */
+  private ensureTurnFileTracking(threadId: string, cwdOverride?: string): Promise<void> {
+    const existing = this.fileTrackingSetupByThread.get(threadId);
+    if (existing) return existing;
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) return Promise.resolve();
+    const workspace = this.workspaceRepo.findById(thread.workspace_id);
+    if (!workspace) return Promise.resolve();
+    const cwd = cwdOverride ?? this.gitService.resolveWorkingDir(
+      workspace.path,
+      thread.mode,
+      thread.worktree_path,
+    );
+    let generation: number;
+    try {
+      generation = this.turnFileTracker.beginTurn(threadId, cwd, null);
+      this.turnFinalizer.recordTurnRef(threadId, null, cwd, generation);
+    } catch (err) {
+      logger.warn("Failed to initialize file tracker", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return Promise.resolve();
+    }
+    const setup = Promise.resolve();
+    this.fileTrackingSetupByThread.set(threadId, setup);
+    this.fileTrackingActivityByThread.set(threadId, setup);
+    const refCapture = (async () => {
+      try {
+        const refBefore = await this.snapshotService.captureRef(cwd);
+        this.turnFinalizer.recordTurnRef(threadId, refBefore, cwd, generation);
+        await this.turnFileTracker.setBaselineRef(threadId, generation, refBefore);
+      } catch (err) {
+        logger.warn("Failed to capture ref_before", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    this.fileTrackingRefCaptureByThread.set(threadId, refCapture);
+    return setup;
+  }
+
+  /** Return the server tracker generation that owns live file effects for a thread. */
+  getCurrentFileEffectTurnId(threadId: string): string | undefined {
+    return this.turnFileTracker.getCurrentTurnId(threadId);
+  }
+
+  /** Start one provider file observation immediately and retain its completion for finalization. */
+  private queueTurnFileTracking(threadId: string, action: () => Promise<void>): void {
+    const setup = this.fileTrackingSetupByThread.get(threadId);
+    if (!setup) return;
+    const previous = this.fileTrackingActivityByThread.get(threadId) ?? setup;
+    let observation: Promise<void>;
+    try {
+      observation = action();
+    } catch (err) {
+      observation = Promise.reject(err);
+    }
+    const guardedObservation = observation.catch((err) => {
+      logger.warn("Failed to observe provider file event", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    const next = Promise.all([previous, guardedObservation]).then(() => undefined);
+    this.fileTrackingActivityByThread.set(threadId, next);
   }
 
   /**
@@ -626,16 +717,16 @@ export class AgentService {
 
     this.threadRepo.updateStatus(threadId, "active");
 
-    // Capture git snapshot ref_before for this turn
-    try {
-      const refBefore = await this.snapshotService.captureRef(cwd);
-      this.turnFinalizer.recordTurnRef(threadId, refBefore, cwd);
-    } catch (err) {
-      logger.warn("Failed to capture ref_before", {
-        threadId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
+    // Emit before baseline I/O so the UI enters running state immediately. AgentService's
+    // provider listener initializes the tracker synchronously before the broadcaster reads its id.
+    (resolvedProvider as unknown as import("events").EventEmitter).emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId,
+    } satisfies AgentEvent);
+
+    await this.ensureTurnFileTracking(threadId, cwd);
+    await this.fileTrackingRefCaptureByThread.get(threadId);
     this.narrativeStore.beginTurn(threadId);
     this.narrativeStore.resetTurnCounters(threadId);
 
@@ -710,18 +801,6 @@ export class AgentService {
     // Replaces the former setSdkSessionId(...) + resume:true two-step dance.
     const resumeFrom: string | undefined =
       isResume && thread.sdk_session_id ? thread.sdk_session_id : undefined;
-
-    const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
-
-    // Emit the live-session "turn started" signal before any other events so
-    // clients can populate runningThreadIds (drives sidebar + composer indicators).
-    // Cast to EventEmitter since IAgentProvider only exposes on(); all providers
-    // extend EventEmitter, matching the same pattern used for synthetic error/ended
-    // emission in the catch block below.
-    (resolvedProvider as unknown as import("events").EventEmitter).emit("event", {
-      type: AgentEventType.TurnStarted,
-      threadId,
-    } satisfies AgentEvent);
 
     let providerMessage = providerWireOverride ?? wirePayload;
     if (effectiveProvider !== "codex") {
@@ -1891,14 +1970,38 @@ export class AgentService {
   ): Promise<void> | null {
     if (this.terminalFinalizedThreads.has(threadId)) return null;
     this.terminalFinalizedThreads.add(threadId);
-    return this.turnFinalizer.finalize(threadId, outcome).catch((err) => {
+    const setup = this.fileTrackingSetupByThread.get(threadId);
+    const activity = this.fileTrackingActivityByThread.get(threadId) ?? setup;
+    const refCapture = this.fileTrackingRefCaptureByThread.get(threadId);
+    const prerequisite = Promise.all([
+      activity ?? Promise.resolve(),
+      refCapture ?? Promise.resolve(),
+    ]);
+    const finalize = this.turnFinalizer.finalize(threadId, outcome, prerequisite)
+      .catch((err) => {
       logger.error("finalize failed on terminal event", {
         threadId,
         outcome,
         source,
         error: err instanceof Error ? err.message : String(err),
       });
+      });
+    this.fileTrackingFinalizationByThread.set(threadId, finalize);
+    void finalize.finally(() => {
+      if (this.fileTrackingSetupByThread.get(threadId) === setup) {
+        this.fileTrackingSetupByThread.delete(threadId);
+      }
+      if (this.fileTrackingActivityByThread.get(threadId) === activity) {
+        this.fileTrackingActivityByThread.delete(threadId);
+      }
+      if (this.fileTrackingRefCaptureByThread.get(threadId) === refCapture) {
+        this.fileTrackingRefCaptureByThread.delete(threadId);
+      }
+      if (this.fileTrackingFinalizationByThread.get(threadId) === finalize) {
+        this.fileTrackingFinalizationByThread.delete(threadId);
+      }
     });
+    return finalize;
   }
 
   /**
@@ -2060,7 +2163,50 @@ export class AgentService {
     });
 
     for (const provider of this.providerRegistry.resolveAll()) {
-      provider.on("event", (event: AgentEvent) => {
+      const handleEvent = (event: AgentEvent): void => {
+        const priorFinalization = this.fileTrackingFinalizationByThread.get(event.threadId);
+        const existingBarrier = this.providerEventBarrierByThread.get(event.threadId);
+        if (!existingBarrier && priorFinalization && event.type === AgentEventType.TurnStarted) {
+          this.fileTrackingSetupByThread.delete(event.threadId);
+          this.fileTrackingActivityByThread.delete(event.threadId);
+          this.fileTrackingRefCaptureByThread.delete(event.threadId);
+          void this.ensureTurnFileTracking(event.threadId);
+          this.earlyFileTrackingEvents.add(event);
+        }
+        if (existingBarrier && event.type === AgentEventType.ToolUse) {
+          this.queueTurnFileTracking(event.threadId, () => (
+            this.turnFileTracker.observeToolUse(
+              event.threadId,
+              event.toolCallId,
+              event.toolName,
+              event.toolInput,
+            )
+          ));
+          this.earlyFileTrackingEvents.add(event);
+        }
+        if (existingBarrier && event.type === AgentEventType.ToolResult) {
+          this.queueTurnFileTracking(event.threadId, () => (
+            this.turnFileTracker.observeToolResult(
+              event.threadId,
+              event.toolCallId,
+              event.toolInput,
+            )
+          ));
+          this.earlyFileTrackingEvents.add(event);
+        }
+        const barrier = existingBarrier
+          ?? (event.type === AgentEventType.TurnStarted ? priorFinalization : undefined);
+        if (barrier) {
+          if (!existingBarrier) this.providerEventBarrierByThread.set(event.threadId, barrier);
+          void barrier.then(() => {
+            if (event.type === AgentEventType.TurnStarted
+              && this.providerEventBarrierByThread.get(event.threadId) === barrier) {
+              this.providerEventBarrierByThread.delete(event.threadId);
+            }
+            handleEvent(event);
+          });
+          return;
+        }
         // Plan mode: feed streaming text to the question parser.
         // Buffer questions until the session closes (`ended`) so the client
         // cannot submit answers against a still-active session, which would
@@ -2273,6 +2419,16 @@ export class AgentService {
         if (event.type === AgentEventType.ToolUse) {
           this.narrativeStore.closeOpenThought(event.threadId);
           this.bufferToolCall(event.threadId, event);
+          if (!this.earlyFileTrackingEvents.delete(event)) {
+            this.queueTurnFileTracking(event.threadId, () => (
+              this.turnFileTracker.observeToolUse(
+                event.threadId,
+                event.toolCallId,
+                event.toolName,
+                event.toolInput,
+              )
+            ));
+          }
         }
 
         if (event.type === AgentEventType.HookStarted) {
@@ -2345,6 +2501,15 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.ToolResult) {
+          if (!this.earlyFileTrackingEvents.delete(event)) {
+            this.queueTurnFileTracking(event.threadId, () => (
+              this.turnFileTracker.observeToolResult(
+                event.threadId,
+                event.toolCallId,
+                event.toolInput,
+              )
+            ));
+          }
           this.narrativeStore.updateBufferedToolCallOutput(
             event.threadId,
             event.toolCallId,
@@ -2367,6 +2532,12 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.TurnStarted) {
+          if (!this.earlyFileTrackingEvents.delete(event)) {
+            this.fileTrackingSetupByThread.delete(event.threadId);
+            this.fileTrackingActivityByThread.delete(event.threadId);
+            this.fileTrackingRefCaptureByThread.delete(event.threadId);
+            void this.ensureTurnFileTracking(event.threadId);
+          }
           // Re-add to activeSessionIds for auto-resumed turns (ScheduleWakeup/loop).
           // For sendMessage()-originated turns this is a no-op since sendMessage()
           // already added the thread before emitting TurnStarted.
@@ -2572,7 +2743,8 @@ export class AgentService {
           this.pendingExitPlanMarkdown.delete(event.threadId);
           this.planCapturedThisTurn.delete(event.threadId);
         }
-      });
+      };
+      provider.on("event", handleEvent);
     }
   }
 

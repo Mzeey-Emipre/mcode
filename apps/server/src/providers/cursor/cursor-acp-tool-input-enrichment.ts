@@ -74,6 +74,13 @@ export function enrichAcpToolInput(
       file_path: diff.path,
       old_string: diff.oldText,
       new_string: diff.newText,
+      _mcodeFileMutations: diffs.slice(0, 256).map((item) => ({
+        path: item.path,
+        kind: item.oldText.length === 0 ? "add" : item.newText.length === 0 ? "remove" : "edit",
+        fullFileContent: true,
+        beforeText: item.oldText,
+        afterText: item.newText,
+      })),
     };
   } else if (toolName === "Read") {
     const filePath =

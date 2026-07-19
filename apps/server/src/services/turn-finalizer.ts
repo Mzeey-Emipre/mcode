@@ -29,11 +29,14 @@ import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type { SnapshotService } from "./snapshot-service";
 import type { NarrativeStore } from "./narrative-store";
 import type { TurnOutcome } from "./turn-outcome";
+import type { TurnFileTracker } from "./turn-file-tracker.js";
+import type { TurnFileEffectSummary } from "@mcode/contracts";
 
 /** Pre-turn git ref captured at send time, used to diff the turn's file changes. */
 interface TurnRef {
-  ref: string;
+  ref: string | null;
   cwd: string;
+  fileTrackerGeneration?: number;
 }
 
 /** Provider assistant body buffered during a turn, materialized at finalize. */
@@ -63,6 +66,8 @@ export function deriveTurnAssistantMessageId(threadId: string, anchorId: string)
 export class TurnFinalizer {
   /** Pre-turn git ref per thread, captured at send time, consumed by the snapshot. */
   private readonly turnRefBefore = new Map<string, TurnRef>();
+  /** Generation-addressable refs let late captures update the exact turn already queued for finalization. */
+  private readonly turnRefsByGeneration = new Map<string, Map<number, TurnRef>>();
   /** Guards against re-entrant or duplicate finalize for the same thread. */
   private readonly persistingThreads = new Set<string>();
   /** Last persisted assistant message id per thread, for late-hook attachment. */
@@ -85,6 +90,7 @@ export class TurnFinalizer {
     private readonly snapshotService: SnapshotService,
     private readonly turnSnapshotRepo: TurnSnapshotRepo,
     private readonly db: Database.Database,
+    private readonly turnFileTracker?: TurnFileTracker,
   ) {}
 
   /** Append a streaming assistant-text delta for the current turn. */
@@ -134,8 +140,28 @@ export class TurnFinalizer {
   }
 
   /** Record the pre-turn git ref so the turn's file changes can be diffed at finalize. */
-  recordTurnRef(threadId: string, ref: string, cwd: string): void {
-    this.turnRefBefore.set(threadId, { ref, cwd });
+  recordTurnRef(threadId: string, ref: string | null, cwd: string, fileTrackerGeneration?: number): void {
+    if (fileTrackerGeneration !== undefined) {
+      const generationRefs = this.turnRefsByGeneration.get(threadId) ?? new Map<number, TurnRef>();
+      const existingGeneration = generationRefs.get(fileTrackerGeneration);
+      const turnRef = existingGeneration ?? { ref, cwd, fileTrackerGeneration };
+      turnRef.ref = ref;
+      turnRef.cwd = cwd;
+      generationRefs.set(fileTrackerGeneration, turnRef);
+      while (generationRefs.size > 4) {
+        const oldest = generationRefs.keys().next().value as number | undefined;
+        if (oldest === undefined) break;
+        generationRefs.delete(oldest);
+      }
+      this.turnRefsByGeneration.set(threadId, generationRefs);
+      const current = this.turnRefBefore.get(threadId);
+      if (current?.fileTrackerGeneration === undefined
+        || current.fileTrackerGeneration <= fileTrackerGeneration) {
+        this.turnRefBefore.set(threadId, turnRef);
+      }
+      return;
+    }
+    this.turnRefBefore.set(threadId, { ref, cwd, fileTrackerGeneration });
   }
 
   /** The last persisted assistant message id, for attaching late hooks (Stop/SessionEnd). */
@@ -191,9 +217,17 @@ export class TurnFinalizer {
    * written behind {@link materializeAssistantRow} and the narrative persists
    * against it.
    */
-  async finalize(threadId: string, outcome: TurnOutcome): Promise<void> {
+  async finalize(
+    threadId: string,
+    outcome: TurnOutcome,
+    prerequisite: Promise<unknown> = Promise.resolve(),
+  ): Promise<void> {
+    const turnRef = this.turnRefBefore.get(threadId);
     const tail = this.finalizeChainByThread.get(threadId) ?? Promise.resolve();
-    const next = tail.then(() => this.runFinalizeOnce(threadId, outcome));
+    const next = tail.then(async () => {
+      await prerequisite;
+      await this.runFinalizeOnce(threadId, outcome, turnRef);
+    });
     this.finalizeChainByThread.set(threadId, next);
     try {
       await next;
@@ -205,10 +239,13 @@ export class TurnFinalizer {
   }
 
   /** Runs one finalize pass; concurrent calls for the same thread are queued by {@link finalize}. */
-  private async runFinalizeOnce(threadId: string, outcome: TurnOutcome): Promise<void> {
+  private async runFinalizeOnce(
+    threadId: string,
+    outcome: TurnOutcome,
+    turnRef: TurnRef | undefined,
+  ): Promise<void> {
     if (this.persistingThreads.has(threadId)) return;
     this.persistingThreads.add(threadId);
-    const turnRef = this.turnRefBefore.get(threadId);
     try {
       // TurnSubstance guard: nothing worth keeping → leave no assistant row.
       if (!this.hasRecordableActivity(threadId)) {
@@ -241,13 +278,20 @@ export class TurnFinalizer {
         outcome,
       );
 
-      const filesChanged = await this.captureSnapshot(threadId, messageId, turnRef);
+      const fileEffects = this.turnFileTracker
+        ? await this.turnFileTracker.finalizeTurn(threadId, turnRef?.fileTrackerGeneration)
+        : undefined;
+      const filesChanged = await this.captureSnapshot(threadId, messageId, turnRef, fileEffects);
 
       broadcast("turn.persisted", {
         threadId,
+        turnId: turnRef?.fileTrackerGeneration !== undefined
+          ? String(turnRef.fileTrackerGeneration)
+          : null,
         messageId,
         toolCallCount,
         filesChanged,
+        ...(fileEffects ? { fileEffects } : {}),
       });
 
       this.clearTurn(threadId, turnRef);
@@ -266,26 +310,45 @@ export class TurnFinalizer {
     threadId: string,
     messageId: string,
     refData: TurnRef | undefined,
+    fileEffects: TurnFileEffectSummary | undefined,
   ): Promise<string[]> {
-    if (!refData) return [];
+    let filesChanged = fileEffects
+      ? fileEffects.effects
+          .filter((effect) => effect.scope === "workspace")
+          .map((effect) => effect.path)
+      : [];
+    if (!refData) return filesChanged;
+
+    let refAfter: string | null = null;
+    if (refData.ref) {
+      try {
+        refAfter = await this.snapshotService.captureRef(refData.cwd);
+      } catch (err) {
+        logger.warn("Failed to capture ref_after", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (!fileEffects && refData.ref && refAfter) {
+      filesChanged = await this.snapshotService.getFilesChanged(refData.cwd, refData.ref, refAfter);
+    }
+
+    const hasFileEffects = (fileEffects?.fileCount ?? 0) > 0;
+    if (!hasFileEffects && (!refData.ref || !refAfter)) return filesChanged;
+
     try {
-      const refAfter = await this.snapshotService.captureRef(refData.cwd);
-      if (refAfter === refData.ref) return [];
-      const filesChanged = await this.snapshotService.getFilesChanged(
-        refData.cwd,
-        refData.ref,
-        refAfter,
-      );
       const writeTurn = this.db.transaction((files: string[]) => {
         this.turnSnapshotRepo.create({
           messageId,
           threadId,
-          refBefore: refData.ref,
-          refAfter,
+          refBefore: refData.ref ?? "",
+          refAfter: refAfter ?? "",
           filesChanged: files,
+          ...(fileEffects ? { fileEffects } : {}),
           worktreePath: null,
         });
-        if (files.length > 0) {
+        if (hasFileEffects || files.length > 0) {
           this.db
             .prepare("UPDATE threads SET has_file_changes = 1 WHERE id = ? AND has_file_changes = 0")
             .run(threadId);
@@ -298,7 +361,7 @@ export class TurnFinalizer {
         threadId,
         error: err instanceof Error ? err.message : String(err),
       });
-      return [];
+      return filesChanged;
     }
   }
 
@@ -386,6 +449,13 @@ export class TurnFinalizer {
    * arriving after the turn can still increment the completed turn's counter.
    */
   private clearTurn(threadId: string, turnRef: TurnRef | undefined): void {
+    if (turnRef?.fileTrackerGeneration !== undefined) {
+      const generationRefs = this.turnRefsByGeneration.get(threadId);
+      if (generationRefs?.get(turnRef.fileTrackerGeneration) === turnRef) {
+        generationRefs.delete(turnRef.fileTrackerGeneration);
+        if (generationRefs.size === 0) this.turnRefsByGeneration.delete(threadId);
+      }
+    }
     if (turnRef !== undefined && this.turnRefBefore.get(threadId) === turnRef) {
       this.turnRefBefore.delete(threadId);
     }
@@ -394,6 +464,7 @@ export class TurnFinalizer {
     this.bufferedAttachmentsByThread.delete(threadId);
     this.materializedThreads.delete(threadId);
     this.narrativeStore.clearTurn(threadId);
+    this.turnFileTracker?.clearTurn(threadId, turnRef?.fileTrackerGeneration);
     this.persistingThreads.delete(threadId);
   }
 

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TaskItem as TaskRow } from "@/components/tasks/TaskItem";
 import { TaskPanelHeader } from "@/components/tasks/TaskPanelHeader";
+import type { TurnFileEffectSummary } from "@mcode/contracts";
+import { FileEffectFacts } from "./FileEffectFacts";
 
 /** Aggregate status displayed by the composer Task bubble. */
 export type TaskAggregateStatus = "active" | "completed" | "pending" | "mixed";
@@ -76,7 +78,13 @@ function ProgressCircle({
 }
 
 /** Composer-adjacent parent-agent task bubble. */
-export function TaskBubble({ tasks }: { tasks: readonly TaskItem[] }) {
+export function TaskBubble({
+  tasks,
+  fileEffects,
+}: {
+  tasks: readonly TaskItem[];
+  fileEffects?: TurnFileEffectSummary;
+}) {
   const [expanded, setExpanded] = useState(false);
   const aggregate = getTaskAggregateStatus(tasks);
   if (!aggregate) return null;
@@ -110,13 +118,14 @@ export function TaskBubble({ tasks }: { tasks: readonly TaskItem[] }) {
         size="sm"
         data-testid="task-bubble"
         aria-expanded={expanded}
-        aria-label={`${settled} of ${total} tasks settled`}
+        aria-label={`${settled} of ${total} tasks settled${fileEffects?.fileCount ? `, ${fileEffects.fileCount} ${fileEffects.fileCount === 1 ? "file" : "files"} changed, ${fileEffects.additions} lines added, ${fileEffects.deletions} lines removed` : ""}`}
         onClick={() => setExpanded((value) => !value)}
         className="h-8 gap-2 rounded-full bg-card/75 px-3"
       >
         <ProgressCircle settled={settled} total={total} status={aggregate} />
-        <span className="font-mono text-xs tabular-nums text-muted-foreground">
+        <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground">
           {settled}/{total} steps
+          {fileEffects && <FileEffectFacts summary={fileEffects} />}
         </span>
       </Button>
     </div>

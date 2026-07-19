@@ -592,13 +592,20 @@ export class CodexEventMapper {
 
     if (itemType === "fileChange") {
       const changes = Array.isArray(item.changes) ? item.changes : [];
-      const paths = changes.map((c) => c.path).filter(Boolean).join(", ");
       return {
         type: AgentEventType.ToolUse,
         threadId: this.threadId,
         toolCallId,
         toolName: "file_change",
-        toolInput: paths.length > 0 ? { files: paths } : {},
+        toolInput: changes.length > 0
+          ? {
+              files: changes.map((change) => change.path).filter(Boolean).join(", "),
+              changes: changes
+                .filter((change) => typeof change.path === "string" && change.path.length > 0)
+                .slice(0, 256)
+                .map((change) => ({ path: change.path, kind: change.kind })),
+            }
+          : {},
         ...(nestParent ? { parentToolCallId: nestParent } : {}),
       };
     }

@@ -33,6 +33,44 @@ function insertMessage(
   ).run(id, "thread-1", role, content, now, sequence);
 }
 
+describe("NarrativeStore Move/Rename persistence sanitization", () => {
+  it.each(["Move", "rEnAmE"])(
+    "passes only bounded source and destination paths to persistence for %s",
+    (toolName) => {
+      let persistedInputSummary: string | undefined;
+      const store = new NarrativeStore(
+        {} as MessageRepo,
+        {
+          bulkCreate: (records: Array<{ inputSummary?: string }>) => {
+            persistedInputSummary = records[0]?.inputSummary;
+          },
+        } as unknown as ToolCallRecordRepo,
+        { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+        { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+      );
+      store.beginTurn("thread-1");
+      store.resetTurnCounters("thread-1");
+      store.bufferToolCall("thread-1", {
+        toolCallId: `file-${toolName}`,
+        toolName,
+        toolInput: {
+          oldPath: "src/old.ts",
+          path: "src/new.ts",
+          beforeText: "SECRET_BEFORE",
+          afterText: "SECRET_AFTER",
+        },
+      });
+
+      store.persistNarrative("thread-1", "m1", "done", "completed");
+
+      expect(persistedInputSummary).toBe("src/old.ts -> src/new.ts");
+      expect(persistedInputSummary?.length).toBeLessThanOrEqual(200);
+      expect(persistedInputSummary).not.toContain("SECRET_BEFORE");
+      expect(persistedInputSummary).not.toContain("SECRET_AFTER");
+    },
+  );
+});
+
 describe("NarrativeStore.load (read seam)", () => {
   let db: Database.Database;
   let store: NarrativeStore;
@@ -314,6 +352,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(command.length).toBeGreaterThan(200);
       expect(record.input_summary).toBe(command);
     });
+
   });
 
   describe("Classification precedence + is_final_response safety net", () => {

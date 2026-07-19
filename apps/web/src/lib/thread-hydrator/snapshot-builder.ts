@@ -14,6 +14,7 @@ export interface SnapshotBuilderInput {
 export interface FileChangeFields {
   persistedFilesChanged: Record<string, string[]>;
   latestTurnWithChanges: string | null;
+  fileEffectSummary: ThreadRecord["fileEffectSummary"];
 }
 
 /**
@@ -28,6 +29,7 @@ export type ThreadRecordPatch = Pick<
   | "persistedToolCallCounts"
   | "persistedFilesChanged"
   | "latestTurnWithChanges"
+  | "fileEffectSummary"
   | "answeredPlanMessageIds"
 >;
 
@@ -59,6 +61,7 @@ export class SnapshotBuilder {
       persistedToolCallCounts,
       persistedFilesChanged: fileChanges.persistedFilesChanged,
       latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+      fileEffectSummary: fileChanges.fileEffectSummary,
       answeredPlanMessageIds: new Set(answeredPlanMessageIds ?? []),
     };
   }
@@ -70,14 +73,22 @@ export class SnapshotBuilder {
   static deriveFileChanges(snapshots: TurnSnapshot[]): FileChangeFields {
     const persistedFilesChanged: Record<string, string[]> = {};
     let latestTurnWithChanges: string | null = null;
+    let fileEffectSummary: ThreadRecord["fileEffectSummary"] = {
+      revision: 0,
+      fileCount: 0,
+      additions: 0,
+      deletions: 0,
+      effects: [],
+    };
 
     for (const snap of snapshots) {
+      if (snap.file_effects) fileEffectSummary = snap.file_effects;
       if (snap.files_changed.length === 0) continue;
       persistedFilesChanged[snap.message_id] = snap.files_changed;
       latestTurnWithChanges = snap.message_id;
     }
 
-    return { persistedFilesChanged, latestTurnWithChanges };
+    return { persistedFilesChanged, latestTurnWithChanges, fileEffectSummary };
   }
 }
 

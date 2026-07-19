@@ -849,6 +849,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const taskBubbleTasks = useTaskStore((s) =>
     threadId ? s.taskBubbleByThread[threadId] ?? EMPTY_TASK_BUBBLE_TASKS : EMPTY_TASK_BUBBLE_TASKS,
   );
+  const fileEffectSummary = useThreadStore((s) =>
+    threadId ? getThreadRecord(s.records, threadId).fileEffectSummary : undefined,
+  );
 
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<MessageMention[]>([]);
@@ -2828,7 +2831,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       {threadId && taskBubbleTasks.length > 0 && !branchFromMessageId && !isNewThread && (
         <div className="mb-2 flex justify-center">
-          <TaskBubble tasks={taskBubbleTasks} />
+          <TaskBubble tasks={taskBubbleTasks} fileEffects={fileEffectSummary} />
         </div>
       )}
 

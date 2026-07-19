@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle } from "@mcode/contracts";
+import type { ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import {
@@ -142,7 +142,20 @@ interface ThreadState {
   evictNarrativeForMessage: (messageId: string) => void;
 
   /** Handle server-side tool call persistence confirmation. */
-  handleTurnPersisted: (payload: { threadId: string; messageId: string; toolCallCount: number; filesChanged: string[] }) => void;
+  handleTurnPersisted: (payload: {
+    threadId: string;
+    messageId: string;
+    turnId?: string | null;
+    toolCallCount: number;
+    filesChanged: string[];
+    fileEffects?: TurnFileEffectSummary;
+  }) => void;
+  /** Apply a monotonic live file-effect update for one thread. */
+  handleFileEffectsUpdated: (
+    threadId: string,
+    turnId: string,
+    summary: TurnFileEffectSummary,
+  ) => void;
   /** Clear the interrupt file-notice banner for one thread (user dismissed). */
   clearInterruptStopFileNotice: (threadId: string) => void;
   /** Clears composer recall state for one thread after the Composer applies it. */
@@ -373,6 +386,7 @@ function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
     hooks: [],
     currentTurnMessageId: "",
     currentTurnResponseKey: "",
+    fileEffectTurnId: "",
   };
 }
 
@@ -1123,6 +1137,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...settingsPatch,
           ...messagePatch,
           agentStartTime: Date.now(),
+          fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
           currentTurnResponseKey: createTurnResponseKey(threadId),
           lastFallback: undefined,
           rateLimit: undefined,
@@ -1852,16 +1867,28 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (method === "session.turnStarted") {
+      const fileEffectTurnId = typeof params.fileEffectTurnId === "string"
+        ? params.fileEffectTurnId
+        : "";
+      const currentState = get();
+      const currentRecord = getThreadRecord(currentState.records, threadId);
+      if (currentState.runningThreadIds.has(threadId)
+        && currentRecord.fileEffectTurnId === fileEffectTurnId) {
+        return;
+      }
       useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
       set((state) => {
-        if (state.runningThreadIds.has(threadId)) return {};
-        const next = new Set(state.runningThreadIds);
-        next.add(threadId);
+        const rec = getThreadRecord(state.records, threadId);
+        const next = state.runningThreadIds.has(threadId)
+          ? state.runningThreadIds
+          : new Set([...state.runningThreadIds, threadId]);
         return {
           runningThreadIds: next,
           records: patchThreadRecord(state.records, threadId, {
             agentStartTime: Date.now(),
-            ...resetTurnEphemeral(getThreadRecord(state.records, threadId)),
+            fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
+            ...resetTurnEphemeral(rec),
+            fileEffectTurnId,
             currentTurnResponseKey: createTurnResponseKey(threadId),
           }),
         };
@@ -3027,6 +3054,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
   },
 
+  handleFileEffectsUpdated: (threadId, turnId, summary) => {
+    set((state) => {
+      const rec = getThreadRecord(state.records, threadId);
+      if (rec.fileEffectTurnId !== turnId) return state;
+      if (summary.revision <= rec.fileEffectSummary.revision) {
+        return state;
+      }
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          fileEffectTurnId: turnId,
+          fileEffectSummary: summary,
+        }),
+      };
+    });
+  },
+
   /**
    * Fetch provider usage from the server and merge it into usageByProvider.
    * Silently ignores errors so the popover shows stale or empty state rather than crashing.
@@ -3122,6 +3165,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
 
       const localMsgId = resolveTurnPersistLocalMessageId(rec, payload.messageId);
+      const ownsLiveFileEffects = payload.turnId != null
+        && payload.turnId === rec.fileEffectTurnId
+        && (localMsgId === rec.currentTurnMessageId
+          || localMsgId === rec.pendingTurnPersistLocalMessageId);
       const ensuredMessages =
         payload.filesChanged.length > 0 || payload.toolCallCount > 0
           ? ensureAssistantMessageForTurnPersist(rec, payload.threadId, localMsgId)
@@ -3152,6 +3199,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               : rec.pendingTurnPersistLocalMessageId,
           interruptStopFileNotice,
           awaitingUserStopPersist,
+          ...(payload.fileEffects
+            && ownsLiveFileEffects
+            && payload.fileEffects.revision >= rec.fileEffectSummary.revision
+            ? { fileEffectSummary: payload.fileEffects }
+            : {}),
         }),
       };
     });

@@ -5,6 +5,7 @@ import {
 } from "@/stores/thread-store-test-utils";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
+import { useTaskStore } from "@/stores/taskStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { createMockThread } from "./mocks/transport";
 import type { GoalState } from "@mcode/contracts";
@@ -14,6 +15,11 @@ describe("running-session signal", () => {
     resetThreadStoreForTests({
       runningThreadIds: new Set(),
       currentThreadId: null,
+    });
+    useTaskStore.setState({
+      tasksByThread: {},
+      taskBubbleByThread: {},
+      pendingTaskBubbleReplacementByThread: {},
     });
   });
 
@@ -31,12 +37,30 @@ describe("running-session signal", () => {
     let now = 1000;
     vi.spyOn(Date, "now").mockImplementation(() => now++);
     const store = useThreadStore.getState();
-    store.handleAgentEvent("t-1", { method: "session.turnStarted", type: "turnStarted", threadId: "t-1" });
+    store.handleAgentEvent("t-1", {
+      method: "session.turnStarted",
+      type: "turnStarted",
+      threadId: "t-1",
+      fileEffectTurnId: "turn-1",
+    });
     const firstStart = getTestThreadAgentStartTime("t-1");
     expect(firstStart).toBeDefined();
-    store.handleAgentEvent("t-1", { method: "session.turnStarted", type: "turnStarted", threadId: "t-1" });
+    useTaskStore.getState().setTasks("t-1", [{
+      id: "task-1",
+      content: "Keep this task",
+      status: "pending",
+      group: "Tasks",
+    }]);
+    store.handleAgentEvent("t-1", {
+      method: "session.turnStarted",
+      type: "turnStarted",
+      threadId: "t-1",
+      fileEffectTurnId: "turn-1",
+    });
     expect(useThreadStore.getState().runningThreadIds.size).toBe(1);
     expect(getTestThreadAgentStartTime("t-1")).toBe(firstStart);
+    expect(useTaskStore.getState().taskBubbleByThread["t-1"]).toHaveLength(1);
+    expect(useTaskStore.getState().pendingTaskBubbleReplacementByThread["t-1"]).toBeUndefined();
     vi.restoreAllMocks();
   });
 

@@ -195,7 +195,10 @@ export class AuxiliaryHydrator {
         if (!latestCached) return;
 
         const fileChanges = SnapshotBuilder.deriveFileChanges(snapshots);
-        if (Object.keys(fileChanges.persistedFilesChanged).length === 0) return;
+        if (
+          Object.keys(fileChanges.persistedFilesChanged).length === 0
+          && fileChanges.fileEffectSummary.fileCount === 0
+        ) return;
 
         cacheRecord(threadId, {
           ...latestCached,
@@ -204,6 +207,7 @@ export class AuxiliaryHydrator {
             ...fileChanges.persistedFilesChanged,
           },
           latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+          fileEffectSummary: fileChanges.fileEffectSummary,
         });
 
         if (!commitToStore) return;
@@ -221,6 +225,7 @@ export class AuxiliaryHydrator {
                 ...fileChanges.persistedFilesChanged,
               },
               latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+              fileEffectSummary: fileChanges.fileEffectSummary,
             }),
           };
         });
