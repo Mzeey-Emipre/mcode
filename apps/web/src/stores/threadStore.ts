@@ -25,6 +25,7 @@ import {
   cacheRecord,
   evictCachedRecord,
   getCachedRecord,
+  takePrefetchedHistoryPage,
 } from "@/lib/thread-hydrator/record-cache";
 import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { forgetScrollTop } from "@/components/chat/scrollPositionMemory";
@@ -966,11 +967,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     try {
       const cursor = getRec(threadId).oldestLoadedSequence;
       const epoch = getRec(threadId).loadEpoch;
+      const prefetchedPage = takePrefetchedHistoryPage(threadId, cursor);
       const {
         messages: olderMessages,
         hasMore,
+        answeredPlanMessageIds,
         narrativeByMessage,
-      } = await getTransport().loadConversationPage(threadId, OLDER_PAGE_SIZE, cursor);
+      } = prefetchedPage
+        ?? await getTransport().loadConversationPage(threadId, OLDER_PAGE_SIZE, cursor);
 
       const isStale = get().currentThreadId !== threadId
         || getRec(threadId).loadEpoch !== epoch;
@@ -992,6 +996,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         messages: [...olderMessages, ...r.messages],
         persistedToolCallCounts: { ...r.persistedToolCallCounts, ...newCounts },
         narrativeByMessage: { ...narrativeByMessage, ...r.narrativeByMessage },
+        answeredPlanMessageIds: new Set([
+          ...r.answeredPlanMessageIds,
+          ...(answeredPlanMessageIds ?? []),
+        ]),
         oldestLoadedSequence: newOldest,
         hasMoreMessages: hasMore,
         isLoadingMore: false,

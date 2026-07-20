@@ -13,9 +13,12 @@ export { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 export type { SnapshotBuilderInput, FileChangeFields, ThreadRecordPatch } from "./snapshot-builder";
 export {
   cacheRecord,
+  cachePrefetchedHistoryPage,
   evictCachedRecord,
   getCachedRecord,
   hasCachedRecord,
+  hasPrefetchedHistoryPage,
+  takePrefetchedHistoryPage,
   clearRecordCache,
   resizeRecordCache,
   RECORD_CACHE_SIZE,
