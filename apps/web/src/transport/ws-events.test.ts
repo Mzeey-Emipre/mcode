@@ -9,6 +9,7 @@ import { pushEmitter } from "./ws-transport";
 import { startPushListeners, stopPushListeners } from "./ws-events";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
+import { useDiffStore } from "@/stores/diffStore";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -125,5 +126,34 @@ describe("ws-events provider.catalogChanged", () => {
     pushEmitter.emit("provider.catalogChanged", { request: { providerId: "codex" } });
 
     expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe("ws-events turn.persisted Review invalidation", () => {
+  beforeEach(() => {
+    stopPushListeners();
+    useWorkspaceStore.setState({ threads: [makeThread()] });
+    useDiffStore.setState({ diffRevisionByScope: {} });
+    startPushListeners();
+  });
+
+  afterEach(() => stopPushListeners());
+
+  it("invalidates Review only when the persisted turn changed files", () => {
+    pushEmitter.emit("turn.persisted", {
+      threadId: "thread-1",
+      messageId: "message-1",
+      toolCallCount: 0,
+      filesChanged: [],
+    });
+    expect(useDiffStore.getState().diffRevisionByScope["thread-1"]).toBeUndefined();
+
+    pushEmitter.emit("turn.persisted", {
+      threadId: "thread-1",
+      messageId: "message-2",
+      toolCallCount: 0,
+      filesChanged: ["src/changed.ts"],
+    });
+    expect(useDiffStore.getState().diffRevisionByScope["thread-1"]).toBe(1);
   });
 });

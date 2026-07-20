@@ -491,6 +491,8 @@ export interface McodeTransport {
   listSnapshots(threadId: string): Promise<TurnSnapshot[]>;
   /** Get cumulative diff across all turns for a thread. Implemented in Phase 3. */
   getCumulativeDiff(threadId: string, filePath?: string, maxLines?: number): Promise<string>;
+  /** Return authoritative net file stats from the first turn ref to the final turn ref. */
+  getCumulativeDiffStats(threadId: string): Promise<{ filePath: string; additions: number; deletions: number }[]>;
   /** Get commit log for a workspace branch. Pass threadId so the server runs git from the thread's worktree path. */
   getGitLog(
     workspaceId: string,
@@ -533,6 +535,15 @@ export interface McodeTransport {
     /** Worktree thread — resolves the right cwd. */
     threadId?: string;
   }): Promise<{ additions: number; deletions: number }>;
+  /** Resolve file metadata and totals for one Review comparison in one request. */
+  getReviewComparison(params: {
+    workspaceId: string;
+    view: "unstaged" | "staged" | "branch" | "commit";
+    base?: string;
+    target?: string;
+    sha?: string;
+    threadId?: string;
+  }): Promise<import("@mcode/contracts").ReviewComparison>;
 
   // GitHub PR (advanced)
   /** Push a branch to the remote. */

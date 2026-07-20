@@ -818,6 +818,14 @@ git-working-tree views (Unstaged, Staged, Commit, Branch) read the
 view renders exactly one diff; there is no eager render of every turn's
 diff.
 
+### Files navigator
+The collapsible file-tree surface within Review, labelled **Files** in the UI.
+When sourced from a [[Comparison]], it lists only that comparison's changed
+files and navigates within the same diff. The Files navigator is distinct from
+the Comparison and its diff; its stable name leaves room for other sources,
+such as project files, without renaming the surface.
+_Avoid_: Worktree files, Changed files (names for a source, not the surface)
+
 ### Comparison
 What a Review view *is*: a **base** (before) and a **target** (after) that
 resolve to exactly one diff. Some comparisons have **fixed** operands the

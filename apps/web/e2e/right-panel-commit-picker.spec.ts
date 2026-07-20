@@ -216,7 +216,16 @@ test.describe("Review tab — Commit picker", () => {
         if (p?.threadId === THREAD.id) return THREAD_COMMITS;
         return p?.skip ? OLDER_COMMITS : firstPageCommits;
       },
-      "git.commitFiles": (params) => FILES_BY_SHA[(params as { sha: string }).sha] ?? [],
+      "git.reviewComparison": (params) => ({
+        files: (FILES_BY_SHA[(params as { sha: string }).sha] ?? []).map((path) => ({
+          path,
+          previousPath: null,
+          changeType: "modified",
+          binary: false,
+        })),
+        additions: 1,
+        deletions: 1,
+      }),
       "git.commitDiff": (params) => {
         const { sha, filePath } = params as { sha: string; filePath: string };
         return DIFF_BY_SHA_AND_FILE[`${sha}:${filePath}`] ?? "";

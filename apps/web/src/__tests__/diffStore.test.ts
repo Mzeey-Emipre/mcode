@@ -17,6 +17,7 @@ describe("diffStore", () => {
       previewUrlByThread: {},
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
+      reviewFilesVisibleByScope: {},
       snapshotsByThread: {},
       snapshotsLoadingByThread: {},
       snapshotsPendingByThread: {},
@@ -37,6 +38,19 @@ describe("diffStore", () => {
       branchComparisonKey: null,
       branchManuallySelectedByScope: {},
       branchResolvedRevisionByScope: {},
+    });
+  });
+
+  describe("Review Files visibility", () => {
+    it("starts closed per scope and persists only explicit choices", () => {
+      const store = useDiffStore.getState();
+
+      expect(store.getReviewFilesVisible("thread-1")).toBe(false);
+      store.setReviewFilesVisible("thread-1", true);
+
+      expect(useDiffStore.getState().getReviewFilesVisible("thread-1")).toBe(true);
+      expect(useDiffStore.getState().getReviewFilesVisible("thread-2")).toBe(false);
+      expect(localStorage.getItem("mcode.review-files-visible.v1")).toContain('"thread-1":true');
     });
   });
 

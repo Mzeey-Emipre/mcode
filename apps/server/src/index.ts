@@ -551,10 +551,6 @@ for (const provider of providerRegistry.resolveAll()) {
       portPush.send("thread.status", completedStatus);
       const thread = threadRepo.findById(event.threadId);
       if (thread) {
-        const filesPayload = { workspaceId: thread.workspace_id, threadId: thread.id };
-        broadcast("files.changed", filesPayload);
-        portPush.send("files.changed", filesPayload);
-
         // Detect or refresh PR state for feature branches only
         const isFeatureBranch = thread.branch !== "main" && thread.branch !== "master";
         const workspace = isFeatureBranch ? workspaceRepo.findById(thread.workspace_id) : null;

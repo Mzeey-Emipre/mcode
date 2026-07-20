@@ -44,6 +44,33 @@ export const PANEL_SPLIT_GAP_PX = 0;
 export const PANEL_DEFAULT_WIDTH = 440;
 /** Wide snap target for the right panel (double-click drag handle). */
 export const PANEL_WIDE_WIDTH = 680;
+const REVIEW_FILES_VISIBILITY_STORAGE_KEY = "mcode.review-files-visible.v1";
+
+function readReviewFilesVisibility(): Record<string, boolean> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(REVIEW_FILES_VISIBILITY_STORAGE_KEY);
+    if (!raw || raw.length > 100_000) return {};
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 1_000)
+        .filter(([key, visible]) => key.length > 0 && key.length <= 4_096 && typeof visible === "boolean"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeReviewFilesVisibility(value: Record<string, boolean>): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(REVIEW_FILES_VISIBILITY_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Visibility still updates for this session when browser persistence is unavailable.
+  }
+}
 
 function clampWidth(w: number): number {
   return Math.max(PANEL_MIN_WIDTH, w);
@@ -252,6 +279,8 @@ interface DiffState {
    * {@link rightPanelByThread} entry. See ADR-0012.
    */
   readonly rightPanelFallbackByWorkspace: Record<string, RightPanelState>;
+  /** Explicit Files visibility choices keyed by Review scope. Missing scopes start closed. */
+  readonly reviewFilesVisibleByScope: Record<string, boolean>;
   /** View mode within the Changes tab (the single rendered view). */
   viewMode: DiffViewMode;
   /**
@@ -389,6 +418,10 @@ interface DiffState {
    * is not open. See ADR-0004.
    */
   closeRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
+  /** Read the persisted Files visibility choice for a Review scope. */
+  getReviewFilesVisible: (scopeId: string) => boolean;
+  /** Persist an explicit Files visibility choice for a Review scope. */
+  setReviewFilesVisible: (scopeId: string, visible: boolean) => void;
   setViewMode: (mode: DiffViewMode) => void;
   /**
    * Resolve the Review view a thread should show: the user's sticky pick when
@@ -460,6 +493,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   previewUrlByThread: {},
   rightPanelByThread: {},
   rightPanelFallbackByWorkspace: {},
+  reviewFilesVisibleByScope: readReviewFilesVisibility(),
   viewMode: "last-turn",
   reviewViewByThread: {},
   reviewViewManuallySelectedByThread: {},
@@ -546,6 +580,17 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         openTabs,
         activeTab,
       });
+    }),
+
+  getReviewFilesVisible: (scopeId) => get().reviewFilesVisibleByScope[scopeId] ?? false,
+  setReviewFilesVisible: (scopeId, visible) =>
+    set((state) => {
+      const reviewFilesVisibleByScope = {
+        ...state.reviewFilesVisibleByScope,
+        [scopeId]: visible,
+      };
+      writeReviewFilesVisibility(reviewFilesVisibleByScope);
+      return { reviewFilesVisibleByScope };
     }),
 
   setViewMode: (mode) =>
@@ -720,6 +765,9 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete reviewViewManuallySelectedByThread[threadId];
       const diffRevisionByScope = { ...state.diffRevisionByScope };
       delete diffRevisionByScope[threadId];
+      const reviewFilesVisibleByScope = { ...state.reviewFilesVisibleByScope };
+      delete reviewFilesVisibleByScope[threadId];
+      writeReviewFilesVisibility(reviewFilesVisibleByScope);
       const branchManuallySelectedByScope = omitByKeySuffix(
         state.branchManuallySelectedByScope,
         `:${threadId}`,
@@ -747,6 +795,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         reviewViewByThread,
         reviewViewManuallySelectedByThread,
         diffRevisionByScope,
+        reviewFilesVisibleByScope,
         branchManuallySelectedByScope,
         branchResolvedRevisionByScope,
         inlineDiffCache,
@@ -774,6 +823,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       if (
         !(workspaceId in state.rightPanelFallbackByWorkspace) &&
         !(workspaceId in state.diffRevisionByScope) &&
+        !(workspaceId in state.reviewFilesVisibleByScope) &&
         !hasInlineDiffCache &&
         !hasBranchScope
       ) {
@@ -783,9 +833,13 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete rightPanelFallbackByWorkspace[workspaceId];
       const diffRevisionByScope = { ...state.diffRevisionByScope };
       delete diffRevisionByScope[workspaceId];
+      const reviewFilesVisibleByScope = { ...state.reviewFilesVisibleByScope };
+      delete reviewFilesVisibleByScope[workspaceId];
+      writeReviewFilesVisibility(reviewFilesVisibleByScope);
       return {
         rightPanelFallbackByWorkspace,
         diffRevisionByScope,
+        reviewFilesVisibleByScope,
         branchManuallySelectedByScope: omitByKeyPrefix(
           state.branchManuallySelectedByScope,
           cachePrefix,

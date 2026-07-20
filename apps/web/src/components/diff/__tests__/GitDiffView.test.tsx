@@ -1,111 +1,36 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useDiffStore } from "@/stores/diffStore";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { GitDiffView } from "../GitDiffView";
 
-vi.mock("@/hooks/useOpenInApps", () => ({
-  useOpenInApps: () => [],
+vi.mock("../FileList", () => ({
+  FileList: ({ files, refreshable, refreshing }: { files: string[]; refreshable: boolean; refreshing: boolean }) => (
+    <div data-testid="file-list" data-refreshable={refreshable} data-refreshing={refreshing}>{files.join(",")}</div>
+  ),
 }));
 
-const transport = vi.hoisted(() => ({
-  getGitLog: vi.fn(),
-  getCommitFiles: vi.fn(),
-  getWorkingTreeFiles: vi.fn(),
-  getBranchFiles: vi.fn(),
-  getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
-}));
+const resolved = {
+  comparison: {
+    files: [{ path: "selected.ts", previousPath: null, changeType: "modified" as const, binary: false }],
+    additions: 1,
+    deletions: 0,
+  },
+  source: "commit" as const,
+  id: "bbbbbbbb2",
+  cacheVersion: 0,
+};
 
-vi.mock("@/transport", () => ({
-  getTransport: () => transport,
-}));
+describe("GitDiffView", () => {
+  it("renders one settled comparison and hides refresh for immutable commits", () => {
+    render(<GitDiffView resolved={resolved} threadId="thread-1" loading={false} immutable onRefresh={vi.fn()} emptyLabel="No commit yet" />);
 
-describe("GitDiffView commit selection", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    useDiffStore.setState({
-      selectedCommitSha: "bbbbbbbb2",
-      selectedFile: null,
-      diffContent: null,
-      diffLoading: false,
-      inlineDiffCache: {},
-      diffRevisionByScope: {},
-      branchComparison: null,
-      branchComparisonKey: null,
-      renderMode: "unified",
-    });
-    transport.getCommitFiles.mockResolvedValue(["selected.ts"]);
+    expect(screen.getByTestId("file-list")).toHaveTextContent("selected.ts");
+    expect(screen.getByTestId("file-list")).toHaveAttribute("data-refreshable", "false");
   });
 
-  it("renders the picked commit's files without resolving the latest commit again", async () => {
-    render(<GitDiffView view="commit" workspaceId="ws-1" threadId="thread-1" />);
+  it("keeps the settled comparison visible while its replacement loads", () => {
+    render(<GitDiffView resolved={resolved} threadId="thread-1" loading immutable={false} onRefresh={vi.fn()} emptyLabel="No changes" />);
 
-    await waitFor(() =>
-      expect(transport.getCommitFiles).toHaveBeenCalledWith("ws-1", "bbbbbbbb2"),
-    );
-
-    await waitFor(() => expect(screen.getAllByText("selected.ts").length).toBeGreaterThan(0));
-    expect(transport.getGitLog).not.toHaveBeenCalled();
-  });
-
-  it("does not refetch an immutable commit when the mutable diff revision changes", async () => {
-    render(<GitDiffView view="commit" workspaceId="ws-1" threadId="thread-1" />);
-
-    await waitFor(() => expect(transport.getCommitFiles).toHaveBeenCalledTimes(1));
-
-    act(() => {
-      useDiffStore.getState().bumpDiffRevision("thread-1");
-    });
-
-    expect(transport.getCommitFiles).toHaveBeenCalledTimes(1);
-  });
-
-  it("waits for the picker when no commit has been resolved", async () => {
-    useDiffStore.setState({ selectedCommitSha: null });
-
-    render(<GitDiffView view="commit" workspaceId="ws-1" threadId="thread-1" />);
-
-    await waitFor(() => expect(screen.getByText("No commit yet")).toBeInTheDocument());
-
-    expect(transport.getCommitFiles).not.toHaveBeenCalled();
-    expect(transport.getGitLog).not.toHaveBeenCalled();
-  });
-});
-
-describe("GitDiffView mutable branch reloads", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    useDiffStore.setState({
-      branchComparison: {
-        base: "feat/current",
-        target: "origin/main",
-        refs: [],
-        isUnborn: false,
-        isComparisonAvailable: true,
-      },
-      branchComparisonKey: "ws-1:thread-1",
-      diffRevisionByScope: {},
-      inlineDiffCache: {},
-      renderMode: "unified",
-    });
-    transport.getBranchFiles.mockResolvedValue(["changed.ts"]);
-  });
-
-  it("refetches the branch file list when the diff scope revision changes", async () => {
-    render(<GitDiffView view="branch" workspaceId="ws-1" threadId="thread-1" />);
-
-    await waitFor(() =>
-      expect(transport.getBranchFiles).toHaveBeenCalledWith(
-        "ws-1",
-        "origin/main",
-        "feat/current",
-        "thread-1",
-      ),
-    );
-
-    act(() => {
-      useDiffStore.getState().bumpDiffRevision("thread-1");
-    });
-
-    await waitFor(() => expect(transport.getBranchFiles).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("file-list")).toHaveTextContent("selected.ts");
+    expect(screen.getByTestId("file-list")).toHaveAttribute("data-refreshing", "true");
   });
 });

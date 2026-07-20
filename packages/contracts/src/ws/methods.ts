@@ -19,6 +19,7 @@ import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
 import { PlanStatusSchema, PlanRecordSchema, PlanActionSchema } from "../models/plan-output.js";
 import { DiffStatsSchema } from "../models/diff-stats.js";
+import { ReviewComparisonSchema } from "../models/review-comparison.js";
 import {
   SettingsSchema,
   PartialSettingsSchema,
@@ -516,6 +517,18 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.object({ additions: z.number(), deletions: z.number() }),
   },
+  /** Resolve file metadata and totals for one Review comparison in one RPC. */
+  "git.reviewComparison": {
+    params: z.object({
+      workspaceId: z.string(),
+      view: z.enum(["unstaged", "staged", "branch", "commit"]),
+      base: GitRefSchema.optional(),
+      target: GitRefSchema.optional(),
+      sha: z.string().optional(),
+      threadId: z.string().optional(),
+    }),
+    result: ReviewComparisonSchema(),
+  },
   "agent.send": {
     params: SendMessageSchema(),
     result: z.void(),
@@ -890,6 +903,10 @@ export const WS_METHODS = lazySchema(() => ({
       maxLines: z.number().int().positive().optional(),
     }),
     result: z.string(),
+  },
+  "snapshot.getCumulativeDiffStats": {
+    params: z.object({ threadId: z.string() }),
+    result: z.array(DiffStatsSchema()).max(10_000),
   },
   "clipboard.saveFile": {
     params: z.object({
