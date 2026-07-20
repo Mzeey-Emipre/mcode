@@ -1,8 +1,8 @@
-import type {
-  ProviderAvailability,
-  ProviderCatalogChange,
-  Settings,
-  TurnFileEffectSummary,
+import {
+  ProviderCatalogChangeSchema,
+  type ProviderAvailability,
+  type Settings,
+  type TurnFileEffectSummary,
 } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { pushEmitter } from "./ws-transport";
@@ -347,7 +347,9 @@ export function startPushListeners(): void {
 
   unsubs.push(
     pushEmitter.on("provider.catalogChanged", (change) => {
-      useProviderCatalogStore.getState().reconcile(change as ProviderCatalogChange);
+      const parsed = ProviderCatalogChangeSchema().safeParse(change);
+      if (!parsed.success) return;
+      useProviderCatalogStore.getState().reconcile(parsed.data);
     }),
   );
 

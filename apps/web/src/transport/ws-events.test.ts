@@ -111,3 +111,19 @@ describe("ws-events skills.changed", () => {
     expect(invalidate).toHaveBeenCalledOnce();
   });
 });
+
+describe("ws-events provider.catalogChanged", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.restoreAllMocks();
+  });
+
+  it("drops malformed catalog changes before store reconciliation", () => {
+    const reconcile = vi.spyOn(useProviderCatalogStore.getState(), "reconcile");
+    startPushListeners();
+
+    pushEmitter.emit("provider.catalogChanged", { request: { providerId: "codex" } });
+
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+});
