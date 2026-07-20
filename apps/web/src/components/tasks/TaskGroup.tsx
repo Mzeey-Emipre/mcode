@@ -39,11 +39,11 @@ export function TaskGroup({ name, tasks, hideHeader }: TaskGroupProps) {
 
   if (hideHeader) {
     return (
-      <div className="py-0.5">
+      <ul className="m-0 list-none py-0.5">
         {tasks.map((task) => (
           <TaskItem key={task.id} task={task} />
         ))}
-      </div>
+      </ul>
     );
   }
 
@@ -102,11 +102,11 @@ export function TaskGroup({ name, tasks, hideHeader }: TaskGroupProps) {
           gridTemplateRows: expanded ? "1fr" : "0fr",
         }}
       >
-        <div className="overflow-hidden min-h-0">
+        <ul className="m-0 min-h-0 list-none overflow-hidden">
           {tasks.map((task) => (
             <TaskItem key={task.id} task={task} />
           ))}
-        </div>
+        </ul>
       </div>
     </div>
   );

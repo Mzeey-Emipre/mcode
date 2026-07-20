@@ -72,7 +72,6 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
 
         {/* Fraction counter — typographic ratio with a soft slash */}
         <span
-          aria-label={progressLabel}
           className={`shrink-0 font-mono tabular-nums text-[10.5px] leading-none transition-colors duration-300 ${
             hasActive
               ? "text-primary/85"
@@ -81,9 +80,12 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
                 : "text-muted-foreground/55"
           }`}
         >
-          <span className="font-medium">{settled}</span>
-          <span className="text-muted-foreground/30">/</span>
-          {total}
+          <span className="sr-only">{progressLabel}</span>
+          <span aria-hidden="true">
+            <span className="font-medium">{settled}</span>
+            <span className="text-muted-foreground/30">/</span>
+            {total}
+          </span>
         </span>
       </div>
     </div>

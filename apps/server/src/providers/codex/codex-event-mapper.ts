@@ -73,6 +73,7 @@ const EARLY_CHILD_FILE_TOOL_NAMES = new Set([
   "searchreplace", "strreplace", "write",
 ]);
 
+/** Maps Codex app-server notifications into Mcode agent events. */
 export class CodexEventMapper {
   /** Main-thread assistant text buffers keyed by Codex item id. */
   private readonly assistantTextByItemId = new Map<string, string>();

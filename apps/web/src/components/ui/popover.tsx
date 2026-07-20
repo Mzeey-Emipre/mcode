@@ -12,6 +12,7 @@ function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
+/** Renders collision-aware popover content in a portal. */
 function PopoverContent({
   className,
   align = "center",
