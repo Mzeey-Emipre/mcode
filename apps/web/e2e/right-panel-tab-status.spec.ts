@@ -1,7 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
 import type { Thread, TurnSnapshot } from "@mcode/contracts";
 import { getDefaultSettings } from "@mcode/contracts";
-import { mockWebSocketServer, interceptZustandStores } from "./helpers/e2e-helpers";
+import {
+  mockWebSocketServer,
+  interceptZustandStores,
+  type WsController,
+} from "./helpers/e2e-helpers";
 
 const now = new Date().toISOString();
 
@@ -76,15 +80,16 @@ const SNAPSHOTS = [
   makeSnapshot("s1", ["RightPanel.tsx", "diffStore.ts"]),
   makeSnapshot("s2", ["index.css", "RightPanel.tsx", "App.tsx"]),
 ];
+let snapshotsForList: TurnSnapshot[] = SNAPSHOTS;
+let wsController: WsController;
 
 /**
- * Seeds workspace, thread, tasks, and snapshots into the live stores, then
- * opens the right panel on the given tab. Mirrors the store-poking pattern used
- * by right-panel-terminal-resize.spec.ts.
+ * Seeds the workspace and thread, then opens the right panel on the given tab.
+ * Snapshot state hydrates through the mocked production RPC.
  */
 async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
   await page.evaluate(
-    ({ workspace, thread, tid, wid, snapshots, tab }) => {
+    ({ workspace, thread, tid, wid, tab }) => {
       const stores: unknown[] =
         (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
       const getState = (s: unknown) =>
@@ -101,19 +106,17 @@ async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
       }
 
       const diffStore = stores.find(
-        (s) => "showRightPanel" in getState(s) && "setSnapshots" in getState(s),
+        (s) => "showRightPanel" in getState(s) && "setRightPanelTab" in getState(s),
       );
       if (diffStore) {
         const api = (
           diffStore as {
             getState: () => {
-              setSnapshots: (id: string, snaps: unknown) => void;
               showRightPanel: (id: string, threadId?: string) => void;
               setRightPanelTab: (id: string, threadId: string | null, t: string) => void;
             };
           }
         ).getState();
-        api.setSnapshots(tid, snapshots);
         api.showRightPanel(wid, tid);
         // Open both rail tabs so switching can be exercised; the requested tab
         // is activated last.
@@ -122,39 +125,20 @@ async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
         api.setRightPanelTab(wid, tid, tab);
       }
     },
-    { workspace: WORKSPACE, thread: THREAD, tid: THREAD.id, wid: WORKSPACE.id, snapshots: SNAPSHOTS, tab },
+    { workspace: WORKSPACE, thread: THREAD, tid: THREAD.id, wid: WORKSPACE.id, tab },
   );
 }
 
-/** Appends one snapshot with a new file so the cumulative file count grows. */
-async function addSnapshotWithNewFile(page: Page): Promise<void> {
-  await page.evaluate((tid) => {
-    const stores: unknown[] =
-      (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
-    const getState = (s: unknown) => (s as { getState: () => Record<string, unknown> }).getState();
-    const diffStore = stores.find((s) => "setSnapshots" in getState(s));
-    if (!diffStore) return;
-    const api = (
-      diffStore as {
-        getState: () => {
-          snapshotsByThread: Record<string, unknown[]>;
-          setSnapshots: (id: string, snaps: unknown) => void;
-        };
-      }
-    ).getState();
-    const existing = api.snapshotsByThread[tid] ?? [];
-    const fresh = {
-      id: "s3",
-      message_id: "m-s3",
-      thread_id: tid,
-      ref_before: "ccccccc",
-      ref_after: "ddddddd",
-      files_changed: ["TabStatus.tsx"],
-      worktree_path: null,
-      created_at: new Date().toISOString(),
-    };
-    api.setSnapshots(tid, [...existing, fresh]);
-  }, THREAD.id);
+/** Publishes one real-change turn so Review refreshes from the authoritative snapshot RPC. */
+async function addSnapshotWithNewFile(): Promise<void> {
+  const fresh = makeSnapshot("s3", ["TabStatus.tsx"]);
+  snapshotsForList = [...snapshotsForList, fresh];
+  await wsController.sendPush("turn.persisted", {
+    threadId: THREAD.id,
+    messageId: fresh.message_id,
+    toolCallCount: 1,
+    filesChanged: fresh.files_changed,
+  });
 }
 
 async function emitTaskCreate(page: Page): Promise<void> {
@@ -216,14 +200,15 @@ async function emitUpdatePlan(page: Page): Promise<void> {
 
 test.describe("Right panel tab status", () => {
   test.beforeEach(async ({ page }) => {
-    await mockWebSocketServer(page, {
+    snapshotsForList = SNAPSHOTS;
+    wsController = await mockWebSocketServer(page, {
       "workspace.list": [WORKSPACE],
       "thread.list": [THREAD],
       // The auxiliary hydrator loads tasks from this RPC on thread activation;
       // returning them here (rather than poking the store) avoids a race where
       // the hydrator's default empty result overwrites a seeded task list.
       "thread.getTasks": TASKS,
-      "snapshot.listByThread": SNAPSHOTS,
+      "snapshot.listByThread": () => snapshotsForList,
       "settings.get": getDefaultSettings(),
     });
     await interceptZustandStores(page);
@@ -303,7 +288,7 @@ test.describe("Right panel tab status", () => {
     await expect(changesTab.locator(".changes-fresh-ring")).toHaveCount(0);
 
     // A new turn lands while the user is on Plan, so Review goes fresh.
-    await addSnapshotWithNewFile(page);
+    await addSnapshotWithNewFile();
     await expect(changesTab).toContainText("5");
     await expect(changesTab.locator(".changes-fresh-ring")).toBeVisible();
 
@@ -313,34 +298,18 @@ test.describe("Right panel tab status", () => {
   });
 
   test("review badge caps the count for very large diffs", async ({ page }) => {
-    // Seed on Plan (Changes inactive) so the DiffPanel does not refetch and
-    // overwrite the large snapshot we poke in below.
+    // Keep Review inactive so turn.persisted refreshes snapshots immediately.
     await seedPanel(page, "tasks");
 
-    await page.evaluate((tid) => {
-      const stores: unknown[] =
-        (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
-      const getState = (s: unknown) => (s as { getState: () => Record<string, unknown> }).getState();
-      const diffStore = stores.find((s) => "setSnapshots" in getState(s));
-      if (!diffStore) return;
-      const files = Array.from({ length: 200 }, (_, i) => `src/file-${i}.ts`);
-      (
-        diffStore as { getState: () => { setSnapshots: (id: string, snaps: unknown) => void } }
-      )
-        .getState()
-        .setSnapshots(tid, [
-          {
-            id: "big",
-            message_id: "m-big",
-            thread_id: tid,
-            ref_before: "aaaaaaa",
-            ref_after: "bbbbbbb",
-            files_changed: files,
-            worktree_path: null,
-            created_at: new Date().toISOString(),
-          },
-        ]);
-    }, THREAD.id);
+    const files = Array.from({ length: 200 }, (_, i) => `src/file-${i}.ts`);
+    const snapshot = makeSnapshot("big", files);
+    snapshotsForList = [snapshot];
+    await wsController.sendPush("turn.persisted", {
+      threadId: THREAD.id,
+      messageId: snapshot.message_id,
+      toolCallCount: 1,
+      filesChanged: files,
+    });
 
     // 200 distinct files renders as the capped label, not "200".
     await expect
