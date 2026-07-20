@@ -19,6 +19,7 @@ export interface ProviderCatalogCacheEntry {
   readonly inflight: Promise<ProviderCatalogSnapshot> | null;
   readonly loadEpoch: number;
   readonly lastFetchedAt: number;
+  readonly pendingChanges: readonly ProviderCatalogChange[];
 }
 
 /** Stable empty entry used by selectors before a catalog context has loaded. */
@@ -30,6 +31,7 @@ export const EMPTY_PROVIDER_CATALOG_CACHE_ENTRY: ProviderCatalogCacheEntry = Obj
   inflight: null,
   loadEpoch: 0,
   lastFetchedAt: 0,
+  pendingChanges: [],
 });
 
 /** Builds a collision-safe cache key for one provider catalog request. */
@@ -77,6 +79,45 @@ function agentIdentity(agent: SelectableProviderAgent): string {
   return JSON.stringify([agent.providerId, agent.nativeId]);
 }
 
+function applyCatalogChange(
+  snapshot: ProviderCatalogSnapshot,
+  change: ProviderCatalogChange,
+): ProviderCatalogSnapshot {
+  const removedEntries = new Set(change.removals.map((identity) => JSON.stringify([
+    identity.providerId,
+    identity.kind,
+    identity.nativeId,
+  ])));
+  const updatedEntries = new Map(change.updates.map((item) => [capabilityIdentity(item), item]));
+  const existingEntryIds = new Set(snapshot.entries.map(capabilityIdentity));
+  const entries = snapshot.entries
+    .filter((item) => !removedEntries.has(capabilityIdentity(item)))
+    .map((item) => updatedEntries.get(capabilityIdentity(item)) ?? item);
+  for (const addition of change.additions) {
+    if (!existingEntryIds.has(capabilityIdentity(addition))) entries.push(addition);
+  }
+
+  const removedAgents = new Set(change.selectableAgents.removals);
+  const updatedAgents = new Map(
+    change.selectableAgents.updates.map((agent) => [agentIdentity(agent), agent]),
+  );
+  const existingAgentIds = new Set(snapshot.selectableAgents.map(agentIdentity));
+  const selectableAgents = snapshot.selectableAgents
+    .filter((agent) => !removedAgents.has(agent.nativeId))
+    .map((agent) => updatedAgents.get(agentIdentity(agent)) ?? agent);
+  for (const addition of change.selectableAgents.additions) {
+    if (!existingAgentIds.has(agentIdentity(addition))) selectableAgents.push(addition);
+  }
+
+  return {
+    ...snapshot,
+    entries,
+    selectableAgents,
+    diagnostics: change.diagnostics ?? snapshot.diagnostics,
+    freshness: change.freshness ?? snapshot.freshness,
+  };
+}
+
 /** Module-scoped store for provider capability catalog snapshots. */
 export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) => ({
   entries: {},
@@ -96,7 +137,7 @@ export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) =
     if (existing.inflight) return existing.inflight;
 
     const epoch = existing.loadEpoch + 1;
-    const promise = (async () => {
+    const fetchSnapshot = async () => {
       const transport = getTransport();
       const attempt = () => transport.getProviderCatalog(request);
       try {
@@ -116,7 +157,11 @@ export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) =
       } catch (value) {
         throw value instanceof Error ? value : new Error(String(value));
       }
-    })();
+    };
+    let startRequest!: () => void;
+    const promise = new Promise<ProviderCatalogSnapshot>((resolve, reject) => {
+      startRequest = () => { void fetchSnapshot().then(resolve, reject); };
+    });
 
     set({
       entries: replaceEntry(state.entries, key, {
@@ -127,20 +172,26 @@ export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) =
         loadEpoch: epoch,
       }),
     });
+    startRequest();
 
     void promise.then(
       (snapshot) => {
         const current = get();
         if (current.entries[key]?.loadEpoch !== epoch) return;
+        const reconciledSnapshot = current.entries[key].pendingChanges.reduce(
+          applyCatalogChange,
+          snapshot,
+        );
         set({
           entries: replaceEntry(current.entries, key, {
-            snapshot,
+            snapshot: reconciledSnapshot,
             isLoading: false,
             needsRefresh: false,
             error: null,
             inflight: null,
             loadEpoch: epoch,
             lastFetchedAt: Date.now(),
+            pendingChanges: [],
           }),
         });
       },
@@ -184,48 +235,25 @@ export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) =
     const key = providerCatalogCacheKey(change.request);
     const current = get();
     const entry = current.entries[key];
-    if (!entry?.snapshot) return;
-
-    const removedEntries = new Set(change.removals.map((identity) => JSON.stringify([
-      identity.providerId,
-      identity.kind,
-      identity.nativeId,
-    ])));
-    const updatedEntries = new Map(change.updates.map((item) => [capabilityIdentity(item), item]));
-    const existingEntryIds = new Set(entry.snapshot.entries.map(capabilityIdentity));
-    const entries = entry.snapshot.entries
-      .filter((item) => !removedEntries.has(capabilityIdentity(item)))
-      .map((item) => updatedEntries.get(capabilityIdentity(item)) ?? item);
-    for (const addition of change.additions) {
-      if (!existingEntryIds.has(capabilityIdentity(addition))) entries.push(addition);
+    if (!entry) {
+      set({
+        entries: replaceEntry(current.entries, key, {
+          ...EMPTY_PROVIDER_CATALOG_CACHE_ENTRY,
+          pendingChanges: [change],
+        }),
+      });
+      return;
     }
-
-    const removedAgents = new Set(change.selectableAgents.removals);
-    const updatedAgents = new Map(
-      change.selectableAgents.updates.map((agent) => [agentIdentity(agent), agent]),
-    );
-    const existingAgentIds = new Set(entry.snapshot.selectableAgents.map(agentIdentity));
-    const selectableAgents = entry.snapshot.selectableAgents
-      .filter((agent) => !removedAgents.has(agent.nativeId))
-      .map((agent) => updatedAgents.get(agentIdentity(agent)) ?? agent);
-    for (const addition of change.selectableAgents.additions) {
-      if (!existingAgentIds.has(agentIdentity(addition))) selectableAgents.push(addition);
-    }
+    const queueChange = entry.inflight !== null || entry.pendingChanges.length > 0;
 
     set({
       entries: replaceEntry(current.entries, key, {
         ...entry,
-        snapshot: {
-          ...entry.snapshot,
-          entries,
-          selectableAgents,
-          diagnostics: change.diagnostics ?? entry.snapshot.diagnostics,
-          freshness: change.freshness ?? entry.snapshot.freshness,
-        },
-        isLoading: false,
+        snapshot: entry.snapshot ? applyCatalogChange(entry.snapshot, change) : null,
+        pendingChanges: queueChange ? [...entry.pendingChanges, change] : [],
+        isLoading: entry.inflight !== null,
         needsRefresh: false,
         error: null,
-        inflight: null,
         lastFetchedAt: Date.now(),
       }),
     });

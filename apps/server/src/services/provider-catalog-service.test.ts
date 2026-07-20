@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import type {
   ProviderCatalogChange,
@@ -145,5 +145,85 @@ describe("ProviderCatalogService", () => {
     });
     expect(immediate.entries).toEqual(CACHED.entries);
     expect(immediate.freshness.status).toBe("stale");
+  });
+
+  it("tracks every logical request sharing one persisted checkout", async () => {
+    const { repo, service } = createService();
+    const key = providerCatalogContextKey(REQUEST, "C:/repo");
+    repo.upsert(key, "workspace-1", "C:/repo", CACHED);
+    const changes: ProviderCatalogChange[] = [];
+    service.onChanged((change) => changes.push(change));
+    const firstRequest = { ...REQUEST, threadId: "thread-1" };
+    const secondRequest = { ...REQUEST, threadId: "thread-2" };
+    const initialRefreshes: Array<ReturnType<typeof vi.fn>> = [];
+    const cacheRefreshes: Array<ReturnType<typeof vi.fn>> = [];
+
+    for (const request of [firstRequest, secondRequest]) {
+      const refresh = vi.fn(async () => CACHED);
+      const refreshFromCache = vi.fn(async () => ({
+        ...CACHED,
+        freshness: { status: "fresh" as const, fetchedAt: "2026-07-20T14:00:00.000Z" },
+      }));
+      initialRefreshes.push(refresh);
+      cacheRefreshes.push(refreshFromCache);
+      service.request({
+        request,
+        context: {
+          scope: "workspace",
+          workspaceId: "workspace-1",
+          threadId: request.threadId,
+        },
+        cwd: "C:/repo",
+        refresh,
+        refreshFromCache,
+      });
+    }
+    await vi.waitFor(() => expect(changes).toHaveLength(2));
+    expect(initialRefreshes.reduce((total, refresh) => total + refresh.mock.calls.length, 0))
+      .toBe(1);
+    changes.length = 0;
+
+    service.refreshKnownContexts("codex", "C:/repo");
+
+    await vi.waitFor(() => expect(changes).toHaveLength(2));
+    expect(changes.map((change) => change.request.threadId).sort()).toEqual([
+      "thread-1",
+      "thread-2",
+    ]);
+    expect(cacheRefreshes.reduce((total, refresh) => total + refresh.mock.calls.length, 0))
+      .toBe(1);
+  });
+
+  it("queues a native change received during an active refresh", async () => {
+    const { repo, service } = createService();
+    const key = providerCatalogContextKey(REQUEST, "C:/repo");
+    repo.upsert(key, "workspace-1", "C:/repo", CACHED);
+    let finishRefresh!: (snapshot: ProviderCatalogSnapshot) => void;
+    const initialRefresh = new Promise<ProviderCatalogSnapshot>((resolve) => {
+      finishRefresh = resolve;
+    });
+    const refreshFromCache = vi.fn(async () => ({
+      ...CACHED,
+      entries: [{ ...CACHED.entries[0], description: "Review after notification" }],
+      freshness: { status: "fresh" as const, fetchedAt: "2026-07-20T14:00:00.000Z" },
+    }));
+    const changes: ProviderCatalogChange[] = [];
+    service.onChanged((change) => changes.push(change));
+
+    service.request({
+      request: REQUEST,
+      context: CACHED.context,
+      cwd: "C:/repo",
+      refresh: () => initialRefresh,
+      refreshFromCache,
+    });
+    service.refreshKnownContexts("codex", "C:/repo");
+    finishRefresh(CACHED);
+
+    await vi.waitFor(() => expect(changes).toHaveLength(2));
+    expect(refreshFromCache).toHaveBeenCalledTimes(1);
+    expect(changes[1]?.updates).toEqual([
+      expect.objectContaining({ description: "Review after notification" }),
+    ]);
   });
 });

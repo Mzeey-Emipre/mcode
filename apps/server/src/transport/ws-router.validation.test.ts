@@ -232,6 +232,29 @@ describe("routeMessage provider.catalog", () => {
       removals: [expect.objectContaining({ nativeId: "C:/repo/.codex/skills/review/SKILL.md" })],
     });
     expect(create).toHaveBeenCalledTimes(1);
+
+    refresh.mockRejectedValueOnce(new Error("provider unavailable"));
+    const failedRefresh = new Promise<import("@mcode/contracts").ProviderCatalogChange>((resolve) => {
+      restartedCatalogService.onChanged((change) => {
+        if (change.request.workspaceId === "workspace-1") resolve(change);
+      });
+    });
+    const failureResponse = await routeMessage(JSON.stringify({
+      id: "catalog-failure",
+      method: "provider.catalog",
+      params: { providerId: "codex", workspaceId: "workspace-1" },
+    }), deps);
+    expect(failureResponse.result).toMatchObject({
+      freshness: { status: "stale" },
+      entries: expect.arrayContaining([expect.objectContaining({ name: "ship" })]),
+    });
+    await expect(failedRefresh).resolves.toMatchObject({
+      additions: [],
+      updates: [],
+      removals: [],
+      diagnostics: [expect.objectContaining({ code: "source-unavailable" })],
+      freshness: { status: "stale" },
+    });
     await codexCatalogService.shutdown();
     db.close();
   });

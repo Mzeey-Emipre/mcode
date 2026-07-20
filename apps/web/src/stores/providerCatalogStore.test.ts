@@ -157,4 +157,61 @@ describe("providerCatalogStore", () => {
     expect(reconciled?.entries[0]).toBe(original);
     expect(reconciled?.freshness).toEqual(change.freshness);
   });
+
+  it("queues a catalog change until the initial RPC snapshot settles", async () => {
+    let resolveCatalog!: (snapshot: ProviderCatalogSnapshot) => void;
+    getProviderCatalogMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCatalog = resolve; }),
+    );
+    const addition = {
+      kind: "skill" as const,
+      identity: { providerId: "codex" as const, kind: "skill" as const, nativeId: "ship" },
+      name: "ship",
+      description: "Ship changes",
+      source: "project" as const,
+    };
+    const pending = useProviderCatalogStore.getState().load(REQUEST);
+
+    useProviderCatalogStore.getState().reconcile({
+      request: REQUEST,
+      additions: [addition],
+      updates: [],
+      removals: [],
+      selectableAgents: { additions: [], updates: [], removals: [] },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T13:00:00.000Z" },
+    });
+    resolveCatalog(STALE_SNAPSHOT);
+    await pending;
+
+    const snapshot = useProviderCatalogStore.getState()
+      .entries[providerCatalogCacheKey(REQUEST)]?.snapshot;
+    expect(snapshot?.entries).toEqual([SNAPSHOT.entries[0], addition]);
+    expect(snapshot?.freshness.status).toBe("fresh");
+  });
+
+  it("does not let a stale force-load response overwrite a catalog push", async () => {
+    await useProviderCatalogStore.getState().load(REQUEST);
+    let resolveCatalog!: (snapshot: ProviderCatalogSnapshot) => void;
+    getProviderCatalogMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCatalog = resolve; }),
+    );
+    const pending = useProviderCatalogStore.getState().load(REQUEST, true);
+    const updated = { ...SNAPSHOT.entries[0], description: "Review current changes" };
+
+    useProviderCatalogStore.getState().reconcile({
+      request: REQUEST,
+      additions: [],
+      updates: [updated],
+      removals: [],
+      selectableAgents: { additions: [], updates: [], removals: [] },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T13:00:00.000Z" },
+    });
+    resolveCatalog(STALE_SNAPSHOT);
+    await pending;
+
+    const snapshot = useProviderCatalogStore.getState()
+      .entries[providerCatalogCacheKey(REQUEST)]?.snapshot;
+    expect(snapshot?.entries).toEqual([updated]);
+    expect(snapshot?.freshness.status).toBe("fresh");
+  });
 });

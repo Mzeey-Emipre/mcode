@@ -22,6 +22,17 @@ export interface ProviderCatalogLoadInput {
 
 const MAX_TRACKED_CATALOG_CONTEXTS = 64;
 
+interface CatalogRefreshSubscriber {
+  readonly visible: ProviderCatalogSnapshot;
+  readonly input: ProviderCatalogLoadInput;
+}
+
+interface CatalogRefreshJob {
+  readonly refresh: () => Promise<ProviderCatalogSnapshot>;
+  readonly subscribers: Map<string, CatalogRefreshSubscriber>;
+  readonly pendingSubscribers: Map<string, CatalogRefreshSubscriber>;
+}
+
 function capabilityIdentity(entry: ProviderCapabilityEntry): string {
   const { providerId, kind, nativeId } = entry.identity;
   return JSON.stringify([providerId, kind, nativeId]);
@@ -43,6 +54,18 @@ export function providerCatalogContextKey(
   return JSON.stringify([
     request.providerId,
     request.workspaceId ?? null,
+    cwd?.replace(/\\/g, "/") ?? null,
+  ]);
+}
+
+function providerCatalogRequestKey(
+  request: ProviderCatalogRequest,
+  cwd?: string,
+): string {
+  return JSON.stringify([
+    request.providerId,
+    request.workspaceId ?? null,
+    request.threadId ?? null,
     cwd?.replace(/\\/g, "/") ?? null,
   ]);
 }
@@ -122,7 +145,7 @@ function catalogChange(
 /** Coordinates persisted snapshots, background refresh, and incremental catalog changes. */
 @injectable()
 export class ProviderCatalogService {
-  private readonly inflight = new Map<string, Promise<void>>();
+  private readonly inflight = new Map<string, CatalogRefreshJob>();
   private readonly trackedContexts = new Map<string, ProviderCatalogLoadInput>();
   private readonly changedHandlers = new Set<(change: ProviderCatalogChange) => void>();
 
@@ -133,16 +156,17 @@ export class ProviderCatalogService {
 
   /** Returns cached state immediately and starts one background refresh for the context. */
   request(input: ProviderCatalogLoadInput): ProviderCatalogSnapshot {
-    const key = providerCatalogContextKey(input.request, input.cwd);
+    const persistenceKey = providerCatalogContextKey(input.request, input.cwd);
+    const requestKey = providerCatalogRequestKey(input.request, input.cwd);
     const fallbackRequest = { ...input.request, threadId: undefined };
     const fallbackKey = input.fallbackCwd === undefined
       ? undefined
       : providerCatalogContextKey(fallbackRequest, input.fallbackCwd);
-    const persisted = this.snapshotRepo.get(key)
-      ?? (fallbackKey && fallbackKey !== key ? this.snapshotRepo.get(fallbackKey) : null);
+    const persisted = this.snapshotRepo.get(persistenceKey)
+      ?? (fallbackKey && fallbackKey !== persistenceKey ? this.snapshotRepo.get(fallbackKey) : null);
     const visible = staleSnapshot(persisted, input.request, input.context);
-    this.rememberContext(key, input);
-    this.scheduleRefresh(key, visible, input);
+    this.rememberContext(requestKey, input);
+    this.scheduleRefresh(requestKey, persistenceKey, visible, input, false);
     return visible;
   }
 
@@ -154,7 +178,8 @@ export class ProviderCatalogService {
 
   /** Reconciles requested contexts after a provider-native background change signal. */
   refreshKnownContexts(providerId: string, cwd?: string): void {
-    for (const [key, input] of this.trackedContexts) {
+    const queueByPersistenceKey = new Map<string, boolean>();
+    for (const [requestKey, input] of this.trackedContexts) {
       if (
         input.request.providerId !== providerId
         || input.cwd !== cwd
@@ -162,9 +187,19 @@ export class ProviderCatalogService {
       ) {
         continue;
       }
-      const persisted = this.snapshotRepo.get(key);
+      const persistenceKey = providerCatalogContextKey(input.request, input.cwd);
+      const queueIfInflight = queueByPersistenceKey.get(persistenceKey)
+        ?? this.inflight.has(persistenceKey);
+      queueByPersistenceKey.set(persistenceKey, queueIfInflight);
+      const persisted = this.snapshotRepo.get(persistenceKey);
       const visible = staleSnapshot(persisted, input.request, input.context);
-      this.scheduleRefresh(key, visible, { ...input, refresh: input.refreshFromCache });
+      this.scheduleRefresh(
+        requestKey,
+        persistenceKey,
+        visible,
+        { ...input, refresh: input.refreshFromCache },
+        queueIfInflight,
+      );
     }
   }
 
@@ -179,37 +214,70 @@ export class ProviderCatalogService {
   }
 
   private scheduleRefresh(
-    key: string,
+    requestKey: string,
+    persistenceKey: string,
     visible: ProviderCatalogSnapshot,
     input: ProviderCatalogLoadInput,
+    queueIfInflight: boolean,
   ): void {
-    if (this.inflight.has(key)) return;
-    const refresh = new Promise<void>((resolve) => {
+    const subscriber = { visible, input } satisfies CatalogRefreshSubscriber;
+    const currentJob = this.inflight.get(persistenceKey);
+    if (currentJob) {
+      const subscribers = queueIfInflight
+        ? currentJob.pendingSubscribers
+        : currentJob.subscribers;
+      subscribers.set(requestKey, subscriber);
+      return;
+    }
+    const job: CatalogRefreshJob = {
+      refresh: input.refresh,
+      subscribers: new Map([[requestKey, subscriber]]),
+      pendingSubscribers: new Map(),
+    };
+    this.inflight.set(persistenceKey, job);
+    void new Promise<void>((resolve) => {
       setImmediate(() => {
-        void this.refresh(key, visible, input).finally(resolve);
+        void this.refresh(persistenceKey, job).finally(resolve);
       });
     }).finally(() => {
-      this.inflight.delete(key);
+      this.inflight.delete(persistenceKey);
+      for (const [pendingRequestKey, pending] of job.pendingSubscribers) {
+        const persisted = this.snapshotRepo.get(persistenceKey);
+        const pendingVisible = staleSnapshot(
+          persisted,
+          pending.input.request,
+          pending.input.context,
+        );
+        this.scheduleRefresh(
+          pendingRequestKey,
+          persistenceKey,
+          pendingVisible,
+          pending.input,
+          false,
+        );
+      }
     });
-    this.inflight.set(key, refresh);
   }
 
   private async refresh(
-    key: string,
-    visible: ProviderCatalogSnapshot,
-    input: ProviderCatalogLoadInput,
+    persistenceKey: string,
+    job: CatalogRefreshJob,
   ): Promise<void> {
     let refreshed: ProviderCatalogSnapshot;
     try {
-      refreshed = await input.refresh();
+      refreshed = await job.refresh();
     } catch (error) {
+      const firstSubscriber = job.subscribers.values().next().value as
+        | CatalogRefreshSubscriber
+        | undefined;
+      if (!firstSubscriber) return;
       logger.warn("Provider catalog background refresh failed", {
-        providerId: input.request.providerId,
-        workspaceId: input.request.workspaceId,
+        providerId: firstSubscriber.input.request.providerId,
+        workspaceId: firstSubscriber.input.request.workspaceId,
         error: error instanceof Error ? error.message : String(error),
       });
       refreshed = {
-        ...visible,
+        ...firstSubscriber.visible,
         diagnostics: [{
           severity: "warning",
           code: "source-unavailable",
@@ -217,28 +285,39 @@ export class ProviderCatalogService {
         }],
         freshness: {
           status: "stale",
-          fetchedAt: visible.freshness.fetchedAt,
+          fetchedAt: firstSubscriber.visible.freshness.fetchedAt,
           reason: "Provider catalog refresh failed.",
         },
       };
     }
 
-    const next = refreshed.freshness.status === "fresh"
-      ? { ...refreshed, context: input.context }
-      : {
-          ...visible,
-          diagnostics: refreshed.diagnostics,
-          freshness: refreshed.freshness,
-        };
-    this.snapshotRepo.upsert(key, input.request.workspaceId, input.cwd, next);
-    const change = catalogChange(input.request, visible, next);
-    for (const handler of this.changedHandlers) {
-      try {
-        handler(change);
-      } catch (error) {
-        logger.debug("Provider catalog change subscriber failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
+    let persisted = false;
+    for (const { visible, input } of job.subscribers.values()) {
+      const next = refreshed.freshness.status === "fresh"
+        ? { ...refreshed, context: input.context }
+        : {
+            ...visible,
+            diagnostics: refreshed.diagnostics,
+            freshness: refreshed.freshness,
+          };
+      if (!persisted) {
+        this.snapshotRepo.upsert(
+          persistenceKey,
+          input.request.workspaceId,
+          input.cwd,
+          next,
+        );
+        persisted = true;
+      }
+      const change = catalogChange(input.request, visible, next);
+      for (const handler of this.changedHandlers) {
+        try {
+          handler(change);
+        } catch (error) {
+          logger.debug("Provider catalog change subscriber failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
   }
