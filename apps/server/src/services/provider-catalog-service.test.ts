@@ -289,4 +289,41 @@ describe("ProviderCatalogService", () => {
       freshness: { status: "stale", reason: expect.stringContaining("capacity") },
     });
   });
+
+  it("admits a new context after evicting the oldest completed context", async () => {
+    const { service } = createService();
+    const refresh = vi.fn(async () => CACHED);
+    const changes: ProviderCatalogChange[] = [];
+    service.onChanged((change) => changes.push(change));
+
+    for (let index = 0; index < 64; index += 1) {
+      service.request({
+        request: { ...REQUEST, threadId: `thread-${index}` },
+        context: {
+          scope: "workspace",
+          workspaceId: "workspace-1",
+          threadId: `thread-${index}`,
+        },
+        cwd: `C:/repo-${index}`,
+        refresh,
+      });
+    }
+    await vi.waitFor(() => expect(changes).toHaveLength(64));
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+
+    const next = service.request({
+      request: { ...REQUEST, threadId: "thread-64" },
+      context: {
+        scope: "workspace",
+        workspaceId: "workspace-1",
+        threadId: "thread-64",
+      },
+      cwd: "C:/repo-64",
+      refresh,
+    });
+
+    expect(next.diagnostics).toEqual([]);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(65));
+    await vi.waitFor(() => expect(changes).toHaveLength(65));
+  });
 });

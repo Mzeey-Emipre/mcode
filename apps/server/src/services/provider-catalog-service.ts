@@ -228,7 +228,18 @@ export class ProviderCatalogService {
       !this.trackedContexts.has(key)
       && this.trackedContexts.size >= MAX_TRACKED_CATALOG_CONTEXTS
     ) {
-      return false;
+      let oldestInactive: string | undefined;
+      for (const candidate of this.trackedContexts.keys()) {
+        const active = [...this.inflight.values()].some((job) => (
+          job.subscribers.has(candidate) || job.pendingSubscribers.has(candidate)
+        ));
+        if (!active) {
+          oldestInactive = candidate;
+          break;
+        }
+      }
+      if (oldestInactive === undefined) return false;
+      this.trackedContexts.delete(oldestInactive);
     }
     this.trackedContexts.delete(key);
     this.trackedContexts.set(key, input);
