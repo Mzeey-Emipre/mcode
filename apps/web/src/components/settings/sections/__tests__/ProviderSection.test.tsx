@@ -83,9 +83,18 @@ describe("ProviderSection", () => {
   it("renders the Beta badge for copilot and Coming soon badges for planned providers", () => {
     render(<ProviderSection />);
     expect(screen.getByTestId("provider-badge-copilot-beta")).toBeInTheDocument();
-    expect(screen.getByTestId("provider-badge-gemini-comingsoon")).toBeInTheDocument();
-    expect(screen.getByTestId("provider-badge-cursor-comingsoon")).toBeInTheDocument();
-    expect(screen.getByTestId("provider-badge-opencode-comingsoon")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-badge-gemini-comingsoon")).toHaveAttribute(
+      "variant",
+      "secondary",
+    );
+    expect(screen.getByTestId("provider-badge-cursor-comingsoon")).toHaveAttribute(
+      "variant",
+      "secondary",
+    );
+    expect(screen.getByTestId("provider-badge-opencode-comingsoon")).toHaveAttribute(
+      "variant",
+      "secondary",
+    );
   });
 
   it("groups planned providers after available providers without adapter copy", () => {

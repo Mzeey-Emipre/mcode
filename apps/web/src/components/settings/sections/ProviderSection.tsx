@@ -238,8 +238,7 @@ function ComingSoonProviderRow({ row }: { row: ProviderAvailability }) {
         {labelFor(row.id)}
       </span>
       <Badge
-        variant="outline"
-        size="sm"
+        variant="secondary"
         data-testid={`provider-badge-${row.id}-comingsoon`}
       >
         Coming soon
