@@ -664,31 +664,33 @@ function ThreadOverviewRepositoryRow({
   return (
     <div className="grid animate-thread-overview-row-reveal">
       <div className="min-h-0 overflow-hidden">
-        <Button
-          variant="ghost"
-          size="sm"
-          type="button"
-          onClick={onOpen}
+        <div
           data-testid="thread-overview-repository"
-          aria-label={`Open ${label} on remote`}
-          title={repository.webUrl ?? label}
-          className={cn(OVERVIEW_ROW_CLASS, "justify-between")}
+          className="flex w-full flex-col gap-1.5 px-2 py-1.5"
         >
-          <span className="flex min-w-0 items-center gap-2">
+          <span className="font-mono text-xs font-medium uppercase leading-tight tracking-[0.18em] text-muted-foreground">
+            REPOSITORY
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            onClick={onOpen}
+            data-testid="thread-overview-repository-link"
+            aria-label={`Open ${label} on remote`}
+            title={repository.webUrl ?? label}
+            className="-mx-1.5 h-7 min-w-0 justify-start gap-1.5 rounded-md px-1.5 text-left text-primary hover:bg-muted/50 hover:text-primary focus-visible:ring-inset"
+          >
             <SiteFavicon
               src={repository.faviconUrl}
               frameTestId="thread-overview-repository-favicon-frame"
               imageTestId="thread-overview-repository-favicon"
               fallback={<GitBranch size={14} className="shrink-0 text-muted-foreground" />}
             />
-            <span className="truncate text-xs font-medium text-primary">{label}</span>
-          </span>
-          <ExternalLink
-            size={12}
-            aria-hidden
-            className="shrink-0 text-muted-foreground transition-colors duration-150 group-hover:text-foreground/80"
-          />
-        </Button>
+            <span className="truncate text-xs font-medium">{label}</span>
+            <ExternalLink size={12} aria-hidden className="shrink-0 text-muted-foreground" />
+          </Button>
+        </div>
       </div>
     </div>
   );
