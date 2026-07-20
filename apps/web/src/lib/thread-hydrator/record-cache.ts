@@ -21,7 +21,7 @@ interface PrefetchedHistoryPage {
   page: ConversationPage;
 }
 
-const historyCache = new LruCache<string, PrefetchedHistoryPage>(RECORD_CACHE_SIZE);
+const prefetchedHistoryCache = new LruCache<string, PrefetchedHistoryPage>(RECORD_CACHE_SIZE);
 
 /** Read the cached record for a thread, refreshing LRU recency on hit. */
 export function getCachedRecord(threadId: string): ThreadRecord | undefined {
@@ -38,7 +38,7 @@ export function cacheRecord(threadId: string, record: ThreadRecord): void {
   const evicted = cache.set(threadId, record);
   if (evicted) {
     forgetScrollTop(evicted);
-    historyCache.delete(evicted);
+    prefetchedHistoryCache.delete(evicted);
   }
 }
 
@@ -48,12 +48,12 @@ export function cachePrefetchedHistoryPage(
   before: number,
   page: ConversationPage,
 ): void {
-  historyCache.set(threadId, { before, page });
+  prefetchedHistoryCache.set(threadId, { before, page });
 }
 
 /** Check whether the requested older-history cursor is already warm. */
 export function hasPrefetchedHistoryPage(threadId: string, before: number): boolean {
-  const entry = historyCache.get(threadId);
+  const entry = prefetchedHistoryCache.get(threadId);
   return entry?.before === before;
 }
 
@@ -62,22 +62,22 @@ export function takePrefetchedHistoryPage(
   threadId: string,
   before: number,
 ): ConversationPage | undefined {
-  const entry = historyCache.get(threadId);
+  const entry = prefetchedHistoryCache.get(threadId);
   if (entry?.before !== before) return undefined;
-  historyCache.delete(threadId);
+  prefetchedHistoryCache.delete(threadId);
   return entry.page;
 }
 
 /** Remove a single thread's cached record. No-op when absent. */
 export function evictCachedRecord(threadId: string): void {
   cache.delete(threadId);
-  historyCache.delete(threadId);
+  prefetchedHistoryCache.delete(threadId);
 }
 
 /** Drop all cached records. Used in tests and on workspace deletion. */
 export function clearRecordCache(): void {
   cache.clear();
-  historyCache.clear();
+  prefetchedHistoryCache.clear();
 }
 
 /**
@@ -88,9 +88,9 @@ export function clearRecordCache(): void {
  */
 export function resizeRecordCache(capacity: number): void {
   const evicted = cache.resize(capacity);
-  historyCache.resize(capacity);
+  prefetchedHistoryCache.resize(capacity);
   for (const threadId of evicted) {
     forgetScrollTop(threadId);
-    historyCache.delete(threadId);
+    prefetchedHistoryCache.delete(threadId);
   }
 }

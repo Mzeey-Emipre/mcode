@@ -25,12 +25,13 @@ import { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
 import type { ConversationPage } from "@mcode/contracts";
 
-interface HistoryHydrate {
+interface PendingHistoryPrefetch {
   expectedEpoch: number;
   promise: Promise<void>;
 }
 
-function selectConversationPage(
+/** Build a conversation page containing only the supplied messages and their metadata. */
+function buildConversationPageSubset(
   page: ConversationPage,
   messages: ConversationPage["messages"],
   hasMore: boolean,
@@ -49,14 +50,14 @@ function selectConversationPage(
 /** Latest messages fetched before the selected thread first paints. */
 export const MESSAGE_FETCH_SIZE = 2;
 
-/** Older messages fetched after the latest tail paints and held outside live state. */
-export const HISTORY_PREFETCH_SIZE = 98;
+/** Maximum messages fetched by a sidebar hover prefetch. */
+export const BACKGROUND_PREFETCH_LIMIT = 100;
+
+/** Older messages warmed after first paint and held outside live React state. */
+export const HISTORY_PREFETCH_SIZE = BACKGROUND_PREFETCH_LIMIT - MESSAGE_FETCH_SIZE;
 
 /** Auxiliary side-effect refresh TTL (permissions, tasks, plans). */
 export const HYDRATION_TTL_MS = 2000;
-
-/** Background hover prefetch limit (matches legacy prefetch.ts). */
-export const BACKGROUND_PREFETCH_LIMIT = 100;
 
 /**
  * Owns the full "load this thread" flow: cache lookup, RPC fetch, record
@@ -66,7 +67,7 @@ export class ThreadHydrator {
   private readonly auxiliaryHydrator: AuxiliaryHydrator;
   private readonly activeHydrates = new Map<string, Promise<void>>();
   private readonly backgroundHydrates = new Map<string, Promise<void>>();
-  private readonly historyHydrates = new Map<string, HistoryHydrate>();
+  private readonly pendingHistoryPrefetches = new Map<string, PendingHistoryPrefetch>();
 
   constructor(private readonly deps: ThreadHydratorDeps) {
     this.auxiliaryHydrator = new AuxiliaryHydrator({
@@ -144,7 +145,7 @@ export class ThreadHydrator {
 
       const tailStart = Math.max(0, pageResult.messages.length - MESSAGE_FETCH_SIZE);
       const earlierMessages = pageResult.messages.slice(0, tailStart);
-      const tailPage = selectConversationPage(
+      const tailPage = buildConversationPageSubset(
         pageResult,
         pageResult.messages.slice(tailStart),
         pageResult.hasMore || earlierMessages.length > 0,
@@ -167,7 +168,7 @@ export class ThreadHydrator {
         cachePrefetchedHistoryPage(
           threadId,
           tailPage.messages[0].sequence,
-          selectConversationPage(pageResult, earlierMessages, pageResult.hasMore),
+          buildConversationPageSubset(pageResult, earlierMessages, pageResult.hasMore),
         );
       }
     } catch {
@@ -292,8 +293,8 @@ export class ThreadHydrator {
     opts?: ThreadHydratorOptions,
     restoreOpts?: { bumpLoadEpoch?: boolean },
   ): void {
-    const visibleCached = this.compactCachedRecordForRestore(threadId, cached);
-    this.restoreFromCache(threadId, visibleCached, restoreOpts);
+    const renderableCachedRecord = this.compactCachedRecordForRestore(threadId, cached);
+    this.restoreFromCache(threadId, renderableCachedRecord, restoreOpts);
     const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
     void this.refreshThreadGoal(threadId, expectedEpoch);
     this.auxiliaryHydrator.hydrate(threadId, {
@@ -303,10 +304,10 @@ export class ThreadHydrator {
       expectedLoadEpoch: expectedEpoch,
     });
     if (
-      visibleCached.hasMoreMessages &&
-      visibleCached.messages.length < BACKGROUND_PREFETCH_LIMIT
+      renderableCachedRecord.hasMoreMessages &&
+      renderableCachedRecord.messages.length < BACKGROUND_PREFETCH_LIMIT
     ) {
-      this.scheduleEarlierHistoryHydration(threadId, visibleCached);
+      this.scheduleEarlierHistoryPrefetch(threadId, renderableCachedRecord);
     }
   }
 
@@ -327,11 +328,11 @@ export class ThreadHydrator {
       answeredPlanMessageIds: [...cached.answeredPlanMessageIds],
       narrativeByMessage,
     };
-    const tailPage = selectConversationPage(page, tailMessages, true);
+    const tailPage = buildConversationPageSubset(page, tailMessages, true);
     cachePrefetchedHistoryPage(
       threadId,
       tailMessages[0].sequence,
-      selectConversationPage(page, earlierMessages, cached.hasMoreMessages),
+      buildConversationPageSubset(page, earlierMessages, cached.hasMoreMessages),
     );
 
     return {
@@ -587,7 +588,7 @@ export class ThreadHydrator {
         if (goalLookup) this.applyGoalLookup(threadId, goalLookup, expectedEpoch);
       });
       if (commitOpts?.prefetchEarlierHistory !== false) {
-        this.scheduleEarlierHistoryHydration(threadId, pageResult);
+        this.scheduleEarlierHistoryPrefetch(threadId, pageResult);
       }
     } catch (e) {
       if (getState().currentThreadId === threadId) {
@@ -603,7 +604,7 @@ export class ThreadHydrator {
   }
 
   /** Defers older history until the browser has had a chance to paint the tail. */
-  private scheduleEarlierHistoryHydration(
+  private scheduleEarlierHistoryPrefetch(
     threadId: string,
     page: Pick<ThreadRecord, "messages"> & { hasMore?: boolean; hasMoreMessages?: boolean },
   ): void {
@@ -611,35 +612,35 @@ export class ThreadHydrator {
     const before = page.messages[0].sequence;
     if (hasPrefetchedHistoryPage(threadId, before)) return;
     const epoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
-    const hydrateKey = `${threadId}:${before}`;
+    const prefetchKey = `${threadId}:${before}`;
     setTimeout(() => {
       const state = this.deps.getState();
       if (state.currentThreadId !== threadId) return;
       if (getThreadRecord(state.records, threadId).loadEpoch !== epoch) return;
-      const existing = this.historyHydrates.get(hydrateKey);
+      const existing = this.pendingHistoryPrefetches.get(prefetchKey);
       if (existing) {
         existing.expectedEpoch = epoch;
         return;
       }
-      const hydrate: HistoryHydrate = {
+      const prefetch: PendingHistoryPrefetch = {
         expectedEpoch: epoch,
         promise: Promise.resolve(),
       };
-      hydrate.promise = this.hydrateEarlierHistory(
+      prefetch.promise = this.prefetchEarlierHistory(
         threadId,
         before,
-        () => hydrate.expectedEpoch,
+        () => prefetch.expectedEpoch,
       ).finally(() => {
-        if (this.historyHydrates.get(hydrateKey) === hydrate) {
-          this.historyHydrates.delete(hydrateKey);
+        if (this.pendingHistoryPrefetches.get(prefetchKey) === prefetch) {
+          this.pendingHistoryPrefetches.delete(prefetchKey);
         }
       });
-      this.historyHydrates.set(hydrateKey, hydrate);
+      this.pendingHistoryPrefetches.set(prefetchKey, prefetch);
     }, 0);
   }
 
-  /** Prepends the rest of the warm history window without blocking the tail. */
-  private async hydrateEarlierHistory(
+  /** Cache the older history window without attaching it to live React state. */
+  private async prefetchEarlierHistory(
     threadId: string,
     before: number,
     getExpectedEpoch: () => number,
