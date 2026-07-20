@@ -9,6 +9,8 @@ import type {
   AttachmentMeta,
   SkillInfo,
   SkillDiagnostics,
+  ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
   PrInfo,
   PrDetail,
   ToolCallRecord,
@@ -684,6 +686,8 @@ export function createWsTransport(
       rpc<ChecksStatus>("github.checkStatus", { threadId, force }),
 
     // Skills
+    getProviderCatalog: (request: ProviderCatalogRequest) =>
+      rpc<ProviderCatalogSnapshot>("provider.catalog", request),
     listSkills: (cwd?, providerId?) => rpc<SkillInfo[]>("skill.list", { cwd, providerId }),
     diagnoseSkills: (cwd?) => rpc<SkillDiagnostics>("skill.diagnose", { cwd }),
 

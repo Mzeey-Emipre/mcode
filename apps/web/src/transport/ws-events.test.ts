@@ -8,7 +8,7 @@ vi.mock("@/transport", () => ({
 import { pushEmitter } from "./ws-transport";
 import { startPushListeners, stopPushListeners } from "./ws-events";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useSkillsStore } from "@/stores/skillsStore";
+import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -100,7 +100,7 @@ describe("ws-events skills.changed", () => {
 
   it("coalesces a burst of provider invalidations into one cache refresh", () => {
     vi.useFakeTimers();
-    const invalidate = vi.spyOn(useSkillsStore.getState(), "invalidate");
+    const invalidate = vi.spyOn(useProviderCatalogStore.getState(), "invalidate");
     startPushListeners();
 
     pushEmitter.emit("skills.changed", {});

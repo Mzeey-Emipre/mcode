@@ -50,6 +50,37 @@ afterEach(() => {
 });
 
 describe("agent command transport", () => {
+  it("sends provider catalog context through the typed RPC method", async () => {
+    const transport = createWsTransport("ws://localhost:1234");
+    mockWs.simulateOpen();
+    const requestParams = {
+      providerId: "codex" as const,
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+    };
+
+    const pending = transport.getProviderCatalog(requestParams);
+    await vi.waitFor(() => {
+      expect(mockWs.sent.some((row) => JSON.parse(row).method === "provider.catalog")).toBe(true);
+    });
+    const request = mockWs.sent
+      .map((row) => JSON.parse(row) as { id: string; method: string; params: unknown })
+      .find((row) => row.method === "provider.catalog");
+
+    expect(request?.params).toEqual(requestParams);
+    const snapshot = {
+      providerId: "codex",
+      context: { scope: "workspace", workspaceId: "workspace-1", threadId: "thread-1" },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T12:00:00.000Z" },
+      diagnostics: [],
+      entries: [],
+      selectableAgents: [],
+    };
+    mockWs.respond(request!.id, snapshot);
+    await expect(pending).resolves.toEqual(snapshot);
+    transport.close();
+  });
+
   it("sends the typed existing-thread command without changing its RPC fields", async () => {
     const transport = createWsTransport("ws://localhost:1234");
     mockWs.simulateOpen();

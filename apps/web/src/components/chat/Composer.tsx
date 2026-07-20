@@ -1296,9 +1296,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (isGoalOpen(activeGoal)) setGoalPending(false);
   }, [activeGoal]);
 
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
-
   const activeThread = useWorkspaceThread(threadId, (t) => t);
   const isThreadScaffold = !!(
     activeThread?.clientPreparing || activeThread?.clientError
@@ -1512,7 +1509,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const slashCommand = useSlashCommand({
     anchorRef: composerContainerRef,
-    cwd: workspacePath,
+    workspaceId: workspaceId ?? undefined,
+    threadId: !isNewThread ? threadId : undefined,
     providerId: effectiveProviderId,
     modelId,
     onMcodeCommand: (action) => {

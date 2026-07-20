@@ -220,20 +220,27 @@ async function seedSkillsStore(page: Page): Promise<void> {
     };
     const stores =
       (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
-    const skillsStore = stores.find((store) => {
+    const catalogStore = stores.find((store) => {
       const state = store.getState();
-      return "skills" in state && "isLoading" in state && "load" in state;
+      return "entries" in state && "load" in state && "invalidate" in state && "reset" in state;
     });
-    if (!skillsStore) throw new Error("[E2E] skillsStore not found");
-    const skills = [
-      { name: "commit", description: "Create a git commit" },
-      { name: "review-pr", description: "Review a pull request" },
+    if (!catalogStore) throw new Error("[E2E] provider catalog store not found");
+    const entries = [
+      { kind: "skill", identity: { providerId: "claude", kind: "skill", nativeId: "commit" }, name: "commit", description: "Create a git commit", source: "user" },
+      { kind: "skill", identity: { providerId: "claude", kind: "skill", nativeId: "review-pr" }, name: "review-pr", description: "Review a pull request", source: "user" },
     ];
-    const cacheKey = JSON.stringify(["/test/path", "claude"]);
-    skillsStore.setState({
+    const cacheKey = JSON.stringify(["claude", "ws-1", "thread-1", null]);
+    catalogStore.setState({
       entries: {
         [cacheKey]: {
-          skills,
+          snapshot: {
+            providerId: "claude",
+            context: { scope: "workspace", workspaceId: "ws-1", threadId: "thread-1" },
+            freshness: { status: "fresh", fetchedAt: new Date().toISOString() },
+            diagnostics: [],
+            entries,
+            selectableAgents: [],
+          },
           isLoading: false,
           isStale: false,
           error: null,
@@ -242,9 +249,6 @@ async function seedSkillsStore(page: Page): Promise<void> {
           lastFetchedAt: Date.now(),
         },
       },
-      skills,
-      isLoading: false,
-      error: null,
     });
   });
 }

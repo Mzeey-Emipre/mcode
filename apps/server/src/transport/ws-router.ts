@@ -18,6 +18,8 @@ import {
   type WsMethodName,
   type IProviderRegistry,
   type ProviderUsageInfo,
+  type ProviderCatalogContext,
+  type ProviderAgentMention,
   type PreviewAnnotationBundle,
   getExtension,
   isSkillCatalogCapable,
@@ -65,6 +67,10 @@ import {
   collectAttributedWorkspacePathGroups,
   collectAttributedWorkspacePaths,
 } from "../services/snapshot-attribution.js";
+import {
+  buildProviderCatalogSnapshot,
+  discoverBoundedCodexAgents,
+} from "./provider-catalog.js";
 
 const PREVIEW_ANNOTATION_FENCE_START = "<!-- mcode-preview-annotations:v1";
 const PREVIEW_ANNOTATION_FENCE_END = "mcode-preview-annotations:end -->";
@@ -114,18 +120,12 @@ function teardownFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
 }
 
-interface CodexAgentMentionInfo {
-  name: string;
-  path: string;
-  description?: string;
-}
-
 function tomlStringValue(body: string, key: string): string | undefined {
   const match = new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m").exec(body);
   return match?.[1]?.trim() || undefined;
 }
 
-async function scanCodexAgentDir(dir: string): Promise<CodexAgentMentionInfo[]> {
+async function scanCodexAgentDir(dir: string): Promise<ProviderAgentMention[]> {
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -133,7 +133,7 @@ async function scanCodexAgentDir(dir: string): Promise<CodexAgentMentionInfo[]> 
     return [];
   }
 
-  const agents: CodexAgentMentionInfo[] = [];
+  const agents: ProviderAgentMention[] = [];
   for (const entry of entries) {
     if (!entry.endsWith(".toml")) continue;
     const path = join(dir, entry);
@@ -150,7 +150,12 @@ async function scanCodexAgentDir(dir: string): Promise<CodexAgentMentionInfo[]> 
   return agents;
 }
 
-async function discoverCodexAgents(deps: RouterDeps, workspaceId?: string, threadId?: string): Promise<CodexAgentMentionInfo[]> {
+function resolveCodexAgentDirectories(
+  deps: RouterDeps,
+  workspaceId?: string,
+  threadId?: string,
+  cwdOverride?: string,
+): string[] {
   const dirs = [join(homedir(), ".codex", "agents")];
   if (workspaceId) {
     const workspace = deps.workspaceService.findById(workspaceId);
@@ -164,15 +169,45 @@ async function discoverCodexAgents(deps: RouterDeps, workspaceId?: string, threa
       }
       dirs.push(join(cwd, ".codex", "agents"));
     }
+  } else if (cwdOverride) {
+    dirs.push(join(cwdOverride, ".codex", "agents"));
   }
+  return dirs;
+}
 
-  const byName = new Map<string, CodexAgentMentionInfo>();
-  for (const dir of dirs) {
+async function discoverCodexAgents(
+  deps: RouterDeps,
+  workspaceId?: string,
+  threadId?: string,
+  cwdOverride?: string,
+): Promise<ProviderAgentMention[]> {
+  const byName = new Map<string, ProviderAgentMention>();
+  for (const dir of resolveCodexAgentDirectories(deps, workspaceId, threadId, cwdOverride)) {
     for (const agent of await scanCodexAgentDir(dir)) {
       byName.set(agent.name, agent);
     }
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function resolveProviderCatalogContext(
+  deps: RouterDeps,
+  params: { workspaceId?: string; threadId?: string; cwd?: string },
+): { cwd: string | undefined; context: ProviderCatalogContext } {
+  if (params.workspaceId) {
+    return {
+      cwd: resolveWorkspaceRepoPath(deps, params.workspaceId, params.threadId),
+      context: {
+        scope: "workspace",
+        workspaceId: params.workspaceId,
+        ...(params.threadId ? { threadId: params.threadId } : {}),
+      },
+    };
+  }
+  if (params.cwd) {
+    return { cwd: params.cwd, context: { scope: "path", cwd: params.cwd } };
+  }
+  return { cwd: undefined, context: { scope: "user" } };
 }
 
 /** Service dependencies for the router. */
@@ -956,6 +991,31 @@ async function dispatch(
           : undefined;
       }
       return deps.skillService.list(params.cwd, params.providerId, nativeSkills);
+    }
+    case "provider.catalog": {
+      const { cwd, context: catalogContext } = resolveProviderCatalogContext(deps, params);
+      let nativeSkills;
+      if (params.providerId === "codex") {
+        const provider = deps.providerRegistry.resolve("codex");
+        nativeSkills = isSkillCatalogCapable(provider)
+          ? await provider.listSkills(cwd)
+          : undefined;
+      }
+      const skills = deps.skillService.list(cwd, params.providerId, nativeSkills);
+      const agentDiscovery = params.providerId === "codex"
+        ? await discoverBoundedCodexAgents(resolveCodexAgentDirectories(
+            deps,
+            params.workspaceId,
+            params.threadId,
+            params.cwd,
+          ))
+        : undefined;
+      return buildProviderCatalogSnapshot({
+        providerId: params.providerId,
+        context: catalogContext,
+        skills,
+        ...(agentDiscovery ? { agentDiscovery } : {}),
+      });
     }
     case "skill.diagnose":
       return deps.skillService.diagnose(params.cwd);

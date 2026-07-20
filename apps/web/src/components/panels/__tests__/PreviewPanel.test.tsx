@@ -15,7 +15,7 @@ const {
   mockUsePreviewTabs,
   mockOnAddElementAnnotation,
   mockCaptureAnnotationSnapshot,
-  mockListSkills,
+  mockGetProviderCatalog,
 } = vi.hoisted(() => ({
   mockUsePreviewBridge: vi.fn(),
   mockUsePreviewTabs: vi.fn<() => {
@@ -31,10 +31,17 @@ const {
   })),
   mockOnAddElementAnnotation: vi.fn(),
   mockCaptureAnnotationSnapshot: vi.fn(),
-  mockListSkills: vi.fn().mockResolvedValue([
-    { name: "commit", description: "Create a git commit" },
-    { name: "review-pr", description: "Review a pull request" },
-  ]),
+  mockGetProviderCatalog: vi.fn().mockResolvedValue({
+    providerId: "claude",
+    context: { scope: "user" },
+    freshness: { status: "fresh", fetchedAt: "2026-07-20T12:00:00.000Z" },
+    diagnostics: [],
+    entries: [
+      { kind: "skill", identity: { providerId: "claude", kind: "skill", nativeId: "commit" }, name: "commit", description: "Create a git commit", source: "user" },
+      { kind: "skill", identity: { providerId: "claude", kind: "skill", nativeId: "review-pr" }, name: "review-pr", description: "Review a pull request", source: "user" },
+    ],
+    selectableAgents: [],
+  }),
 }));
 
 // Mock hooks before importing the component under test.
@@ -43,11 +50,11 @@ vi.mock("../hooks/usePreviewBridge", () => ({
   formatNavError: (code: string) => code,
 }));
 
-// Transport mock keeps the skillsStore eager-prefetch from hitting real IPC in
+// Transport mock keeps provider catalog eager-prefetch from hitting real IPC in
 // tests. The mock is shared across all describe blocks; individual tests that
-// need specific skill lists override mockListSkills directly.
+// need specific catalogs override mockGetProviderCatalog directly.
 vi.mock("@/transport", () => ({
-  getTransport: () => ({ listSkills: mockListSkills }),
+  getTransport: () => ({ getProviderCatalog: mockGetProviderCatalog }),
 }));
 
 // The panel only consumes usePreviewTabs for the header's "New page" action and
@@ -84,7 +91,7 @@ import {
   usePreviewAnnotationStore,
 } from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
-import { useSkillsStore } from "@/stores/skillsStore";
+import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
@@ -333,7 +340,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
-    useSkillsStore.getState().reset();
+    useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
     mockUsePreviewTabs.mockReturnValue({
       tabSet: null,
@@ -352,7 +359,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
-    useSkillsStore.getState().reset();
+    useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockClear();
     mockUsePreviewTabs.mockClear();
     mockOnAddElementAnnotation.mockClear();
@@ -2011,8 +2018,15 @@ describe("PreviewPanel: full panel state", () => {
     // Override skills to be empty so only builtins would appear if they were
     // included; with includeBuiltins: false the popup renders the empty state
     // instead of a list. Confirms builtins don't leak into the annotation popup.
-    mockListSkills.mockResolvedValueOnce([]);
-    useSkillsStore.getState().reset();
+    mockGetProviderCatalog.mockResolvedValueOnce({
+      providerId: "claude",
+      context: { scope: "user" },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T12:00:00.000Z" },
+      diagnostics: [],
+      entries: [],
+      selectableAgents: [],
+    });
+    useProviderCatalogStore.getState().reset();
 
     installDraftAnnotation();
 
