@@ -167,8 +167,38 @@ test.describe("Right panel activity rail", () => {
     await expect(page.getByTestId("rail-panel-toggle")).toBeVisible();
     await expect(page.getByTestId("rail-panel-toggle")).toHaveAttribute(
       "aria-label",
-      "Toggle panel",
+      "Close panel",
     );
+    await expect(page.getByTestId("rail-maximize-toggle")).toHaveAttribute(
+      "aria-label",
+      "Maximize panel",
+    );
+  });
+
+  test("maximizes and restores the panel from the expanded rail", async ({ page }) => {
+    await seed(page, { tabs: ["preview"] });
+
+    const panel = page.getByTestId("right-panel");
+    const rail = page.getByTestId("activity-rail");
+    const maximizeToggle = page.getByTestId("rail-maximize-toggle");
+    const inlineWidth = await panel.evaluate((element) => element.getBoundingClientRect().width);
+
+    await rail.hover({ position: { x: 24, y: 16 } });
+    await expect(rail).toHaveAttribute("data-expanded", "true");
+    await expect(maximizeToggle).toBeVisible();
+    await maximizeToggle.click();
+
+    await expect(maximizeToggle).toHaveAttribute("aria-label", "Restore panel");
+    await expect
+      .poll(() => panel.evaluate((element) => element.getBoundingClientRect().width))
+      .toBeGreaterThan(inlineWidth);
+
+    await maximizeToggle.click();
+
+    await expect(maximizeToggle).toHaveAttribute("aria-label", "Maximize panel");
+    await expect
+      .poll(() => panel.evaluate((element) => Math.round(element.getBoundingClientRect().width)))
+      .toBe(Math.round(inlineWidth));
   });
 
   test("add control: hidden when nothing is creatable", async ({ page }) => {
@@ -233,7 +263,7 @@ test.describe("Right panel activity rail", () => {
     await expect(page.getByTestId("activity-rail")).toBeVisible();
     await expect(page.getByTestId("rail-panel-toggle")).toHaveAttribute(
       "aria-label",
-      "Toggle panel",
+      "Close panel",
     );
   });
 });
