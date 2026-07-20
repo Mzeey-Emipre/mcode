@@ -323,9 +323,8 @@ export function RightPanel() {
           )}
           <div
             className={cn(
-              "absolute inset-0 flex min-h-0 flex-row overflow-hidden",
-              !terminalActive && "pointer-events-none z-0 opacity-0",
-              terminalActive && "z-10",
+              "absolute inset-0 z-0 flex min-h-0 flex-row overflow-hidden",
+              !terminalActive && "pointer-events-none opacity-0",
             )}
             aria-hidden={!terminalActive}
             inert={!terminalActive ? true : undefined}

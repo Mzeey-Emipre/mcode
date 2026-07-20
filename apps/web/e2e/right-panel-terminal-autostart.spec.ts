@@ -65,6 +65,22 @@ async function terminalCount(page: Page, threadId: string): Promise<number> {
   }, threadId);
 }
 
+/** Clears the scope's local terminal list without retriggering auto-start. */
+async function clearTerminals(page: Page, threadId: string): Promise<void> {
+  await page.evaluate((tid) => {
+    const stores: unknown[] =
+      (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
+    const termStore = stores.find(
+      (s) => "removeAllTerminals" in (s as { getState: () => Record<string, unknown> }).getState(),
+    );
+    (
+      termStore as
+        | { getState: () => { removeAllTerminals: (scopeId: string) => void } }
+        | undefined
+    )?.getState().removeAllTerminals(tid);
+  }, threadId);
+}
+
 async function openPanelOnScope(page: Page): Promise<void> {
   await page.evaluate(
     ({ workspace, thread, tid, wid }) => {
@@ -131,5 +147,80 @@ test.describe("Right panel terminal auto-start", () => {
     // Opening the tab spawns one without the user clicking "New terminal".
     await expect.poll(() => terminalCount(page, THREAD.id), { timeout: 5_000 }).toBe(1);
     await expect(page.getByText("No terminals")).toHaveCount(0);
+  });
+
+  test("expanded rail stays opaque above terminal content", async ({ page }) => {
+    await openPanelOnScope(page);
+    await page.getByTestId("panel-card-terminal").click();
+    await expect.poll(() => terminalCount(page, THREAD.id), { timeout: 5_000 }).toBe(1);
+
+    const rail = page.getByTestId("activity-rail");
+    const railSurface = rail.locator(":scope > div");
+    const resizeHandle = page.getByRole("separator", { name: "Resize panel" });
+    const terminalSlot = page.getByTestId("terminal-pool-slot");
+    const slotWidthBefore = await terminalSlot.evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
+    await rail.hover({ position: { x: 24, y: 16 } });
+    await expect(rail).toHaveAttribute("data-expanded", "true");
+
+    const railBox = await rail.boundingBox();
+    const railSurfaceBox = await railSurface.boundingBox();
+    const resizeHandleBox = await resizeHandle.boundingBox();
+    expect(railBox).not.toBeNull();
+    expect(railSurfaceBox).not.toBeNull();
+    expect(resizeHandleBox).not.toBeNull();
+    expect(Math.round(railSurfaceBox!.width)).toBe(160);
+    await expect
+      .poll(() => terminalSlot.evaluate((element) => element.getBoundingClientRect().width))
+      .toBe(slotWidthBefore);
+    const railAlpha = await railSurface.evaluate((element) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas 2D context unavailable");
+      context.fillStyle = getComputedStyle(element).backgroundColor;
+      context.fillRect(0, 0, 1, 1);
+      return context.getImageData(0, 0, 1, 1).data[3];
+    });
+    expect(railAlpha).toBe(255);
+
+    expect(
+      await resizeHandle.evaluate(
+        (element, { x, y }) => element.contains(document.elementFromPoint(x, y)),
+        { x: resizeHandleBox!.x + 1, y: railBox!.y + 92 },
+      ),
+    ).toBe(true);
+
+    const hitExpandedRail = () => page.evaluate(
+      ({ x, y }) => {
+        const railElement = document.querySelector('[data-testid="activity-rail"]');
+        const hit = document.elementFromPoint(x, y);
+        const ancestry: string[] = [];
+        let current: Element | null = hit;
+        while (current && ancestry.length < 6) {
+          const style = getComputedStyle(current);
+          ancestry.push(
+            `${current.tagName.toLowerCase()}.${current.className} z=${style.zIndex} position=${style.position}`,
+          );
+          current = current.parentElement;
+        }
+        return {
+          insideRail: Boolean(railElement && hit && railElement.contains(hit)),
+          ancestry,
+        };
+      },
+      { x: railBox!.x + 100, y: railBox!.y + 92 },
+    );
+
+    const activeTerminalHit = await hitExpandedRail();
+    expect(activeTerminalHit.insideRail, activeTerminalHit.ancestry.join("\n")).toBe(true);
+
+    await clearTerminals(page, THREAD.id);
+    await expect(page.getByText("No terminals")).toBeVisible();
+
+    const emptyTerminalHit = await hitExpandedRail();
+    expect(emptyTerminalHit.insideRail, emptyTerminalHit.ancestry.join("\n")).toBe(true);
   });
 });

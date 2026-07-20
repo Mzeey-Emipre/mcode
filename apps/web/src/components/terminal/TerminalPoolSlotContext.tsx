@@ -62,5 +62,5 @@ export function useTerminalPoolSlot(): TerminalPoolSlotContextValue {
  */
 export function TerminalPoolSlot({ className }: { readonly className?: string }) {
   const { setSlotRef } = useTerminalPoolSlot();
-  return <div ref={setSlotRef} className={className} />;
+  return <div ref={setSlotRef} className={className} data-testid="terminal-pool-slot" />;
 }
