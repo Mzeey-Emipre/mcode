@@ -212,6 +212,13 @@ function usageCategoryFillClass(category: QuotaCategory): string {
   return "bg-[var(--diff-add-strong)]";
 }
 
+function usageCategoryMetricClass(category: QuotaCategory): string {
+  const percent = usageCategoryPercent(category);
+  if (percent >= 90) return "text-destructive";
+  if (percent >= 70) return "text-primary";
+  return "text-foreground/80";
+}
+
 /**
  * Returns the Overview session-cost label only for provider-proven API-key billing.
  */
@@ -300,7 +307,7 @@ function ThreadOverviewUsageBars({
         className="flex h-8 w-full items-center justify-between gap-3 px-2 text-left"
       >
         <span className="flex min-w-0 items-center gap-2">
-          <Gauge size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+          <Gauge aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate text-xs font-medium">Usage</span>
         </span>
         <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
@@ -327,12 +334,12 @@ function ThreadOverviewUsageBars({
           className="h-8 w-full cursor-pointer justify-between gap-3 px-2 text-left"
         >
           <span className="flex min-w-0 items-center gap-2">
-            <Gauge size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+            <Gauge aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="truncate text-xs font-medium">Usage</span>
           </span>
-          <span className="flex shrink-0 items-center gap-2">
+          <span className="flex min-w-0 shrink items-center gap-2">
             {!open ? (
-              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+              <span className="min-w-0 truncate font-mono text-xs tabular-nums text-muted-foreground">
                 {summary}
               </span>
             ) : null}
@@ -353,63 +360,72 @@ function ThreadOverviewUsageBars({
           id={THREAD_OVERVIEW_USAGE_DETAILS_ID}
           data-testid="thread-overview-usage-details"
           aria-hidden={!open}
-          className="space-y-2.5 px-2 pb-2 pl-6 pt-1 text-muted-foreground"
+          className="flex gap-2 px-2 pb-2 pt-1 text-muted-foreground"
         >
-          {categories.map((category) => {
-            const percent = Math.min(Math.max(usageCategoryPercent(category), 0), 100);
-            const rounded = Math.round(percent);
-            const shortLabel = usageCategoryShortLabel(category.label);
-            const displayLabel = category.label.trim();
-            const resetText = formatUsageResetText(category.resetDate);
-            const progressDescription = resetText
-              ? `${shortLabel} usage ${rounded} percent. ${resetText}`
-              : `${shortLabel} usage ${rounded} percent`;
-            return (
-              <div key={category.label} className="space-y-1">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 truncate text-xs text-foreground/80">{displayLabel}</span>
-                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                    {rounded}%
-                  </span>
-                </div>
-                <div
-                  role="progressbar"
-                  aria-label={progressDescription}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={rounded}
-                  className="h-1 w-full overflow-hidden rounded-full bg-muted/60"
-                >
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-[width] duration-300 ease-out motion-reduce:transition-none",
-                      open && "animate-thread-overview-usage-fill",
-                      usageCategoryFillClass(category),
-                    )}
-                    style={{ width: `${percent}%` }}
-                  />
-                </div>
-                {resetText ? (
-                  <div className="font-mono text-xs tabular-nums text-muted-foreground/70">
-                    {resetText}
+          <span aria-hidden className="size-3.5 shrink-0" />
+          <div className="min-w-0 flex-1 space-y-3">
+            {categories.map((category) => {
+              const percent = Math.min(Math.max(usageCategoryPercent(category), 0), 100);
+              const rounded = Math.round(percent);
+              const shortLabel = usageCategoryShortLabel(category.label);
+              const displayLabel = category.label.trim();
+              const resetText = formatUsageResetText(category.resetDate);
+              const progressDescription = resetText
+                ? `${shortLabel} usage ${rounded} percent. ${resetText}`
+                : `${shortLabel} usage ${rounded} percent`;
+              return (
+                <div key={category.label} className="space-y-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0 truncate text-xs text-foreground/80">{displayLabel}</span>
+                    <span
+                      data-testid="thread-overview-usage-value"
+                      className={cn(
+                        "shrink-0 font-mono text-xs font-medium tabular-nums",
+                        usageCategoryMetricClass(category),
+                      )}
+                    >
+                      {rounded}%
+                    </span>
                   </div>
-                ) : null}
+                  <div
+                    role="progressbar"
+                    aria-label={progressDescription}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={rounded}
+                    className="h-1 w-full overflow-hidden rounded-full bg-muted"
+                  >
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-[width] duration-300 ease-out motion-reduce:transition-none",
+                        open && "animate-thread-overview-usage-fill",
+                        usageCategoryFillClass(category),
+                      )}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                  {resetText ? (
+                    <div className="font-mono text-xs tabular-nums text-muted-foreground">
+                      {resetText}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {usageStatus === "stale" ? (
+              <div className="font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
+                STALE
               </div>
-            );
-          })}
-          {usageStatus === "stale" ? (
-            <div className="font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
-              STALE
-            </div>
-          ) : null}
-          {sessionCostSummary ? (
-            <div className="flex items-baseline justify-between gap-3 pt-0.5">
-              <span className="min-w-0 truncate text-xs text-foreground/80">Session cost</span>
-              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                {sessionCostSummary}
-              </span>
-            </div>
-          ) : null}
+            ) : null}
+            {sessionCostSummary ? (
+              <div className="flex items-baseline justify-between gap-3 pt-1">
+                <span className="min-w-0 truncate text-xs text-foreground/80">Session cost</span>
+                <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                  {sessionCostSummary}
+                </span>
+              </div>
+            ) : null}
+          </div>
         </div>
       </AnimatedCollapsible>
     </Collapsible>

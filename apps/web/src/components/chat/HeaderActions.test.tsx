@@ -531,6 +531,39 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
   });
 
+  it("emphasizes quota percentages when usage approaches or reaches the limit", () => {
+    seedThreadUsage("thread-1", {
+      providerId: "claude",
+      usageStatus: "ready",
+      quotaCategories: [
+        {
+          label: "5-hour limit",
+          used: 75,
+          total: 100,
+          remainingPercent: 0.25,
+          resetDate: "2099-07-07T14:14:00.000Z",
+          isUnlimited: false,
+        },
+        {
+          label: "Weekly limit",
+          used: 95,
+          total: 100,
+          remainingPercent: 0.05,
+          resetDate: "2099-07-07T14:14:00.000Z",
+          isUnlimited: false,
+        },
+      ],
+    });
+
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+
+    const values = screen.getAllByTestId("thread-overview-usage-value");
+    expect(values[0]).toHaveTextContent("75%");
+    expect(values[0]).toHaveClass("text-primary");
+    expect(values[1]).toHaveTextContent("95%");
+    expect(values[1]).toHaveClass("text-destructive");
+  });
+
   it("does not render Codex usage before provider quota data arrives", () => {
     renderHeaderActions(makeThread({ provider: "codex" }));
 
