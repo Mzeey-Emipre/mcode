@@ -23,6 +23,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const measureSpy = vi.fn();
 const scrollToIndexSpy = vi.fn();
+const loadOlderMessagesSpy = vi.fn();
 let totalSizeValue = 0;
 
 const mockVirtualizer = {
@@ -42,6 +43,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 let loadingValue = false;
 let activeThreadIdValue = "thread-A";
 let messagesValue: { id: string; sequence: number }[] = [{ id: "m1", sequence: 1 }];
+let hasMoreMessagesValue = false;
 
 function buildMockRecord() {
   return {
@@ -53,7 +55,7 @@ function buildMockRecord() {
     persistedToolCallCounts: {},
     persistedFilesChanged: {},
     latestTurnWithChanges: null,
-    hasMoreMessages: false,
+    hasMoreMessages: hasMoreMessagesValue,
     isLoadingMore: false,
     permissions: [],
     hooks: [],
@@ -71,7 +73,7 @@ vi.mock("@/stores/threadStore", () => ({
       records,
       currentThreadId: activeThreadIdValue,
       runningThreadIds: new Set(),
-      loadOlderMessages: vi.fn(),
+      loadOlderMessages: loadOlderMessagesSpy,
     });
   }),
 }));
@@ -104,7 +106,9 @@ import { rememberScrollTop, recallScrollTop, clearScrollMemory } from "../scroll
 beforeEach(() => {
   measureSpy.mockClear();
   scrollToIndexSpy.mockClear();
+  loadOlderMessagesSpy.mockClear();
   totalSizeValue = 0;
+  hasMoreMessagesValue = false;
   clearScrollMemory();
 });
 
@@ -214,6 +218,46 @@ describe("MessageList thread switch", () => {
     act(() => rerender(<MessageList />));
 
     expect(scrollTop).toBe(5580);
+  });
+
+  it("waits for upward user intent before consuming prefetched history", async () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [{ id: "m1", sequence: 1 }];
+    hasMoreMessagesValue = true;
+    const { container } = render(<MessageList />);
+
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      configurable: true,
+      value: 2000,
+    });
+    Object.defineProperty(scrollEl, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
+    await vi.waitFor(() => {
+      expect(scrollEl.style.opacity).toBe("1");
+    });
+    scrollEl.scrollTop = 0;
+
+    act(() => {
+      fireEvent.scroll(scrollEl);
+    });
+    expect(loadOlderMessagesSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      fireEvent.wheel(scrollEl, { deltaY: -100 });
+      fireEvent.scroll(scrollEl);
+    });
+
+    expect(loadOlderMessagesSpy).toHaveBeenCalledOnce();
+    expect(loadOlderMessagesSpy).toHaveBeenCalledWith("thread-A");
   });
 
   it("does not call virtualizer.measure() on a cache-hit switch", () => {

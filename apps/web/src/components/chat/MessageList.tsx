@@ -273,6 +273,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const scrollToTailIntentRef = useRef(false);
   /** Previous `scrollTop` from the last `onScroll` pass; detects upward interrupts during smooth tail scroll. */
   const prevScrollTopRef = useRef(0);
+  /** Prevents layout-driven scroll events from consuming warm history before the user asks for it. */
+  const olderHistoryRequestedRef = useRef(false);
   /** Ref mirror of sticky-user-message visibility to avoid redundant setState on scroll. */
   const showStickyUserMessageRef = useRef(false);
   /** Previous effective top padding; used to compensate scrollTop when padding changes. */
@@ -394,9 +396,28 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     });
   }, []);
 
+  /** Load older messages only after an upward gesture reaches the top threshold. */
+  const loadOlderHistoryWhenRequested = useCallback(() => {
+    const el = containerRef.current;
+    if (
+      !olderHistoryRequestedRef.current ||
+      !el ||
+      el.scrollTop >= PAGINATION_THRESHOLD ||
+      !activeThreadId ||
+      !hasMore ||
+      isLoadingMore
+    ) {
+      return;
+    }
+
+    olderHistoryRequestedRef.current = false;
+    void loadOlderMessages(activeThreadId);
+  }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages]);
+
   /** Clears tail pin when the user scrolls content upward (wheel / trackpad). */
   const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
     if (e.deltaY < 0) {
+      olderHistoryRequestedRef.current = true;
       const interruptedPendingTailScroll = scrollTimerRef.current !== null;
       scrollToTailIntentRef.current = false;
       pinListTailRef.current = false;
@@ -409,8 +430,9 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
         setShowScrollBtn(true);
       }
       streamingFollowPauseUntilRef.current = Date.now() + WHEEL_UP_FOLLOW_PAUSE_MS;
+      loadOlderHistoryWhenRequested();
     }
-  }, []);
+  }, [loadOlderHistoryWhenRequested]);
 
   /** Track scroll-to-bottom button visibility and trigger upward pagination near the top. */
   const handleScroll = useCallback(() => {
@@ -465,18 +487,10 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
 
     syncStickyUserMessageVisibility();
 
-    // Trigger loading older messages when near the top
-    if (
-      el.scrollTop < PAGINATION_THRESHOLD &&
-      activeThreadId &&
-      hasMore &&
-      !isLoadingMore
-    ) {
-      loadOlderMessages(activeThreadId);
-    }
+    loadOlderHistoryWhenRequested();
 
     prevScrollTopRef.current = el.scrollTop;
-  }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages, syncStickyUserMessageVisibility]);
+  }, [loadOlderHistoryWhenRequested, syncStickyUserMessageVisibility]);
 
   useEffect(() => {
     for (const message of messages) {
@@ -917,6 +931,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       }
       turnExpandRef.current.clear();
       scrollToTailIntentRef.current = false;
+      olderHistoryRequestedRef.current = false;
       prevMessageCountRef.current = 0;
       firstMessageIdRef.current = null;
       prevScrollHeightRef.current = 0;
