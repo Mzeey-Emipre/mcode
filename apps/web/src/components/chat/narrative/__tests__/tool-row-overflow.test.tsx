@@ -69,13 +69,14 @@ describe("narrative tool row layout classes", () => {
     expect(command?.className).toContain("overflow-wrap");
   });
 
-  it("ToolSummaryLine gives a completed shell command its own disclosure", () => {
+  it("ToolSummaryLine keeps shell calls nested and reveals a shell transcript", () => {
     const group: ToolGroup = {
       calls: [
         makeBashCall({
           id: "tc-1",
           isComplete: true,
           output: "command output",
+          durationMs: 15_000,
         }),
       ],
     };
@@ -86,15 +87,24 @@ describe("narrative tool row layout classes", () => {
       </div>,
     );
 
-    const button = screen.getByRole("button", { name: /Ran command/ });
+    const summary = screen.getByRole("button", { name: /Ran 1 command/ });
     expect(screen.getAllByRole("button")).toHaveLength(1);
-    fireEvent.click(button);
+    fireEvent.click(summary);
 
+    const child = screen.getByRole("button", { name: /Ran command/ });
+    expect(child).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("in 15s")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Shell output" })).toBeNull();
+
+    fireEvent.click(child);
+
+    const detail = screen.getByTitle(LONG_SHELL_COMMAND);
+    expect(detail.className).toContain("truncate");
+    expect(detail.closest("li")?.className).toContain("min-w-0");
+    expect(screen.getByRole("region", { name: "Shell output" })).toBeTruthy();
+    expect(screen.getByText("Shell")).toBeTruthy();
     expect(container.querySelector("code")?.textContent).toBe(LONG_SHELL_COMMAND);
-    expect(screen.queryByText("Output")).toBeNull();
     expect(screen.getByText("command output")).toBeTruthy();
-    expect(container.querySelector("code")?.className).toContain("text-xs");
-    expect(container.querySelector("pre")?.className).toContain("text-xs");
   });
 
   it("ToolSummaryLine maps command_execution to terminal icon via Bash alias", () => {
@@ -114,6 +124,7 @@ describe("narrative tool row layout classes", () => {
       </div>,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
     expect(container.querySelector(".lucide-terminal")).toBeTruthy();
     expect(screen.getByText("Ran command")).toBeTruthy();
@@ -151,6 +162,7 @@ describe("narrative tool row layout classes", () => {
       <ToolSummaryLine group={group} hasError={false} hasCancelled={false} />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
     expect(container.querySelector("code")?.textContent).toBe(LONG_SHELL_COMMAND);
     expect(container.textContent).not.toContain('{"command"');
@@ -173,6 +185,7 @@ describe("narrative tool row layout classes", () => {
       <ToolSummaryLine group={group} hasError={false} hasCancelled={false} />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
     const command = container.querySelector("code")?.textContent ?? "";
     expect(command).toMatch(/^cd "C:\\Users\\cjnwo/);
@@ -200,6 +213,7 @@ describe("narrative tool row layout classes", () => {
       </div>,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
 
     const notice = screen.getByText(/Output truncated/);

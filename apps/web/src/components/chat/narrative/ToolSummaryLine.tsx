@@ -15,7 +15,7 @@ import type { ToolGroup } from "./types";
 import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
-import { CommandExecutionCard } from "./CommandExecutionCard";
+import { ShellToolCallRow } from "./ShellToolCallRow";
 
 interface ToolSummaryLineProps {
   /** The group of consecutive tool calls to summarize. */
@@ -58,7 +58,7 @@ export function NarrativeSummaryLine({
       type="button"
       onClick={onToggle}
       disabled={disabled}
-      className={`${NARRATIVE_TOOL_ROW} w-full px-2 py-1 text-left rounded-md transition-colors duration-100 text-sm ${
+      className={`${NARRATIVE_TOOL_ROW} w-full rounded-md px-2 py-1 text-left text-sm transition-colors duration-100 ${
         disabled ? "cursor-default" : "hover:bg-muted/30"
       }`}
       aria-expanded={expandable ? open : undefined}
@@ -106,7 +106,7 @@ function StatusBadge({ status }: StatusBadgeProps) {
   };
   return (
     <span
-      className={`font-mono text-xs font-medium px-1.5 py-px rounded-sm ${styles[status]}`}
+      className={`rounded-sm px-1.5 py-px font-mono text-xs font-medium ${styles[status]}`}
     >
       {status}
     </span>
@@ -128,19 +128,6 @@ export function ToolSummaryLine({
 }: ToolSummaryLineProps) {
   const [open, setOpen] = useState(false);
 
-  if (
-    group.calls.length > 0 &&
-    group.calls.every((call) => isShellTool(call.toolName))
-  ) {
-    return (
-      <div className="flex min-w-0 max-w-full flex-col gap-1 py-0.5">
-        {group.calls.map((toolCall) => (
-          <CommandExecutionCard key={toolCall.id} toolCall={toolCall} />
-        ))}
-      </div>
-    );
-  }
-
   const firstCall = group.calls[0];
   const LeadingIcon = firstCall
     ? (TOOL_ICONS[resolveToolName(firstCall.toolName)] ?? DEFAULT_ICON)
@@ -160,17 +147,17 @@ export function ToolSummaryLine({
       <NarrativeSummaryLine
         open={open}
         onToggle={() => setOpen((prev) => !prev)}
-        icon={<LeadingIcon className="w-3 h-3 shrink-0 text-muted-foreground/40" />}
+        icon={<LeadingIcon className="h-3 w-3 shrink-0 text-muted-foreground/55" />}
         badge={worstBadge ? <StatusBadge status={worstBadge} /> : undefined}
       >
-        <span className="text-muted-foreground/60 flex-1 min-w-0 truncate">
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground/75">
           {summaryText}
         </span>
       </NarrativeSummaryLine>
 
       {/* Expanded detail list */}
       <AnimatedCollapsible open={open}>
-        <ul className="min-w-0 max-w-full pl-6 mt-0.5 space-y-0.5 pb-1">
+        <ul className="mt-1 min-w-0 max-w-full space-y-1 pb-2 pl-6">
           {group.calls.map((tc) => {
             const canonicalName = resolveToolName(tc.toolName);
             const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
@@ -180,14 +167,14 @@ export function ToolSummaryLine({
 
             if (isShellTool(tc.toolName)) {
               return (
-                <li key={tc.id} className="min-w-0 max-w-full py-0.5">
-                  <CommandExecutionCard toolCall={tc} />
+                <li key={tc.id} className="min-w-0 max-w-full">
+                  <ShellToolCallRow toolCall={tc} />
                 </li>
               );
             }
 
             return (
-              <li key={tc.id} className="flex min-w-0 max-w-full flex-col gap-0.5">
+              <li key={tc.id} className="flex min-w-0 max-w-full flex-col gap-1 py-1">
                 {/* Row: icon + label + detail + badge */}
                 <div className={`${NARRATIVE_TOOL_ROW} text-sm`}>
                   <Icon className="w-[14px] h-[14px] text-muted-foreground/75 shrink-0" />

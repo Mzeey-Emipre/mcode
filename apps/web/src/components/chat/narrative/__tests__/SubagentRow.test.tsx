@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { SubagentRow } from "../SubagentRow";
 import type { ToolCall } from "@/transport/types";
 
@@ -92,5 +92,34 @@ describe("SubagentRow", () => {
     );
 
     expect(screen.getByText(/Output truncated/).textContent).toContain("512 KB total");
+  });
+
+  it("keeps shell calls nested under a subagent and expands their transcript", () => {
+    const child: ToolCall = {
+      id: "shell-1",
+      toolName: "Shell",
+      toolInput: { command: "git status --short" },
+      output: " M file.ts",
+      isError: false,
+      isComplete: true,
+      durationMs: 2_000,
+      startedAt: 1,
+      parentToolCallId: "agent-1",
+    };
+
+    render(<SubagentRow toolCall={mkAgent({})} children={[child]} hooks={[]} />);
+
+    const parent = screen.getByRole("button", { name: /Read detection module/ });
+    fireEvent.click(parent);
+
+    const command = screen.getByRole("button", { name: /Ran command/ });
+    expect(command).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: "Shell output" })).toBeNull();
+
+    fireEvent.click(command);
+
+    expect(screen.getByRole("region", { name: "Shell output" })).toBeTruthy();
+    expect(screen.getAllByText("git status --short")).toHaveLength(2);
+    expect(screen.getByText("M file.ts", { exact: false })).toBeTruthy();
   });
 });

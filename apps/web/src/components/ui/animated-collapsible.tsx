@@ -29,7 +29,13 @@ export function AnimatedCollapsible({
         className,
       )}
     >
-      <div className="min-h-0 overflow-hidden">{children}</div>
+      <div
+        className="min-h-0 overflow-hidden"
+        aria-hidden={!open}
+        inert={!open}
+      >
+        {children}
+      </div>
     </div>
   );
 }

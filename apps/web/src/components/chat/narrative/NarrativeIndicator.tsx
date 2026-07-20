@@ -107,12 +107,12 @@ export function NarrativeIndicator({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 px-4 py-2 mt-1.5",
+        "mt-2 flex items-center gap-2 px-4 py-2",
         phase === "exiting" && "narrative-indicator-exit",
       )}
       data-state={phase}
     >
-      <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+      <span className="flex items-center gap-2 text-sm text-muted-foreground">
         {/* When sub-agents are dispatched, the stacked-layers icon (with its
             float + per-layer ripple) becomes the "agent working" mark — more
             semantic than a generic dot because it mirrors the same glyph used

@@ -146,6 +146,11 @@ async function expectTruncationNotice(page: Page, total: string) {
     await summary.click();
   }
 
+  const command = page.getByRole("button", { name: /Ran command/ });
+  if (await command.getAttribute("aria-expanded") !== "true") {
+    await command.click();
+  }
+
   const notice = page.getByText(/Output truncated/).first();
   await expect(notice).toBeVisible();
   await expect(notice).toContainText(total);

@@ -32,6 +32,8 @@ function marginClassForItem(item: NarrativeItem, index: number): string {
   switch (item.type) {
     case "thought":
       return "mt-3";
+    case "tool-group":
+    case "hook":
     case "subagent":
       return "mt-1";
     default:
