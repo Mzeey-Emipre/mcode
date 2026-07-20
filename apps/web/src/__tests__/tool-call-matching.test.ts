@@ -48,7 +48,7 @@ describe("Tool Call Matching", () => {
 
     useThreadStore.getState().handleAgentEvent("thread-1", {
       method: "session.toolResult",
-      params: { toolCallId: "tc2", output: "done", isError: false },
+      params: { toolCallId: "tc2", output: "done", isError: true, exitCode: 1 },
     });
     vi.runAllTimers();
 
@@ -56,6 +56,7 @@ describe("Tool Call Matching", () => {
     expect(calls[0].isComplete).toBe(false); // tc1 untouched
     expect(calls[1].isComplete).toBe(true);
     expect(calls[1].output).toBe("done");
+    expect(calls[1].exitCode).toBe(1);
   });
 
   it("tool result with non-matching ID falls back to first incomplete", () => {

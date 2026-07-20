@@ -110,6 +110,19 @@ describe("buildPersistedNarrativeItems", () => {
     }
   });
 
+  it("hydrates a persisted shell exit code onto the rendered tool call", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [makeTool({ tool_name: "Bash", status: "failed", exit_code: 1 })],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].group.calls[0].exitCode).toBe(1);
+    }
+  });
+
   it.each([
     ["a positive interval", "2026-05-15T10:00:00Z", "2026-05-15T10:00:15Z", 15_000],
     ["a zero interval", "2026-05-15T10:00:00Z", "2026-05-15T10:00:00Z", 0],

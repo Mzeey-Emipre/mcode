@@ -44,11 +44,15 @@ describe("AgentEventSchema", () => {
       threadId: "thread-1",
       toolCallId: "agent-1",
       output: "done",
-      isError: false,
+      isError: true,
+      exitCode: 1,
       toolInput: { model: "gpt-5.5", reasoningEffort: "high" },
     });
 
     expect(result.success).toBe(true);
+    if (result.success && result.data.type === "toolResult") {
+      expect(result.data.exitCode).toBe(1);
+    }
   });
 });
 

@@ -192,6 +192,7 @@ export class CodexEventMapper {
     toolCallId: string;
     output: string | BoundedToolOutputBuffer | undefined;
     isError: boolean;
+    exitCode?: number;
     toolInput?: Record<string, unknown>;
     fallback?: string;
   }): AgentEvent {
@@ -202,6 +203,7 @@ export class CodexEventMapper {
       toolCallId: args.toolCallId,
       output: bounded.output,
       isError: args.isError,
+      ...(args.exitCode !== undefined ? { exitCode: args.exitCode } : {}),
       ...(bounded.outputTruncated
         ? {
             outputTruncated: true,
@@ -1235,6 +1237,9 @@ export class CodexEventMapper {
       const toolResultEvent = this.toolResultEvent({
         toolCallId,
         isError: item.exitCode != null && item.exitCode !== 0,
+        ...(typeof item.exitCode === "number" && Number.isInteger(item.exitCode)
+          ? { exitCode: item.exitCode }
+          : {}),
         output: bufferedOutput,
         fallback: textOut,
       });

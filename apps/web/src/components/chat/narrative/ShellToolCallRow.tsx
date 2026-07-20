@@ -71,6 +71,13 @@ export function ShellToolCallRow({ toolCall }: ShellToolCallRowProps) {
   const duration = toolCall.isComplete ? formatToolDuration(toolCall.durationMs) : null;
   const isRunning = !toolCall.isComplete && !toolCall.isError;
   const isCancelled = !toolCall.isComplete && toolCall.isError;
+  const failureLabel = toolCall.isError
+    ? typeof toolCall.exitCode === "number" && Number.isInteger(toolCall.exitCode)
+      ? `exit code ${toolCall.exitCode}`
+      : isCancelled
+        ? "cancelled"
+        : "failed"
+    : null;
 
   return (
     <div className="min-w-0 max-w-full">
@@ -103,11 +110,6 @@ export function ShellToolCallRow({ toolCall }: ShellToolCallRowProps) {
         <span className={narrativeToolDetailClass("md")} title={command || undefined}>
           {detail}
         </span>
-        {toolCall.isError && (
-          <Badge variant="destructive" size="sm" className="rounded-sm font-mono">
-            {isCancelled ? "cancelled" : "errored"}
-          </Badge>
-        )}
         <ChevronRight
           className={`h-3 w-3 shrink-0 text-muted-foreground/45 transition-transform duration-150 motion-reduce:transition-none ${
             open ? "rotate-90" : ""
@@ -150,6 +152,14 @@ export function ShellToolCallRow({ toolCall }: ShellToolCallRowProps) {
               >
                 {toolCall.output}
               </pre>
+            )}
+
+            {failureLabel && (
+              <footer className="mt-2 flex justify-end">
+                <Badge variant="destructive" size="sm" className="rounded-sm font-mono">
+                  {failureLabel}
+                </Badge>
+              </footer>
             )}
           </div>
         </section>

@@ -95,6 +95,8 @@ export const AgentEventSchema = lazySchema(() =>
       toolCallId: z.string(),
       output: z.string(),
       isError: z.boolean(),
+      /** Process exit code when the provider reports one for a shell command. */
+      exitCode: z.number().int().optional(),
       /** True when the output preview omits middle bytes from the full output. */
       outputTruncated: z.boolean().optional(),
       /** UTF-8 byte count for the full tool output before preview bounding. */

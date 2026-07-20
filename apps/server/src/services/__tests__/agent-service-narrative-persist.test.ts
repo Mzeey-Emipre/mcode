@@ -11,7 +11,10 @@ import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../repositories/message-repo.js";
 import type { GitService } from "../git-service.js";
 import type { AttachmentService } from "../attachment-service.js";
-import type { ToolCallRecordRepo } from "../../repositories/tool-call-record-repo.js";
+import type {
+  ToolCallRecordRepo,
+  CreateToolCallRecordInput,
+} from "../../repositories/tool-call-record-repo.js";
 import type { ThoughtSegmentRepo, CreateThoughtSegmentInput } from "../../repositories/thought-segment-repo.js";
 import type { HookExecutionRepo, CreateHookExecutionInput } from "../../repositories/hook-execution-repo.js";
 import type { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo.js";
@@ -264,6 +267,40 @@ describe("AgentService narrative persistence", () => {
     });
 
     expect(taskAppend).not.toHaveBeenCalled();
+  });
+
+  it("persists a shell exit code from its tool result", async () => {
+    const { providerEmitter, toolBulk } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "shell-failed",
+      toolName: "command_execution",
+      toolInput: { command: "exit 1" },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      toolCallId: "shell-failed",
+      output: "",
+      isError: true,
+      exitCode: 1,
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(toolBulk).toHaveBeenCalledOnce();
+    const toolCalls: CreateToolCallRecordInput[] = toolBulk.mock.calls[0][0];
+    expect(toolCalls[0].exitCode).toBe(1);
   });
 
   it("applies a TaskUpdate status transition to the persisted task by harness id", () => {

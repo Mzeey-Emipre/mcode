@@ -99,7 +99,25 @@ function truncatedToolRecord() {
   };
 }
 
-async function setupApp(page: Page, messages: Array<ReturnType<typeof userMessage> | ReturnType<typeof assistantMessage>>) {
+function failedToolRecord() {
+  return {
+    ...truncatedToolRecord(),
+    id: "tool-failed",
+    input_summary: "git pull --ff-only origin main",
+    output_summary: "fatal: Not possible to fast-forward, aborting.",
+    output_truncated: 0,
+    output_total_bytes: null,
+    output_artifact_path: null,
+    exit_code: 1,
+    status: "failed" as const,
+  };
+}
+
+async function setupApp(
+  page: Page,
+  messages: Array<ReturnType<typeof userMessage> | ReturnType<typeof assistantMessage>>,
+  toolRecords = [truncatedToolRecord()],
+) {
   await page.addInitScript((workspaceId: string) => {
     localStorage.setItem("mcode-expanded-projects", JSON.stringify({ [workspaceId]: true }));
   }, WORKSPACE_ID);
@@ -113,7 +131,7 @@ async function setupApp(page: Page, messages: Array<ReturnType<typeof userMessag
     "narrative.list": (params?: unknown) => {
       const messageId = (params as { messageId?: string } | undefined)?.messageId;
       return messageId === ASSISTANT_ID
-        ? { tools: [truncatedToolRecord()], thoughts: [], hooks: [] }
+        ? { tools: toolRecords, thoughts: [], hooks: [] }
         : { tools: [], thoughts: [], hooks: [] };
     },
     "settings.get": getDefaultSettings(),
@@ -207,5 +225,17 @@ test.describe("tool output truncation", () => {
 
     await expectTruncationNotice(page, "350 KB total", "15s");
     expect(browserErrors).toEqual([]);
+  });
+
+  test("shows a persisted shell exit code in the panel footer", async ({ page }) => {
+    await setupApp(page, [userMessage(), assistantMessage()], [failedToolRecord()]);
+
+    await page.getByRole("button", { name: /Ran 1 command/ }).click();
+    await page.getByRole("button", { name: /Ran command/ }).click();
+
+    const panel = page.getByRole("region", { name: "Shell output" });
+    await expect(panel.getByText("exit code 1")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Ran command/ })).not.toContainText("errored");
+    await expect(panel.getByText("errored")).toHaveCount(0);
   });
 });

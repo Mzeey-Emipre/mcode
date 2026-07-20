@@ -256,4 +256,32 @@ describe("narrative tool row layout classes", () => {
     expect(notice.textContent).toContain("full output saved");
     expect(notice.className).toContain("text-xs");
   });
+
+  it("shows a failed shell exit code at the bottom right of the expanded panel", () => {
+    const group: ToolGroup = {
+      calls: [
+        makeBashCall({
+          id: "tc-failed",
+          output: "fatal: remote failed",
+          isComplete: true,
+          isError: true,
+          exitCode: 1,
+        }),
+      ],
+    };
+
+    render(
+      <ToolSummaryLine group={group} hasError={true} hasCancelled={false} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
+    const child = screen.getByRole("button", { name: /Ran command/ });
+    expect(child).not.toHaveTextContent("errored");
+    fireEvent.click(child);
+
+    const panel = screen.getByRole("region", { name: "Shell output" });
+    const badge = screen.getByText("exit code 1");
+    expect(panel).toContainElement(badge);
+    expect(badge.closest("footer")).toHaveClass("justify-end");
+  });
 });

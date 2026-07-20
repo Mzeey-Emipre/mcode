@@ -154,6 +154,8 @@ export interface ToolCall {
   startedAt?: number;
   /** Wall-clock duration when the tool call completed (ms). */
   durationMs?: number;
+  /** Process exit code reported for a completed shell command. */
+  exitCode?: number;
 }
 
 /** Ephemeral hook execution state tracked during a session. Not persisted to DB. */

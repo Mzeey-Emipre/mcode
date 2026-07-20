@@ -223,6 +223,9 @@ export function applySchemaPatches(db: Database.Database): void {
   if (toolCols.length > 0 && !toolCols.includes("output_artifact_path")) {
     addToolCallColumn("output_artifact_path TEXT");
   }
+  if (toolCols.length > 0 && !toolCols.includes("exit_code")) {
+    addToolCallColumn("exit_code INTEGER");
+  }
 
   const messageCols = (
     db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>

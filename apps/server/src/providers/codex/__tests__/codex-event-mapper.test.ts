@@ -266,6 +266,7 @@ describe("CodexEventMapper", () => {
         toolCallId: "cmd-live",
         output: "hi\n",
         isError: false,
+        exitCode: 0,
       },
     ]);
   });
@@ -326,7 +327,7 @@ describe("CodexEventMapper", () => {
           id: "cmd-known",
           command: "echo hi",
           aggregatedOutput: "hi\n",
-          exitCode: 0,
+          exitCode: 1,
         },
       },
     });
@@ -337,7 +338,8 @@ describe("CodexEventMapper", () => {
         threadId: "test-thread",
         toolCallId: "cmd-known",
         output: "hi\n",
-        isError: false,
+        isError: true,
+        exitCode: 1,
       },
     ]);
   });
@@ -417,6 +419,7 @@ describe("CodexEventMapper", () => {
         toolCallId: "cmd-fallback",
         output: "/repo\n",
         isError: false,
+        exitCode: 0,
       },
     ]);
   });

@@ -59,6 +59,7 @@ function recordToToolCall(r: ToolCallRecord): ToolCall {
     ...(typeof r.output_total_bytes === "number" ? { outputTotalBytes: r.output_total_bytes } : {}),
     ...(r.output_artifact_path ? { outputArtifactPath: r.output_artifact_path } : {}),
     ...(durationMs === undefined ? {} : { durationMs }),
+    ...(typeof r.exit_code === "number" ? { exitCode: r.exit_code } : {}),
     parentToolCallId: r.parent_tool_call_id ?? undefined,
     startedAt: isoToMs(r.started_at),
   };

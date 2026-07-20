@@ -420,6 +420,7 @@ export class NarrativeStore {
       outputTruncated?: boolean;
       outputTotalBytes?: number;
       outputArtifactPath?: string;
+      exitCode?: number;
     },
   ): void {
     const stack = this.agentCallStack.get(threadId) ?? [];
@@ -441,11 +442,15 @@ export class NarrativeStore {
         buffer[i].outputTruncated = outputMeta?.outputTruncated === true;
         delete buffer[i].outputTotalBytes;
         delete buffer[i].outputArtifactPath;
+        delete buffer[i].exitCode;
         if (outputMeta?.outputTotalBytes != null) {
           buffer[i].outputTotalBytes = outputMeta.outputTotalBytes;
         }
         if (outputMeta?.outputArtifactPath) {
           buffer[i].outputArtifactPath = outputMeta.outputArtifactPath;
+        }
+        if (outputMeta?.exitCode !== undefined) {
+          buffer[i].exitCode = outputMeta.exitCode;
         }
         buffer[i].status = isError ? "failed" : "completed";
         if (toolInput && Object.keys(toolInput).length > 0) {

@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4acf7c52-baa4-46d4-bf21-62802ee2dee0",
-  "prevId": "23190214-504d-4b55-bb8e-f2c92be7ae45",
+  "id": "c07c1316-2b12-4757-ad6b-e534e07c1215",
+  "prevId": "11007ec1-331f-4923-98a3-e5d23ef44582",
   "tables": {
     "cleanup_jobs": {
       "name": "cleanup_jobs",
@@ -1430,6 +1430,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "exit_code": {
+          "name": "exit_code",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "status": {
           "name": "status",
           "type": "text",
@@ -1542,6 +1549,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'[]'"
+        },
+        "file_effects": {
+          "name": "file_effects",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{\"revision\":0,\"fileCount\":0,\"additions\":0,\"deletions\":0,\"effects\":[]}'"
         },
         "worktree_path": {
           "name": "worktree_path",
