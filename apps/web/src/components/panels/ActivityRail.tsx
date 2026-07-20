@@ -2,6 +2,7 @@ import type { FocusEvent as ReactFocusEvent, PointerEvent as ReactPointerEvent }
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Globe, Maximize2, Minimize2, PanelRight, Plus, X } from "lucide-react";
 import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -105,7 +106,7 @@ function RailStatus({
     return (
       <span
         className={cn(
-          "font-mono text-[9px] font-medium leading-none tabular-nums transition-[opacity,transform] motion-reduce:duration-0 motion-reduce:transition-none",
+          "font-mono text-xs font-medium leading-none tabular-nums transition-[opacity,transform] motion-reduce:duration-0 motion-reduce:transition-none",
           expanded
             ? "absolute right-2 top-1/2 -translate-y-1/2 group-hover:opacity-0"
             : "mt-0.5",
@@ -203,7 +204,7 @@ function RailTab({
         title={expanded ? undefined : `Close ${label}`}
         onClick={() => onClose(id)}
         className={cn(
-          "absolute right-0 top-0 text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+          "absolute left-[7.75rem] top-0 text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
           expanded
             ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
             : "pointer-events-none",
@@ -310,7 +311,7 @@ function BrowserPageRailTab({
           onClose(page.id);
         }}
         className={cn(
-          "absolute right-0 top-0 text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+          "absolute left-[7.75rem] top-0 text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
           expanded
             ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
             : "pointer-events-none",
@@ -452,9 +453,9 @@ function RailAddControl({
                 {type.label}
               </span>
               {type.comingSoon ? (
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                <Badge variant="secondary" size="sm" className="uppercase tracking-wide">
                   Soon
-                </span>
+                </Badge>
               ) : (
                 keycap && <Kbd>{keycap}</Kbd>
               )}
@@ -633,7 +634,7 @@ export function ActivityRail({
           size="icon-xs"
           onClick={onToggleMaximized}
           className={cn(
-            "absolute right-0 top-0 text-muted-foreground/70 transition-[color,opacity] motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+            "absolute left-[7.75rem] top-0 text-muted-foreground/70 transition-[color,opacity] motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
             expanded ? "opacity-100" : "pointer-events-none opacity-0",
           )}
           aria-label={maximized ? "Restore panel" : "Maximize panel"}
