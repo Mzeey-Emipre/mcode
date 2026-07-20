@@ -393,10 +393,10 @@ export function ModelSection() {
       className="mx-auto w-full max-w-[88rem] pb-10"
     >
       <header className="mb-8 border-b border-border/45 px-1 pb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="text-2xl leading-7 font-semibold tracking-tight text-foreground">
           Models &amp; providers
         </h1>
-        <p className="mt-2 max-w-[65ch] text-sm leading-6 text-muted-foreground">
+        <p className="mt-2 max-w-[65ch] text-sm leading-4 text-muted-foreground">
           Configure the providers and model defaults used across new threads and
           utility tasks.
         </p>

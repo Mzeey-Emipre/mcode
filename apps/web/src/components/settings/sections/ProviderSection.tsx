@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { SettingRow } from "../SettingRow";
+import { SettingRow, SETTING_ROW_GRID_CLASS } from "../SettingRow";
 import { SettingsGroup } from "../SettingsGroup";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -167,7 +167,7 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
   return (
     <Collapsible open={isConfigOpen} onOpenChange={setIsConfigOpen}>
       <div className="border-b border-border/50 px-1 py-4 last:border-b-0">
-        <div className="grid gap-3 min-[900px]:grid-cols-[minmax(0,1fr)_auto] min-[900px]:items-center min-[900px]:gap-x-8">
+        <div className={SETTING_ROW_GRID_CLASS}>
           <CollapsibleTrigger asChild>
             <Button
               type="button"
@@ -193,7 +193,12 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
           {controls}
         </div>
         <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down motion-reduce:animate-none">
-          <div className="mt-3 grid gap-3 border-t border-border/40 pt-3 pl-2 min-[900px]:grid-cols-[minmax(0,1fr)_auto] min-[900px]:items-center min-[900px]:gap-x-8">
+          <div
+            className={cn(
+              SETTING_ROW_GRID_CLASS,
+              "mt-3 border-t border-border/40 pt-3 pl-2",
+            )}
+          >
             <label htmlFor={`provider-cli-path-${row.id}`} className="text-sm font-medium text-foreground">
               {label} CLI path
             </label>

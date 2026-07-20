@@ -1747,9 +1747,9 @@ const ProjectNode = memo(function ProjectNode({
           title={`New thread in ${workspace.name}`}
           onKeyDown={(event) => event.stopPropagation()}
           onClick={handleCreateThreadClick}
-          className="size-6 opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
-          <SquarePen size={11} className="size-[1.1rem]" />
+          <SquarePen className="size-[1rem]" />
         </Button>
       </div>
 

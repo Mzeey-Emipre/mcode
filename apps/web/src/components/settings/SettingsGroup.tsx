@@ -10,7 +10,7 @@ export interface SettingsGroupProps {
   children: ReactNode;
 }
 
-/** Renders a labeled settings group on a quiet tonal surface. */
+/** Renders a labeled settings group with divider-defined content. */
 export function SettingsGroup({
   title,
   description,
@@ -23,17 +23,17 @@ export function SettingsGroup({
       <div className="mb-3 px-1">
         <h2
           id={headingId}
-          className="text-base font-semibold tracking-tight text-foreground"
+          className="text-base leading-5 font-semibold tracking-tight text-foreground"
         >
           {title}
         </h2>
         {description && (
-          <p className="mt-1 max-w-[65ch] text-xs leading-5 text-muted-foreground">
+          <p className="mt-1 max-w-[65ch] text-xs text-muted-foreground">
             {description}
           </p>
         )}
       </div>
-      <div className="overflow-hidden rounded-xl border border-border/55 bg-card/30 px-4">
+      <div className="border-y border-border/50 px-2">
         {children}
       </div>
     </section>
