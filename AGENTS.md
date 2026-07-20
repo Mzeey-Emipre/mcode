@@ -50,11 +50,12 @@ Per-repo configuration for the engineering skills (`to-issues`, `to-prd`, `triag
 
 Write self-documenting code. Use precise names, small focused units, explicit types,
 and straightforward control flow so readers can understand behavior from the code.
-Prefer this over explanatory comments or separate documentation. Add documentation
-only for context the code cannot express, such as rationale, constraints, public
-contracts, or operational guidance.
+Prefer this over explanatory comments or separate documentation. Except for
+required public-symbol docstrings, add documentation only for context the code
+cannot express, such as rationale, constraints, public contracts, or operational
+guidance.
 
-Always add JSDoc/TSDoc docstrings to all exported functions, components, types, and interfaces. AI-powered code reviews depend on these for context. Keep them to a one-line summary unless the public contract needs more detail.
+Always add JSDoc/TSDoc docstrings to exported functions, components, classes, types, interfaces, and constants. AI-powered code reviews depend on these for context. Keep them to a one-line summary unless a public contract or other necessary context needs more detail.
 
 Comments explain **why**, not **what**. The code itself shows what it does.
 
