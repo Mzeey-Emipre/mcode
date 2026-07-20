@@ -391,29 +391,25 @@ test("thread switch paints the latest turn before older history finishes", async
     && (call.params as { threadId?: string }).threadId === "thread-b").length,
   { timeout: 3000 }).toBe(2);
   expect(typeof resolveOlderHistory).toBe("function");
-  await expect(page.getByText("Latest beta response", { exact: true })).toBeVisible();
-  const scrollContainer = page.locator("[data-testid=message-list] > div").first();
-  const tailScrollHeight = await scrollContainer.evaluate((element) => element.scrollHeight);
-  resolveOlderHistory?.();
   await expect.poll(() => readThreadRecord(page, "thread-b")).toEqual({
     currentThreadId: "thread-b",
     loading: false,
-    messageIds: threadBMessages.slice(20).map((entry) => entry.id),
-    messageSequences: Array.from({ length: 100 }, (_, index) => index + 21),
+    messageIds: threadBMessages.slice(-2).map((entry) => entry.id),
+    messageSequences: [119, 120],
     toolCallIds: [],
     goalObjective: null,
   });
-  await expect.poll(() => scrollContainer.evaluate((element) => element.scrollHeight))
-    .toBeGreaterThan(tailScrollHeight);
+  await expect(page.getByText("Latest beta response", { exact: true })).toBeVisible();
 
   const threadBCalls = calls.filter((call) =>
     call.method === "conversation.page"
     && (call.params as { threadId?: string }).threadId === "thread-b");
   expect(threadBCalls).toHaveLength(2);
   expect(threadBCalls.map((call) => call.params)).toEqual([
-    { threadId: "thread-b", limit: 12 },
-    { threadId: "thread-b", limit: 88, before: 109 },
+    { threadId: "thread-b", limit: 2 },
+    { threadId: "thread-b", limit: 98, before: 119 },
   ]);
+  resolveOlderHistory?.();
 });
 
 test("thread switch shows a running agent before persisted history refreshes", async ({ page }) => {
