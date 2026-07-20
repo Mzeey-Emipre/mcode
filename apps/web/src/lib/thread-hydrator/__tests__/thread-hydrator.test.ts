@@ -177,6 +177,57 @@ describe("ThreadHydrator", () => {
     expect(getCachedRecord(THREAD_A)?.messages).toEqual([msgA]);
   });
 
+  it("does not let delayed snapshot hydration replace a running turn file summary", async () => {
+    const liveSummary = {
+      revision: 2,
+      fileCount: 1,
+      additions: 3,
+      deletions: 1,
+      effects: [],
+    };
+    useWorkspaceStore.setState({
+      threads: [
+        createMockThread({ id: THREAD_A, has_file_changes: true }),
+        createMockThread({ id: THREAD_B, has_file_changes: false }),
+      ],
+    });
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_A,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map([
+        [THREAD_A, {
+          ...createEmptyThreadRecord(),
+          messages: [msgA],
+          fileEffectTurnId: "live-turn",
+          fileEffectSummary: liveSummary,
+        }],
+      ]),
+    });
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        message_id: "persisted-turn",
+        files_changed: ["old.ts"],
+        file_effects: {
+          revision: 9,
+          fileCount: 9,
+          additions: 9,
+          deletions: 9,
+          effects: [],
+        },
+      } as unknown as TurnSnapshot,
+    ]);
+
+    await hydrator.hydrate(THREAD_A, "active");
+    await vi.waitFor(() => {
+      expect(readActiveThreadField((record) => record.persistedFilesChanged)).toEqual({
+        "persisted-turn": ["old.ts"],
+      });
+    });
+
+    expect(readActiveThreadField((record) => record.fileEffectTurnId)).toBe("live-turn");
+    expect(readActiveThreadField((record) => record.fileEffectSummary)).toEqual(liveSummary);
+  });
+
   it("keeps prefetched earlier history out of live state until pagination", async () => {
     const history = Array.from({ length: 100 }, (_, index) => createMockMessage({
       id: `a-${index + 1}`,

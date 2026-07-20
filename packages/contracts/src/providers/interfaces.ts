@@ -25,6 +25,14 @@ export interface CompletionOptions {
   reasoningLevel?: ReasoningLevel;
 }
 
+/** Explicit provider file-tool start used to capture a mutation baseline without publishing narrative UI. */
+export interface ProviderFileMutationStart {
+  threadId: string;
+  toolCallId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+}
+
 /**
  * Per-Provider knobs that ride on a {@link TurnRequest}, keyed by {@link ProviderId}.
  * Generic call sites cannot reach into the wrong Provider's knobs because the
@@ -155,6 +163,8 @@ export interface IAgentProvider {
 
   /** Subscribe to agent events. */
   on(event: "event", handler: (event: AgentEvent) => void): void;
+  /** Subscribe to private file-tool starts that must be observed before public attribution is known. */
+  on(event: "file_mutation_start", handler: (event: ProviderFileMutationStart) => void): void;
   /** Subscribe to provider-level errors. */
   on(event: "error", handler: (error: Error) => void): void;
   /** Subscribe to permission request events (emitted when canUseTool fires). */

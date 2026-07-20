@@ -8,6 +8,7 @@ import {
   createCursorAcpTurnState,
   mapCursorAcpSessionNotification,
 } from "../../providers/cursor/cursor-acp-event-mapper.js";
+import { CodexEventMapper } from "../../providers/codex/codex-event-mapper.js";
 import { AgentEventType } from "@mcode/contracts";
 
 const dirs: string[] = [];
@@ -36,6 +37,89 @@ function trackerWithBaseline(
 }
 
 describe("TurnFileTracker", () => {
+  it("captures an unavailable-Git baseline before an early child mutation is attributed", async () => {
+    const root = await tempDir("mcode-early-child-effects-");
+    const trackedPath = join(root, "tracked.txt");
+    await writeFile(trackedPath, "before\n");
+    const updates: TurnFileEffectSummary[] = [];
+    const tracker = new TurnFileTracker(
+      async () => ({ kind: "unavailable" }),
+      (_threadId, _turnId, summary) => updates.push(summary),
+    );
+    tracker.beginTurn("t", root, "unavailable-ref");
+    const pendingStarts: Promise<void>[] = [];
+    const mapper = new CodexEventMapper("t", "parent-thread", (event) => {
+      pendingStarts.push(tracker.observeToolUse(
+        event.threadId,
+        event.toolCallId,
+        event.toolName,
+        event.toolInput,
+      ));
+    });
+
+    const earlyStart = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "child-thread-early",
+        item: {
+          type: "fileChange",
+          id: "file-child",
+          changes: [{ path: "tracked.txt", kind: "edit" }],
+        },
+      },
+    });
+    await writeFile(trackedPath, "after\nextra\n");
+    const earlyCompletion = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-thread-early",
+        item: {
+          type: "fileChange",
+          id: "file-child",
+          changes: [{ path: "tracked.txt", kind: "edit" }],
+        },
+      },
+    });
+    const registered = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "parent-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-early",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-thread-early"],
+          result: "spawned",
+        },
+      },
+    });
+
+    expect(earlyStart).toEqual([]);
+    expect(earlyCompletion).toEqual([]);
+    expect(pendingStarts).toHaveLength(1);
+    for (const event of registered) {
+      if (event.type === AgentEventType.ToolUse && event.toolName !== "Agent") {
+        await tracker.observeToolUse("t", event.toolCallId, event.toolName, event.toolInput);
+      }
+      if (event.type === AgentEventType.ToolResult) {
+        await tracker.observeToolResult("t", event.toolCallId, event.toolInput);
+      }
+    }
+    await Promise.all(pendingStarts);
+
+    const summary = await tracker.finalizeTurn("t");
+    expect(summary).toMatchObject({ fileCount: 1, additions: 2, deletions: 1 });
+    expect(summary.effects[0]).toMatchObject({
+      path: "tracked.txt",
+      kind: "edited",
+      toolCallIds: ["file-child"],
+    });
+    expect(updates.at(-1)).toEqual(summary);
+  });
+
   it("classifies added, edited, and removed files with net line totals", async () => {
     const root = await tempDir("mcode-file-effects-");
     await writeFile(join(root, "edited.txt"), "one\ntwo");
@@ -104,6 +188,30 @@ describe("TurnFileTracker", () => {
     await writeFile(join(root, "same.txt"), "base");
     await tracker.observeToolResult("t", "c");
     expect(await tracker.finalizeTurn("t")).toMatchObject({ fileCount: 0, additions: 0, deletions: 0 });
+  });
+
+  it("coalesces parallel sub-agent tools by path while retaining their provenance", async () => {
+    const root = await tempDir("mcode-file-effects-subagents-");
+    await writeFile(join(root, "shared.txt"), "base\n");
+    const tracker = trackerWithBaseline({ "shared.txt": "base\n" }, []);
+    tracker.beginTurn("parent-turn", root, "before");
+
+    await Promise.all([
+      tracker.observeToolUse("parent-turn", "subagent-a-edit", "Edit", { file_path: "shared.txt" }),
+      tracker.observeToolUse("parent-turn", "subagent-b-edit", "Edit", { file_path: "shared.txt" }),
+    ]);
+    await writeFile(join(root, "shared.txt"), "changed\n");
+    await Promise.all([
+      tracker.observeToolResult("parent-turn", "subagent-a-edit"),
+      tracker.observeToolResult("parent-turn", "subagent-b-edit"),
+    ]);
+
+    const summary = await tracker.finalizeTurn("parent-turn");
+    expect(summary.fileCount).toBe(1);
+    expect(summary.effects[0]).toMatchObject({
+      path: "shared.txt",
+      toolCallIds: ["subagent-a-edit", "subagent-b-edit"],
+    });
   });
 
   it("detects a partial write even when the tool result is an error", async () => {

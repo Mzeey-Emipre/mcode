@@ -1390,6 +1390,104 @@ describe("CodexEventMapper", () => {
     });
   });
 
+  it("replays an early child file mutation after its receiver thread is registered", () => {
+    mapper = new CodexEventMapper("test-thread", "parent-thread");
+    const earlyStart = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "child-thread-early",
+        item: {
+          type: "fileChange",
+          id: "file-child",
+          changes: [{ path: "src/child.ts", kind: "edit" }],
+        },
+      },
+    });
+    const earlyCompletion = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-thread-early",
+        item: {
+          type: "fileChange",
+          id: "file-child",
+          changes: [{ path: "src/child.ts", kind: "edit" }],
+        },
+      },
+    });
+
+    const registered = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "parent-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-early",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-thread-early"],
+          result: "spawned",
+        },
+      },
+    });
+
+    expect(earlyStart).toEqual([]);
+    expect(earlyCompletion).toEqual([]);
+    expect(registered).toEqual([
+      expect.objectContaining({
+        type: "toolUse",
+        toolCallId: "collab-early",
+      }),
+      expect.objectContaining({
+        type: "toolUse",
+        toolCallId: "file-child",
+        toolName: "file_change",
+        parentToolCallId: "collab-early",
+      }),
+      expect.objectContaining({
+        type: "toolResult",
+        toolCallId: "file-child",
+      }),
+    ]);
+  });
+
+  it("drops an unrelated unknown-thread notification instead of replaying it", () => {
+    mapper = new CodexEventMapper("test-thread", "parent-thread");
+    const unknown = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "unrelated-thread",
+        item: {
+          type: "commandExecution",
+          id: "unrelated-command",
+          command: "git status",
+        },
+      },
+    });
+
+    const registered = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "parent-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-unrelated",
+          tool: "spawnAgent",
+          receiverThreadIds: ["unrelated-thread"],
+          result: "spawned",
+        },
+      },
+    });
+
+    expect(unknown).toEqual([]);
+    expect(registered).toEqual([
+      expect.objectContaining({ type: "toolUse", toolCallId: "collab-unrelated" }),
+    ]);
+  });
+
   it("nests commandExecution under inner collab on a nested receiver thread (two-level sub-agents)", () => {
     mapper = new CodexEventMapper("test-thread", "parent-thread");
     mapper.mapNotification({

@@ -945,7 +945,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       getSpawnEnv: () => args.env,
     });
 
-    const mapper = new CodexEventMapper(threadId);
+    const mapper = new CodexEventMapper(threadId, undefined, (event) => {
+      this.emit("file_mutation_start", event);
+    });
     mapper.setOutputTruncationMode(this.outputTruncationMode);
 
     server.on("notification", (notification) => {
