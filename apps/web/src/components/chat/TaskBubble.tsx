@@ -161,9 +161,16 @@ export function TaskBubble({
   return (
     <Popover
       open={expanded}
-      onOpenChange={(open) => {
-        if (open) setPinnedOpen(true);
-        else closePreview();
+      onOpenChange={(open, eventDetails) => {
+        if (open || (
+          eventDetails.reason === "trigger-press"
+          && hoverOpen
+          && !pinnedOpen
+        )) {
+          setPinnedOpen(true);
+        } else {
+          closePreview();
+        }
       }}
     >
       <div className="w-fit max-w-full">

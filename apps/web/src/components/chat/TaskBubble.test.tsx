@@ -128,6 +128,44 @@ describe("getTaskAggregateStatus", () => {
     expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
   });
 
+  it("keeps the preview open when a mouse click follows pointer hover", () => {
+    render(
+      <TaskBubble tasks={[item("one", "pending", "Finish one")]} />,
+    );
+
+    const bubble = screen.getByTestId("task-bubble");
+    fireEvent.pointerEnter(bubble, { pointerType: "mouse" });
+    fireEvent.click(bubble);
+
+    expect(screen.getByTestId("task-bubble-expanded")).toBeInTheDocument();
+
+    fireEvent.click(bubble);
+    expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
+  });
+
+  it("closes a hover-open preview on Escape", () => {
+    render(
+      <TaskBubble tasks={[item("one", "pending", "Finish one")]} />,
+    );
+
+    fireEvent.pointerEnter(screen.getByTestId("task-bubble"), { pointerType: "mouse" });
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
+  });
+
+  it("closes a hover-open preview on outside press", () => {
+    render(
+      <TaskBubble tasks={[item("one", "pending", "Finish one")]} />,
+    );
+
+    fireEvent.pointerEnter(screen.getByTestId("task-bubble"), { pointerType: "mouse" });
+    fireEvent.pointerDown(document.body);
+    fireEvent.click(document.body);
+
+    expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
+  });
+
   it("renders semantic task rows with accessible statuses", () => {
     render(
       <TaskBubble tasks={[
