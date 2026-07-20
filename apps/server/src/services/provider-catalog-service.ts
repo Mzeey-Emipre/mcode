@@ -93,6 +93,22 @@ function staleSnapshot(
   };
 }
 
+function capacitySnapshot(snapshot: ProviderCatalogSnapshot): ProviderCatalogSnapshot {
+  return {
+    ...snapshot,
+    diagnostics: [{
+      severity: "warning",
+      code: "source-unavailable",
+      message: "Provider catalog refresh capacity is full for this context. Try again shortly.",
+    }],
+    freshness: {
+      status: "stale",
+      fetchedAt: snapshot.freshness.fetchedAt,
+      reason: "Provider catalog refresh capacity is full.",
+    },
+  };
+}
+
 function reconcileEntries(
   previous: ProviderCatalogSnapshot,
   next: ProviderCatalogSnapshot,
@@ -166,8 +182,10 @@ export class ProviderCatalogService {
     const persisted = this.snapshotRepo.get(persistenceKey)
       ?? (fallbackKey && fallbackKey !== persistenceKey ? this.snapshotRepo.get(fallbackKey) : null);
     const visible = staleSnapshot(persisted, input.request, input.context);
-    this.rememberContext(requestKey, input);
-    this.scheduleRefresh(requestKey, persistenceKey, visible, input, false);
+    if (!this.rememberContext(requestKey, input)) return capacitySnapshot(visible);
+    if (!this.scheduleRefresh(requestKey, persistenceKey, visible, input, false)) {
+      return capacitySnapshot(visible);
+    }
     return visible;
   }
 
@@ -194,28 +212,27 @@ export class ProviderCatalogService {
       queueByPersistenceKey.set(persistenceKey, queueIfInflight);
       const persisted = this.snapshotRepo.get(persistenceKey);
       const visible = staleSnapshot(persisted, input.request, input.context);
-      this.scheduleRefresh(
+      const scheduled = this.scheduleRefresh(
         requestKey,
         persistenceKey,
         visible,
         { ...input, refresh: input.refreshFromCache },
         queueIfInflight,
       );
+      if (!scheduled) this.emitChange(catalogChange(input.request, visible, capacitySnapshot(visible)));
     }
   }
 
-  private rememberContext(key: string, input: ProviderCatalogLoadInput): void {
+  private rememberContext(key: string, input: ProviderCatalogLoadInput): boolean {
+    if (
+      !this.trackedContexts.has(key)
+      && this.trackedContexts.size >= MAX_TRACKED_CATALOG_CONTEXTS
+    ) {
+      return false;
+    }
     this.trackedContexts.delete(key);
     this.trackedContexts.set(key, input);
-    while (this.trackedContexts.size > MAX_TRACKED_CATALOG_CONTEXTS) {
-      const oldest = this.trackedContexts.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      this.trackedContexts.delete(oldest);
-      for (const job of this.inflight.values()) {
-        job.subscribers.delete(oldest);
-        job.pendingSubscribers.delete(oldest);
-      }
-    }
+    return true;
   }
 
   private scheduleRefresh(
@@ -224,7 +241,7 @@ export class ProviderCatalogService {
     visible: ProviderCatalogSnapshot,
     input: ProviderCatalogLoadInput,
     queueIfInflight: boolean,
-  ): void {
+  ): boolean {
     const subscriber = { visible, input } satisfies CatalogRefreshSubscriber;
     const currentJob = this.inflight.get(persistenceKey);
     if (currentJob) {
@@ -232,9 +249,9 @@ export class ProviderCatalogService {
         ? currentJob.pendingSubscribers
         : currentJob.subscribers;
       subscribers.set(requestKey, subscriber);
-      return;
+      return true;
     }
-    if (this.inflight.size >= MAX_INFLIGHT_CATALOG_REFRESHES) return;
+    if (this.inflight.size >= MAX_INFLIGHT_CATALOG_REFRESHES) return false;
     const job: CatalogRefreshJob = {
       refresh: input.refresh,
       subscribers: new Map([[requestKey, subscriber]]),
@@ -263,6 +280,19 @@ export class ProviderCatalogService {
         );
       }
     });
+    return true;
+  }
+
+  private emitChange(change: ProviderCatalogChange): void {
+    for (const handler of this.changedHandlers) {
+      try {
+        handler(change);
+      } catch (error) {
+        logger.debug("Provider catalog change subscriber failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   private async refresh(
@@ -316,15 +346,7 @@ export class ProviderCatalogService {
         persisted = true;
       }
       const change = catalogChange(input.request, visible, next);
-      for (const handler of this.changedHandlers) {
-        try {
-          handler(change);
-        } catch (error) {
-          logger.debug("Provider catalog change subscriber failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
+      this.emitChange(change);
     }
   }
 }

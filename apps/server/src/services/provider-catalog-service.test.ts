@@ -234,11 +234,12 @@ describe("ProviderCatalogService", () => {
       finishRefresh = resolve;
     }));
     const changes: ProviderCatalogChange[] = [];
+    const immediate: ProviderCatalogSnapshot[] = [];
     service.onChanged((change) => changes.push(change));
 
     for (let index = 0; index < 65; index += 1) {
       const request = { ...REQUEST, threadId: `thread-${index}` };
-      service.request({
+      immediate.push(service.request({
         request,
         context: {
           scope: "workspace",
@@ -247,22 +248,30 @@ describe("ProviderCatalogService", () => {
         },
         cwd: "C:/repo",
         refresh,
-      });
+      }));
     }
+    expect(immediate[64]).toMatchObject({
+      diagnostics: [expect.objectContaining({
+        code: "source-unavailable",
+        message: expect.stringContaining("capacity"),
+      })],
+      freshness: { status: "stale", reason: expect.stringContaining("capacity") },
+    });
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     finishRefresh(CACHED);
 
     await vi.waitFor(() => expect(changes).toHaveLength(64));
-    expect(changes.some((change) => change.request.threadId === "thread-0")).toBe(false);
-    expect(changes.some((change) => change.request.threadId === "thread-64")).toBe(true);
+    expect(changes.some((change) => change.request.threadId === "thread-0")).toBe(true);
+    expect(changes.some((change) => change.request.threadId === "thread-64")).toBe(false);
   });
 
   it("bounds concurrent physical catalog refreshes", async () => {
     const { service } = createService();
     const refresh = vi.fn(() => new Promise<ProviderCatalogSnapshot>(() => undefined));
+    const immediate: ProviderCatalogSnapshot[] = [];
 
     for (let index = 0; index < 65; index += 1) {
-      service.request({
+      immediate.push(service.request({
         request: { ...REQUEST, threadId: `thread-${index}` },
         context: {
           scope: "workspace",
@@ -271,9 +280,13 @@ describe("ProviderCatalogService", () => {
         },
         cwd: `C:/repo-${index}`,
         refresh,
-      });
+      }));
     }
 
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(64));
+    expect(immediate[64]).toMatchObject({
+      diagnostics: [expect.objectContaining({ code: "source-unavailable" })],
+      freshness: { status: "stale", reason: expect.stringContaining("capacity") },
+    });
   });
 });
