@@ -83,7 +83,7 @@ export function NarrativeSummaryLine({
  */
 function getCallStatus(tc: ToolCall): "completed" | "errored" | "cancelled" {
   if (tc.isError) return "errored";
-  if (!tc.isComplete) return "cancelled";
+  if (tc.isCancelled || !tc.isComplete) return "cancelled";
   return "completed";
 }
 
@@ -160,10 +160,6 @@ export function ToolSummaryLine({
         <ul className="mt-1 min-w-0 max-w-full space-y-1 pb-2 pl-6">
           {group.calls.map((tc) => {
             const canonicalName = resolveToolName(tc.toolName);
-            const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
-            const label = TOOL_LABELS[canonicalName] ?? tc.toolName;
-            const detail = extractToolInputDetail(tc);
-            const status = getCallStatus(tc);
 
             if (isShellTool(tc.toolName)) {
               return (
@@ -172,6 +168,11 @@ export function ToolSummaryLine({
                 </li>
               );
             }
+
+            const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
+            const label = TOOL_LABELS[canonicalName] ?? tc.toolName;
+            const detail = extractToolInputDetail(tc);
+            const status = getCallStatus(tc);
 
             return (
               <li key={tc.id} className="flex min-w-0 max-w-full flex-col gap-1 py-1">

@@ -43,7 +43,7 @@ function persistedDurationMs(
 }
 
 /** Map a persisted tool record to the live `ToolCall` shape used by row components. */
-function recordToToolCall(r: ToolCallRecord): ToolCall {
+export function recordToToolCall(r: ToolCallRecord): ToolCall {
   const durationMs = persistedDurationMs(r.started_at, r.completed_at);
 
   return {
@@ -55,6 +55,7 @@ function recordToToolCall(r: ToolCallRecord): ToolCall {
     output: r.output_summary || null,
     isError: r.status === "failed",
     isComplete: r.status === "completed" || r.status === "failed" || r.status === "cancelled",
+    ...(r.status === "cancelled" ? { isCancelled: true } : {}),
     ...(r.output_truncated === 1 ? { outputTruncated: true } : {}),
     ...(typeof r.output_total_bytes === "number" ? { outputTotalBytes: r.output_total_bytes } : {}),
     ...(r.output_artifact_path ? { outputArtifactPath: r.output_artifact_path } : {}),
@@ -226,7 +227,8 @@ export function buildPersistedNarrativeItems(
       group: { calls: pendingGroup.slice() },
       hasError: pendingGroup.some((c) => c.isError),
       hasCancelled: pendingGroup.some(
-        (c) => typeof c.output === "string" && c.output.toLowerCase().includes("cancelled"),
+        (c) => c.isCancelled === true
+          || (typeof c.output === "string" && c.output.toLowerCase().includes("cancelled")),
       ),
     });
     pendingGroup.length = 0;

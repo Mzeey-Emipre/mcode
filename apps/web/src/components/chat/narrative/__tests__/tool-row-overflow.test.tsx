@@ -181,6 +181,29 @@ describe("narrative tool row layout classes", () => {
     }
   });
 
+  it("does not round a sub-second shell duration up to one second", () => {
+    const group: ToolGroup = {
+      calls: [makeBashCall({ isComplete: true, durationMs: 500 })],
+    };
+
+    render(<ToolSummaryLine group={group} hasError={false} hasCancelled={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
+    expect(screen.getByRole("button", { name: /Ran command/ })).not.toHaveTextContent("in 1s");
+  });
+
+  it("shows cancelled for a persisted cancelled shell call", () => {
+    const group: ToolGroup = {
+      calls: [makeBashCall({ isComplete: true, isCancelled: true })],
+    };
+
+    render(<ToolSummaryLine group={group} hasError={false} hasCancelled />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
+    expect(screen.getAllByText("cancelled")).toHaveLength(2);
+  });
+
   it("normalizes older persisted Codex command summaries before display", () => {
     const group: ToolGroup = {
       calls: [

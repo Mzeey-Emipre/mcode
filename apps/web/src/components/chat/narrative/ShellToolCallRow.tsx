@@ -57,8 +57,8 @@ function extractCommand(toolCall: ToolCall): string {
 
 /** Formats a completed tool duration for the compact child-row label. */
 function formatToolDuration(durationMs: number | undefined): string | null {
-  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) return null;
-  return formatDuration(Math.max(1, Math.round(durationMs / 1000)));
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 1000) return null;
+  return formatDuration(Math.round(durationMs / 1000));
 }
 
 /** Renders a nested shell call that reveals a terminal-style command transcript. */
@@ -68,14 +68,14 @@ export function ShellToolCallRow({ toolCall }: ShellToolCallRowProps) {
   const command = extractCommand(toolCall);
   const detail = command.replace(/\s+/g, " ").trim() || "Command unavailable";
   const duration = toolCall.isComplete ? formatToolDuration(toolCall.durationMs) : null;
-  const isRunning = !toolCall.isComplete && !toolCall.isError;
-  const isCancelled = !toolCall.isComplete && toolCall.isError;
-  const failureLabel = toolCall.isError
+  const isCancelled = toolCall.isCancelled === true || (!toolCall.isComplete && toolCall.isError);
+  const isRunning = !toolCall.isComplete && !toolCall.isError && !isCancelled;
+  const failureLabel = isCancelled
+    ? "cancelled"
+    : toolCall.isError
     ? typeof toolCall.exitCode === "number" && Number.isInteger(toolCall.exitCode)
       ? `exit code ${toolCall.exitCode}`
-      : isCancelled
-        ? "cancelled"
-        : "failed"
+      : "failed"
     : null;
 
   return (

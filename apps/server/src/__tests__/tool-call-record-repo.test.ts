@@ -115,6 +115,21 @@ describe("ToolCallRecordRepo", () => {
     expect(records[0]!.exit_code).toBe(1);
   });
 
+  it("preserves a successful exit code of zero", () => {
+    const record = repo.create({
+      messageId,
+      toolName: "Bash",
+      inputSummary: "git status",
+      outputSummary: "",
+      exitCode: 0,
+      status: "completed",
+      sortOrder: 0,
+    });
+
+    expect(record.exit_code).toBe(0);
+    expect(repo.listByMessage(messageId)[0]!.exit_code).toBe(0);
+  });
+
   it("bulkCreate inserts multiple records in a transaction", () => {
     const inputs: CreateToolCallRecordInput[] = [
       {

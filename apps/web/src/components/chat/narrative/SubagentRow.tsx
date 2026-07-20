@@ -259,17 +259,18 @@ function ExpandableSubagentRow({
             }
 
             const canonicalName = resolveToolName(tc.toolName);
-            const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
-            const label = TOOL_LABELS[canonicalName] ?? tc.toolName;
-            const detail = extractToolInputDetail(tc);
 
-            if (resolveToolName(tc.toolName) === "Bash") {
+            if (canonicalName === "Bash") {
               return (
                 <li key={tc.id} className="min-w-0 max-w-full list-none">
                   <ShellToolCallRow toolCall={tc} />
                 </li>
               );
             }
+
+            const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
+            const label = TOOL_LABELS[canonicalName] ?? tc.toolName;
+            const detail = extractToolInputDetail(tc);
 
             return (
               <li key={tc.id} className={`${NARRATIVE_TOOL_ROW} py-1 text-sm`}>

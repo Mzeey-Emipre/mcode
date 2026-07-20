@@ -123,6 +123,20 @@ describe("buildPersistedNarrativeItems", () => {
     }
   });
 
+  it("preserves an explicit persisted cancellation status", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [makeTool({ tool_name: "Bash", status: "cancelled" })],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].hasCancelled).toBe(true);
+      expect(items[0].group.calls[0].isCancelled).toBe(true);
+    }
+  });
+
   it.each([
     ["a positive interval", "2026-05-15T10:00:00Z", "2026-05-15T10:00:15Z", 15_000],
     ["a zero interval", "2026-05-15T10:00:00Z", "2026-05-15T10:00:00Z", 0],
