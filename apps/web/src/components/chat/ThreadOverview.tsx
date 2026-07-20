@@ -777,10 +777,7 @@ function ThreadOverviewRecapRow({
                   <RefreshCw
                     size={13}
                     aria-hidden
-                    className={cn(
-                      "transition-transform duration-200 ease-out group-active:rotate-45 motion-reduce:transition-none",
-                      isGenerating && "animate-spin motion-reduce:animate-none",
-                    )}
+                    className="transition-transform duration-200 ease-out group-active:rotate-45 motion-reduce:transition-none"
                   />
                 </Button>
               }
