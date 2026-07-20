@@ -114,13 +114,13 @@ type LoadedBranchState =
   | { status: "error"; branches: GitBranchRecord[]; uncommittedFiles: number | null };
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 type LocalCopyTarget = "path" | "branch";
-type CiSegmentName = "failing" | "running" | "passing" | "other";
+type CiSegmentName = "failing" | "running" | "passing" | "cancelled";
 
 const CI_SEGMENT_COLORS: Record<CiSegmentName, string> = {
   failing: "var(--diff-remove-strong)",
-  running: "#e7a90b",
+  running: "var(--primary)",
   passing: "var(--diff-add-strong)",
-  other: "var(--muted-foreground)",
+  cancelled: "var(--muted-foreground)",
 };
 
 /** Repository metadata rendered by the Overview Repository row. */
@@ -159,6 +159,9 @@ const EMPTY_REPOSITORY: ThreadOverviewRepository = {
   webUrl: null,
   faviconUrl: null,
 };
+
+const OVERVIEW_ROW_CLASS =
+  "group h-8 w-full gap-3 px-2 text-left transition-[background-color,color,transform] duration-150 ease-out active:translate-y-px motion-reduce:transform-none";
 
 /**
  * Derives the active thread's compact CI signal for the Overview trigger.
@@ -210,6 +213,13 @@ function usageCategoryFillClass(category: QuotaCategory): string {
   if (percent >= 90) return "bg-destructive";
   if (percent >= 70) return "bg-primary";
   return "bg-[var(--diff-add-strong)]";
+}
+
+function usageCategoryMetricClass(category: QuotaCategory): string {
+  const percent = usageCategoryPercent(category);
+  if (percent >= 90) return "text-destructive";
+  if (percent >= 70) return "text-primary";
+  return "text-foreground/80";
 }
 
 /**
@@ -300,7 +310,7 @@ function ThreadOverviewUsageBars({
         className="flex h-8 w-full items-center justify-between gap-3 px-2 text-left"
       >
         <span className="flex min-w-0 items-center gap-2">
-          <Gauge size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+          <Gauge aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate text-xs font-medium">Usage</span>
         </span>
         <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
@@ -327,12 +337,12 @@ function ThreadOverviewUsageBars({
           className="h-8 w-full cursor-pointer justify-between gap-3 px-2 text-left"
         >
           <span className="flex min-w-0 items-center gap-2">
-            <Gauge size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+            <Gauge aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="truncate text-xs font-medium">Usage</span>
           </span>
-          <span className="flex shrink-0 items-center gap-2">
+          <span className="flex min-w-0 shrink items-center gap-2">
             {!open ? (
-              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+              <span className="min-w-0 truncate font-mono text-xs tabular-nums text-muted-foreground">
                 {summary}
               </span>
             ) : null}
@@ -353,63 +363,72 @@ function ThreadOverviewUsageBars({
           id={THREAD_OVERVIEW_USAGE_DETAILS_ID}
           data-testid="thread-overview-usage-details"
           aria-hidden={!open}
-          className="space-y-2.5 px-2 pb-2 pl-6 pt-1 text-muted-foreground"
+          className="flex gap-2 px-2 pb-2 pt-1 text-muted-foreground"
         >
-          {categories.map((category) => {
-            const percent = Math.min(Math.max(usageCategoryPercent(category), 0), 100);
-            const rounded = Math.round(percent);
-            const shortLabel = usageCategoryShortLabel(category.label);
-            const displayLabel = category.label.trim();
-            const resetText = formatUsageResetText(category.resetDate);
-            const progressDescription = resetText
-              ? `${shortLabel} usage ${rounded} percent. ${resetText}`
-              : `${shortLabel} usage ${rounded} percent`;
-            return (
-              <div key={category.label} className="space-y-1">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 truncate text-xs text-foreground/80">{displayLabel}</span>
-                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                    {rounded}%
-                  </span>
-                </div>
-                <div
-                  role="progressbar"
-                  aria-label={progressDescription}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={rounded}
-                  className="h-1 w-full overflow-hidden rounded-full bg-muted/60"
-                >
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-[width] duration-300 ease-out motion-reduce:transition-none",
-                      open && "animate-thread-overview-usage-fill",
-                      usageCategoryFillClass(category),
-                    )}
-                    style={{ width: `${percent}%` }}
-                  />
-                </div>
-                {resetText ? (
-                  <div className="font-mono text-xs tabular-nums text-muted-foreground/70">
-                    {resetText}
+          <span aria-hidden className="size-3.5 shrink-0" />
+          <div className="min-w-0 flex-1 space-y-3">
+            {categories.map((category) => {
+              const percent = Math.min(Math.max(usageCategoryPercent(category), 0), 100);
+              const rounded = Math.round(percent);
+              const shortLabel = usageCategoryShortLabel(category.label);
+              const displayLabel = category.label.trim();
+              const resetText = formatUsageResetText(category.resetDate);
+              const progressDescription = resetText
+                ? `${shortLabel} usage ${rounded} percent. ${resetText}`
+                : `${shortLabel} usage ${rounded} percent`;
+              return (
+                <div key={category.label} className="space-y-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0 truncate text-xs text-foreground/80">{displayLabel}</span>
+                    <span
+                      data-testid="thread-overview-usage-value"
+                      className={cn(
+                        "shrink-0 font-mono text-xs font-medium tabular-nums",
+                        usageCategoryMetricClass(category),
+                      )}
+                    >
+                      {rounded}%
+                    </span>
                   </div>
-                ) : null}
+                  <div
+                    role="progressbar"
+                    aria-label={progressDescription}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={rounded}
+                    className="h-1 w-full overflow-hidden rounded-full bg-muted"
+                  >
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-[width] duration-300 ease-out motion-reduce:transition-none",
+                        open && "animate-thread-overview-usage-fill",
+                        usageCategoryFillClass(category),
+                      )}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                  {resetText ? (
+                    <div className="font-mono text-xs tabular-nums text-muted-foreground">
+                      {resetText}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {usageStatus === "stale" ? (
+              <div className="font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
+                STALE
               </div>
-            );
-          })}
-          {usageStatus === "stale" ? (
-            <div className="font-mono text-xs uppercase tracking-wider text-muted-foreground/60">
-              STALE
-            </div>
-          ) : null}
-          {sessionCostSummary ? (
-            <div className="flex items-baseline justify-between gap-3 pt-0.5">
-              <span className="min-w-0 truncate text-xs text-foreground/80">Session cost</span>
-              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                {sessionCostSummary}
-              </span>
-            </div>
-          ) : null}
+            ) : null}
+            {sessionCostSummary ? (
+              <div className="flex items-baseline justify-between gap-3 pt-1">
+                <span className="min-w-0 truncate text-xs text-foreground/80">Session cost</span>
+                <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                  {sessionCostSummary}
+                </span>
+              </div>
+            ) : null}
+          </div>
         </div>
       </AnimatedCollapsible>
     </Collapsible>
@@ -753,9 +772,13 @@ function ThreadOverviewRecapRow({
                   aria-label={refreshLabel}
                   disabled={isGenerating}
                   onClick={onRefresh}
-                  className={cn("shrink-0", isGenerating && "text-muted-foreground/45")}
+                  className={cn("group shrink-0", isGenerating && "text-muted-foreground/45")}
                 >
-                  <RefreshCw size={13} aria-hidden />
+                  <RefreshCw
+                    size={13}
+                    aria-hidden
+                    className="transition-transform duration-200 ease-out group-active:rotate-45 motion-reduce:transition-none"
+                  />
                 </Button>
               }
             />
@@ -1072,8 +1095,8 @@ function ThreadOverviewSources({ sources, onOpen }: ThreadOverviewSourcesProps) 
 
   return (
     <div data-testid="thread-overview-sources" className="flex w-full flex-col gap-1.5 px-2 py-1.5">
-      <span className="font-mono text-xs font-medium uppercase leading-tight tracking-[0.18em] text-muted-foreground">
-        SOURCES
+      <span className="text-xs font-medium text-muted-foreground">
+        Sources
       </span>
       <div className="flex flex-wrap gap-1">
         {sources.map((source) => (
@@ -1143,18 +1166,25 @@ export function getPrRowDetail(
   return null;
 }
 
-function getCiStatusCircleStyle(checks: ChecksStatus): CSSProperties {
+/** Builds the segmented ring that summarizes CI run outcomes in the Overview. */
+export function getCiStatusRingStyle(checks: ChecksStatus): CSSProperties {
   const breakdown = getBreakdown(checks);
   const total = breakdown.total || 1;
   const segments = ([
     { name: "failing", count: breakdown.failing },
     { name: "running", count: breakdown.running },
     { name: "passing", count: breakdown.passing },
-    { name: "other", count: breakdown.other },
+    { name: "cancelled", count: breakdown.other },
   ] satisfies Array<{ name: CiSegmentName; count: number }>).filter((segment) => segment.count > 0);
 
+  const ringMask = "radial-gradient(circle, transparent 42%, black 46%)";
+
   if (segments.length === 0) {
-    return { background: "var(--muted)" };
+    return {
+      background: "var(--muted)",
+      maskImage: ringMask,
+      WebkitMaskImage: ringMask,
+    };
   }
 
   let cursor = 0;
@@ -1165,17 +1195,23 @@ function getCiStatusCircleStyle(checks: ChecksStatus): CSSProperties {
     return `${CI_SEGMENT_COLORS[segment.name]} ${start}% ${end}%`;
   });
 
-  return { background: `conic-gradient(${stops.join(", ")})` };
+  return {
+    background: `conic-gradient(${stops.join(", ")})`,
+    maskImage: ringMask,
+    WebkitMaskImage: ringMask,
+  };
 }
 
 function ThreadOverviewCiStatusCircle({ checks }: { checks: ChecksStatus }) {
   return (
-    <span
-      aria-hidden
-      data-testid="thread-overview-ci-status-circle"
-      className="size-3 shrink-0 rounded-full border border-border/70"
-      style={getCiStatusCircleStyle(checks)}
-    />
+    <span className="flex size-3.5 shrink-0 items-center justify-center">
+      <span
+        aria-hidden
+        data-testid="thread-overview-ci-status-circle"
+        className="size-3.5 rounded-full"
+        style={getCiStatusRingStyle(checks)}
+      />
+    </span>
   );
 }
 
@@ -1203,7 +1239,10 @@ function ThreadOverviewPrActionRow({
           size="sm"
           type="button"
           data-testid="workspace-menu-commit"
-          className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+          className={cn(
+            OVERVIEW_ROW_CLASS,
+            "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground",
+          )}
           onClick={onCommitOrPush}
           title="Ask the agent to commit and push the changes"
         >
@@ -1221,7 +1260,10 @@ function ThreadOverviewPrActionRow({
         size="sm"
         type="button"
         data-testid="workspace-menu-create-pr"
-        className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        className={cn(
+          OVERVIEW_ROW_CLASS,
+          "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+        )}
         onClick={onCreatePr}
         disabled={!hasCommitsAhead}
         title={hasCommitsAhead ? "Create pull request" : "Waiting for commits ahead of base branch"}
@@ -1285,11 +1327,11 @@ function ThreadOverviewPrActiveRow({
             event.stopPropagation();
             setChecksOpen((open) => !open);
           }}
-          className="ml-6 flex h-6 w-[calc(100%-1.5rem)] cursor-pointer justify-between rounded-none border-transparent bg-transparent px-0 text-left text-muted-foreground hover:bg-transparent hover:text-foreground dark:hover:bg-transparent"
+          className="flex h-7 w-full cursor-pointer justify-between gap-3 border-transparent bg-transparent px-2 text-left text-muted-foreground hover:bg-muted/40 hover:text-foreground dark:hover:bg-muted/40"
         >
           <span className="flex min-w-0 items-center gap-2">
             <ThreadOverviewCiStatusCircle checks={checks} />
-            <span className="truncate text-xs">
+            <span className="truncate font-mono text-xs tabular-nums">
               {getCiOverviewSummaryLabel(checks)}
             </span>
           </span>
@@ -1307,9 +1349,10 @@ function ThreadOverviewPrActiveRow({
       status.label ? (
         <span
           data-testid="thread-overview-pr-status"
-          className="ml-6 inline-flex h-6 items-center rounded-md px-2 text-xs text-muted-foreground"
+          className="inline-flex h-7 w-full items-center gap-2 px-2 font-mono text-xs text-muted-foreground"
         >
-          {status.label}
+          <span aria-hidden className="size-3.5 shrink-0" />
+          <span className="truncate">{status.label}</span>
         </span>
       ) : null
     );
@@ -1319,6 +1362,7 @@ function ThreadOverviewPrActiveRow({
       <PrSplitButton
         pr={pr}
         label={rowLabel}
+        machineLabel={!detailText}
         onCreatePr={onCreatePr}
         onOpenPr={onOpenPr}
         primaryButtonTestId="workspace-menu-open-pr"
@@ -1846,7 +1890,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       aria-label={triggerStatus}
       data-testid="header-workspace-menu"
       className={cn(
-        "relative cursor-pointer text-foreground/70 hover:bg-muted/40 hover:text-foreground",
+        "relative cursor-pointer text-foreground/70 transition-[background-color,color,transform] duration-150 active:scale-95 motion-reduce:transform-none hover:bg-muted/40 hover:text-foreground",
         open && "bg-muted text-foreground",
       )}
     >
@@ -1866,17 +1910,28 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   );
 
   const overviewBody = (
-    <div data-testid="thread-overview-body" className="animate-overview-enter p-1.5">
+    <div data-testid="thread-overview-body" className="animate-overview-enter">
+      <div
+        data-testid="thread-overview-masthead"
+        className="flex h-9 items-center bg-muted/20 px-3"
+      >
+        <span className="text-xs font-semibold text-foreground/90">Overview</span>
+      </div>
+      <Separator />
+      <div className="p-1.5">
             <Button
               variant="ghost"
               size="sm"
               onClick={openChanges}
               data-testid="workspace-menu-changes"
               aria-label={`Changes, ${changedFilesLabel(changeSummary.files)}`}
-              className="h-8 w-full cursor-pointer justify-between gap-3 px-2 text-left"
+              className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-between")}
             >
               <span className="flex min-w-0 items-center gap-2">
-                <Diff size={14} className="shrink-0 text-muted-foreground" />
+                <Diff
+                  size={14}
+                  className="shrink-0 text-muted-foreground transition-colors duration-150 group-hover:text-foreground/80"
+                />
                 <span className="truncate text-xs font-medium">Changes</span>
               </span>
               {isChangeSummaryLoading ? (
@@ -1915,10 +1970,13 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 data-testid="thread-overview-plan"
                 onClick={openLatestPlan}
                 aria-label={`Plan, ${latestPlan.title}`}
-                className="h-8 w-full cursor-pointer justify-between gap-3 px-2 text-left"
+                className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-between")}
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  <ListChecks size={14} className="shrink-0 text-muted-foreground" />
+                  <ListChecks
+                    size={14}
+                    className="shrink-0 text-muted-foreground transition-colors duration-150 group-hover:text-foreground/80"
+                  />
                   <span className="truncate text-xs font-medium">Plans</span>
                 </span>
                 <span className="min-w-0 max-w-[11rem] truncate text-xs text-muted-foreground">
@@ -1937,7 +1995,8 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                     data-testid="thread-overview-local"
                     aria-label={`${modeLabel}${dirPath ? `, ${dirPath}` : ""}`}
                     className={cn(
-                      "h-8 w-full justify-between gap-3 px-2 text-left",
+                      OVERVIEW_ROW_CLASS,
+                      "justify-between",
                       localOpen && "bg-muted text-foreground",
                     )}
                   >
@@ -1946,11 +2005,18 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                         size={14}
                         aria-hidden
                         data-testid="thread-overview-local-mode-icon"
-                        className="shrink-0 text-muted-foreground"
+                        className="shrink-0 text-muted-foreground transition-colors duration-150 group-hover:text-foreground/80"
                       />
                       <span className="truncate text-xs font-medium">{modeLabel}</span>
                     </span>
-                    <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
+                    <ChevronDown
+                      size={13}
+                      aria-hidden
+                      className={cn(
+                        "shrink-0 text-muted-foreground transition-transform duration-150",
+                        localOpen && "rotate-180",
+                      )}
+                    />
                   </Button>
                 }
               />
@@ -1970,11 +2036,14 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 size="sm"
                 type="button"
                 data-testid="thread-overview-create-branch"
-                className="h-8 w-full cursor-pointer justify-start gap-2 px-2 text-left text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground"
+                className={cn(
+                  OVERVIEW_ROW_CLASS,
+                  "cursor-pointer justify-start text-xs text-primary hover:bg-primary/10 hover:text-primary",
+                )}
                 onClick={() => setCreateBranchOpen(true)}
                 title="Create a branch in this worktree"
               >
-                <GitBranch size={14} className="shrink-0 text-muted-foreground" />
+                <GitBranch size={14} className="shrink-0 text-primary/80" />
                 <span className="font-medium">Create branch</span>
               </Button>
             ) : (
@@ -1987,15 +2056,26 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                       type="button"
                       data-testid="workspace-menu-branch"
                       className={cn(
-                        "h-8 w-full justify-between gap-3 px-2 text-left",
+                        OVERVIEW_ROW_CLASS,
+                        "justify-between",
                         branchOpen && "bg-muted text-foreground",
                       )}
                     >
                       <span className="flex min-w-0 items-center gap-2">
-                        <GitBranch size={14} className="shrink-0 text-muted-foreground" />
+                        <GitBranch
+                          size={14}
+                          className="shrink-0 text-muted-foreground transition-colors duration-150 group-hover:text-foreground/80"
+                        />
                         <span className="truncate text-xs font-medium">{checkoutLabel}</span>
                       </span>
-                      <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
+                      <ChevronDown
+                        size={13}
+                        aria-hidden
+                        className={cn(
+                          "shrink-0 text-muted-foreground transition-transform duration-150",
+                          branchOpen && "rotate-180",
+                        )}
+                      />
                     </Button>
                   }
                 />
@@ -2044,16 +2124,21 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             )}
 
             {canShowPrActions && (
-              <ThreadOverviewPrRow
-                pr={effectivePr}
-                hasCommitsAhead={hasCommitsAhead}
-                checks={checks}
-                openPrDetail={openPrDetail}
-                threadId={thread.id}
-                onCommitOrPush={handleCommitOrPush}
-                onCreatePr={() => setCreatePrOpen(true)}
-                onOpenPr={handleOpenPr}
-              />
+              <>
+                {usageSummary ? (
+                  <Separator data-testid="thread-overview-pr-separator" className="my-1.5" />
+                ) : null}
+                <ThreadOverviewPrRow
+                  pr={effectivePr}
+                  hasCommitsAhead={hasCommitsAhead}
+                  checks={checks}
+                  openPrDetail={openPrDetail}
+                  threadId={thread.id}
+                  onCommitOrPush={handleCommitOrPush}
+                  onCreatePr={() => setCreatePrOpen(true)}
+                  onOpenPr={handleOpenPr}
+                />
+              </>
             )}
 
             {sources.length > 0 && (
@@ -2073,6 +2158,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               error={threadRecap.error}
               onRefresh={() => void threadRecap.refresh()}
             />
+      </div>
     </div>
   );
 
@@ -2094,7 +2180,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
           sideOffset={18}
           alignOffset={-40}
           collisionPadding={8}
-          className="w-80 p-0"
+          className="w-80 overflow-hidden p-0"
         >
           {overviewBody}
         </PopoverContent>

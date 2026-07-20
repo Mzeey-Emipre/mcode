@@ -140,6 +140,7 @@ import {
 import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
+  getCiStatusRingStyle,
   getThreadOverviewCiDot,
   formatThreadOverviewSessionCost,
   formatThreadOverviewUsage,
@@ -498,10 +499,13 @@ describe("HeaderActions - consolidated header", () => {
 
     const usageTrigger = screen.getByTestId("thread-overview-usage");
     const prAction = screen.getByTestId("thread-overview-pr");
+    const prSeparator = screen.getByTestId("thread-overview-pr-separator");
     const recap = screen.getByTestId("thread-overview-recap");
     expect(usageTrigger).toHaveAttribute("aria-label", "Usage, 5-hour 12%, weekly 47%");
     expect(usageTrigger).toHaveAttribute("aria-expanded", "true");
     expect(Boolean(usageTrigger.compareDocumentPosition(prAction) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(usageTrigger.compareDocumentPosition(prSeparator) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(prSeparator.compareDocumentPosition(prAction) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(Boolean(usageTrigger.compareDocumentPosition(recap) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(usageTrigger).toHaveTextContent("Usage");
     expect(usageTrigger).not.toHaveTextContent("5-hour 12%, weekly 47%");
@@ -525,6 +529,39 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.queryByRole("progressbar", { name: /5-hour usage/ })).not.toBeInTheDocument();
     expect(screen.queryByText("usage unavailable")).not.toBeInTheDocument();
     expect(screen.queryByTestId("thread-overview-usage-popover")).not.toBeInTheDocument();
+  });
+
+  it("emphasizes quota percentages when usage approaches or reaches the limit", () => {
+    seedThreadUsage("thread-1", {
+      providerId: "claude",
+      usageStatus: "ready",
+      quotaCategories: [
+        {
+          label: "5-hour limit",
+          used: 75,
+          total: 100,
+          remainingPercent: 0.25,
+          resetDate: "2099-07-07T14:14:00.000Z",
+          isUnlimited: false,
+        },
+        {
+          label: "Weekly limit",
+          used: 95,
+          total: 100,
+          remainingPercent: 0.05,
+          resetDate: "2099-07-07T14:14:00.000Z",
+          isUnlimited: false,
+        },
+      ],
+    });
+
+    renderHeaderActions(makeThread({ worktree_path: "/repo/worktrees/feat-x" }));
+
+    const values = screen.getAllByTestId("thread-overview-usage-value");
+    expect(values[0]).toHaveTextContent("75%");
+    expect(values[0]).toHaveClass("text-primary");
+    expect(values[1]).toHaveTextContent("95%");
+    expect(values[1]).toHaveClass("text-destructive");
   });
 
   it("does not render Codex usage before provider quota data arrives", () => {
@@ -1016,5 +1053,52 @@ describe("getThreadOverviewCiDot", () => {
       ),
     ).toBeNull();
     expect(getThreadOverviewCiDot(null, { ...baseChecks, aggregate: "passing" })).toBeNull();
+  });
+});
+
+describe("getCiStatusRingStyle", () => {
+  const completedRun = {
+    status: "completed" as const,
+    durationMs: 1,
+    startedAt: "2026-07-20T10:00:00.000Z",
+  };
+
+  it("renders all-passing checks as a hollow green ring", () => {
+    const style = getCiStatusRingStyle({
+      aggregate: "passing",
+      fetchedAt: 1,
+      runs: [
+        { ...completedRun, name: "Typecheck", conclusion: "success" },
+        { ...completedRun, name: "Tests", conclusion: "success" },
+      ],
+    });
+
+    expect(style.background).toBe(
+      "conic-gradient(var(--diff-add-strong) 0% 100%)",
+    );
+    expect(style.maskImage).toContain("transparent 42%");
+  });
+
+  it("allocates ring segments to failed, running, successful, and cancelled checks", () => {
+    const style = getCiStatusRingStyle({
+      aggregate: "failing",
+      fetchedAt: 1,
+      runs: [
+        { ...completedRun, name: "Lint", conclusion: "failure" },
+        {
+          name: "Build",
+          status: "in_progress",
+          conclusion: null,
+          durationMs: null,
+          startedAt: "2026-07-20T10:00:00.000Z",
+        },
+        { ...completedRun, name: "Tests", conclusion: "success" },
+        { ...completedRun, name: "Preview", conclusion: "cancelled" },
+      ],
+    });
+
+    expect(style.background).toBe(
+      "conic-gradient(var(--diff-remove-strong) 0% 25%, var(--primary) 25% 50%, var(--diff-add-strong) 50% 75%, var(--muted-foreground) 75% 100%)",
+    );
   });
 });
