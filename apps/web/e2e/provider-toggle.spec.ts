@@ -99,7 +99,9 @@ async function openProviderSettings(page: Page): Promise<void> {
   // separate "Provider" nav entry.
   await page.getByRole("button", { name: "Model", exact: true }).click();
   // Wait for the ProviderSection heading to confirm the section rendered.
-  await expect(page.getByRole("heading", { name: "Provider" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Providers", exact: true }),
+  ).toBeVisible();
 }
 
 /**
@@ -145,7 +147,7 @@ test.describe("provider toggle", () => {
 
   // ── Test 1: six switches + key badges visible ──────────────────────────────
 
-  test("renders six switches with badges", async ({ page }) => {
+  test("renders configurable switches with provider badges", async ({ page }) => {
     const availability = makeAvailabilityFixture();
 
     await mockWebSocketServer(page, {
@@ -156,9 +158,9 @@ test.describe("provider toggle", () => {
     await page.waitForLoadState("networkidle");
     await openProviderSettings(page);
 
-    // Each provider should have a switch
+    // Configurable providers should have switches.
     const switchIds: ProviderAvailability["id"][] = [
-      "claude", "codex", "copilot", "gemini", "cursor", "opencode",
+      "claude", "codex", "copilot",
     ];
     for (const id of switchIds) {
       await expect(page.getByTestId(`provider-switch-${id}`)).toBeVisible();
@@ -172,6 +174,11 @@ test.describe("provider toggle", () => {
 
     // Gemini should have a Coming soon badge
     await expect(page.getByTestId("provider-badge-gemini-comingsoon")).toBeVisible();
+    await expect(page.getByTestId("provider-badge-cursor-comingsoon")).toBeVisible();
+    await expect(page.getByTestId("provider-badge-opencode-comingsoon")).toBeVisible();
+    await expect(page.getByTestId("provider-switch-gemini")).toHaveCount(0);
+    await expect(page.getByTestId("provider-switch-cursor")).toHaveCount(0);
+    await expect(page.getByTestId("provider-switch-opencode")).toHaveCount(0);
 
     await page.screenshot({ path: SS("01-settings-default.png"), fullPage: false });
   });
@@ -304,7 +311,7 @@ test.describe("provider toggle", () => {
 
   // ── Test 5: coming-soon provider switch is disabled ───────────────────────
 
-  test("coming-soon provider switch is disabled", async ({ page }) => {
+  test("coming-soon providers are grouped without switches", async ({ page }) => {
     const availability = makeAvailabilityFixture();
 
     await mockWebSocketServer(page, {
@@ -315,10 +322,13 @@ test.describe("provider toggle", () => {
     await page.waitForLoadState("networkidle");
     await openProviderSettings(page);
 
-    // gemini is comingSoon=true, so its switch must be disabled
-    const geminiSwitch = page.getByTestId("provider-switch-gemini");
-    await expect(geminiSwitch).toBeVisible();
-    await expect(geminiSwitch).toBeDisabled();
+    await expect(page.getByTestId("coming-soon-providers")).toBeVisible();
+    await expect(page.getByTestId("provider-badge-gemini-comingsoon")).toBeVisible();
+    await expect(page.getByTestId("provider-badge-cursor-comingsoon")).toBeVisible();
+    await expect(page.getByTestId("provider-badge-opencode-comingsoon")).toBeVisible();
+    await expect(page.getByTestId("provider-switch-gemini")).toHaveCount(0);
+    await expect(page.getByTestId("provider-switch-cursor")).toHaveCount(0);
+    await expect(page.getByTestId("provider-switch-opencode")).toHaveCount(0);
 
     await page.screenshot({ path: SS("05-coming-soon-disabled.png"), fullPage: false });
   });
