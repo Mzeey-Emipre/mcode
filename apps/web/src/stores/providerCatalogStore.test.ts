@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderCatalogRequest, ProviderCatalogSnapshot } from "@/transport";
+import type { ProviderCatalogChange } from "@mcode/contracts";
 import { providerCatalogCacheKey, useProviderCatalogStore } from "./providerCatalogStore";
 
 const REQUEST: ProviderCatalogRequest = {
@@ -127,5 +128,33 @@ describe("providerCatalogStore", () => {
 
     await expect(store.getState().load(REQUEST)).resolves.toEqual(SNAPSHOT);
     expect(calls).toHaveLength(2);
+  });
+
+  it("reconciles identity changes without replacing unaffected entries", async () => {
+    await useProviderCatalogStore.getState().load(REQUEST);
+    const key = providerCatalogCacheKey(REQUEST);
+    const original = useProviderCatalogStore.getState().entries[key]?.snapshot?.entries[0];
+    const addition = {
+      kind: "skill" as const,
+      identity: { providerId: "codex" as const, kind: "skill" as const, nativeId: "ship" },
+      name: "ship",
+      description: "Ship changes",
+      source: "project" as const,
+    };
+    const change: ProviderCatalogChange = {
+      request: REQUEST,
+      additions: [addition],
+      updates: [],
+      removals: [],
+      selectableAgents: { additions: [], updates: [], removals: [] },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T13:00:00.000Z" },
+    };
+
+    useProviderCatalogStore.getState().reconcile(change);
+
+    const reconciled = useProviderCatalogStore.getState().entries[key]?.snapshot;
+    expect(reconciled?.entries).toEqual([SNAPSHOT.entries[0], addition]);
+    expect(reconciled?.entries[0]).toBe(original);
+    expect(reconciled?.freshness).toEqual(change.freshness);
   });
 });

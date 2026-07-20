@@ -4,6 +4,11 @@ import {
   type ProviderCatalogRequest,
   type ProviderCatalogSnapshot,
 } from "@/transport";
+import type {
+  ProviderCapabilityEntry,
+  ProviderCatalogChange,
+  SelectableProviderAgent,
+} from "@mcode/contracts";
 
 /** Cached provider catalog state for one discovery context. */
 export interface ProviderCatalogCacheEntry {
@@ -44,6 +49,8 @@ interface ProviderCatalogState {
   load(request: ProviderCatalogRequest, force?: boolean): Promise<ProviderCatalogSnapshot>;
   /** Marks every catalog stale while retaining visible rows during refresh. */
   invalidate(): void;
+  /** Applies one server-produced identity reconciliation to a loaded context. */
+  reconcile(change: ProviderCatalogChange): void;
   /** Clears every cached catalog and fences in-flight loads. */
   reset(): void;
 }
@@ -56,6 +63,18 @@ function replaceEntry(
   entry: ProviderCatalogCacheEntry,
 ): Readonly<Record<string, ProviderCatalogCacheEntry>> {
   return { ...entries, [key]: entry };
+}
+
+function capabilityIdentity(entry: ProviderCapabilityEntry): string {
+  return JSON.stringify([
+    entry.identity.providerId,
+    entry.identity.kind,
+    entry.identity.nativeId,
+  ]);
+}
+
+function agentIdentity(agent: SelectableProviderAgent): string {
+  return JSON.stringify([agent.providerId, agent.nativeId]);
 }
 
 /** Module-scoped store for provider capability catalog snapshots. */
@@ -159,6 +178,57 @@ export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) =
       ]),
     );
     set({ entries });
+  },
+
+  reconcile(change) {
+    const key = providerCatalogCacheKey(change.request);
+    const current = get();
+    const entry = current.entries[key];
+    if (!entry?.snapshot) return;
+
+    const removedEntries = new Set(change.removals.map((identity) => JSON.stringify([
+      identity.providerId,
+      identity.kind,
+      identity.nativeId,
+    ])));
+    const updatedEntries = new Map(change.updates.map((item) => [capabilityIdentity(item), item]));
+    const existingEntryIds = new Set(entry.snapshot.entries.map(capabilityIdentity));
+    const entries = entry.snapshot.entries
+      .filter((item) => !removedEntries.has(capabilityIdentity(item)))
+      .map((item) => updatedEntries.get(capabilityIdentity(item)) ?? item);
+    for (const addition of change.additions) {
+      if (!existingEntryIds.has(capabilityIdentity(addition))) entries.push(addition);
+    }
+
+    const removedAgents = new Set(change.selectableAgents.removals);
+    const updatedAgents = new Map(
+      change.selectableAgents.updates.map((agent) => [agentIdentity(agent), agent]),
+    );
+    const existingAgentIds = new Set(entry.snapshot.selectableAgents.map(agentIdentity));
+    const selectableAgents = entry.snapshot.selectableAgents
+      .filter((agent) => !removedAgents.has(agent.nativeId))
+      .map((agent) => updatedAgents.get(agentIdentity(agent)) ?? agent);
+    for (const addition of change.selectableAgents.additions) {
+      if (!existingAgentIds.has(agentIdentity(addition))) selectableAgents.push(addition);
+    }
+
+    set({
+      entries: replaceEntry(current.entries, key, {
+        ...entry,
+        snapshot: {
+          ...entry.snapshot,
+          entries,
+          selectableAgents,
+          diagnostics: change.diagnostics ?? entry.snapshot.diagnostics,
+          freshness: change.freshness ?? entry.snapshot.freshness,
+        },
+        isLoading: false,
+        needsRefresh: false,
+        error: null,
+        inflight: null,
+        lastFetchedAt: Date.now(),
+      }),
+    });
   },
 
   reset() {

@@ -28,6 +28,7 @@ import { FileService } from "./services/file-service";
 import { ConfigService } from "./services/config-service";
 import { SkillService } from "./services/skill-service";
 import { CodexCatalogService } from "./services/codex-catalog-service";
+import { ProviderCatalogService } from "./services/provider-catalog-service";
 import { TerminalService } from "./services/terminal-service";
 import { MessageRepo } from "./repositories/message-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
@@ -222,6 +223,7 @@ const fileService = container.resolve(FileService);
 const configService = container.resolve(ConfigService);
 const skillService = container.resolve(SkillService);
 const codexCatalogService = container.resolve(CodexCatalogService);
+const providerCatalogService = container.resolve(ProviderCatalogService);
 const terminalService = container.resolve(TerminalService);
 const messageRepo = container.resolve(MessageRepo);
 const threadRepo = container.resolve(ThreadRepo);
@@ -600,6 +602,14 @@ for (const provider of providerRegistry.resolveAll()) {
   });
 }
 
+providerCatalogService.onChanged((change) => {
+  broadcast("provider.catalogChanged", change);
+  portPush.send("provider.catalogChanged", change);
+});
+codexCatalogService.onSkillsChanged((cwd) => {
+  providerCatalogService.refreshKnownContexts("codex", cwd);
+});
+
 // Create and start HTTP + WS server
 const { httpServer, wss } = createWsServer({
   workspaceService,
@@ -614,6 +624,7 @@ const { httpServer, wss } = createWsServer({
   configService,
   skillService,
   codexCatalogService,
+  providerCatalogService,
   terminalService,
   messageRepo,
   toolCallRecordRepo,

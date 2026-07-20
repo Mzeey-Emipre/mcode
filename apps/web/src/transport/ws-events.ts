@@ -1,4 +1,9 @@
-import type { Settings, ProviderAvailability, TurnFileEffectSummary } from "@mcode/contracts";
+import type {
+  ProviderAvailability,
+  ProviderCatalogChange,
+  Settings,
+  TurnFileEffectSummary,
+} from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { pushEmitter } from "./ws-transport";
 import { getTransport } from "@/transport";
@@ -50,6 +55,7 @@ function approxBase64DecodedBytes(encoded: string): number {
  * - `thread.modelUpdated` -- thread model and provider synced after a message send (multi-client)
  * - `files.changed` -- invalidates the file autocomplete cache
  * - `skills.changed` -- invalidates provider catalogs; popup re-fetches on next open
+ * - `provider.catalogChanged` -- reconciles a refreshed catalog by stable identity
  * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
  * - `settings.changed` -- server-pushed settings updates forwarded to settingsStore
  * - `branch.changed` -- refreshes branch list and updates current branch if not manually overridden
@@ -336,6 +342,12 @@ export function startPushListeners(): void {
         skillsInvalidationTimer = null;
         useProviderCatalogStore.getState().invalidate();
       }, SKILLS_INVALIDATION_DEBOUNCE_MS);
+    }),
+  );
+
+  unsubs.push(
+    pushEmitter.on("provider.catalogChanged", (change) => {
+      useProviderCatalogStore.getState().reconcile(change as ProviderCatalogChange);
     }),
   );
 

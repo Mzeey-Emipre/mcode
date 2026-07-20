@@ -527,6 +527,9 @@ export {
   ProviderCatalogContextSchema,
   ProviderCatalogRequestSchema,
   ProviderCatalogSnapshotSchema,
+  ProviderCapabilityIdentitySchema,
+  SelectableProviderAgentChangesSchema,
+  ProviderCatalogChangeSchema,
 } from "./providers/capability-catalog.js";
 export type {
   ProviderCapabilityKind,
@@ -538,6 +541,9 @@ export type {
   ProviderCatalogContext,
   ProviderCatalogRequest,
   ProviderCatalogSnapshot,
+  ProviderCapabilityIdentity,
+  SelectableProviderAgentChanges,
+  ProviderCatalogChange,
 } from "./providers/capability-catalog.js";
 
 // WebSocket protocol

@@ -322,6 +322,23 @@ export const providerModelCache = sqliteTable("provider_model_cache", {
   modelCount: integer("model_count").notNull().default(0),
 });
 
+/** Last known provider catalog snapshots, isolated by provider and realized context. */
+export const providerCatalogSnapshots = sqliteTable(
+  "provider_catalog_snapshots",
+  {
+    contextKey: text("context_key").primaryKey().notNull(),
+    providerId: text("provider_id").notNull(),
+    workspaceId: text("workspace_id"),
+    cwd: text("cwd"),
+    snapshotJson: text("snapshot_json").notNull(),
+    updatedAt: text("updated_at").notNull().default(timestampDefault),
+  },
+  (table) => [
+    index("idx_provider_catalog_snapshots_workspace").on(table.workspaceId),
+    index("idx_provider_catalog_snapshots_provider").on(table.providerId),
+  ],
+);
+
 export const planQuestionAnswers = sqliteTable(
   "plan_question_answers",
   {

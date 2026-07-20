@@ -216,3 +216,41 @@ export const ProviderCatalogSnapshotSchema = lazySchema(() =>
 );
 /** Provider capability catalog snapshot for one validated discovery context. */
 export type ProviderCatalogSnapshot = z.infer<ReturnType<typeof ProviderCatalogSnapshotSchema>>;
+
+/** Stable provider capability identity used by incremental removals. */
+export const ProviderCapabilityIdentitySchema = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    identitySchema("skill"),
+    identitySchema("plugin"),
+    identitySchema("customPrompt"),
+    identitySchema("providerCommand"),
+  ]),
+);
+/** Stable provider capability identity used by incremental removals. */
+export type ProviderCapabilityIdentity = z.infer<ReturnType<typeof ProviderCapabilityIdentitySchema>>;
+
+/** Incremental selectable-agent reconciliation payload. */
+export const SelectableProviderAgentChangesSchema = lazySchema(() =>
+  z.object({
+    additions: z.array(SelectableProviderAgentSchema()).max(PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS),
+    updates: z.array(SelectableProviderAgentSchema()).max(PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS),
+    removals: z.array(z.string().trim().min(1).max(512)).max(PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS),
+  }).strict(),
+);
+/** Incremental selectable-agent reconciliation payload. */
+export type SelectableProviderAgentChanges = z.infer<ReturnType<typeof SelectableProviderAgentChangesSchema>>;
+
+/** Incremental provider catalog reconciliation emitted after a background refresh. */
+export const ProviderCatalogChangeSchema = lazySchema(() =>
+  z.object({
+    request: ProviderCatalogRequestSchema(),
+    additions: z.array(ProviderCapabilityEntrySchema()).max(PROVIDER_CATALOG_MAX_ENTRIES),
+    updates: z.array(ProviderCapabilityEntrySchema()).max(PROVIDER_CATALOG_MAX_ENTRIES),
+    removals: z.array(ProviderCapabilityIdentitySchema()).max(PROVIDER_CATALOG_MAX_ENTRIES),
+    selectableAgents: SelectableProviderAgentChangesSchema(),
+    diagnostics: z.array(ProviderCatalogDiagnosticSchema()).max(100).optional(),
+    freshness: ProviderCatalogFreshnessSchema().optional(),
+  }).strict(),
+);
+/** Incremental provider catalog reconciliation emitted after a background refresh. */
+export type ProviderCatalogChange = z.infer<ReturnType<typeof ProviderCatalogChangeSchema>>;

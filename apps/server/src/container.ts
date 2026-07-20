@@ -22,6 +22,7 @@ import { ModelCacheRepo } from "./repositories/model-cache-repo";
 import { PlanQuestionAnswersRepo } from "./repositories/plan-question-answers-repo";
 import { PlanRepo } from "./repositories/plan-repo";
 import { PullRequestReviewLinkRepo } from "./repositories/pull-request-review-link-repo";
+import { ProviderCatalogSnapshotRepo } from "./repositories/provider-catalog-snapshot-repo";
 
 // Providers
 import { ClaudeProvider } from "./providers/claude/claude-provider";
@@ -45,6 +46,7 @@ import {
   CodexCatalogClientFactory,
   CodexCatalogService,
 } from "./services/codex-catalog-service";
+import { ProviderCatalogService } from "./services/provider-catalog-service";
 import { TerminalService } from "./services/terminal-service";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
@@ -220,6 +222,11 @@ export function setupContainer(mcodeDir: string): typeof container {
     { useClass: PullRequestReviewLinkRepo },
     { lifecycle: Lifecycle.Singleton },
   );
+  container.register(
+    ProviderCatalogSnapshotRepo,
+    { useClass: ProviderCatalogSnapshotRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
 
   // Providers
   container.register(
@@ -366,6 +373,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     CodexCatalogService,
     { useClass: CodexCatalogService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ProviderCatalogService,
+    { useClass: ProviderCatalogService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
