@@ -128,7 +128,7 @@ function NewThreadWelcome({
       <div
         key={projectName ?? "projectless"}
         data-testid="new-thread-welcome"
-        className="animate-fade-up-in flex w-full max-w-3xl flex-col items-center gap-7 text-center"
+        className="animate-fade-up-in flex w-full max-w-[80rem] flex-col items-center gap-7 text-center"
       >
         <McodeLogo variant="newThread" markOnly />
         <h1
@@ -158,17 +158,20 @@ function NewThreadWelcome({
             "What should we work on?"
           )}
         </h1>
-        <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+        <div
+          data-testid="new-thread-starters"
+          className="grid w-full grid-cols-[repeat(auto-fit,minmax(min(18rem,100%),1fr))] gap-3"
+        >
           {NEW_THREAD_STARTERS.map(({ label, prompt, icon: Icon }) => (
             <Button
               key={label}
               type="button"
               variant="outline"
               onClick={() => onPromptSelect(prompt)}
-              className="group h-auto min-h-24 flex-col items-start justify-between rounded-xl border-border/70 bg-transparent px-4 py-3.5 text-left shadow-none hover:border-primary/35 hover:bg-accent/45"
+              className="group h-auto min-h-24 flex-col items-start justify-between rounded-xl border-border/70 bg-transparent px-4 py-4 text-left shadow-none hover:border-primary/35 hover:bg-accent/45"
             >
-              <Icon size={15} className="text-primary transition-transform duration-200 group-hover:-translate-y-0.5 motion-reduce:transform-none" aria-hidden />
-              <span className="max-w-32 text-wrap text-sm font-medium leading-5 text-foreground/90">
+              <Icon className="size-4 text-primary transition-transform duration-200 group-hover:-translate-y-0.5 motion-reduce:transform-none" aria-hidden />
+              <span className="w-full max-w-[18ch] text-wrap text-sm font-medium leading-5 text-foreground/90">
                 {label}
               </span>
             </Button>

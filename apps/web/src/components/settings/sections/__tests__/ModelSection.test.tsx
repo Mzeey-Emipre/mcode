@@ -101,6 +101,22 @@ describe("ModelSection reasoning options", () => {
     vi.clearAllMocks();
   });
 
+  it("groups provider and model controls under a clear page hierarchy", () => {
+    renderWithModel("claude", "claude-opus-4-7");
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Models & providers" }),
+    ).toBeInTheDocument();
+    for (const name of [
+      "Providers",
+      "Model defaults",
+      "Utility model",
+      "AI features",
+    ]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
+  });
+
   it("renders reasoning options in order: Low, Medium, High, X-High, Max for Claude Opus 4.7", () => {
     renderWithModel("claude", "claude-opus-4-7");
 

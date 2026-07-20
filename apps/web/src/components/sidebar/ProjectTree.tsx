@@ -1075,7 +1075,7 @@ const ThreadPrIndicator = memo(function ThreadPrIndicator({
       title={label}
       aria-label={label}
       data-testid={`thread-pr-indicator-${threadId}`}
-      className="absolute left-1.5 top-1/2 -mt-px flex h-4 w-4 -translate-y-1/2 items-center justify-center"
+      className="-mt-px flex h-4 w-4 items-center justify-center"
     >
       <span className="relative flex size-4 items-center justify-center">
         <PrIcon
@@ -1302,25 +1302,29 @@ function VirtualizedThreadList({
             )}
             style={{ paddingLeft: `${42 + depth * 12}px` }}
           >
-            {prable && thread.pr_number != null ? (
-              <ThreadPrIndicator
-                threadId={thread.id}
-                prNumber={thread.pr_number}
-                prStatus={thread.pr_status}
-                checks={checks}
-                showCi={showPrCi}
-              />
-            ) : null}
             <span
-              aria-label={`Provider, ${providerMeta.label}`}
-              className={cn(
-                "absolute top-1/2 -mt-px flex h-4 w-4 -translate-y-1/2 items-center justify-center",
-                providerMeta.color,
-                scaffoldDim,
-              )}
-              style={{ left: `${22 + depth * 12}px` }}
+              className="absolute left-0.5 top-1/2 flex -translate-y-1/2 items-center justify-end gap-1"
+              style={{ width: `${36 + depth * 12}px` }}
             >
-              <RowProviderIcon size={12} />
+              {prable && thread.pr_number != null ? (
+                <ThreadPrIndicator
+                  threadId={thread.id}
+                  prNumber={thread.pr_number}
+                  prStatus={thread.pr_status}
+                  checks={checks}
+                  showCi={showPrCi}
+                />
+              ) : null}
+              <span
+                aria-label={`Provider, ${providerMeta.label}`}
+                className={cn(
+                  "-mt-px flex h-4 w-4 items-center justify-center",
+                  providerMeta.color,
+                  scaffoldDim,
+                )}
+              >
+                <RowProviderIcon size={12} />
+              </span>
             </span>
             <div
               className={cn(
@@ -1670,7 +1674,7 @@ const ProjectNode = memo(function ProjectNode({
             event.stopPropagation();
             handleToggle();
           }}
-          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-transparent hover:text-muted-foreground dark:hover:bg-transparent group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
           <ChevronRight
             size={14}
@@ -1749,7 +1753,7 @@ const ProjectNode = memo(function ProjectNode({
           onClick={handleCreateThreadClick}
           className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
-          <SquarePen size={13} />
+          <SquarePen className="size-[1.4rem]" />
         </Button>
       </div>
 
