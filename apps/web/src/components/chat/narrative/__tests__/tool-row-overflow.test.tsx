@@ -257,7 +257,7 @@ describe("narrative tool row layout classes", () => {
     expect(notice.className).toContain("text-xs");
   });
 
-  it("shows a failed shell exit code at the bottom right of the expanded panel", () => {
+  it("shows a plain shell exit code at the bottom right of the expanded panel", () => {
     const group: ToolGroup = {
       calls: [
         makeBashCall({
@@ -280,8 +280,9 @@ describe("narrative tool row layout classes", () => {
     fireEvent.click(child);
 
     const panel = screen.getByRole("region", { name: "Shell output" });
-    const badge = screen.getByText("exit code 1");
-    expect(panel).toContainElement(badge);
-    expect(badge.closest("footer")).toHaveClass("justify-end");
+    const exitCode = screen.getByText("exit code 1");
+    expect(panel).toContainElement(exitCode);
+    expect(exitCode).toHaveClass("text-muted-foreground/70");
+    expect(exitCode.closest("footer")).toHaveClass("justify-end");
   });
 });

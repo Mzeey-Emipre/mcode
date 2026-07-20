@@ -1,7 +1,6 @@
 import { useId, useState } from "react";
 import { ChevronRight, Terminal } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDuration } from "@/lib/time";
 import type { ToolCall } from "@/transport/types";
@@ -156,9 +155,9 @@ export function ShellToolCallRow({ toolCall }: ShellToolCallRowProps) {
 
             {failureLabel && (
               <footer className="mt-2 flex justify-end">
-                <Badge variant="destructive" size="sm" className="rounded-sm font-mono">
+                <span className="font-mono text-xs tabular-nums text-muted-foreground/70">
                   {failureLabel}
-                </Badge>
+                </span>
               </footer>
             )}
           </div>
