@@ -31,11 +31,13 @@ import type {
   PermissionDecision,
   PermissionRequest,
   PlanOutput,
-  PlanAction,
   MessageMention,
   PreviewAnnotationBundle,
   GoalState,
   GoalLookupResult,
+  SendMessageInput,
+  CreateAndSendInput,
+  PermissionMode,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -85,6 +87,26 @@ function escapeXml(s: string): string {
 }
 
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
+
+/** Command accepted by {@link AgentService.sendMessage}, including service-only delivery metadata. */
+export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "provider"> & {
+  permissionMode?: PermissionMode | "default";
+  provider?: ProviderId;
+  /** Assistant message whose plan-question batch is settled by this send. */
+  markPlanAnswerForMessageId?: string;
+  /** Provider payload used instead of the persisted user-facing content. */
+  providerWireOverride?: string;
+};
+
+/** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
+export type CreateAndSendCommand = Omit<
+  CreateAndSendInput,
+  "model" | "permissionMode" | "provider"
+> & {
+  model?: string;
+  permissionMode?: PermissionMode | "default";
+  provider?: ProviderId;
+};
 
 function buildInjectedFileMessage(
   text: string,
@@ -451,51 +473,32 @@ export class AgentService {
    * Loads the thread, persists the user message, resolves the working
    * directory, and dispatches to the provider.
    */
-  async sendMessage(
-    threadId: string,
-    content: string,
-    permissionMode: string,
+  async sendMessage({
+    threadId,
+    content,
+    permissionMode = "default",
     model = "claude-sonnet-4-6",
-    attachments: AttachmentMeta[] = [],
-    reasoningLevel?: ReasoningLevel,
-    provider?: ProviderId,
-    interactionMode?: InteractionMode,
-    maxBudgetUsd?: number,
-    maxTurns?: number,
-    copilotAgent?: string,
-    contextWindowMode?: ContextWindowMode,
-    thinking?: boolean,
-    codexFastMode?: boolean,
-    /**
-     * If set, persist a plan-questions "answered" marker for the given
-     * assistant message id in the same SQLite transaction as the user
-     * message create. Used by `answerQuestions` to record that the wizard
-     * has been satisfied so it does not re-pop on reload.
-     */
-    markPlanAnswerForMessageId?: string,
-    /**
-     * Provider-only payload for this send (fork continuation, stitched replay).
-     * The persisted user row uses {@link messageDisplayContent} when supplied,
-     * otherwise the original `content` argument; this string is forwarded to
-     * the agent without writing the override text to SQLite when set.
-     */
-    providerWireOverride?: string,
-    /** ID of the message being replied to. Stored on the user message row. */
-    replyToMessageId?: string,
-    /** Highlighted text excerpt from the replied-to message. Stored on the user message row. */
-    quotedText?: string,
-    /**
-     * Transcript stored in SQLite for the user bubble. When omitted, the
-     * original `content` argument is persisted. The `content` argument is
-     * still the base for plan/reply wrapping sent to the provider.
-     */
-    messageDisplayContent?: string,
-    planAction?: PlanAction,
-    mentions: MessageMention[] = [],
-    previewAnnotations?: PreviewAnnotationBundle,
-    goalObjective?: string,
-    orchestrationMode?: OrchestrationMode,
-  ): Promise<void> {
+    attachments = [],
+    reasoningLevel,
+    provider,
+    interactionMode,
+    maxBudgetUsd,
+    maxTurns,
+    copilotAgent,
+    contextWindow: contextWindowMode,
+    thinking,
+    codexFastMode,
+    markPlanAnswerForMessageId,
+    providerWireOverride,
+    replyToMessageId,
+    quotedText,
+    displayContent: messageDisplayContent,
+    planAction,
+    mentions = [],
+    previewAnnotations,
+    goalObjective,
+    orchestrationMode,
+  }: SendMessageCommand): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     // Use the thread's stored provider as authoritative fallback; only override
@@ -932,7 +935,7 @@ export class AgentService {
   async answerQuestions(
     threadId: string,
     answers: Array<{ questionId: string; selectedOptionId: string | null; freeText: string | null }>,
-    permissionMode = "default",
+    permissionMode: PermissionMode | "default" = "default",
     reasoningLevel?: ReasoningLevel,
     contextWindowMode?: ContextWindowMode,
     thinking?: boolean,
@@ -950,23 +953,18 @@ export class AgentService {
     this.armPlanGenerationTurn(threadId);
 
     // interactionMode intentionally omitted — no question wrapping for the answer turn
-    await this.sendMessage(
+    await this.sendMessage({
       threadId,
       content,
       permissionMode,
-      thread.model ?? "claude-sonnet-4-6",
-      [],
+      model: thread.model ?? "claude-sonnet-4-6",
+      attachments: [],
       reasoningLevel,
-      (thread.provider as ProviderId) ?? "claude",
-      undefined, // interactionMode
-      undefined, // maxBudgetUsd
-      undefined, // maxTurns
-      undefined, // copilotAgent
-      contextWindowMode,
+      provider: (thread.provider as ProviderId) ?? "claude",
+      contextWindow: contextWindowMode,
       thinking,
-      undefined,
       markPlanAnswerForMessageId,
-    );
+    });
   }
 
   /**
@@ -1116,34 +1114,34 @@ export class AgentService {
    * Generates a title from the content, creates the thread, sends,
    * and returns the fully-populated Thread object.
    */
-  async createAndSend(
-    workspaceId: string,
-    content: string,
+  async createAndSend({
+    workspaceId,
+    content,
     model = "claude-sonnet-4-6",
     permissionMode = "default",
-    mode: "direct" | "worktree" = "direct",
+    mode = "direct",
     branch = "main",
-    worktreeBranchMode: "branchless" | "named" = "branchless",
-    existingWorktreePath?: string,
-    existingWorktreeBaseBranch?: string,
-    attachments: AttachmentMeta[] = [],
-    reasoningLevel?: ReasoningLevel,
-    provider: ProviderId = "claude",
-    interactionMode?: InteractionMode,
-    parentThreadId?: string,
-    forkedFromMessageId?: string,
-    maxBudgetUsd?: number,
-    maxTurns?: number,
-    copilotAgent?: string,
-    contextWindowMode?: ContextWindowMode,
-    thinking?: boolean,
-    codexFastMode?: boolean,
-    displayContent?: string,
-    mentions: MessageMention[] = [],
-    previewAnnotations?: PreviewAnnotationBundle,
-    goalObjective?: string,
-    orchestrationMode?: OrchestrationMode,
-  ): Promise<Thread & { warnings?: string[] }> {
+    worktreeBranchMode = "branchless",
+    existingWorktreePath,
+    existingWorktreeBaseBranch,
+    attachments = [],
+    reasoningLevel,
+    provider = "claude",
+    interactionMode,
+    parentThreadId,
+    forkedFromMessageId,
+    maxBudgetUsd,
+    maxTurns,
+    copilotAgent,
+    contextWindow: contextWindowMode,
+    thinking,
+    codexFastMode,
+    displayContent,
+    mentions = [],
+    previewAnnotations,
+    goalObjective,
+    orchestrationMode,
+  }: CreateAndSendCommand): Promise<Thread & { warnings?: string[] }> {
     const title = truncateTitle(displayContent ?? content);
 
     if (parentThreadId) {
@@ -1227,8 +1225,8 @@ export class AgentService {
         : thread.codex_fast_mode,
     };
 
-    void this.sendMessage(
-      thread.id,
+    void this.sendMessage({
+      threadId: thread.id,
       content,
       permissionMode,
       model,
@@ -1239,20 +1237,14 @@ export class AgentService {
       maxBudgetUsd,
       maxTurns,
       copilotAgent,
-      contextWindowMode,
+      contextWindow: contextWindowMode,
       thinking,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
       displayContent,
-      undefined,
       mentions,
       previewAnnotations,
       goalObjective,
       orchestrationMode,
-    ).catch((err) => {
+    }).catch((err) => {
       logger.error("createAndSend initial send failed", {
         threadId: thread.id,
         error: err instanceof Error ? err.message : String(err),
@@ -1273,7 +1265,7 @@ export class AgentService {
     workspaceId: string;
     content: string;
     model: string;
-    permissionMode: string;
+    permissionMode: PermissionMode | "default";
     mode: "direct" | "worktree";
     branch: string;
     worktreeBranchMode?: "branchless" | "named";
@@ -1454,8 +1446,8 @@ export class AgentService {
       });
     }
 
-    void this.sendMessage(
-      thread.id,
+    void this.sendMessage({
+      threadId: thread.id,
       content,
       permissionMode,
       model,
@@ -1466,20 +1458,16 @@ export class AgentService {
       maxBudgetUsd,
       maxTurns,
       copilotAgent,
-      effectiveContextWindowMode,
-      effectiveThinking,
-      resolvedCodexFast ?? undefined,
-      undefined,
-      providerInput,
-      undefined,
-      undefined,
+      contextWindow: effectiveContextWindowMode,
+      thinking: effectiveThinking,
+      codexFastMode: resolvedCodexFast ?? undefined,
+      providerWireOverride: providerInput,
       displayContent,
-      undefined,
       mentions,
       previewAnnotations,
       goalObjective,
       orchestrationMode,
-    ).catch((err) => {
+    }).catch((err) => {
       logger.error("createBranchedThread initial send failed", {
         threadId: thread.id,
         error: err instanceof Error ? err.message : String(err),

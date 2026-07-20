@@ -615,18 +615,31 @@ describe("Workspace Behavior", () => {
 
       await useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5");
 
-      const call = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(call.slice(0, 9)).toEqual([
-        ws.id,
-        "Hello",
-        "gpt-5.5",
-        undefined,
-        "worktree",
-        "main",
-        undefined,
-        "/repo/.worktrees/branchless-existing",
-        "main",
-      ]);
+      const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(command).toEqual({
+        workspaceId: ws.id,
+        content: "Hello",
+        model: "gpt-5.5",
+        permissionMode: undefined,
+        mode: "worktree",
+        branch: "main",
+        worktreeBranchMode: undefined,
+        existingWorktreePath: "/repo/.worktrees/branchless-existing",
+        existingWorktreeBaseBranch: "main",
+        attachments: undefined,
+        reasoningLevel: undefined,
+        provider: undefined,
+        interactionMode: undefined,
+        parentThreadId: undefined,
+        forkedFromMessageId: undefined,
+        copilotAgent: undefined,
+        contextWindow: undefined,
+        thinking: undefined,
+        codexFastMode: undefined,
+        displayContent: undefined,
+        mentions: undefined,
+        previewAnnotations: undefined,
+      });
     });
 
     it("createAndSendMessage rejects detached existing worktree attach without a base branch", async () => {
@@ -676,16 +689,31 @@ describe("Workspace Behavior", () => {
         base_branch: null,
       });
 
-      const call = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(call.slice(0, 7)).toEqual([
-        ws.id,
-        "Review this",
-        "gpt-5.5",
-        undefined,
-        "worktree",
-        "contributor/pr-branch",
-        "named",
-      ]);
+      const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(command).toEqual({
+        workspaceId: ws.id,
+        content: "Review this",
+        model: "gpt-5.5",
+        permissionMode: undefined,
+        mode: "worktree",
+        branch: "contributor/pr-branch",
+        worktreeBranchMode: "named",
+        existingWorktreePath: undefined,
+        existingWorktreeBaseBranch: undefined,
+        attachments: undefined,
+        reasoningLevel: undefined,
+        provider: undefined,
+        interactionMode: undefined,
+        parentThreadId: undefined,
+        forkedFromMessageId: undefined,
+        copilotAgent: undefined,
+        contextWindow: undefined,
+        thinking: undefined,
+        codexFastMode: undefined,
+        displayContent: undefined,
+        mentions: undefined,
+        previewAnnotations: undefined,
+      });
       expect(useWorkspaceStore.getState().newThreadBranchSource).toBe("branch");
 
       resolveRpc(createMockThread({
@@ -733,18 +761,31 @@ describe("Workspace Behavior", () => {
         worktree_managed: false,
       });
 
-      const call = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(call.slice(0, 9)).toEqual([
-        ws.id,
-        "Hello",
-        "gpt-5.5",
-        undefined,
-        "worktree",
-        "feat/existing",
-        undefined,
-        "/repo/.worktrees/feature-existing",
-        undefined,
-      ]);
+      const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(command).toEqual({
+        workspaceId: ws.id,
+        content: "Hello",
+        model: "gpt-5.5",
+        permissionMode: undefined,
+        mode: "worktree",
+        branch: "feat/existing",
+        worktreeBranchMode: undefined,
+        existingWorktreePath: "/repo/.worktrees/feature-existing",
+        existingWorktreeBaseBranch: undefined,
+        attachments: undefined,
+        reasoningLevel: undefined,
+        provider: undefined,
+        interactionMode: undefined,
+        parentThreadId: undefined,
+        forkedFromMessageId: undefined,
+        copilotAgent: undefined,
+        contextWindow: undefined,
+        thinking: undefined,
+        codexFastMode: undefined,
+        displayContent: undefined,
+        mentions: undefined,
+        previewAnnotations: undefined,
+      });
 
       resolveRpc(createMockThread({
         id: "named-existing-thread",
@@ -906,18 +947,31 @@ describe("Workspace Behavior", () => {
         existingWorktreePath: "C:\\repo\\.worktrees\\branchless-existing\\",
       });
 
-      const call = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(call.slice(0, 9)).toEqual([
-        ws.id,
-        "Branch this",
-        "gpt-5.5",
-        undefined,
-        "worktree",
-        "main",
-        undefined,
-        "C:\\repo\\.worktrees\\branchless-existing\\",
-        "main",
-      ]);
+      const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(command).toEqual({
+        workspaceId: ws.id,
+        content: "Branch this",
+        model: "gpt-5.5",
+        permissionMode: undefined,
+        mode: "worktree",
+        branch: "main",
+        worktreeBranchMode: undefined,
+        existingWorktreePath: "C:\\repo\\.worktrees\\branchless-existing\\",
+        existingWorktreeBaseBranch: "main",
+        attachments: undefined,
+        reasoningLevel: undefined,
+        provider: undefined,
+        interactionMode: undefined,
+        parentThreadId: parent.id,
+        forkedFromMessageId: undefined,
+        copilotAgent: undefined,
+        contextWindow: undefined,
+        thinking: undefined,
+        codexFastMode: undefined,
+        displayContent: undefined,
+        mentions: undefined,
+        previewAnnotations: undefined,
+      });
     });
 
     it("branchThread rejects detached existing worktree attach without a base branch", async () => {

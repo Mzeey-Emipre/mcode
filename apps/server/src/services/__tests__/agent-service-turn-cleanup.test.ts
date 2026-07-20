@@ -307,7 +307,14 @@ describe("AgentService turn cleanup", () => {
     service.init();
 
     // sendMessage adds thread to activeSessionIds and emits TurnStarted
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
@@ -333,30 +340,16 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter, attachmentService, messageRepo } = buildService();
     const bundle = makePreviewAnnotationBundle();
 
-    await service.sendMessage(
-      THREAD_ID,
-      "fix this",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      [],
-      bundle,
-    );
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "fix this",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      mentions: [],
+      previewAnnotations: bundle,
+    });
 
     const expectedAttachment = {
       id: "annotation-shot-1",
@@ -400,7 +393,14 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter } = buildService();
     service.init();
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
     // Start compaction first
@@ -431,7 +431,14 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
     service.init();
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
     // Turn completes, thread removed from active
@@ -662,7 +669,14 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
     service.init();
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
     // Turn completes, thread removed
@@ -696,7 +710,14 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
     service.init();
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
     providerEmitter.emit("event", {
@@ -798,7 +819,14 @@ describe("AgentService Ended finalization", () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "codex");
 
-    await service.sendMessage(thread.id, "please investigate", "default", "gpt-5", [], undefined, "codex");
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "please investigate",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
     providerEmitter.emit("event", {
       type: AgentEventType.TextDelta,
       threadId: thread.id,
@@ -825,7 +853,14 @@ describe("AgentService Ended finalization", () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "cursor");
 
-    await service.sendMessage(thread.id, "please investigate", "default", "gpt-5", [], undefined, "cursor");
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "please investigate",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "cursor",
+    });
     providerEmitter.emit("event", {
       type: AgentEventType.TextDelta,
       threadId: thread.id,

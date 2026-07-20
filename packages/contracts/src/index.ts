@@ -531,7 +531,12 @@ export {
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
   RECAP_MAX_PREVIOUS_RECAP_CHARS,
 } from "./ws/methods.js";
-export type { WsMethodName, CreateAndSendResult } from "./ws/methods.js";
+export type {
+  WsMethodName,
+  SendMessageInput,
+  CreateAndSendInput,
+  CreateAndSendResult,
+} from "./ws/methods.js";
 
 export { WS_CHANNELS } from "./ws/channels.js";
 export type { WsChannelName } from "./ws/channels.js";

@@ -7,6 +7,7 @@ import {
   PlanQuestionSchema,
   PERMISSION_MODES,
   INTERACTION_MODES,
+  ProviderIdSchema,
   isGoalOpen,
   previewAnnotationSnapshotStoredAttachments,
 } from "@mcode/contracts";
@@ -1160,7 +1161,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
     try {
       const { interactionMode } = get().getThreadSettings(threadId);
-      await getTransport().sendMessage(
+      await getTransport().sendMessage({
         threadId,
         content,
         model,
@@ -1168,7 +1169,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         attachments,
         displayContent,
         reasoningLevel,
-        provider,
+        provider: provider === undefined ? undefined : ProviderIdSchema.parse(provider),
         interactionMode,
         copilotAgent,
         contextWindow,
@@ -1181,7 +1182,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         previewAnnotations,
         goalObjective,
         orchestrationMode,
-      );
+      });
     } catch (e) {
       if (planAction === "revise") {
         usePlanStore.getState().setGenerating(threadId, false);

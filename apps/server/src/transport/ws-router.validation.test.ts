@@ -55,6 +55,126 @@ describe("routeMessage result validation seam", () => {
   });
 });
 
+describe("routeMessage agent commands", () => {
+  const capture = {
+    schemaVersion: 2,
+    pageUrl: "http://localhost:5173/products/1",
+    pageTitle: "Product",
+    capturedAt: "2026-07-01T00:00:00.000Z",
+    captureKind: "element",
+    selectorHint: "button.buy",
+    bounds: { x: 10, y: 20, width: 100, height: 40 },
+    visibleTextExcerpt: "Buy now",
+    layoutViewport: { width: 1200, height: 800 },
+  };
+  const previewAnnotations = {
+    schemaVersion: 1,
+    annotations: [
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        displayNumber: 1,
+        pageIdentity: "http://localhost:5173/products/1",
+        pageContext: capture,
+        targetContext: {
+          label: "button.buy",
+          selectorHint: "button.buy",
+          bounds: { x: 10, y: 20, width: 100, height: 40 },
+        },
+        note: "Make the button clearer.",
+        snapshot: {
+          id: "snap-1",
+          name: "preview.png",
+          mimeType: "image/png",
+          sizeBytes: 123,
+          sourcePath: "C:/tmp/preview.png",
+          capture,
+        },
+      },
+    ],
+  };
+
+  it("augments an existing-thread command while preserving its display content and annotations", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const deps = { agentService: { sendMessage } } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-send",
+        method: "agent.send",
+        params: {
+          threadId: "thread-1",
+          content: "Inspect this change",
+          displayContent: "Inspect the highlighted button",
+          model: "gpt-5",
+          provider: "codex",
+          interactionMode: "build",
+          permissionMode: "full",
+          thinking: false,
+          previewAnnotations,
+        },
+      }),
+      deps,
+    );
+
+    expect(response.error).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      content: `Inspect this change
+
+<!-- mcode-preview-annotations:v1
+${JSON.stringify(previewAnnotations)}
+mcode-preview-annotations:end -->`,
+      displayContent: "Inspect the highlighted button",
+      model: "gpt-5",
+      provider: "codex",
+      interactionMode: "build",
+      permissionMode: "full",
+      thinking: false,
+      previewAnnotations,
+    });
+  });
+
+  it("augments a new-thread command while falling back to raw display content", async () => {
+    const createAndSend = vi.fn().mockResolvedValue({
+      id: "thread-2",
+      mode: "direct",
+      worktree_path: null,
+    });
+    const deps = { agentService: { createAndSend } } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-create-send",
+        method: "agent.createAndSend",
+        params: {
+          workspaceId: "workspace-1",
+          content: "Start here",
+          model: "gpt-5",
+          provider: "codex",
+          mode: "direct",
+          previewAnnotations,
+        },
+      }),
+      deps,
+    );
+
+    expect(response.error).toBeUndefined();
+    expect(createAndSend).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      content: `Start here
+
+<!-- mcode-preview-annotations:v1
+${JSON.stringify(previewAnnotations)}
+mcode-preview-annotations:end -->`,
+      displayContent: "Start here",
+      model: "gpt-5",
+      provider: "codex",
+      mode: "direct",
+      previewAnnotations,
+    });
+  });
+});
+
 describe("routeMessage git.getRemoteUrl", () => {
   it("resolves the git path from a workspace thread before calling GitService", async () => {
     const getRemoteUrl = vi.fn().mockResolvedValue({

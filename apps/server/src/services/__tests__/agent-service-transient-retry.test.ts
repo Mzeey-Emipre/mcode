@@ -206,7 +206,14 @@ describe("AgentService transient-failure auto-retry", () => {
       .mockRejectedValueOnce(new Error("read ECONNRESET"))
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(sendTurn).toHaveBeenCalledTimes(2);
     // First attempt resumes the live session; the retry must drop it for a fresh spawn.
@@ -224,7 +231,14 @@ describe("AgentService transient-failure auto-retry", () => {
     service.init();
     sendTurn.mockRejectedValue(new Error("permission denied"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(sendTurn).toHaveBeenCalledTimes(1);
     expect(discardSession).not.toHaveBeenCalled();
@@ -248,7 +262,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // During the retried attempt: a transient error is swallowed, a fatal one is not.
     expect(transientSuppressedDuringAttempt).toBe(true);
@@ -280,7 +301,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // The trailing Ended was armed for suppression during the failed attempt...
     expect(endedSuppressedDuringAttempt).toBe(true);
@@ -303,7 +331,14 @@ describe("AgentService transient-failure auto-retry", () => {
       return Promise.reject(new Error("permission denied"));
     });
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // A fatal error is not part of a retry window, so its Ended must reach the UI.
     expect(endedSuppressedDuringAttempt).toBe(false);
@@ -315,7 +350,14 @@ describe("AgentService transient-failure auto-retry", () => {
     service.init();
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // Give-up disarms the retry window so the terminal error is visible.
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
@@ -341,7 +383,14 @@ describe("AgentService transient-failure auto-retry", () => {
       .mockRejectedValueOnce(new Error("spawn claude EAGAIN"))
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(discardSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
     expect(waitForSessionExit).toHaveBeenCalledWith(`mcode-${THREAD_ID}`, 5000);
@@ -356,20 +405,15 @@ describe("AgentService transient-failure auto-retry", () => {
 
     sendTurn.mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(
-      THREAD_ID,
-      "hello",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "1m",
-    );
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      contextWindow: "1m",
+    });
 
     // A bare `Ended` with no in-flight transient retry means the stream
     // genuinely ended; it must reach the cleanup path even though the
@@ -385,7 +429,14 @@ describe("AgentService transient-failure auto-retry", () => {
     sendTurn.mockResolvedValueOnce(undefined);
 
     // Fire-and-forget send leaves the retry window armed until TurnComplete.
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(true);
 
     // A user stop ends the turn via finalize; it must tear down the armed
@@ -406,7 +457,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    const sendPromise = service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    const sendPromise = service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     await sendPromise;
 
     providerEmitter.emit("event", {
@@ -445,7 +503,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(turnCompleteSuppressedDuringAttempt).toBe(true);
     providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
@@ -457,7 +522,14 @@ describe("AgentService transient-failure auto-retry", () => {
     service.init();
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // Cap is 2: one original attempt plus one retry, then it gives up.
     expect(sendTurn).toHaveBeenCalledTimes(2);

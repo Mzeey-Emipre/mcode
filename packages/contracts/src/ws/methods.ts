@@ -135,6 +135,9 @@ export const SendMessageSchema = lazySchema(() =>
   }),
 );
 
+/** Validated command for sending a message to an existing thread. */
+export type SendMessageInput = z.infer<ReturnType<typeof SendMessageSchema>>;
+
 /** Schema for creating a thread and sending a message in one call. */
 export const CreateAndSendSchema = lazySchema(() =>
   z.object({
@@ -184,6 +187,9 @@ export const CreateAndSendSchema = lazySchema(() =>
   { message: "forkedFromMessageId requires parentThreadId", path: ["forkedFromMessageId"] },
   ),
 );
+
+/** Validated command for creating a thread and sending its first message. */
+export type CreateAndSendInput = z.infer<ReturnType<typeof CreateAndSendSchema>>;
 
 /** Result schema for agent.createAndSend: a Thread with optional non-fatal warnings. */
 export const CreateAndSendResultSchema = lazySchema(() =>
