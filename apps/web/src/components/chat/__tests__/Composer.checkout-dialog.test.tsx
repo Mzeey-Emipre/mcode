@@ -496,8 +496,8 @@ describe("Composer checkout confirmation", () => {
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
-    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
-    expect(sendCall?.[17]).toMatchObject({
+    const sendCommand = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(sendCommand?.previewAnnotations).toMatchObject({
       schemaVersion: 1,
       annotations: [
         { id: "550e8400-e29b-41d4-a716-446655440001" },
