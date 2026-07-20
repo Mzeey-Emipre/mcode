@@ -71,6 +71,7 @@ export function RightPanel() {
   // chat/composer (App.tsx suppresses the chat pane). A transient view toggle,
   // not a stored width — the panel keeps its width so restoring drops back inline.
   const maximized = useUiStore((s) => s.rightPanelMaximized);
+  const toggleMaximized = useUiStore((s) => s.toggleRightPanelMaximized);
 
   // Read the scope's effective panel record: the active thread's own once it has
   // diverged, otherwise the workspace fallback (ADR-0012 copy-on-write). Both
@@ -238,9 +239,9 @@ export function RightPanel() {
       aria-hidden={!panelVisible}
       inert={!panelVisible ? true : undefined}
     >
-      {/* Rail + content. The activity rail carries the maximize toggle and, once
-          tabs are open, tab navigation and the add control. With no tabs the rail
-          is just the maximize button beside the empty-state create list. */}
+      {/* Rail + content. The activity rail carries close and maximize actions and,
+          once tabs are open, tab navigation and the add control. With no tabs it
+          keeps those panel actions beside the empty-state create list. */}
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
         <ActivityRail
           openTabs={openTabs}
@@ -250,9 +251,11 @@ export function RightPanel() {
           changesCount={changesCount}
           changesFresh={changesFresh}
           browserTabSet={browserTabSet}
+          maximized={maximized}
           onTogglePanel={() =>
             toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId)
           }
+          onToggleMaximized={toggleMaximized}
           onSelect={(id) =>
             setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
           }

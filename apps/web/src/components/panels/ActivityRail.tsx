@@ -1,6 +1,6 @@
 import type { FocusEvent as ReactFocusEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Globe, PanelRight, Plus, X } from "lucide-react";
+import { Globe, Maximize2, Minimize2, PanelRight, Plus, X } from "lucide-react";
 import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import {
@@ -467,10 +467,10 @@ function RailAddControl({
 }
 
 /**
- * Vertical activity rail for the right panel: panel toggle at the head, then
+ * Vertical activity rail for the right panel: close and maximize controls at the head, then
  * open singleton tabs (active lamp, hover-× close, add control when tabs exist).
- * With no tabs open the rail is only the panel toggle beside the empty-state
- * list. The rail toggle mirrors the chat-header toggle and right-panel shortcut.
+ * With no tabs open the rail keeps only the panel actions beside the empty-state
+ * list. The close action mirrors the chat-header toggle and right-panel shortcut.
  */
 export function ActivityRail({
   openTabs,
@@ -480,7 +480,9 @@ export function ActivityRail({
   changesCount,
   changesFresh,
   browserTabSet,
+  maximized,
   onTogglePanel,
+  onToggleMaximized,
   onSelect,
   onClose,
   onCreate,
@@ -495,7 +497,10 @@ export function ActivityRail({
   readonly changesFresh: boolean;
   /** The Browser tab's open pages, or null when none are known (web build / not yet loaded). */
   readonly browserTabSet: BrowserTabSet | null;
+  /** Whether the panel fills the content area beside the project tree. */
+  readonly maximized: boolean;
   onTogglePanel: () => void;
+  onToggleMaximized: () => void;
   onSelect: (id: RightPanelTab) => void;
   onClose: (id: RightPanelTab) => void;
   onCreate: (id: RightPanelTab) => void;
@@ -596,33 +601,49 @@ export function ActivityRail({
       <div
         className={cn(
           "absolute inset-y-0 left-0 flex w-12 flex-col items-stretch gap-0.5 overflow-hidden bg-background px-1.5 py-2 transition-[width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-          expanded && "w-36 border-r border-border/50",
+          expanded && "w-40 border-r border-border/50",
         )}
       >
-      {/* The panel toggle sits at the rail head (not the foot) so it stays in
-          the first tab stop and never scrolls off-screen on short viewports. */}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onTogglePanel}
-        className="relative h-8 w-full shrink-0 justify-start overflow-hidden px-2 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
-        aria-label="Toggle panel"
-        aria-pressed={true}
-        title={expanded ? undefined : "Toggle panel"}
-        data-testid="rail-panel-toggle"
-        data-preview-design-keep-open="true"
-      >
-        <PanelRight />
-        <span
-          aria-hidden
-          className={cn(
-            "absolute left-8 right-2 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-            expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
-          )}
+      {/* Panel-level actions stay at the rail head so they remain the first tab
+          stops and never scroll off-screen on short viewports. */}
+      <div className="relative h-8 w-full shrink-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onTogglePanel}
+          className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
+          aria-label="Close panel"
+          title={expanded ? undefined : "Close panel"}
+          data-testid="rail-panel-toggle"
+          data-preview-design-keep-open="true"
         >
-          Close panel
-        </span>
-      </Button>
+          <PanelRight />
+          <span
+            aria-hidden
+            className={cn(
+              "absolute left-8 right-8 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+              expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+            )}
+          >
+            Close panel
+          </span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onToggleMaximized}
+          className={cn(
+            "absolute right-0 top-0 text-muted-foreground/70 transition-[color,opacity] motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+            expanded ? "opacity-100" : "pointer-events-none opacity-0",
+          )}
+          aria-label={maximized ? "Restore panel" : "Maximize panel"}
+          title={maximized ? "Restore panel" : "Maximize panel"}
+          data-testid="rail-maximize-toggle"
+          data-preview-design-keep-open="true"
+        >
+          {maximized ? <Minimize2 /> : <Maximize2 />}
+        </Button>
+      </div>
 
       {openTabs.map((id) => {
         // The Browser tab becomes its page switcher: when its pages are known,

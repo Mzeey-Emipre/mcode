@@ -9,6 +9,7 @@ const EXPECTED_COLLAPSE_DELAY_MS = 250;
 
 const handlers = {
   onTogglePanel: vi.fn(),
+  onToggleMaximized: vi.fn(),
   onSelect: vi.fn(),
   onClose: vi.fn(),
   onCreate: vi.fn(),
@@ -26,6 +27,7 @@ function railElement(openTabs: readonly RightPanelTab[] = ["terminal", "changes"
       changesCount={3}
       changesFresh={false}
       browserTabSet={null}
+      maximized={false}
       {...handlers}
     />
   );
@@ -40,6 +42,7 @@ function renderRail() {
 describe("ActivityRail expansion", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.clearAllMocks();
     usePreviewSuppressionStore.setState({ count: 0 });
   });
 
@@ -88,6 +91,33 @@ describe("ActivityRail expansion", () => {
     fireEvent.focus(screen.getByRole("button", { name: "Terminal" }));
 
     expect(rail).toHaveAttribute("data-expanded", "true");
+  });
+
+  it("keeps close and maximize as independent panel actions", () => {
+    const { rerender } = renderRail();
+
+    fireEvent.focus(screen.getByRole("button", { name: "Close panel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Maximize panel" }));
+
+    expect(handlers.onTogglePanel).toHaveBeenCalledTimes(1);
+    expect(handlers.onToggleMaximized).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ActivityRail
+        openTabs={["terminal", "changes"]}
+        activeTab="terminal"
+        scope="thread"
+        scopeProgress={{ done: 0, total: 0 }}
+        changesCount={3}
+        changesFresh={false}
+        browserTabSet={null}
+        maximized
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Restore panel" })).toBeInTheDocument();
   });
 
   it("collapses after a focused rail control is removed", () => {
