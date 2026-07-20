@@ -1,4 +1,3 @@
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { TaskItem } from "@/stores/taskStore";
 
 /** Props for TaskPanelHeader. */
@@ -28,12 +27,20 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
   if (total === 0) return null;
 
   const useDots = total <= 24;
+  const progressLabel = allDone
+    ? cancelled > 0
+      ? `All tasks settled: ${completed} completed, ${cancelled} cancelled`
+      : "All tasks completed"
+    : cancelled > 0
+      ? `${completed} completed, ${cancelled} cancelled, ${total - settled} remaining`
+      : `${completed} of ${total} tasks completed`;
 
   return (
     <div className="flex-none border-b border-border/20 px-3 py-2.5">
       <div className="flex items-center gap-3">
+        <span className="shrink-0 text-xs font-medium text-foreground/80">Tasks</span>
         {/* Task status visualization — slim ticks (vertical bars) read as a typographic ledger */}
-        <div className="flex flex-1 min-w-0 items-center">
+        <div className="flex min-w-0 flex-1 items-center" aria-hidden>
           {useDots ? (
             <div className="flex items-center gap-[3px]">
               {tasks.map((task, i) => (
@@ -64,34 +71,20 @@ export function TaskPanelHeader({ tasks }: TaskPanelHeaderProps) {
         </div>
 
         {/* Fraction counter — typographic ratio with a soft slash */}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                className={`shrink-0 font-mono tabular-nums text-[10.5px] leading-none transition-colors duration-300 cursor-help ${
-                  hasActive
-                    ? "text-primary/85"
-                    : allDone
-                      ? "text-[var(--diff-add-strong)]/75"
-                      : "text-muted-foreground/55"
-                }`}
-              >
-                <span className="font-medium">{settled}</span>
-                <span className="text-muted-foreground/30">/</span>
-                {total}
-              </span>
-            }
-          />
-          <TooltipContent side="top" className="text-xs">
-            {allDone
-              ? cancelled > 0
-                ? `All tasks settled (${completed} completed, ${cancelled} cancelled)`
-                : "All tasks completed"
-              : cancelled > 0
-                ? `${completed} completed, ${cancelled} cancelled, ${total - settled} remaining`
-                : `${completed} of ${total} tasks completed`}
-          </TooltipContent>
-        </Tooltip>
+        <span
+          aria-label={progressLabel}
+          className={`shrink-0 font-mono tabular-nums text-[10.5px] leading-none transition-colors duration-300 ${
+            hasActive
+              ? "text-primary/85"
+              : allDone
+                ? "text-[var(--diff-add-strong)]/75"
+                : "text-muted-foreground/55"
+          }`}
+        >
+          <span className="font-medium">{settled}</span>
+          <span className="text-muted-foreground/30">/</span>
+          {total}
+        </span>
       </div>
     </div>
   );
