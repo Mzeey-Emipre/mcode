@@ -34,7 +34,11 @@ import type { GithubService } from "../services/github-service";
 import type { FileService } from "../services/file-service";
 import type { ConfigService } from "../services/config-service";
 import type { SkillService } from "../services/skill-service";
-import type { CodexCatalogService } from "../services/codex-catalog-service";
+import type {
+  CodexCatalogRefreshResult,
+  CodexCatalogService,
+} from "../services/codex-catalog-service";
+import type { ProviderCatalogService } from "../services/provider-catalog-service";
 import type { TerminalService } from "../services/terminal-service";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
@@ -223,6 +227,8 @@ export interface RouterDeps {
   skillService: SkillService;
   /** Owns the thread-independent Codex app-server catalog connection. */
   codexCatalogService: CodexCatalogService;
+  /** Serves persisted snapshots and coordinates background catalog reconciliation. */
+  providerCatalogService: ProviderCatalogService;
   terminalService: TerminalService;
   messageRepo: MessageRepo;
   toolCallRecordRepo: ToolCallRecordRepo;
@@ -997,31 +1003,45 @@ async function dispatch(
     }
     case "provider.catalog": {
       const { cwd, context: catalogContext } = resolveProviderCatalogContext(deps, params);
-      let nativeSkills;
-      let diagnostics;
-      let freshness;
-      if (params.providerId === "codex") {
-        const catalog = await deps.codexCatalogService.refresh(cwd);
-        nativeSkills = catalog.skills;
-        diagnostics = catalog.diagnostics;
-        freshness = catalog.freshness;
-      }
-      const skills = deps.skillService.list(cwd, params.providerId, nativeSkills);
-      const agentDiscovery = params.providerId === "codex"
-        ? await discoverBoundedCodexAgents(resolveCodexAgentDirectories(
-            deps,
-            params.workspaceId,
-            params.threadId,
-            params.cwd,
-          ))
+      const workspaceRoot = params.workspaceId
+        ? deps.workspaceService.findById(params.workspaceId)?.path
         : undefined;
-      return buildProviderCatalogSnapshot({
-        providerId: params.providerId,
+      const buildSnapshot = async (
+        catalog?: CodexCatalogRefreshResult,
+      ) => {
+        const skills = deps.skillService.list(cwd, params.providerId, catalog?.skills);
+        const agentDiscovery = params.providerId === "codex"
+          ? await discoverBoundedCodexAgents(resolveCodexAgentDirectories(
+              deps,
+              params.workspaceId,
+              params.threadId,
+              params.cwd,
+            ))
+          : undefined;
+        return buildProviderCatalogSnapshot({
+          providerId: params.providerId,
+          context: catalogContext,
+          skills,
+          ...(agentDiscovery ? { agentDiscovery } : {}),
+          ...(catalog?.diagnostics ? { diagnostics: catalog.diagnostics } : {}),
+          ...(catalog?.freshness ? { freshness: catalog.freshness } : {}),
+        });
+      };
+      return deps.providerCatalogService.request({
+        request: params,
         context: catalogContext,
-        skills,
-        ...(agentDiscovery ? { agentDiscovery } : {}),
-        ...(diagnostics ? { diagnostics } : {}),
-        ...(freshness ? { freshness } : {}),
+        cwd,
+        ...(params.threadId && workspaceRoot ? { fallbackCwd: workspaceRoot } : {}),
+        refresh: async () => buildSnapshot(
+          params.providerId === "codex"
+            ? await deps.codexCatalogService.refresh(cwd)
+            : undefined,
+        ),
+        ...(params.providerId === "codex" ? {
+          refreshFromCache: async () => buildSnapshot(
+            deps.codexCatalogService.currentSnapshot(cwd),
+          ),
+        } : {}),
       });
     }
     case "skill.diagnose":

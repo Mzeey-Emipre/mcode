@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderCatalogRequest, ProviderCatalogSnapshot } from "@/transport";
+import type { ProviderCatalogChange } from "@mcode/contracts";
 import { providerCatalogCacheKey, useProviderCatalogStore } from "./providerCatalogStore";
 
 const REQUEST: ProviderCatalogRequest = {
@@ -127,5 +128,121 @@ describe("providerCatalogStore", () => {
 
     await expect(store.getState().load(REQUEST)).resolves.toEqual(SNAPSHOT);
     expect(calls).toHaveLength(2);
+  });
+
+  it("reconciles identity changes without replacing unaffected entries", async () => {
+    await useProviderCatalogStore.getState().load(REQUEST);
+    const key = providerCatalogCacheKey(REQUEST);
+    const original = useProviderCatalogStore.getState().entries[key]?.snapshot?.entries[0];
+    const addition = {
+      kind: "skill" as const,
+      identity: { providerId: "codex" as const, kind: "skill" as const, nativeId: "ship" },
+      name: "ship",
+      description: "Ship changes",
+      source: "project" as const,
+    };
+    const change: ProviderCatalogChange = {
+      request: REQUEST,
+      additions: [addition],
+      updates: [],
+      removals: [],
+      selectableAgents: { additions: [], updates: [], removals: [] },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T13:00:00.000Z" },
+    };
+
+    useProviderCatalogStore.getState().reconcile(change);
+
+    const reconciled = useProviderCatalogStore.getState().entries[key]?.snapshot;
+    expect(reconciled?.entries).toEqual([SNAPSHOT.entries[0], addition]);
+    expect(reconciled?.entries[0]).toBe(original);
+    expect(reconciled?.freshness).toEqual(change.freshness);
+  });
+
+  it("queues a catalog change until the initial RPC snapshot settles", async () => {
+    let resolveCatalog!: (snapshot: ProviderCatalogSnapshot) => void;
+    getProviderCatalogMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCatalog = resolve; }),
+    );
+    const addition = {
+      kind: "skill" as const,
+      identity: { providerId: "codex" as const, kind: "skill" as const, nativeId: "ship" },
+      name: "ship",
+      description: "Ship changes",
+      source: "project" as const,
+    };
+    const pending = useProviderCatalogStore.getState().load(REQUEST);
+
+    useProviderCatalogStore.getState().reconcile({
+      request: REQUEST,
+      additions: [addition],
+      updates: [],
+      removals: [],
+      selectableAgents: { additions: [], updates: [], removals: [] },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T13:00:00.000Z" },
+    });
+    resolveCatalog(STALE_SNAPSHOT);
+    await pending;
+
+    const snapshot = useProviderCatalogStore.getState()
+      .entries[providerCatalogCacheKey(REQUEST)]?.snapshot;
+    expect(snapshot?.entries).toEqual([SNAPSHOT.entries[0], addition]);
+    expect(snapshot?.freshness.status).toBe("fresh");
+  });
+
+  it("does not let a stale force-load response overwrite a catalog push", async () => {
+    await useProviderCatalogStore.getState().load(REQUEST);
+    let resolveCatalog!: (snapshot: ProviderCatalogSnapshot) => void;
+    getProviderCatalogMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCatalog = resolve; }),
+    );
+    const pending = useProviderCatalogStore.getState().load(REQUEST, true);
+    const updated = { ...SNAPSHOT.entries[0], description: "Review current changes" };
+
+    useProviderCatalogStore.getState().reconcile({
+      request: REQUEST,
+      additions: [],
+      updates: [updated],
+      removals: [],
+      selectableAgents: { additions: [], updates: [], removals: [] },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T13:00:00.000Z" },
+    });
+    resolveCatalog(STALE_SNAPSHOT);
+    await pending;
+
+    const snapshot = useProviderCatalogStore.getState()
+      .entries[providerCatalogCacheKey(REQUEST)]?.snapshot;
+    expect(snapshot?.entries).toEqual([updated]);
+    expect(snapshot?.freshness.status).toBe("fresh");
+  });
+
+  it("reloads the persisted snapshot when queued changes exceed the replay bound", async () => {
+    let resolveInitial!: (snapshot: ProviderCatalogSnapshot) => void;
+    const recoveredSnapshot = {
+      ...SNAPSHOT,
+      entries: [{ ...SNAPSHOT.entries[0], description: "Latest confirmed description" }],
+    };
+    getProviderCatalogMock
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
+      .mockResolvedValueOnce(recoveredSnapshot);
+    const pending = useProviderCatalogStore.getState().load(REQUEST);
+
+    for (let index = 0; index < 65; index += 1) {
+      useProviderCatalogStore.getState().reconcile({
+        request: REQUEST,
+        additions: [],
+        updates: [{ ...SNAPSHOT.entries[0], description: `Queued description ${index}` }],
+        removals: [],
+        selectableAgents: { additions: [], updates: [], removals: [] },
+      });
+    }
+    resolveInitial(STALE_SNAPSHOT);
+    await pending;
+
+    await vi.waitFor(() => {
+      const snapshot = useProviderCatalogStore.getState()
+        .entries[providerCatalogCacheKey(REQUEST)]?.snapshot;
+      expect(snapshot).toEqual(recoveredSnapshot);
+    });
+    expect(getProviderCatalogMock).toHaveBeenCalledTimes(2);
   });
 });

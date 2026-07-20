@@ -4,6 +4,9 @@ import { EventEmitter } from "events";
 import type { WebSocket } from "ws";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
 import { CodexCatalogService } from "../services/codex-catalog-service.js";
+import { ProviderCatalogService } from "../services/provider-catalog-service.js";
+import { ProviderCatalogSnapshotRepo } from "../repositories/provider-catalog-snapshot-repo.js";
+import { openMemoryDatabase } from "../store/database.js";
 import { _resetForTest, addClient } from "./push.js";
 import {
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
@@ -59,7 +62,7 @@ describe("routeMessage result validation seam", () => {
 });
 
 describe("routeMessage provider.catalog", () => {
-  it("discovers path-scoped Codex Skills before a thread exists", async () => {
+  it("returns persisted Codex Skills immediately and reconciles refreshes in the background", async () => {
     let catalogVersion = 1;
     const client = Object.assign(new EventEmitter(), {
       isAlive: true,
@@ -100,6 +103,14 @@ describe("routeMessage provider.catalog", () => {
       { create } as never,
     );
     const refresh = vi.spyOn(codexCatalogService, "refresh");
+    const db = openMemoryDatabase();
+    const insertWorkspace = db.prepare(
+      "INSERT INTO workspaces (id, name, path) VALUES (?, ?, ?)",
+    );
+    insertWorkspace.run("workspace-1", "Workspace 1", "C:/repo");
+    insertWorkspace.run("workspace-2", "Workspace 2", "C:/other");
+    const snapshotRepo = new ProviderCatalogSnapshotRepo(db);
+    const providerCatalogService = new ProviderCatalogService(snapshotRepo);
     const list = vi.fn().mockImplementation((_cwd, _providerId, discoveredSkills = []) => [
       ...discoveredSkills,
       {
@@ -122,8 +133,13 @@ describe("routeMessage provider.catalog", () => {
       },
       threadRepo: { findById: threadLookup },
       codexCatalogService,
+      providerCatalogService,
       skillService: { list },
     } as unknown as RouterDeps;
+
+    const firstChange = new Promise<import("@mcode/contracts").ProviderCatalogChange>((resolve) => {
+      providerCatalogService.onChanged(resolve);
+    });
 
     const response = await routeMessage(JSON.stringify({
       id: "catalog-1",
@@ -135,30 +151,17 @@ describe("routeMessage provider.catalog", () => {
     expect(response.result).toMatchObject({
       providerId: "codex",
       context: { scope: "workspace", workspaceId: "workspace-1" },
-      freshness: { status: "fresh" },
+      freshness: { status: "stale" },
       diagnostics: [],
-      entries: [
-        {
-          kind: "skill",
-          identity: {
-            providerId: "codex",
-            kind: "skill",
-            nativeId: "C:/users/test/.codex/skills/review/SKILL.md",
-          },
-        },
-        {
-          kind: "skill",
-          identity: {
-            providerId: "codex",
-            kind: "skill",
-            nativeId: "C:/repo/.codex/skills/review/SKILL.md",
-          },
-        },
-        {
-          kind: "customPrompt",
-          identity: { providerId: "codex", kind: "customPrompt", nativeId: "release" },
-        },
-      ],
+      entries: [],
+    });
+    await expect(firstChange).resolves.toMatchObject({
+      request: { providerId: "codex", workspaceId: "workspace-1" },
+      additions: expect.arrayContaining([
+        expect.objectContaining({ name: "review", kind: "skill" }),
+        expect.objectContaining({ name: "prompts:release", kind: "customPrompt" }),
+      ]),
+      freshness: { status: "fresh" },
     });
     expect(refresh).toHaveBeenCalledWith("C:/repo");
     expect(threadLookup).not.toHaveBeenCalled();
@@ -178,33 +181,87 @@ describe("routeMessage provider.catalog", () => {
     }).selectableAgents.every((agent) => agent.providerId === "codex" && agent.nativeId.length > 0))
       .toBe(true);
 
+    const restartedCatalogService = new ProviderCatalogService(snapshotRepo);
+    (deps as { providerCatalogService: ProviderCatalogService }).providerCatalogService = restartedCatalogService;
+    const restartedChange = new Promise<import("@mcode/contracts").ProviderCatalogChange>((resolve) => {
+      restartedCatalogService.onChanged((change) => {
+        if (change.request.workspaceId === "workspace-1") resolve(change);
+      });
+    });
+    const restartedResponse = await routeMessage(JSON.stringify({
+      id: "catalog-restarted",
+      method: "provider.catalog",
+      params: { providerId: "codex", workspaceId: "workspace-1" },
+    }), deps);
+    expect(restartedResponse.result).toMatchObject({
+      freshness: { status: "stale" },
+      entries: expect.arrayContaining([
+        expect.objectContaining({ name: "review" }),
+        expect.objectContaining({ name: "prompts:release" }),
+      ]),
+    });
+    await restartedChange;
+
+    const otherWorkspaceChange = new Promise<import("@mcode/contracts").ProviderCatalogChange>((resolve) => {
+      restartedCatalogService.onChanged((change) => {
+        if (change.request.workspaceId === "workspace-2") resolve(change);
+      });
+    });
     const otherWorkspaceResponse = await routeMessage(JSON.stringify({
       id: "catalog-2",
       method: "provider.catalog",
       params: { providerId: "codex", workspaceId: "workspace-2" },
     }), deps);
     expect(otherWorkspaceResponse.error).toBeUndefined();
+    expect((otherWorkspaceResponse.result as { entries: unknown[] }).entries).toEqual([]);
+    await otherWorkspaceChange;
     expect(client.listSkills).toHaveBeenLastCalledWith(["C:/other"], false);
-    expect((otherWorkspaceResponse.result as { entries: Array<{ identity: { nativeId: string } }> })
-      .entries.some((entry) => entry.identity.nativeId.startsWith("C:/other/"))).toBe(true);
 
     catalogVersion = 2;
     const refreshed = new Promise<string | undefined>((resolve) => {
       codexCatalogService.onSkillsChanged(resolve);
     });
+    codexCatalogService.onSkillsChanged((cwd) => {
+      restartedCatalogService.refreshKnownContexts("codex", cwd);
+    });
+    const reconciled = new Promise<import("@mcode/contracts").ProviderCatalogChange>((resolve) => {
+      restartedCatalogService.onChanged((change) => {
+        if (change.request.workspaceId === "workspace-1") resolve(change);
+      });
+    });
     client.emit("notification", { method: "skills/changed", params: { cwd: "C:/repo" } });
     await expect(refreshed).resolves.toBe("C:/repo");
     expect(client.listSkills).toHaveBeenCalledWith(["C:/repo"], true);
+    await expect(reconciled).resolves.toMatchObject({
+      additions: [expect.objectContaining({ name: "ship" })],
+      removals: [expect.objectContaining({ nativeId: "C:/repo/.codex/skills/review/SKILL.md" })],
+    });
+    expect(create).toHaveBeenCalledTimes(1);
 
-    const refreshedResponse = await routeMessage(JSON.stringify({
-      id: "catalog-3",
+    refresh.mockRejectedValueOnce(new Error("provider unavailable"));
+    const failedRefresh = new Promise<import("@mcode/contracts").ProviderCatalogChange>((resolve) => {
+      restartedCatalogService.onChanged((change) => {
+        if (change.request.workspaceId === "workspace-1") resolve(change);
+      });
+    });
+    const failureResponse = await routeMessage(JSON.stringify({
+      id: "catalog-failure",
       method: "provider.catalog",
       params: { providerId: "codex", workspaceId: "workspace-1" },
     }), deps);
-    expect((refreshedResponse.result as { entries: Array<{ name: string }> }).entries)
-      .toEqual(expect.arrayContaining([expect.objectContaining({ name: "ship" })]));
-    expect(create).toHaveBeenCalledTimes(1);
+    expect(failureResponse.result).toMatchObject({
+      freshness: { status: "stale" },
+      entries: expect.arrayContaining([expect.objectContaining({ name: "ship" })]),
+    });
+    await expect(failedRefresh).resolves.toMatchObject({
+      additions: [],
+      updates: [],
+      removals: [],
+      diagnostics: [expect.objectContaining({ code: "source-unavailable" })],
+      freshness: { status: "stale" },
+    });
     await codexCatalogService.shutdown();
+    db.close();
   });
 
   it("rejects unknown providers and oversized contexts before dispatch", async () => {

@@ -9,6 +9,7 @@ import { PermissionRequestSchema, PermissionDecisionSchema } from "../models/per
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
 import { lazySchema } from "../utils/lazySchema.js";
 import { TurnFileEffectSummarySchema } from "../models/file-effect.js";
+import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
@@ -65,6 +66,8 @@ export const WS_CHANNELS = {
   }),
   "settings.changed": SettingsSchema(),
   "skills.changed": z.object({}),
+  /** Identity-based catalog changes produced by a completed background refresh. */
+  "provider.catalogChanged": ProviderCatalogChangeSchema(),
   /** Full-list broadcast of provider availability. Replaces the client cache. */
   "providers.availability": z.array(ProviderAvailabilitySchema()),
   "branch.changed": lazySchema(() =>

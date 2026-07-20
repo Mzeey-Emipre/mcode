@@ -125,6 +125,42 @@ describe("CodexCatalogService", () => {
     expect(client.kill).toHaveBeenCalledTimes(1);
   });
 
+  it("starts a new connection after eviction while retaining the context snapshot", async () => {
+    vi.useFakeTimers();
+    const firstClient = new ControlledCatalogClient();
+    const secondClient = new ControlledCatalogClient();
+    const create = vi.fn()
+      .mockReturnValueOnce(firstClient)
+      .mockReturnValueOnce(secondClient);
+    const service = createService(firstClient, create);
+    const cwd = "C:/workspaces/one";
+    const first = await service.refresh(cwd);
+
+    await vi.advanceTimersByTimeAsync(60_001);
+    const restarted = await service.refresh(cwd);
+
+    expect(firstClient.kill).toHaveBeenCalledTimes(1);
+    expect(secondClient.start).toHaveBeenCalledTimes(1);
+    expect(secondClient.listSkills).toHaveBeenCalledWith([cwd], false);
+    expect(restarted.skills).toEqual(first.skills);
+  });
+
+  it("does not extend the request idle deadline for provider change signals", async () => {
+    vi.useFakeTimers();
+    const client = new ControlledCatalogClient();
+    const service = createService(client);
+    const cwd = "C:/workspaces/one";
+    await service.refresh(cwd);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const changed = new Promise<string | undefined>((resolve) => service.onSkillsChanged(resolve));
+
+    client.emit("notification", { method: "skills/changed", params: { cwd } });
+    await changed;
+    await vi.advanceTimersByTimeAsync(30_001);
+
+    expect(client.kill).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves the context snapshot and scopes diagnostics after a provider failure", async () => {
     const client = new ControlledCatalogClient();
     const service = createService(client);

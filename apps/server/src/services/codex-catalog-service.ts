@@ -170,6 +170,11 @@ export class CodexCatalogService {
     return this.snapshots.get(catalogKey(cwd))?.skills ?? [];
   }
 
+  /** Returns the last complete refresh result without touching the connection idle deadline. */
+  currentSnapshot(cwd?: string): CodexCatalogRefreshResult | undefined {
+    return this.snapshots.get(catalogKey(cwd));
+  }
+
   /** Stops the catalog process and clears in-flight connection state. */
   async shutdown(): Promise<void> {
     if (this.idleTimer) {
@@ -231,7 +236,7 @@ export class CodexCatalogService {
         cwd,
         error: error instanceof Error ? error.message : String(error),
       });
-      return {
+      const snapshot: CodexCatalogRefreshResult = {
         skills: previous?.skills ?? [],
         diagnostics: [{
           severity: "warning",
@@ -244,6 +249,8 @@ export class CodexCatalogService {
           reason: "Codex Skill discovery failed.",
         },
       };
+      this.snapshots.set(catalogKey(cwd), snapshot);
+      return snapshot;
     }
   }
 
