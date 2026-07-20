@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -73,16 +73,34 @@ beforeEach(() => {
 });
 
 describe("ProviderSection", () => {
-  it("renders one switch per provider", () => {
+  it("renders switches only for available providers", () => {
     render(<ProviderSection />);
     const switches = screen.getAllByRole("switch");
-    expect(switches).toHaveLength(6);
+    expect(switches).toHaveLength(3);
+    expect(screen.queryByTestId("provider-switch-gemini")).not.toBeInTheDocument();
   });
 
-  it("renders the Beta badge for copilot and Coming soon for gemini/cursor/opencode", () => {
+  it("renders the Beta badge for copilot and Coming soon badges for planned providers", () => {
     render(<ProviderSection />);
     expect(screen.getByTestId("provider-badge-copilot-beta")).toBeInTheDocument();
     expect(screen.getByTestId("provider-badge-gemini-comingsoon")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-badge-cursor-comingsoon")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-badge-opencode-comingsoon")).toBeInTheDocument();
+  });
+
+  it("groups planned providers after available providers without adapter copy", () => {
+    render(<ProviderSection />);
+
+    const comingSoon = screen.getByTestId("coming-soon-providers");
+    expect(within(comingSoon).getByText("Gemini")).toBeInTheDocument();
+    expect(within(comingSoon).getByText("Cursor")).toBeInTheDocument();
+    expect(within(comingSoon).getByText("Opencode")).toBeInTheDocument();
+    expect(screen.queryByText("Adapter not available yet.")).not.toBeInTheDocument();
+    expect(
+      screen
+        .getByTestId("provider-config-trigger-copilot")
+        .compareDocumentPosition(comingSoon) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("renders a CLI-not-found badge when enabled and status='not_found'", () => {
@@ -90,9 +108,10 @@ describe("ProviderSection", () => {
     expect(screen.getByTestId("provider-badge-codex-cli-missing")).toBeInTheDocument();
   });
 
-  it("disables the switch for coming-soon providers", () => {
+  it("does not render controls for coming-soon providers", () => {
     render(<ProviderSection />);
-    expect(screen.getByTestId("provider-switch-gemini")).toBeDisabled();
+    expect(screen.queryByTestId("provider-switch-gemini")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("provider-config-trigger-gemini")).not.toBeInTheDocument();
   });
 
   it("keeps stable provider configuration collapsed and opens Beta configuration by default", () => {
@@ -123,6 +142,15 @@ describe("ProviderSection", () => {
     await user.click(screen.getByTestId("provider-config-trigger-claude"));
 
     expect(screen.getByTestId("provider-cli-path-claude")).toBeVisible();
+  });
+
+  it("keeps expanded provider triggers visually neutral", () => {
+    render(<ProviderSection />);
+
+    expect(screen.getByTestId("provider-config-trigger-copilot")).toHaveClass(
+      "aria-expanded:bg-transparent",
+      "dark:aria-expanded:bg-transparent",
+    );
   });
 
   it("does not expose a disclosure trigger for coming-soon providers", () => {
