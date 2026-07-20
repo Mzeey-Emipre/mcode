@@ -37,12 +37,21 @@ const mockVirtualizer = {
 
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: vi.fn(() => mockVirtualizer),
+  defaultRangeExtractor: ({ startIndex, endIndex, overscan, count }: {
+    startIndex: number;
+    endIndex: number;
+    overscan: number;
+    count: number;
+  }) => Array.from(
+    { length: Math.min(count - 1, endIndex + overscan) - Math.max(0, startIndex - overscan) + 1 },
+    (_, index) => Math.max(0, startIndex - overscan) + index,
+  ),
 }));
 
 // Minimal store mocks; control `loading` and `activeThreadId` between renders.
 let loadingValue = false;
 let activeThreadIdValue = "thread-A";
-let messagesValue: { id: string; sequence: number }[] = [{ id: "m1", sequence: 1 }];
+let messagesValue: { id: string; sequence: number; thread_id?: string }[] = [{ id: "m1", sequence: 1 }];
 let hasMoreMessagesValue = false;
 
 function buildMockRecord() {
@@ -100,8 +109,13 @@ vi.mock("../PermissionRequestCard", () => ({ PermissionRequestCard: () => null }
 vi.mock("../HookActivitySection", () => ({ HookActivitySection: () => null }));
 vi.mock("../narrative", () => ({ NarrativeFlow: () => null }));
 
-import { MessageList } from "../MessageList";
-import { rememberScrollTop, recallScrollTop, clearScrollMemory } from "../scrollPositionMemory";
+import { MessageList, preservePrependedVirtualRange } from "../MessageList";
+import {
+  rememberScrollTop,
+  recallScrollTop,
+  clearScrollMemory,
+  hasRememberedHistoryPosition,
+} from "../scrollPositionMemory";
 
 beforeEach(() => {
   measureSpy.mockClear();
@@ -117,6 +131,35 @@ afterEach(() => {
 });
 
 describe("MessageList thread switch", () => {
+  it("records history posture before navigation can replace the active transcript", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [];
+    const { container, rerender } = render(<MessageList />);
+    messagesValue = [{ id: "m1", sequence: 1, thread_id: "thread-A" }];
+    act(() => rerender(<MessageList />));
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    Object.defineProperty(scrollEl, "scrollHeight", { configurable: true, value: 6000 });
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollEl, "scrollTop", { configurable: true, value: 3000, writable: true });
+
+    fireEvent.wheel(scrollEl, { deltaY: -100 });
+    scrollEl.scrollTop = 3000;
+    fireEvent.scroll(scrollEl);
+
+    expect(recallScrollTop("thread-A")).toBe(3000);
+    expect(hasRememberedHistoryPosition("thread-A")).toBe(true);
+  });
+
+  it("keeps the previous viewport range mounted while prepended rows are positioned", () => {
+    expect(preservePrependedVirtualRange({
+      startIndex: 0,
+      endIndex: 4,
+      overscan: 2,
+      count: 105,
+    }, 100)).toEqual([0, 1, 2, 3, 4, 5, 6, 100, 101, 102, 103, 104]);
+  });
+
   it("keeps the measured transcript tail pinned as virtualized content grows", () => {
     loadingValue = false;
     activeThreadIdValue = "thread-A";
@@ -182,6 +225,46 @@ describe("MessageList thread switch", () => {
     act(() => rerender(<MessageList />));
 
     expect(scrollTop).toBe(3000);
+  });
+
+  it("compensates a history prepend before the next paint", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [{ id: "m1", sequence: 1 }];
+    const { rerender, container } = render(<MessageList />);
+
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    let scrollHeight = 6000;
+    let scrollTop = 3000;
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(scrollEl, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    fireEvent.wheel(scrollEl, { deltaY: -100 });
+    fireEvent.scroll(scrollEl);
+    messagesValue = [{ id: "m1", sequence: 1 }];
+    act(() => rerender(<MessageList />));
+
+    scrollHeight = 8000;
+    messagesValue = [
+      { id: "m0", sequence: 0 },
+      { id: "m1", sequence: 1 },
+    ];
+    act(() => rerender(<MessageList />));
+
+    expect(scrollTop).toBe(5000);
   });
 
   it("does not restore tail pin when wheel-up remains inside the bottom cushion", () => {
@@ -452,7 +535,35 @@ describe("MessageList thread switch", () => {
 
     // The scroll restoration effect should have called scrollTop setter with 1500
     expect(setScrollTopValue).toBe(1500);
-    expect(recallScrollTop("thread-B")).toBeUndefined();
+    expect(recallScrollTop("thread-B")).toBe(1500);
+  });
+
+  it("waits for the selected thread transcript before applying its remembered position", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [{ id: "a1", sequence: 1, thread_id: "thread-A" }];
+    const { rerender, container } = render(<MessageList />);
+    rememberScrollTop("thread-B", 1500);
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    let scrollTop = 0;
+    Object.defineProperty(scrollEl, "scrollHeight", { configurable: true, value: 5000 });
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    activeThreadIdValue = "thread-B";
+    act(() => rerender(<MessageList />));
+    expect(recallScrollTop("thread-B")).toBe(1500);
+
+    messagesValue = [{ id: "b1", sequence: 1, thread_id: "thread-B" }];
+    act(() => rerender(<MessageList />));
+    expect(scrollTop).toBe(1500);
+    expect(recallScrollTop("thread-B")).toBe(1500);
   });
 
   it("does not re-apply remembered scroll when messages append on the same thread", () => {
@@ -491,7 +602,7 @@ describe("MessageList thread switch", () => {
     });
 
     expect(scrollTop).toBe(1500);
-    expect(recallScrollTop("thread-B")).toBeUndefined();
+    expect(recallScrollTop("thread-B")).toBe(1500);
 
     // Simulate user pinned at bottom, then a new message arrives.
     scrollTop = scrollHeight - 400;
