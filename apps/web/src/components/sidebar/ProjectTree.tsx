@@ -1749,7 +1749,7 @@ const ProjectNode = memo(function ProjectNode({
           onClick={handleCreateThreadClick}
           className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
-          <SquarePen className="size-[1.2rem]" />
+          <SquarePen className="size-[1.4rem]" />
         </Button>
       </div>
 
