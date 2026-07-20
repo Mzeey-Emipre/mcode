@@ -1028,6 +1028,37 @@ file mention references a workspace file, while a sub-agent mention requests a
 provider agent for part of the turn.
 _Avoid_: treating every `@...` string as a file path.
 
+### Selectable provider agent
+A provider-defined agent offered through the `@` mention picker. The list may
+combine provider-returned registrations with standalone agent definitions,
+but Mcode does not invent provider-internal built-ins that the provider did not
+return. Suggestion metadata helps the user choose an agent; the provider remains
+authoritative when resolving the selected agent name.
+_Avoid_: Sub-agent run, built-in agent
+
+### Provider catalog entry
+An invocable provider-owned item offered through the composer. Each entry is
+exactly one Skill, provider plugin, Codex custom prompt, or provider command.
+Mcode-level commands are not provider catalog entries. Entries of different
+kinds may share a native name and remain distinct.
+
+### Provider plugin
+A provider-distributed bundle of reusable instructions and integrations. Mcode
+exposes an installed and enabled plugin as one provider catalog entry while
+keeping its constituent Skills distinct.
+_Avoid_: Skill, plugin marketplace entry
+
+### Provider catalog snapshot
+The last provider-confirmed set of catalog entries for a workspace context. A
+snapshot remains available across app restarts and is marked stale whenever
+Mcode cannot confirm it against the provider. Age alone does not expire a
+snapshot.
+
+### Catalog refresh
+A background reconciliation between a visible catalog snapshot and its
+sources. Cached entries remain usable during refresh, and additions, changes,
+removals, and diagnostics are applied by stable entry identity.
+
 ### Skill
 A reusable agent capability the end user can attach to their threads
 inside the Mcode app — domain knowledge or a multi-step workflow the
@@ -1037,12 +1068,13 @@ the skills store. Distinct from the dev-tooling skill concept under
 
 A provider may be the **authoritative source of its own skill catalog**
 (Codex exposes one natively, including skills bundled inside provider
-plugins); the app's own filesystem scan is the fallback when the
-provider's catalog is unreachable. Skills the user disabled in the
-provider's own config do not appear in Mcode. A **provider plugin** is a
-distribution format, not a separate invocable thing: what the user
-invokes is always a skill, and plugin-bundled skills appear in the menu
-badged as plugin entries.
+plugins). When the Codex catalog is temporarily unavailable, Mcode serves
+the last confirmed catalog snapshot and marks it stale. Without a snapshot,
+the catalog is unavailable. Mcode does not reconstruct the Codex skill
+catalog with a filesystem scan. Skills the user disabled in the provider's
+own config do not appear in Mcode. An installed and enabled **provider
+plugin** is a distinct provider catalog entry. Skills contributed by that
+plugin remain separate Skill entries.
 
 ### Slash command
 A short command the user types in the composer (e.g. `/something`) that
@@ -1051,6 +1083,19 @@ lives in the composer's Lexical plugin (`SlashCommandPlugin`,
 `SlashCommandNode`, `SlashCommandPopup`). Distinct from the dev-tooling
 slash commands under `.claude/commands/` etc. (which are for
 contributors).
+
+### Codex custom prompt
+A deprecated Codex prompt template that the user invokes explicitly through
+the slash-command gesture. Mcode continues to support custom prompts as a
+compatibility surface, while Skills remain the preferred Codex surface for
+reusable instructions.
+_Avoid_: Skill, Mcode-level command
+
+### Provider command
+A reusable command defined by an agent provider, such as a Claude command.
+Provider commands are distinct from Codex custom prompts, even when both use
+the slash-command gesture in the composer.
+_Avoid_: Codex custom prompt, Skill
 
 Slash commands use `/` as their composer gesture. Providers with their own
 native invocation syntax (Codex's `$` mentions) get a translation at the
