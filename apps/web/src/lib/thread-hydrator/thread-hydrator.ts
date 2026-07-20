@@ -433,6 +433,7 @@ export class ThreadHydrator {
       // The cache snapshot predates in-flight narration, so for a running
       // thread the live record wins (mirrors fetchAndCommit's isRunning guard).
       const isRunning = state.runningThreadIds.has(threadId);
+      const ownsLiveFileEffects = isRunning || current.fileEffectTurnId.length > 0;
       const liveVolatile: Partial<ThreadRecord> = isRunning
         ? {
             toolCalls: current.toolCalls,
@@ -445,6 +446,10 @@ export class ThreadHydrator {
             isCompacting: current.isCompacting,
           }
         : {};
+      if (ownsLiveFileEffects) {
+        liveVolatile.fileEffectSummary = current.fileEffectSummary;
+        liveVolatile.fileEffectTurnId = current.fileEffectTurnId;
+      }
       return {
         records: patchThreadRecord(state.records, threadId, {
           ...cached,
@@ -504,14 +509,28 @@ export class ThreadHydrator {
         return {};
       }
       applied = true;
+      const ownsLiveFileEffects = current.fileEffectTurnId.length > 0
+        || state.runningThreadIds.has(threadId);
       return {
-        records: patchThreadRecord(state.records, threadId, fileChanges),
+        records: patchThreadRecord(state.records, threadId, {
+          persistedFilesChanged: fileChanges.persistedFilesChanged,
+          latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+          ...(!ownsLiveFileEffects ? { fileEffectSummary: fileChanges.fileEffectSummary } : {}),
+        }),
       };
     });
 
     const cached = getCachedRecord(threadId);
     if (!cached || !applied) return;
-    cacheRecord(threadId, { ...cached, ...fileChanges });
+    const liveRecord = getThreadRecord(this.deps.getState().records, threadId);
+    const ownsLiveFileEffects = liveRecord.fileEffectTurnId.length > 0
+      || this.deps.getState().runningThreadIds.has(threadId);
+    cacheRecord(threadId, {
+      ...cached,
+      persistedFilesChanged: fileChanges.persistedFilesChanged,
+      latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+      ...(!ownsLiveFileEffects ? { fileEffectSummary: fileChanges.fileEffectSummary } : {}),
+    });
   }
 
   /** Refresh one thread's active goal without blocking main hydration. */
@@ -620,15 +639,21 @@ export class ThreadHydrator {
         answeredPlanMessageIds: pageResult.answeredPlanMessageIds,
       });
 
-      setState((state: ThreadHydratorWriteState) => ({
-        records: patchThreadRecord(state.records, threadId, {
-          ...patch,
-          narrativeByMessage: pageResult.narrativeByMessage,
-          loading: false,
-          isLoadingMore: false,
-          settings: this.deps.getWorkspaceThreadSettings(threadId),
-        }),
-      }));
+      setState((state: ThreadHydratorWriteState) => {
+        const current = getThreadRecord(state.records, threadId);
+        const ownsLiveFileEffects = current.fileEffectTurnId.length > 0
+          || state.runningThreadIds.has(threadId);
+        return {
+          records: patchThreadRecord(state.records, threadId, {
+            ...patch,
+            ...(ownsLiveFileEffects ? { fileEffectSummary: current.fileEffectSummary } : {}),
+            narrativeByMessage: pageResult.narrativeByMessage,
+            loading: false,
+            isLoadingMore: false,
+            settings: this.deps.getWorkspaceThreadSettings(threadId),
+          }),
+        };
+      });
 
       this.auxiliaryHydrator.hydrate(threadId, {
         freshnessTtlMs: HYDRATION_TTL_MS,

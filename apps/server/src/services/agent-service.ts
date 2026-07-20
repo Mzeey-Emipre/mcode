@@ -38,6 +38,7 @@ import type {
   SendMessageInput,
   CreateAndSendInput,
   PermissionMode,
+  ProviderFileMutationStart,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -2151,6 +2152,17 @@ export class AgentService {
     });
 
     for (const provider of this.providerRegistry.resolveAll()) {
+      provider.on("file_mutation_start", (event: ProviderFileMutationStart) => {
+        void this.ensureTurnFileTracking(event.threadId);
+        this.queueTurnFileTracking(event.threadId, () => (
+          this.turnFileTracker.observeToolUse(
+            event.threadId,
+            event.toolCallId,
+            event.toolName,
+            event.toolInput,
+          )
+        ));
+      });
       const handleEvent = (event: AgentEvent): void => {
         const priorFinalization = this.fileTrackingFinalizationByThread.get(event.threadId);
         const existingBarrier = this.providerEventBarrierByThread.get(event.threadId);

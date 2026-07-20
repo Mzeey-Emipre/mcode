@@ -607,6 +607,7 @@ export type {
   TurnRequest,
   ProviderOptionsByProvider,
   CompletionOptions,
+  ProviderFileMutationStart,
 } from "./providers/interfaces.js";
 
 export * from "./providers/catalog.js";

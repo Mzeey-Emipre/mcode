@@ -193,6 +193,10 @@ export class AuxiliaryHydrator {
 
         const latestCached = getCachedRecord(threadId);
         if (!latestCached) return;
+        const liveState = this.deps.getState();
+        const liveRecord = getThreadRecord(liveState.records, threadId);
+        const ownsLiveFileEffects = liveRecord.fileEffectTurnId.length > 0
+          || liveState.runningThreadIds.has(threadId);
 
         const fileChanges = SnapshotBuilder.deriveFileChanges(snapshots);
         if (
@@ -207,7 +211,7 @@ export class AuxiliaryHydrator {
             ...fileChanges.persistedFilesChanged,
           },
           latestTurnWithChanges: fileChanges.latestTurnWithChanges,
-          fileEffectSummary: fileChanges.fileEffectSummary,
+          ...(!ownsLiveFileEffects ? { fileEffectSummary: fileChanges.fileEffectSummary } : {}),
         });
 
         if (!commitToStore) return;
@@ -225,7 +229,9 @@ export class AuxiliaryHydrator {
                 ...fileChanges.persistedFilesChanged,
               },
               latestTurnWithChanges: fileChanges.latestTurnWithChanges,
-              fileEffectSummary: fileChanges.fileEffectSummary,
+              ...(rec.fileEffectTurnId.length === 0 && !state.runningThreadIds.has(threadId)
+                ? { fileEffectSummary: fileChanges.fileEffectSummary }
+                : {}),
             }),
           };
         });

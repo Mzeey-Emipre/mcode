@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent, GoalState } from "@mcode/contracts";
+import type { AgentEvent, GoalState, ProviderFileMutationStart } from "@mcode/contracts";
 import {
   BoundedToolOutputBuffer,
   boundToolOutput,
@@ -66,7 +66,14 @@ const TOOL_LIKE_ITEM_TYPES = new Set([
 ]);
 
 const FALLBACK_ASSISTANT_ITEM_ID = "__codex_assistant_message__";
+const MAX_EARLY_CHILD_THREADS = 8;
+const MAX_EARLY_CHILD_NOTIFICATIONS = 64;
+const EARLY_CHILD_FILE_TOOL_NAMES = new Set([
+  "apply_patch", "create", "delete", "edit", "move", "remove", "rename",
+  "searchreplace", "strreplace", "write",
+]);
 
+/** Maps Codex app-server notifications into Mcode agent events. */
 export class CodexEventMapper {
   /** Main-thread assistant text buffers keyed by Codex item id. */
   private readonly assistantTextByItemId = new Map<string, string>();
@@ -120,6 +127,11 @@ export class CodexEventMapper {
    * under the correct Agent row even when multiple sub-agents run in parallel.
    */
   private collabReceiverThreadToCollabId = new Map<string, string>();
+  /** Bounded mutation/collab notifications received before spawn receiver metadata. */
+  private earlyChildNotificationsByThread = new Map<string, CodexNotification[]>();
+  private earlyChildNotificationCount = 0;
+  /** Child events replayed while the current main-thread notification registers receivers. */
+  private replayedChildEvents: AgentEvent[] = [];
   /**
    * True once `turn/completed` fired but before the next turn's `turn/started`.
    * While this is set we suppress all event emission so trailing notifications
@@ -128,7 +140,11 @@ export class CodexEventMapper {
    */
   private turnEnded = false;
 
-  constructor(threadId: string, mainCodexThreadId?: string) {
+  constructor(
+    threadId: string,
+    mainCodexThreadId?: string,
+    private readonly onPendingMutationStart?: (event: ProviderFileMutationStart) => void,
+  ) {
     this.threadId = threadId;
     this.mainCodexThreadId = mainCodexThreadId;
   }
@@ -232,6 +248,54 @@ export class CodexEventMapper {
     return "main";
   }
 
+  /** Retains only bounded notifications that can establish or report explicit child mutations. */
+  private bufferEligibleEarlyChildNotification(notification: CodexNotification): boolean {
+    const childThreadId = this.notificationThreadId(notification);
+    if (!childThreadId || !this.isEligibleEarlyChildNotification(notification)) return false;
+    if (this.earlyChildNotificationCount >= MAX_EARLY_CHILD_NOTIFICATIONS) return false;
+    let pending = this.earlyChildNotificationsByThread.get(childThreadId);
+    if (!pending) {
+      if (this.earlyChildNotificationsByThread.size >= MAX_EARLY_CHILD_THREADS) return false;
+      pending = [];
+      this.earlyChildNotificationsByThread.set(childThreadId, pending);
+    }
+    pending.push(notification);
+    this.earlyChildNotificationCount += 1;
+    this.capturePendingMutationStart(notification);
+    logger.debug("CodexEventMapper: buffering eligible early child notification", {
+      method: notification.method,
+      notificationThreadId: childThreadId,
+    });
+    return true;
+  }
+
+  /** Captures file state at an eligible unknown child start without publishing an attributed tool row. */
+  private capturePendingMutationStart(notification: CodexNotification): void {
+    if (notification.method !== "item/started" || !this.onPendingMutationStart) return;
+    const item = notification.params.item as CompletedItem | undefined;
+    const itemId = typeof item?.id === "string" ? item.id : undefined;
+    if (!item || !itemId || item.type === "collabAgentToolCall") return;
+    const toolUse = this.buildToolUseEvent(item, itemId, notification);
+    if (!toolUse || toolUse.type !== AgentEventType.ToolUse) return;
+    this.onPendingMutationStart({
+      threadId: toolUse.threadId,
+      toolCallId: toolUse.toolCallId,
+      toolName: toolUse.toolName,
+      toolInput: toolUse.toolInput,
+    });
+  }
+
+  private isEligibleEarlyChildNotification(notification: CodexNotification): boolean {
+    if (notification.method !== "item/started" && notification.method !== "item/completed") {
+      return false;
+    }
+    const item = notification.params.item as CompletedItem | undefined;
+    if (item?.type === "fileChange" || item?.type === "collabAgentToolCall") return true;
+    return item?.type === "function_call"
+      && typeof item.name === "string"
+      && EARLY_CHILD_FILE_TOOL_NAMES.has(item.name.toLowerCase());
+  }
+
   /** Child receiver threads contribute tool rows only; text and lifecycle stay private to Codex. */
   private mapChildThreadNotification(notification: CodexNotification): AgentEvent[] {
     const { method } = notification;
@@ -262,6 +326,13 @@ export class CodexEventMapper {
           this.openSpawnAgentIds.add(itemId);
         }
         return [this.buildCollabToolUseEvent(item, itemId, notification)];
+      }
+      if (itemType && itemId && TOOL_LIKE_ITEM_TYPES.has(itemType) && itemType !== "webSearch") {
+        const toolUse = this.buildToolUseEvent(item as CompletedItem, itemId, notification);
+        if (toolUse) {
+          this.startedToolUseSignatures.set(itemId, this.toolUseSignature(toolUse));
+          return [toolUse];
+        }
       }
       logger.debug("Codex child thread notification consumed", { method, itemType });
       return [];
@@ -349,6 +420,13 @@ export class CodexEventMapper {
     }
     for (const id of receiverThreadIds) {
       this.collabReceiverThreadToCollabId.set(id, collabId);
+      const pending = this.earlyChildNotificationsByThread.get(id);
+      if (!pending) continue;
+      this.earlyChildNotificationsByThread.delete(id);
+      this.earlyChildNotificationCount -= pending.length;
+      for (const notification of pending) {
+        this.replayedChildEvents.push(...this.mapChildThreadNotification(notification));
+      }
     }
     return receiverThreadIds.size;
   }
@@ -778,6 +856,14 @@ export class CodexEventMapper {
    * Returns an empty array for silently consumed notification types.
    */
   mapNotification(notification: CodexNotification): AgentEvent[] {
+    this.replayedChildEvents = [];
+    const events = this.mapNotificationInternal(notification);
+    return this.replayedChildEvents.length > 0
+      ? [...events, ...this.replayedChildEvents]
+      : events;
+  }
+
+  private mapNotificationInternal(notification: CodexNotification): AgentEvent[] {
     const { method } = notification;
     if (method === "warning") {
       logger.warn("Codex warning notification", { method, params: notification.params });
@@ -787,6 +873,7 @@ export class CodexEventMapper {
     const route = this.classifyNotificationThread(notification);
 
     if (route === "unknown") {
+      if (this.bufferEligibleEarlyChildNotification(notification)) return [];
       logger.warn("CodexEventMapper: dropping unknown-thread notification", {
         method,
         notificationThreadId: this.notificationThreadId(notification),
@@ -1132,6 +1219,9 @@ export class CodexEventMapper {
     this.childAssistantTextByThreadId.clear();
     this.pendingLegacyCollabPops.clear();
     this.collabReceiverThreadToCollabId.clear();
+    this.earlyChildNotificationsByThread.clear();
+    this.earlyChildNotificationCount = 0;
+    this.replayedChildEvents = [];
     // Note: turnEnded is intentionally NOT cleared here. reset() is called
     // from inside turn/completed, and we want the latch to stay armed until
     // the next turn opens. Use prepareForTurn() before a new outbound turn.

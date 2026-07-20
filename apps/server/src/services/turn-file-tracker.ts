@@ -146,7 +146,7 @@ export class TurnFileTracker {
       for (const tracked of turn.tracked.values()) {
         if (!tracked.providerConfirmed || tracked.scope !== "workspace") continue;
         const baseline = await this.readGitBaseline(turn, tracked.displayPath);
-        if (baseline) tracked.baseline = baseline;
+        if (baseline && (baseline.known || !tracked.baseline.known)) tracked.baseline = baseline;
         if (tracked.oldPath && tracked.oldResolvedPath) {
           const oldBaseline = await this.readGitBaseline(turn, tracked.oldPath);
           if (oldBaseline) tracked.oldBaseline = oldBaseline;
@@ -179,8 +179,7 @@ export class TurnFileTracker {
     };
     const observations = boundedCandidates.map((candidate) => {
       const requiredPaths = candidate.operationHint === "rename" && candidate.oldPath ? 2 : 1;
-      return candidate.providerConfirmed === true
-        || candidate.beforeText !== undefined
+      return candidate.beforeText !== undefined
         || syncBudget.remainingPaths < requiredPaths
         ? undefined
         : observeCandidateSynchronously(turn.canonicalRoot, candidate, syncBudget);
@@ -296,7 +295,9 @@ export class TurnFileTracker {
         const oldBaseline = candidate.beforeText !== undefined
           ? stateFromEvidenceText(candidate.beforeText)
           : observation?.oldBaseline
-            ? observation.oldBaseline
+            ? candidate.providerConfirmed === true
+              ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove", observation.oldBaseline)
+              : observation.oldBaseline
             : candidate.providerConfirmed === true
               ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove")
               : await readBoundedState(validOldPath.path);
@@ -308,20 +309,26 @@ export class TurnFileTracker {
       return;
     }
 
-    let baseline = candidate.beforeText !== undefined && !validOldPath
+    const baseline = candidate.beforeText !== undefined && !validOldPath
       ? stateFromEvidenceText(candidate.beforeText)
-      : observation?.baseline ?? null;
-    baseline ??= candidate.providerConfirmed === true
-      ? await this.readProviderConfirmedBaseline(turn, resolvedPath, candidate.operationHint)
-      : await readBoundedState(resolvedPath.path);
+      : candidate.providerConfirmed === true
+        ? await this.readProviderConfirmedBaseline(
+            turn,
+            resolvedPath,
+            candidate.operationHint,
+            observation?.baseline ?? undefined,
+          )
+        : observation?.baseline ?? await readBoundedState(resolvedPath.path);
     const oldBaseline = validOldPath
       ? candidate.beforeText !== undefined
         ? stateFromEvidenceText(candidate.beforeText)
-        : observation?.oldBaseline
-          ? observation.oldBaseline
-        : candidate.providerConfirmed === true
-          ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove")
-          : await readBoundedState(validOldPath.path)
+          : observation?.oldBaseline
+            ? candidate.providerConfirmed === true
+              ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove", observation.oldBaseline)
+              : observation.oldBaseline
+            : candidate.providerConfirmed === true
+              ? await this.readProviderConfirmedBaseline(turn, validOldPath, "remove")
+              : await readBoundedState(validOldPath.path)
       : undefined;
     turn.tracked.set(resolvedPath.path, {
       ...resolvedPath,
@@ -343,12 +350,13 @@ export class TurnFileTracker {
     turn: TurnState,
     resolvedPath: Pick<TrackedPath, "path" | "displayPath" | "scope">,
     operationHint: OperationHint,
+    observedBaseline?: FileState,
   ): Promise<FileState> {
     if (resolvedPath.scope === "workspace" && turn.baselineRef) {
       const baseline = await this.readGitBaseline(turn, resolvedPath.displayPath);
-      if (baseline) return baseline;
+      if (baseline?.known) return baseline;
     }
-    return inferredProviderBaseline(operationHint);
+    return observedBaseline ?? inferredProviderBaseline(operationHint);
   }
 
   private async readGitBaseline(turn: TurnState, relativePath: string): Promise<FileState | null> {
