@@ -29,7 +29,6 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
-  SquarePen,
 } from "lucide-react";
 import {
   Tooltip,
@@ -1740,17 +1739,25 @@ const ProjectNode = memo(function ProjectNode({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`New thread in ${workspace.name}`}
-          title={`New thread in ${workspace.name}`}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={handleCreateThreadClick}
-          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
-        >
-          <SquarePen size={13} />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`New thread in ${workspace.name}`}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={handleCreateThreadClick}
+                className="rounded-md text-muted-foreground opacity-0 hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+              >
+                <Plus size={15} aria-hidden />
+              </Button>
+            }
+          />
+          <TooltipContent side="right" className="text-xs">
+            New thread
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Threads (when expanded) — indented, no guide rail. */}
