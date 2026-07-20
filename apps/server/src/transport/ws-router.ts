@@ -34,6 +34,7 @@ import type { GithubService } from "../services/github-service";
 import type { FileService } from "../services/file-service";
 import type { ConfigService } from "../services/config-service";
 import type { SkillService } from "../services/skill-service";
+import type { CodexCatalogService } from "../services/codex-catalog-service";
 import type { TerminalService } from "../services/terminal-service";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
@@ -220,6 +221,8 @@ export interface RouterDeps {
   fileService: FileService;
   configService: ConfigService;
   skillService: SkillService;
+  /** Owns the thread-independent Codex app-server catalog connection. */
+  codexCatalogService: CodexCatalogService;
   terminalService: TerminalService;
   messageRepo: MessageRepo;
   toolCallRecordRepo: ToolCallRecordRepo;
@@ -995,11 +998,13 @@ async function dispatch(
     case "provider.catalog": {
       const { cwd, context: catalogContext } = resolveProviderCatalogContext(deps, params);
       let nativeSkills;
+      let diagnostics;
+      let freshness;
       if (params.providerId === "codex") {
-        const provider = deps.providerRegistry.resolve("codex");
-        nativeSkills = isSkillCatalogCapable(provider)
-          ? await provider.listSkills(cwd)
-          : undefined;
+        const catalog = await deps.codexCatalogService.refresh(cwd);
+        nativeSkills = catalog.skills;
+        diagnostics = catalog.diagnostics;
+        freshness = catalog.freshness;
       }
       const skills = deps.skillService.list(cwd, params.providerId, nativeSkills);
       const agentDiscovery = params.providerId === "codex"
@@ -1015,6 +1020,8 @@ async function dispatch(
         context: catalogContext,
         skills,
         ...(agentDiscovery ? { agentDiscovery } : {}),
+        ...(diagnostics ? { diagnostics } : {}),
+        ...(freshness ? { freshness } : {}),
       });
     }
     case "skill.diagnose":

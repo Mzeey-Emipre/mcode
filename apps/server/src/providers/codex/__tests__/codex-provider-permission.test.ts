@@ -60,6 +60,12 @@ describe("CodexProvider permission flow", () => {
       stubEnvService() as never,
       { list: vi.fn(() => []) } as never,
       { persistGeneratedImageFromPath: vi.fn() } as never,
+      {
+        currentSkills: vi.fn(() => []),
+        refresh: vi.fn(async () => ({ skills: [] })),
+        onSkillsChanged: vi.fn(() => () => undefined),
+        shutdown: vi.fn(async () => undefined),
+      } as never,
     );
     // Pre-register a session entry so drain logic has something to iterate.
     seedSession(provider, sessionId, threadId, {

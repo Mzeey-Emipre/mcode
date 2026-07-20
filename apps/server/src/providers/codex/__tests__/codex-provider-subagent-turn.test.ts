@@ -79,6 +79,12 @@ function makeProvider(): CodexProvider {
     stubEnvService() as never,
     { list: vi.fn(() => []) } as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
+    {
+      currentSkills: vi.fn(() => []),
+      refresh: vi.fn(async () => ({ skills: [] })),
+      onSkillsChanged: vi.fn(() => () => undefined),
+      shutdown: vi.fn(async () => undefined),
+    } as never,
   );
 }
 

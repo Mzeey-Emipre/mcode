@@ -41,6 +41,10 @@ import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
 import { ConfigService } from "./services/config-service";
 import { SkillService } from "./services/skill-service";
+import {
+  CodexCatalogClientFactory,
+  CodexCatalogService,
+} from "./services/codex-catalog-service";
 import { TerminalService } from "./services/terminal-service";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
@@ -352,6 +356,16 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     SkillService,
     { useClass: SkillService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    CodexCatalogClientFactory,
+    { useClass: CodexCatalogClientFactory },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    CodexCatalogService,
+    { useClass: CodexCatalogService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

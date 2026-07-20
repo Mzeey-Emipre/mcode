@@ -21,7 +21,8 @@ import { AttachmentService } from "../../services/attachment-service.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import type { MemoryPressureLevel } from "../../services/memory-pressure-service.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
-import { SkillService, codexPluginNameFromSkillPath } from "../../services/skill-service.js";
+import { SkillService } from "../../services/skill-service.js";
+import { CodexCatalogService } from "../../services/codex-catalog-service.js";
 import type {
   IAgentProvider,
   IGoalCapable,
@@ -54,7 +55,6 @@ import type {
   CodexRateLimitWindow,
   CodexRateLimitsPayload,
   CodexTurnOptions,
-  CodexSkillMetadata,
   CompletedItem,
   ThreadGoal,
 } from "./codex-types.js";
@@ -363,32 +363,6 @@ async function resolveCodexSlashInvocation(
   return { text: message };
 }
 
-/** Maps Codex native skill scope into Mcode's source labels. */
-function codexSkillSource(skill: CodexSkillMetadata): SkillInfo["source"] {
-  if (codexPluginNameFromSkillPath(skill.path)) return "plugin";
-  if (skill.scope === "user") return "user";
-  if (skill.scope === "repo") return "project";
-  return "agent";
-}
-
-/** Picks the concise display description from Codex native metadata. */
-function codexSkillDescription(skill: CodexSkillMetadata): string {
-  return skill.interface?.shortDescription ?? skill.shortDescription ?? skill.description ?? "";
-}
-
-/** Converts native Codex skill metadata into the shared slash-menu shape. */
-function mapNativeCodexSkill(skill: CodexSkillMetadata): SkillInfo {
-  return {
-    name: skill.name,
-    description: codexSkillDescription(skill),
-    kind: "skill",
-    source: codexSkillSource(skill),
-    providers: ["codex"],
-    nativeName: skill.name,
-    path: skill.path,
-  };
-}
-
 /** Return the generated image path from an app-server imageGeneration item. */
 export function generatedImagePathFromCodexItem(item: CompletedItem | undefined): string | null {
   if (!item || item.type !== "imageGeneration") return null;
@@ -487,6 +461,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     @inject(EnvService) private readonly envService: EnvService,
     @inject(SkillService) private readonly skillService: SkillService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
+    @inject(CodexCatalogService) private readonly codexCatalogService: CodexCatalogService,
   ) {
     super();
     this.runtime = new SessionRuntime<CodexSessionState>(this, {
@@ -799,7 +774,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     } = req;
     const codexFastMode = req.providerOptions.fastMode;
 
-    const nativeSkills = await this.listSkills(cwd);
+    const nativeSkills = this.codexCatalogService.currentSkills(cwd);
     const skillCatalog = this.skillService.list(cwd, "codex", nativeSkills);
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
     let input: TurnInputPart[];
@@ -975,9 +950,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     server.on("notification", (notification) => {
       const n = notification as { method?: string; params?: Record<string, unknown> };
-      if (n.method === "skills/changed") {
-        this.emit("skills_changed");
-      }
       if (n.method === "account/rateLimits/updated") {
         this.applyUsageSnapshot(n.params, threadId);
       }
@@ -1263,34 +1235,14 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     }
   }
 
-  /** Lists native Codex skills from an already-running app-server session. */
+  /** Lists native Codex Skills through the provider-wide catalog connection. */
   async listSkills(cwd?: string): Promise<SkillInfo[]> {
-    for (const sessionId of this.liveSessionIds) {
-      const state = this.runtime.get(sessionId);
-      if (!state?.server.isAlive) continue;
-      if (cwd && state.cwd !== cwd) continue;
-
-      try {
-        const result = await state.server.listSkills(cwd ? [cwd] : undefined);
-        const entry = cwd
-          ? result.data.find((item) => item.cwd === cwd) ?? result.data[0]
-          : result.data[0];
-        return (entry?.skills ?? [])
-          .filter((skill) => skill.enabled)
-          .map(mapNativeCodexSkill);
-      } catch (err) {
-        logger.warn("Codex native skills/list failed; falling back to disk scan", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    return [];
+    return (await this.codexCatalogService.refresh(cwd)).skills;
   }
 
   /** Subscribes to native Codex skill catalog invalidations. */
   onSkillsChanged(handler: () => void): void {
-    this.on("skills_changed", handler);
+    this.codexCatalogService.onSkillsChanged(() => handler());
   }
 
   /** Apply a queued native goal to the app-server before dispatching a turn. */
@@ -1688,6 +1640,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     this.drainPending(() => true);
     void this.runtime.shutdown().catch((err: unknown) => {
       logger.warn("Codex runtime shutdown failed", { error: String(err) });
+    });
+    void this.codexCatalogService.shutdown().catch((err: unknown) => {
+      logger.warn("Codex catalog shutdown failed", { error: String(err) });
     });
     this.sdkSessionIds.clear();
     this.pendingSpawnTurns.clear();

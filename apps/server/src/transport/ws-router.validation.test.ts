@@ -1,6 +1,9 @@
+import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "events";
 import type { WebSocket } from "ws";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
+import { CodexCatalogService } from "../services/codex-catalog-service.js";
 import { _resetForTest, addClient } from "./push.js";
 import {
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
@@ -56,69 +59,152 @@ describe("routeMessage result validation seam", () => {
 });
 
 describe("routeMessage provider.catalog", () => {
-  it("returns mapped capabilities and separate Codex agents for the requested thread context", async () => {
-    const list = vi.fn().mockReturnValue([
-      {
-        name: "review",
-        description: "Review changes",
-        kind: "skill",
-        source: "plugin",
-        providers: ["codex"],
-        nativeName: "review",
-        path: "C:/repo/.codex/skills/review/SKILL.md",
-      },
+  it("discovers path-scoped Codex Skills before a thread exists", async () => {
+    let catalogVersion = 1;
+    const client = Object.assign(new EventEmitter(), {
+      isAlive: true,
+      start: vi.fn(async () => undefined),
+      kill: vi.fn(async () => undefined),
+      listSkills: vi.fn(async (cwds?: string[]) => {
+        const cwd = cwds?.[0] ?? "";
+        const projectSkill = catalogVersion === 1 ? "review" : "ship";
+        return {
+        data: [{
+          cwd,
+          errors: [],
+          skills: [
+            {
+              name: "review",
+              description: "Review global changes",
+              enabled: true,
+              scope: "user",
+              path: "C:/users/test/.codex/skills/review/SKILL.md",
+            },
+            {
+              name: projectSkill,
+              description: `${projectSkill} project changes`,
+              enabled: true,
+              scope: "repo",
+              path: `${cwd}/.codex/skills/${projectSkill}/SKILL.md`,
+            },
+          ],
+        }],
+        };
+      }),
+    });
+    const create = vi.fn(() => client);
+    const codexCatalogService = new CodexCatalogService(
+      { get: () => ({ provider: { cli: { codex: "codex" } } }) } as never,
+      { isWindowsJob: false } as never,
+      { getEnv: () => ({}) } as never,
+      { create } as never,
+    );
+    const refresh = vi.spyOn(codexCatalogService, "refresh");
+    const list = vi.fn().mockImplementation((_cwd, _providerId, discoveredSkills = []) => [
+      ...discoveredSkills,
       {
         name: "prompts:release",
         description: "Prepare a release",
-        kind: "command",
-        source: "user",
+        kind: "command" as const,
+        source: "user" as const,
         providers: ["codex"],
         nativeName: "release",
         path: "C:/users/test/.codex/prompts/release.md",
       },
     ]);
+    const threadLookup = vi.fn();
     const deps = {
       workspaceService: {
-        findById: vi.fn().mockReturnValue({ id: "workspace-1", path: "C:/repo" }),
+        findById: vi.fn((workspaceId: string) => ({
+          id: workspaceId,
+          path: workspaceId === "workspace-2" ? "C:/other" : "C:/repo",
+        })),
       },
-      threadRepo: {
-        findById: vi.fn().mockReturnValue({
-          id: "thread-1",
-          workspace_id: "workspace-1",
-          mode: "direct",
-          worktree_path: null,
-        }),
-      },
-      gitService: { resolveWorkingDir: vi.fn().mockReturnValue("C:/repo") },
-      providerRegistry: { resolve: vi.fn().mockReturnValue({ listSkills: vi.fn().mockResolvedValue([]) }) },
+      threadRepo: { findById: threadLookup },
+      codexCatalogService,
       skillService: { list },
     } as unknown as RouterDeps;
 
     const response = await routeMessage(JSON.stringify({
       id: "catalog-1",
       method: "provider.catalog",
-      params: { providerId: "codex", workspaceId: "workspace-1", threadId: "thread-1" },
+      params: { providerId: "codex", workspaceId: "workspace-1" },
     }), deps);
 
     expect(response.error).toBeUndefined();
     expect(response.result).toMatchObject({
       providerId: "codex",
-      context: { scope: "workspace", workspaceId: "workspace-1", threadId: "thread-1" },
+      context: { scope: "workspace", workspaceId: "workspace-1" },
       freshness: { status: "fresh" },
       diagnostics: [],
       entries: [
-        { kind: "skill", identity: { providerId: "codex", kind: "skill", nativeId: "review" } },
+        {
+          kind: "skill",
+          identity: {
+            providerId: "codex",
+            kind: "skill",
+            nativeId: "C:/users/test/.codex/skills/review/SKILL.md",
+          },
+        },
+        {
+          kind: "skill",
+          identity: {
+            providerId: "codex",
+            kind: "skill",
+            nativeId: "C:/repo/.codex/skills/review/SKILL.md",
+          },
+        },
         {
           kind: "customPrompt",
           identity: { providerId: "codex", kind: "customPrompt", nativeId: "release" },
         },
       ],
     });
-    expect(list).toHaveBeenCalledWith("C:/repo", "codex", undefined);
+    expect(refresh).toHaveBeenCalledWith("C:/repo");
+    expect(threadLookup).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(client.start).toHaveBeenCalledTimes(1);
+    expect(client.listSkills).toHaveBeenCalledWith(["C:/repo"], false);
+    expect(list).toHaveBeenCalledWith(
+      "C:/repo",
+      "codex",
+      expect.arrayContaining([
+        expect.objectContaining({ path: "C:/users/test/.codex/skills/review/SKILL.md" }),
+        expect.objectContaining({ path: "C:/repo/.codex/skills/review/SKILL.md" }),
+      ]),
+    );
     expect((response.result as {
       selectableAgents: Array<{ providerId: string; nativeId: string }>;
     }).selectableAgents.every((agent) => agent.providerId === "codex" && agent.nativeId.length > 0))
       .toBe(true);
+
+    const otherWorkspaceResponse = await routeMessage(JSON.stringify({
+      id: "catalog-2",
+      method: "provider.catalog",
+      params: { providerId: "codex", workspaceId: "workspace-2" },
+    }), deps);
+    expect(otherWorkspaceResponse.error).toBeUndefined();
+    expect(client.listSkills).toHaveBeenLastCalledWith(["C:/other"], false);
+    expect((otherWorkspaceResponse.result as { entries: Array<{ identity: { nativeId: string } }> })
+      .entries.some((entry) => entry.identity.nativeId.startsWith("C:/other/"))).toBe(true);
+
+    catalogVersion = 2;
+    const refreshed = new Promise<string | undefined>((resolve) => {
+      codexCatalogService.onSkillsChanged(resolve);
+    });
+    client.emit("notification", { method: "skills/changed", params: { cwd: "C:/repo" } });
+    await expect(refreshed).resolves.toBe("C:/repo");
+    expect(client.listSkills).toHaveBeenCalledWith(["C:/repo"], true);
+
+    const refreshedResponse = await routeMessage(JSON.stringify({
+      id: "catalog-3",
+      method: "provider.catalog",
+      params: { providerId: "codex", workspaceId: "workspace-1" },
+    }), deps);
+    expect((refreshedResponse.result as { entries: Array<{ name: string }> }).entries)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ name: "ship" })]));
+    expect(create).toHaveBeenCalledTimes(1);
+    await codexCatalogService.shutdown();
   });
 
   it("rejects unknown providers and oversized contexts before dispatch", async () => {

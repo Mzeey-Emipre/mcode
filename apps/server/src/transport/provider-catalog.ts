@@ -14,6 +14,7 @@ import {
   type ProviderCapabilityEntry,
   type ProviderCatalogContext,
   type ProviderCatalogDiagnostic,
+  type ProviderCatalogFreshness,
   type ProviderCatalogSnapshot,
   type SettingsProviderId,
   type SkillInfo,
@@ -43,6 +44,8 @@ export interface BuildProviderCatalogSnapshotInput {
   readonly context: ProviderCatalogContext;
   readonly skills: readonly SkillInfo[];
   readonly agentDiscovery?: BoundedCodexAgentDiscovery;
+  readonly diagnostics?: readonly ProviderCatalogDiagnostic[];
+  readonly freshness?: ProviderCatalogFreshness;
   readonly fetchedAt?: string;
 }
 
@@ -145,7 +148,7 @@ function toProviderCapabilityEntry(
   if (item.kind === "skill") {
     return {
       kind: "skill",
-      identity: { providerId, kind: "skill", nativeId: item.nativeName ?? item.name },
+      identity: { providerId, kind: "skill", nativeId: item.path ?? item.nativeName ?? item.name },
       name: item.name,
       description: item.description,
       source: item.source,
@@ -205,7 +208,7 @@ function parseSelectableAgent(
 export function buildProviderCatalogSnapshot(
   input: BuildProviderCatalogSnapshotInput,
 ): ProviderCatalogSnapshot {
-  const diagnostics: ProviderCatalogDiagnostic[] = [];
+  const diagnostics: ProviderCatalogDiagnostic[] = [...(input.diagnostics ?? [])];
   let invalidItemOmitted = false;
   const entries: ProviderCapabilityEntry[] = [];
   for (const item of input.skills.slice(0, PROVIDER_CATALOG_MAX_ENTRIES)) {
@@ -248,7 +251,10 @@ export function buildProviderCatalogSnapshot(
   return ProviderCatalogSnapshotSchema().parse({
     providerId: input.providerId,
     context: input.context,
-    freshness: { status: "fresh", fetchedAt: input.fetchedAt ?? new Date().toISOString() },
+    freshness: input.freshness ?? {
+      status: "fresh",
+      fetchedAt: input.fetchedAt ?? new Date().toISOString(),
+    },
     diagnostics,
     entries,
     selectableAgents,

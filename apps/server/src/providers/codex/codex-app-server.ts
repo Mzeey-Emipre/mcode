@@ -91,6 +91,8 @@ export interface CodexAppServerOptions {
   getSpawnEnv?: () => Record<string, string>;
   /** Config overrides passed to `codex app-server` as repeated `-c key=value`. */
   configOverrides?: readonly string[];
+  /** Completes the handshake after initialization without creating a thread. */
+  catalogOnly?: boolean;
 }
 
 /**
@@ -817,12 +819,14 @@ export class CodexAppServer extends EventEmitter {
 
   /** Runs interrupt, RPC dispose, and process termination once per server instance. */
   private async performKill(): Promise<void> {
-    if (this.rpc) {
+    if (this.rpc && this.threadId) {
       try {
         await this.rpc.sendRequest("turn/interrupt", { threadId: this.threadId }, 3000);
       } catch {
         // best effort - ignore
       }
+    }
+    if (this.rpc) {
       this.rpc.dispose();
     }
 
@@ -1085,6 +1089,8 @@ export class CodexAppServer extends EventEmitter {
 
     // Step 2: initialized notification (no response expected)
     this.rpc.sendNotification("initialized", {});
+
+    if (this.options.catalogOnly) return;
 
     // Step 3: model/list (best-effort)
     try {
