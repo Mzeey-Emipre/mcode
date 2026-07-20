@@ -140,6 +140,7 @@ import {
 import {
   getRepositoryFaviconUrl,
   getSafeRepositoryWebUrl,
+  getCiStatusRingStyle,
   getThreadOverviewCiDot,
   formatThreadOverviewSessionCost,
   formatThreadOverviewUsage,
@@ -1019,5 +1020,52 @@ describe("getThreadOverviewCiDot", () => {
       ),
     ).toBeNull();
     expect(getThreadOverviewCiDot(null, { ...baseChecks, aggregate: "passing" })).toBeNull();
+  });
+});
+
+describe("getCiStatusRingStyle", () => {
+  const completedRun = {
+    status: "completed" as const,
+    durationMs: 1,
+    startedAt: "2026-07-20T10:00:00.000Z",
+  };
+
+  it("renders all-passing checks as a hollow green ring", () => {
+    const style = getCiStatusRingStyle({
+      aggregate: "passing",
+      fetchedAt: 1,
+      runs: [
+        { ...completedRun, name: "Typecheck", conclusion: "success" },
+        { ...completedRun, name: "Tests", conclusion: "success" },
+      ],
+    });
+
+    expect(style.background).toBe(
+      "conic-gradient(var(--diff-add-strong) 0% 100%)",
+    );
+    expect(style.maskImage).toContain("transparent 42%");
+  });
+
+  it("allocates ring segments to failed, running, successful, and cancelled checks", () => {
+    const style = getCiStatusRingStyle({
+      aggregate: "failing",
+      fetchedAt: 1,
+      runs: [
+        { ...completedRun, name: "Lint", conclusion: "failure" },
+        {
+          name: "Build",
+          status: "in_progress",
+          conclusion: null,
+          durationMs: null,
+          startedAt: "2026-07-20T10:00:00.000Z",
+        },
+        { ...completedRun, name: "Tests", conclusion: "success" },
+        { ...completedRun, name: "Preview", conclusion: "cancelled" },
+      ],
+    });
+
+    expect(style.background).toBe(
+      "conic-gradient(var(--diff-remove-strong) 0% 25%, var(--primary) 25% 50%, var(--diff-add-strong) 50% 75%, var(--muted-foreground) 75% 100%)",
+    );
   });
 });

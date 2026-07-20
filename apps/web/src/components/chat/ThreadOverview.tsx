@@ -114,13 +114,13 @@ type LoadedBranchState =
   | { status: "error"; branches: GitBranchRecord[]; uncommittedFiles: number | null };
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 type LocalCopyTarget = "path" | "branch";
-type CiSegmentName = "failing" | "running" | "passing" | "other";
+type CiSegmentName = "failing" | "running" | "passing" | "cancelled";
 
 const CI_SEGMENT_COLORS: Record<CiSegmentName, string> = {
   failing: "var(--diff-remove-strong)",
-  running: "#e7a90b",
+  running: "var(--primary)",
   passing: "var(--diff-add-strong)",
-  other: "var(--muted-foreground)",
+  cancelled: "var(--muted-foreground)",
 };
 
 /** Repository metadata rendered by the Overview Repository row. */
@@ -1143,18 +1143,25 @@ export function getPrRowDetail(
   return null;
 }
 
-function getCiStatusCircleStyle(checks: ChecksStatus): CSSProperties {
+/** Builds the segmented ring that summarizes CI run outcomes in the Overview. */
+export function getCiStatusRingStyle(checks: ChecksStatus): CSSProperties {
   const breakdown = getBreakdown(checks);
   const total = breakdown.total || 1;
   const segments = ([
     { name: "failing", count: breakdown.failing },
     { name: "running", count: breakdown.running },
     { name: "passing", count: breakdown.passing },
-    { name: "other", count: breakdown.other },
+    { name: "cancelled", count: breakdown.other },
   ] satisfies Array<{ name: CiSegmentName; count: number }>).filter((segment) => segment.count > 0);
 
+  const ringMask = "radial-gradient(circle, transparent 42%, black 46%)";
+
   if (segments.length === 0) {
-    return { background: "var(--muted)" };
+    return {
+      background: "var(--muted)",
+      maskImage: ringMask,
+      WebkitMaskImage: ringMask,
+    };
   }
 
   let cursor = 0;
@@ -1165,7 +1172,11 @@ function getCiStatusCircleStyle(checks: ChecksStatus): CSSProperties {
     return `${CI_SEGMENT_COLORS[segment.name]} ${start}% ${end}%`;
   });
 
-  return { background: `conic-gradient(${stops.join(", ")})` };
+  return {
+    background: `conic-gradient(${stops.join(", ")})`,
+    maskImage: ringMask,
+    WebkitMaskImage: ringMask,
+  };
 }
 
 function ThreadOverviewCiStatusCircle({ checks }: { checks: ChecksStatus }) {
@@ -1174,8 +1185,8 @@ function ThreadOverviewCiStatusCircle({ checks }: { checks: ChecksStatus }) {
       <span
         aria-hidden
         data-testid="thread-overview-ci-status-circle"
-        className="size-1.5 rounded-full ring-1 ring-border/70"
-        style={getCiStatusCircleStyle(checks)}
+        className="size-3.5 rounded-full"
+        style={getCiStatusRingStyle(checks)}
       />
     </span>
   );
