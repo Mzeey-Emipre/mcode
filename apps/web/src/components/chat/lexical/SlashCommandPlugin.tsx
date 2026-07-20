@@ -174,6 +174,30 @@ export function insertPluginMentionNode(
   });
 }
 
+/** Inserts a selected plugin command as a native Codex mention. */
+export function insertSelectedPluginMention(
+  editor: LexicalEditor,
+  command: {
+    readonly capabilityKind: string;
+    readonly mentionPath?: string;
+    readonly name: string;
+  },
+): boolean {
+  if (command.capabilityKind !== "plugin" || !command.mentionPath) return false;
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `mention-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  insertPluginMentionNode(editor, {
+    id,
+    kind: "plugin",
+    label: command.name,
+    name: command.name,
+    path: command.mentionPath,
+  });
+  return true;
+}
+
 /** Removes the slash trigger at the current selection without inserting a command node. */
 export function removeSlashCommandTrigger(editor: LexicalEditor): void {
   editor.update(() => {

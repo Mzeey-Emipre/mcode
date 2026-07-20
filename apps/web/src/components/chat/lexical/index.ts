@@ -9,6 +9,7 @@ export {
 export { insertMentionNode } from "./MentionPlugin";
 export {
   insertPluginMentionNode,
+  insertSelectedPluginMention,
   insertSlashCommandNode,
   removeSlashCommandTrigger,
 } from "./SlashCommandPlugin";

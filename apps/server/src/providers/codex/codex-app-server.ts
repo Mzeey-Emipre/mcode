@@ -1014,7 +1014,7 @@ export class CodexAppServer extends EventEmitter {
     if (!this._isAlive || !this.rpc) {
       throw new Error("readPlugin called before codex app-server was ready");
     }
-    return this.rpc.sendRequest<PluginReadParams, PluginReadResult>("plugin/read", params, 10000);
+    return this.rpc.sendRequest<PluginReadParams, PluginReadResult>("plugin/read", params, 2_000);
   }
 
   /**

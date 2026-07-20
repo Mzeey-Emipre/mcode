@@ -294,7 +294,7 @@ function CommandRow({
         )}>
           <span>{commandDisplayLabel(cmd)}</span>
           <span className={cn(
-            "ml-2 text-[10px] font-medium uppercase tracking-wide",
+            "ml-2 text-xs font-medium uppercase tracking-wide",
             tone === "dark" ? "text-neutral-500" : "text-muted-foreground",
           )}>
             {commandKindLabel(cmd)}

@@ -178,6 +178,49 @@ describe("CodexCatalogService", () => {
     expect(result.plugins[0]?.description).toBe("Detailed plugin description");
   });
 
+  it("bounds concurrent detail reads while retaining plugins beyond the enrichment cap", async () => {
+    const client = new ControlledCatalogClient();
+    let activeReads = 0;
+    let maxActiveReads = 0;
+    client.readPlugin.mockImplementation(async () => {
+      activeReads += 1;
+      maxActiveReads = Math.max(maxActiveReads, activeReads);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      activeReads -= 1;
+      return { plugin: { description: "Detailed plugin description" } };
+    });
+    client.listPlugins.mockResolvedValueOnce({
+      marketplaces: [{
+        name: "personal",
+        path: "C:/marketplaces/personal",
+        interface: null,
+        plugins: Array.from({ length: 65 }, (_, index) => ({
+          id: `minimal-${index}@personal`,
+          name: `minimal-${index}`,
+          installed: true,
+          enabled: true,
+          version: null,
+          localVersion: null,
+          interface: null,
+        })),
+      }],
+      marketplaceLoadErrors: [],
+      featuredPluginIds: [],
+    });
+    const service = createService(client);
+
+    const result = await service.refresh("C:/workspaces/one");
+
+    expect(client.readPlugin).toHaveBeenCalledTimes(64);
+    expect(maxActiveReads).toBeLessThanOrEqual(8);
+    expect(result.plugins).toHaveLength(65);
+    expect(result.diagnostics).toContainEqual({
+      severity: "warning",
+      code: "partial-result",
+      message: "Codex plugin detail reads were capped at 64 entries.",
+    });
+  });
+
   it("keeps valid plugins when a marketplace reports a scoped load error", async () => {
     const client = new ControlledCatalogClient();
     client.listPlugins.mockResolvedValueOnce({

@@ -27,6 +27,14 @@ import type { JobObject } from "./job-object.js";
 const CODEX_CATALOG_IDLE_TTL_MS = 60_000;
 const CODEX_CATALOG_MAX_CONTEXTS = 64;
 const CODEX_CATALOG_MAX_CWD_LENGTH = 4_096;
+const CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS = 64;
+const CODEX_CATALOG_PLUGIN_DETAIL_CONCURRENCY = 8;
+
+interface PluginCandidate {
+  readonly marketplaceName: string;
+  readonly marketplacePath: string | null;
+  readonly summary: Record<string, unknown>;
+}
 
 /** Result of refreshing native Codex Skills for one working-directory context. */
 export interface CodexCatalogRefreshResult {
@@ -155,6 +163,15 @@ function pluginDetailDescription(result: PluginReadResult): string {
   ))?.trim() ?? "";
 }
 
+function pluginSummaryDescription(summary: Record<string, unknown>): string {
+  const interfaceValue = summary.interface && typeof summary.interface === "object"
+    ? summary.interface as Record<string, unknown>
+    : undefined;
+  return [interfaceValue?.shortDescription, interfaceValue?.longDescription]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim() ?? "";
+}
+
 function pluginReadParams(
   marketplaceName: string,
   marketplacePath: string | null,
@@ -163,6 +180,59 @@ function pluginReadParams(
   return marketplacePath
     ? { marketplacePath, pluginName }
     : { remoteMarketplaceName: marketplaceName, pluginName };
+}
+
+async function readMissingPluginDescriptions(
+  client: CodexCatalogClient,
+  candidates: PluginCandidate[],
+  diagnostics: ProviderCatalogDiagnostic[],
+): Promise<Map<string, string>> {
+  const missing = candidates.filter(({ summary }) => (
+    typeof summary.id === "string" &&
+    typeof summary.name === "string" &&
+    !pluginSummaryDescription(summary)
+  ));
+  const selected = missing.slice(0, CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS);
+  const descriptions = new Map<string, string>();
+  let nextIndex = 0;
+
+  const worker = async (): Promise<void> => {
+    while (nextIndex < selected.length) {
+      const candidate = selected[nextIndex++];
+      if (!candidate) return;
+      const { marketplaceName, marketplacePath, summary } = candidate;
+      const pluginId = summary.id as string;
+      try {
+        const detail = await client.readPlugin(pluginReadParams(
+          marketplaceName,
+          marketplacePath,
+          summary.name as string,
+        ));
+        descriptions.set(pluginId, pluginDetailDescription(detail));
+      } catch {
+        diagnostics.push({
+          severity: "warning",
+          code: "partial-result",
+          message: boundedDiagnosticMessage(
+            `Codex plugin details are unavailable for ${pluginId}.`,
+          ),
+        });
+      }
+    }
+  };
+
+  await Promise.all(Array.from(
+    { length: Math.min(CODEX_CATALOG_PLUGIN_DETAIL_CONCURRENCY, selected.length) },
+    worker,
+  ));
+  if (missing.length > CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS) {
+    diagnostics.push({
+      severity: "warning",
+      code: "partial-result",
+      message: `Codex plugin detail reads were capped at ${CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS} entries.`,
+    });
+  }
+  return descriptions;
 }
 
 async function reconcilePlugins(
@@ -190,11 +260,7 @@ async function reconcilePlugins(
         ),
       }];
     });
-  const candidates: Array<{
-    marketplaceName: string;
-    marketplacePath: string | null;
-    summary: Record<string, unknown>;
-  }> = [];
+  const candidates: PluginCandidate[] = [];
 
   for (const rawMarketplace of Array.isArray(result.marketplaces) ? result.marketplaces : []) {
     if (!rawMarketplace || typeof rawMarketplace !== "object") continue;
@@ -213,10 +279,16 @@ async function reconcilePlugins(
     }
   }
 
+  const selectedCandidates = candidates.slice(0, PROVIDER_CATALOG_MAX_ENTRIES);
+  const detailDescriptions = await readMissingPluginDescriptions(
+    client,
+    selectedCandidates,
+    diagnostics,
+  );
   const pluginsById = new Map<string, ProviderPluginCapability>();
   let invalidMetadata = false;
-  for (const candidate of candidates.slice(0, PROVIDER_CATALOG_MAX_ENTRIES)) {
-    const { marketplaceName, marketplacePath, summary } = candidate;
+  for (const candidate of selectedCandidates) {
+    const { marketplaceName, summary } = candidate;
     if (typeof summary.id !== "string" || typeof summary.name !== "string") {
       invalidMetadata = true;
       continue;
@@ -224,26 +296,7 @@ async function reconcilePlugins(
     const interfaceValue = summary.interface && typeof summary.interface === "object"
       ? summary.interface as Record<string, unknown>
       : undefined;
-    let description = [interfaceValue?.shortDescription, interfaceValue?.longDescription]
-      .find((value): value is string => typeof value === "string" && value.trim().length > 0)
-      ?.trim() ?? "";
-    if (!description) {
-      try {
-        description = pluginDetailDescription(await client.readPlugin(pluginReadParams(
-          marketplaceName,
-          marketplacePath,
-          summary.name,
-        )));
-      } catch {
-        diagnostics.push({
-          severity: "warning",
-          code: "partial-result",
-          message: boundedDiagnosticMessage(
-            `Codex plugin details are unavailable for ${summary.id}.`,
-          ),
-        });
-      }
-    }
+    const description = pluginSummaryDescription(summary) || detailDescriptions.get(summary.id) || "";
     const name = typeof interfaceValue?.displayName === "string" && interfaceValue.displayName.trim()
       ? interfaceValue.displayName.trim()
       : summary.name;
