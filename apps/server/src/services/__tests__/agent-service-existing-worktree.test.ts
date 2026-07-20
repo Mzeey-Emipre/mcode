@@ -49,6 +49,28 @@ function createAgentServiceHarness() {
   return { db, threadRepo, workspaceRepo, gitService, threadService, service };
 }
 
+describe("AgentService.createAndSend defaults", () => {
+  it("uses the default model when the command omits it", async () => {
+    const { threadRepo, workspaceRepo, service } = createAgentServiceHarness();
+    const workspace = workspaceRepo.create("Repo", "/repo");
+
+    const thread = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Use the default model",
+    });
+
+    expect(thread.model).toBe("claude-sonnet-4-6");
+    expect(threadRepo.findById(thread.id)?.model).toBe("claude-sonnet-4-6");
+    expect(service.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: thread.id,
+        content: "Use the default model",
+        model: "claude-sonnet-4-6",
+      }),
+    );
+  });
+});
+
 describe("AgentService.createAndSend existing worktree attach", () => {
   it("creates a new worktree as branchless from the selected base branch", async () => {
     const { threadRepo, workspaceRepo, threadService, service } = createAgentServiceHarness();

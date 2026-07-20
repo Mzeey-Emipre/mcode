@@ -98,8 +98,12 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   providerWireOverride?: string;
 };
 
-/** Command accepted by {@link AgentService.createAndSend}, including the service default permission mode. */
-export type CreateAndSendCommand = Omit<CreateAndSendInput, "permissionMode" | "provider"> & {
+/** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
+export type CreateAndSendCommand = Omit<
+  CreateAndSendInput,
+  "model" | "permissionMode" | "provider"
+> & {
+  model?: string;
   permissionMode?: PermissionMode | "default";
   provider?: ProviderId;
 };
