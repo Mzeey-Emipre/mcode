@@ -593,7 +593,7 @@ export function ActivityRail({
       ref={railRef}
       data-testid="activity-rail"
       data-expanded={expanded ? "true" : "false"}
-      className="relative z-10 w-12 flex-none"
+      className="relative z-10 w-12 flex-none bg-background"
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onFocusCapture={onFocusCapture}
