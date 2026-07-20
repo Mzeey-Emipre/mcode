@@ -28,8 +28,24 @@ function isoToMs(s: string | null | undefined): number {
   return Number.isFinite(t) ? t : 0;
 }
 
+/** Derive a valid elapsed duration from persisted lifecycle timestamps. */
+function persistedDurationMs(
+  startedAt: string | null | undefined,
+  completedAt: string | null | undefined,
+): number | undefined {
+  if (!startedAt || !completedAt) return undefined;
+
+  const start = Date.parse(startedAt);
+  const end = Date.parse(completedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined;
+
+  return end - start;
+}
+
 /** Map a persisted tool record to the live `ToolCall` shape used by row components. */
 function recordToToolCall(r: ToolCallRecord): ToolCall {
+  const durationMs = persistedDurationMs(r.started_at, r.completed_at);
+
   return {
     id: r.id,
     toolName: r.tool_name,
@@ -42,6 +58,7 @@ function recordToToolCall(r: ToolCallRecord): ToolCall {
     ...(r.output_truncated === 1 ? { outputTruncated: true } : {}),
     ...(typeof r.output_total_bytes === "number" ? { outputTotalBytes: r.output_total_bytes } : {}),
     ...(r.output_artifact_path ? { outputArtifactPath: r.output_artifact_path } : {}),
+    ...(durationMs === undefined ? {} : { durationMs }),
     parentToolCallId: r.parent_tool_call_id ?? undefined,
     startedAt: isoToMs(r.started_at),
   };

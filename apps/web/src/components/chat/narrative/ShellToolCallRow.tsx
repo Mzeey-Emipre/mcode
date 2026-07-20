@@ -1,6 +1,8 @@
 import { useId, useState } from "react";
 import { ChevronRight, Terminal } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { formatDuration } from "@/lib/time";
 import type { ToolCall } from "@/transport/types";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
@@ -72,10 +74,12 @@ export function ShellToolCallRow({ toolCall }: ShellToolCallRowProps) {
 
   return (
     <div className="min-w-0 max-w-full">
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         onClick={() => setOpen((current) => !current)}
-        className={`${NARRATIVE_TOOL_ROW} w-full rounded-md py-1 text-left transition-colors duration-150 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none`}
+        className={`${NARRATIVE_TOOL_ROW} h-auto w-full justify-start rounded-md px-0 py-1 text-left font-normal transition-colors duration-150 hover:bg-muted/30 aria-expanded:bg-transparent active:translate-y-0 motion-reduce:transition-none dark:hover:bg-muted/30 dark:aria-expanded:bg-transparent`}
         aria-expanded={open}
         aria-controls={panelId}
       >
@@ -100,16 +104,16 @@ export function ShellToolCallRow({ toolCall }: ShellToolCallRowProps) {
           {detail}
         </span>
         {toolCall.isError && (
-          <span className="shrink-0 rounded-sm bg-[var(--diff-remove)]/15 px-1.5 py-px font-mono text-xs font-medium text-[var(--diff-remove)]">
+          <Badge variant="destructive" size="sm" className="rounded-sm font-mono">
             {isCancelled ? "cancelled" : "errored"}
-          </span>
+          </Badge>
         )}
         <ChevronRight
           className={`h-3 w-3 shrink-0 text-muted-foreground/45 transition-transform duration-150 motion-reduce:transition-none ${
             open ? "rotate-90" : ""
           }`}
         />
-      </button>
+      </Button>
 
       <AnimatedCollapsible open={open}>
         <section

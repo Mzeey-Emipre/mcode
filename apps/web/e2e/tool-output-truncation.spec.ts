@@ -3,6 +3,7 @@ import { getDefaultSettings } from "@mcode/contracts";
 import { interceptZustandStores, mockWebSocketServer } from "./helpers/e2e-helpers";
 
 const now = new Date().toISOString();
+const completedAt = new Date(Date.parse(now) + 15_000).toISOString();
 const WORKSPACE_ID = "ws-tool-output-truncation";
 const THREAD_ID = "thread-tool-output-truncation";
 const ASSISTANT_ID = "assistant-tool-output-truncation";
@@ -93,7 +94,7 @@ function truncatedToolRecord() {
     output_artifact_path: ARTIFACT_PATH,
     status: "completed" as const,
     started_at: now,
-    completed_at: now,
+    completed_at: completedAt,
     sort_order: 0,
   };
 }
@@ -140,13 +141,16 @@ async function dispatchAgentEvent(page: Page, event: unknown) {
   }, { threadId: THREAD_ID, agentEvent: event });
 }
 
-async function expectTruncationNotice(page: Page, total: string) {
-  const summary = page.getByRole("button", { name: /Ran command/ });
+async function expectTruncationNotice(page: Page, total: string, duration?: string) {
+  const summary = page.getByRole("button", { name: /Ran 1 command/ });
   if (await summary.getAttribute("aria-expanded") !== "true") {
     await summary.click();
   }
 
   const command = page.getByRole("button", { name: /Ran command/ });
+  if (duration) {
+    await expect(command).toContainText(`in ${duration}`);
+  }
   if (await command.getAttribute("aria-expanded") !== "true") {
     await command.click();
   }
@@ -187,14 +191,21 @@ test.describe("tool output truncation", () => {
   });
 
   test("keeps truncation notice after persisted narrative reload", async ({ page }) => {
+    const browserErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") browserErrors.push(message.text());
+    });
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+
     await setupApp(page, [userMessage(), assistantMessage()]);
 
-    await expectTruncationNotice(page, "350 KB total");
+    await expectTruncationNotice(page, "350 KB total", "15s");
 
     await page.reload();
     await page.waitForSelector("[data-testid='thread-item']");
     await page.getByTestId("thread-item").first().click();
 
-    await expectTruncationNotice(page, "350 KB total");
+    await expectTruncationNotice(page, "350 KB total", "15s");
+    expect(browserErrors).toEqual([]);
   });
 });

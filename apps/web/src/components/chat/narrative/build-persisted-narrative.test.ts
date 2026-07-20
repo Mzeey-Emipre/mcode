@@ -110,6 +110,40 @@ describe("buildPersistedNarrativeItems", () => {
     }
   });
 
+  it.each([
+    ["a positive interval", "2026-05-15T10:00:00Z", "2026-05-15T10:00:15Z", 15_000],
+    ["a zero interval", "2026-05-15T10:00:00Z", "2026-05-15T10:00:00Z", 0],
+  ])("hydrates %s as a completed tool duration", (_label, startedAt, completedAt, expected) => {
+    const items = buildPersistedNarrativeItems({
+      tools: [makeTool({ started_at: startedAt, completed_at: completedAt })],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].group.calls[0].durationMs).toBe(expected);
+    }
+  });
+
+  it.each([
+    ["missing completion", "2026-05-15T10:00:00Z", null],
+    ["invalid start", "not-a-date", "2026-05-15T10:00:15Z"],
+    ["invalid completion", "2026-05-15T10:00:00Z", "not-a-date"],
+    ["reversed timestamps", "2026-05-15T10:00:15Z", "2026-05-15T10:00:00Z"],
+  ])("omits duration for %s", (_label, startedAt, completedAt) => {
+    const items = buildPersistedNarrativeItems({
+      tools: [makeTool({ started_at: startedAt, completed_at: completedAt })],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].group.calls[0].durationMs).toBeUndefined();
+    }
+  });
+
   it("hooks-only: emits a hook row per record", () => {
     const items = buildPersistedNarrativeItems({
       tools: [],

@@ -5,8 +5,9 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { ActiveToolRow } from "../ActiveToolRow";
 import { ToolSummaryLine } from "../ToolSummaryLine";
+import { buildPersistedNarrativeItems } from "../build-persisted-narrative";
 import { buildToolSummaryText, isShellTool, resolveToolName } from "../../tool-renderers/constants";
-import type { ToolCall } from "@/transport/types";
+import type { ToolCall, ToolCallRecord } from "@/transport/types";
 import type { ToolGroup } from "../types";
 
 /** Long unbroken path + git add, matching real overflow reports. */
@@ -105,6 +106,40 @@ describe("narrative tool row layout classes", () => {
     expect(screen.getByText("Shell")).toBeTruthy();
     expect(container.querySelector("code")?.textContent).toBe(LONG_SHELL_COMMAND);
     expect(screen.getByText("command output")).toBeTruthy();
+  });
+
+  it("ToolSummaryLine renders duration hydrated from a persisted shell call", () => {
+    const persisted: ToolCallRecord = {
+      id: "tc-persisted",
+      message_id: "message-1",
+      parent_tool_call_id: null,
+      tool_name: "Shell",
+      input_summary: JSON.stringify({ command: LONG_SHELL_COMMAND }),
+      output_summary: "command output",
+      status: "completed",
+      started_at: "2026-05-15T10:00:00Z",
+      completed_at: "2026-05-15T10:00:15Z",
+      sort_order: 1,
+    };
+    const items = buildPersistedNarrativeItems({
+      tools: [persisted],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type !== "tool-group") return;
+
+    render(
+      <ToolSummaryLine group={items[0].group} hasError={false} hasCancelled={false} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
+    expect(screen.getByRole("button", { name: /Ran command/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByText("in 15s")).toBeTruthy();
   });
 
   it("ToolSummaryLine maps command_execution to terminal icon via Bash alias", () => {
