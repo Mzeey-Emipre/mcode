@@ -2,13 +2,7 @@ import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { container } from "tsyringe";
 import type Database from "better-sqlite3";
-import type {
-  Thread,
-  IProviderRegistry,
-  GoalState,
-  AgentEvent,
-  GoalLookupResult,
-} from "@mcode/contracts";
+import type { Thread, IProviderRegistry, GoalState, AgentEvent, GoalLookupResult } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../store/database.js";
 import { ThreadRepo } from "../../repositories/thread-repo.js";
@@ -76,12 +70,10 @@ function buildService(db: Database.Database) {
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,
     maxInputCharactersPerTurn: 16_000,
-    sendTurn: vi.fn<
-      (params: { message: string; [k: string]: unknown }) => Promise<void>
-    >(() => Promise.resolve()),
-    setGoal: vi.fn<(sid: string, condition: string) => GoalState>(
-      (_, condition) => makeGoal(condition),
+    sendTurn: vi.fn<(params: { message: string; [k: string]: unknown }) => Promise<void>>(
+      () => Promise.resolve(),
     ),
+    setGoal: vi.fn<(sid: string, condition: string) => GoalState>((_, condition) => makeGoal(condition)),
     clearGoal: vi.fn<(sid: string) => boolean>(() => true),
     getGoal: vi.fn<(sid: string) => GoalState | undefined>(() => undefined),
     getGoalLookup: vi.fn<(_sid: string) => GoalLookupResult>(() => ({
@@ -91,19 +83,11 @@ function buildService(db: Database.Database) {
       reason: "missing" as const,
     })),
     hasNativeGoalCommand: vi.fn<(sid: string) => boolean>(() => false),
-    setNativeGoalMirror: vi.fn<(sid: string, condition: string) => GoalState>(
-      (_, condition) => makeGoal(condition),
-    ),
+    setNativeGoalMirror: vi.fn<(sid: string, condition: string) => GoalState>((_, condition) => makeGoal(condition)),
     clearNativeGoalMirror: vi.fn<(sid: string) => boolean>(() => true),
-    runNativeGoalCommand: vi.fn<
-      () => Promise<
-        | { kind: "active"; objective: string }
-        | { kind: "cleared"; objective: string }
-        | { kind: "empty" }
-        | { kind: "unavailable" }
-        | null
-      >
-    >(() => Promise.resolve(null)),
+    runNativeGoalCommand: vi.fn<() => Promise<{ kind: "active"; objective: string } | { kind: "cleared"; objective: string } | { kind: "empty" } | { kind: "unavailable" } | null>>(
+      () => Promise.resolve(null),
+    ),
   });
   // A provider lacking the goal capability (no setGoal/clearGoal/getGoal).
   // `/goal` must pass through to this provider as plain text.
@@ -112,14 +96,12 @@ function buildService(db: Database.Database) {
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,
     maxInputCharactersPerTurn: 16_000,
-    sendTurn: vi.fn<
-      (params: { message: string; [k: string]: unknown }) => Promise<void>
-    >(() => Promise.resolve()),
+    sendTurn: vi.fn<(params: { message: string; [k: string]: unknown }) => Promise<void>>(
+      () => Promise.resolve(),
+    ),
   });
   const providerRegistry = {
-    resolve: vi.fn((id: string) =>
-      id === "claude" ? providerStub : nonGoalStub,
-    ),
+    resolve: vi.fn((id: string) => (id === "claude" ? providerStub : nonGoalStub)),
     resolveAll: vi.fn(() => [providerStub]),
     shutdown: vi.fn(),
   } as unknown as IProviderRegistry;
@@ -141,13 +123,7 @@ function buildService(db: Database.Database) {
   const settingsService = {
     get: vi.fn(() =>
       Promise.resolve({
-        model: {
-          defaults: {
-            fallbackId: undefined,
-            contextWindow: "auto",
-            thinking: false,
-          },
-        },
+        model: { defaults: { fallbackId: undefined, contextWindow: "auto", thinking: false } },
         agent: { guardrails: { maxBudgetUsd: 0, maxTurns: 0 } },
         provider: { enabled: {}, cli: {} },
       }),
@@ -167,12 +143,7 @@ function buildService(db: Database.Database) {
     attachmentService,
     providerRegistry,
     threadService,
-    {
-      bulkCreate: () => {},
-      create: () => ({}),
-      listByMessage: () => [],
-      countByMessage: () => 0,
-    } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
     turnSnapshotRepo,
     snapshotService,
     db,
@@ -181,34 +152,14 @@ function buildService(db: Database.Database) {
     settingsService,
     availability,
     planQuestionAnswersRepo,
-    {
-      create: vi.fn(),
-      updateStatus: vi.fn(),
-      listByThread: vi.fn(() => []),
-      getLatestForThread: vi.fn(() => null),
-      getById: vi.fn(() => null),
-    } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-    {
-      deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })),
-    } as any,
-    {
-      issue: vi.fn(),
-      tryConsume: vi.fn(() => false),
-      clear: vi.fn(),
-      hasActiveGrant: vi.fn(() => false),
-    } as any,
-    container.resolve(NarrativeStore),
-    container.resolve(PlanQuestionService),
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
+      { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
+      container.resolve(NarrativeStore),
+      container.resolve(PlanQuestionService),
   );
 
-  return {
-    svc,
-    threadRepo,
-    workspaceRepo,
-    messageRepo,
-    providerStub,
-    nonGoalStub,
-  };
+  return { svc, threadRepo, workspaceRepo, messageRepo, providerStub, nonGoalStub };
 }
 
 describe("AgentService.sendMessage — /goal command", () => {
@@ -298,9 +249,7 @@ describe("AgentService.sendMessage — /goal command", () => {
       `mcode-${thread.id}`,
       "analyse this branch",
     );
-    expect(providerStub.sendTurn.mock.calls[0][0].message).toBe(
-      "/goal analyse this branch",
-    );
+    expect(providerStub.sendTurn.mock.calls[0][0].message).toBe("/goal analyse this branch");
   });
 
   it("completes a direct say-goal when the assistant says the requested text", async () => {
@@ -332,42 +281,34 @@ describe("AgentService.sendMessage — /goal command", () => {
       tokens: null,
     } satisfies AgentEvent);
 
-    for (
-      let i = 0;
-      i < 20 && providerStub.clearGoal.mock.calls.length === 0;
-      i++
-    ) {
+    for (let i = 0; i < 20 && providerStub.clearGoal.mock.calls.length === 0; i++) {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
     expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: AgentEventType.GoalUpdated,
-          threadId: thread.id,
-          goal: expect.objectContaining({
-            objective: "say hi",
-            status: "complete",
-            providerId: "claude",
-            controls: expect.objectContaining({ canClear: false }),
-          }),
-        }),
-        expect.objectContaining({
-          type: AgentEventType.GoalCleared,
-          threadId: thread.id,
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: AgentEventType.GoalUpdated,
+        threadId: thread.id,
+        goal: expect.objectContaining({
+          objective: "say hi",
+          status: "complete",
           providerId: "claude",
-          reason: "completed",
+          controls: expect.objectContaining({ canClear: false }),
         }),
-      ]),
-    );
-    expect(
-      events.some(
-        (event) =>
-          event.type === AgentEventType.Message &&
-          /^Goal achieved in \d+s\.$/.test(event.content),
-      ),
-    ).toBe(false);
+      }),
+      expect.objectContaining({
+        type: AgentEventType.GoalCleared,
+        threadId: thread.id,
+        providerId: "claude",
+        reason: "completed",
+      }),
+    ]));
+    expect(events.some(
+      (event) =>
+        event.type === AgentEventType.Message &&
+        /^Goal achieved in \d+s\.$/.test(event.content),
+    )).toBe(false);
   });
 
   it("does not complete broad goals from an arbitrary assistant answer", async () => {
@@ -428,22 +369,14 @@ describe("AgentService.sendMessage — /goal command", () => {
       tokens: null,
     } satisfies AgentEvent);
 
-    for (
-      let i = 0;
-      i < 20 && providerStub.clearGoal.mock.calls.length === 0;
-      i++
-    ) {
+    for (let i = 0; i < 20 && providerStub.clearGoal.mock.calls.length === 0; i++) {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
-    expect(
-      events.some((event) => event.type === AgentEventType.GoalUpdated),
-    ).toBe(false);
-    expect(
-      events.some((event) => event.type === AgentEventType.GoalCleared),
-    ).toBe(false);
+    expect(events.some((event) => event.type === AgentEventType.GoalUpdated)).toBe(false);
+    expect(events.some((event) => event.type === AgentEventType.GoalCleared)).toBe(false);
   });
 
   it("rolls the installed goal back when the send fails so no Stop-hook gate lingers", async () => {
@@ -515,13 +448,11 @@ describe("AgentService.sendMessage — /goal command", () => {
     const calls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls;
     const messageEvents = calls.filter(
       ([channel, payload]) =>
-        channel === "agent.event" &&
-        (payload as { type?: string }).type === AgentEventType.Message,
+        channel === "agent.event" && (payload as { type?: string }).type === AgentEventType.Message,
     );
     const endedEvents = calls.filter(
       ([channel, payload]) =>
-        channel === "agent.event" &&
-        (payload as { type?: string }).type === AgentEventType.Ended,
+        channel === "agent.event" && (payload as { type?: string }).type === AgentEventType.Ended,
     );
     expect(messageEvents.length).toBeGreaterThanOrEqual(1);
     expect(endedEvents.length).toBe(0);
@@ -576,9 +507,7 @@ describe("AgentService.sendMessage — /goal command", () => {
     // received the raw text (no rewrite).
     expect(providerStub.setGoal).not.toHaveBeenCalled();
     expect(nonGoalStub.sendTurn).toHaveBeenCalledTimes(1);
-    expect(nonGoalStub.sendTurn.mock.calls[0][0].message).toBe(
-      "/goal something",
-    );
+    expect(nonGoalStub.sendTurn.mock.calls[0][0].message).toBe("/goal something");
   });
 
   it("persists a Codex goal completion receipt that arrives after TurnComplete", async () => {
@@ -636,9 +565,7 @@ describe("AgentService.sendMessage — /goal command", () => {
     ).rejects.toThrow("already has an active agent session");
 
     expect(providerStub.sendTurn).not.toHaveBeenCalled();
-    expect(messageRepo.listByThread(thread.id, 100).messages).toEqual(
-      beforeMessages,
-    );
+    expect(messageRepo.listByThread(thread.id, 100).messages).toEqual(beforeMessages);
   });
 
   it("rejects concurrent normal sends before either can persist a duplicate row", async () => {
@@ -665,9 +592,7 @@ describe("AgentService.sendMessage — /goal command", () => {
     await first;
 
     expect(providerStub.sendTurn).toHaveBeenCalledTimes(1);
-    const contents = messageRepo
-      .listByThread(thread.id, 100)
-      .messages.map((m) => m.content);
+    const contents = messageRepo.listByThread(thread.id, 100).messages.map((m) => m.content);
     expect(contents).toEqual(["first turn"]);
   });
 
@@ -695,13 +620,9 @@ describe("AgentService.sendMessage — /goal command", () => {
 
     expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
     expect(providerStub.sendTurn).not.toHaveBeenCalled();
-    const contents = messageRepo
-      .listByThread(thread.id, 100)
-      .messages.map((m) => m.content);
+    const contents = messageRepo.listByThread(thread.id, 100).messages.map((m) => m.content);
     expect(contents).toContain("/goal clear");
-    expect(contents.some((content) => content.includes("Goal cleared"))).toBe(
-      true,
-    );
+    expect(contents.some((content) => content.includes("Goal cleared"))).toBe(true);
   });
 
   it("thread.goal.clear during an active native Claude turn returns busy cache and keeps mirror", async () => {
@@ -760,17 +681,12 @@ describe("AgentService.sendMessage — /goal command", () => {
       source: "claude",
       controls: { canInspect: true, canClear: true },
     };
-    let resolveNativeRead!: (value: {
-      kind: "active";
-      objective: string;
-    }) => void;
+    let resolveNativeRead!: (value: { kind: "active"; objective: string }) => void;
     providerStub.hasNativeGoalCommand.mockReturnValue(true);
     providerStub.getGoal.mockReturnValue(activeGoal);
-    providerStub.runNativeGoalCommand.mockReturnValue(
-      new Promise((resolve) => {
-        resolveNativeRead = resolve;
-      }),
-    );
+    providerStub.runNativeGoalCommand.mockReturnValue(new Promise((resolve) => {
+      resolveNativeRead = resolve;
+    }));
     svc.init();
 
     providerStub.emit("event", {
@@ -782,11 +698,7 @@ describe("AgentService.sendMessage — /goal command", () => {
       tokensOut: 0,
     } satisfies AgentEvent);
 
-    for (
-      let i = 0;
-      i < 20 && providerStub.runNativeGoalCommand.mock.calls.length === 0;
-      i++
-    ) {
+    for (let i = 0; i < 20 && providerStub.runNativeGoalCommand.mock.calls.length === 0; i++) {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     providerStub.emit("event", {
@@ -806,20 +718,14 @@ describe("AgentService.sendMessage — /goal command", () => {
   it("idle native thread.goal.clear dispatches /goal off and returns authoritative native clear", async () => {
     const { svc, providerStub } = buildService(db);
     providerStub.hasNativeGoalCommand.mockReturnValue(true);
-    providerStub.runNativeGoalCommand.mockResolvedValue({
-      kind: "cleared",
-      objective: "wait",
-    });
+    providerStub.runNativeGoalCommand.mockResolvedValue({ kind: "cleared", objective: "wait" });
 
     await expect(svc.clearThreadGoal(thread.id)).resolves.toEqual({
       goal: null,
       authoritative: true,
       source: "claude-native-command",
     });
-    expect(providerStub.runNativeGoalCommand).toHaveBeenCalledWith(
-      `mcode-${thread.id}`,
-      "/goal off",
-    );
+    expect(providerStub.runNativeGoalCommand).toHaveBeenCalledWith(`mcode-${thread.id}`, "/goal off");
     expect(providerStub.clearGoal).not.toHaveBeenCalled();
   });
 
@@ -859,30 +765,18 @@ describe("AgentService.sendMessage — /goal command", () => {
       providerId: "claude",
     } satisfies AgentEvent);
 
-    for (
-      let i = 0;
-      i < 20 && providerStub.runNativeGoalCommand.mock.calls.length === 0;
-      i++
-    ) {
+    for (let i = 0; i < 20 && providerStub.runNativeGoalCommand.mock.calls.length === 0; i++) {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
-    expect(providerStub.runNativeGoalCommand).toHaveBeenCalledWith(
-      `mcode-${thread.id}`,
-      "/goal",
-    );
+    expect(providerStub.runNativeGoalCommand).toHaveBeenCalledWith(`mcode-${thread.id}`, "/goal");
     const goalEvents = events.filter(
-      (event) =>
-        event.type === AgentEventType.GoalUpdated ||
-        event.type === AgentEventType.GoalCleared,
+      (event) => event.type === AgentEventType.GoalUpdated || event.type === AgentEventType.GoalCleared,
     );
     expect(goalEvents).toEqual([
       expect.objectContaining({
         type: AgentEventType.GoalUpdated,
-        goal: expect.objectContaining({
-          status: "complete",
-          objective: "say hi",
-        }),
+        goal: expect.objectContaining({ status: "complete", objective: "say hi" }),
       }),
       expect.objectContaining({
         type: AgentEventType.GoalCleared,
@@ -908,12 +802,9 @@ describe("AgentService.sendMessage — /goal command", () => {
     };
     let resolveGoal!: (goal: GoalState) => void;
     providerStub.hasNativeGoalCommand.mockReturnValue(true);
-    providerStub.getGoal.mockImplementation(
-      () =>
-        new Promise<GoalState>((resolve) => {
-          resolveGoal = resolve;
-        }) as unknown as GoalState,
-    );
+    providerStub.getGoal.mockImplementation(() => new Promise<GoalState>((resolve) => {
+      resolveGoal = resolve;
+    }) as unknown as GoalState);
     svc.init();
 
     providerStub.emit("event", {

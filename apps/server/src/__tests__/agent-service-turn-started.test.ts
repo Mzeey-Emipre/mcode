@@ -44,10 +44,9 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
   let turnSnapshotRepo: TurnSnapshotRepo;
   let taskRepo: TaskRepo;
   let svc: AgentService;
-  let providerStub: EventEmitter &
-    Partial<IAgentProvider> & {
-      sendTurn: ReturnType<typeof vi.fn>;
-    };
+  let providerStub: EventEmitter & Partial<IAgentProvider> & {
+    sendTurn: ReturnType<typeof vi.fn>;
+  };
   let capturedEvents: AgentEvent[];
   // Snapshot of capturedEvents.length taken synchronously when the provider's
   // sendMessage body is entered. If emit truly precedes the call, this must be >= 1.
@@ -134,12 +133,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       attachmentServiceStub,
       registryStub,
       threadServiceStub,
-      {
-        bulkCreate: () => {},
-        create: () => ({}),
-        listByMessage: () => [],
-        countByMessage: () => 0,
-      } as unknown as import("../repositories/hook-execution-repo.js").HookExecutionRepo,
+      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../repositories/hook-execution-repo.js").HookExecutionRepo,
       turnSnapshotRepo,
       snapshotServiceStub,
       db,
@@ -147,42 +141,15 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       taskRepo,
       settingsServiceStub,
       availabilityStub,
-      {
-        markAnswered: vi.fn(),
-        isAnswered: vi.fn(() => false),
-        listAnsweredForThread: vi.fn(() => []),
-      } as unknown as import("../repositories/plan-question-answers-repo.js").PlanQuestionAnswersRepo,
-      {
-        create: vi.fn(),
-        updateStatus: vi.fn(),
-        listByThread: vi.fn(() => []),
-        getLatestForThread: vi.fn(() => null),
-        getById: vi.fn(() => null),
-      } as unknown as import("../repositories/plan-repo.js").PlanRepo,
-      {
-        deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })),
-      } as any,
-      {
-        issue: vi.fn(),
-        tryConsume: vi.fn(() => false),
-        clear: vi.fn(),
-        hasActiveGrant: vi.fn(() => false),
-      } as any,
+      { markAnswered: vi.fn(), isAnswered: vi.fn(() => false), listAnsweredForThread: vi.fn(() => []) } as unknown as import("../repositories/plan-question-answers-repo.js").PlanQuestionAnswersRepo,
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../repositories/plan-repo.js").PlanRepo,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
+      { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(
         messageRepo,
         toolCallRecordRepo,
-        {
-          bulkCreate: () => {},
-          create: () => ({}),
-          listByMessage: () => [],
-          countByMessage: () => 0,
-        } as unknown as import("../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
-        {
-          bulkCreate: () => {},
-          create: () => ({}),
-          listByMessage: () => [],
-          countByMessage: () => 0,
-        } as unknown as import("../repositories/hook-execution-repo.js").HookExecutionRepo,
+        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
+        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../repositories/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, new PlanQuestionAnswersRepo(db)),
     );
@@ -190,14 +157,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
 
   it("emits turnStarted through the provider before provider.sendMessage resolves", async () => {
     const workspace = workspaceRepo.create("test-ws", process.cwd());
-    const thread = threadRepo.create(
-      workspace.id,
-      "Test Thread",
-      "direct",
-      "main",
-      true,
-      "claude",
-    );
+    const thread = threadRepo.create(workspace.id, "Test Thread", "direct", "main", true, "claude");
 
     // Kick off sendMessage without awaiting (provider.sendMessage never resolves).
     void svc.sendMessage({
@@ -210,10 +170,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     // TurnStarted must be the FIRST event on the bus (nothing precedes it).
-    expect(
-      capturedEvents.length,
-      "expected at least one event on the bus",
-    ).toBeGreaterThan(0);
+    expect(capturedEvents.length, "expected at least one event on the bus").toBeGreaterThan(0);
     expect(capturedEvents[0]).toMatchObject({
       type: AgentEventType.TurnStarted,
       threadId: thread.id,

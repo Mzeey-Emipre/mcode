@@ -51,8 +51,7 @@ function createAgentServiceHarness() {
 
 describe("AgentService.createAndSend existing worktree attach", () => {
   it("creates a new worktree as branchless from the selected base branch", async () => {
-    const { threadRepo, workspaceRepo, threadService, service } =
-      createAgentServiceHarness();
+    const { threadRepo, workspaceRepo, threadService, service } = createAgentServiceHarness();
     const workspace = workspaceRepo.create("Repo", "/repo");
     const createdThread = {
       ...threadRepo.create(
@@ -95,8 +94,7 @@ describe("AgentService.createAndSend existing worktree attach", () => {
   });
 
   it("creates a new worktree on a PR branch as a named checkout", async () => {
-    const { threadRepo, workspaceRepo, threadService, service } =
-      createAgentServiceHarness();
+    const { threadRepo, workspaceRepo, threadService, service } = createAgentServiceHarness();
     const workspace = workspaceRepo.create("Repo", "/repo");
     const createdThread = {
       ...threadRepo.create(

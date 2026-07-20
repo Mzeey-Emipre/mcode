@@ -616,14 +616,29 @@ describe("Workspace Behavior", () => {
       await useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5");
 
       const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-      expect(command).toMatchObject({
+      expect(command).toEqual({
         workspaceId: ws.id,
         content: "Hello",
         model: "gpt-5.5",
+        permissionMode: undefined,
         mode: "worktree",
         branch: "main",
+        worktreeBranchMode: undefined,
         existingWorktreePath: "/repo/.worktrees/branchless-existing",
         existingWorktreeBaseBranch: "main",
+        attachments: undefined,
+        reasoningLevel: undefined,
+        provider: undefined,
+        interactionMode: undefined,
+        parentThreadId: undefined,
+        forkedFromMessageId: undefined,
+        copilotAgent: undefined,
+        contextWindow: undefined,
+        thinking: undefined,
+        codexFastMode: undefined,
+        displayContent: undefined,
+        mentions: undefined,
+        previewAnnotations: undefined,
       });
     });
 
@@ -675,13 +690,29 @@ describe("Workspace Behavior", () => {
       });
 
       const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-      expect(command).toMatchObject({
+      expect(command).toEqual({
         workspaceId: ws.id,
         content: "Review this",
         model: "gpt-5.5",
+        permissionMode: undefined,
         mode: "worktree",
         branch: "contributor/pr-branch",
         worktreeBranchMode: "named",
+        existingWorktreePath: undefined,
+        existingWorktreeBaseBranch: undefined,
+        attachments: undefined,
+        reasoningLevel: undefined,
+        provider: undefined,
+        interactionMode: undefined,
+        parentThreadId: undefined,
+        forkedFromMessageId: undefined,
+        copilotAgent: undefined,
+        contextWindow: undefined,
+        thinking: undefined,
+        codexFastMode: undefined,
+        displayContent: undefined,
+        mentions: undefined,
+        previewAnnotations: undefined,
       });
       expect(useWorkspaceStore.getState().newThreadBranchSource).toBe("branch");
 
@@ -731,15 +762,30 @@ describe("Workspace Behavior", () => {
       });
 
       const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-      expect(command).toMatchObject({
+      expect(command).toEqual({
         workspaceId: ws.id,
         content: "Hello",
         model: "gpt-5.5",
+        permissionMode: undefined,
         mode: "worktree",
         branch: "feat/existing",
+        worktreeBranchMode: undefined,
         existingWorktreePath: "/repo/.worktrees/feature-existing",
+        existingWorktreeBaseBranch: undefined,
+        attachments: undefined,
+        reasoningLevel: undefined,
+        provider: undefined,
+        interactionMode: undefined,
+        parentThreadId: undefined,
+        forkedFromMessageId: undefined,
+        copilotAgent: undefined,
+        contextWindow: undefined,
+        thinking: undefined,
+        codexFastMode: undefined,
+        displayContent: undefined,
+        mentions: undefined,
+        previewAnnotations: undefined,
       });
-      expect(command.existingWorktreeBaseBranch).toBeUndefined();
 
       resolveRpc(createMockThread({
         id: "named-existing-thread",
@@ -902,14 +948,29 @@ describe("Workspace Behavior", () => {
       });
 
       const command = (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-      expect(command).toMatchObject({
+      expect(command).toEqual({
         workspaceId: ws.id,
         content: "Branch this",
         model: "gpt-5.5",
+        permissionMode: undefined,
         mode: "worktree",
         branch: "main",
+        worktreeBranchMode: undefined,
         existingWorktreePath: "C:\\repo\\.worktrees\\branchless-existing\\",
         existingWorktreeBaseBranch: "main",
+        attachments: undefined,
+        reasoningLevel: undefined,
+        provider: undefined,
+        interactionMode: undefined,
+        parentThreadId: parent.id,
+        forkedFromMessageId: undefined,
+        copilotAgent: undefined,
+        contextWindow: undefined,
+        thinking: undefined,
+        codexFastMode: undefined,
+        displayContent: undefined,
+        mentions: undefined,
+        previewAnnotations: undefined,
       });
     });
 

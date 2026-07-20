@@ -174,12 +174,7 @@ function buildService({
     attachmentService,
     providerRegistry,
     threadService,
-    {
-      bulkCreate: () => {},
-      create: () => ({}),
-      listByMessage: () => [],
-      countByMessage: () => 0,
-    } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
     turnSnapshotRepo,
     snapshotService,
     db,
@@ -188,39 +183,16 @@ function buildService({
     settingsService,
     availability,
     planQuestionAnswersRepo,
-    {
-      create: vi.fn(),
-      updateStatus: vi.fn(),
-      listByThread: vi.fn(() => []),
-      getLatestForThread: vi.fn(() => null),
-      getById: vi.fn(() => null),
-    } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-    {
-      deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })),
-    } as any,
-    {
-      issue: vi.fn(),
-      tryConsume: vi.fn(() => false),
-      clear: vi.fn(),
-      hasActiveGrant: vi.fn(() => false),
-    } as any,
-    new NarrativeStore(
-      messageRepo,
-      toolCallRecordRepo,
-      {
-        bulkCreate: () => {},
-        create: () => ({}),
-        listByMessage: () => [],
-        countByMessage: () => 0,
-      } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
-      {
-        bulkCreate: () => {},
-        create: () => ({}),
-        listByMessage: () => [],
-        countByMessage: () => 0,
-      } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
-    ),
-    new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
+      { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
+      new NarrativeStore(
+        messageRepo,
+        toolCallRecordRepo,
+        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
+        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+      ),
+      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
   );
 }
 

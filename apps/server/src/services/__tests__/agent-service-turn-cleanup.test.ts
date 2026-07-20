@@ -264,12 +264,7 @@ function buildService(cwd = process.cwd()): {
     attachmentService,
     providerRegistry,
     threadService,
-    {
-      bulkCreate: () => {},
-      create: () => ({}),
-      listByMessage: () => [],
-      countByMessage: () => 0,
-    } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
     turnSnapshotRepo,
     snapshotService,
     db,
@@ -278,39 +273,16 @@ function buildService(cwd = process.cwd()): {
     settingsService,
     availability,
     planQuestionAnswersRepo,
-    {
-      create: vi.fn(),
-      updateStatus: vi.fn(),
-      listByThread: vi.fn(() => []),
-      getLatestForThread: vi.fn(() => null),
-      getById: vi.fn(() => null),
-    } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-    {
-      deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })),
-    } as any,
-    {
-      issue: vi.fn(),
-      tryConsume: vi.fn(() => false),
-      clear: vi.fn(),
-      hasActiveGrant: vi.fn(() => false),
-    } as any,
-    new NarrativeStore(
-      messageRepo,
-      toolCallRecordRepo,
-      {
-        bulkCreate: () => {},
-        create: () => ({}),
-        listByMessage: () => [],
-        countByMessage: () => 0,
-      } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
-      {
-        bulkCreate: () => {},
-        create: () => ({}),
-        listByMessage: () => [],
-        countByMessage: () => 0,
-      } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
-    ),
-    new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
+      { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
+      new NarrativeStore(
+        messageRepo,
+        toolCallRecordRepo,
+        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
+        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+      ),
+      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
   );
 
   return {
@@ -365,8 +337,7 @@ describe("AgentService turn cleanup", () => {
   });
 
   it("persists preview annotation snapshots as visible provider attachments", async () => {
-    const { service, providerEmitter, attachmentService, messageRepo } =
-      buildService();
+    const { service, providerEmitter, attachmentService, messageRepo } = buildService();
     const bundle = makePreviewAnnotationBundle();
 
     await service.sendMessage({
@@ -764,10 +735,7 @@ describe("AgentService Ended finalization", () => {
   let threadRepo: RealThreadRepo;
   let workspaceRepo: RealWorkspaceRepo;
   let messageRepo: RealMessageRepo;
-  let providerEmitter: EventEmitter & {
-    sendTurn: ReturnType<typeof vi.fn>;
-    stopSession: ReturnType<typeof vi.fn>;
-  };
+  let providerEmitter: EventEmitter & { sendTurn: ReturnType<typeof vi.fn>; stopSession: ReturnType<typeof vi.fn> };
   let service: AgentService;
 
   beforeEach(() => {
@@ -830,10 +798,7 @@ describe("AgentService Ended finalization", () => {
       providerRegistry,
       { create: vi.fn() } as unknown as ThreadService,
       hookExecutionRepo,
-      {
-        listByThread: vi.fn(() => []),
-        create: vi.fn(),
-      } as unknown as TurnSnapshotRepo,
+      { listByThread: vi.fn(() => []), create: vi.fn() } as unknown as TurnSnapshotRepo,
       snapshotService,
       db,
       memoryPressureService,
@@ -841,28 +806,10 @@ describe("AgentService Ended finalization", () => {
       settingsService,
       { assertUsable: vi.fn() } as unknown as ProviderAvailabilityService,
       planQuestionAnswersRepo,
-      {
-        create: vi.fn(),
-        updateStatus: vi.fn(),
-        listByThread: vi.fn(() => []),
-        getLatestForThread: vi.fn(() => null),
-        getById: vi.fn(() => null),
-      } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-      {
-        deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })),
-      } as any,
-      {
-        issue: vi.fn(),
-        tryConsume: vi.fn(() => false),
-        clear: vi.fn(),
-        hasActiveGrant: vi.fn(() => false),
-      } as any,
-      new NarrativeStore(
-        messageRepo,
-        toolCallRecordRepo,
-        thoughtSegmentRepo,
-        hookExecutionRepo,
-      ),
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
+      { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
+      new NarrativeStore(messageRepo, toolCallRecordRepo, thoughtSegmentRepo, hookExecutionRepo),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
     );
     service.init();
@@ -870,14 +817,7 @@ describe("AgentService Ended finalization", () => {
 
   it("persists partial assistant text when a running turn ends with only Ended", async () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
-    const thread = threadRepo.create(
-      workspace.id,
-      "Test thread",
-      "direct",
-      "main",
-      true,
-      "codex",
-    );
+    const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "codex");
 
     await service.sendMessage({
       threadId: thread.id,
@@ -902,28 +842,16 @@ describe("AgentService Ended finalization", () => {
 
     const { messages } = messageRepo.listByThread(thread.id, 10);
     const assistant = messages.find((message) => message.role === "assistant");
-    expect(assistant?.content).toBe(
-      "partial answer before the provider stopped",
-    );
-    expect(broadcast).toHaveBeenCalledWith(
-      "turn.persisted",
-      expect.objectContaining({
-        threadId: thread.id,
-        messageId: assistant?.id,
-      }),
-    );
+    expect(assistant?.content).toBe("partial answer before the provider stopped");
+    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: thread.id,
+      messageId: assistant?.id,
+    }));
   });
 
   it("does not infer cancellation from a bare Ended event for non-Codex providers", async () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
-    const thread = threadRepo.create(
-      workspace.id,
-      "Test thread",
-      "direct",
-      "main",
-      true,
-      "cursor",
-    );
+    const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "cursor");
 
     await service.sendMessage({
       threadId: thread.id,
@@ -947,16 +875,9 @@ describe("AgentService Ended finalization", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const { messages } = messageRepo.listByThread(thread.id, 10);
-    expect(
-      messages.some(
-        (message) =>
-          message.role === "assistant" &&
-          message.content === "partial cursor text",
-      ),
-    ).toBe(false);
-    expect(broadcast).not.toHaveBeenCalledWith(
-      "turn.persisted",
-      expect.anything(),
-    );
+    expect(messages.some((message) =>
+      message.role === "assistant" && message.content === "partial cursor text",
+    )).toBe(false);
+    expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.anything());
   });
 });

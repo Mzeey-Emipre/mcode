@@ -84,13 +84,7 @@ function buildService(db: Database.Database) {
   const settingsService = {
     get: vi.fn(() =>
       Promise.resolve({
-        model: {
-          defaults: {
-            fallbackId: undefined,
-            contextWindow: "auto",
-            thinking: false,
-          },
-        },
+        model: { defaults: { fallbackId: undefined, contextWindow: "auto", thinking: false } },
         agent: { guardrails: { maxBudgetUsd: 0, maxTurns: 0 } },
         provider: { enabled: {}, cli: {} },
       }),
@@ -110,12 +104,7 @@ function buildService(db: Database.Database) {
     attachmentService,
     providerRegistry,
     threadService,
-    {
-      bulkCreate: () => {},
-      create: () => ({}),
-      listByMessage: () => [],
-      countByMessage: () => 0,
-    } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
     turnSnapshotRepo,
     snapshotService,
     db,
@@ -124,33 +113,14 @@ function buildService(db: Database.Database) {
     settingsService,
     availability,
     planQuestionAnswersRepo,
-    {
-      create: vi.fn(),
-      updateStatus: vi.fn(),
-      listByThread: vi.fn(() => []),
-      getLatestForThread: vi.fn(() => null),
-      getById: vi.fn(() => null),
-    } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-    {
-      deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })),
-    } as any,
-    {
-      issue: vi.fn(),
-      tryConsume: vi.fn(() => false),
-      clear: vi.fn(),
-      hasActiveGrant: vi.fn(() => false),
-    } as any,
-    container.resolve(NarrativeStore),
-    container.resolve(PlanQuestionService),
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
+      { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
+      { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
+      container.resolve(NarrativeStore),
+      container.resolve(PlanQuestionService),
   );
 
-  return {
-    svc,
-    threadRepo,
-    workspaceRepo,
-    messageRepo,
-    planQuestionAnswersRepo,
-  };
+  return { svc, threadRepo, workspaceRepo, messageRepo, planQuestionAnswersRepo };
 }
 
 describe("AgentService.sendMessage — plan-questions answered marker", () => {
@@ -177,17 +147,15 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   it("marks the plan-questions message answered when markPlanAnswerForMessageId is set", async () => {
     const { svc, planQuestionAnswersRepo } = buildService(db);
 
-    await svc.sendMessage(
-      {
-        threadId: thread.id,
-        content: "my answers",
-        permissionMode: "default",
-        model: "claude-sonnet-4-6",
-        attachments: [],
-        provider: "claude",
-        markPlanAnswerForMessageId: assistantMessageId,
-      }, // markPlanAnswerForMessageId
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "my answers",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      markPlanAnswerForMessageId: assistantMessageId,
+    });
 
     expect(planQuestionAnswersRepo.isAnswered(assistantMessageId)).toBe(true);
   });
@@ -204,9 +172,7 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
       provider: "claude",
     });
 
-    expect(planQuestionAnswersRepo.listAnsweredForThread(thread.id)).toEqual(
-      [],
-    );
+    expect(planQuestionAnswersRepo.listAnsweredForThread(thread.id)).toEqual([]);
   });
 
   it("answerQuestions marks the latest plan-questions message answered", async () => {
@@ -232,9 +198,7 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
       ]),
     ).resolves.toBeUndefined();
 
-    expect(
-      planQuestionAnswersRepo.listAnsweredForThread(plainThread.id),
-    ).toEqual([]);
+    expect(planQuestionAnswersRepo.listAnsweredForThread(plainThread.id)).toEqual([]);
   });
 
   it("broadcasts plan.answered after the marker tx commits", async () => {
@@ -268,9 +232,9 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
       provider: "claude",
     });
 
-    const calls = (
-      broadcast as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls.filter((c) => c[0] === "plan.answered");
+    const calls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === "plan.answered",
+    );
     expect(calls).toEqual([]);
   });
 
@@ -289,9 +253,9 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
       }),
     ).rejects.toThrow();
 
-    const calls = (
-      broadcast as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls.filter((c) => c[0] === "plan.answered");
+    const calls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === "plan.answered",
+    );
     expect(calls).toEqual([]);
   });
 
@@ -307,9 +271,9 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
     });
     // Dismiss must NOT broadcast plan.answered — that channel is reserved
     // for submissions and triggers the AnsweredSummary echo on receivers.
-    const answeredCalls = (
-      broadcast as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls.filter((c) => c[0] === "plan.answered");
+    const answeredCalls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === "plan.answered",
+    );
     expect(answeredCalls).toEqual([]);
   });
 
@@ -327,21 +291,13 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   it("dismissPlanQuestions is a no-op when the thread has no plan-questions fence", () => {
     const { svc, workspaceRepo, threadRepo, planQuestionAnswersRepo } =
       buildService(db);
-    const ws2 = workspaceRepo.create(
-      "dismiss-ws",
-      `${process.cwd()}#dismiss`,
-      false,
-    );
+    const ws2 = workspaceRepo.create("dismiss-ws", `${process.cwd()}#dismiss`, false);
     const plainThread = threadRepo.create(ws2.id, "plain", "direct", "main");
 
     svc.dismissPlanQuestions(plainThread.id);
 
-    expect(
-      planQuestionAnswersRepo.listAnsweredForThread(plainThread.id),
-    ).toEqual([]);
-    const calls = (
-      broadcast as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls.filter(
+    expect(planQuestionAnswersRepo.listAnsweredForThread(plainThread.id)).toEqual([]);
+    const calls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) =>
         (c[0] === "plan.dismissed" || c[0] === "plan.answered") &&
         (c[1] as { threadId: string }).threadId === plainThread.id,
@@ -351,8 +307,8 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
 
   it("rolls back the user message when the marker insert fails (FK violation)", async () => {
     const { svc, messageRepo, planQuestionAnswersRepo } = buildService(db);
-    const beforeCount = messageRepo.listByThread(thread.id, 100).messages
-      .length;
+    const beforeCount =
+      messageRepo.listByThread(thread.id, 100).messages.length;
 
     // Pass an unknown message id so the FK rejects the marker insert.
     // The user-message INSERT must roll back as part of the same transaction.
@@ -368,10 +324,9 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
       }),
     ).rejects.toThrow();
 
-    const afterCount = messageRepo.listByThread(thread.id, 100).messages.length;
+    const afterCount =
+      messageRepo.listByThread(thread.id, 100).messages.length;
     expect(afterCount).toBe(beforeCount);
-    expect(planQuestionAnswersRepo.listAnsweredForThread(thread.id)).toEqual(
-      [],
-    );
+    expect(planQuestionAnswersRepo.listAnsweredForThread(thread.id)).toEqual([]);
   });
 });
