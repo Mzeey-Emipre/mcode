@@ -11,7 +11,6 @@ import type {
   SkillDiagnostics,
   PrInfo,
   PrDetail,
-  PermissionMode,
   ToolCallRecord,
   ThoughtSegmentRecord,
   HookExecutionRecord,
@@ -52,10 +51,11 @@ import type {
   PullRequestCloseResult,
   PullRequestMergeRequest,
   PullRequestMergeResult,
+  SendMessageInput,
+  CreateAndSendInput,
 } from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
 import type { PaginatedMessages, ConversationPage, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
-import type { ReasoningLevel } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
   decodeTerminalDataFrame,
@@ -576,111 +576,26 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (
-      threadId,
-      content,
-      model?,
-      permissionMode?: PermissionMode,
-      attachments?: AttachmentMeta[],
-      displayContent?: string,
-      reasoningLevel?: ReasoningLevel,
-      provider?: string,
-      interactionMode?,
-      copilotAgent?: string,
-      contextWindow?,
-      thinking?,
-      codexFastMode?,
-      replyToMessageId?,
-      quotedText?,
-      planAction?,
-      mentions?,
-      previewAnnotations?,
-      goalObjective?,
-      orchestrationMode?,
-    ) => {
+    sendMessage: (input: SendMessageInput) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
         ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
         : {};
+      const { replyToMessageId, quotedText, ...command } = input;
       return rpc<void>("agent.send", {
-        threadId,
-        content,
-        model,
-        permissionMode,
-        attachments,
-        reasoningLevel,
-        provider,
-        interactionMode,
-        copilotAgent,
-        contextWindow,
-        thinking,
-        ...(codexFastMode !== undefined && { codexFastMode }),
+        ...command,
         ...(replyToMessageId && { replyToMessageId }),
         ...(quotedText && { quotedText }),
-        ...(displayContent !== undefined && { displayContent }),
-        ...(planAction !== undefined && { planAction }),
-        ...(mentions !== undefined && { mentions }),
-        ...(previewAnnotations !== undefined && { previewAnnotations }),
-        ...(goalObjective !== undefined && { goalObjective }),
-        ...(orchestrationMode !== undefined && { orchestrationMode }),
         ...guardrails,
       });
     },
-    createAndSendMessage: (
-      workspaceId,
-      content,
-      model,
-      permissionMode?,
-      mode?,
-      branch?,
-      worktreeBranchMode?,
-      existingWorktreePath?,
-      existingWorktreeBaseBranch?,
-      attachments?,
-      reasoningLevel?,
-      provider?,
-      interactionMode?,
-      parentThreadId?,
-      forkedFromMessageId?,
-      copilotAgent?,
-      contextWindow?,
-      thinking?,
-      codexFastMode?,
-      displayContent?,
-      mentions?,
-      previewAnnotations?,
-      goalObjective?,
-      orchestrationMode?,
-    ) => {
+    createAndSendMessage: (input: CreateAndSendInput) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
         ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
         : {};
       return rpc<CreateAndSendResult>("agent.createAndSend", {
-        workspaceId,
-        content,
-        model,
-        permissionMode,
-        mode,
-        branch,
-        worktreeBranchMode,
-        existingWorktreePath,
-        existingWorktreeBaseBranch,
-        attachments,
-        reasoningLevel,
-        provider,
-        interactionMode,
-        parentThreadId,
-        forkedFromMessageId,
-        copilotAgent,
-        contextWindow,
-        thinking,
-        ...(codexFastMode !== undefined && { codexFastMode }),
-        ...(displayContent !== undefined && { displayContent }),
-        ...(mentions !== undefined && { mentions }),
-        ...(previewAnnotations !== undefined && { previewAnnotations }),
-        ...(goalObjective !== undefined && { goalObjective }),
-        ...(orchestrationMode !== undefined && { orchestrationMode }),
+        ...input,
         ...guardrails,
       });
     },

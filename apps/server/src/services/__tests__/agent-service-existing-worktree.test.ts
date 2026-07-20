@@ -51,7 +51,8 @@ function createAgentServiceHarness() {
 
 describe("AgentService.createAndSend existing worktree attach", () => {
   it("creates a new worktree as branchless from the selected base branch", async () => {
-    const { threadRepo, workspaceRepo, threadService, service } = createAgentServiceHarness();
+    const { threadRepo, workspaceRepo, threadService, service } =
+      createAgentServiceHarness();
     const workspace = workspaceRepo.create("Repo", "/repo");
     const createdThread = {
       ...threadRepo.create(
@@ -69,14 +70,14 @@ describe("AgentService.createAndSend existing worktree attach", () => {
     };
     vi.mocked(threadService.create).mockResolvedValue(createdThread);
 
-    const thread = await service.createAndSend(
-      workspace.id,
-      "Work from feature base",
-      "claude-sonnet-4-6",
-      "default",
-      "worktree",
-      "feature/base",
-    );
+    const thread = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Work from feature base",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      mode: "worktree",
+      branch: "feature/base",
+    });
 
     expect(threadService.create).toHaveBeenCalledWith(
       workspace.id,
@@ -94,7 +95,8 @@ describe("AgentService.createAndSend existing worktree attach", () => {
   });
 
   it("creates a new worktree on a PR branch as a named checkout", async () => {
-    const { threadRepo, workspaceRepo, threadService, service } = createAgentServiceHarness();
+    const { threadRepo, workspaceRepo, threadService, service } =
+      createAgentServiceHarness();
     const workspace = workspaceRepo.create("Repo", "/repo");
     const createdThread = {
       ...threadRepo.create(
@@ -112,15 +114,15 @@ describe("AgentService.createAndSend existing worktree attach", () => {
     };
     vi.mocked(threadService.create).mockResolvedValue(createdThread);
 
-    const thread = await service.createAndSend(
-      workspace.id,
-      "Review PR",
-      "claude-sonnet-4-6",
-      "default",
-      "worktree",
-      "contributor/pr-branch",
-      "named",
-    );
+    const thread = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Review PR",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      mode: "worktree",
+      branch: "contributor/pr-branch",
+      worktreeBranchMode: "named",
+    });
 
     expect(threadService.create).toHaveBeenCalledWith(
       workspace.id,
@@ -149,24 +151,18 @@ describe("AgentService.createAndSend existing worktree attach", () => {
       },
     ]);
 
-    const thread = await service.createAndSend(
-      workspace.id,
-      "Work in detached worktree",
-      "claude-sonnet-4-6",
-      "default",
-      "worktree",
-      "main",
-      undefined,
-      "/repo/.worktrees/branchless-existing/",
-      "main",
-      [],
-      undefined,
-      "claude",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-    );
+    const thread = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Work in detached worktree",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      mode: "worktree",
+      branch: "main",
+      existingWorktreePath: "/repo/.worktrees/branchless-existing/",
+      existingWorktreeBaseBranch: "main",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(thread).toMatchObject({
       mode: "worktree",
@@ -190,20 +186,17 @@ describe("AgentService.createAndSend existing worktree attach", () => {
       },
     ]);
 
-    const thread = await service.createAndSend(
-      workspace.id,
-      "Work in named worktree",
-      "claude-sonnet-4-6",
-      "default",
-      "worktree",
-      "main",
-      undefined,
-      "/repo/.worktrees/feature-existing",
-      undefined,
-      [],
-      undefined,
-      "claude",
-    );
+    const thread = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Work in named worktree",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      mode: "worktree",
+      branch: "main",
+      existingWorktreePath: "/repo/.worktrees/feature-existing",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(thread).toMatchObject({
       mode: "worktree",
@@ -228,20 +221,18 @@ describe("AgentService.createAndSend existing worktree attach", () => {
     ]);
 
     await expect(
-      service.createAndSend(
-        workspace.id,
-        "Work in detached worktree",
-        "claude-sonnet-4-6",
-        "default",
-        "worktree",
-        "main",
-        undefined,
-        "/repo/.worktrees/branchless-existing",
-        "HEAD",
-        [],
-        undefined,
-        "claude",
-      ),
+      service.createAndSend({
+        workspaceId: workspace.id,
+        content: "Work in detached worktree",
+        model: "claude-sonnet-4-6",
+        permissionMode: "default",
+        mode: "worktree",
+        branch: "main",
+        existingWorktreePath: "/repo/.worktrees/branchless-existing",
+        existingWorktreeBaseBranch: "HEAD",
+        attachments: [],
+        provider: "claude",
+      }),
     ).rejects.toThrow("Base branch cannot be HEAD");
   });
 });

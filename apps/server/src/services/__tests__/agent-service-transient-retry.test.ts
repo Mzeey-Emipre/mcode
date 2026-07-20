@@ -69,19 +69,28 @@ function buildService(): {
   discardSession: ReturnType<typeof vi.fn>;
   waitForSessionExit: ReturnType<typeof vi.fn>;
   providerEmitter: EventEmitter;
-  threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
+  threadRepo: ThreadRepo & {
+    clearSdkSessionId: ReturnType<typeof vi.fn>;
+    updateStatus: ReturnType<typeof vi.fn>;
+  };
 } {
   const thread = makeThread();
   const providerEmitter = new EventEmitter();
   const sendTurn = vi.fn(() => Promise.resolve());
-  (providerEmitter as unknown as { sendTurn: typeof sendTurn }).sendTurn = sendTurn;
+  (providerEmitter as unknown as { sendTurn: typeof sendTurn }).sendTurn =
+    sendTurn;
   // Implementing discardSession makes the fake provider ISessionEvictable, so
   // the retry path force-evicts the pooled session before re-dispatch.
   const discardSession = vi.fn();
   const waitForSessionExit = vi.fn().mockResolvedValue(undefined);
-  (providerEmitter as unknown as { discardSession: typeof discardSession }).discardSession = discardSession;
-  (providerEmitter as unknown as { waitForSessionExit: typeof waitForSessionExit }).waitForSessionExit =
-    waitForSessionExit;
+  (
+    providerEmitter as unknown as { discardSession: typeof discardSession }
+  ).discardSession = discardSession;
+  (
+    providerEmitter as unknown as {
+      waitForSessionExit: typeof waitForSessionExit;
+    }
+  ).waitForSessionExit = waitForSessionExit;
 
   const threadRepo = {
     findById: vi.fn(() => thread),
@@ -97,7 +106,10 @@ function buildService(): {
     clearSdkSessionId: vi.fn(),
     updateCompactSummary: vi.fn(),
     updateLineage: vi.fn(),
-  } as unknown as ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
+  } as unknown as ThreadRepo & {
+    clearSdkSessionId: ReturnType<typeof vi.fn>;
+    updateStatus: ReturnType<typeof vi.fn>;
+  };
 
   const workspaceRepo = {
     findById: vi.fn(() => ({ id: "ws-1", path: "/workspace" })),
@@ -105,7 +117,9 @@ function buildService(): {
 
   // A prior message means nextSeq > 1, so the first attempt is a resume.
   const messageRepo = {
-    listByThread: vi.fn(() => ({ messages: [{ id: "m0", sequence: 1, role: "user", content: "prev" }] })),
+    listByThread: vi.fn(() => ({
+      messages: [{ id: "m0", sequence: 1, role: "user", content: "prev" }],
+    })),
     create: vi.fn(() => ({ id: "msg-1", sequence: 2 })),
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
@@ -127,7 +141,9 @@ function buildService(): {
   } as unknown as IProviderRegistry;
 
   const threadService = { create: vi.fn() } as unknown as ThreadService;
-  const toolCallRecordRepo = { bulkCreate: vi.fn() } as unknown as ToolCallRecordRepo;
+  const toolCallRecordRepo = {
+    bulkCreate: vi.fn(),
+  } as unknown as ToolCallRecordRepo;
   const turnSnapshotRepo = {
     listByThread: vi.fn(() => []),
     create: vi.fn(),
@@ -142,7 +158,10 @@ function buildService(): {
     assertCanStartTurn: vi.fn(),
     onPressureChange: vi.fn(),
   } as unknown as MemoryPressureService;
-  const taskRepo = { get: vi.fn(() => []), upsert: vi.fn() } as unknown as TaskRepo;
+  const taskRepo = {
+    get: vi.fn(() => []),
+    upsert: vi.fn(),
+  } as unknown as TaskRepo;
   const settingsService = {
     get: vi.fn(() => ({
       model: { defaults: { fallbackId: undefined } },
@@ -151,7 +170,9 @@ function buildService(): {
     })),
     on: vi.fn(),
   } as unknown as SettingsService;
-  const availability = { assertUsable: vi.fn() } as unknown as ProviderAvailabilityService;
+  const availability = {
+    assertUsable: vi.fn(),
+  } as unknown as ProviderAvailabilityService;
   const planQuestionAnswersRepo = {
     markAnswered: vi.fn(),
     isAnswered: vi.fn(() => false),
@@ -170,7 +191,12 @@ function buildService(): {
     attachmentService,
     providerRegistry,
     threadService,
-    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+    {
+      bulkCreate: () => {},
+      create: () => ({}),
+      listByMessage: () => [],
+      countByMessage: () => 0,
+    } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
     turnSnapshotRepo,
     snapshotService,
     db,
@@ -179,19 +205,49 @@ function buildService(): {
     settingsService,
     availability,
     planQuestionAnswersRepo,
-    { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
-    { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as never,
-    { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as never,
+    {
+      create: vi.fn(),
+      updateStatus: vi.fn(),
+      listByThread: vi.fn(() => []),
+      getLatestForThread: vi.fn(() => null),
+      getById: vi.fn(() => null),
+    } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
+    {
+      deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })),
+    } as never,
+    {
+      issue: vi.fn(),
+      tryConsume: vi.fn(() => false),
+      clear: vi.fn(),
+      hasActiveGrant: vi.fn(() => false),
+    } as never,
     new NarrativeStore(
       messageRepo,
       toolCallRecordRepo,
-      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
-      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+      {
+        bulkCreate: () => {},
+        create: () => ({}),
+        listByMessage: () => [],
+        countByMessage: () => 0,
+      } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
+      {
+        bulkCreate: () => {},
+        create: () => ({}),
+        listByMessage: () => [],
+        countByMessage: () => 0,
+      } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
     ),
     new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
   );
 
-  return { service, sendTurn, discardSession, waitForSessionExit, providerEmitter, threadRepo };
+  return {
+    service,
+    sendTurn,
+    discardSession,
+    waitForSessionExit,
+    providerEmitter,
+    threadRepo,
+  };
 }
 
 describe("AgentService transient-failure auto-retry", () => {
@@ -206,17 +262,31 @@ describe("AgentService transient-failure auto-retry", () => {
       .mockRejectedValueOnce(new Error("read ECONNRESET"))
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(sendTurn).toHaveBeenCalledTimes(2);
     // First attempt resumes the live session; the retry must drop it for a fresh spawn.
-    expect((sendTurn.mock.calls[0][0] as TurnRequest).resumeFrom).toBe("sess-abc");
-    expect((sendTurn.mock.calls[1][0] as TurnRequest).resumeFrom).toBeUndefined();
+    expect((sendTurn.mock.calls[0][0] as TurnRequest).resumeFrom).toBe(
+      "sess-abc",
+    );
+    expect(
+      (sendTurn.mock.calls[1][0] as TurnRequest).resumeFrom,
+    ).toBeUndefined();
     // Dropping resumeFrom is not enough: the provider pools a warm session by
     // sessionName, so the retry must also force-evict it to truly spawn fresh.
     expect(discardSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
     expect(threadRepo.clearSdkSessionId).toHaveBeenCalledWith(THREAD_ID);
-    expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "errored");
+    expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(
+      THREAD_ID,
+      "errored",
+    );
   });
 
   it("does not retry a fatal send failure", async () => {
@@ -224,7 +294,14 @@ describe("AgentService transient-failure auto-retry", () => {
     service.init();
     sendTurn.mockRejectedValue(new Error("permission denied"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(sendTurn).toHaveBeenCalledTimes(1);
     expect(discardSession).not.toHaveBeenCalled();
@@ -242,21 +319,46 @@ describe("AgentService transient-failure auto-retry", () => {
     let fatalSuppressedDuringAttempt: boolean | undefined;
     sendTurn
       .mockImplementationOnce(() => {
-        transientSuppressedDuringAttempt = service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET");
-        fatalSuppressedDuringAttempt = service.shouldSuppressTransientTurnError(THREAD_ID, "permission denied");
+        transientSuppressedDuringAttempt =
+          service.shouldSuppressTransientTurnError(
+            THREAD_ID,
+            "read ECONNRESET",
+          );
+        fatalSuppressedDuringAttempt = service.shouldSuppressTransientTurnError(
+          THREAD_ID,
+          "permission denied",
+        );
         return Promise.reject(new Error("read ECONNRESET"));
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // During the retried attempt: a transient error is swallowed, a fatal one is not.
     expect(transientSuppressedDuringAttempt).toBe(true);
     expect(fatalSuppressedDuringAttempt).toBe(false);
     // Fire-and-forget providers keep the window armed until TurnComplete.
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
+    expect(
+      service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET"),
+    ).toBe(true);
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+    expect(
+      service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET"),
+    ).toBe(false);
   });
 
   it("swallows the failed attempt's trailing Ended so the UI's running state survives the retry", async () => {
@@ -275,16 +377,31 @@ describe("AgentService transient-failure auto-retry", () => {
           threadId: THREAD_ID,
           error: "read ECONNRESET",
         });
-        endedSuppressedDuringAttempt = service.shouldSuppressTurnEnded(THREAD_ID);
+        endedSuppressedDuringAttempt =
+          service.shouldSuppressTurnEnded(THREAD_ID);
         return Promise.reject(new Error("read ECONNRESET"));
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // The trailing Ended was armed for suppression during the failed attempt...
     expect(endedSuppressedDuringAttempt).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
   });
 
@@ -303,7 +420,14 @@ describe("AgentService transient-failure auto-retry", () => {
       return Promise.reject(new Error("permission denied"));
     });
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // A fatal error is not part of a retry window, so its Ended must reach the UI.
     expect(endedSuppressedDuringAttempt).toBe(false);
@@ -315,14 +439,29 @@ describe("AgentService transient-failure auto-retry", () => {
     service.init();
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // Give-up disarms the retry window so the terminal error is visible.
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
+    expect(
+      service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET"),
+    ).toBe(false);
   });
 
   it("swallows discardSession's trailing Ended when sendTurn rejects without emitting Error", async () => {
-    const { service, sendTurn, discardSession, waitForSessionExit, providerEmitter } = buildService();
+    const {
+      service,
+      sendTurn,
+      discardSession,
+      waitForSessionExit,
+      providerEmitter,
+    } = buildService();
     service.init();
 
     let endedSuppressedWhenDiscardUnwinds: boolean | undefined;
@@ -330,7 +469,8 @@ describe("AgentService transient-failure auto-retry", () => {
     // subprocess and emits Ended on the next tick while the retry catch runs.
     discardSession.mockImplementation(() => {
       queueMicrotask(() => {
-        endedSuppressedWhenDiscardUnwinds = service.shouldSuppressTurnEnded(THREAD_ID);
+        endedSuppressedWhenDiscardUnwinds =
+          service.shouldSuppressTurnEnded(THREAD_ID);
         providerEmitter.emit("event", { type: "ended", threadId: THREAD_ID });
       });
     });
@@ -341,12 +481,26 @@ describe("AgentService transient-failure auto-retry", () => {
       .mockRejectedValueOnce(new Error("spawn claude EAGAIN"))
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(discardSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
     expect(waitForSessionExit).toHaveBeenCalledWith(`mcode-${THREAD_ID}`, 5000);
     expect(endedSuppressedWhenDiscardUnwinds).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
   });
 
@@ -356,20 +510,15 @@ describe("AgentService transient-failure auto-retry", () => {
 
     sendTurn.mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(
-      THREAD_ID,
-      "hello",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "1m",
-    );
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      contextWindow: "1m",
+    });
 
     // A bare `Ended` with no in-flight transient retry means the stream
     // genuinely ended; it must reach the cleanup path even though the
@@ -385,15 +534,26 @@ describe("AgentService transient-failure auto-retry", () => {
     sendTurn.mockResolvedValueOnce(undefined);
 
     // Fire-and-forget send leaves the retry window armed until TurnComplete.
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(true);
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    expect(
+      service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET"),
+    ).toBe(true);
 
     // A user stop ends the turn via finalize; it must tear down the armed
     // window so a scheduled stream retry can't re-dispatch after the stop and
     // the suppression flags don't outlive into the next turn.
     await service.stopSession(THREAD_ID);
 
-    expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
+    expect(
+      service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET"),
+    ).toBe(false);
   });
 
   it("retries when sendTurn resolves early then a transient stream Error arrives", async () => {
@@ -406,7 +566,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    const sendPromise = service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    const sendPromise = service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     await sendPromise;
 
     providerEmitter.emit("event", {
@@ -417,7 +584,9 @@ describe("AgentService transient-failure auto-retry", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(sendTurn).toHaveBeenCalledTimes(2);
-    expect((sendTurn.mock.calls[1][0] as TurnRequest).resumeFrom).toBeUndefined();
+    expect(
+      (sendTurn.mock.calls[1][0] as TurnRequest).resumeFrom,
+    ).toBeUndefined();
   });
 
   it("swallows a failed attempt's TurnComplete during the retry window", async () => {
@@ -440,15 +609,30 @@ describe("AgentService transient-failure auto-retry", () => {
           tokensIn: 0,
           tokensOut: 0,
         });
-        turnCompleteSuppressedDuringAttempt = service.shouldSuppressTurnComplete(THREAD_ID);
+        turnCompleteSuppressedDuringAttempt =
+          service.shouldSuppressTurnComplete(THREAD_ID);
         return Promise.reject(new Error("read ECONNRESET"));
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(turnCompleteSuppressedDuringAttempt).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTurnComplete(THREAD_ID)).toBe(false);
   });
 
@@ -457,7 +641,14 @@ describe("AgentService transient-failure auto-retry", () => {
     service.init();
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // Cap is 2: one original attempt plus one retry, then it gives up.
     expect(sendTurn).toHaveBeenCalledTimes(2);

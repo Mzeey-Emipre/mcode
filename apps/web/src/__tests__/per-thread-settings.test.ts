@@ -227,7 +227,7 @@ describe("per-thread settings", () => {
     );
 
     const calls = vi.mocked(mockTransport.sendMessage).mock.calls;
-    const sendCall = calls[calls.length - 1];
-    expect(sendCall?.[8]).toBe("build");
+    const sendCall = calls[calls.length - 1]?.[0];
+    expect(sendCall?.interactionMode).toBe("build");
   });
 });

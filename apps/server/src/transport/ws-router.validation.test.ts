@@ -55,6 +55,76 @@ describe("routeMessage result validation seam", () => {
   });
 });
 
+describe("routeMessage agent commands", () => {
+  it("passes an existing-thread command to AgentService without positional mapping", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const deps = { agentService: { sendMessage } } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-send",
+        method: "agent.send",
+        params: {
+          threadId: "thread-1",
+          content: "Inspect this change",
+          model: "gpt-5",
+          provider: "codex",
+          interactionMode: "build",
+          permissionMode: "full",
+          thinking: false,
+        },
+      }),
+      deps,
+    );
+
+    expect(response.error).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      content: "Inspect this change",
+      displayContent: "Inspect this change",
+      model: "gpt-5",
+      provider: "codex",
+      interactionMode: "build",
+      permissionMode: "full",
+      thinking: false,
+    });
+  });
+
+  it("passes a new-thread command to AgentService without positional mapping", async () => {
+    const createAndSend = vi.fn().mockResolvedValue({
+      id: "thread-2",
+      mode: "direct",
+      worktree_path: null,
+    });
+    const deps = { agentService: { createAndSend } } as unknown as RouterDeps;
+
+    const response = await routeMessage(
+      JSON.stringify({
+        id: "req-create-send",
+        method: "agent.createAndSend",
+        params: {
+          workspaceId: "workspace-1",
+          content: "Start here",
+          model: "gpt-5",
+          provider: "codex",
+          mode: "direct",
+        },
+      }),
+      deps,
+    );
+
+    expect(response.error).toBeUndefined();
+    expect(createAndSend).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      content: "Start here",
+      displayContent: "Start here",
+      model: "gpt-5",
+      provider: "codex",
+      mode: "direct",
+    });
+  });
+});
+
 describe("routeMessage git.getRemoteUrl", () => {
   it("resolves the git path from a workspace thread before calling GitService", async () => {
     const getRemoteUrl = vi.fn().mockResolvedValue({

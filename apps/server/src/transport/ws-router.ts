@@ -767,62 +767,18 @@ async function dispatch(
 
     // Agent
     case "agent.send":
-      await deps.agentService.sendMessage(
-        params.threadId,
-        appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
-        params.permissionMode ?? "default",
-        params.model,
-        params.attachments,
-        params.reasoningLevel,
-        params.provider,
-        params.interactionMode,
-        params.maxBudgetUsd,
-        params.maxTurns,
-        params.copilotAgent,
-        params.contextWindow,
-        params.thinking,
-        params.codexFastMode,
-        undefined,
-        undefined,
-        params.replyToMessageId,
-        params.quotedText,
-        params.displayContent ?? params.content,
-        params.planAction,
-        params.mentions,
-        params.previewAnnotations,
-        params.goalObjective,
-        params.orchestrationMode,
-      );
+      await deps.agentService.sendMessage({
+        ...params,
+        content: appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
+        displayContent: params.displayContent ?? params.content,
+      });
       return;
     case "agent.createAndSend": {
-      const thread = await deps.agentService.createAndSend(
-        params.workspaceId,
-        appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
-        params.model,
-        params.permissionMode,
-        params.mode,
-        params.branch,
-        params.worktreeBranchMode,
-        params.existingWorktreePath,
-        params.existingWorktreeBaseBranch,
-        params.attachments,
-        params.reasoningLevel,
-        params.provider,
-        params.interactionMode,
-        params.parentThreadId,
-        params.forkedFromMessageId,
-        params.maxBudgetUsd,
-        params.maxTurns,
-        params.copilotAgent,
-        params.contextWindow,
-        params.thinking,
-        params.codexFastMode,
-        params.displayContent ?? params.content,
-        params.mentions,
-        params.previewAnnotations,
-        params.goalObjective,
-        params.orchestrationMode,
-      );
+      const thread = await deps.agentService.createAndSend({
+        ...params,
+        content: appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
+        displayContent: params.displayContent ?? params.content,
+      });
       watchReturnedThreadWorktree(deps, thread);
       return thread;
     }

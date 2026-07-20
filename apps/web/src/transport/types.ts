@@ -26,7 +26,6 @@ import type {
   PlanAnswer,
   InteractionMode,
   OrchestrationMode,
-  PlanAction,
   ProviderModelInfo,
   ProviderUsageInfo,
   ProviderAvailability,
@@ -39,9 +38,7 @@ import type {
   PermissionRequest,
   CreateAndSendResult,
   ConversationPage,
-  MessageMention,
   GoalLookupResult,
-  PreviewAnnotationBundle,
   PullRequestCapabilitiesRequest,
   PullRequestCapabilitiesResult,
   PullRequestListRequest,
@@ -70,9 +67,12 @@ import type {
   PullRequestCloseResult,
   PullRequestMergeRequest,
   PullRequestMergeResult,
+  SendMessageInput,
+  CreateAndSendInput,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
+export type { PlanAction } from "@mcode/contracts";
 export type {
   Workspace,
   WorkspaceEnrichment,
@@ -96,7 +96,6 @@ export type {
   PartialSettings,
   GitCommit,
   PlanAnswer,
-  PlanAction,
   ProviderModelInfo,
   MessageMention,
   PullRequestCapabilities,
@@ -118,6 +117,8 @@ export type {
   PullRequestFileChangeType,
   PullRequestFilePatchStatus,
   PullRequestPatchResult,
+  SendMessageInput,
+  CreateAndSendInput,
 } from "@mcode/contracts";
 
 export type { PaginatedMessages, ConversationPage, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
@@ -249,54 +250,8 @@ export interface McodeTransport {
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
-  sendMessage(
-    threadId: string,
-    content: string,
-    model?: string,
-    permissionMode?: PermissionMode,
-    attachments?: AttachmentMeta[],
-    displayContent?: string,
-    reasoningLevel?: ReasoningLevel,
-    provider?: string,
-    interactionMode?: InteractionMode,
-    copilotAgent?: string,
-    contextWindow?: ContextWindowMode,
-    thinking?: boolean,
-    codexFastMode?: boolean,
-    replyToMessageId?: string,
-    quotedText?: string,
-    planAction?: PlanAction,
-    mentions?: MessageMention[],
-    previewAnnotations?: PreviewAnnotationBundle,
-    goalObjective?: string,
-    orchestrationMode?: OrchestrationMode,
-  ): Promise<void>;
-  createAndSendMessage(
-    workspaceId: string,
-    content: string,
-    model: string,
-    permissionMode?: PermissionMode,
-    mode?: "direct" | "worktree",
-    branch?: string,
-    worktreeBranchMode?: "branchless" | "named",
-    existingWorktreePath?: string,
-    existingWorktreeBaseBranch?: string,
-    attachments?: AttachmentMeta[],
-    reasoningLevel?: ReasoningLevel,
-    provider?: string,
-    interactionMode?: InteractionMode,
-    parentThreadId?: string,
-    forkedFromMessageId?: string,
-    copilotAgent?: string,
-    contextWindow?: ContextWindowMode,
-    thinking?: boolean,
-    codexFastMode?: boolean,
-    displayContent?: string,
-    mentions?: MessageMention[],
-    previewAnnotations?: PreviewAnnotationBundle,
-    goalObjective?: string,
-    orchestrationMode?: OrchestrationMode,
-  ): Promise<CreateAndSendResult>;
+  sendMessage(input: SendMessageInput): Promise<void>;
+  createAndSendMessage(input: CreateAndSendInput): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<void>;
   /** Respond to a tool permission request from the agent. */
   respondToPermission(requestId: string, decision: PermissionDecision): Promise<void>;

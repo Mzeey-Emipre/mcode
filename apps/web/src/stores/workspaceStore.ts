@@ -5,7 +5,13 @@ import {
   buildPlaceholderWorkspaceThread,
   titleFromMessageContent,
 } from "@/lib/workspace-thread";
-import type { ChecksStatus, CreateAndSendResult, MessageMention, PreviewAnnotationBundle } from "@mcode/contracts";
+import {
+  ProviderIdSchema,
+  type ChecksStatus,
+  type CreateAndSendResult,
+  type MessageMention,
+  type PreviewAnnotationBundle,
+} from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
@@ -115,32 +121,32 @@ interface PendingThreadCreation {
 const pendingThreadCreationByPlaceholderId = new Map<string, PendingThreadCreation>();
 
 async function runCreateAndSend(pending: PendingThreadCreation): Promise<CreateAndSendResult> {
-  return getTransport().createAndSendMessage(
-    pending.workspaceId,
-    pending.content,
-    pending.model,
-    pending.permissionMode,
-    pending.transportMode,
-    pending.branch,
-    pending.worktreeBranchMode,
-    pending.existingWorktreePath,
-    pending.existingWorktreeBaseBranch,
-    pending.attachments,
-    pending.reasoningLevel,
-    pending.provider,
-    pending.interactionMode,
-    pending.sourceThreadId,
-    pending.forkedFromMessageId,
-    pending.copilotAgent,
-    pending.contextWindow,
-    pending.thinking,
-    pending.codexFastMode,
-    pending.displayContent,
-    pending.mentions,
-    pending.previewAnnotations,
-    pending.goalObjective,
-    pending.orchestrationMode,
-  );
+  return getTransport().createAndSendMessage({
+    workspaceId: pending.workspaceId,
+    content: pending.content,
+    model: pending.model,
+    permissionMode: pending.permissionMode,
+    mode: pending.transportMode,
+    branch: pending.branch,
+    worktreeBranchMode: pending.worktreeBranchMode,
+    existingWorktreePath: pending.existingWorktreePath,
+    existingWorktreeBaseBranch: pending.existingWorktreeBaseBranch,
+    attachments: pending.attachments,
+    reasoningLevel: pending.reasoningLevel,
+    provider: pending.provider === undefined ? undefined : ProviderIdSchema.parse(pending.provider),
+    interactionMode: pending.interactionMode,
+    parentThreadId: pending.sourceThreadId,
+    forkedFromMessageId: pending.forkedFromMessageId,
+    copilotAgent: pending.copilotAgent,
+    contextWindow: pending.contextWindow,
+    thinking: pending.thinking,
+    codexFastMode: pending.codexFastMode,
+    displayContent: pending.displayContent,
+    mentions: pending.mentions,
+    previewAnnotations: pending.previewAnnotations,
+    goalObjective: pending.goalObjective,
+    orchestrationMode: pending.orchestrationMode,
+  });
 }
 /**
  * Optional RPC dispatch callback used by workspace actions. Tests inject a

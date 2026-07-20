@@ -429,14 +429,14 @@ describe("Composer checkout confirmation", () => {
     await user.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.createAndSendMessage).toHaveBeenCalled());
-    const createCall = (
+    const createCommand = (
       mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>
-    ).mock.calls.at(-1);
-    expect(createCall?.slice(4, 7)).toEqual([
-      "worktree",
-      "contributor/pr-branch",
-      "named",
-    ]);
+    ).mock.calls.at(-1)?.[0];
+    expect(createCommand).toMatchObject({
+      mode: "worktree",
+      branch: "contributor/pr-branch",
+      worktreeBranchMode: "named",
+    });
   });
 
   it("reports the created thread to an embedding new-thread workflow", async () => {
@@ -575,10 +575,10 @@ describe("Composer checkout confirmation", () => {
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.createAndSendMessage).toHaveBeenCalled());
-    const createCall = (
+    const createCommand = (
       mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>
-    ).mock.calls.at(-1);
-    expect(createCall?.[21]).toMatchObject({
+    ).mock.calls.at(-1)?.[0];
+    expect(createCommand?.previewAnnotations).toMatchObject({
       schemaVersion: 1,
       annotations: [
         {
@@ -660,15 +660,15 @@ describe("Composer checkout confirmation", () => {
     expect(screen.getByTestId("attachment-preview")).toBeEmptyDOMElement();
     expect(usePreviewAnnotationStore.getState().byThread[thread.id] ?? []).toEqual([]);
     expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(false);
-    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
-    expect(sendCall?.[4]).toEqual([
+    const sendCommand = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(sendCommand?.attachments).toEqual([
       expect.objectContaining({
         name: "handoff.txt",
         mimeType: "text/plain",
         sourcePath: "C:\\tmp\\handoff.txt",
       }),
     ]);
-    expect(sendCall?.[17]).toMatchObject({
+    expect(sendCommand?.previewAnnotations).toMatchObject({
       schemaVersion: 1,
       annotations: [
         {
@@ -803,8 +803,8 @@ describe("Composer checkout confirmation", () => {
     await user.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
-    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
-    expect(sendCall?.[17]).toBeUndefined();
+    const sendCommand = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(sendCommand?.previewAnnotations).toBeUndefined();
   });
 
   it("does not resurrect restored annotations when swapping after chip removal", async () => {

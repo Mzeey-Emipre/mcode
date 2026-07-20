@@ -543,27 +543,22 @@ export class ReviewWorktreeService {
       return warnings;
     }
 
-    const send = this.agentService.sendMessage(
+    const send = this.agentService.sendMessage({
       threadId,
-      intent,
-      settings.agent.defaults.permission,
-      settings.model.defaults.id,
-      [],
-      settings.model.defaults.reasoning,
+      content: intent,
+      permissionMode: settings.agent.defaults.permission,
+      model: settings.model.defaults.id,
+      attachments: [],
+      reasoningLevel: settings.model.defaults.reasoning,
       provider,
       interactionMode,
-      settings.agent.guardrails.maxBudgetUsd || undefined,
-      settings.agent.guardrails.maxTurns || undefined,
-      undefined,
-      settings.model.defaults.contextWindow,
-      settings.model.defaults.thinking,
-      undefined,
-      undefined,
-      context,
-      undefined,
-      undefined,
-      intent,
-    );
+      maxBudgetUsd: settings.agent.guardrails.maxBudgetUsd || undefined,
+      maxTurns: settings.agent.guardrails.maxTurns || undefined,
+      contextWindow: settings.model.defaults.contextWindow,
+      thinking: settings.model.defaults.thinking,
+      providerWireOverride: context,
+      displayContent: intent,
+    });
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
     const start = await Promise.race([
       send.then(() => ({ complete: true as const }), (error: unknown) => ({ error })),

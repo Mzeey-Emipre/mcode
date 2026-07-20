@@ -70,13 +70,13 @@ describe("PlanPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Implement" }));
 
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
-    const sendCall = vi.mocked(mockTransport.sendMessage).mock.calls.at(-1);
-    const content = sendCall?.[1];
+    const sendCall = vi.mocked(mockTransport.sendMessage).mock.calls.at(-1)?.[0];
+    const content = sendCall?.content;
 
     expect(content).toContain('Implement plan v2: "Version 2 Plan".');
     expect(content).toContain(versionTwo.contentMd);
     expect(content).not.toContain(versionOne.contentMd);
-    expect(sendCall?.[15]).toBe("implement");
+    expect(sendCall?.planAction).toBe("implement");
   }, 15_000);
 
   it("moves from an old active version to the latest generated plan when there are no annotations", async () => {
