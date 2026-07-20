@@ -1022,6 +1022,7 @@ async function dispatch(
           providerId: params.providerId,
           context: catalogContext,
           skills,
+          ...(catalog?.plugins ? { entries: catalog.plugins } : {}),
           ...(agentDiscovery ? { agentDiscovery } : {}),
           ...(catalog?.diagnostics ? { diagnostics: catalog.diagnostics } : {}),
           ...(catalog?.freshness ? { freshness: catalog.freshness } : {}),

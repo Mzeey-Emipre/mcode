@@ -33,9 +33,10 @@ function makeAnchorRect(): DOMRect {
 }
 
 const COMMANDS: Command[] = [
-  { name: "deploy", description: "Deploy command", namespace: "command" },
-  { name: "my-skill", description: "A skill", namespace: "skill" },
-  { name: "figma:use", description: "A plugin skill", namespace: "plugin" },
+  { id: "command:deploy", name: "deploy", description: "Deploy command", namespace: "command", capabilityKind: "providerCommand", nativeId: "deploy" },
+  { id: "skill:my-skill", name: "my-skill", description: "A skill", namespace: "skill", capabilityKind: "skill", nativeId: "my-skill" },
+  { id: "skill:figma:use", name: "figma:use", description: "A plugin skill", namespace: "plugin", capabilityKind: "skill", nativeId: "figma:use" },
+  { id: "plugin:browser", name: "Browser", description: "A native plugin", namespace: "plugin", capabilityKind: "plugin", nativeId: "browser@openai-bundled", mentionPath: "plugin://browser@openai-bundled" },
 ];
 
 function renderPopup() {
@@ -84,8 +85,8 @@ describe("SlashCommandPopup source groups", () => {
     const pluginRow = screen.getByRole("option", { name: /A plugin skill/ });
     const title = within(pluginRow).getByText("use");
     const description = within(pluginRow).getByText("A plugin skill");
-    expect(title.parentElement).toBe(description.parentElement);
-    expect(title.parentElement).toHaveClass("flex-col");
+    const content = title.closest(".flex-col");
+    expect(content).toBe(description.parentElement);
   });
 
   it("fades overflowing descriptions instead of showing an ellipsis", () => {
@@ -122,10 +123,17 @@ describe("SlashCommandPopup namespace icons", () => {
     expect(terminalIcon).not.toBeNull();
   });
 
-  it("plugin namespace renders a blocks SVG", () => {
+  it("native plugin entries render a blocks SVG", () => {
     renderPopup();
-    const pluginRow = screen.getByRole("option", { name: /A plugin skill/ });
+    const pluginRow = screen.getByRole("option", { name: /A native plugin/ });
     expect(pluginRow.querySelector(".lucide-blocks")).not.toBeNull();
+  });
+
+  it("plugin-provided skills remain skill entries", () => {
+    renderPopup();
+    const pluginSkillRow = screen.getByRole("option", { name: /A plugin skill/ });
+    expect(pluginSkillRow.querySelector(".lucide-sparkles")).not.toBeNull();
+    expect(pluginSkillRow.querySelector(".lucide-blocks")).toBeNull();
   });
 
   it("command namespace does NOT render a lucide-sparkles SVG", () => {

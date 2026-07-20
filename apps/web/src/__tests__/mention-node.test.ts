@@ -3,6 +3,7 @@ import { $createParagraphNode, $createTextNode, $getRoot, createEditor } from "l
 import {
   MentionNode,
   $createMentionNode,
+  $createTypedMentionNode,
   $isMentionNode,
 } from "@/components/chat/lexical/MentionNode";
 import { extractComposerMessage } from "@/components/chat/lexical/cursor-utils";
@@ -106,6 +107,36 @@ describe("MentionNode", () => {
         label: "src/app.ts",
         path: "src/app.ts",
         range: { start: 7, end: 18 },
+      }],
+    });
+  });
+
+  it("extracts a selected plugin as a native Codex mention", () => {
+    const editor = createTestEditor();
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        paragraph.append($createTypedMentionNode({
+          id: "plugin-1",
+          kind: "plugin",
+          label: "Browser",
+          name: "Browser",
+          path: "plugin://browser@openai-bundled",
+        }));
+        $getRoot().append(paragraph);
+      },
+      { discrete: true },
+    );
+
+    expect(extractComposerMessage(editor)).toEqual({
+      text: "@Browser",
+      mentions: [{
+        id: "plugin-1",
+        kind: "plugin",
+        label: "Browser",
+        name: "Browser",
+        path: "plugin://browser@openai-bundled",
+        range: { start: 0, end: 8 },
       }],
     });
   });

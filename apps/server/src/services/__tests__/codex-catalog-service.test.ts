@@ -2,7 +2,11 @@ import "reflect-metadata";
 import { EventEmitter } from "events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexCatalogService } from "../codex-catalog-service.js";
-import type { SkillsListResult } from "../../providers/codex/codex-types.js";
+import type {
+  PluginListResult,
+  PluginReadResult,
+  SkillsListResult,
+} from "../../providers/codex/codex-types.js";
 
 class ControlledCatalogClient extends EventEmitter {
   isAlive = true;
@@ -35,6 +39,48 @@ class ControlledCatalogClient extends EventEmitter {
       }],
     };
   });
+  readonly listPlugins = vi.fn(async (cwds?: string[]): Promise<PluginListResult> => ({
+    marketplaces: [{
+      name: "openai-bundled",
+      path: "C:/marketplaces/openai-bundled",
+      interface: null,
+      plugins: [
+        {
+          id: "review@openai-bundled",
+          name: "review",
+          installed: true,
+          enabled: true,
+          version: "1.2.3",
+          localVersion: "1.2.3",
+          interface: {
+            displayName: "Review",
+            shortDescription: `Review plugin for ${cwds?.[0] ?? "user"}`,
+            developerName: "OpenAI",
+            capabilities: ["mcp"],
+          },
+        },
+        {
+          id: "disabled@openai-bundled",
+          name: "disabled",
+          installed: true,
+          enabled: false,
+          interface: { shortDescription: "Disabled plugin" },
+        },
+        {
+          id: "available@openai-bundled",
+          name: "available",
+          installed: false,
+          enabled: true,
+          interface: { shortDescription: "Available plugin" },
+        },
+      ],
+    }],
+    marketplaceLoadErrors: [],
+    featuredPluginIds: [],
+  }));
+  readonly readPlugin = vi.fn(async (): Promise<PluginReadResult> => ({
+    plugin: { description: "Detailed plugin description" },
+  }));
 }
 
 describe("CodexCatalogService", () => {
@@ -75,6 +121,10 @@ describe("CodexCatalogService", () => {
       [["C:/workspaces/one"], false],
       [["C:/workspaces/two"], false],
     ]);
+    expect(client.listPlugins.mock.calls).toEqual([
+      [["C:/workspaces/one"]],
+      [["C:/workspaces/two"]],
+    ]);
     expect(first.skills.map((skill) => skill.path)).toEqual([
       "C:/users/test/.codex/skills/review/SKILL.md",
       "C:/workspaces/one/.codex/skills/review/SKILL.md",
@@ -83,6 +133,70 @@ describe("CodexCatalogService", () => {
       "C:/users/test/.codex/skills/review/SKILL.md",
       "C:/workspaces/two/.codex/skills/review/SKILL.md",
     ]);
+    expect(first.plugins).toEqual([expect.objectContaining({
+      kind: "plugin",
+      identity: { providerId: "codex", kind: "plugin", nativeId: "review@openai-bundled" },
+      name: "Review",
+      description: "Review plugin for C:/workspaces/one",
+      mentionPath: "plugin://review@openai-bundled",
+      marketplaceName: "openai-bundled",
+      version: "1.2.3",
+      developerName: "OpenAI",
+      capabilities: ["mcp"],
+    })]);
+    expect(client.readPlugin).not.toHaveBeenCalled();
+  });
+
+  it("reads only plugin summaries that omit composer details", async () => {
+    const client = new ControlledCatalogClient();
+    client.listPlugins.mockResolvedValueOnce({
+      marketplaces: [{
+        name: "personal",
+        path: "C:/marketplaces/personal",
+        interface: null,
+        plugins: [{
+          id: "minimal@personal",
+          name: "minimal",
+          installed: true,
+          enabled: true,
+          version: null,
+          localVersion: null,
+          interface: null,
+        }],
+      }],
+      marketplaceLoadErrors: [],
+      featuredPluginIds: [],
+    });
+    const service = createService(client);
+
+    const result = await service.refresh("C:/workspaces/one");
+
+    expect(client.readPlugin).toHaveBeenCalledWith({
+      marketplacePath: "C:/marketplaces/personal",
+      pluginName: "minimal",
+    });
+    expect(result.plugins[0]?.description).toBe("Detailed plugin description");
+  });
+
+  it("keeps valid plugins when a marketplace reports a scoped load error", async () => {
+    const client = new ControlledCatalogClient();
+    client.listPlugins.mockResolvedValueOnce({
+      ...(await client.listPlugins()),
+      marketplaceLoadErrors: [{
+        marketplacePath: "C:/marketplaces/broken.json",
+        message: "invalid marketplace metadata",
+      }],
+    });
+    const service = createService(client);
+
+    const result = await service.refresh("C:/workspaces/one");
+
+    expect(result.plugins).toHaveLength(1);
+    expect(result.diagnostics).toContainEqual({
+      severity: "warning",
+      code: "discovery-error",
+      message: "Codex plugin marketplace C:/marketplaces/broken.json: invalid marketplace metadata",
+    });
   });
 
   it("reconciles the affected context after skills/changed", async () => {
@@ -175,7 +289,7 @@ describe("CodexCatalogService", () => {
     expect(failed.diagnostics).toEqual([{
       severity: "warning",
       code: "source-unavailable",
-      message: "Codex Skills are temporarily unavailable for this catalog context.",
+      message: "Codex capabilities are temporarily unavailable for this catalog context.",
     }]);
   });
 

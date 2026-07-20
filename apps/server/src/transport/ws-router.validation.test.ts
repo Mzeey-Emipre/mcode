@@ -94,6 +94,49 @@ describe("routeMessage provider.catalog", () => {
         }],
         };
       }),
+      listPlugins: vi.fn(async (cwds?: string[]) => ({
+        marketplaces: [{
+          name: "personal",
+          path: "C:/marketplaces/personal",
+          interface: null,
+          plugins: catalogVersion === 1
+            ? [
+                {
+                  id: "review@personal",
+                  name: "review",
+                  installed: true,
+                  enabled: true,
+                  interface: {
+                    displayName: "review",
+                    shortDescription: `Review plugin for ${cwds?.[0] ?? "user"}`,
+                    capabilities: ["mcp"],
+                  },
+                },
+                {
+                  id: "disabled@personal",
+                  name: "disabled",
+                  installed: true,
+                  enabled: false,
+                  interface: { shortDescription: "Disabled" },
+                },
+              ]
+            : [{
+                id: "browser@personal",
+                name: "browser",
+                installed: true,
+                enabled: true,
+                interface: { shortDescription: "Browse pages", capabilities: ["mcp"] },
+              }],
+        }],
+        marketplaceLoadErrors: catalogVersion === 1
+          ? [{
+              marketplacePath: "C:/marketplaces/broken.json",
+              message: "invalid metadata",
+            }]
+          : [],
+        featuredPluginIds: [],
+      })),
+      readPlugin: vi.fn(async () => ({ plugin: { description: "Plugin details" } })),
     });
     const create = vi.fn(() => client);
     const codexCatalogService = new CodexCatalogService(
@@ -159,8 +202,17 @@ describe("routeMessage provider.catalog", () => {
       request: { providerId: "codex", workspaceId: "workspace-1" },
       additions: expect.arrayContaining([
         expect.objectContaining({ name: "review", kind: "skill" }),
+        expect.objectContaining({
+          name: "review",
+          kind: "plugin",
+          mentionPath: "plugin://review@personal",
+        }),
         expect.objectContaining({ name: "prompts:release", kind: "customPrompt" }),
       ]),
+      diagnostics: [expect.objectContaining({
+        code: "discovery-error",
+        message: expect.stringContaining("C:/marketplaces/broken.json"),
+      })],
       freshness: { status: "fresh" },
     });
     expect(refresh).toHaveBeenCalledWith("C:/repo");
@@ -168,6 +220,8 @@ describe("routeMessage provider.catalog", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(client.start).toHaveBeenCalledTimes(1);
     expect(client.listSkills).toHaveBeenCalledWith(["C:/repo"], false);
+    expect(client.listPlugins).toHaveBeenCalledWith(["C:/repo"]);
+    expect(client.readPlugin).not.toHaveBeenCalled();
     expect(list).toHaveBeenCalledWith(
       "C:/repo",
       "codex",
@@ -233,8 +287,14 @@ describe("routeMessage provider.catalog", () => {
     await expect(refreshed).resolves.toBe("C:/repo");
     expect(client.listSkills).toHaveBeenCalledWith(["C:/repo"], true);
     await expect(reconciled).resolves.toMatchObject({
-      additions: [expect.objectContaining({ name: "ship" })],
-      removals: [expect.objectContaining({ nativeId: "C:/repo/.codex/skills/review/SKILL.md" })],
+      additions: expect.arrayContaining([
+        expect.objectContaining({ kind: "skill", name: "ship" }),
+        expect.objectContaining({ kind: "plugin", name: "browser" }),
+      ]),
+      removals: expect.arrayContaining([
+        expect.objectContaining({ nativeId: "C:/repo/.codex/skills/review/SKILL.md" }),
+        expect.objectContaining({ nativeId: "review@personal", kind: "plugin" }),
+      ]),
     });
     expect(create).toHaveBeenCalledTimes(1);
 

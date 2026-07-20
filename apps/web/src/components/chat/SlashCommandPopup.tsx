@@ -20,9 +20,20 @@ const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
 };
 
 function commandDisplayLabel(command: Command): string {
+  if (command.capabilityKind === "plugin") return `@${command.name}`;
   if (command.namespace === "skill") return command.name;
   if (command.namespace === "plugin") return command.name.split(":").at(-1) ?? command.name;
   return `/${command.name}`;
+}
+
+function commandKindLabel(command: Command): string {
+  switch (command.capabilityKind) {
+    case "customPrompt": return "Prompt";
+    case "providerCommand": return "Command";
+    case "plugin": return "Plugin";
+    case "skill": return "Skill";
+    case "mcode": return "Mcode";
+  }
 }
 
 /** Preserve command ordering while exposing the source context of each command. */
@@ -165,7 +176,7 @@ export function SlashCommandPopup({
                     ref={scrollRef}
                     role="listbox"
                     aria-label="Slash commands"
-                    aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
+                    aria-activedescendant={items[selectedIndex] ? `slash-cmd-${selectedIndex}` : undefined}
                     className="overflow-y-auto"
                     style={{ maxHeight: listMaxHeight, scrollbarGutter: "stable" }}
                   >
@@ -189,9 +200,10 @@ export function SlashCommandPopup({
                           </div>
                           {groupItems.map(({ command: cmd, index }) => {
                             return (
-                              <div key={cmd.name} role="presentation" data-index={index}>
+                              <div key={cmd.id} role="presentation" data-index={index}>
                                 <CommandRow
                                   cmd={cmd}
+                                  index={index}
                                   selected={index === selectedIndex}
                                   onSelect={onSelect}
                                   tone={tone}
@@ -226,11 +238,13 @@ export function SlashCommandPopup({
 
 function CommandRow({
   cmd,
+  index,
   selected,
   onSelect,
   tone = "default",
 }: {
   cmd: Command;
+  index: number;
   selected: boolean;
   onSelect: (cmd: Command) => void;
   tone?: "default" | "dark";
@@ -240,7 +254,7 @@ function CommandRow({
       type="button"
       variant="ghost"
       size="sm"
-      id={`slash-cmd-${cmd.name}`}
+      id={`slash-cmd-${index}`}
       role="option"
       aria-selected={selected}
       onMouseDown={(e) => {
@@ -265,7 +279,11 @@ function CommandRow({
           ? "bg-white/[0.06] text-neutral-400 ring-white/10"
           : "bg-muted/65 text-muted-foreground ring-border/60",
       )}>
-        <EntityIcon kind={cmd.namespace} size={14} className="flex items-center justify-center" />
+        <EntityIcon
+          kind={cmd.capabilityKind === "mcode" ? "mcode" : cmd.capabilityKind === "customPrompt" || cmd.capabilityKind === "providerCommand" ? "command" : cmd.capabilityKind}
+          size={14}
+          className="flex items-center justify-center"
+        />
       </span>
 
       {/* Name + description */}
@@ -274,7 +292,13 @@ function CommandRow({
           "truncate text-sm font-medium leading-4",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
-          {commandDisplayLabel(cmd)}
+          <span>{commandDisplayLabel(cmd)}</span>
+          <span className={cn(
+            "ml-2 text-[10px] font-medium uppercase tracking-wide",
+            tone === "dark" ? "text-neutral-500" : "text-muted-foreground",
+          )}>
+            {commandKindLabel(cmd)}
+          </span>
         </span>
         <span className={cn(
           "overflow-hidden whitespace-nowrap text-xs font-normal leading-4",

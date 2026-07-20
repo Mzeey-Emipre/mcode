@@ -287,7 +287,7 @@ async function buildCodexInput(
   }
 
   for (const mention of mentions) {
-    if (mention.kind !== "file") continue;
+    if (mention.kind !== "file" && mention.kind !== "plugin") continue;
     inputs.push({
       type: "mention",
       name: mention.label,

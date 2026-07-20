@@ -68,15 +68,18 @@ function makeAnchorRect(): DOMRect {
 }
 
 const COMMANDS: Command[] = [
-  { name: "foo", description: "First command", namespace: "command" },
-  { name: "bar", description: "Second command", namespace: "skill" },
-  { name: "baz", description: "Third command", namespace: "mcode" },
+  { id: "command:foo", name: "foo", description: "First command", namespace: "command", capabilityKind: "providerCommand", nativeId: "foo" },
+  { id: "skill:bar", name: "bar", description: "Second command", namespace: "skill", capabilityKind: "skill", nativeId: "bar" },
+  { id: "mcode:baz", name: "baz", description: "Third command", namespace: "mcode", capabilityKind: "mcode", nativeId: "baz" },
 ];
 
 const LONG_COMMANDS: Command[] = Array.from({ length: 25 }, (_, i) => ({
+  id: `skill:${i}`,
   name: `skill-${i.toString().padStart(2, "0")}`,
   description: `Skill ${i}`,
   namespace: "skill",
+  capabilityKind: "skill",
+  nativeId: `skill-${i}`,
 }));
 
 function renderPopup(selectedIndex: number) {

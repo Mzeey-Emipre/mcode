@@ -67,6 +67,7 @@ import {
   $createTypedMentionNode,
   extractComposerMessage,
   insertMentionNode,
+  insertPluginMentionNode,
   insertSlashCommandNode,
   removeSlashCommandTrigger,
   type MentionNodeData,
@@ -224,7 +225,7 @@ function writeComposerContent(
               label: mention.label,
               name: mention.name,
               path: mention.path,
-              provider: mention.provider,
+              ...(mention.kind === "agent" ? { provider: mention.provider } : {}),
             };
       paragraph.append($createTypedMentionNode(nodeMention));
       cursor = mention.range.end;
@@ -2713,6 +2714,18 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (editorRef.current) {
       if (cmd.action) {
         removeSlashCommandTrigger(editorRef.current);
+      } else if (cmd.capabilityKind === "plugin" && cmd.mentionPath) {
+        const id =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `mention-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        insertPluginMentionNode(editorRef.current, {
+          id,
+          kind: "plugin",
+          label: cmd.name,
+          name: cmd.name,
+          path: cmd.mentionPath,
+        });
       } else {
         insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
       }

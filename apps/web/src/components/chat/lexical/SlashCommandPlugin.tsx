@@ -11,6 +11,7 @@ import {
   $createSlashCommandNode,
   type SlashCommandNamespace,
 } from "./SlashCommandNode";
+import { $createTypedMentionNode, type MentionNodeData } from "./MentionNode";
 import { SLASH_TRIGGER_RE } from "../useSlashCommand";
 
 /** Props for the SlashCommandPlugin that detects /-triggers in the editor. */
@@ -124,6 +125,48 @@ export function insertSlashCommandNode(
     } else {
       node.replace(commandNode);
       commandNode.insertAfter(afterNode);
+    }
+
+    const offset = trailingText.startsWith(" ") ? 1 : 0;
+    afterNode.select(offset, offset);
+  });
+}
+
+/** Replaces the active slash trigger with a native Codex plugin mention. */
+export function insertPluginMentionNode(
+  editor: LexicalEditor,
+  mention: Extract<MentionNodeData, { kind: "plugin" }>,
+): void {
+  editor.update(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection)) return;
+
+    const anchor = selection.anchor;
+    if (anchor.type !== "text") return;
+
+    const node = anchor.getNode();
+    if (!(node instanceof TextNode)) return;
+
+    const textContent = node.getTextContent();
+    const cursorOffset = anchor.offset;
+    const match = SLASH_TRIGGER_RE.exec(textContent.slice(0, cursorOffset));
+    if (!match) return;
+
+    const triggerStart = match.index + match[1].length;
+    const beforeText = textContent.slice(0, triggerStart);
+    const afterCursor = textContent.slice(cursorOffset);
+    const mentionNode = $createTypedMentionNode(mention);
+    const trailingText = afterCursor.length > 0 ? afterCursor : " ";
+    const afterNode = $createTextNode(trailingText);
+
+    if (beforeText) {
+      const beforeNode = $createTextNode(beforeText);
+      node.replace(beforeNode);
+      beforeNode.insertAfter(mentionNode);
+      mentionNode.insertAfter(afterNode);
+    } else {
+      node.replace(mentionNode);
+      mentionNode.insertAfter(afterNode);
     }
 
     const offset = trailingText.startsWith(" ") ? 1 : 0;

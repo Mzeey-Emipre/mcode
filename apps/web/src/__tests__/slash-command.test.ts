@@ -310,7 +310,14 @@ describe("selection + text replacement", () => {
     let emittedValue = "";
     await act(async () => {
       result.current.onSelect(
-        { name: "commit", description: "Commit changes", namespace: "skill" },
+        {
+          id: "skill:commit",
+          name: "commit",
+          description: "Commit changes",
+          namespace: "skill",
+          capabilityKind: "skill",
+          nativeId: "commit",
+        },
         (v: string) => { emittedValue = v; }
       );
     });
@@ -643,7 +650,7 @@ describe("popup state machine", () => {
 });
 
 describe("includeBuiltins: false", () => {
-  it("adapts invocable catalog entries while keeping plugin records out of the picker", async () => {
+  it("keeps same-named plugin and Skill entries distinct in the picker", async () => {
     const getProviderCatalog = vi.fn().mockResolvedValue({
       providerId: "codex",
       context: { scope: "user" },
@@ -652,7 +659,7 @@ describe("includeBuiltins: false", () => {
       entries: [
         { kind: "providerCommand", identity: { providerId: "codex", kind: "providerCommand", nativeId: "deploy" }, name: "deploy", description: "Deploy" },
         { kind: "customPrompt", identity: { providerId: "codex", kind: "customPrompt", nativeId: "release" }, name: "prompts:release", description: "Release" },
-        { kind: "plugin", identity: { providerId: "codex", kind: "plugin", nativeId: "tools" }, name: "tools", description: "Tools" },
+        { kind: "plugin", identity: { providerId: "codex", kind: "plugin", nativeId: "review@personal" }, name: "review", description: "Review plugin", mentionPath: "plugin://review@personal", marketplaceName: "personal", capabilities: [] },
         { kind: "skill", identity: { providerId: "codex", kind: "skill", nativeId: "review" }, name: "review", description: "Review", source: "user" },
       ],
       selectableAgents: [{ providerId: "codex", nativeId: "reviewer", name: "reviewer", path: "C:/agents/reviewer.toml" }],
@@ -668,11 +675,27 @@ describe("includeBuiltins: false", () => {
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {});
 
-    expect(result.current.allCommands.map((command) => [command.name, command.namespace])).toEqual([
-      ["deploy", "command"],
-      ["prompts:release", "command"],
-      ["review", "skill"],
+    expect(result.current.allCommands.map((command) => [
+      command.name,
+      command.namespace,
+      command.capabilityKind,
+      command.nativeId,
+    ])).toEqual([
+      ["deploy", "command", "providerCommand", "deploy"],
+      ["prompts:release", "command", "customPrompt", "release"],
+      ["review", "skill", "skill", "review"],
+      ["review", "plugin", "plugin", "review@personal"],
     ]);
+
+    const replaceText = vi.fn();
+    await act(async () => {
+      result.current.onInputChange("/rev");
+      result.current.onSelect(
+        result.current.allCommands.find((command) => command.capabilityKind === "plugin")!,
+        replaceText,
+      );
+    });
+    expect(replaceText).toHaveBeenCalledWith("@review ");
   });
 
   it("excludes all BUILTIN_COMMANDS when includeBuiltins is false", async () => {

@@ -25,4 +25,30 @@ describe("MessageMentionSchema", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("preserves a Codex plugin mention target", () => {
+    const result = MessageMentionSchema.safeParse({
+      id: "mention-plugin-1",
+      kind: "plugin",
+      label: "Browser",
+      name: "Browser",
+      path: "plugin://browser@openai-bundled",
+      range: { start: 0, end: 8 },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects plugin mentions without Codex's plugin URI", () => {
+    const result = MessageMentionSchema.safeParse({
+      id: "mention-plugin-1",
+      kind: "plugin",
+      label: "Browser",
+      name: "Browser",
+      path: "C:/plugins/browser",
+      range: { start: 0, end: 8 },
+    });
+
+    expect(result.success).toBe(false);
+  });
 });

@@ -321,6 +321,38 @@ describe("CodexProvider first turn on new session", () => {
     ]);
   });
 
+  it("sends selected plugin mentions as native Codex mention input", async () => {
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      sessionId: "mcode-mentioned-plugin",
+      threadId: "mentioned-plugin",
+      message: "@Browser inspect the page",
+      mentions: [{
+        id: "mention-plugin-1",
+        kind: "plugin",
+        label: "Browser",
+        name: "Browser",
+        path: "plugin://browser@openai-bundled",
+        range: { start: 0, end: 8 },
+      }],
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      permissionMode: "auto",
+      providerOptions: {},
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    expect(sendTurnMock.mock.calls[0][0]).toEqual([
+      { type: "mention", name: "Browser", path: "plugin://browser@openai-bundled" },
+      { type: "text", text: "@Browser inspect the page" },
+    ]);
+  });
+
   it("sends selected agent mentions as Codex subagent URI input", async () => {
     const provider = makeProvider();
 

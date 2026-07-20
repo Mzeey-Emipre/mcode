@@ -533,6 +533,7 @@ export {
 } from "./providers/capability-catalog.js";
 export type {
   ProviderCapabilityKind,
+  ProviderPluginCapability,
   ProviderCapabilityEntry,
   ProviderAgentMention,
   SelectableProviderAgent,

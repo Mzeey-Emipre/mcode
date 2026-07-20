@@ -43,6 +43,7 @@ export interface BuildProviderCatalogSnapshotInput {
   readonly providerId: SettingsProviderId;
   readonly context: ProviderCatalogContext;
   readonly skills: readonly SkillInfo[];
+  readonly entries?: readonly ProviderCapabilityEntry[];
   readonly agentDiscovery?: BoundedCodexAgentDiscovery;
   readonly diagnostics?: readonly ProviderCatalogDiagnostic[];
   readonly freshness?: ProviderCatalogFreshness;
@@ -211,12 +212,22 @@ export function buildProviderCatalogSnapshot(
   const diagnostics: ProviderCatalogDiagnostic[] = [...(input.diagnostics ?? [])];
   let invalidItemOmitted = false;
   const entries: ProviderCapabilityEntry[] = [];
-  for (const item of input.skills.slice(0, PROVIDER_CATALOG_MAX_ENTRIES)) {
+  for (const item of input.skills) {
+    if (entries.length >= PROVIDER_CATALOG_MAX_ENTRIES) break;
     const entry = parseProviderCapabilityEntry(input.providerId, item);
     if (entry) entries.push(entry);
     else invalidItemOmitted = true;
   }
-  if (input.skills.length > PROVIDER_CATALOG_MAX_ENTRIES) {
+  for (const item of input.entries ?? []) {
+    if (entries.length >= PROVIDER_CATALOG_MAX_ENTRIES) break;
+    const entry = ProviderCapabilityEntrySchema().safeParse(item);
+    if (entry.success && entry.data.identity.providerId === input.providerId) {
+      entries.push(entry.data);
+    } else {
+      invalidItemOmitted = true;
+    }
+  }
+  if (input.skills.length + (input.entries?.length ?? 0) > PROVIDER_CATALOG_MAX_ENTRIES) {
     diagnostics.push(partialResultDiagnostic(
       `Catalog entries were capped at ${PROVIDER_CATALOG_MAX_ENTRIES}.`,
     ));
@@ -255,7 +266,7 @@ export function buildProviderCatalogSnapshot(
       status: "fresh",
       fetchedAt: input.fetchedAt ?? new Date().toISOString(),
     },
-    diagnostics,
+    diagnostics: diagnostics.slice(0, 100),
     entries,
     selectableAgents,
   });
