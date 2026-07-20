@@ -32,6 +32,14 @@ interface PendingHistoryPrefetch {
   promise: Promise<void>;
 }
 
+function hasResidentLayer(record: ThreadRecord): boolean {
+  return record.messages.length > 0
+    || record.streaming.length > 0
+    || record.toolCalls.length > 0
+    || record.thoughtSegments.length > 0
+    || record.hooks.length > 0;
+}
+
 /** Build a conversation page containing only the supplied messages and their metadata. */
 function buildConversationPageSubset(
   page: ConversationPage,
@@ -181,6 +189,9 @@ export class ThreadHydrator {
   /** Active-thread load invoked from ChatView and workspaceStore. */
   private async hydrateActive(threadId: string, opts?: ThreadHydratorOptions): Promise<void> {
     const outgoingThreadId = this.deps.getState().currentThreadId;
+    const outgoingHydrate = outgoingThreadId
+      ? this.activeHydrates.get(outgoingThreadId)
+      : undefined;
     queueMicrotask(() => {
       this.deps.flushPendingTextDeltas();
     });
@@ -188,7 +199,7 @@ export class ThreadHydrator {
     // next frame lets that posture choose full-history or compact-tail caching.
     const retireOutgoingRecord = () => {
       if (outgoingThreadId && outgoingThreadId !== threadId) {
-        this.retireInactiveRecord(outgoingThreadId);
+        this.retireInactiveRecord(outgoingThreadId, outgoingHydrate != null);
       }
     };
     if (typeof requestAnimationFrame === "function") {
@@ -197,25 +208,12 @@ export class ThreadHydrator {
       setTimeout(retireOutgoingRecord, 0);
     }
 
-    const cached = getCachedRecord(threadId);
-    if (cached) {
-      this.restoreCachedActive(threadId, cached, opts);
-      return;
-    }
-
     const resident = this.deps.getState().records.get(threadId);
-    const hasResidentLayer = resident != null && (
-      resident.messages.length > 0
-      || resident.streaming.length > 0
-      || resident.toolCalls.length > 0
-      || resident.thoughtSegments.length > 0
-      || resident.hooks.length > 0
-      || this.deps.getState().runningThreadIds.has(threadId)
-    );
+    const hasResidentContent = resident != null && hasResidentLayer(resident);
 
     const inFlight = this.activeHydrates.get(threadId);
     if (inFlight) {
-      this.selectInFlightLayer(threadId, hasResidentLayer);
+      this.selectInFlightLayer(threadId, hasResidentContent);
       await inFlight;
       const state = this.deps.getState();
       const current = getThreadRecord(state.records, threadId);
@@ -225,13 +223,20 @@ export class ThreadHydrator {
       return;
     }
 
-    if (hasResidentLayer) {
+    const cached = getCachedRecord(threadId);
+    if (cached) {
+      this.restoreCachedActive(threadId, cached, opts);
+      return;
+    }
+
+    if (hasResidentContent) {
       this.activateResidentLayer(threadId);
     }
 
-    const hydrate = this.fetchActiveReusingBackground(threadId, opts, hasResidentLayer).finally(() => {
+    const hydrate = this.fetchActiveReusingBackground(threadId, opts, hasResidentContent).finally(() => {
       if (this.activeHydrates.get(threadId) === hydrate) {
         this.activeHydrates.delete(threadId);
+        this.discardInactiveLoadingRecord(threadId);
       }
     });
     this.activeHydrates.set(threadId, hydrate);
@@ -239,11 +244,15 @@ export class ThreadHydrator {
   }
 
   /** Move an inactive transcript under the bounded LRU and compact tail readers. */
-  private retireInactiveRecord(threadId: string): void {
+  private retireInactiveRecord(threadId: string, hadActiveHydrate: boolean): void {
     const state = this.deps.getState();
     if (state.currentThreadId === threadId) return;
     const resident = state.records.get(threadId);
     if (!resident) return;
+    if (
+      !hasResidentLayer(resident)
+      && (hadActiveHydrate || this.activeHydrates.has(threadId))
+    ) return;
 
     const cached = this.compactCachedRecordForRestore(threadId, resident);
     cacheRecord(threadId, cached);
@@ -257,6 +266,16 @@ export class ThreadHydrator {
       return {
         records: deleteThreadRecord(latest.records, threadId),
       };
+    });
+  }
+
+  /** Remove an inactive empty loading shell after its hydrate result was discarded. */
+  private discardInactiveLoadingRecord(threadId: string): void {
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      if (state.currentThreadId === threadId) return {};
+      const resident = state.records.get(threadId);
+      if (!resident || hasResidentLayer(resident)) return {};
+      return { records: deleteThreadRecord(state.records, threadId) };
     });
   }
 
@@ -350,40 +369,32 @@ export class ThreadHydrator {
 
   /** Keep cache-hit reconciliation bounded while retaining loaded history for upward pagination. */
   private compactCachedRecordForRestore(threadId: string, cached: ThreadRecord): ThreadRecord {
+    cacheRecord(threadId, cached);
+    const bounded = getCachedRecord(threadId) ?? cached;
     if (
-      cached.messages.length <= MESSAGE_FETCH_SIZE
+      bounded.messages.length <= MESSAGE_FETCH_SIZE
       || hasRememberedHistoryPosition(threadId)
     ) {
-      return cached;
+      return bounded;
     }
 
-    const tailStart = cached.messages.length - MESSAGE_FETCH_SIZE;
-    const earlierMessages = cached.messages.slice(0, tailStart);
+    const tailStart = bounded.messages.length - MESSAGE_FETCH_SIZE;
+    const earlierMessages = bounded.messages.slice(0, tailStart);
     const retainedEarlierMessages = earlierMessages.slice(-HISTORY_PREFETCH_SIZE);
-    const tailMessages = cached.messages.slice(tailStart);
+    const tailMessages = bounded.messages.slice(tailStart);
     const narrativeByMessage: ConversationPage["narrativeByMessage"] = {};
-    for (const [messageId, narrative] of Object.entries(cached.narrativeByMessage)) {
+    for (const [messageId, narrative] of Object.entries(bounded.narrativeByMessage)) {
       if (narrative) narrativeByMessage[messageId] = narrative;
     }
     const page: ConversationPage = {
-      messages: cached.messages,
-      hasMore: cached.hasMoreMessages,
-      answeredPlanMessageIds: [...cached.answeredPlanMessageIds],
+      messages: bounded.messages,
+      hasMore: bounded.hasMoreMessages,
+      answeredPlanMessageIds: [...bounded.answeredPlanMessageIds],
       narrativeByMessage,
     };
     const tailPage = buildConversationPageSubset(page, tailMessages, true);
-    cachePrefetchedHistoryPage(
-      threadId,
-      tailMessages[0].sequence,
-      buildConversationPageSubset(
-        page,
-        retainedEarlierMessages,
-        cached.hasMoreMessages || retainedEarlierMessages.length < earlierMessages.length,
-      ),
-    );
-
     const compacted = {
-      ...cached,
+      ...bounded,
       messages: tailMessages,
       oldestLoadedSequence: tailMessages[0].sequence,
       hasMoreMessages: true,
@@ -391,6 +402,15 @@ export class ThreadHydrator {
       answeredPlanMessageIds: new Set(tailPage.answeredPlanMessageIds ?? []),
     };
     cacheRecord(threadId, compacted);
+    cachePrefetchedHistoryPage(
+      threadId,
+      tailMessages[0].sequence,
+      buildConversationPageSubset(
+        page,
+        retainedEarlierMessages,
+        bounded.hasMoreMessages || retainedEarlierMessages.length < earlierMessages.length,
+      ),
+    );
     return compacted;
   }
 

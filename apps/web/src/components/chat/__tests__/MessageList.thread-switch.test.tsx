@@ -112,6 +112,7 @@ vi.mock("../narrative", () => ({ NarrativeFlow: () => null }));
 import { MessageList, preservePrependedVirtualRange } from "../MessageList";
 import {
   rememberScrollTop,
+  recallScrollPosition,
   recallScrollTop,
   clearScrollMemory,
   hasRememberedHistoryPosition,
@@ -536,6 +537,38 @@ describe("MessageList thread switch", () => {
     // The scroll restoration effect should have called scrollTop setter with 1500
     expect(setScrollTopValue).toBe(1500);
     expect(recallScrollTop("thread-B")).toBe(1500);
+  });
+
+  it("does not overwrite remembered posture while a cache-hit restore settles", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [{ id: "a1", sequence: 1, thread_id: "thread-A" }];
+    const { rerender, container } = render(<MessageList />);
+    rememberScrollTop("thread-B", 1500, false, { messageId: "b1", top: 29 });
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    let scrollTop = 0;
+    Object.defineProperty(scrollEl, "scrollHeight", { configurable: true, value: 5000 });
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    activeThreadIdValue = "thread-B";
+    messagesValue = [{ id: "b1", sequence: 1, thread_id: "thread-B" }];
+    act(() => rerender(<MessageList />));
+    scrollTop = 900;
+    fireEvent.scroll(scrollEl);
+
+    expect(recallScrollPosition("thread-B")).toEqual({
+      scrollTop: 1500,
+      atTail: false,
+      anchorMessageId: "b1",
+      anchorTop: 29,
+    });
   });
 
   it("waits for the selected thread transcript before applying its remembered position", () => {

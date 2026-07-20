@@ -274,13 +274,15 @@ test("rapid reselection paints the tail before auxiliary thread data resolves", 
   await page.goto("/");
   await page.getByRole("group", { name: "Conversation Page Workspace project" }).click();
   await page.waitForSelector("[data-testid='thread-item']");
-  const threadItems = page.locator("[data-testid='thread-item']");
+  const threadAItem = page.locator("[data-testid='thread-item'][data-thread-id='thread-a']");
+  const threadBItem = page.locator("[data-testid='thread-item'][data-thread-id='thread-b']");
 
-  await threadItems.nth(0).click();
+  await threadAItem.click();
   await expect.poll(() => typeof resolveThreadA).toBe("function");
-  await threadItems.nth(1).click();
+  await threadBItem.click();
   await expect.poll(() => typeof resolveThreadB).toBe("function");
-  await threadItems.nth(0).click();
+  await page.waitForTimeout(275);
+  await threadAItem.click();
 
   await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread A");
   await expect(page.locator("[data-testid=conversation-loading]")).toBeVisible();
@@ -303,6 +305,74 @@ test("rapid reselection paints the tail before auxiliary thread data resolves", 
   await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread A");
   await expect(page.getByText("Alpha tail after reselection", { exact: true })).toBeVisible();
   await expect(page.getByText("Beta tail", { exact: true })).not.toBeVisible();
+});
+
+test("rapid reselection discards an inactive result and refetches real data", async ({ page }) => {
+  test.setTimeout(90_000);
+  const calls: string[] = [];
+  const releases = new Map<string, Array<() => void>>();
+  const threads = [
+    thread("thread-a", "Thread A"),
+    thread("thread-b", "Thread B"),
+  ];
+
+  await interceptZustandStores(page);
+  await mockWebSocketServer(page, {
+    "workspace.list": [workspace],
+    "thread.list": threads,
+    "conversation.page": (params) => {
+      const input = params as { threadId: string };
+      calls.push(input.threadId);
+      const result = {
+        messages: input.threadId === "thread-a"
+          ? [message("thread-a", "thread-a-tail", "assistant", "Alpha real data", 12)]
+          : [message("thread-b", "thread-b-tail", "assistant", "Beta real data", 12)],
+        hasMore: false,
+        answeredPlanMessageIds: [],
+        narrativeByMessage: {},
+      };
+      return new Promise((resolve) => {
+        const queued = releases.get(input.threadId) ?? [];
+        queued.push(() => resolve(result));
+        releases.set(input.threadId, queued);
+      });
+    },
+  });
+
+  await page.goto("/");
+  await page.getByRole("group", { name: "Conversation Page Workspace project" }).click();
+  await page.waitForSelector("[data-testid='thread-item']");
+  const threadAItem = page.locator("[data-testid='thread-item'][data-thread-id='thread-a']");
+  const threadBItem = page.locator("[data-testid='thread-item'][data-thread-id='thread-b']");
+
+  await threadAItem.click();
+  await expect.poll(() => releases.get("thread-a")?.length).toBe(1);
+  await threadBItem.click();
+  await expect.poll(() => releases.get("thread-b")?.length).toBe(1);
+  await page.waitForTimeout(275);
+  await threadAItem.click();
+  await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread A");
+  await expect(page.locator("[data-testid=conversation-loading]")).toBeVisible();
+  await page.waitForTimeout(275);
+  await threadBItem.click();
+  await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread B");
+  await expect(page.locator("[data-testid=conversation-loading]")).toBeVisible();
+
+  releases.get("thread-a")?.shift()?.();
+  releases.get("thread-b")?.shift()?.();
+  await expect(page.getByText("Beta real data", { exact: true })).toBeVisible();
+  await expect(page.getByText("Alpha real data", { exact: true })).not.toBeVisible();
+
+  await page.waitForTimeout(275);
+  await threadAItem.click();
+  await expect(page.locator("[data-testid=chat-header-title]")).toContainText("Thread A");
+  await expect(page.locator("[data-testid=conversation-loading]")).toBeVisible();
+  await expect.poll(() => calls.filter((threadId) => threadId === "thread-a").length).toBe(2);
+  releases.get("thread-a")?.shift()?.();
+
+  await expect(page.getByText("Alpha real data", { exact: true })).toBeVisible();
+  expect(calls.filter((threadId) => threadId === "thread-a")).toHaveLength(2);
+  expect(calls.filter((threadId) => threadId === "thread-b")).toHaveLength(1);
 });
 
 test("thread switch paints the latest turn before older history finishes", async ({ page }) => {

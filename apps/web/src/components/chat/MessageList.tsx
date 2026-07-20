@@ -522,7 +522,11 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     }
     isScrolledUpRef.current = scrolledUp;
     setShowScrollBtn(scrolledUp);
-    if (activeThreadId && renderedThreadId === activeThreadId) {
+    if (
+      activeThreadId
+      && renderedThreadId === activeThreadId
+      && !suppressPassiveAutoBottomScrollRef.current
+    ) {
       const viewportTop = el.getBoundingClientRect().top;
       const anchor = [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
         .find((node) => node.getBoundingClientRect().bottom > viewportTop + 2);
