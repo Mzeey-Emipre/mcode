@@ -1170,12 +1170,14 @@ function getCiStatusCircleStyle(checks: ChecksStatus): CSSProperties {
 
 function ThreadOverviewCiStatusCircle({ checks }: { checks: ChecksStatus }) {
   return (
-    <span
-      aria-hidden
-      data-testid="thread-overview-ci-status-circle"
-      className="size-3 shrink-0 rounded-full border border-border/70"
-      style={getCiStatusCircleStyle(checks)}
-    />
+    <span className="flex size-3.5 shrink-0 items-center justify-center">
+      <span
+        aria-hidden
+        data-testid="thread-overview-ci-status-circle"
+        className="size-1.5 rounded-full ring-1 ring-border/70"
+        style={getCiStatusCircleStyle(checks)}
+      />
+    </span>
   );
 }
 
@@ -1285,11 +1287,11 @@ function ThreadOverviewPrActiveRow({
             event.stopPropagation();
             setChecksOpen((open) => !open);
           }}
-          className="ml-6 flex h-6 w-[calc(100%-1.5rem)] cursor-pointer justify-between rounded-none border-transparent bg-transparent px-0 text-left text-muted-foreground hover:bg-transparent hover:text-foreground dark:hover:bg-transparent"
+          className="flex h-7 w-full cursor-pointer justify-between gap-3 border-transparent bg-transparent px-2 text-left text-muted-foreground hover:bg-muted/40 hover:text-foreground dark:hover:bg-muted/40"
         >
           <span className="flex min-w-0 items-center gap-2">
             <ThreadOverviewCiStatusCircle checks={checks} />
-            <span className="truncate text-xs">
+            <span className="truncate font-mono text-xs tabular-nums">
               {getCiOverviewSummaryLabel(checks)}
             </span>
           </span>
@@ -1307,9 +1309,10 @@ function ThreadOverviewPrActiveRow({
       status.label ? (
         <span
           data-testid="thread-overview-pr-status"
-          className="ml-6 inline-flex h-6 items-center rounded-md px-2 text-xs text-muted-foreground"
+          className="inline-flex h-7 w-full items-center gap-2 px-2 font-mono text-xs text-muted-foreground"
         >
-          {status.label}
+          <span aria-hidden className="size-3.5 shrink-0" />
+          <span className="truncate">{status.label}</span>
         </span>
       ) : null
     );
@@ -1319,6 +1322,7 @@ function ThreadOverviewPrActiveRow({
       <PrSplitButton
         pr={pr}
         label={rowLabel}
+        machineLabel={!detailText}
         onCreatePr={onCreatePr}
         onOpenPr={onOpenPr}
         primaryButtonTestId="workspace-menu-open-pr"
@@ -2044,16 +2048,21 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             )}
 
             {canShowPrActions && (
-              <ThreadOverviewPrRow
-                pr={effectivePr}
-                hasCommitsAhead={hasCommitsAhead}
-                checks={checks}
-                openPrDetail={openPrDetail}
-                threadId={thread.id}
-                onCommitOrPush={handleCommitOrPush}
-                onCreatePr={() => setCreatePrOpen(true)}
-                onOpenPr={handleOpenPr}
-              />
+              <>
+                {usageSummary ? (
+                  <Separator data-testid="thread-overview-pr-separator" className="my-1.5" />
+                ) : null}
+                <ThreadOverviewPrRow
+                  pr={effectivePr}
+                  hasCommitsAhead={hasCommitsAhead}
+                  checks={checks}
+                  openPrDetail={openPrDetail}
+                  threadId={thread.id}
+                  onCommitOrPush={handleCommitOrPush}
+                  onCreatePr={() => setCreatePrOpen(true)}
+                  onOpenPr={handleOpenPr}
+                />
+              </>
             )}
 
             {sources.length > 0 && (

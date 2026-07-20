@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, GitPullRequest } from "lucide-react";
+import { ChevronDown, ExternalLink, GitPullRequest, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,8 @@ interface PrSplitButtonProps {
   pr: { number: number; url: string; state: "OPEN" | "MERGED" | "CLOSED" | string };
   /** Primary row label, usually the PR title or PR number. */
   label: string;
+  /** Whether the primary label is generated repository data rather than prose. */
+  machineLabel?: boolean;
   /** Called when the user wants to open CreatePrDialog. */
   onCreatePr: () => void;
   /** Called with the PR URL when the user wants to open it in the browser or preview. */
@@ -47,6 +49,7 @@ function openPrLabel(pr: PrSplitButtonProps["pr"]): string {
 export function PrSplitButton({
   pr,
   label,
+  machineLabel = false,
   onCreatePr,
   onOpenPr,
   trailing,
@@ -73,10 +76,17 @@ export function PrSplitButton({
               )}
             >
               <span className="flex min-w-0 items-center gap-2">
-                <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
-                <span className="truncate text-xs font-medium">{label}</span>
+                <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" />
+                <span
+                  className={cn(
+                    "truncate text-xs font-medium",
+                    machineLabel && "font-mono tabular-nums",
+                  )}
+                >
+                  {label}
+                </span>
               </span>
-              <span className="flex shrink-0 items-center gap-1.5">
+              <span className="flex shrink-0 items-center gap-1">
                 {trailing ? (
                   <span
                     className="flex items-center"
@@ -99,7 +109,7 @@ export function PrSplitButton({
           }
         />
         <PopoverContent align="start" side="left" sideOffset={12} className="w-72 p-0">
-          <div data-testid="thread-overview-pr-popover" className="animate-popover-enter space-y-0.5 p-2">
+          <div data-testid="thread-overview-pr-popover" className="animate-popover-enter space-y-1 p-2">
             <Button
               variant="ghost"
               size="sm"
@@ -112,7 +122,7 @@ export function PrSplitButton({
                 onOpenPr(pr.url, event);
               }}
             >
-              <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+              <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="font-medium">{openPrLabel(pr)}</span>
             </Button>
             <Button
@@ -126,7 +136,7 @@ export function PrSplitButton({
                 onCreatePr();
               }}
             >
-              <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
+              <Plus className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="font-medium">Create new PR</span>
             </Button>
           </div>

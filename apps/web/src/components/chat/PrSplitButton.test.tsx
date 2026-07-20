@@ -24,6 +24,21 @@ describe("PrSplitButton", () => {
     expect(screen.getByTestId("workspace-menu-open-pr")).toHaveTextContent("PR #42");
   });
 
+  it("uses machine typography for a generated PR number", () => {
+    render(
+      <PrSplitButton
+        pr={openPr}
+        label="PR #42"
+        machineLabel
+        onCreatePr={noop}
+        onOpenPr={noop}
+        primaryButtonTestId="workspace-menu-open-pr"
+      />,
+    );
+
+    expect(screen.getByText("PR #42")).toHaveClass("font-mono", "tabular-nums");
+  });
+
   it("calls onOpenPr from the popover action", () => {
     const onOpenPr = vi.fn();
     render(

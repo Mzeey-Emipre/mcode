@@ -498,10 +498,13 @@ describe("HeaderActions - consolidated header", () => {
 
     const usageTrigger = screen.getByTestId("thread-overview-usage");
     const prAction = screen.getByTestId("thread-overview-pr");
+    const prSeparator = screen.getByTestId("thread-overview-pr-separator");
     const recap = screen.getByTestId("thread-overview-recap");
     expect(usageTrigger).toHaveAttribute("aria-label", "Usage, 5-hour 12%, weekly 47%");
     expect(usageTrigger).toHaveAttribute("aria-expanded", "true");
     expect(Boolean(usageTrigger.compareDocumentPosition(prAction) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(usageTrigger.compareDocumentPosition(prSeparator) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(prSeparator.compareDocumentPosition(prAction) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(Boolean(usageTrigger.compareDocumentPosition(recap) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(usageTrigger).toHaveTextContent("Usage");
     expect(usageTrigger).not.toHaveTextContent("5-hour 12%, weekly 47%");
