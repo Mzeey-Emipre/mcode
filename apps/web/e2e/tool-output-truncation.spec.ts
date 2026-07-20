@@ -3,6 +3,7 @@ import { getDefaultSettings } from "@mcode/contracts";
 import { interceptZustandStores, mockWebSocketServer } from "./helpers/e2e-helpers";
 
 const now = new Date().toISOString();
+const completedAt = new Date(Date.parse(now) + 15_000).toISOString();
 const WORKSPACE_ID = "ws-tool-output-truncation";
 const THREAD_ID = "thread-tool-output-truncation";
 const ASSISTANT_ID = "assistant-tool-output-truncation";
@@ -93,12 +94,30 @@ function truncatedToolRecord() {
     output_artifact_path: ARTIFACT_PATH,
     status: "completed" as const,
     started_at: now,
-    completed_at: now,
+    completed_at: completedAt,
     sort_order: 0,
   };
 }
 
-async function setupApp(page: Page, messages: Array<ReturnType<typeof userMessage> | ReturnType<typeof assistantMessage>>) {
+function failedToolRecord() {
+  return {
+    ...truncatedToolRecord(),
+    id: "tool-failed",
+    input_summary: "git pull --ff-only origin main",
+    output_summary: "fatal: Not possible to fast-forward, aborting.",
+    output_truncated: 0,
+    output_total_bytes: null,
+    output_artifact_path: null,
+    exit_code: 1,
+    status: "failed" as const,
+  };
+}
+
+async function setupApp(
+  page: Page,
+  messages: Array<ReturnType<typeof userMessage> | ReturnType<typeof assistantMessage>>,
+  toolRecords = [truncatedToolRecord()],
+) {
   await page.addInitScript((workspaceId: string) => {
     localStorage.setItem("mcode-expanded-projects", JSON.stringify({ [workspaceId]: true }));
   }, WORKSPACE_ID);
@@ -112,7 +131,7 @@ async function setupApp(page: Page, messages: Array<ReturnType<typeof userMessag
     "narrative.list": (params?: unknown) => {
       const messageId = (params as { messageId?: string } | undefined)?.messageId;
       return messageId === ASSISTANT_ID
-        ? { tools: [truncatedToolRecord()], thoughts: [], hooks: [] }
+        ? { tools: toolRecords, thoughts: [], hooks: [] }
         : { tools: [], thoughts: [], hooks: [] };
     },
     "settings.get": getDefaultSettings(),
@@ -140,10 +159,18 @@ async function dispatchAgentEvent(page: Page, event: unknown) {
   }, { threadId: THREAD_ID, agentEvent: event });
 }
 
-async function expectTruncationNotice(page: Page, total: string) {
-  const summary = page.getByRole("button", { name: /Ran command/ });
+async function expectTruncationNotice(page: Page, total: string, duration?: string) {
+  const summary = page.getByRole("button", { name: /Ran 1 command/ });
   if (await summary.getAttribute("aria-expanded") !== "true") {
     await summary.click();
+  }
+
+  const command = page.getByRole("button", { name: /Ran command/ });
+  if (duration) {
+    await expect(command).toContainText(`in ${duration}`);
+  }
+  if (await command.getAttribute("aria-expanded") !== "true") {
+    await command.click();
   }
 
   const notice = page.getByText(/Output truncated/).first();
@@ -182,14 +209,33 @@ test.describe("tool output truncation", () => {
   });
 
   test("keeps truncation notice after persisted narrative reload", async ({ page }) => {
+    const browserErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") browserErrors.push(message.text());
+    });
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+
     await setupApp(page, [userMessage(), assistantMessage()]);
 
-    await expectTruncationNotice(page, "350 KB total");
+    await expectTruncationNotice(page, "350 KB total", "15s");
 
     await page.reload();
     await page.waitForSelector("[data-testid='thread-item']");
     await page.getByTestId("thread-item").first().click();
 
-    await expectTruncationNotice(page, "350 KB total");
+    await expectTruncationNotice(page, "350 KB total", "15s");
+    expect(browserErrors).toEqual([]);
+  });
+
+  test("shows a persisted shell exit code in the panel footer", async ({ page }) => {
+    await setupApp(page, [userMessage(), assistantMessage()], [failedToolRecord()]);
+
+    await page.getByRole("button", { name: /Ran 1 command/ }).click();
+    await page.getByRole("button", { name: /Ran command/ }).click();
+
+    const panel = page.getByRole("region", { name: "Shell output" });
+    await expect(panel.getByText("exit code 1")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Ran command/ })).not.toContainText("errored");
+    await expect(panel.getByText("errored")).toHaveCount(0);
   });
 });

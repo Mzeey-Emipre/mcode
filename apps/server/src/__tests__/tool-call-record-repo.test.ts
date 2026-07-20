@@ -59,6 +59,7 @@ describe("V7 migration", () => {
       "output_truncated",
       "output_total_bytes",
       "output_artifact_path",
+      "exit_code",
     ]));
 
     db.close();
@@ -86,6 +87,7 @@ describe("ToolCallRecordRepo", () => {
       outputTruncated: true,
       outputTotalBytes: 300_000,
       outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
+      exitCode: 1,
       status: "completed",
       sortOrder: 0,
     };
@@ -100,6 +102,7 @@ describe("ToolCallRecordRepo", () => {
     expect(record.output_truncated).toBe(1);
     expect(record.output_total_bytes).toBe(300_000);
     expect(record.output_artifact_path).toBe("C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt");
+    expect(record.exit_code).toBe(1);
     expect(record.status).toBe("completed");
     expect(record.sort_order).toBe(0);
     expect(record.parent_tool_call_id).toBeNull();
@@ -109,6 +112,22 @@ describe("ToolCallRecordRepo", () => {
     expect(records).toHaveLength(1);
     expect(records[0]!.id).toBe(record.id);
     expect(records[0]!.output_truncated).toBe(1);
+    expect(records[0]!.exit_code).toBe(1);
+  });
+
+  it("preserves a successful exit code of zero", () => {
+    const record = repo.create({
+      messageId,
+      toolName: "Bash",
+      inputSummary: "git status",
+      outputSummary: "",
+      exitCode: 0,
+      status: "completed",
+      sortOrder: 0,
+    });
+
+    expect(record.exit_code).toBe(0);
+    expect(repo.listByMessage(messageId)[0]!.exit_code).toBe(0);
   });
 
   it("bulkCreate inserts multiple records in a transaction", () => {

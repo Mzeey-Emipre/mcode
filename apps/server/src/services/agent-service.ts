@@ -2508,6 +2508,7 @@ export class AgentService {
               ...(event.outputTruncated === true ? { outputTruncated: true } : {}),
               ...(event.outputTotalBytes != null ? { outputTotalBytes: event.outputTotalBytes } : {}),
               ...(event.outputArtifactPath ? { outputArtifactPath: event.outputArtifactPath } : {}),
+              ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
             },
           );
           // Persist a just-created task now that the harness has assigned its id.

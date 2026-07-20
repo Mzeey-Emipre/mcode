@@ -2268,6 +2268,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const toolCallId = (params.toolCallId as string) || "";
       const output = (params.output as string) || "";
       const isError = (params.isError as boolean) || false;
+      const exitCode =
+        typeof params.exitCode === "number" && Number.isInteger(params.exitCode)
+          ? params.exitCode
+          : undefined;
       const outputTruncated = params.outputTruncated === true;
       const outputTotalBytes =
         typeof params.outputTotalBytes === "number" && Number.isFinite(params.outputTotalBytes)
@@ -2334,6 +2338,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             ...(outputTotalBytes != null ? { outputTotalBytes } : {}),
             ...(outputArtifactPath ? { outputArtifactPath } : {}),
             ...(durationMs != null ? { durationMs } : {}),
+            ...(exitCode !== undefined ? { exitCode } : {}),
           };
         };
         const updated = hasIdMatch

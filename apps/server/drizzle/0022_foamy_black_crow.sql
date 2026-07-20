@@ -1,0 +1,1 @@
+ALTER TABLE `tool_call_records` ADD `exit_code` integer;

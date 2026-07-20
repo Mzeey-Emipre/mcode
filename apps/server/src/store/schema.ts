@@ -186,6 +186,7 @@ export const toolCallRecords = sqliteTable(
     outputTruncated: integer("output_truncated").notNull().default(0),
     outputTotalBytes: integer("output_total_bytes"),
     outputArtifactPath: text("output_artifact_path"),
+    exitCode: integer("exit_code"),
     status: text("status").notNull().default("running"),
     startedAt: text("started_at").notNull().default(timestampDefault),
     completedAt: text("completed_at"),

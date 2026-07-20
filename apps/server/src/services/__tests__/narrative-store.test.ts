@@ -269,6 +269,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
         outputTruncated: true,
         outputTotalBytes: 300_000,
         outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
+        exitCode: 1,
       });
       store.persistNarrative(THREAD, "m1", "", "completed");
 
@@ -276,6 +277,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(tools[0].output_truncated).toBe(1);
       expect(tools[0].output_total_bytes).toBe(300_000);
       expect(tools[0].output_artifact_path).toBe("C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt");
+      expect(tools[0].exit_code).toBe(1);
     });
 
     it("clears the whole stack on the final Message event", () => {

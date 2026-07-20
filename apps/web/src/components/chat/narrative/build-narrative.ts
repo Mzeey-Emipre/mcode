@@ -81,7 +81,10 @@ export function filterThoughtsMatchingAssistantBody(
 
 /** Returns true if any call in a group has output containing "cancelled". */
 function hasCancelledCall(calls: readonly ToolCall[]): boolean {
-  return calls.some((tc) => typeof tc.output === "string" && tc.output.toLowerCase().includes("cancelled"));
+  return calls.some(
+    (tc) => tc.isCancelled === true
+      || (typeof tc.output === "string" && tc.output.toLowerCase().includes("cancelled")),
+  );
 }
 
 /** A unified timeline event - everything that happens during a turn, sorted by startedAt. */

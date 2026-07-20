@@ -45,7 +45,7 @@ function marginClassForItem(item: NarrativeItem, index: number): string {
       return "mt-3";
     case "tool-group":
     case "hook":
-      return "mt-0";
+      return "mt-1";
     case "subagent":
       return "mt-1";
     case "active-tool":

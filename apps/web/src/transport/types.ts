@@ -140,6 +140,8 @@ export interface ToolCall {
   output: string | null;
   isError: boolean;
   isComplete: boolean;
+  /** True when a persisted tool call ended through cancellation. */
+  isCancelled?: boolean;
   /** True when the live output preview omits middle bytes from the full output. */
   outputTruncated?: boolean;
   /** UTF-8 byte count for the full output when the server bounded the preview. */
@@ -154,6 +156,8 @@ export interface ToolCall {
   startedAt?: number;
   /** Wall-clock duration when the tool call completed (ms). */
   durationMs?: number;
+  /** Process exit code reported for a completed shell command. */
+  exitCode?: number;
 }
 
 /** Ephemeral hook execution state tracked during a session. Not persisted to DB. */

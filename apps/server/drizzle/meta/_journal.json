@@ -162,6 +162,13 @@
       "when": 1784398924316,
       "tag": "0021_bright_vargas",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1784554548886,
+      "tag": "0022_foamy_black_crow",
+      "breakpoints": true
     }
   ]
 }

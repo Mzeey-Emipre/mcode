@@ -7,7 +7,10 @@ import { ThoughtBlock } from "./ThoughtBlock";
 import { ToolSummaryLine } from "./ToolSummaryLine";
 import { HookRow } from "./HookRow";
 import { SubagentRow } from "./SubagentRow";
-import { buildPersistedNarrativeItems } from "./build-persisted-narrative";
+import {
+  buildPersistedNarrativeItems,
+  recordToToolCall,
+} from "./build-persisted-narrative";
 
 /** Props for `PersistedNarrative`. */
 export interface PersistedNarrativeProps {
@@ -32,6 +35,8 @@ function marginClassForItem(item: NarrativeItem, index: number): string {
   switch (item.type) {
     case "thought":
       return "mt-3";
+    case "tool-group":
+    case "hook":
     case "subagent":
       return "mt-1";
     default:
@@ -117,20 +122,7 @@ export function PersistedNarrative({ messageId, messageContent }: PersistedNarra
       };
     }
     const built = buildPersistedNarrativeItems({ ...records, messageContent });
-    const liveTools: ToolCall[] = records.tools.map((r) => ({
-      id: r.id,
-      toolName: r.tool_name,
-      toolInput: {},
-      output: r.output_summary || null,
-      isError: r.status === "failed",
-      isComplete:
-        r.status === "completed" || r.status === "failed" || r.status === "cancelled",
-      ...(r.output_truncated === 1 ? { outputTruncated: true } : {}),
-      ...(typeof r.output_total_bytes === "number" ? { outputTotalBytes: r.output_total_bytes } : {}),
-      ...(r.output_artifact_path ? { outputArtifactPath: r.output_artifact_path } : {}),
-      parentToolCallId: r.parent_tool_call_id ?? undefined,
-      startedAt: Date.parse(r.started_at) || 0,
-    }));
+    const liveTools: ToolCall[] = records.tools.map(recordToToolCall);
     return { items: built, allToolCalls: liveTools };
   }, [records, messageContent]);
 

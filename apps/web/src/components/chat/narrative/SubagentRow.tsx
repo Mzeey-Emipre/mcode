@@ -19,6 +19,7 @@ import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
 import { EntityIcon } from "../EntityToken";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ShellToolCallRow } from "./ShellToolCallRow";
 
 interface SubagentRowProps {
   toolCall: ToolCall;
@@ -42,7 +43,7 @@ interface DelegationTagsProps {
 function DelegationTags({ tags }: DelegationTagsProps) {
   if (tags.length === 0) return null;
   return (
-    <span className="flex items-center gap-1 shrink-0">
+    <span className="flex shrink-0 items-center gap-1">
       {tags.map((tag) => (
         <Badge
           key={tag}
@@ -80,7 +81,7 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
   if (!hasChildren && !finalOutput) {
     return (
       <div
-        className="flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-hidden px-2 py-1 text-sm"
+        className="flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden px-2 py-1 text-sm"
         data-testid="subagent-flat-row"
       >
         <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/65 ring-1 ring-inset ring-border/60">
@@ -211,7 +212,7 @@ function ExpandableSubagentRow({
         <DelegationTags tags={delegationTags} />
 
         {metaText && (
-          <span className="font-mono text-xs text-muted-foreground/50 shrink-0">
+          <span className="shrink-0 font-mono text-xs text-muted-foreground/65">
             {!isRunning ? `· ${metaText}` : metaText}
           </span>
         )}
@@ -238,17 +239,8 @@ function ExpandableSubagentRow({
           </div>
         )}
         {children.length > 0 && (
-          /* Mini-timeline: a hairline rail emerges inside the expanded sub-agent
-              because the children are a nested group that the eye benefits from
-              tracking as one unit. The rail aligns with the parent's stacked-
-              layers icon (centred at ~x=15), so it reads as "these calls belong
-              to this sub-agent" rather than a generic indent. */
-          <div className="relative min-w-0 max-w-full pl-7 mt-0.5 pb-1">
-            <div
-              className="absolute left-[14px] top-1 bottom-2 w-px bg-border/50 pointer-events-none"
-              aria-hidden
-            />
-            <ul className="min-w-0 max-w-full space-y-px max-h-64 overflow-y-auto overflow-x-hidden">
+          <div className="mt-1 min-w-0 max-w-full pb-2 pl-6">
+            <ul className="max-h-64 min-w-0 max-w-full space-y-1 overflow-y-auto overflow-x-hidden">
             {visibleChildren.map((tc, idx) => {
               const isActive = idx === lastIncompleteIdx;
 
@@ -267,12 +259,21 @@ function ExpandableSubagentRow({
             }
 
             const canonicalName = resolveToolName(tc.toolName);
+
+            if (canonicalName === "Bash") {
+              return (
+                <li key={tc.id} className="min-w-0 max-w-full list-none">
+                  <ShellToolCallRow toolCall={tc} />
+                </li>
+              );
+            }
+
             const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
             const label = TOOL_LABELS[canonicalName] ?? tc.toolName;
             const detail = extractToolInputDetail(tc);
 
             return (
-              <li key={tc.id} className={`${NARRATIVE_TOOL_ROW} py-px text-sm`}>
+              <li key={tc.id} className={`${NARRATIVE_TOOL_ROW} py-1 text-sm`}>
                 <Icon className={`w-3 h-3 shrink-0 ${isActive ? "text-primary" : "text-muted-foreground/50"}`} />
                 <span className={`shrink-0 ${isActive ? "text-foreground" : "text-muted-foreground/70"}`}>{label}</span>
                 <span className={narrativeToolDetailClass("sm")} title={detail}>
@@ -293,7 +294,7 @@ function ExpandableSubagentRow({
             variant="ghost"
             size="sm"
             onClick={() => setShowAll((o) => !o)}
-            className="h-auto items-center gap-1 rounded-md pl-7 pb-1 text-xs text-muted-foreground/50 hover:text-muted-foreground/70 transition-colors"
+            className="h-auto items-center gap-1 rounded-md pb-1 pl-7 font-mono text-xs text-muted-foreground/55 transition-colors hover:text-muted-foreground/75"
           >
             <ChevronDown className={`h-2.5 w-2.5 shrink-0 transition-transform duration-150 ${showAll ? "rotate-180" : ""}`} />
             {showAll ? "Show less" : `Show all ${children.length}`}

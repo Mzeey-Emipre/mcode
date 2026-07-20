@@ -4,7 +4,6 @@ import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import type { HookExecution } from "@/transport/types";
 import { NarrativeSummaryLine } from "./ToolSummaryLine";
 import { getHookOutputLines } from "@/components/chat/hook-output";
-import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 
 interface HookRowProps {
   /** The hook execution to display. */
@@ -69,7 +68,7 @@ export function HookRow({ hook }: HookRowProps) {
         expandable={hasOutput}
         icon={isRunning ? (
           <span aria-label="running" className="flex w-3 h-3 items-center justify-center shrink-0">
-            <span className="size-1.5 rounded-full bg-primary animate-pulse" />
+            <span className="size-1.5 animate-pulse rounded-full bg-primary" />
           </span>
         ) : isBlocked ? (
           <span aria-label="blocked" className="flex w-3 h-3 items-center justify-center shrink-0">
@@ -81,11 +80,11 @@ export function HookRow({ hook }: HookRowProps) {
           </span>
         )}
         badge={isRunning ? (
-          <span className="font-mono text-xs font-medium px-1.5 py-px rounded-sm bg-primary/15 text-primary shrink-0">
+          <span className="shrink-0 rounded-sm bg-primary/15 px-1.5 py-px font-mono text-xs font-medium text-primary">
             running
           </span>
         ) : isBlocked ? (
-          <span className="font-mono text-xs font-medium px-1.5 py-px rounded-sm bg-[var(--diff-remove)]/15 text-[var(--diff-remove)] shrink-0">
+          <span className="shrink-0 rounded-sm bg-[var(--diff-remove)]/15 px-1.5 py-px font-mono text-xs font-medium text-[var(--diff-remove)]">
             blocked
           </span>
         ) : undefined}
@@ -98,14 +97,14 @@ export function HookRow({ hook }: HookRowProps) {
 
         {/* Trigger label */}
         {hook.toolName && (
-          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground/50">
+          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground/65">
             on {hook.toolName}
           </span>
         )}
 
         {/* Duration or elapsed timer - hide for sub-5ms instant hooks */}
         {(isRunning || (hook.durationMs != null && hook.durationMs >= 5)) && (
-          <span className="font-mono text-xs tabular-nums text-muted-foreground/50 shrink-0">
+          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground/65">
             {isRunning ? `${elapsedSeconds}s` : formatDuration(hook.durationMs!)}
           </span>
         )}
@@ -113,31 +112,23 @@ export function HookRow({ hook }: HookRowProps) {
 
       {hasOutput && (
         <AnimatedCollapsible open={open}>
-          <ul className="min-w-0 max-w-full pl-6 mt-0.5 space-y-0.5 pb-1">
+          <pre className="mt-1 ml-6 max-h-64 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-muted/25 px-3 py-2 font-mono text-sm leading-5 [overflow-wrap:anywhere]">
             {fullLines.map((line, index) => (
-              <li key={`${index}-${line}`} className="flex min-w-0 max-w-full flex-col gap-0.5">
-                <div className={`${NARRATIVE_TOOL_ROW} text-sm`}>
-                  <Webhook className="w-[14px] h-[14px] text-muted-foreground/75 shrink-0" />
-                  <span className="text-foreground/65 font-medium shrink-0">
-                    Hook detail
-                  </span>
-                  <span
-                    className={
-                      isBlocked || (hasPassed && hook.exitCode !== 0)
-                        ? `${narrativeToolDetailClass("md")} text-[var(--diff-remove)]`
-                        : narrativeToolDetailClass("md")
-                    }
-                    title={line}
-                  >
-                    {line}
-                    {isRunning && index === fullLines.length - 1 && (
-                      <span aria-hidden="true" className="typing-cursor" />
-                    )}
-                  </span>
-                </div>
-              </li>
+              <span
+                key={`${index}-${line}`}
+                className={
+                  isBlocked || (hasPassed && hook.exitCode !== 0)
+                    ? "block text-sm text-[var(--diff-remove)]"
+                    : "block text-sm text-foreground/75"
+                }
+              >
+                {line}
+                {isRunning && index === fullLines.length - 1 && (
+                  <span aria-hidden="true" className="typing-cursor" />
+                )}
+              </span>
             ))}
-          </ul>
+          </pre>
         </AnimatedCollapsible>
       )}
     </div>
