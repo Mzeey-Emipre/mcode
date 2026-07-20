@@ -164,13 +164,15 @@ test.describe("Right panel terminal auto-start", () => {
     await rail.hover({ position: { x: 24, y: 16 } });
     await expect(rail).toHaveAttribute("data-expanded", "true");
 
+    await expect
+      .poll(() =>
+        railSurface.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
+      )
+      .toBe(160);
     const railBox = await rail.boundingBox();
-    const railSurfaceBox = await railSurface.boundingBox();
     const resizeHandleBox = await resizeHandle.boundingBox();
     expect(railBox).not.toBeNull();
-    expect(railSurfaceBox).not.toBeNull();
     expect(resizeHandleBox).not.toBeNull();
-    expect(Math.round(railSurfaceBox!.width)).toBe(160);
     await expect
       .poll(() => terminalSlot.evaluate((element) => element.getBoundingClientRect().width))
       .toBe(slotWidthBefore);
