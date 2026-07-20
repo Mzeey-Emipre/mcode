@@ -42,6 +42,8 @@ describe("ProviderCatalogService", () => {
     service: ProviderCatalogService;
   } {
     db = openMemoryDatabase();
+    db.prepare("INSERT INTO workspaces (id, name, path) VALUES (?, ?, ?)")
+      .run("workspace-1", "Workspace 1", "C:/repo");
     const repo = new ProviderCatalogSnapshotRepo(db);
     return { repo, service: new ProviderCatalogService(repo) };
   }
@@ -122,6 +124,32 @@ describe("ProviderCatalogService", () => {
       diagnostics: [expect.objectContaining({ code: "source-unavailable" })],
     });
     expect(repo.get(key)?.entries).toEqual(CACHED.entries);
+  });
+
+  it("drops a delayed refresh after its workspace is deleted", async () => {
+    const { repo, service } = createService();
+    const key = providerCatalogContextKey(REQUEST, "C:/repo");
+    let finishRefresh!: (snapshot: ProviderCatalogSnapshot) => void;
+    const refresh = new Promise<ProviderCatalogSnapshot>((resolve) => {
+      finishRefresh = resolve;
+    });
+    const persist = vi.spyOn(repo, "upsert");
+    const changes: ProviderCatalogChange[] = [];
+    service.onChanged((change) => changes.push(change));
+
+    service.request({
+      request: REQUEST,
+      context: CACHED.context,
+      cwd: "C:/repo",
+      refresh: () => refresh,
+    });
+    db?.prepare("DELETE FROM workspaces WHERE id = ?").run("workspace-1");
+    finishRefresh(CACHED);
+
+    await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce());
+    expect(persist.mock.results[0]?.value).toBe(false);
+    expect(repo.get(key)).toBeNull();
+    expect(changes).toEqual([]);
   });
 
   it("uses the workspace snapshot provisionally for a realized worktree context", () => {

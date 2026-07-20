@@ -25,8 +25,18 @@ describe("ProviderCatalogSnapshotRepo", () => {
 
   afterEach(() => db?.close());
 
+  function openCatalogDatabase(): Database.Database {
+    const database = openMemoryDatabase();
+    const insertWorkspace = database.prepare(
+      "INSERT INTO workspaces (id, name, path) VALUES (?, ?, ?)",
+    );
+    insertWorkspace.run("workspace-1", "Workspace 1", "C:/repo");
+    insertWorkspace.run("workspace-2", "Workspace 2", "C:/other");
+    return database;
+  }
+
   it("persists snapshots by provider and realized catalog context", () => {
-    db = openMemoryDatabase();
+    db = openCatalogDatabase();
     const firstProcess = new ProviderCatalogSnapshotRepo(db);
     firstProcess.upsert("codex:workspace:workspace-1:C:/repo", "workspace-1", "C:/repo", SNAPSHOT);
 
@@ -37,7 +47,7 @@ describe("ProviderCatalogSnapshotRepo", () => {
   });
 
   it("rejects malformed persisted payloads without affecting other contexts", () => {
-    db = openMemoryDatabase();
+    db = openCatalogDatabase();
     const repo = new ProviderCatalogSnapshotRepo(db);
     repo.upsert("valid", "workspace-1", "C:/repo", SNAPSHOT);
     db.prepare(`
@@ -51,7 +61,7 @@ describe("ProviderCatalogSnapshotRepo", () => {
   });
 
   it("does not expire an otherwise valid snapshot because of its age", () => {
-    db = openMemoryDatabase();
+    db = openCatalogDatabase();
     const repo = new ProviderCatalogSnapshotRepo(db);
     repo.upsert("old", "workspace-1", "C:/repo", SNAPSHOT);
     db.prepare(
@@ -59,5 +69,31 @@ describe("ProviderCatalogSnapshotRepo", () => {
     ).run("2000-01-01T00:00:00.000Z", "old");
 
     expect(repo.get("old")).toEqual(SNAPSHOT);
+  });
+
+  it("deletes workspace snapshots when their workspace is deleted", () => {
+    db = openCatalogDatabase();
+    const repo = new ProviderCatalogSnapshotRepo(db);
+    repo.upsert("workspace-snapshot", "workspace-1", "C:/repo", SNAPSHOT);
+
+    db.prepare("DELETE FROM workspaces WHERE id = ?").run("workspace-1");
+
+    expect(repo.get("workspace-snapshot")).toBeNull();
+  });
+
+  it("does not recreate a snapshot after its workspace is deleted", () => {
+    db = openCatalogDatabase();
+    const repo = new ProviderCatalogSnapshotRepo(db);
+    db.prepare("DELETE FROM workspaces WHERE id = ?").run("workspace-1");
+
+    const persisted = repo.upsert(
+      "deleted-workspace",
+      "workspace-1",
+      "C:/repo",
+      SNAPSHOT,
+    );
+
+    expect(persisted).toBe(false);
+    expect(repo.get("deleted-workspace")).toBeNull();
   });
 });

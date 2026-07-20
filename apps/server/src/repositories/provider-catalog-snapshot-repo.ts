@@ -35,19 +35,20 @@ export class ProviderCatalogSnapshotRepo {
     }
   }
 
-  /** Inserts or replaces a validated snapshot without applying an age limit. */
+  /** Inserts or replaces a validated snapshot when its workspace still exists. */
   upsert(
     contextKey: string,
     workspaceId: string | undefined,
     cwd: string | undefined,
     snapshot: ProviderCatalogSnapshot,
-  ): void {
+  ): boolean {
     const validated = ProviderCatalogSnapshotSchema().parse(snapshot);
-    this.db.transaction(() => {
-      this.db.prepare(`
+    return this.db.transaction(() => {
+      const result = this.db.prepare(`
         INSERT INTO provider_catalog_snapshots
           (context_key, provider_id, workspace_id, cwd, snapshot_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        SELECT ?, ?, ?, ?, ?, datetime('now')
+        WHERE ? IS NULL OR EXISTS (SELECT 1 FROM workspaces WHERE id = ?)
         ON CONFLICT(context_key) DO UPDATE SET
           provider_id = excluded.provider_id,
           workspace_id = excluded.workspace_id,
@@ -60,7 +61,10 @@ export class ProviderCatalogSnapshotRepo {
         workspaceId ?? null,
         cwd ?? null,
         JSON.stringify(validated),
+        workspaceId ?? null,
+        workspaceId ?? null,
       );
+      if (result.changes === 0) return false;
       this.db.prepare(`
         DELETE FROM provider_catalog_snapshots
         WHERE context_key IN (
@@ -71,6 +75,7 @@ export class ProviderCatalogSnapshotRepo {
           LIMIT -1 OFFSET ?
         )
       `).run(validated.providerId, MAX_PERSISTED_CONTEXTS_PER_PROVIDER);
+      return true;
     })();
   }
 }

@@ -328,7 +328,8 @@ export const providerCatalogSnapshots = sqliteTable(
   {
     contextKey: text("context_key").primaryKey().notNull(),
     providerId: text("provider_id").notNull(),
-    workspaceId: text("workspace_id"),
+    workspaceId: text("workspace_id")
+      .references(() => workspaces.id, { onDelete: "cascade" }),
     cwd: text("cwd"),
     snapshotJson: text("snapshot_json").notNull(),
     updatedAt: text("updated_at").notNull().default(timestampDefault),

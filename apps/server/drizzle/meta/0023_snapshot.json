@@ -721,7 +721,21 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "provider_catalog_snapshots_workspace_id_workspaces_id_fk": {
+          "name": "provider_catalog_snapshots_workspace_id_workspaces_id_fk",
+          "tableFrom": "provider_catalog_snapshots",
+          "tableTo": "workspaces",
+          "columnsFrom": [
+            "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

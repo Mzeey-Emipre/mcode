@@ -4,7 +4,8 @@ CREATE TABLE `provider_catalog_snapshots` (
 	`workspace_id` text,
 	`cwd` text,
 	`snapshot_json` text NOT NULL,
-	`updated_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL
+	`updated_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL,
+	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `idx_provider_catalog_snapshots_workspace` ON `provider_catalog_snapshots` (`workspace_id`);--> statement-breakpoint

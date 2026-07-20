@@ -346,14 +346,15 @@ export class ProviderCatalogService {
             ...visible,
             diagnostics: refreshed.diagnostics,
             freshness: refreshed.freshness,
-          };
+      };
       if (!persisted) {
-        this.snapshotRepo.upsert(
+        const workspaceExists = this.snapshotRepo.upsert(
           persistenceKey,
           input.request.workspaceId,
           input.cwd,
           next,
         );
+        if (!workspaceExists) return;
         persisted = true;
       }
       const change = catalogChange(input.request, visible, next);

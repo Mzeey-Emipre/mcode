@@ -104,6 +104,11 @@ describe("routeMessage provider.catalog", () => {
     );
     const refresh = vi.spyOn(codexCatalogService, "refresh");
     const db = openMemoryDatabase();
+    const insertWorkspace = db.prepare(
+      "INSERT INTO workspaces (id, name, path) VALUES (?, ?, ?)",
+    );
+    insertWorkspace.run("workspace-1", "Workspace 1", "C:/repo");
+    insertWorkspace.run("workspace-2", "Workspace 2", "C:/other");
     const snapshotRepo = new ProviderCatalogSnapshotRepo(db);
     const providerCatalogService = new ProviderCatalogService(snapshotRepo);
     const list = vi.fn().mockImplementation((_cwd, _providerId, discoveredSkills = []) => [
