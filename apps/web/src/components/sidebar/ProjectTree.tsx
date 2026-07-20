@@ -1670,7 +1670,7 @@ const ProjectNode = memo(function ProjectNode({
             event.stopPropagation();
             handleToggle();
           }}
-          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-transparent hover:text-muted-foreground dark:hover:bg-transparent group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
           <ChevronRight
             size={14}
@@ -1747,9 +1747,9 @@ const ProjectNode = memo(function ProjectNode({
           title={`New thread in ${workspace.name}`}
           onKeyDown={(event) => event.stopPropagation()}
           onClick={handleCreateThreadClick}
-          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+          className="size-6 opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
         >
-          <SquarePen size={12} />
+          <SquarePen size={11} className="size-[1.1rem]" />
         </Button>
       </div>
 
