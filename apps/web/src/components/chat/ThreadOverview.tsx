@@ -1242,12 +1242,12 @@ function ThreadOverviewPrActionRow({
           data-testid="workspace-menu-commit"
           className={cn(
             OVERVIEW_ROW_CLASS,
-            "cursor-pointer justify-start text-xs text-primary hover:bg-primary/10 hover:text-primary",
+            "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground",
           )}
           onClick={onCommitOrPush}
           title="Ask the agent to commit and push the changes"
         >
-          <GitPullRequest size={14} className="shrink-0 text-primary/80" />
+          <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
           <span className="font-medium">Commit or push</span>
         </Button>
       </div>
@@ -1263,13 +1263,13 @@ function ThreadOverviewPrActionRow({
         data-testid="workspace-menu-create-pr"
         className={cn(
           OVERVIEW_ROW_CLASS,
-          "cursor-pointer justify-start text-xs text-primary hover:bg-primary/10 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50",
+          "cursor-pointer justify-start text-xs text-foreground/75 hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
         )}
         onClick={onCreatePr}
         disabled={!hasCommitsAhead}
         title={hasCommitsAhead ? "Create pull request" : "Waiting for commits ahead of base branch"}
       >
-        <GitPullRequest size={14} className="shrink-0 text-primary/80" />
+        <GitPullRequest size={14} className="shrink-0 text-muted-foreground" />
         <span className="font-medium">Create PR</span>
       </Button>
     </div>
