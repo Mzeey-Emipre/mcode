@@ -21,6 +21,7 @@ export interface ProviderCatalogLoadInput {
 }
 
 const MAX_TRACKED_CATALOG_CONTEXTS = 64;
+const MAX_INFLIGHT_CATALOG_REFRESHES = 64;
 
 interface CatalogRefreshSubscriber {
   readonly visible: ProviderCatalogSnapshot;
@@ -210,6 +211,10 @@ export class ProviderCatalogService {
       const oldest = this.trackedContexts.keys().next().value as string | undefined;
       if (oldest === undefined) break;
       this.trackedContexts.delete(oldest);
+      for (const job of this.inflight.values()) {
+        job.subscribers.delete(oldest);
+        job.pendingSubscribers.delete(oldest);
+      }
     }
   }
 
@@ -229,6 +234,7 @@ export class ProviderCatalogService {
       subscribers.set(requestKey, subscriber);
       return;
     }
+    if (this.inflight.size >= MAX_INFLIGHT_CATALOG_REFRESHES) return;
     const job: CatalogRefreshJob = {
       refresh: input.refresh,
       subscribers: new Map([[requestKey, subscriber]]),

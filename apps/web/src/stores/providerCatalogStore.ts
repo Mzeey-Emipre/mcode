@@ -20,6 +20,7 @@ export interface ProviderCatalogCacheEntry {
   readonly loadEpoch: number;
   readonly lastFetchedAt: number;
   readonly pendingChanges: readonly ProviderCatalogChange[];
+  readonly pendingChangesOverflowed: boolean;
 }
 
 /** Stable empty entry used by selectors before a catalog context has loaded. */
@@ -32,6 +33,7 @@ export const EMPTY_PROVIDER_CATALOG_CACHE_ENTRY: ProviderCatalogCacheEntry = Obj
   loadEpoch: 0,
   lastFetchedAt: 0,
   pendingChanges: [],
+  pendingChangesOverflowed: false,
 });
 
 /** Builds a collision-safe cache key for one provider catalog request. */
@@ -58,6 +60,7 @@ interface ProviderCatalogState {
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1_000;
+const MAX_PENDING_CATALOG_CHANGES = 64;
 
 function replaceEntry(
   entries: Readonly<Record<string, ProviderCatalogCacheEntry>>,
@@ -177,23 +180,31 @@ export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) =
     void promise.then(
       (snapshot) => {
         const current = get();
-        if (current.entries[key]?.loadEpoch !== epoch) return;
-        const reconciledSnapshot = current.entries[key].pendingChanges.reduce(
+        const currentEntry = current.entries[key];
+        if (currentEntry?.loadEpoch !== epoch) return;
+        const reconciledSnapshot = currentEntry.pendingChanges.reduce(
           applyCatalogChange,
           snapshot,
         );
+        const recoverOverflow = currentEntry.pendingChangesOverflowed;
         set({
           entries: replaceEntry(current.entries, key, {
             snapshot: reconciledSnapshot,
             isLoading: false,
-            needsRefresh: false,
+            needsRefresh: recoverOverflow,
             error: null,
             inflight: null,
             loadEpoch: epoch,
             lastFetchedAt: Date.now(),
             pendingChanges: [],
+            pendingChangesOverflowed: false,
           }),
         });
+        if (recoverOverflow) {
+          queueMicrotask(() => {
+            void get().load(request, true).catch(() => undefined);
+          });
+        }
       },
       (error: Error) => {
         console.warn("[providerCatalogStore] load failed after retry", error);
@@ -245,12 +256,19 @@ export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) =
       return;
     }
     const queueChange = entry.inflight !== null || entry.pendingChanges.length > 0;
+    const pendingChangesAtCapacity = queueChange
+      && entry.pendingChanges.length >= MAX_PENDING_CATALOG_CHANGES;
 
     set({
       entries: replaceEntry(current.entries, key, {
         ...entry,
         snapshot: entry.snapshot ? applyCatalogChange(entry.snapshot, change) : null,
-        pendingChanges: queueChange ? [...entry.pendingChanges, change] : [],
+        pendingChanges: queueChange && !pendingChangesAtCapacity
+          ? [...entry.pendingChanges, change]
+          : entry.pendingChanges,
+        pendingChangesOverflowed: queueChange
+          ? entry.pendingChangesOverflowed || pendingChangesAtCapacity
+          : false,
         isLoading: entry.inflight !== null,
         needsRefresh: false,
         error: null,

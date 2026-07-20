@@ -226,4 +226,54 @@ describe("ProviderCatalogService", () => {
       expect.objectContaining({ description: "Review after notification" }),
     ]);
   });
+
+  it("bounds logical subscribers attached to one physical refresh", async () => {
+    const { service } = createService();
+    let finishRefresh!: (snapshot: ProviderCatalogSnapshot) => void;
+    const refresh = vi.fn(() => new Promise<ProviderCatalogSnapshot>((resolve) => {
+      finishRefresh = resolve;
+    }));
+    const changes: ProviderCatalogChange[] = [];
+    service.onChanged((change) => changes.push(change));
+
+    for (let index = 0; index < 65; index += 1) {
+      const request = { ...REQUEST, threadId: `thread-${index}` };
+      service.request({
+        request,
+        context: {
+          scope: "workspace",
+          workspaceId: "workspace-1",
+          threadId: request.threadId,
+        },
+        cwd: "C:/repo",
+        refresh,
+      });
+    }
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    finishRefresh(CACHED);
+
+    await vi.waitFor(() => expect(changes).toHaveLength(64));
+    expect(changes.some((change) => change.request.threadId === "thread-0")).toBe(false);
+    expect(changes.some((change) => change.request.threadId === "thread-64")).toBe(true);
+  });
+
+  it("bounds concurrent physical catalog refreshes", async () => {
+    const { service } = createService();
+    const refresh = vi.fn(() => new Promise<ProviderCatalogSnapshot>(() => undefined));
+
+    for (let index = 0; index < 65; index += 1) {
+      service.request({
+        request: { ...REQUEST, threadId: `thread-${index}` },
+        context: {
+          scope: "workspace",
+          workspaceId: "workspace-1",
+          threadId: `thread-${index}`,
+        },
+        cwd: `C:/repo-${index}`,
+        refresh,
+      });
+    }
+
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(64));
+  });
 });

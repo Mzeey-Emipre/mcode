@@ -214,4 +214,35 @@ describe("providerCatalogStore", () => {
     expect(snapshot?.entries).toEqual([updated]);
     expect(snapshot?.freshness.status).toBe("fresh");
   });
+
+  it("reloads the persisted snapshot when queued changes exceed the replay bound", async () => {
+    let resolveInitial!: (snapshot: ProviderCatalogSnapshot) => void;
+    const recoveredSnapshot = {
+      ...SNAPSHOT,
+      entries: [{ ...SNAPSHOT.entries[0], description: "Latest confirmed description" }],
+    };
+    getProviderCatalogMock
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
+      .mockResolvedValueOnce(recoveredSnapshot);
+    const pending = useProviderCatalogStore.getState().load(REQUEST);
+
+    for (let index = 0; index < 65; index += 1) {
+      useProviderCatalogStore.getState().reconcile({
+        request: REQUEST,
+        additions: [],
+        updates: [{ ...SNAPSHOT.entries[0], description: `Queued description ${index}` }],
+        removals: [],
+        selectableAgents: { additions: [], updates: [], removals: [] },
+      });
+    }
+    resolveInitial(STALE_SNAPSHOT);
+    await pending;
+
+    await vi.waitFor(() => {
+      const snapshot = useProviderCatalogStore.getState()
+        .entries[providerCatalogCacheKey(REQUEST)]?.snapshot;
+      expect(snapshot).toEqual(recoveredSnapshot);
+    });
+    expect(getProviderCatalogMock).toHaveBeenCalledTimes(2);
+  });
 });
