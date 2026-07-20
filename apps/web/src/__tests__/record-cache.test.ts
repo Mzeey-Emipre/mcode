@@ -3,14 +3,18 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   getCachedRecord,
   cacheRecord,
+  cachePrefetchedHistoryPage,
+  takePrefetchedHistoryPage,
   evictCachedRecord,
   clearRecordCache,
   resizeRecordCache,
   RECORD_CACHE_SIZE,
+  RECORD_MESSAGE_CACHE_SIZE,
 } from "@/lib/thread-hydrator/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
   rememberScrollTop,
+  recallScrollPosition,
   recallScrollTop,
   clearScrollMemory,
 } from "@/components/chat/scrollPositionMemory";
@@ -93,6 +97,114 @@ describe("recordCache", () => {
     cacheRecord("t1", makeRecord("t1"));
     clearRecordCache();
     expect(getCachedRecord("t1")).toBeUndefined();
+  });
+
+  it("caps cached messages and prunes message-keyed metadata", () => {
+    const messages = Array.from({ length: RECORD_MESSAGE_CACHE_SIZE + 20 }, (_, index) => ({
+      ...makeRecord("bounded").messages[0],
+      id: `message-${index + 1}`,
+      sequence: index + 1,
+    }));
+    const metadata = Object.fromEntries(messages.map((message) => [message.id, 1]));
+    const files = Object.fromEntries(messages.map((message) => [message.id, [`${message.id}.ts`]]));
+    const responses = Object.fromEntries(messages.map((message) => [message.id, `response-${message.id}`]));
+
+    cacheRecord("bounded", {
+      ...createEmptyThreadRecord(),
+      messages,
+      oldestLoadedSequence: 1,
+      hasMoreMessages: false,
+      persistedToolCallCounts: metadata,
+      persistedFilesChanged: files,
+      serverMessageIds: responses,
+      assistantResponseKeys: responses,
+      narrativeByMessage: Object.fromEntries(messages.map((message) => [message.id, {
+        tools: [], thoughts: [], hooks: [],
+      }])),
+      answeredPlanMessageIds: new Set(messages.map((message) => message.id)),
+      latestTurnWithChanges: "message-1",
+    });
+
+    const cached = getCachedRecord("bounded");
+    expect(cached?.messages).toHaveLength(RECORD_MESSAGE_CACHE_SIZE);
+    expect(cached?.messages[0].id).toBe("message-21");
+    expect(cached?.oldestLoadedSequence).toBe(21);
+    expect(cached?.hasMoreMessages).toBe(true);
+    expect(cached?.persistedToolCallCounts["message-1"]).toBeUndefined();
+    expect(cached?.persistedToolCallCounts["message-21"]).toBe(1);
+    expect(cached?.persistedFilesChanged["message-1"]).toBeUndefined();
+    expect(cached?.serverMessageIds["message-1"]).toBeUndefined();
+    expect(cached?.assistantResponseKeys["message-1"]).toBeUndefined();
+    expect(cached?.narrativeByMessage["message-1"]).toBeUndefined();
+    expect(cached?.answeredPlanMessageIds.has("message-1")).toBe(false);
+    expect(cached?.latestTurnWithChanges).toBeNull();
+  });
+
+  it("forgets a remembered anchor when the message cap evicts it", () => {
+    const messages = Array.from({ length: RECORD_MESSAGE_CACHE_SIZE + 1 }, (_, index) => ({
+      ...makeRecord("anchor").messages[0],
+      id: `anchor-${index + 1}`,
+      sequence: index + 1,
+    }));
+    rememberScrollTop("anchor", 200, false, { messageId: "anchor-1", top: 30 });
+
+    cacheRecord("anchor", {
+      ...createEmptyThreadRecord(),
+      messages,
+      oldestLoadedSequence: 1,
+    });
+
+    expect(recallScrollPosition("anchor")).toBeUndefined();
+  });
+
+  it("keeps a remembered anchor that remains inside the message cap", () => {
+    const messages = Array.from({ length: RECORD_MESSAGE_CACHE_SIZE + 1 }, (_, index) => ({
+      ...makeRecord("anchor").messages[0],
+      id: `anchor-${index + 1}`,
+      sequence: index + 1,
+    }));
+    rememberScrollTop("anchor", 200, false, { messageId: "anchor-2", top: 30 });
+
+    cacheRecord("anchor", {
+      ...createEmptyThreadRecord(),
+      messages,
+      oldestLoadedSequence: 1,
+    });
+
+    expect(recallScrollPosition("anchor")?.anchorMessageId).toBe("anchor-2");
+  });
+
+  it("bounds a record and its prefetched history to one message budget", () => {
+    const cachedMessages = Array.from({ length: 40 }, (_, index) => ({
+      ...makeRecord("warm").messages[0],
+      id: `cached-${index + 61}`,
+      sequence: index + 61,
+    }));
+    const historyMessages = Array.from({ length: 100 }, (_, index) => ({
+      ...makeRecord("warm").messages[0],
+      id: `history-${index + 1}`,
+      sequence: index + 1,
+    }));
+    cacheRecord("warm", {
+      ...createEmptyThreadRecord(),
+      messages: cachedMessages,
+      oldestLoadedSequence: 61,
+    });
+    cachePrefetchedHistoryPage("warm", 61, {
+      messages: historyMessages,
+      hasMore: false,
+      answeredPlanMessageIds: historyMessages.map((message) => message.id),
+      narrativeByMessage: Object.fromEntries(historyMessages.map((message) => [message.id, {
+        tools: [], thoughts: [], hooks: [],
+      }])),
+    });
+
+    const prefetched = takePrefetchedHistoryPage("warm", 61);
+    expect(prefetched?.messages).toHaveLength(RECORD_MESSAGE_CACHE_SIZE - cachedMessages.length);
+    expect(prefetched?.messages[0].id).toBe("history-41");
+    expect(prefetched?.hasMore).toBe(true);
+    expect(prefetched?.answeredPlanMessageIds?.[0]).toBe("history-41");
+    expect(prefetched?.narrativeByMessage["history-1"]).toBeUndefined();
   });
 
   it("cleans up scroll memory when evicting via LRU capacity", () => {

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useShallow } from "zustand/shallow";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useActiveThreadRecord } from "@/stores/thread-selectors";
@@ -26,7 +26,11 @@ import {
 } from "./virtual-items";
 import type { ChatVirtualItem } from "./virtual-items";
 import type { ToolCall } from "@/transport/types";
-import { rememberScrollTop, recallScrollTop, forgetScrollTop } from "./scrollPositionMemory";
+import {
+  rememberScrollTop,
+  recallScrollPosition,
+  type ThreadScrollPosition,
+} from "./scrollPositionMemory";
 import { NarrativeFlow } from "./narrative";
 import { PersistedNarrative } from "./narrative/PersistedNarrative";
 import { PersistedTurnFooter } from "./narrative/PersistedTurnFooter";
@@ -71,6 +75,16 @@ const MESSAGE_LIST_TOP_PADDING_PX = 16;
  */
 const TAIL_SETTLE_STABLE_FRAMES = 4;
 const TAIL_SETTLE_MAX_FRAMES = 60;
+
+/** Keep the prior viewport mounted while prepended rows receive their new indexes. */
+export function preservePrependedVirtualRange(range: Range, prependedCount: number): number[] {
+  const currentIndexes = defaultRangeExtractor(range);
+  if (prependedCount <= 0) return currentIndexes;
+  const previousViewportIndexes = currentIndexes
+    .map((index) => index + prependedCount)
+    .filter((index) => index < range.count);
+  return [...new Set([...currentIndexes, ...previousViewportIndexes])].sort((left, right) => left - right);
+}
 
 /** Renders a single virtual item based on its type discriminant. */
 const VirtualItemRenderer = memo(function VirtualItemRenderer({
@@ -229,6 +243,18 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const prevScrollHeightRef = useRef(0);
   /** Tracks the first message ID to detect real prepends vs appends. */
   const firstMessageIdRef = useRef<string | null>(null);
+  /** Number of inserted rows whose previous viewport must remain mounted until layout compensation. */
+  const pendingPrependCountRef = useRef(0);
+  /** Previous virtual row count used to translate retained keys after a prepend. */
+  const previousVirtualItemCountRef = useRef(0);
+  /** Previous first virtual key distinguishes a prepend from an append. */
+  const firstVirtualItemKeyRef = useRef<string | null>(null);
+  /** Visible message and viewport offset held steady while older history settles. */
+  const pendingHistoryAnchorRef = useRef<{ messageId: string; top: number } | null>(null);
+  /** First history reveal keeps the latest messages at the tail when the prior window could not scroll. */
+  const pinTailAfterHistoryPrependRef = useRef(false);
+  /** Invalidates stale history-anchor settle loops after navigation or another prepend. */
+  const historyAnchorSettleGenerationRef = useRef(0);
   /** True until initial messages are positioned at the bottom after a thread switch. */
   const isInitialLoadRef = useRef(true);
   /**
@@ -254,7 +280,9 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   /** Tracks the previous activeThreadId so we can save its scrollTop before switching. */
   const prevActiveThreadIdRef = useRef<string | null>(null);
   /** Holds the scrollTop value to restore on the next layout effect. */
-  const pendingScrollRestoreRef = useRef<number | null>(null);
+  const pendingScrollRestoreRef = useRef<ThreadScrollPosition | null>(null);
+  /** Invalidates stale reading-position settle loops after another navigation. */
+  const scrollRestoreGenerationRef = useRef(0);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   /** True when new content arrived while the user was scrolled up. */
   const [hasNewContent, setHasNewContent] = useState(false);
@@ -318,6 +346,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const isLoadingMore = useActiveThreadRecord((r) => r.isLoadingMore);
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
   const currentThreadId = activeThreadId;
+  const renderedThreadId = messages[0]?.thread_id ?? null;
   const permissions = useActiveThreadRecord((r) => r.permissions);
   const hooks = useActiveThreadRecord((r) => r.hooks);
   const thoughtSegments = useActiveThreadRecord((r) => r.thoughtSegments);
@@ -411,6 +440,20 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     }
 
     olderHistoryRequestedRef.current = false;
+    pinTailAfterHistoryPrependRef.current = el.scrollHeight <= el.clientHeight;
+    if (el.scrollHeight > el.clientHeight) {
+      const viewportTop = el.getBoundingClientRect().top;
+      const anchor = [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
+        .find((node) => node.getBoundingClientRect().bottom > viewportTop + 2);
+      pendingHistoryAnchorRef.current = anchor
+        ? {
+            messageId: anchor.getAttribute("data-message-id") ?? "",
+            top: anchor.getBoundingClientRect().top,
+          }
+        : null;
+    } else {
+      pendingHistoryAnchorRef.current = null;
+    }
     void loadOlderMessages(activeThreadId);
   }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages]);
 
@@ -479,6 +522,26 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     }
     isScrolledUpRef.current = scrolledUp;
     setShowScrollBtn(scrolledUp);
+    if (
+      activeThreadId
+      && renderedThreadId === activeThreadId
+      && !suppressPassiveAutoBottomScrollRef.current
+    ) {
+      const viewportTop = el.getBoundingClientRect().top;
+      const anchor = [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
+        .find((node) => node.getBoundingClientRect().bottom > viewportTop + 2);
+      rememberScrollTop(
+        activeThreadId,
+        el.scrollTop,
+        !awayFromTail,
+        anchor
+          ? {
+              messageId: anchor.getAttribute("data-message-id") ?? "",
+              top: anchor.getBoundingClientRect().top,
+            }
+          : undefined,
+      );
+    }
     if (!awayFromTail) {
       streamingFollowPauseUntilRef.current = 0;
     }
@@ -490,7 +553,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     loadOlderHistoryWhenRequested();
 
     prevScrollTopRef.current = el.scrollTop;
-  }, [loadOlderHistoryWhenRequested, syncStickyUserMessageVisibility]);
+  }, [activeThreadId, loadOlderHistoryWhenRequested, renderedThreadId, syncStickyUserMessageVisibility]);
 
   useEffect(() => {
     for (const message of messages) {
@@ -639,6 +702,19 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
+  const previousVirtualItemCount = previousVirtualItemCountRef.current;
+  pendingPrependCountRef.current =
+    previousVirtualItemCount > 0
+    && items.length > previousVirtualItemCount
+    && firstVirtualItemKeyRef.current !== null
+    && items[0]?.key !== firstVirtualItemKeyRef.current
+      ? items.length - previousVirtualItemCount
+      : 0;
+  const rangeExtractor = useCallback(
+    (range: Range) => preservePrependedVirtualRange(range, pendingPrependCountRef.current),
+    [],
+  );
+
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => containerRef.current,
@@ -648,6 +724,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     },
     getItemKey: (index) => items[index]?.key ?? String(index),
     overscan: OVERSCAN,
+    rangeExtractor,
     // Opt out of react-virtual's flushSync(rerender) on sync measurement. It
     // fires inside the library's commit-phase layout effect and trips React's
     // "flushSync called from inside a lifecycle method" warning. Scroll-tail
@@ -682,6 +759,11 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     }
     return item.start < scrollOffset;
   };
+
+  useLayoutEffect(() => {
+    previousVirtualItemCountRef.current = items.length;
+    firstVirtualItemKeyRef.current = items[0]?.key ?? null;
+  }, [items]);
 
   /** Pins the visible transcript to the current measured tail before paint. */
   const snapToBottom = useCallback(() => {
@@ -912,10 +994,6 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   useLayoutEffect(() => {
     const prevId = prevActiveThreadIdRef.current;
     const isThreadSwitch = !!prevId && prevId !== activeThreadId;
-    if (isThreadSwitch && prevId) {
-      const el = containerRef.current;
-      if (el) rememberScrollTop(prevId, el.scrollTop);
-    }
     prevActiveThreadIdRef.current = activeThreadId ?? null;
 
     if (!activeThreadId) return;
@@ -932,6 +1010,10 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       turnExpandRef.current.clear();
       scrollToTailIntentRef.current = false;
       olderHistoryRequestedRef.current = false;
+      pendingHistoryAnchorRef.current = null;
+      pinTailAfterHistoryPrependRef.current = false;
+      historyAnchorSettleGenerationRef.current += 1;
+      scrollRestoreGenerationRef.current += 1;
       prevMessageCountRef.current = 0;
       firstMessageIdRef.current = null;
       prevScrollHeightRef.current = 0;
@@ -963,11 +1045,13 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     // effect does not run a visible smooth scroll from a stale offset. This block
     // still runs when `loading` flips true→false on the same thread; the
     // `isThreadSwitch` guard on the bottom branch avoids clobbering initial load.
-    const rememberedScrollTop = recallScrollTop(activeThreadId);
-    if (rememberedScrollTop != null) {
+    const rememberedPosition = isThreadSwitch || prevId === null
+      ? recallScrollPosition(activeThreadId)
+      : undefined;
+    if (rememberedPosition) {
       isInitialLoadRef.current = false;
       setIsPositioned(true);
-      pendingScrollRestoreRef.current = rememberedScrollTop;
+      pendingScrollRestoreRef.current = rememberedPosition;
     } else if (isThreadSwitch) {
       // Cache hit on switch with no saved offset: avoid leaving stale scroll and
       // throttled smooth scroll from the discrete-messages effect.
@@ -986,7 +1070,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   // Stabilize scroll position when older messages are prepended.
   // Detects real prepends by comparing the first message ID before and after
   // the render, avoiding false positives from appends while near the top.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = containerRef.current;
     const prevCount = prevMessageCountRef.current;
     const prevFirstId = firstMessageIdRef.current;
@@ -994,6 +1078,11 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     firstMessageIdRef.current = messages.length > 0 ? messages[0].id : null;
 
     if (!el || messages.length <= prevCount || prevCount === 0) {
+      pendingPrependCountRef.current = 0;
+      if (!isLoadingMore) {
+        pendingHistoryAnchorRef.current = null;
+        pinTailAfterHistoryPrependRef.current = false;
+      }
       prevScrollHeightRef.current = el?.scrollHeight ?? 0;
       return;
     }
@@ -1001,19 +1090,68 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     // A prepend occurred if the first message ID changed (new items at the front)
     const wasPrepend = prevFirstId !== null && messages[0].id !== prevFirstId;
     if (wasPrepend) {
-      // After React renders the new items, restore scroll position
-      requestAnimationFrame(() => {
-        const newScrollHeight = el.scrollHeight;
+      const newScrollHeight = el.scrollHeight;
+      const anchorSnapshot = pendingHistoryAnchorRef.current;
+      const findAnchor = () => anchorSnapshot
+        ? [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
+            .find((node) => node.getAttribute("data-message-id") === anchorSnapshot.messageId)
+        : undefined;
+      const correctAnchor = () => {
+        const anchor = findAnchor();
+        if (!anchor || !anchorSnapshot) return 0;
+        const delta = anchor.getBoundingClientRect().top - anchorSnapshot.top;
+        if (Math.abs(delta) > 0.5) {
+          el.scrollTop += delta;
+        }
+        return Math.abs(delta);
+      };
+
+      if (pinTailAfterHistoryPrependRef.current) {
+        const generation = ++historyAnchorSettleGenerationRef.current;
+        let lastHeight = -1;
+        let stableFrames = 0;
+        const settleTail = () => {
+          if (historyAnchorSettleGenerationRef.current !== generation) return;
+          el.scrollTop = el.scrollHeight;
+          stableFrames = el.scrollHeight === lastHeight ? stableFrames + 1 : 0;
+          lastHeight = el.scrollHeight;
+          if (stableFrames >= 3) return;
+          requestAnimationFrame(settleTail);
+        };
+        settleTail();
+        pinTailAfterHistoryPrependRef.current = false;
+        pendingHistoryAnchorRef.current = null;
+      } else if (anchorSnapshot && findAnchor()) {
+        correctAnchor();
+        const generation = ++historyAnchorSettleGenerationRef.current;
+        let stableFrames = 0;
+        let attempts = 0;
+        const settleAnchor = () => {
+          if (historyAnchorSettleGenerationRef.current !== generation) return;
+          attempts += 1;
+          stableFrames = correctAnchor() <= 0.5 ? stableFrames + 1 : 0;
+          if (stableFrames >= 3 || attempts >= 12) {
+            pendingHistoryAnchorRef.current = null;
+            return;
+          }
+          requestAnimationFrame(settleAnchor);
+        };
+        requestAnimationFrame(settleAnchor);
+      } else {
         const addedHeight = newScrollHeight - prevScrollHeightRef.current;
         if (addedHeight > 0) {
           el.scrollTop += addedHeight;
         }
-        prevScrollHeightRef.current = newScrollHeight;
-      });
+        pendingHistoryAnchorRef.current = null;
+      }
+      prevScrollHeightRef.current = newScrollHeight;
     } else {
+      pendingHistoryAnchorRef.current = null;
+      pinTailAfterHistoryPrependRef.current = false;
       prevScrollHeightRef.current = el.scrollHeight;
     }
-  }, [messages]);
+    pendingPrependCountRef.current = 0;
+  }, [isLoadingMore, messages]);
 
   // Empty thread: reveal without a tail jump. Non-empty initial tail positioning
   // runs in the active-thread useLayoutEffect so cache-miss completion (same
@@ -1045,42 +1183,73 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     // to be briefly visible. When items load, items.length will change and trigger
     // another effect pass where loading is false.
     if (loading) return;
+    if (renderedThreadId && activeThreadId && renderedThreadId !== activeThreadId) return;
     beginSuppressPassiveAutoBottomScroll();
     const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
     const withinTail =
-      target <= maxScroll && maxScroll - target <= AUTO_SCROLL_THRESHOLD;
-    const snapToTail = withinTail || target > maxScroll;
+      target.scrollTop <= maxScroll && maxScroll - target.scrollTop <= AUTO_SCROLL_THRESHOLD;
+    const hasHistoryAnchor =
+      !target.atTail
+      && !!target.anchorMessageId
+      && target.anchorTop != null;
+    const snapToTail = target.atTail || (!hasHistoryAnchor && (withinTail || target.scrollTop > maxScroll));
+    pendingScrollRestoreRef.current = null;
+    scrollToTailIntentRef.current = false;
+
     if (snapToTail) {
       pinListTailRef.current = true;
       el.scrollTop = el.scrollHeight;
       pinTailBaselineMaxScrollRef.current = Math.max(0, el.scrollHeight - el.clientHeight);
-    } else {
-      pinListTailRef.current = false;
-      el.scrollTop = target;
-    }
-    pendingScrollRestoreRef.current = null;
-    scrollToTailIntentRef.current = false;
-    // Recall is for one-shot restore when entering a thread. The layout effect
-    // also depends on items.length (initial hydrate); without forgetting, every
-    // new message re-queues the same offset and yanks the viewport off the tail.
-    if (activeThreadId) forgetScrollTop(activeThreadId);
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const scrolledUp = distanceFromBottom > USER_AWAY_FROM_BOTTOM_PX;
-    isScrolledUpRef.current = scrolledUp;
-    setShowScrollBtn(scrolledUp);
-    if (!scrolledUp) {
+      isScrolledUpRef.current = false;
+      setShowScrollBtn(false);
       streamingFollowPauseUntilRef.current = 0;
       setHasNewContent(false);
+      requestAnimationFrame(() => {
+        const el2 = containerRef.current;
+        if (el2) {
+          el2.scrollTop = el2.scrollHeight;
+          pinTailBaselineMaxScrollRef.current = Math.max(0, el2.scrollHeight - el2.clientHeight);
+        }
+        scheduleEndSuppressPassiveAutoBottomScroll();
+      });
+      return;
     }
-    requestAnimationFrame(() => {
-      const el2 = containerRef.current;
-      if (el2 && snapToTail) {
-        el2.scrollTop = el2.scrollHeight;
-        pinTailBaselineMaxScrollRef.current = Math.max(0, el2.scrollHeight - el2.clientHeight);
-      }
+
+    pinListTailRef.current = false;
+    el.scrollTop = target.scrollTop;
+    isScrolledUpRef.current = true;
+    setShowScrollBtn(true);
+    if (!hasHistoryAnchor) {
       scheduleEndSuppressPassiveAutoBottomScroll();
-    });
-  }, [activeThreadId, items.length, loading, beginSuppressPassiveAutoBottomScroll, scheduleEndSuppressPassiveAutoBottomScroll]);
+      return;
+    }
+    const generation = ++scrollRestoreGenerationRef.current;
+    let stableFrames = 0;
+    let attempts = 0;
+    const settleReadingAnchor = () => {
+      if (scrollRestoreGenerationRef.current !== generation) return;
+      attempts += 1;
+      const anchor = hasHistoryAnchor
+        ? [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
+            .find((node) => node.getAttribute("data-message-id") === target.anchorMessageId)
+        : undefined;
+      if (anchor && target.anchorTop != null) {
+        const delta = anchor.getBoundingClientRect().top - target.anchorTop;
+        if (Math.abs(delta) > 0.5) {
+          el.scrollTop += delta;
+          stableFrames = 0;
+        } else {
+          stableFrames += 1;
+        }
+      }
+      if (stableFrames >= 3 || attempts >= 20) {
+        scheduleEndSuppressPassiveAutoBottomScroll();
+        return;
+      }
+      requestAnimationFrame(settleReadingAnchor);
+    };
+    requestAnimationFrame(settleReadingAnchor);
+  }, [activeThreadId, items.length, loading, renderedThreadId, beginSuppressPassiveAutoBottomScroll, scheduleEndSuppressPassiveAutoBottomScroll]);
 
   // Discrete events (new message, tool call) -> scroll if at bottom, else highlight button
   useLayoutEffect(() => {

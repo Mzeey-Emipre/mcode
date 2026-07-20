@@ -4,6 +4,7 @@ import {
   buildStableItems,
   buildVirtualItems,
   buildVolatileItems,
+  createVirtualItemsBuilder,
 } from "../virtual-items";
 
 function message(
@@ -74,5 +75,27 @@ describe("goal notices in chat virtual items", () => {
     expect(receiptIndex).toBeGreaterThan(-1);
     expect(narrativeIndex).toBeLessThan(answerIndex);
     expect(answerIndex).toBeLessThan(receiptIndex);
+  });
+});
+
+describe("history prepends", () => {
+  it("retains existing row identity when older messages are inserted", () => {
+    const first = message("first", "user", "First", 1);
+    const second = message("second", "assistant", "Second", 2);
+    const builder = createVirtualItemsBuilder();
+    const initial = builder(buildStableItems([first, second]), [], false);
+
+    const prepended = builder(
+      buildStableItems([message("older", "user", "Older", 0), first, second]),
+      [],
+      false,
+    );
+
+    expect(prepended.find((item) => item.key === first.id)).toBe(
+      initial.find((item) => item.key === first.id),
+    );
+    expect(prepended.find((item) => item.key === second.id)).toBe(
+      initial.find((item) => item.key === second.id),
+    );
   });
 });
