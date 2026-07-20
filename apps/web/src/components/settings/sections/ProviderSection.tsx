@@ -129,7 +129,7 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
   const hint = hintFor(row, isLastEnabled);
 
   const controls = (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 min-[80rem]:min-w-[9.2rem] min-[80rem]:justify-end">
       {row.beta && (
         <Tooltip>
           <TooltipTrigger>

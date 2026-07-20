@@ -13,7 +13,7 @@ interface SettingRowProps {
 
 /** Responsive grid shared by standard and provider-specific setting rows. */
 export const SETTING_ROW_GRID_CLASS =
-  "grid gap-3 min-[90rem]:grid-cols-[minmax(0,1fr)_auto] min-[90rem]:items-center min-[90rem]:gap-x-8";
+  "grid gap-3 min-[80rem]:grid-cols-[minmax(0,1fr)_auto] min-[80rem]:items-center min-[80rem]:gap-x-8";
 
 /**
  * Responsive row layout for a single setting: label + hint on the left,
@@ -36,7 +36,7 @@ export function SettingRow({ label, hint, children, className }: SettingRowProps
           </p>
         )}
       </div>
-      <div className="min-w-0 min-[90rem]:justify-self-end">{children}</div>
+      <div className="min-w-0 min-[80rem]:justify-self-end">{children}</div>
     </div>
   );
 }
