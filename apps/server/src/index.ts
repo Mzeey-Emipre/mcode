@@ -27,6 +27,7 @@ import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
 import { ConfigService } from "./services/config-service";
 import { SkillService } from "./services/skill-service";
+import { CodexCatalogService } from "./services/codex-catalog-service";
 import { TerminalService } from "./services/terminal-service";
 import { MessageRepo } from "./repositories/message-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
@@ -220,6 +221,7 @@ const reviewWorktreeService = container.resolve(ReviewWorktreeService);
 const fileService = container.resolve(FileService);
 const configService = container.resolve(ConfigService);
 const skillService = container.resolve(SkillService);
+const codexCatalogService = container.resolve(CodexCatalogService);
 const terminalService = container.resolve(TerminalService);
 const messageRepo = container.resolve(MessageRepo);
 const threadRepo = container.resolve(ThreadRepo);
@@ -611,6 +613,7 @@ const { httpServer, wss } = createWsServer({
   fileService,
   configService,
   skillService,
+  codexCatalogService,
   terminalService,
   messageRepo,
   toolCallRecordRepo,

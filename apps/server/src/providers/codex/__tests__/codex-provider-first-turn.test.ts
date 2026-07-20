@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import { join } from "path";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 
@@ -52,13 +52,27 @@ import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { stubEnvService } from "../../../__tests__/stub-env-service.js";
 
-function makeProvider(skillList: (...args: unknown[]) => unknown[] = vi.fn(() => [])): CodexProvider {
+function makeProvider(
+  skillList: (...args: unknown[]) => unknown[] = vi.fn(() => []),
+  catalogService: {
+    currentSkills: (cwd?: string) => unknown[];
+    refresh: (cwd?: string) => Promise<{ skills: unknown[] }>;
+    onSkillsChanged: (handler: () => void) => () => void;
+    shutdown: () => Promise<void>;
+  } = {
+    currentSkills: vi.fn(() => []),
+    refresh: vi.fn(async () => ({ skills: [] })),
+    onSkillsChanged: vi.fn(() => () => undefined),
+    shutdown: vi.fn(async () => undefined),
+  },
+): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
     { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
     { list: skillList } as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
+    catalogService as never,
   );
 }
 
@@ -114,6 +128,44 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await ended;
+  });
+
+  it("starts the first turn from cached Skills without waiting for catalog I/O", async () => {
+    const nativeSkill = {
+      name: "review",
+      description: "Review changes",
+      kind: "skill" as const,
+      source: "project" as const,
+      providers: ["codex"],
+      nativeName: "review",
+      path: "C:/repo/.codex/skills/review/SKILL.md",
+    };
+    const currentSkills = vi.fn(() => [nativeSkill]);
+    const refresh = vi.fn(() => new Promise<{ skills: unknown[] }>(() => undefined));
+    const list = vi.fn((_cwd, _providerId, skills) => skills as unknown[]);
+    const provider = makeProvider(list, {
+      currentSkills,
+      refresh,
+      onSkillsChanged: vi.fn(() => () => undefined),
+      shutdown: vi.fn(async () => undefined),
+    });
+
+    await provider.sendTurn({
+      sessionId: "mcode-catalog-independent",
+      threadId: "catalog-independent",
+      message: "hello",
+      cwd: "C:/repo",
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(sendTurnMock).toHaveBeenCalledTimes(1);
+    expect(currentSkills).toHaveBeenCalledWith("C:/repo");
+    expect(list).toHaveBeenCalledWith("C:/repo", "codex", [nativeSkill]);
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("maps proactive orchestration to Ultra only on supported Codex models", async () => {
@@ -404,69 +456,30 @@ describe("CodexProvider first turn on new session", () => {
     expect(sendTurnMock.mock.calls[0][0]).toEqual([{ type: "text", text: "/goal clear" }]);
   });
 
-  it("lists enabled native Codex skills from a live app-server session", async () => {
+  it("lists native Codex Skills through the catalog service", async () => {
     const cwd = process.cwd();
-    const skillPath = join(
-      homedir(),
-      ".codex",
-      "plugins",
-      "cache",
-      "openai-bundled",
-      "browser",
-      "1.0.0",
-      "skills",
-      "control-in-app-browser",
-      "SKILL.md",
-    );
-    listSkillsMock.mockResolvedValueOnce({
-      data: [{
-        cwd,
-        errors: [],
-        skills: [
-          {
-            name: "control-in-app-browser",
-            description: "Long browser description",
-            shortDescription: "Short browser description",
-            enabled: true,
-            path: skillPath,
-            scope: "system",
-            interface: null,
-          },
-          {
-            name: "disabled",
-            description: "Hidden",
-            enabled: false,
-            path: join(cwd, ".codex", "skills", "disabled", "SKILL.md"),
-            scope: "repo",
-          },
-        ],
-      }],
-    });
-    const provider = makeProvider();
-
-    await provider.sendTurn({
-      sessionId: "mcode-native-skills",
-      threadId: "native-skills",
-      message: "hello",
-      cwd,
-      model: "gpt-5.4",
-      interactionMode: "build",
-      providerOptions: {},
-      permissionMode: "auto",
+    const nativeSkill = {
+      name: "control-in-app-browser",
+      description: "Short browser description",
+      kind: "skill" as const,
+      source: "plugin" as const,
+      providers: ["codex"],
+      nativeName: "control-in-app-browser",
+      path: "C:/codex/skills/control-in-app-browser/SKILL.md",
+    };
+    const refresh = vi.fn(async () => ({ skills: [nativeSkill] }));
+    const provider = makeProvider(undefined, {
+      currentSkills: vi.fn(() => []),
+      refresh,
+      onSkillsChanged: vi.fn(() => () => undefined),
+      shutdown: vi.fn(async () => undefined),
     });
 
     const skills = await provider.listSkills(cwd);
 
-    expect(listSkillsMock).toHaveBeenCalledWith([cwd]);
-    expect(skills).toEqual([{
-      name: "control-in-app-browser",
-      description: "Short browser description",
-      kind: "skill",
-      source: "plugin",
-      providers: ["codex"],
-      nativeName: "control-in-app-browser",
-      path: skillPath,
-    }]);
+    expect(refresh).toHaveBeenCalledWith(cwd);
+    expect(skills).toEqual([nativeSkill]);
+    expect(listSkillsMock).not.toHaveBeenCalled();
   });
 
   it("runs side-channel handoff turns at low effort", async () => {

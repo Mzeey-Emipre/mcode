@@ -168,19 +168,17 @@ describe("SkillService", () => {
       expect(skill!.providers).toEqual(["claude"]);
     });
 
-    it("tags skills from ~/.codex/skills with providers=['codex']", () => {
+    it("does not expose Codex Skills from the filesystem fallback", () => {
       const skillDir = join(fakeHome, ".codex", "skills", "codex-skill");
       mkdirSync(skillDir, { recursive: true });
       writeMd(join(skillDir, "SKILL.md"), { description: "Codex skill" });
 
       const items = new SkillService().list(undefined, "codex");
 
-      const skill = items.find((i) => i.name === "codex-skill");
-      expect(skill).toBeDefined();
-      expect(skill!.providers).toEqual(["codex"]);
+      expect(items.find((i) => i.name === "codex-skill")).toBeUndefined();
     });
 
-    it("scans Codex plugin cache skills with plugin prefixes", () => {
+    it("does not scan Codex plugin cache Skills", () => {
       const skillDir = join(
         fakeHome,
         ".codex",
@@ -197,16 +195,10 @@ describe("SkillService", () => {
       writeMd(skillPath, { name: "audit", description: "Run audit checks" });
 
       const items = new SkillService().list(undefined, "codex");
-      expect(items.find((i) => i.name === "impeccable:audit")).toMatchObject({
-        kind: "skill",
-        source: "plugin",
-        nativeName: "audit",
-        path: skillPath,
-        providers: ["codex"],
-      });
+      expect(items.find((i) => i.name === "impeccable:audit")).toBeUndefined();
     });
 
-    it("scans bundled Codex runtime plugin skills", () => {
+    it("does not scan bundled Codex runtime plugin Skills", () => {
       const skillDir = join(
         fakeHome,
         ".cache",
@@ -223,15 +215,10 @@ describe("SkillService", () => {
       writeMd(join(skillDir, "SKILL.md"), { name: "documents", description: "Edit documents" });
 
       const items = new SkillService().list(undefined, "codex");
-      expect(items.find((i) => i.name === "documents:documents")).toMatchObject({
-        kind: "skill",
-        source: "plugin",
-        nativeName: "documents",
-        providers: ["codex"],
-      });
+      expect(items.find((i) => i.name === "documents:documents")).toBeUndefined();
     });
 
-    it("lets native Codex catalog entries override disk fallback duplicates", () => {
+    it("uses native Codex catalog entries instead of disk fallback duplicates", () => {
       const skillDir = join(
         fakeHome,
         ".codex",
@@ -265,6 +252,31 @@ describe("SkillService", () => {
       });
     });
 
+    it("keeps same-name native Codex Skills distinct by path", () => {
+      const nativeSkills = [
+        {
+          name: "review",
+          description: "Global review",
+          kind: "skill" as const,
+          source: "user" as const,
+          providers: ["codex"],
+          path: "C:/users/test/.codex/skills/review/SKILL.md",
+        },
+        {
+          name: "review",
+          description: "Project review",
+          kind: "skill" as const,
+          source: "project" as const,
+          providers: ["codex"],
+          path: "C:/repo/.codex/skills/review/SKILL.md",
+        },
+      ];
+
+      const items = new SkillService().list("C:/repo", "codex", nativeSkills);
+
+      expect(items.filter((item) => item.name === "review")).toEqual(nativeSkills);
+    });
+
     it("extracts Codex plugin names from cache and runtime skill paths", () => {
       const cacheSkillPath = join(
         fakeHome,
@@ -296,7 +308,7 @@ describe("SkillService", () => {
       expect(codexPluginNameFromSkillPath(runtimeSkillPath, fakeHome)).toBe("documents");
     });
 
-    it("tags skills from ~/.agents/skills with providers=['codex'] only", () => {
+    it("leaves ~/.agents/skills discovery to the native Codex catalog", () => {
       const skillDir = join(fakeHome, ".agents", "skills", "shared-skill");
       mkdirSync(skillDir, { recursive: true });
       writeMd(join(skillDir, "SKILL.md"), { description: "Shared skill" });
@@ -304,7 +316,7 @@ describe("SkillService", () => {
       const svc = new SkillService();
 
       const codexItems = svc.list(undefined, "codex");
-      expect(codexItems.find((i) => i.name === "shared-skill")).toBeDefined();
+      expect(codexItems.find((i) => i.name === "shared-skill")).toBeUndefined();
 
       svc.invalidate();
       const copilotItems = svc.list(undefined, "copilot");
@@ -332,7 +344,7 @@ describe("SkillService", () => {
 
       svc.invalidate();
       const codexItems = svc.list(undefined, "codex");
-      expect(codexItems.find((i) => i.name === "codex-only")).toBeDefined();
+      expect(codexItems.find((i) => i.name === "codex-only")).toBeUndefined();
       expect(codexItems.find((i) => i.name === "claude-only")).toBeUndefined();
     });
 
@@ -348,7 +360,7 @@ describe("SkillService", () => {
       const items = new SkillService().list();
 
       expect(items.find((i) => i.name === "claude-skill")).toBeDefined();
-      expect(items.find((i) => i.name === "codex-skill")).toBeDefined();
+      expect(items.find((i) => i.name === "codex-skill")).toBeUndefined();
       expect(items.every((i) => Array.isArray(i.providers))).toBe(true);
     });
 
@@ -372,14 +384,10 @@ describe("SkillService", () => {
       }
     });
 
-    it("allows same name across different providers", () => {
+    it("allows a native Codex Skill to share a name with a Claude Skill", () => {
       const claudeSkillDir = join(fakeHome, ".claude", "skills", "deploy");
       mkdirSync(claudeSkillDir, { recursive: true });
       writeMd(join(claudeSkillDir, "SKILL.md"), { description: "Claude deploy" });
-
-      const codexSkillDir = join(fakeHome, ".codex", "skills", "deploy");
-      mkdirSync(codexSkillDir, { recursive: true });
-      writeMd(join(codexSkillDir, "SKILL.md"), { description: "Codex deploy" });
 
       const svc = new SkillService();
 
@@ -388,9 +396,16 @@ describe("SkillService", () => {
       expect(claudeDeploy!.description).toBe("Claude deploy");
 
       svc.invalidate();
-      const codexItems = svc.list(undefined, "codex");
+      const codexItems = svc.list(undefined, "codex", [{
+        name: "deploy",
+        description: "Native Codex deploy",
+        kind: "skill",
+        source: "user",
+        providers: ["codex"],
+        path: "C:/codex/skills/deploy/SKILL.md",
+      }]);
       const codexDeploy = codexItems.find((i) => i.name === "deploy");
-      expect(codexDeploy!.description).toBe("Codex deploy");
+      expect(codexDeploy!.description).toBe("Native Codex deploy");
     });
 
     it("tags prompts from ~/.codex/prompts as Codex prompt commands", () => {
