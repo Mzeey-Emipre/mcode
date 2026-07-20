@@ -19,7 +19,7 @@ import {
 } from "@/lib/model-registry";
 import { SettingRow } from "../SettingRow";
 import { SegControl } from "../SegControl";
-import { SectionHeading } from "../SectionHeading";
+import { SettingsGroup } from "../SettingsGroup";
 import { SearchableGroupedPicker } from "../SearchableGroupedPicker";
 import { SettingsProviderPicker } from "../SettingsProviderPicker";
 import { Switch } from "@/components/ui/switch";
@@ -388,12 +388,27 @@ export function ModelSection() {
   };
 
   return (
-    <div>
-      <ProviderSection />
+    <div
+      data-testid="model-settings-section"
+      className="mx-auto w-full max-w-[88rem] pb-10"
+    >
+      <header className="mb-8 border-b border-border/45 px-1 pb-6">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+          Models &amp; providers
+        </h1>
+        <p className="mt-2 max-w-[65ch] text-sm leading-6 text-muted-foreground">
+          Configure the providers and model defaults used across new threads and
+          utility tasks.
+        </p>
+      </header>
 
-      <div className="mt-8">
-      <SectionHeading>Model</SectionHeading>
-      <div>
+      <div className="space-y-8">
+        <ProviderSection />
+
+        <SettingsGroup
+          title="Model defaults"
+          description="Defaults applied when you start a new thread."
+        >
       <SettingRow
         label="Provider"
         configKey="model.defaults.provider"
@@ -523,12 +538,12 @@ export function ModelSection() {
           />
         </SettingRow>
       )}
-      </div>
-      </div>
+        </SettingsGroup>
 
-      <div className="mt-8">
-        <SectionHeading>Utility Model</SectionHeading>
-        <div>
+        <SettingsGroup
+          title="Utility model"
+          description="Provider and model for lightweight tasks such as PR drafts and diff summaries."
+        >
           <SettingRow
             label="Provider"
             configKey="model.utility.provider"
@@ -570,12 +585,12 @@ export function ModelSection() {
               </div>
             )}
           </SettingRow>
-        </div>
-      </div>
+        </SettingsGroup>
 
-      <div className="mt-8">
-        <SectionHeading>AI Features</SectionHeading>
-        <div>
+        <SettingsGroup
+          title="AI features"
+          description="Optional model-powered features."
+        >
           <SettingRow
             label="Diff summary"
             configKey="diffSummary.enabled"
@@ -586,9 +601,8 @@ export function ModelSection() {
               onCheckedChange={(v) => update({ diffSummary: { enabled: v } })}
             />
           </SettingRow>
-        </div>
+        </SettingsGroup>
       </div>
-
     </div>
   );
 }

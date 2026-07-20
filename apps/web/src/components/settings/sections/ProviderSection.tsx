@@ -3,7 +3,7 @@ import { ChevronDown } from "lucide-react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
 import { SettingRow } from "../SettingRow";
-import { SectionHeading } from "../SectionHeading";
+import { SettingsGroup } from "../SettingsGroup";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -57,8 +57,10 @@ export function ProviderSection() {
 
   return (
     <div>
-      <SectionHeading>Provider</SectionHeading>
-      <div>
+      <SettingsGroup
+        title="Providers"
+        description="Enable providers and configure their CLI paths."
+      >
         {providers.map((p) => (
           <ProviderRow
             key={p.id}
@@ -73,7 +75,7 @@ export function ProviderSection() {
             }
           />
         ))}
-      </div>
+      </SettingsGroup>
       {pendingDisable && (
         <ConfirmDisableDialog
           providerId={pendingDisable}
@@ -165,7 +167,7 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
   return (
     <Collapsible open={isConfigOpen} onOpenChange={setIsConfigOpen}>
       <div className="border-b border-border/50 px-1 py-4 last:border-b-0">
-        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div className="grid gap-3 min-[900px]:grid-cols-[minmax(0,1fr)_auto] min-[900px]:items-center min-[900px]:gap-x-8">
           <CollapsibleTrigger asChild>
             <Button
               type="button"
@@ -173,7 +175,7 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
               size="sm"
               data-testid={`provider-config-trigger-${row.id}`}
               aria-label={`${isConfigOpen ? "Hide" : "Show"} ${label} configuration`}
-              className="-ml-2 h-auto min-w-[10rem] flex-1 items-start justify-between gap-4 rounded-md px-2 py-1 text-left hover:bg-accent/60"
+              className="-ml-2 h-auto w-full min-w-0 items-start justify-between gap-4 rounded-md px-2 py-1 text-left hover:bg-accent/60"
             >
               <span className="flex min-w-0 flex-col items-start">
                 <span className="text-sm font-semibold text-foreground">{label}</span>
@@ -191,7 +193,7 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
           {controls}
         </div>
         <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down motion-reduce:animate-none">
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-border/40 pt-3 pl-2">
+          <div className="mt-3 grid gap-3 border-t border-border/40 pt-3 pl-2 min-[900px]:grid-cols-[minmax(0,1fr)_auto] min-[900px]:items-center min-[900px]:gap-x-8">
             <label htmlFor={`provider-cli-path-${row.id}`} className="text-sm font-medium text-foreground">
               {label} CLI path
             </label>

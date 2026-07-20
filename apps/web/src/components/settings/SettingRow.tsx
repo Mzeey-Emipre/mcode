@@ -13,21 +13,25 @@ interface SettingRowProps {
 
 /**
  * Responsive row layout for a single setting: label + hint on the left,
- * control slot on the right. Wraps to a stacked layout on narrow viewports.
+ * control slot on the right. Stacks the control below the label on narrow viewports.
  */
 export function SettingRow({ label, hint, children, className }: SettingRowProps) {
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-border/50 px-1 py-4 last:border-b-0",
+        "grid gap-3 border-b border-border/50 px-1 py-4 last:border-b-0 min-[900px]:grid-cols-[minmax(0,1fr)_auto] min-[900px]:items-center min-[900px]:gap-x-8",
         className,
       )}
     >
-      <div className="min-w-[10rem]">
+      <div className="min-w-0">
         <span className="text-sm font-semibold text-foreground">{label}</span>
-        {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
+        {hint && (
+          <p className="mt-1 max-w-[62ch] text-xs leading-5 text-muted-foreground">
+            {hint}
+          </p>
+        )}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="min-w-0 min-[900px]:justify-self-end">{children}</div>
     </div>
   );
 }
