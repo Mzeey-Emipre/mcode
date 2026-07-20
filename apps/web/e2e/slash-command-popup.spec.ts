@@ -56,7 +56,7 @@ const THREAD = {
   forked_from_message_id: null,
 };
 
-/** Cursor-backed thread — `skill.list` must receive `providerId: "cursor"`. */
+/** Cursor-backed thread whose catalog must receive `providerId: "cursor"`. */
 const THREAD_CURSOR = {
   ...THREAD,
   provider: "cursor" as const,
@@ -90,6 +90,47 @@ const LONG_PLUGIN_SKILLS = Array.from({ length: 25 }, (_, i) => ({
   source: "plugin" as const,
 }));
 
+type SkillFixture = (typeof FIXTURE_SKILLS)[number] | (typeof LONG_PLUGIN_SKILLS)[number];
+
+/** Adapt legacy Skill fixtures into the provider catalog contract used by the picker. */
+function catalogSnapshot(params: unknown, skills: readonly SkillFixture[]) {
+  const request = params as {
+    providerId: "claude" | "codex" | "copilot" | "cursor" | "gemini";
+    workspaceId?: string;
+    threadId?: string;
+    cwd?: string;
+  };
+  return {
+    providerId: request.providerId,
+    context: request.workspaceId
+      ? { scope: "workspace", workspaceId: request.workspaceId, ...(request.threadId ? { threadId: request.threadId } : {}) }
+      : request.cwd
+        ? { scope: "path", cwd: request.cwd }
+        : { scope: "user" },
+    freshness: { status: "fresh", fetchedAt: NOW },
+    diagnostics: [],
+    entries: skills.map((skill) => {
+      const kind = skill.kind === "command"
+        ? request.providerId === "codex" && skill.name.startsWith("prompts:")
+          ? "customPrompt"
+          : "providerCommand"
+        : "skill";
+      return {
+        kind,
+        identity: { providerId: request.providerId, kind, nativeId: skill.name },
+        name: skill.name,
+        description: skill.description,
+        ...(kind === "skill" ? { source: skill.source } : {}),
+      };
+    }),
+    selectableAgents: [],
+  };
+}
+
+function catalogOverride(skills: readonly SkillFixture[]) {
+  return (params: unknown) => catalogSnapshot(params, skills);
+}
+
 /** Boot the app with one workspace + one thread, plus caller-supplied overrides. */
 async function bootApp(page: Page, extra: RpcOverrides = {}): Promise<void> {
   await mockWebSocketServer(page, {
@@ -119,7 +160,7 @@ async function openPopup(page: Page, prefix: string): Promise<void> {
 
 test.describe("Slash command popup", () => {
   test("01 - popup open shows the full mixed command list", async ({ page }) => {
-    await bootApp(page, { "skill.list": FIXTURE_SKILLS });
+    await bootApp(page, { "provider.catalog": catalogOverride(FIXTURE_SKILLS) });
     await openPopup(page, "/");
 
     const popup = page.locator("[data-slash-popup]");
@@ -153,7 +194,7 @@ test.describe("Slash command popup", () => {
   });
 
   test("02 - popup filters as the user keeps typing", async ({ page }) => {
-    await bootApp(page, { "skill.list": FIXTURE_SKILLS });
+    await bootApp(page, { "provider.catalog": catalogOverride(FIXTURE_SKILLS) });
     await openPopup(page, "/sup");
 
     const popup = page.locator("[data-slash-popup]");
@@ -170,7 +211,7 @@ test.describe("Slash command popup", () => {
 
   test("popup stays above the composer text", async ({ page }) => {
     await page.setViewportSize({ width: 800, height: 400 });
-    await bootApp(page, { "skill.list": LONG_PLUGIN_SKILLS });
+    await bootApp(page, { "provider.catalog": catalogOverride(LONG_PLUGIN_SKILLS) });
     await openPopup(page, "/");
 
     const popup = page.locator("[data-slash-popup]");
@@ -192,7 +233,7 @@ test.describe("Slash command popup", () => {
   });
 
   test("03 - error response surfaces ErrorRow with Retry button", async ({ page }) => {
-    // Mirror the shared helper's defaults but force `skill.list` to return a
+    // Mirror the shared helper's defaults but force `provider.catalog` to return a
     // JSON-RPC error. The shared mock helper only supports successful result
     // overrides, so we register a self-contained route that uses
     // `getDefaultSettings()` for bootstrap parity.
@@ -202,7 +243,7 @@ test.describe("Slash command popup", () => {
       ws.onMessage((data) => {
         const msg = JSON.parse(data.toString()) as { id?: string | number; method?: string };
         const method = msg.method;
-        if (method === "skill.list") {
+        if (method === "provider.catalog") {
           ws.send(
             JSON.stringify({
               id: msg.id,
@@ -244,7 +285,7 @@ test.describe("Slash command popup", () => {
   });
 
   test("04 - popup omits a manual reload control", async ({ page }) => {
-    await bootApp(page, { "skill.list": FIXTURE_SKILLS });
+    await bootApp(page, { "provider.catalog": catalogOverride(FIXTURE_SKILLS) });
     await openPopup(page, "/");
 
     const popup = page.locator("[data-slash-popup]");
@@ -252,8 +293,8 @@ test.describe("Slash command popup", () => {
     await expect(popup.getByRole("button", { name: "Refresh commands" })).toHaveCount(0);
   });
 
-  test("05 - cursor provider thread scopes skill.list to providerId cursor", async ({ page }) => {
-    let listParams: { cwd?: string; providerId?: string } | undefined;
+  test("05 - cursor provider thread scopes provider.catalog to providerId cursor", async ({ page }) => {
+    let catalogParams: { workspaceId?: string; threadId?: string; providerId?: string } | undefined;
     const cursorSkills = [
       {
         name: "cursor-plugin:deploy",
@@ -268,15 +309,15 @@ test.describe("Slash command popup", () => {
       "workspace.list": [WORKSPACE],
       "thread.list": [THREAD_CURSOR],
       "message.list": [],
-      "skill.list": (params) => {
-        listParams = params as { cwd?: string; providerId?: string };
-        return cursorSkills;
+      "provider.catalog": (params) => {
+        catalogParams = params as { workspaceId?: string; threadId?: string; providerId?: string };
+        return catalogSnapshot(params, cursorSkills);
       },
     });
 
     await openPopup(page, "/cursor");
 
-    expect(listParams?.providerId).toBe("cursor");
+    expect(catalogParams).toMatchObject({ providerId: "cursor", workspaceId: "ws-1", threadId: "thread-1" });
 
     const popup = page.locator("[data-slash-popup]");
     await expect(popup.getByText("deploy")).toBeVisible();
@@ -288,7 +329,7 @@ test.describe("Slash command popup", () => {
   });
 
   test("06 - codex provider thread shows prompt commands in completion", async ({ page }) => {
-    let listParams: { cwd?: string; providerId?: string } | undefined;
+    let catalogParams: { workspaceId?: string; threadId?: string; providerId?: string } | undefined;
     const codexPrompts = [
       {
         name: "prompts:draftpr",
@@ -304,15 +345,15 @@ test.describe("Slash command popup", () => {
       "workspace.list": [WORKSPACE],
       "thread.list": [THREAD_CODEX],
       "message.list": [],
-      "skill.list": (params) => {
-        listParams = params as { cwd?: string; providerId?: string };
-        return codexPrompts;
+      "provider.catalog": (params) => {
+        catalogParams = params as { workspaceId?: string; threadId?: string; providerId?: string };
+        return catalogSnapshot(params, codexPrompts);
       },
     });
 
     await openPopup(page, "/prompts");
 
-    expect(listParams?.providerId).toBe("codex");
+    expect(catalogParams).toMatchObject({ providerId: "codex", workspaceId: "ws-1", threadId: "thread-1" });
 
     const popup = page.locator("[data-slash-popup]");
     await expect(popup.getByText("/prompts:draftpr")).toBeVisible();
@@ -330,7 +371,7 @@ test.describe("Slash command popup", () => {
       if (text.includes("flushSync was called")) flushSyncWarnings.push(text);
     });
 
-    await bootApp(page, { "skill.list": LONG_PLUGIN_SKILLS });
+    await bootApp(page, { "provider.catalog": catalogOverride(LONG_PLUGIN_SKILLS) });
     await openPopup(page, "/example-plugin");
     await page.keyboard.press("ArrowDown");
     await expect(page.locator("[role='option']")).toHaveCount(25);

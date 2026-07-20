@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
-  EMPTY_SKILLS_CACHE_ENTRY,
-  skillsCacheKey,
-  useSkillsStore,
-} from "@/stores/skillsStore";
-import type { SkillInfo } from "@/transport";
+  EMPTY_PROVIDER_CATALOG_CACHE_ENTRY,
+  providerCatalogCacheKey,
+  useProviderCatalogStore,
+} from "@/stores/providerCatalogStore";
+import { ProviderIdSchema, type ProviderCapabilityEntry } from "@mcode/contracts";
+import type { ProviderCatalogRequest } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 import {
   resolveComposerCapabilities,
@@ -51,16 +52,20 @@ const BUILTIN_COMMANDS: Command[] = [
 /** Regex: matches `/` at start of line or after whitespace, followed by non-space chars. */
 export const SLASH_TRIGGER_RE = /(^|\s)(\/\S*)$/;
 
-/** Map a SkillInfo into a Command. */
-function toCommand(s: SkillInfo): Command {
-  // `kind === "command"` overrides any namespace inference.
-  if (s.kind === "command") {
-    return { name: s.name, description: s.description || `Run /${s.name}`, namespace: "command" };
+/** Map an invocable provider capability into the existing command presentation. */
+function toCommand(entry: ProviderCapabilityEntry): Command | null {
+  if (entry.kind === "plugin") return null;
+  if (entry.kind === "customPrompt" || entry.kind === "providerCommand") {
+    return {
+      name: entry.name,
+      description: entry.description || `Run /${entry.name}`,
+      namespace: "command",
+    };
   }
   return {
-    name: s.name,
-    description: s.description || `Run /${s.name}`,
-    namespace: s.source === "plugin" || s.name.includes(":") ? "plugin" : "skill",
+    name: entry.name,
+    description: entry.description || `Run /${entry.name}`,
+    namespace: entry.source === "plugin" || entry.name.includes(":") ? "plugin" : "skill",
   };
 }
 
@@ -84,6 +89,10 @@ interface UseSlashCommandOptions {
   anchorRef: React.RefObject<HTMLElement | null>;
   onMcodeCommand?: (action: ComposerCommandAction) => void;
   cwd?: string;
+  /** Workspace whose validated server-side path scopes provider discovery. */
+  workspaceId?: string;
+  /** Thread whose worktree path scopes provider discovery. */
+  threadId?: string;
   /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /plan for "copilot"). */
   providerId?: string;
   /** Model ID used to resolve model-specific composer capabilities. */
@@ -122,11 +131,13 @@ export interface UseSlashCommandReturn {
   onRetry: () => void;
 }
 
-/** Manages slash command detection, skill loading via skillsStore, and popup state. */
+/** Manages slash command detection, provider catalog loading, and popup state. */
 export function useSlashCommand({
   anchorRef,
   onMcodeCommand,
   cwd,
+  workspaceId,
+  threadId,
   providerId,
   modelId,
   includeBuiltins = true,
@@ -144,12 +155,27 @@ export function useSlashCommand({
   // always appending to the end (which breaks mid-text trigger detection).
   const lastCursorRef = useRef<number | undefined>(undefined);
 
-  const cacheKey = skillsCacheKey(cwd, providerId);
-  const cacheEntry = useSkillsStore(
-    (state) => state.entries[cacheKey] ?? EMPTY_SKILLS_CACHE_ENTRY,
+  const catalogRequest = useMemo<ProviderCatalogRequest | null>(() => {
+    const parsedProvider = ProviderIdSchema.safeParse(providerId ?? "claude");
+    if (!parsedProvider.success) return null;
+    if (workspaceId) {
+      return {
+        providerId: parsedProvider.data,
+        workspaceId,
+        ...(threadId ? { threadId } : {}),
+      };
+    }
+    return {
+      providerId: parsedProvider.data,
+      ...(cwd ? { cwd } : {}),
+    };
+  }, [cwd, providerId, threadId, workspaceId]);
+  const cacheKey = catalogRequest ? providerCatalogCacheKey(catalogRequest) : "invalid-provider";
+  const cacheEntry = useProviderCatalogStore(
+    (state) => state.entries[cacheKey] ?? EMPTY_PROVIDER_CATALOG_CACHE_ENTRY,
   );
-  const { skills, isLoading, isStale, error } = cacheEntry;
-  const load = useSkillsStore((s) => s.load);
+  const { snapshot, isLoading, needsRefresh, error } = cacheEntry;
+  const load = useProviderCatalogStore((state) => state.load);
 
   // Build the full command list only when its inputs change. Filtering stays
   // separate so keyboard selection does not rebuild every command row.
@@ -167,12 +193,15 @@ export function useSlashCommand({
           ...BUILTIN_COMMANDS,
         ]
       : [];
+    const providerCommands = (snapshot?.entries ?? [])
+      .map(toCommand)
+      .filter((command): command is Command => command !== null);
     const commands: Command[] = [
       ...builtins,
-      ...((skills ?? []).map(toCommand)),
+      ...providerCommands,
     ];
     return sortCommands(commands);
-  }, [skills, providerId, modelId, includeBuiltins]);
+  }, [snapshot, providerId, modelId, includeBuiltins]);
 
   const filtered = useMemo(() => {
     const f = filter.toLowerCase();
@@ -203,19 +232,19 @@ export function useSlashCommand({
   // Eager prefetch runs while the picker is closed. This warms the cache for
   // the next open without replacing commands while the user is navigating.
   //
-  // Each cwd and provider pair has its own cache entry. Load when that entry
+  // Each provider discovery context has its own cache entry. Load when that entry
   // is cold or stale, while retaining old rows during background refresh.
   //
   // The error gate prevents an infinite retry loop on persistent failures.
-  // A different cwd or provider selects a different entry with its own error.
+  // A different context selects a different entry with its own error.
   useEffect(() => {
     if (isOpen) return;
     if (isLoading) return;
-    const noSkills = skills === null;
-    if (!error && (isStale || noSkills)) {
-      load(cwd, providerId).catch(() => { /* surfaced via `error` */ });
+    const noSnapshot = snapshot === null;
+    if (catalogRequest && !error && (needsRefresh || noSnapshot)) {
+      load(catalogRequest).catch(() => { /* surfaced via `error` */ });
     }
-  }, [skills, cwd, providerId, isLoading, isStale, error, load, isOpen]);
+  }, [catalogRequest, snapshot, isLoading, needsRefresh, error, load, isOpen]);
 
   const onInputChange = useCallback(
     (value: string, cursorPos?: number) => {
@@ -236,12 +265,12 @@ export function useSlashCommand({
       const anchor = anchorRef.current;
       if (anchor) setAnchorRect(anchor.getBoundingClientRect());
 
-      if (!isOpen && skills !== null) setOpenCommands(allCommands);
+      if (!isOpen && snapshot !== null) setOpenCommands(allCommands);
       setFilter(match[2].slice(1));
       setIsOpen(true);
       setSelectedIndex(0);
     },
-    [anchorRef, allCommands, isOpen, skills],
+    [anchorRef, allCommands, isOpen, snapshot],
   );
 
   const onKeyDown = useCallback(
@@ -306,8 +335,9 @@ export function useSlashCommand({
     setOpenCommands(null);
   }, []);
   const onRetry = useCallback(() => {
-    load(cwd, providerId, true).catch(() => { /* surfaced via `error` */ });
-  }, [load, cwd, providerId]);
+    if (!catalogRequest) return;
+    load(catalogRequest, true).catch(() => { /* surfaced via `error` */ });
+  }, [catalogRequest, load]);
 
   return {
     isOpen,

@@ -30,6 +30,11 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
+import {
+  ProviderCatalogRequestSchema,
+  ProviderCatalogSnapshotSchema,
+  ProviderAgentMentionSchema,
+} from "../providers/capability-catalog.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
 import { GoalLookupResultSchema, GoalObjectiveSchema } from "../models/goal.js";
@@ -732,6 +737,11 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.array(SkillInfoSchema()),
   },
+  /** Returns provider capabilities for one validated discovery context. */
+  "provider.catalog": {
+    params: ProviderCatalogRequestSchema(),
+    result: ProviderCatalogSnapshotSchema(),
+  },
   "skill.diagnose": {
     params: z.object({ cwd: z.string().optional() }),
     result: SkillDiagnosticsSchema(),
@@ -934,11 +944,7 @@ export const WS_METHODS = lazySchema(() => ({
       workspaceId: z.string().optional(),
       threadId: z.string().optional(),
     }),
-    result: z.array(z.object({
-      name: z.string(),
-      path: z.string(),
-      description: z.string().optional(),
-    })),
+    result: z.array(ProviderAgentMentionSchema()),
   },
   "providers.listAvailability": {
     params: z.object({}),

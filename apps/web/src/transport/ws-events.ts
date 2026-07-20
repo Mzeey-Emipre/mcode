@@ -10,7 +10,7 @@ import { getThreadRecord, patchThreadRecord } from "@/stores/thread-record";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { useSkillsStore } from "@/stores/skillsStore";
+import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePlanStore } from "@/stores/planStore";
 import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
 import { emitPtyData, emitPtyExit } from "@/components/terminal/ptyDataRegistry";
@@ -49,7 +49,7 @@ function approxBase64DecodedBytes(encoded: string): number {
  * - `thread.checksUpdated` -- CI check status polled for a thread's PR, updates checksById
  * - `thread.modelUpdated` -- thread model and provider synced after a message send (multi-client)
  * - `files.changed` -- invalidates the file autocomplete cache
- * - `skills.changed` -- invalidates the skill cache; popup re-fetches on next open
+ * - `skills.changed` -- invalidates provider catalogs; popup re-fetches on next open
  * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
  * - `settings.changed` -- server-pushed settings updates forwarded to settingsStore
  * - `branch.changed` -- refreshes branch list and updates current branch if not manually overridden
@@ -334,7 +334,7 @@ export function startPushListeners(): void {
       }
       skillsInvalidationTimer = setTimeout(() => {
         skillsInvalidationTimer = null;
-        useSkillsStore.getState().invalidate();
+        useProviderCatalogStore.getState().invalidate();
       }, SKILLS_INVALIDATION_DEBOUNCE_MS);
     }),
   );

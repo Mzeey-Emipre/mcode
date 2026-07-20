@@ -13,6 +13,9 @@ import type {
   PrDetail,
   SkillInfo,
   SkillDiagnostics,
+  ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
+  ProviderAgentMention,
   PermissionMode,
   ReasoningLevel,
   ContextWindowMode,
@@ -89,6 +92,9 @@ export type {
   PrDetail,
   SkillInfo,
   SkillDiagnostics,
+  ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
+  ProviderAgentMention,
   PermissionMode,
   InteractionMode,
   ContextWindowMode,
@@ -126,11 +132,7 @@ export type { PaginatedMessages, ConversationPage, ToolCallRecord, ThoughtSegmen
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
 /** Codex sub-agent metadata exposed for @ mention autocomplete. */
-export interface CodexAgentMentionInfo {
-  name: string;
-  path: string;
-  description?: string;
-}
+export type CodexAgentMentionInfo = ProviderAgentMention;
 
 /** In-progress tool call tracked by the frontend streaming layer. */
 export interface ToolCall {
@@ -421,6 +423,8 @@ export interface McodeTransport {
   checkStatus(threadId: string, force?: boolean): Promise<ChecksStatus>;
 
   // Skills
+  /** Return a provider capability catalog for one validated discovery context. */
+  getProviderCatalog(request: ProviderCatalogRequest): Promise<ProviderCatalogSnapshot>;
   /** List discoverable skills and commands, optionally scoped to a workspace path and provider. */
   listSkills(cwd?: string, providerId?: string): Promise<SkillInfo[]>;
   /** Run a filesystem scan across all skill search paths and return per-path diagnostics. */

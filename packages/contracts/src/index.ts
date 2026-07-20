@@ -507,6 +507,39 @@ export type {
   SkillDiagnostics,
 } from "./skills.js";
 
+// Provider capability catalogs
+export {
+  PROVIDER_CATALOG_PATH_MAX_CHARS,
+  PROVIDER_CATALOG_MAX_ENTRIES,
+  PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS,
+  PROVIDER_CATALOG_MAX_CODEX_AGENT_FILES,
+  PROVIDER_CATALOG_MAX_CODEX_AGENT_FILE_BYTES,
+  ProviderCapabilityKindSchema,
+  ProviderSkillCapabilitySchema,
+  ProviderPluginCapabilitySchema,
+  ProviderCustomPromptCapabilitySchema,
+  ProviderCommandCapabilitySchema,
+  ProviderCapabilityEntrySchema,
+  ProviderAgentMentionSchema,
+  SelectableProviderAgentSchema,
+  ProviderCatalogDiagnosticSchema,
+  ProviderCatalogFreshnessSchema,
+  ProviderCatalogContextSchema,
+  ProviderCatalogRequestSchema,
+  ProviderCatalogSnapshotSchema,
+} from "./providers/capability-catalog.js";
+export type {
+  ProviderCapabilityKind,
+  ProviderCapabilityEntry,
+  ProviderAgentMention,
+  SelectableProviderAgent,
+  ProviderCatalogDiagnostic,
+  ProviderCatalogFreshness,
+  ProviderCatalogContext,
+  ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
+} from "./providers/capability-catalog.js";
+
 // WebSocket protocol
 export {
   WebSocketRequestSchema,

@@ -55,6 +55,114 @@ describe("routeMessage result validation seam", () => {
   });
 });
 
+describe("routeMessage provider.catalog", () => {
+  it("returns mapped capabilities and separate Codex agents for the requested thread context", async () => {
+    const list = vi.fn().mockReturnValue([
+      {
+        name: "review",
+        description: "Review changes",
+        kind: "skill",
+        source: "plugin",
+        providers: ["codex"],
+        nativeName: "review",
+        path: "C:/repo/.codex/skills/review/SKILL.md",
+      },
+      {
+        name: "prompts:release",
+        description: "Prepare a release",
+        kind: "command",
+        source: "user",
+        providers: ["codex"],
+        nativeName: "release",
+        path: "C:/users/test/.codex/prompts/release.md",
+      },
+    ]);
+    const deps = {
+      workspaceService: {
+        findById: vi.fn().mockReturnValue({ id: "workspace-1", path: "C:/repo" }),
+      },
+      threadRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "thread-1",
+          workspace_id: "workspace-1",
+          mode: "direct",
+          worktree_path: null,
+        }),
+      },
+      gitService: { resolveWorkingDir: vi.fn().mockReturnValue("C:/repo") },
+      providerRegistry: { resolve: vi.fn().mockReturnValue({ listSkills: vi.fn().mockResolvedValue([]) }) },
+      skillService: { list },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "catalog-1",
+      method: "provider.catalog",
+      params: { providerId: "codex", workspaceId: "workspace-1", threadId: "thread-1" },
+    }), deps);
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toMatchObject({
+      providerId: "codex",
+      context: { scope: "workspace", workspaceId: "workspace-1", threadId: "thread-1" },
+      freshness: { status: "fresh" },
+      diagnostics: [],
+      entries: [
+        { kind: "skill", identity: { providerId: "codex", kind: "skill", nativeId: "review" } },
+        {
+          kind: "customPrompt",
+          identity: { providerId: "codex", kind: "customPrompt", nativeId: "release" },
+        },
+      ],
+    });
+    expect(list).toHaveBeenCalledWith("C:/repo", "codex", undefined);
+    expect((response.result as {
+      selectableAgents: Array<{ providerId: string; nativeId: string }>;
+    }).selectableAgents.every((agent) => agent.providerId === "codex" && agent.nativeId.length > 0))
+      .toBe(true);
+  });
+
+  it("rejects unknown providers and oversized contexts before dispatch", async () => {
+    const deps = { skillService: { list: vi.fn() } } as unknown as RouterDeps;
+    const unknownProvider = await routeMessage(JSON.stringify({
+      id: "catalog-unknown",
+      method: "provider.catalog",
+      params: { providerId: "unknown" },
+    }), deps);
+    const oversizedContext = await routeMessage(JSON.stringify({
+      id: "catalog-oversized",
+      method: "provider.catalog",
+      params: { providerId: "codex", cwd: "x".repeat(4_097) },
+    }), deps);
+
+    expect(unknownProvider.error?.code).toBe("INVALID_PARAMS");
+    expect(oversizedContext.error?.code).toBe("INVALID_PARAMS");
+    expect(deps.skillService.list).not.toHaveBeenCalled();
+  });
+
+  it("rejects a thread owned by another workspace", async () => {
+    const deps = {
+      workspaceService: { findById: vi.fn().mockReturnValue({ id: "workspace-1", path: "C:/repo" }) },
+      threadRepo: {
+        findById: vi.fn().mockReturnValue({
+          id: "thread-1",
+          workspace_id: "workspace-2",
+          mode: "direct",
+          worktree_path: null,
+        }),
+      },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "catalog-owner",
+      method: "provider.catalog",
+      params: { providerId: "claude", workspaceId: "workspace-1", threadId: "thread-1" },
+    }), deps);
+
+    expect(response.error?.code).toBe("INTERNAL_ERROR");
+    expect(response.error?.message).toContain("does not belong to workspace");
+  });
+});
+
 describe("routeMessage agent commands", () => {
   const capture = {
     schemaVersion: 2,

@@ -4,6 +4,7 @@ import type {
   Thread,
   Message,
   SkillInfo,
+  ProviderCatalogRequest,
 } from "@/transport/types";
 import { getDefaultSettings } from "@mcode/contracts";
 import { vi } from "vitest";
@@ -169,6 +170,18 @@ export const mockTransport: McodeTransport = {
   fetchBranch: vi.fn().mockResolvedValue(undefined),
   getPrByUrl: vi.fn().mockResolvedValue(null),
   checkStatus: vi.fn().mockResolvedValue({ aggregate: "no_checks", runs: [], fetchedAt: 0 }),
+  getProviderCatalog: vi.fn().mockImplementation(async (request: ProviderCatalogRequest) => ({
+    providerId: request.providerId,
+    context: request.workspaceId
+      ? { scope: "workspace" as const, workspaceId: request.workspaceId, ...(request.threadId ? { threadId: request.threadId } : {}) }
+      : request.cwd
+        ? { scope: "path" as const, cwd: request.cwd }
+        : { scope: "user" as const },
+    freshness: { status: "fresh" as const, fetchedAt: "2026-07-20T12:00:00.000Z" },
+    diagnostics: [],
+    entries: [],
+    selectableAgents: [],
+  })),
   listSkills: vi.fn().mockResolvedValue([] as SkillInfo[]),
   diagnoseSkills: vi.fn().mockResolvedValue({ scanned: [], errors: [], totalSkills: 0, totalCommands: 0 }),
   terminalCreate: vi.fn().mockResolvedValue({ ptyId: "pty-mock-1", shell: "pwsh" }),

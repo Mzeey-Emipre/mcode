@@ -72,7 +72,6 @@ import {
   useFileTagPopup,
 } from "@/components/chat/FileTagPopup";
 import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useWorkspaceThread } from "@/stores/workspace-selectors";
 
 /** Human-readable label for the capture confirmation badge. */
@@ -1570,15 +1569,13 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   // hooks can load skills scoped to the same context as the Composer.
   const activeThread = useWorkspaceThread(threadId, (t) => t);
   const providerId = (activeThread?.provider ?? undefined) as string | undefined;
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
-
   // Slash-command autocomplete for the bubble. Builtins are excluded because
   // mcode app-level actions (plan, compact, goal) have no meaning inside an
   // annotation comment because they target the Composer's thread, not the bubble.
   const bubbleSlashCommand = useSlashCommand({
     anchorRef: bubbleNoteInputRef as React.RefObject<HTMLElement | null>,
-    cwd: workspacePath,
+    workspaceId: workspaceId ?? undefined,
+    threadId,
     providerId,
     includeBuiltins: false,
   });

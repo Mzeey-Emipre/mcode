@@ -182,6 +182,25 @@ export async function mockWebSocketServer(
         result = [];
       } else if (method === "provider.codexAgents") {
         result = [];
+      } else if (method === "provider.catalog") {
+        const request = msg.params as {
+          providerId: "claude" | "codex" | "copilot" | "cursor" | "gemini";
+          workspaceId?: string;
+          threadId?: string;
+          cwd?: string;
+        };
+        result = {
+          providerId: request.providerId,
+          context: request.workspaceId
+            ? { scope: "workspace", workspaceId: request.workspaceId, ...(request.threadId ? { threadId: request.threadId } : {}) }
+            : request.cwd
+              ? { scope: "path", cwd: request.cwd }
+              : { scope: "user" },
+          freshness: { status: "fresh", fetchedAt: new Date().toISOString() },
+          diagnostics: [],
+          entries: [],
+          selectableAgents: [],
+        };
       } else if (method === "narrative.list") {
         // Assistant messages mount <PersistedNarrative>, which calls this RPC and
         // spreads the result into buildPersistedNarrativeItems. The generic
