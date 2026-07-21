@@ -747,6 +747,8 @@ export function createWsTransport(
       rpc<TurnSnapshot[]>("snapshot.listByThread", { threadId }),
     getCumulativeDiff: (threadId, filePath?, maxLines?) =>
       rpc<string>("snapshot.getCumulativeDiff", { threadId, filePath, maxLines }),
+    getCumulativeDiffStats: (threadId) =>
+      rpc("snapshot.getCumulativeDiffStats", { threadId }),
     getGitLog: (workspaceId, branch?, limit?, baseBranch?, threadId?, options?) =>
       rpc<GitCommit[]>("git.log", {
         workspaceId,
@@ -775,6 +777,8 @@ export function createWsTransport(
       rpc<GitRemoteUrl>("git.getRemoteUrl", { workspaceId, threadId }),
     getReviewDiffStats: (params) =>
       rpc<{ additions: number; deletions: number }>("git.reviewDiffStats", params),
+    getReviewComparison: (params) =>
+      rpc<import("@mcode/contracts").ReviewComparison>("git.reviewComparison", params),
 
     // GitHub PR (advanced)
     push: (workspaceId, branch, threadId?) =>

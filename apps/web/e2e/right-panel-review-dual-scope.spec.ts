@@ -78,6 +78,8 @@ const SETTINGS = {
 let branchFilesCalls: unknown[] = [];
 let branchDiffCalls: unknown[] = [];
 let branchDiffVersion = 0;
+let reviewComparisonVersion = 0;
+let reviewComparisonCalls: unknown[] = [];
 let snapshotListCalls = 0;
 let snapshotsForList: TurnSnapshot[] = [];
 let commitsForLog: GitCommit[] = [];
@@ -159,6 +161,8 @@ test.describe("Review tab: dual-scope view selection", () => {
     branchFilesCalls = [];
     branchDiffCalls = [];
     branchDiffVersion = 0;
+    reviewComparisonVersion = 0;
+    reviewComparisonCalls = [];
     snapshotListCalls = 0;
     snapshotsForList = [SNAPSHOT];
     commitsForLog = [];
@@ -178,14 +182,37 @@ test.describe("Review tab: dual-scope view selection", () => {
         const filePath = (params as { filePath?: string }).filePath ?? "src/a.ts";
         return `@@ -1 +1 @@\n-old ${filePath}\n+new ${filePath}\n`;
       },
-      "diffSummary.get": null,
-      "git.workingTreeFiles": (params) =>
-        (params as { staged?: boolean })?.staged ? ["src/staged.ts"] : ["src/unstaged.ts"],
-      "git.workingTreeDiff": "",
-      "git.branchFiles": (params) => {
-        branchFilesCalls.push(params);
-        return ["src/branch.ts"];
+      "snapshot.getDiffStats": (params) => {
+        const snapshot = snapshotsForList.find((item) => item.id === (params as { snapshotId: string }).snapshotId);
+        return (snapshot?.files_changed ?? []).map((filePath) => ({ filePath, additions: 1, deletions: 1 }));
       },
+      "snapshot.getCumulativeDiffStats": () => snapshotsForList.flatMap((snapshot) =>
+        snapshot.files_changed.map((filePath) => ({ filePath, additions: 1, deletions: 1 }))),
+      "diffSummary.get": null,
+      "git.workingTreeFiles": [],
+      "git.reviewComparison": (params) => {
+        const request = params as { view: string; base?: string; target?: string };
+        reviewComparisonCalls.push(params);
+        if (request.view === "branch") {
+          branchFilesCalls.push(params);
+          return {
+            files: [{ path: "src/branch.ts", previousPath: null, changeType: "modified", binary: false }],
+            additions: 1,
+            deletions: 1,
+          };
+        }
+        const paths = request.view === "staged"
+          ? ["src/staged.ts"]
+          : reviewComparisonVersion === 0
+            ? ["src/feature/unstaged.ts"]
+            : ["src/feature/unstaged.ts", "lib/new.ts"];
+        return {
+          files: paths.map((path) => ({ path, previousPath: null, changeType: "modified", binary: false })),
+          additions: 1,
+          deletions: 1,
+        };
+      },
+      "git.workingTreeDiff": "",
       "git.branchDiff": (params) => {
         branchDiffCalls.push(params);
         const base = (params as { base?: string }).base ?? "unknown";
@@ -205,7 +232,6 @@ test.describe("Review tab: dual-scope view selection", () => {
         isComparisonAvailable: true,
       },
       "git.log": () => commitsForLog,
-      "git.commitFiles": [],
     });
     await interceptZustandStores(page);
     await page.setViewportSize({ width: 1920, height: 900 });
@@ -482,5 +508,53 @@ test.describe("Review tab: dual-scope view selection", () => {
         ).length,
       )
       .toBeGreaterThan(1);
+  });
+
+  test("Files stays closed initially, persists across views, and refreshes atomically", async ({ page }) => {
+    await openThreadlessReview(page);
+
+    await expect(page.getByTestId("dev-worktree-files-pane")).toHaveCount(0);
+    await page.getByLabel("Show files").click();
+    const files = page.getByTestId("dev-worktree-files-pane");
+    await expect(files).toBeVisible();
+    await expect(files.getByText("unstaged.ts")).toBeVisible();
+
+    const sourceFolder = files.getByRole("treeitem", { name: "src/feature", exact: true });
+    await expect(sourceFolder).toHaveAttribute("aria-expanded", "true");
+    await sourceFolder.focus();
+    await expect(sourceFolder).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(sourceFolder).toHaveAttribute("aria-expanded", "false");
+
+    reviewComparisonVersion = 1;
+    const callsBeforeRefresh = reviewComparisonCalls.length;
+    await files.getByLabel("Refresh comparison").click();
+    await expect.poll(() => reviewComparisonCalls.length).toBeGreaterThan(callsBeforeRefresh);
+    await expect(files.getByText("unstaged.ts")).toHaveCount(0);
+    await expect(files.getByText("new.ts")).toBeVisible();
+    await expect(files.getByRole("treeitem", { name: "src/feature", exact: true })).toHaveAttribute("aria-expanded", "false");
+    await expect(files.getByRole("treeitem", { name: "lib", exact: true })).toHaveAttribute("aria-expanded", "true");
+
+    await page.getByTestId("review-view-switcher").click();
+    await page.getByTestId("review-view-staged").click();
+    await expect(files).toBeVisible();
+    await expect(files.getByText("staged.ts")).toBeVisible();
+    await expect(page.locator('button[aria-label="Hide files"][aria-pressed="true"]')).toBeVisible();
+  });
+
+  test("Files uses the same closed-first-paint and persisted-open flow at compact width", async ({ page }) => {
+    await page.setViewportSize({ width: 640, height: 760 });
+    await openThreadlessReview(page);
+    const projectTreeBackdrop = page.getByLabel("Close project tree");
+    if (await projectTreeBackdrop.isVisible()) await projectTreeBackdrop.click();
+
+    await expect(page.getByTestId("dev-worktree-files-pane")).toHaveCount(0);
+    await page.getByLabel("Show files").click();
+    await expect(page.getByTestId("dev-worktree-files-pane")).toBeVisible();
+    await page.getByTestId("review-view-switcher").click();
+    await page.getByTestId("review-view-staged").click();
+    await expect(page.getByTestId("dev-worktree-files-pane")).toBeVisible();
+    await page.getByTestId("dev-worktree-files-pane").getByRole("button", { name: "Hide files" }).click();
+    await expect(page.getByTestId("dev-worktree-files-pane")).toHaveCount(0);
   });
 });

@@ -383,6 +383,11 @@ export function startPushListeners(): void {
       const hasFileChanges = payload.filesChanged.length > 0;
       if (!hasFileChanges) return;
 
+      const thread = useWorkspaceStore
+        .getState()
+        .threads.find((candidate) => candidate.id === payload.threadId);
+      if (thread) clearFileListCache(thread.workspace_id, payload.threadId);
+
       try {
         const transport = getTransport();
         const snap = useDiffStore.getState();

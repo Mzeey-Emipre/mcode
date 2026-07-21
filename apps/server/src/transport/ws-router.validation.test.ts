@@ -61,6 +61,44 @@ describe("routeMessage result validation seam", () => {
   });
 });
 
+describe("routeMessage snapshot.getCumulativeDiffStats", () => {
+  it("rejects results above the Review comparison file bound before returning them", async () => {
+    const getDiffStats = vi.fn().mockResolvedValue(
+      Array.from({ length: 10_001 }, (_, index) => ({
+        filePath: `file-${index}.ts`,
+        additions: 1,
+        deletions: 0,
+      })),
+    );
+    const deps = {
+      turnSnapshotRepo: {
+        listByThread: vi.fn().mockReturnValue([{
+          id: "snapshot-1",
+          thread_id: "thread-1",
+          ref_before: "before",
+          ref_after: "after",
+          files_changed: [],
+          worktree_path: "C:/repo",
+          created_at: "2026-07-20T12:00:00.000Z",
+        }]),
+      },
+      snapshotService: { getDiffStats },
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "cumulative-stats-bound",
+      method: "snapshot.getCumulativeDiffStats",
+      params: { threadId: "thread-1" },
+    }), deps);
+
+    expect(response.error).toEqual({
+      code: "INTERNAL_ERROR",
+      message: "Cumulative Review comparison is limited to 10000 files",
+    });
+    expect(getDiffStats).toHaveBeenCalledOnce();
+  });
+});
+
 describe("routeMessage provider.catalog", () => {
   it("returns persisted Codex Skills immediately and reconciles refreshes in the background", async () => {
     let catalogVersion = 1;

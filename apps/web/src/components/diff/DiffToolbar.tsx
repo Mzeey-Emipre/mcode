@@ -24,9 +24,9 @@ type CommitAvailability = "loading" | "available" | "empty";
 
 /** Props for the Dev Review toolbar. */
 export interface DiffToolbarProps {
-  /** Whether the full-worktree file navigator is visible. */
+  /** Whether the active-comparison Files navigator is visible. */
   readonly filesVisible: boolean;
-  /** Toggles the full-worktree file navigator. */
+  /** Toggles the active-comparison Files navigator. */
   readonly onToggleFiles: () => void;
 }
 
@@ -260,7 +260,7 @@ export function DiffToolbar({ filesVisible, onToggleFiles }: DiffToolbarProps) {
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                aria-label={filesVisible ? "Hide worktree files" : "Show worktree files"}
+                aria-label={filesVisible ? "Hide files" : "Show files"}
                 aria-pressed={filesVisible}
                 className={cn(
                   "rounded-md text-muted-foreground",
@@ -273,7 +273,7 @@ export function DiffToolbar({ filesVisible, onToggleFiles }: DiffToolbarProps) {
             }
           />
           <TooltipContent side="bottom" className="text-xs">
-            {filesVisible ? "Hide worktree files" : "Show worktree files"}
+            {filesVisible ? "Hide files" : "Show files"}
           </TooltipContent>
         </Tooltip>
         {activeThread && <ReviewActions thread={activeThread} />}

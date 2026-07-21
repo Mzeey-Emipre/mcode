@@ -808,6 +808,16 @@ async function dispatch(
         resolveThreadRepoPath(deps, params.threadId),
       );
     }
+    case "git.reviewComparison": {
+      const ws = deps.workspaceService.findById(params.workspaceId);
+      if (!ws?.is_git_repo) return { files: [], additions: 0, deletions: 0 };
+      return deps.gitService.reviewComparison(
+        params.workspaceId,
+        params.view,
+        { base: params.base, target: params.target, sha: params.sha },
+        resolveThreadRepoPath(deps, params.threadId),
+      );
+    }
 
     // Agent
     case "agent.send":
@@ -1188,6 +1198,36 @@ async function dispatch(
         attributedPaths,
         attributedPathGroups,
       );
+    }
+    case "snapshot.getCumulativeDiffStats": {
+      const snapshots = deps.turnSnapshotRepo.listByThread(params.threadId);
+      const withGitRefs = snapshots.filter((snapshot) => snapshot.ref_before && snapshot.ref_after);
+      if (withGitRefs.length === 0) return [];
+      const first = withGitRefs[0];
+      const last = withGitRefs[withGitRefs.length - 1];
+      const attributedPaths = collectAttributedWorkspacePaths(withGitRefs);
+      const attributedPathGroups = collectAttributedWorkspacePathGroups(withGitRefs);
+      let cwd: string;
+      if (first.worktree_path) {
+        cwd = first.worktree_path;
+      } else {
+        const thread = deps.threadService.findById(params.threadId);
+        if (!thread) throw new Error(`Thread not found: ${params.threadId}`);
+        const ws = deps.workspaceService.findById(thread.workspace_id);
+        if (!ws) throw new Error(`Workspace not found: ${thread.workspace_id}`);
+        cwd = deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
+      }
+      const stats = await deps.snapshotService.getDiffStats(
+        cwd,
+        first.ref_before,
+        last.ref_after,
+        attributedPaths,
+        attributedPathGroups,
+      );
+      if (stats.length > 10_000) {
+        throw new Error("Cumulative Review comparison is limited to 10000 files");
+      }
+      return stats;
     }
 
     // Clipboard (legacy JSON-RPC path -- binary upload preferred)

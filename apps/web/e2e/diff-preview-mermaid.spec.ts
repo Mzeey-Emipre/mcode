@@ -136,6 +136,9 @@ test.describe("Diff preview: mermaid fences render as diagrams", () => {
       "snapshot.listByThread": [SNAPSHOT],
       "snapshot.getDiff": MERMAID_MD_DIFF,
       "snapshot.getCumulativeDiff": MERMAID_MD_DIFF,
+      "snapshot.getCumulativeDiffStats": [
+        { filePath: MD_FILE, additions: 11, deletions: 0 },
+      ],
       "diffSummary.get": null,
     });
     await interceptZustandStores(page);

@@ -116,6 +116,16 @@ export {
 export type { FileEffect, TurnFileEffectSummary } from "./models/file-effect.js";
 
 export {
+  ReviewFileChangeTypeSchema,
+  ReviewFileChangeSchema,
+  ReviewComparisonSchema,
+} from "./models/review-comparison.js";
+export type {
+  ReviewFileChange,
+  ReviewComparison,
+} from "./models/review-comparison.js";
+
+export {
   SettingsSchema,
   PartialSettingsSchema,
   getDefaultSettings,

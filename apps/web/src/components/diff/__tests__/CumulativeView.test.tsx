@@ -34,18 +34,13 @@ describe("CumulativeView summary lens", () => {
     render(
       <CumulativeView
         threadId="thread-1"
-        snapshots={[
-          {
-            id: "snap-1",
-            thread_id: "thread-1",
-            message_id: "turn-1",
-            ref_before: "a",
-            ref_after: "b",
-            files_changed: ["apps/web/src/a.ts"],
-            worktree_path: null,
-            created_at: "2026-06-12T10:00:00.000Z",
-          },
-        ]}
+        comparison={{
+          files: [{ path: "apps/web/src/a.ts", previousPath: null, changeType: "modified", binary: false }],
+          additions: 1,
+          deletions: 0,
+        }}
+        cacheVersion="snap-1"
+        turnCount={1}
       />,
     );
 
@@ -68,18 +63,13 @@ describe("CumulativeView summary lens", () => {
     render(
       <CumulativeView
         threadId="thread-1"
-        snapshots={[
-          {
-            id: "snap-1",
-            thread_id: "thread-1",
-            message_id: "turn-1",
-            ref_before: "a",
-            ref_after: "b",
-            files_changed: ["apps/web/src/a.ts"],
-            worktree_path: null,
-            created_at: "2026-06-12T10:00:00.000Z",
-          },
-        ]}
+        comparison={{
+          files: [{ path: "apps/web/src/a.ts", previousPath: null, changeType: "modified", binary: false }],
+          additions: 1,
+          deletions: 0,
+        }}
+        cacheVersion="snap-1"
+        turnCount={1}
       />,
     );
 
