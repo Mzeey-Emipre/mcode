@@ -27,6 +27,9 @@ const CatalogNameSchema = z.string().trim().min(1).max(256);
 const CatalogDescriptionSchema = z.string().max(2_000);
 const CatalogNativeIdSchema = z.string().trim().min(1).max(512);
 const CatalogPathSchema = z.string().min(1).max(PROVIDER_CATALOG_PATH_MAX_CHARS);
+const CatalogMarketplaceNameSchema = z.string().trim().min(1).max(256);
+const CatalogVersionSchema = z.string().trim().min(1).max(128);
+const CatalogCapabilitySchema = z.string().trim().min(1).max(256);
 
 function identitySchema<TKind extends ProviderCapabilityKind>(kind: TKind) {
   return z.object({
@@ -56,8 +59,15 @@ export const ProviderPluginCapabilitySchema = lazySchema(() =>
     identity: identitySchema("plugin"),
     name: CatalogNameSchema,
     description: CatalogDescriptionSchema,
+    mentionPath: z.string().startsWith("plugin://").max(PROVIDER_CATALOG_PATH_MAX_CHARS),
+    marketplaceName: CatalogMarketplaceNameSchema,
+    version: CatalogVersionSchema.optional(),
+    developerName: CatalogNameSchema.optional(),
+    capabilities: z.array(CatalogCapabilitySchema).max(100),
   }).strict(),
 );
+/** Installed and enabled provider plugin entry. */
+export type ProviderPluginCapability = z.infer<ReturnType<typeof ProviderPluginCapabilitySchema>>;
 
 /** Deprecated Codex custom prompt entry available through the slash gesture. */
 export const ProviderCustomPromptCapabilitySchema = lazySchema(() =>

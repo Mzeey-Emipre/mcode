@@ -1021,7 +1021,7 @@ export class AgentService {
       if (mention.kind === "command") continue;
 
       if (input.provider !== "codex") {
-        throw new Error("Agent mentions are only supported by Codex");
+        throw new Error("Provider mentions are only supported by Codex");
       }
     }
 

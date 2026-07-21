@@ -4,7 +4,11 @@ import {
   providerCatalogCacheKey,
   useProviderCatalogStore,
 } from "@/stores/providerCatalogStore";
-import { ProviderIdSchema, type ProviderCapabilityEntry } from "@mcode/contracts";
+import {
+  ProviderIdSchema,
+  type ProviderCapabilityEntry,
+  type ProviderCapabilityKind,
+} from "@mcode/contracts";
 import type { ProviderCatalogRequest } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 import {
@@ -17,9 +21,13 @@ export type ComposerCommandAction = ComposerCapabilityAction;
 
 /** A slash command entry shown in the popup. */
 export interface Command {
+  id: string;
   name: string;
   description: string;
   namespace: SlashCommandNamespace;
+  capabilityKind: ProviderCapabilityKind | "mcode";
+  nativeId: string;
+  mentionPath?: string;
   /** For mcode-namespace commands, the action string dispatched on selection. */
   action?: ComposerCommandAction;
 }
@@ -43,9 +51,12 @@ const MAX_SLASH_COMMAND_ITEMS = 100;
 
 const BUILTIN_COMMANDS: Command[] = [
   {
+    id: "builtin:command:compact",
     name: "compact",
     description: "Summarise conversation history to free up context window",
     namespace: "command",
+    capabilityKind: "providerCommand",
+    nativeId: "compact",
   },
 ];
 
@@ -54,17 +65,29 @@ export const SLASH_TRIGGER_RE = /(^|\s)(\/\S*)$/;
 
 /** Map an invocable provider capability into the existing command presentation. */
 function toCommand(entry: ProviderCapabilityEntry): Command | null {
-  if (entry.kind === "plugin") return null;
+  const base = {
+    id: `${entry.identity.providerId}:${entry.identity.kind}:${entry.identity.nativeId}`,
+    name: entry.name,
+    description: entry.description || `Run /${entry.name}`,
+    capabilityKind: entry.kind,
+    nativeId: entry.identity.nativeId,
+  };
+  if (entry.kind === "plugin") {
+    return {
+      ...base,
+      description: entry.description || `Use @${entry.name}`,
+      namespace: "plugin",
+      mentionPath: entry.mentionPath,
+    };
+  }
   if (entry.kind === "customPrompt" || entry.kind === "providerCommand") {
     return {
-      name: entry.name,
-      description: entry.description || `Run /${entry.name}`,
+      ...base,
       namespace: "command",
     };
   }
   return {
-    name: entry.name,
-    description: entry.description || `Run /${entry.name}`,
+    ...base,
     namespace: entry.source === "plugin" || entry.name.includes(":") ? "plugin" : "skill",
   };
 }
@@ -80,7 +103,9 @@ const NAMESPACE_ORDER: Record<SlashCommandNamespace, number> = {
 function sortCommands(cmds: Command[]): Command[] {
   return [...cmds].sort((a, b) => {
     const order = NAMESPACE_ORDER[a.namespace] - NAMESPACE_ORDER[b.namespace];
-    return order !== 0 ? order : a.name.localeCompare(b.name);
+    if (order !== 0) return order;
+    const nameOrder = a.name.localeCompare(b.name);
+    return nameOrder !== 0 ? nameOrder : a.id.localeCompare(b.id);
   });
 }
 
@@ -103,6 +128,8 @@ interface UseSlashCommandOptions {
    * bubble where mcode actions are meaningless and must not be selectable.
    */
   includeBuiltins?: boolean;
+  /** Whether this surface can persist native plugin mentions. */
+  includePlugins?: boolean;
 }
 
 /** Return value of the useSlashCommand hook. */
@@ -141,6 +168,7 @@ export function useSlashCommand({
   providerId,
   modelId,
   includeBuiltins = true,
+  includePlugins = true,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -184,9 +212,12 @@ export function useSlashCommand({
       ? [
           ...resolveComposerCapabilities({ providerId, modelId }).map(
             (capability): Command => ({
+              id: `builtin:mcode:${capability.id}`,
               name: capability.slashCommand,
               description: `Attach ${capability.label} to the composer`,
               namespace: "mcode",
+              capabilityKind: "mcode",
+              nativeId: capability.id,
               action: capability.action,
             }),
           ),
@@ -194,6 +225,7 @@ export function useSlashCommand({
         ]
       : [];
     const providerCommands = (snapshot?.entries ?? [])
+      .filter((entry) => includePlugins || entry.kind !== "plugin")
       .map(toCommand)
       .filter((command): command is Command => command !== null);
     const commands: Command[] = [
@@ -201,7 +233,7 @@ export function useSlashCommand({
       ...providerCommands,
     ];
     return sortCommands(commands);
-  }, [snapshot, providerId, modelId, includeBuiltins]);
+  }, [snapshot, providerId, modelId, includeBuiltins, includePlugins]);
 
   const filtered = useMemo(() => {
     const f = filter.toLowerCase();
@@ -320,7 +352,9 @@ export function useSlashCommand({
         replaceText(
           cmd.action
             ? value.slice(0, triggerStart) + value.slice(cursor)
-            : value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor),
+            : value.slice(0, triggerStart) + (
+                cmd.capabilityKind === "plugin" ? `@${cmd.name} ` : `/${cmd.name} `
+              ) + value.slice(cursor),
         );
       }
       if (cmd.action && onMcodeCommand) onMcodeCommand(cmd.action);

@@ -65,8 +65,10 @@ import {
   ComposerEditor,
   $createSlashCommandNode,
   $createTypedMentionNode,
+  createMentionId,
   extractComposerMessage,
   insertMentionNode,
+  insertSelectedPluginMention,
   insertSlashCommandNode,
   removeSlashCommandTrigger,
   type MentionNodeData,
@@ -224,7 +226,7 @@ function writeComposerContent(
               label: mention.label,
               name: mention.name,
               path: mention.path,
-              provider: mention.provider,
+              ...(mention.kind === "agent" ? { provider: mention.provider } : {}),
             };
       paragraph.append($createTypedMentionNode(nodeMention));
       cursor = mention.range.end;
@@ -1344,14 +1346,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     fileAutocomplete.selectSuggestion(item);
     if (!editorRef.current) return;
 
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `mention-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const mention: MentionNodeData =
       item.kind === "agent"
         ? {
-            id,
+            id: createMentionId(),
             kind: "agent",
             label: item.label,
             name: item.name,
@@ -1359,7 +1357,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             provider: item.provider,
           }
         : {
-            id,
+            id: createMentionId(),
             kind: "file",
             label: item.label,
             path: item.path,
@@ -2713,7 +2711,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (editorRef.current) {
       if (cmd.action) {
         removeSlashCommandTrigger(editorRef.current);
-      } else {
+      } else if (!insertSelectedPluginMention(editorRef.current, cmd)) {
         insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
       }
     }

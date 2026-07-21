@@ -14,7 +14,16 @@ function entry(kind: "skill" | "plugin" | "customPrompt" | "providerCommand") {
     name: "same-name",
     description: `${kind} description`,
   } as const;
-  return kind === "skill" ? { ...base, source: "user" as const } : base;
+  if (kind === "skill") return { ...base, source: "user" as const };
+  if (kind === "plugin") {
+    return {
+      ...base,
+      mentionPath: "plugin://same-name@personal",
+      marketplaceName: "personal",
+      capabilities: [],
+    };
+  }
+  return base;
 }
 
 describe("ProviderCatalogSnapshotSchema", () => {

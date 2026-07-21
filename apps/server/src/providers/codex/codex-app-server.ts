@@ -36,6 +36,10 @@ import type {
   AccountRateLimitsReadResult,
   SkillsListParams,
   SkillsListResult,
+  PluginListParams,
+  PluginListResult,
+  PluginReadParams,
+  PluginReadResult,
   SandboxMode,
   AskForApproval,
 } from "./codex-types.js";
@@ -992,6 +996,25 @@ export class CodexAppServer extends EventEmitter {
       ...(forceReload ? { forceReload } : {}),
     };
     return this.rpc.sendRequest<SkillsListParams, SkillsListResult>("skills/list", params, 10000);
+  }
+
+  /** Reads installed plugin summaries for the effective working-directory context. */
+  async listPlugins(cwds?: string[]): Promise<PluginListResult> {
+    if (!this._isAlive || !this.rpc) {
+      throw new Error("listPlugins called before codex app-server was ready");
+    }
+    const params: PluginListParams = {
+      ...(cwds && cwds.length > 0 ? { cwds } : {}),
+    };
+    return this.rpc.sendRequest<PluginListParams, PluginListResult>("plugin/list", params, 10000);
+  }
+
+  /** Reads plugin detail only when its list summary omits composer metadata. */
+  async readPlugin(params: PluginReadParams): Promise<PluginReadResult> {
+    if (!this._isAlive || !this.rpc) {
+      throw new Error("readPlugin called before codex app-server was ready");
+    }
+    return this.rpc.sendRequest<PluginReadParams, PluginReadResult>("plugin/read", params, 2_000);
   }
 
   /**

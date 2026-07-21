@@ -1578,6 +1578,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     threadId,
     providerId,
     includeBuiltins: false,
+    includePlugins: false,
   });
   const {
     isOpen: bubbleSlashOpen,

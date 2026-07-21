@@ -1,5 +1,11 @@
 export { ComposerEditor } from "./ComposerEditor";
-export { MentionNode, $createMentionNode, $createTypedMentionNode, $isMentionNode } from "./MentionNode";
+export {
+  MentionNode,
+  $createMentionNode,
+  $createTypedMentionNode,
+  $isMentionNode,
+  createMentionId,
+} from "./MentionNode";
 export type { MentionNodeData } from "./MentionNode";
 export {
   SlashCommandNode,
@@ -7,6 +13,11 @@ export {
   $isSlashCommandNode,
 } from "./SlashCommandNode";
 export { insertMentionNode } from "./MentionPlugin";
-export { insertSlashCommandNode, removeSlashCommandTrigger } from "./SlashCommandPlugin";
+export {
+  insertPluginMentionNode,
+  insertSelectedPluginMention,
+  insertSlashCommandNode,
+  removeSlashCommandTrigger,
+} from "./SlashCommandPlugin";
 export { getPlainTextFromEditor, extractMentionPaths, extractComposerMessage } from "./cursor-utils";
 export type { ExtractedComposerMessage } from "./cursor-utils";

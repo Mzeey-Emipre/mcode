@@ -48,6 +48,13 @@ export const MessageMentionSchema = z.discriminatedUnion("kind", [
     provider: z.string().min(1).max(64).optional(),
   }),
   MentionBaseSchema.extend({
+    kind: z.literal("plugin"),
+    name: MentionTextSchema,
+    path: MentionPathSchema.refine((value) => value.startsWith("plugin://"), {
+      message: "Plugin mention path must use the plugin:// scheme",
+    }),
+  }),
+  MentionBaseSchema.extend({
     kind: z.literal("command"),
     namespace: z.enum(["skill", "mcode", "plugin", "command"]),
   }),

@@ -206,6 +206,66 @@ export interface SkillsListResult {
   }>;
 }
 
+// Plugin RPCs
+
+/** Parameters for the `plugin/list` RPC method. */
+export interface PluginListParams {
+  cwds?: string[];
+}
+
+/** Composer metadata included in a Codex plugin summary. */
+export interface CodexPluginInterface {
+  displayName?: string | null;
+  shortDescription?: string | null;
+  longDescription?: string | null;
+  developerName?: string | null;
+  capabilities?: string[];
+  [key: string]: unknown;
+}
+
+/** Installed-state metadata returned for a Codex plugin. */
+export interface CodexPluginSummary {
+  id: string;
+  name: string;
+  installed: boolean;
+  enabled: boolean;
+  version?: string | null;
+  localVersion?: string | null;
+  interface?: CodexPluginInterface | null;
+  [key: string]: unknown;
+}
+
+/** One plugin marketplace and its summarized plugins. */
+export interface CodexPluginMarketplace {
+  name: string;
+  path: string | null;
+  plugins: CodexPluginSummary[];
+  [key: string]: unknown;
+}
+
+/** Result returned by the `plugin/list` RPC method. */
+export interface PluginListResult {
+  marketplaces: CodexPluginMarketplace[];
+  marketplaceLoadErrors: Array<{ marketplacePath: string; message: string }>;
+  featuredPluginIds: string[];
+}
+
+/** Parameters for the `plugin/read` RPC method. */
+export interface PluginReadParams {
+  marketplacePath?: string;
+  remoteMarketplaceName?: string;
+  pluginName: string;
+}
+
+/** Result returned by the `plugin/read` RPC method. */
+export interface PluginReadResult {
+  plugin: {
+    description?: string | null;
+    summary?: CodexPluginSummary;
+    [key: string]: unknown;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Notification payloads
 // Source: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts

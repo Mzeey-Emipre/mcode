@@ -3,15 +3,20 @@ import { inject, injectable } from "tsyringe";
 import type {
   ProviderCatalogDiagnostic,
   ProviderCatalogFreshness,
+  ProviderPluginCapability,
   SkillInfo,
 } from "@mcode/contracts";
 import {
   PROVIDER_CATALOG_MAX_ENTRIES,
+  ProviderPluginCapabilitySchema,
   SkillInfoSchema,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import { CodexAppServer, type CodexAppServerOptions } from "../providers/codex/codex-app-server.js";
 import type {
+  PluginListResult,
+  PluginReadParams,
+  PluginReadResult,
   SkillsListResult,
 } from "../providers/codex/codex-types.js";
 import { codexPluginNameFromSkillPath } from "./skill-service.js";
@@ -22,10 +27,19 @@ import type { JobObject } from "./job-object.js";
 const CODEX_CATALOG_IDLE_TTL_MS = 60_000;
 const CODEX_CATALOG_MAX_CONTEXTS = 64;
 const CODEX_CATALOG_MAX_CWD_LENGTH = 4_096;
+const CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS = 64;
+const CODEX_CATALOG_PLUGIN_DETAIL_CONCURRENCY = 8;
+
+interface PluginCandidate {
+  readonly marketplaceName: string;
+  readonly marketplacePath: string | null;
+  readonly summary: Record<string, unknown>;
+}
 
 /** Result of refreshing native Codex Skills for one working-directory context. */
 export interface CodexCatalogRefreshResult {
   readonly skills: SkillInfo[];
+  readonly plugins: ProviderPluginCapability[];
   readonly diagnostics: ProviderCatalogDiagnostic[];
   readonly freshness: ProviderCatalogFreshness;
 }
@@ -35,6 +49,8 @@ export interface CodexCatalogClient extends EventEmitter {
   readonly isAlive: boolean;
   start(): Promise<void>;
   listSkills(cwds?: string[], forceReload?: boolean): Promise<SkillsListResult>;
+  listPlugins(cwds?: string[]): Promise<PluginListResult>;
+  readPlugin(params: PluginReadParams): Promise<PluginReadResult>;
   kill(): Promise<void>;
 }
 
@@ -135,7 +151,201 @@ function upstreamDiagnostics(rawErrors: unknown): ProviderCatalogDiagnostic[] {
   });
 }
 
-/** Owns one lazy, thread-independent Codex app-server connection for Skill catalogs. */
+function pluginDetailDescription(result: PluginReadResult): string {
+  const plugin = result.plugin;
+  const summaryInterface = plugin.summary?.interface;
+  return [
+    plugin.description,
+    summaryInterface?.shortDescription,
+    summaryInterface?.longDescription,
+  ].find((candidate): candidate is string => (
+    typeof candidate === "string" && candidate.trim().length > 0
+  ))?.trim() ?? "";
+}
+
+function pluginSummaryDescription(summary: Record<string, unknown>): string {
+  const interfaceValue = summary.interface && typeof summary.interface === "object"
+    ? summary.interface as Record<string, unknown>
+    : undefined;
+  return [interfaceValue?.shortDescription, interfaceValue?.longDescription]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+    ?.trim() ?? "";
+}
+
+function pluginReadParams(
+  marketplaceName: string,
+  marketplacePath: string | null,
+  pluginName: string,
+): PluginReadParams {
+  return marketplacePath
+    ? { marketplacePath, pluginName }
+    : { remoteMarketplaceName: marketplaceName, pluginName };
+}
+
+async function readMissingPluginDescriptions(
+  client: CodexCatalogClient,
+  candidates: PluginCandidate[],
+  diagnostics: ProviderCatalogDiagnostic[],
+): Promise<Map<string, string>> {
+  const missing = candidates.filter(({ summary }) => (
+    typeof summary.id === "string" &&
+    typeof summary.name === "string" &&
+    !pluginSummaryDescription(summary)
+  ));
+  const selected = missing.slice(0, CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS);
+  const descriptions = new Map<string, string>();
+  let nextIndex = 0;
+
+  const worker = async (): Promise<void> => {
+    while (nextIndex < selected.length) {
+      const candidate = selected[nextIndex++];
+      if (!candidate) return;
+      const { marketplaceName, marketplacePath, summary } = candidate;
+      const pluginId = summary.id as string;
+      try {
+        const detail = await client.readPlugin(pluginReadParams(
+          marketplaceName,
+          marketplacePath,
+          summary.name as string,
+        ));
+        descriptions.set(pluginId, pluginDetailDescription(detail));
+      } catch {
+        diagnostics.push({
+          severity: "warning",
+          code: "partial-result",
+          message: boundedDiagnosticMessage(
+            `Codex plugin details are unavailable for ${pluginId}.`,
+          ),
+        });
+      }
+    }
+  };
+
+  await Promise.all(Array.from(
+    { length: Math.min(CODEX_CATALOG_PLUGIN_DETAIL_CONCURRENCY, selected.length) },
+    worker,
+  ));
+  if (missing.length > CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS) {
+    diagnostics.push({
+      severity: "warning",
+      code: "partial-result",
+      message: `Codex plugin detail reads were capped at ${CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS} entries.`,
+    });
+  }
+  return descriptions;
+}
+
+async function reconcilePlugins(
+  client: CodexCatalogClient,
+  result: PluginListResult,
+): Promise<{
+  plugins: ProviderPluginCapability[];
+  diagnostics: ProviderCatalogDiagnostic[];
+}> {
+  const diagnostics: ProviderCatalogDiagnostic[] = (Array.isArray(result.marketplaceLoadErrors)
+    ? result.marketplaceLoadErrors
+    : []).slice(0, 90).flatMap((error) => {
+      if (
+        !error ||
+        typeof error.marketplacePath !== "string" ||
+        typeof error.message !== "string"
+      ) {
+        return [];
+      }
+      return [{
+        severity: "warning" as const,
+        code: "discovery-error" as const,
+        message: boundedDiagnosticMessage(
+          `Codex plugin marketplace ${error.marketplacePath}: ${error.message}`,
+        ),
+      }];
+    });
+  const candidates: PluginCandidate[] = [];
+
+  for (const rawMarketplace of Array.isArray(result.marketplaces) ? result.marketplaces : []) {
+    if (!rawMarketplace || typeof rawMarketplace !== "object") continue;
+    const marketplace = rawMarketplace as unknown as Record<string, unknown>;
+    if (typeof marketplace.name !== "string" || !Array.isArray(marketplace.plugins)) continue;
+    const marketplacePath = typeof marketplace.path === "string" ? marketplace.path : null;
+    for (const rawPlugin of marketplace.plugins) {
+      if (!rawPlugin || typeof rawPlugin !== "object") continue;
+      const summary = rawPlugin as Record<string, unknown>;
+      if (summary.installed !== true || summary.enabled !== true) continue;
+      candidates.push({
+        marketplaceName: marketplace.name,
+        marketplacePath,
+        summary,
+      });
+    }
+  }
+
+  const selectedCandidates = candidates.slice(0, PROVIDER_CATALOG_MAX_ENTRIES);
+  const detailDescriptions = await readMissingPluginDescriptions(
+    client,
+    selectedCandidates,
+    diagnostics,
+  );
+  const pluginsById = new Map<string, ProviderPluginCapability>();
+  let invalidMetadata = false;
+  for (const candidate of selectedCandidates) {
+    const { marketplaceName, summary } = candidate;
+    if (typeof summary.id !== "string" || typeof summary.name !== "string") {
+      invalidMetadata = true;
+      continue;
+    }
+    const interfaceValue = summary.interface && typeof summary.interface === "object"
+      ? summary.interface as Record<string, unknown>
+      : undefined;
+    const description = pluginSummaryDescription(summary) || detailDescriptions.get(summary.id) || "";
+    const name = typeof interfaceValue?.displayName === "string" && interfaceValue.displayName.trim()
+      ? interfaceValue.displayName.trim()
+      : summary.name;
+    const version = [summary.localVersion, summary.version]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0)
+      ?.trim();
+    const developerName = typeof interfaceValue?.developerName === "string" && interfaceValue.developerName.trim()
+      ? interfaceValue.developerName.trim()
+      : undefined;
+    const capabilities = Array.isArray(interfaceValue?.capabilities)
+      ? interfaceValue.capabilities
+          .filter((value): value is string => typeof value === "string")
+          .slice(0, 100)
+      : [];
+    const parsed = ProviderPluginCapabilitySchema().safeParse({
+      kind: "plugin",
+      identity: { providerId: "codex", kind: "plugin", nativeId: summary.id },
+      name,
+      description,
+      mentionPath: `plugin://${summary.id}`,
+      marketplaceName,
+      ...(version ? { version } : {}),
+      ...(developerName ? { developerName } : {}),
+      capabilities,
+    });
+    if (parsed.success) pluginsById.set(parsed.data.identity.nativeId, parsed.data);
+    else invalidMetadata = true;
+  }
+  if (candidates.length > PROVIDER_CATALOG_MAX_ENTRIES) {
+    diagnostics.push({
+      severity: "warning",
+      code: "partial-result",
+      message: `Codex plugins were capped at ${PROVIDER_CATALOG_MAX_ENTRIES} entries.`,
+    });
+  }
+  if (invalidMetadata) {
+    diagnostics.push({
+      severity: "warning",
+      code: "partial-result",
+      message: "Some Codex plugins were omitted because their metadata was invalid.",
+    });
+  }
+  return {
+    plugins: [...pluginsById.values()],
+    diagnostics: diagnostics.slice(0, 100),
+  };
+}
+
+/** Owns one lazy, thread-independent Codex app-server connection for capability catalogs. */
 @injectable()
 export class CodexCatalogService {
   private client: CodexCatalogClient | null = null;
@@ -152,7 +362,7 @@ export class CodexCatalogService {
     @inject(CodexCatalogClientFactory) private readonly clientFactory: CodexCatalogClientFactory,
   ) {}
 
-  /** Refreshes the complete native Skill list for one working-directory context. */
+  /** Refreshes the complete native capability list for one working-directory context. */
   async refresh(cwd?: string): Promise<CodexCatalogRefreshResult> {
     this.rememberContext(cwd);
     this.armIdleTimer();
@@ -193,9 +403,12 @@ export class CodexCatalogService {
   ): Promise<CodexCatalogRefreshResult> {
     try {
       const client = await this.acquireClient(cwd);
-      const result = await client.listSkills(cwd ? [cwd] : undefined, forceReload);
-      const rawData = Array.isArray((result as { data?: unknown }).data)
-        ? (result as { data: unknown[] }).data
+      const [skillsResult, pluginsResult] = await Promise.all([
+        client.listSkills(cwd ? [cwd] : undefined, forceReload),
+        client.listPlugins(cwd ? [cwd] : undefined),
+      ]);
+      const rawData = Array.isArray((skillsResult as { data?: unknown }).data)
+        ? (skillsResult as { data: unknown[] }).data
         : [];
       const data = (cwd
         ? rawData.find((item) => (
@@ -207,6 +420,8 @@ export class CodexCatalogService {
       }
       const reconciled = reconcileSkills(data?.skills);
       const diagnostics = upstreamDiagnostics(data?.errors);
+      const reconciledPlugins = await reconcilePlugins(client, pluginsResult);
+      diagnostics.push(...reconciledPlugins.diagnostics);
       if (reconciled.invalidMetadata) {
         diagnostics.push({
           severity: "warning",
@@ -224,7 +439,8 @@ export class CodexCatalogService {
       const fetchedAt = new Date().toISOString();
       const snapshot: CodexCatalogRefreshResult = {
         skills: reconciled.skills,
-        diagnostics,
+        plugins: reconciledPlugins.plugins,
+        diagnostics: diagnostics.slice(0, 100),
         freshness: { status: "fresh", fetchedAt },
       };
       this.snapshots.set(catalogKey(cwd), snapshot);
@@ -238,15 +454,16 @@ export class CodexCatalogService {
       });
       const snapshot: CodexCatalogRefreshResult = {
         skills: previous?.skills ?? [],
+        plugins: previous?.plugins ?? [],
         diagnostics: [{
           severity: "warning",
           code: "source-unavailable",
-          message: "Codex Skills are temporarily unavailable for this catalog context.",
+          message: "Codex capabilities are temporarily unavailable for this catalog context.",
         }],
         freshness: {
           status: "stale",
           fetchedAt,
-          reason: "Codex Skill discovery failed.",
+          reason: "Codex capability discovery failed.",
         },
       };
       this.snapshots.set(catalogKey(cwd), snapshot);
