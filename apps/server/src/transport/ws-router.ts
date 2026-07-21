@@ -5,9 +5,9 @@
  */
 
 import { randomUUID } from "crypto";
-import { mkdir, readdir, readFile, writeFile } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import type { WebSocket } from "ws";
 
 import {
@@ -20,7 +20,6 @@ import {
   type ProviderUsageInfo,
   type ProviderCatalogContext,
   type ProviderCapabilityKind,
-  type ProviderAgentMention,
   type PreviewAnnotationBundle,
   getExtension,
   isSkillCatalogCapable,
@@ -75,7 +74,6 @@ import {
 } from "../services/snapshot-attribution.js";
 import {
   buildProviderCatalogSnapshot,
-  discoverBoundedCodexAgents,
 } from "./provider-catalog.js";
 
 const PREVIEW_ANNOTATION_FENCE_START = "<!-- mcode-preview-annotations:v1";
@@ -124,76 +122,6 @@ function readyUsageSnapshot(usage: ProviderUsageInfo): ProviderUsageInfo {
 
 function teardownFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
-}
-
-function tomlStringValue(body: string, key: string): string | undefined {
-  const match = new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m").exec(body);
-  return match?.[1]?.trim() || undefined;
-}
-
-async function scanCodexAgentDir(dir: string): Promise<ProviderAgentMention[]> {
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return [];
-  }
-
-  const agents: ProviderAgentMention[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".toml")) continue;
-    const path = join(dir, entry);
-    try {
-      const body = await readFile(path, "utf8");
-      const fallbackName = entry.slice(0, -".toml".length);
-      const name = tomlStringValue(body, "name") ?? fallbackName;
-      const description = tomlStringValue(body, "description");
-      agents.push({ name, path, ...(description ? { description } : {}) });
-    } catch {
-      // Ignore malformed or unreadable agent files; diagnostics belong in the agent editor.
-    }
-  }
-  return agents;
-}
-
-function resolveCodexAgentDirectories(
-  deps: RouterDeps,
-  workspaceId?: string,
-  threadId?: string,
-  cwdOverride?: string,
-): string[] {
-  const dirs = [join(homedir(), ".codex", "agents")];
-  if (workspaceId) {
-    const workspace = deps.workspaceService.findById(workspaceId);
-    if (workspace) {
-      let cwd = workspace.path;
-      if (threadId) {
-        const thread = deps.threadRepo.findById(threadId);
-        if (thread && thread.workspace_id === workspaceId) {
-          cwd = deps.gitService.resolveWorkingDir(workspace.path, thread.mode, thread.worktree_path);
-        }
-      }
-      dirs.push(join(cwd, ".codex", "agents"));
-    }
-  } else if (cwdOverride) {
-    dirs.push(join(cwdOverride, ".codex", "agents"));
-  }
-  return dirs;
-}
-
-async function discoverCodexAgents(
-  deps: RouterDeps,
-  workspaceId?: string,
-  threadId?: string,
-  cwdOverride?: string,
-): Promise<ProviderAgentMention[]> {
-  const byName = new Map<string, ProviderAgentMention>();
-  for (const dir of resolveCodexAgentDirectories(deps, workspaceId, threadId, cwdOverride)) {
-    for (const agent of await scanCodexAgentDir(dir)) {
-      byName.set(agent.name, agent);
-    }
-  }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function resolveProviderCatalogContext(
@@ -1024,20 +952,12 @@ async function dispatch(
           ? [...catalog.skills, ...catalog.prompts]
           : undefined;
         const skills = deps.skillService.list(cwd, params.providerId, nativeItems);
-        const agentDiscovery = params.providerId === "codex"
-          ? await discoverBoundedCodexAgents(resolveCodexAgentDirectories(
-              deps,
-              params.workspaceId,
-              params.threadId,
-              params.cwd,
-            ))
-          : undefined;
         return buildProviderCatalogSnapshot({
           providerId: params.providerId,
           context: catalogContext,
           skills,
           ...(catalog?.plugins ? { entries: catalog.plugins } : {}),
-          ...(agentDiscovery ? { agentDiscovery } : {}),
+          ...(catalog?.agents ? { agents: catalog.agents } : {}),
           ...(catalog?.diagnostics ? { diagnostics: catalog.diagnostics } : {}),
           ...(catalog?.freshness ? { freshness: catalog.freshness } : {}),
         });
@@ -1316,7 +1236,8 @@ async function dispatch(
       return deps.providerAvailability.listAvailability();
     }
     case "provider.codexAgents": {
-      return discoverCodexAgents(deps, params.workspaceId, params.threadId);
+      const { cwd } = resolveProviderCatalogContext(deps, params);
+      return (await deps.codexCatalogService.refresh(cwd)).agents;
     }
     case "provider.copilotAgents": {
       const workspace = deps.workspaceService.findById(params.workspaceId);

@@ -75,13 +75,26 @@ test("Codex @ autocomplete groups agents and files, then sends selected agent me
   await mockWebSocketServer(page, {
     "workspace.enrich": { items: [] },
     "settings.get": getDefaultSettings(),
-    "provider.codexAgents": [
-      {
-        name: "planner",
-        path: "C:/Users/example/.codex/agents/planner.toml",
-        description: "Plans implementation work.",
+    "provider.catalog": {
+      providerId: "codex",
+      context: {
+        scope: "workspace",
+        workspaceId: WORKSPACE.id,
+        threadId: THREAD.id,
       },
-    ],
+      freshness: { status: "fresh", fetchedAt: new Date().toISOString() },
+      diagnostics: [],
+      entries: [],
+      selectableAgents: [
+        {
+          providerId: "codex",
+          nativeId: "planner",
+          name: "planner",
+          path: "C:/Users/example/.codex/agents/planner.toml",
+          description: "Plans implementation work.",
+        },
+      ],
+    },
     "file.list": ["src/app.ts", "src/components/chat/Composer.tsx"],
     "agent.send": (params) => {
       sendParams = params;

@@ -1,9 +1,6 @@
-import { open, opendir } from "fs/promises";
-import { join } from "path";
 import {
-  PROVIDER_CATALOG_MAX_CODEX_AGENT_FILE_BYTES,
-  PROVIDER_CATALOG_MAX_CODEX_AGENT_FILES,
   PROVIDER_CATALOG_MAX_ENTRIES,
+  PROVIDER_CATALOG_MAX_DIAGNOSTICS,
   PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS,
   ProviderAgentMentionSchema,
   ProviderCapabilityEntrySchema,
@@ -21,122 +18,20 @@ import {
 } from "@mcode/contracts";
 import { isCodexCustomPromptCatalogItem } from "../providers/codex/codex-prompt.js";
 
-/** Limits used while reading Codex agent files for a catalog snapshot. */
-export interface CodexAgentDiscoveryLimits {
-  readonly maxFiles: number;
-  readonly maxFileBytes: number;
-}
-
-/** Limit state collected while reading Codex agent files. */
-export interface CodexAgentDiscoveryLimitState {
-  readonly fileCount: boolean;
-  readonly fileSize: boolean;
-}
-
-/** Bounded Codex agent discovery result used to build a catalog snapshot. */
-export interface BoundedCodexAgentDiscovery {
-  readonly agents: readonly ProviderAgentMention[];
-  readonly limits: CodexAgentDiscoveryLimitState;
-}
-
 /** Inputs used to construct and validate one provider catalog snapshot. */
 export interface BuildProviderCatalogSnapshotInput {
   readonly providerId: SettingsProviderId;
   readonly context: ProviderCatalogContext;
   readonly skills: readonly SkillInfo[];
   readonly entries?: readonly ProviderCapabilityEntry[];
-  readonly agentDiscovery?: BoundedCodexAgentDiscovery;
+  readonly agents?: readonly ProviderAgentMention[];
   readonly diagnostics?: readonly ProviderCatalogDiagnostic[];
   readonly freshness?: ProviderCatalogFreshness;
   readonly fetchedAt?: string;
 }
 
-const DEFAULT_CODEX_AGENT_DISCOVERY_LIMITS: CodexAgentDiscoveryLimits = {
-  maxFiles: PROVIDER_CATALOG_MAX_CODEX_AGENT_FILES,
-  maxFileBytes: PROVIDER_CATALOG_MAX_CODEX_AGENT_FILE_BYTES,
-};
 const INVALID_CATALOG_ITEM_DIAGNOSTIC =
   "Some provider catalog items were omitted because their metadata was invalid.";
-const PROVIDER_CATALOG_MAX_DIAGNOSTICS = 100;
-
-function appendDiagnostic(
-  diagnostics: ProviderCatalogDiagnostic[],
-  diagnostic: ProviderCatalogDiagnostic,
-): void {
-  if (diagnostics.length < PROVIDER_CATALOG_MAX_DIAGNOSTICS) diagnostics.push(diagnostic);
-}
-
-function tomlStringValue(body: string, key: string): string | undefined {
-  const match = new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m").exec(body);
-  return match?.[1]?.trim() || undefined;
-}
-
-async function readBoundedAgentFile(
-  path: string,
-  maxFileBytes: number,
-): Promise<{ body?: string; capped: boolean }> {
-  let file;
-  try {
-    file = await open(path, "r");
-    const buffer = Buffer.allocUnsafe(maxFileBytes + 1);
-    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > maxFileBytes) return { capped: true };
-    return { body: buffer.subarray(0, bytesRead).toString("utf8"), capped: false };
-  } catch {
-    return { capped: false };
-  } finally {
-    await file?.close().catch(() => undefined);
-  }
-}
-
-/** Discovers Codex agents without exceeding the supplied file-count or per-file read limits. */
-export async function discoverBoundedCodexAgents(
-  directories: readonly string[],
-  limits: CodexAgentDiscoveryLimits = DEFAULT_CODEX_AGENT_DISCOVERY_LIMITS,
-): Promise<BoundedCodexAgentDiscovery> {
-  const byName = new Map<string, ProviderAgentMention>();
-  let inspectedFiles = 0;
-  let fileCountCapped = false;
-  let fileSizeCapped = false;
-
-  for (const directory of directories) {
-    let handle;
-    try {
-      handle = await opendir(directory);
-    } catch {
-      continue;
-    }
-
-    for await (const entry of handle) {
-      if (!entry.isFile() || !entry.name.endsWith(".toml")) continue;
-      if (inspectedFiles >= limits.maxFiles) {
-        fileCountCapped = true;
-        break;
-      }
-      inspectedFiles += 1;
-
-      const path = join(directory, entry.name);
-      const result = await readBoundedAgentFile(path, limits.maxFileBytes);
-      if (result.capped) {
-        fileSizeCapped = true;
-        continue;
-      }
-      if (result.body === undefined) continue;
-
-      const fallbackName = entry.name.slice(0, -".toml".length);
-      const name = tomlStringValue(result.body, "name") ?? fallbackName;
-      const description = tomlStringValue(result.body, "description");
-      byName.set(name, { name, path, ...(description ? { description } : {}) });
-    }
-
-    if (fileCountCapped) break;
-  }
-
-  return {
-    agents: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
-    limits: { fileCount: fileCountCapped, fileSize: fileSizeCapped },
-  };
-}
 
 function providerCommandCapabilityKind(
   providerId: SettingsProviderId,
@@ -218,7 +113,14 @@ function parseSelectableAgent(
 export function buildProviderCatalogSnapshot(
   input: BuildProviderCatalogSnapshotInput,
 ): ProviderCatalogSnapshot {
-  const diagnostics: ProviderCatalogDiagnostic[] = [...(input.diagnostics ?? [])];
+  const diagnostics: ProviderCatalogDiagnostic[] = [
+    ...(input.diagnostics ?? []).slice(0, PROVIDER_CATALOG_MAX_DIAGNOSTICS),
+  ];
+  let diagnosticsCapped = (input.diagnostics?.length ?? 0) > PROVIDER_CATALOG_MAX_DIAGNOSTICS;
+  const addDiagnostic = (diagnostic: ProviderCatalogDiagnostic): void => {
+    if (diagnostics.length < PROVIDER_CATALOG_MAX_DIAGNOSTICS) diagnostics.push(diagnostic);
+    else diagnosticsCapped = true;
+  };
   let invalidItemOmitted = false;
   const entries: ProviderCapabilityEntry[] = [];
   for (const item of input.skills) {
@@ -237,12 +139,12 @@ export function buildProviderCatalogSnapshot(
     }
   }
   if (input.skills.length + (input.entries?.length ?? 0) > PROVIDER_CATALOG_MAX_ENTRIES) {
-    appendDiagnostic(diagnostics, partialResultDiagnostic(
+    addDiagnostic(partialResultDiagnostic(
       `Catalog entries were capped at ${PROVIDER_CATALOG_MAX_ENTRIES}.`,
     ));
   }
 
-  const discoveredAgents = input.agentDiscovery?.agents ?? [];
+  const discoveredAgents = input.agents ?? [];
   const selectableAgents = [];
   for (const item of discoveredAgents.slice(0, PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS)) {
     const agent = parseSelectableAgent(input.providerId, item);
@@ -250,22 +152,17 @@ export function buildProviderCatalogSnapshot(
     else invalidItemOmitted = true;
   }
   if (discoveredAgents.length > PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS) {
-    appendDiagnostic(diagnostics, partialResultDiagnostic(
+    addDiagnostic(partialResultDiagnostic(
       `Selectable agents were capped at ${PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS}.`,
     ));
   }
-  if (input.agentDiscovery?.limits.fileCount) {
-    appendDiagnostic(diagnostics, partialResultDiagnostic(
-      `Codex agent discovery inspected at most ${PROVIDER_CATALOG_MAX_CODEX_AGENT_FILES} files.`,
-    ));
-  }
-  if (input.agentDiscovery?.limits.fileSize) {
-    appendDiagnostic(diagnostics, partialResultDiagnostic(
-      `Codex agent files larger than ${PROVIDER_CATALOG_MAX_CODEX_AGENT_FILE_BYTES} bytes were omitted.`,
-    ));
-  }
   if (invalidItemOmitted) {
-    appendDiagnostic(diagnostics, partialResultDiagnostic(INVALID_CATALOG_ITEM_DIAGNOSTIC));
+    addDiagnostic(partialResultDiagnostic(INVALID_CATALOG_ITEM_DIAGNOSTIC));
+  }
+  if (diagnosticsCapped) {
+    diagnostics[PROVIDER_CATALOG_MAX_DIAGNOSTICS - 1] = partialResultDiagnostic(
+      `Catalog diagnostics were capped at ${PROVIDER_CATALOG_MAX_DIAGNOSTICS}.`,
+    );
   }
 
   return ProviderCatalogSnapshotSchema().parse({
@@ -275,7 +172,7 @@ export function buildProviderCatalogSnapshot(
       status: "fresh",
       fetchedAt: input.fetchedAt ?? new Date().toISOString(),
     },
-    diagnostics: diagnostics.slice(0, PROVIDER_CATALOG_MAX_DIAGNOSTICS),
+    diagnostics,
     entries,
     selectableAgents,
   });

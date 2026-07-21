@@ -4,11 +4,15 @@ import type {
   ProviderCatalogDiagnostic,
   ProviderCatalogFreshness,
   ProviderPluginCapability,
+  ProviderAgentMention,
   SkillInfo,
 } from "@mcode/contracts";
 import {
   PROVIDER_CATALOG_MAX_ENTRIES,
   ProviderPluginCapabilitySchema,
+  PROVIDER_CATALOG_MAX_DIAGNOSTICS,
+  PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS,
+  ProviderAgentMentionSchema,
   SkillInfoSchema,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
@@ -17,8 +21,13 @@ import type {
   PluginListResult,
   PluginReadParams,
   PluginReadResult,
+  ConfigReadResult,
   SkillsListResult,
 } from "../providers/codex/codex-types.js";
+import {
+  discoverCodexStandaloneAgents,
+  type CodexStandaloneAgentDiscovery,
+} from "../providers/codex/codex-agent-discovery.js";
 import { codexPluginNameFromSkillPath } from "./skill-service.js";
 import { SettingsService } from "./settings-service.js";
 import { EnvService } from "./env-service.js";
@@ -45,6 +54,7 @@ export interface CodexCatalogRefreshResult {
   readonly skills: SkillInfo[];
   readonly plugins: ProviderPluginCapability[];
   readonly prompts: SkillInfo[];
+  readonly agents: ProviderAgentMention[];
   readonly diagnostics: ProviderCatalogDiagnostic[];
   readonly freshness: ProviderCatalogFreshness;
   readonly skillsAvailable: boolean;
@@ -58,6 +68,7 @@ export interface CodexCatalogClient extends EventEmitter {
   listSkills(cwds?: string[], forceReload?: boolean): Promise<SkillsListResult>;
   listPlugins(cwds?: string[]): Promise<PluginListResult>;
   readPlugin(params: PluginReadParams): Promise<PluginReadResult>;
+  readConfig(cwd?: string): Promise<ConfigReadResult>;
   kill(): Promise<void>;
 }
 
@@ -352,10 +363,72 @@ async function reconcilePlugins(
   };
 }
 
+function configuredAgents(rawConfig: unknown): {
+  agents: ProviderAgentMention[];
+  invalidMetadata: boolean;
+  entryLimitReached: boolean;
+} {
+  if (!rawConfig || typeof rawConfig !== "object") {
+    return { agents: [], invalidMetadata: false, entryLimitReached: false };
+  }
+  const rawAgents = (rawConfig as Record<string, unknown>).agents;
+  if (!rawAgents || typeof rawAgents !== "object" || Array.isArray(rawAgents)) {
+    return { agents: [], invalidMetadata: false, entryLimitReached: false };
+  }
+  const agents: ProviderAgentMention[] = [];
+  let invalidMetadata = false;
+  const registrations = Object.entries(rawAgents);
+  for (const [name, rawAgent] of registrations.slice(0, PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS)) {
+    if (!rawAgent || typeof rawAgent !== "object" || Array.isArray(rawAgent)) continue;
+    const value = rawAgent as Record<string, unknown>;
+    const isRegistration = "config_file" in value
+      || "description" in value
+      || "nickname_candidates" in value;
+    if (!isRegistration) continue;
+    if (value.description !== undefined && typeof value.description !== "string") {
+      invalidMetadata = true;
+      continue;
+    }
+    if (value.config_file !== undefined && typeof value.config_file !== "string") {
+      invalidMetadata = true;
+      continue;
+    }
+    const configFile = typeof value.config_file === "string" && value.config_file.trim()
+      ? value.config_file
+      : `codex-config://agents/${encodeURIComponent(name)}`;
+    const parsed = ProviderAgentMentionSchema().safeParse({
+      name,
+      path: configFile,
+      ...(typeof value.description === "string" && value.description.trim()
+        ? { description: value.description.trim() }
+        : {}),
+    });
+    if (parsed.success) agents.push(parsed.data);
+    else invalidMetadata = true;
+  }
+  return {
+    agents: agents.sort((left, right) => left.name.localeCompare(right.name)),
+    invalidMetadata,
+    entryLimitReached: registrations.length > PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS,
+  };
+}
+
+function mergeAgents(
+  standalone: readonly ProviderAgentMention[],
+  configured: readonly ProviderAgentMention[],
+): ProviderAgentMention[] {
+  const byName = new Map(standalone.map((agent) => [agent.name, agent]));
+  for (const agent of configured) {
+    if (!byName.has(agent.name)) byName.set(agent.name, agent);
+  }
+  return [...byName.values()];
+}
+
 /** Owns one lazy, thread-independent Codex app-server connection for capability catalogs. */
 @injectable()
 export class CodexCatalogService {
   private client: CodexCatalogClient | null = null;
+  private clientEnvironment: Record<string, string> | null = null;
   private startPromise: Promise<CodexCatalogClient> | null = null;
   private readonly snapshots = new Map<string, CodexCatalogRefreshResult>();
   private readonly requestedContexts = new Map<string, string | undefined>();
@@ -371,7 +444,7 @@ export class CodexCatalogService {
     private readonly customPromptService: CodexCustomPromptService,
   ) {}
 
-  /** Refreshes native Skills, plugins, and bounded custom prompts for one working-directory context. */
+  /** Refreshes native Skills, plugins, custom prompts, and selectable agents for one context. */
   async refresh(cwd?: string): Promise<CodexCatalogRefreshResult> {
     this.rememberContext(cwd);
     this.armIdleTimer();
@@ -412,6 +485,7 @@ export class CodexCatalogService {
     }
     const client = this.client;
     this.client = null;
+    this.clientEnvironment = null;
     this.startPromise = null;
     await client?.kill();
   }
@@ -420,13 +494,34 @@ export class CodexCatalogService {
     cwd: string | undefined,
     forceReload: boolean,
   ): Promise<CodexCatalogRefreshResult> {
+    const previous = this.snapshots.get(catalogKey(cwd));
+    const environment = (this.client?.isAlive || this.startPromise) && this.clientEnvironment
+      ? this.clientEnvironment
+      : this.envService.getEnv();
     const promptRefresh = this.customPromptService.refresh();
+    const standalonePromise = discoverCodexStandaloneAgents({ environment, cwd }).catch(
+      (): CodexStandaloneAgentDiscovery => ({
+        agents: [],
+        diagnostics: [{
+          severity: "warning",
+          code: "source-unavailable",
+          message: "Standalone Codex agent discovery is temporarily unavailable for this catalog context.",
+        }],
+      }),
+    );
     try {
-      const client = await this.acquireClient(cwd);
-      const [skillsResult, pluginsResult, customPrompts] = await Promise.all([
+      const [{ client }, standalone, customPrompts] = await Promise.all([
+        this.acquireClient(cwd, environment),
+        standalonePromise,
+        promptRefresh,
+      ]);
+      const [skillsResult, pluginsResult, configResult] = await Promise.all([
         client.listSkills(cwd ? [cwd] : undefined, forceReload),
         client.listPlugins(cwd ? [cwd] : undefined),
-        promptRefresh,
+        client.readConfig(cwd).then(
+          (value) => ({ value }),
+          () => ({ value: undefined }),
+        ),
       ]);
       const rawData = Array.isArray((skillsResult as { data?: unknown }).data)
         ? (skillsResult as { data: unknown[] }).data
@@ -440,9 +535,34 @@ export class CodexCatalogService {
         throw new Error("Codex skills/list omitted the requested catalog context.");
       }
       const reconciled = reconcileSkills(data?.skills);
-      const diagnostics = upstreamDiagnostics(data?.errors);
+      const diagnostics = [
+        ...upstreamDiagnostics(data?.errors),
+        ...standalone.diagnostics,
+      ];
       const reconciledPlugins = await reconcilePlugins(client, pluginsResult);
       diagnostics.push(...reconciledPlugins.diagnostics);
+      const registrations = configuredAgents(configResult.value?.config);
+      if (configResult.value === undefined) {
+        diagnostics.push({
+          severity: "warning",
+          code: "source-unavailable",
+          message: "Codex agent registrations are temporarily unavailable for this catalog context.",
+        });
+      }
+      if (registrations.invalidMetadata) {
+        diagnostics.push({
+          severity: "warning",
+          code: "partial-result",
+          message: "Some Codex agent registrations were omitted because their metadata was invalid.",
+        });
+      }
+      if (registrations.entryLimitReached) {
+        diagnostics.push({
+          severity: "warning",
+          code: "partial-result",
+          message: `Codex agent registrations were capped at ${PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS} entries.`,
+        });
+      }
       if (reconciled.invalidMetadata) {
         diagnostics.push({
           severity: "warning",
@@ -462,7 +582,12 @@ export class CodexCatalogService {
         skills: reconciled.skills,
         plugins: reconciledPlugins.plugins,
         prompts: customPrompts.prompts,
-        diagnostics: [...diagnostics, ...customPrompts.diagnostics].slice(0, 100),
+        agents: mergeAgents(
+          standalone.agents,
+          configResult.value === undefined ? previous?.agents ?? [] : registrations.agents,
+        ),
+        diagnostics: [...diagnostics, ...customPrompts.diagnostics]
+          .slice(0, PROVIDER_CATALOG_MAX_DIAGNOSTICS),
         freshness: customPrompts.available
           ? { status: "fresh", fetchedAt }
           : {
@@ -476,30 +601,40 @@ export class CodexCatalogService {
       this.snapshots.set(catalogKey(cwd), snapshot);
       return snapshot;
     } catch (error) {
-      const customPrompts = await promptRefresh;
-      const previous = this.snapshots.get(catalogKey(cwd));
-      const fetchedAt = previous?.freshness.fetchedAt ?? new Date().toISOString();
+      const [customPrompts, standalone] = await Promise.all([
+        promptRefresh,
+        standalonePromise,
+      ]);
+      const standaloneIsFresh = standalone.agents.length > 0;
+      const fetchedAt = standaloneIsFresh
+        ? new Date().toISOString()
+        : previous?.freshness.fetchedAt ?? new Date().toISOString();
       logger.warn("Codex catalog refresh failed", {
         cwd,
         error: error instanceof Error ? error.message : String(error),
       });
+      const diagnostics: ProviderCatalogDiagnostic[] = [
+        ...standalone.diagnostics,
+        {
+          severity: "warning",
+          code: "source-unavailable",
+          message: "Codex capabilities and agent registrations are temporarily unavailable for this catalog context.",
+        },
+        ...customPrompts.diagnostics,
+      ];
       const snapshot: CodexCatalogRefreshResult = {
         skills: previous?.skills ?? [],
         plugins: previous?.plugins ?? [],
         prompts: customPrompts.prompts,
-        diagnostics: [
-          {
-            severity: "warning" as const,
-            code: "source-unavailable" as const,
-            message: "Codex capabilities are temporarily unavailable for this catalog context.",
-          },
-          ...customPrompts.diagnostics,
-        ].slice(0, 100),
-        freshness: {
-          status: "stale",
-          fetchedAt,
-          reason: "Codex capability discovery failed.",
-        },
+        agents: mergeAgents(standalone.agents, previous?.agents ?? []),
+        diagnostics: diagnostics.slice(0, PROVIDER_CATALOG_MAX_DIAGNOSTICS),
+        freshness: standaloneIsFresh
+          ? { status: "fresh", fetchedAt }
+          : {
+              status: "stale",
+              fetchedAt,
+              reason: "Codex capability discovery failed.",
+            },
         skillsAvailable: false,
         promptsAvailable: customPrompts.available,
       };
@@ -508,28 +643,41 @@ export class CodexCatalogService {
     }
   }
 
-  private async acquireClient(cwd?: string): Promise<CodexCatalogClient> {
-    if (this.client?.isAlive) return this.client;
-    if (this.startPromise) return this.startPromise;
+  private async acquireClient(
+    cwd?: string,
+    requestedEnvironment?: Record<string, string>,
+  ): Promise<{
+    client: CodexCatalogClient;
+    environment: Record<string, string>;
+  }> {
+    if (this.client?.isAlive && this.clientEnvironment) {
+      return { client: this.client, environment: this.clientEnvironment };
+    }
+    if (this.startPromise && this.clientEnvironment) {
+      return { client: await this.startPromise, environment: this.clientEnvironment };
+    }
 
     const settings = this.settingsService.get();
+    const environment = requestedEnvironment ?? this.envService.getEnv();
     const client = this.clientFactory.create({
       cliPath: settings.provider.cli.codex || "codex",
       workingDirectory: cwd ?? process.cwd(),
       approvalPolicy: "never",
       catalogOnly: true,
       jobObject: this.jobObject,
-      getSpawnEnv: () => this.envService.getEnv(),
+      getSpawnEnv: () => ({ ...environment }),
     });
     this.client = client;
+    this.clientEnvironment = environment;
     client.on("notification", (notification: unknown) => {
       this.handleNotification(notification);
     });
     this.startPromise = client.start().then(() => client);
     try {
-      return await this.startPromise;
+      return { client: await this.startPromise, environment };
     } catch (error) {
       if (this.client === client) this.client = null;
+      if (this.client === null) this.clientEnvironment = null;
       await client.kill().catch(() => undefined);
       throw error;
     } finally {
@@ -549,6 +697,7 @@ export class CodexCatalogService {
   private async evictIdleClient(): Promise<void> {
     const client = this.client;
     this.client = null;
+    this.clientEnvironment = null;
     this.startPromise = null;
     await client?.kill();
   }
