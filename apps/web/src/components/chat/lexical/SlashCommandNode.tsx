@@ -13,6 +13,10 @@ import {
   type NodeKey,
   type SerializedLexicalNode,
 } from "lexical";
+import {
+  ProviderCapabilityIdentitySchema,
+  type ProviderCapabilityIdentity,
+} from "@mcode/contracts";
 import { EntityToken } from "../EntityToken";
 
 // ---------------------------------------------------------------------------
@@ -27,6 +31,7 @@ export interface SerializedSlashCommandNode extends SerializedLexicalNode {
   readonly type: "slash-command";
   readonly commandName: string;
   readonly namespace: SlashCommandNamespace;
+  readonly capabilityIdentity?: ProviderCapabilityIdentity;
 }
 
 /** Valid namespace values for deserialisation fallback. */
@@ -55,6 +60,7 @@ function SlashCommandChip({
 export class SlashCommandNode extends DecoratorNode<JSX.Element> {
   __commandName: string;
   __namespace: SlashCommandNamespace;
+  __capabilityIdentity?: ProviderCapabilityIdentity;
 
   static getType(): string {
     return "slash-command";
@@ -64,6 +70,7 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
     return new SlashCommandNode(
       node.__commandName,
       node.__namespace,
+      node.__capabilityIdentity,
       node.__key,
     );
   }
@@ -71,11 +78,13 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
   constructor(
     commandName: string,
     namespace: SlashCommandNamespace,
+    capabilityIdentity?: ProviderCapabilityIdentity,
     key?: NodeKey,
   ) {
     super(key);
     this.__commandName = commandName;
     this.__namespace = namespace;
+    this.__capabilityIdentity = capabilityIdentity;
   }
 
   // -- Accessors ------------------------------------------------------------
@@ -86,6 +95,10 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
 
   getNamespace(): SlashCommandNamespace {
     return this.getLatest().__namespace;
+  }
+
+  getCapabilityIdentity(): ProviderCapabilityIdentity | undefined {
+    return this.getLatest().__capabilityIdentity;
   }
 
   // -- Behavior -------------------------------------------------------------
@@ -117,6 +130,7 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
       type: "slash-command",
       commandName: this.__commandName,
       namespace: this.__namespace,
+      ...(this.__capabilityIdentity ? { capabilityIdentity: this.__capabilityIdentity } : {}),
       version: 1,
     };
   }
@@ -127,7 +141,14 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
     const ns = VALID_NAMESPACES.has(serializedNode.namespace)
       ? serializedNode.namespace
       : "mcode";
-    return $createSlashCommandNode(serializedNode.commandName, ns);
+    const identity = ProviderCapabilityIdentitySchema().safeParse(
+      serializedNode.capabilityIdentity,
+    );
+    return $createSlashCommandNode(
+      serializedNode.commandName,
+      ns,
+      identity.success ? identity.data : undefined,
+    );
   }
 
   // -- Decoration -----------------------------------------------------------
@@ -150,8 +171,9 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
 export function $createSlashCommandNode(
   commandName: string,
   namespace: SlashCommandNamespace,
+  capabilityIdentity?: ProviderCapabilityIdentity,
 ): SlashCommandNode {
-  return new SlashCommandNode(commandName, namespace);
+  return new SlashCommandNode(commandName, namespace, capabilityIdentity);
 }
 
 /** Type guard: returns true when the node is a SlashCommandNode. */

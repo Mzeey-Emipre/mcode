@@ -19,6 +19,7 @@ import {
   type SettingsProviderId,
   type SkillInfo,
 } from "@mcode/contracts";
+import { isCodexCustomPromptCatalogItem } from "../providers/codex/codex-prompt.js";
 
 /** Limits used while reading Codex agent files for a catalog snapshot. */
 export interface CodexAgentDiscoveryLimits {
@@ -56,6 +57,14 @@ const DEFAULT_CODEX_AGENT_DISCOVERY_LIMITS: CodexAgentDiscoveryLimits = {
 };
 const INVALID_CATALOG_ITEM_DIAGNOSTIC =
   "Some provider catalog items were omitted because their metadata was invalid.";
+const PROVIDER_CATALOG_MAX_DIAGNOSTICS = 100;
+
+function appendDiagnostic(
+  diagnostics: ProviderCatalogDiagnostic[],
+  diagnostic: ProviderCatalogDiagnostic,
+): void {
+  if (diagnostics.length < PROVIDER_CATALOG_MAX_DIAGNOSTICS) diagnostics.push(diagnostic);
+}
 
 function tomlStringValue(body: string, key: string): string | undefined {
   const match = new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m").exec(body);
@@ -133,7 +142,7 @@ function providerCommandCapabilityKind(
   providerId: SettingsProviderId,
   item: SkillInfo,
 ): "customPrompt" | "providerCommand" {
-  return providerId === "codex" && item.name.startsWith("prompts:")
+  return providerId === "codex" && isCodexCustomPromptCatalogItem(item)
     ? "customPrompt"
     : "providerCommand";
 }
@@ -228,7 +237,7 @@ export function buildProviderCatalogSnapshot(
     }
   }
   if (input.skills.length + (input.entries?.length ?? 0) > PROVIDER_CATALOG_MAX_ENTRIES) {
-    diagnostics.push(partialResultDiagnostic(
+    appendDiagnostic(diagnostics, partialResultDiagnostic(
       `Catalog entries were capped at ${PROVIDER_CATALOG_MAX_ENTRIES}.`,
     ));
   }
@@ -241,22 +250,22 @@ export function buildProviderCatalogSnapshot(
     else invalidItemOmitted = true;
   }
   if (discoveredAgents.length > PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS) {
-    diagnostics.push(partialResultDiagnostic(
+    appendDiagnostic(diagnostics, partialResultDiagnostic(
       `Selectable agents were capped at ${PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS}.`,
     ));
   }
   if (input.agentDiscovery?.limits.fileCount) {
-    diagnostics.push(partialResultDiagnostic(
+    appendDiagnostic(diagnostics, partialResultDiagnostic(
       `Codex agent discovery inspected at most ${PROVIDER_CATALOG_MAX_CODEX_AGENT_FILES} files.`,
     ));
   }
   if (input.agentDiscovery?.limits.fileSize) {
-    diagnostics.push(partialResultDiagnostic(
+    appendDiagnostic(diagnostics, partialResultDiagnostic(
       `Codex agent files larger than ${PROVIDER_CATALOG_MAX_CODEX_AGENT_FILE_BYTES} bytes were omitted.`,
     ));
   }
   if (invalidItemOmitted) {
-    diagnostics.push(partialResultDiagnostic(INVALID_CATALOG_ITEM_DIAGNOSTIC));
+    appendDiagnostic(diagnostics, partialResultDiagnostic(INVALID_CATALOG_ITEM_DIAGNOSTIC));
   }
 
   return ProviderCatalogSnapshotSchema().parse({
@@ -266,7 +275,7 @@ export function buildProviderCatalogSnapshot(
       status: "fresh",
       fetchedAt: input.fetchedAt ?? new Date().toISOString(),
     },
-    diagnostics: diagnostics.slice(0, 100),
+    diagnostics: diagnostics.slice(0, PROVIDER_CATALOG_MAX_DIAGNOSTICS),
     entries,
     selectableAgents,
   });

@@ -17,6 +17,7 @@ import {
   createMentionId,
   type MentionNodeData,
 } from "./MentionNode";
+import type { ProviderCapabilityIdentity } from "@mcode/contracts";
 import { SLASH_TRIGGER_RE, type Command } from "../useSlashCommand";
 
 /** Props for the SlashCommandPlugin that detects /-triggers in the editor. */
@@ -145,8 +146,12 @@ export function insertSlashCommandNode(
   editor: LexicalEditor,
   commandName: string,
   namespace: SlashCommandNamespace,
+  capabilityIdentity?: ProviderCapabilityIdentity,
 ): void {
-  replaceActiveSlashTrigger(editor, () => $createSlashCommandNode(commandName, namespace));
+  replaceActiveSlashTrigger(
+    editor,
+    () => $createSlashCommandNode(commandName, namespace, capabilityIdentity),
+  );
 }
 
 /** Inserts a selected plugin command as a native Codex mention. */

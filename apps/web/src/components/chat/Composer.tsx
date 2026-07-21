@@ -208,7 +208,11 @@ function writeComposerContent(
       }
       appendText(text.slice(cursor, mention.range.start));
       if (mention.kind === "command") {
-        paragraph.append($createSlashCommandNode(mention.label, mention.namespace));
+        paragraph.append($createSlashCommandNode(
+          mention.label,
+          mention.namespace,
+          mention.capabilityIdentity,
+        ));
         cursor = mention.range.end;
         continue;
       }
@@ -2712,7 +2716,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       if (cmd.action) {
         removeSlashCommandTrigger(editorRef.current);
       } else if (!insertSelectedPluginMention(editorRef.current, cmd)) {
-        insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
+        insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace, cmd.identity);
       }
     }
   }, [slashCommand]);

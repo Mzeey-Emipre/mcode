@@ -1,7 +1,9 @@
 import "reflect-metadata";
 import { EventEmitter } from "events";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SkillInfo } from "@mcode/contracts";
 import { CodexCatalogService } from "../codex-catalog-service.js";
+import type { CodexCustomPromptDiscoveryResult } from "../codex-custom-prompt-service.js";
 import type {
   PluginListResult,
   PluginReadResult,
@@ -89,12 +91,20 @@ describe("CodexCatalogService", () => {
   function createService(
     client: ControlledCatalogClient,
     create: () => ControlledCatalogClient = () => client,
+    customPromptService: {
+      refresh: () => Promise<CodexCustomPromptDiscoveryResult>;
+      currentPrompts: () => SkillInfo[];
+    } = {
+      refresh: vi.fn(async () => ({ prompts: [], diagnostics: [], available: true })),
+      currentPrompts: vi.fn(() => []),
+    },
   ): CodexCatalogService {
     const service = new CodexCatalogService(
       { get: () => ({ provider: { cli: { codex: "codex" } } }) } as never,
       { isWindowsJob: false } as never,
       { getEnv: () => ({}) } as never,
       { create } as never,
+      customPromptService as never,
     );
     services.push(service);
     return service;
@@ -240,6 +250,29 @@ describe("CodexCatalogService", () => {
       code: "discovery-error",
       message: "Codex plugin marketplace C:/marketplaces/broken.json: invalid marketplace metadata",
     });
+  });
+
+  it("includes bounded custom prompts beside native Skills", async () => {
+    const client = new ControlledCatalogClient();
+    const prompt: SkillInfo = {
+      name: "prompts:release",
+      nativeName: "release",
+      description: "Prepare a release",
+      kind: "command" as const,
+      source: "user" as const,
+      providers: ["codex"],
+      path: "C:/codex-home/prompts/release.md",
+    };
+    const customPromptService = {
+      refresh: vi.fn(async () => ({ prompts: [prompt], diagnostics: [], available: true })),
+      currentPrompts: vi.fn(() => [prompt]),
+    };
+    const service = createService(client, () => client, customPromptService);
+
+    const result = await service.refresh("C:/workspaces/one");
+
+    expect(result.prompts).toEqual([prompt]);
+    expect(service.currentPrompts()).toEqual([prompt]);
   });
 
   it("reconciles the affected context after skills/changed", async () => {

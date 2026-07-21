@@ -118,7 +118,7 @@ describe("SkillWatcherService", () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("watches codex, agents, and cursor roots in addition to claude roots", () => {
+  it("watches Codex Skills and plugins without watching custom prompts", () => {
     const watchSpy = vi.spyOn(watcher, "watch");
 
     watcher.start();
@@ -126,7 +126,7 @@ describe("SkillWatcherService", () => {
 
     // Should watch all the new provider roots
     expect(watchedPaths.some((p) => p.includes(".codex"))).toBe(true);
-    expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".codex/prompts"))).toBe(true);
+    expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".codex/prompts"))).toBe(false);
     expect(watchedPaths.some((p) => p.includes(".agents"))).toBe(true);
     expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".cursor/skills"))).toBe(true);
   });

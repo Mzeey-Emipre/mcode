@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderCapabilityIdentitySchema } from "../providers/capability-catalog.js";
 
 export const MAX_MESSAGE_MENTIONS = 50;
 export const MENTION_ID_MAX_LENGTH = 128;
@@ -57,6 +58,7 @@ export const MessageMentionSchema = z.discriminatedUnion("kind", [
   MentionBaseSchema.extend({
     kind: z.literal("command"),
     namespace: z.enum(["skill", "mcode", "plugin", "command"]),
+    capabilityIdentity: ProviderCapabilityIdentitySchema().optional(),
   }),
 ]);
 

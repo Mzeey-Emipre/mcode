@@ -40,6 +40,7 @@ import type {
   PermissionRequest,
   ProviderModelInfo,
   ProviderUsageInfo,
+  ProviderCapabilityIdentity,
   QuotaCategory,
   SkillInfo,
 } from "@mcode/contracts";
@@ -296,7 +297,7 @@ async function buildCodexInput(
   }
 
   const wireMessage = rewriteAgentMentionsAsSubagentUris(message, mentions);
-  const invocation = await resolveCodexSlashInvocation(wireMessage, skills);
+  const invocation = await resolveCodexSlashInvocation(wireMessage, skills, mentions);
   if (invocation.skillItem) inputs.push(invocation.skillItem);
   inputs.push({ type: "text", text: invocation.text });
   return inputs;
@@ -333,34 +334,75 @@ function rewriteAgentMentionsAsSubagentUris(
 async function resolveCodexSlashInvocation(
   message: string,
   skills: readonly SkillInfo[],
+  mentions: readonly MessageMention[],
 ): Promise<{ text: string; skillItem?: TurnInputPart }> {
   const slash = parseCodexSlashInvocation(message);
   if (!slash) return { text: message };
 
-  let promptCommand: (SkillInfo & { path: string }) | undefined;
-  for (const item of skills) {
-    if (item.name !== slash.requestedName && item.nativeName !== slash.requestedName) continue;
-
-    if (item.kind === "skill") {
-      const nativeName = item.nativeName ?? item.name.split(":").pop() ?? item.name;
-      const args = slash.args.trimStart();
-      const text = `$${nativeName}${args ? ` ${args}` : ""}`;
-      return {
-        text,
-        ...(item.path ? { skillItem: { type: "skill" as const, name: nativeName, path: item.path } } : {}),
-      };
-    }
-
-    if (!promptCommand && isCodexPromptCommand(item, slash.requestedName)) {
-      promptCommand = item;
-    }
-  }
+  const leadingSpace = message.length - message.trimStart().length;
+  const commandEnd = leadingSpace + slash.requestedName.length + 1;
+  const selectedMention = mentions.find((mention): mention is Extract<
+    MessageMention,
+    { kind: "command" }
+  > => (
+    mention.kind === "command"
+    && mention.label === slash.requestedName
+    && mention.range.start === leadingSpace
+    && mention.range.end === commandEnd
+    && mention.capabilityIdentity?.providerId === "codex"
+  ));
+  const selectedIdentity = selectedMention?.capabilityIdentity;
+  const candidates = skills.filter((item) => (
+    item.name === slash.requestedName || item.nativeName === slash.requestedName
+  ));
+  const selected = selectedIdentity
+    ? candidates.find((item) => matchesCodexCapabilityIdentity(item, selectedIdentity))
+    : undefined;
+  const promptCommand = selectedIdentity?.kind === "customPrompt"
+    ? selected && isCodexPromptCommand(selected, slash.requestedName) ? selected : undefined
+    : selectedIdentity
+      ? undefined
+      : candidates.find((item) => isCodexPromptCommand(item, slash.requestedName));
 
   if (promptCommand) {
     return { text: await expandCodexPromptCommand(promptCommand, slash.args) };
   }
 
+  const skill = selectedIdentity?.kind === "skill"
+    ? selected?.kind === "skill" ? selected : undefined
+    : selectedIdentity
+      ? undefined
+      : candidates.find((item) => item.kind === "skill");
+  if (skill) {
+    const nativeName = skill.nativeName ?? skill.name.split(":").pop() ?? skill.name;
+    const args = slash.args.trimStart();
+    const text = `$${nativeName}${args ? ` ${args}` : ""}`;
+    return {
+      text,
+      ...(skill.path
+        ? { skillItem: { type: "skill" as const, name: nativeName, path: skill.path } }
+        : {}),
+    };
+  }
+
   return { text: message };
+}
+
+function matchesCodexCapabilityIdentity(
+  item: SkillInfo,
+  identity: ProviderCapabilityIdentity,
+): boolean {
+  if (identity.kind === "skill") {
+    return item.kind === "skill"
+      && (item.path ?? item.nativeName ?? item.name) === identity.nativeId;
+  }
+  if (identity.kind === "customPrompt") {
+    return isCodexPromptCommand(item, item.name)
+      && (item.nativeName ?? item.name) === identity.nativeId;
+  }
+  return item.kind === "command"
+    && !isCodexPromptCommand(item, item.name)
+    && (item.nativeName ?? item.name) === identity.nativeId;
 }
 
 /** Return the generated image path from an app-server imageGeneration item. */
@@ -775,7 +817,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const codexFastMode = req.providerOptions.fastMode;
 
     const nativeSkills = this.codexCatalogService.currentSkills(cwd);
-    const skillCatalog = this.skillService.list(cwd, "codex", nativeSkills);
+    const slashInvocation = parseCodexSlashInvocation(message);
+    const customPrompts = slashInvocation?.requestedName.startsWith("prompts:")
+      ? (await this.codexCatalogService.refreshCustomPrompts()).prompts
+      : this.codexCatalogService.currentPrompts();
+    const skillCatalog = this.skillService.list(
+      cwd,
+      "codex",
+      [...nativeSkills, ...customPrompts],
+    );
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
     let input: TurnInputPart[];
     try {

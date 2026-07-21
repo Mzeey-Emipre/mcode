@@ -1,9 +1,9 @@
 /**
  * Skill and command scanning service.
  * Walks user, project, agent, and plugin directories looking for both
- * `skills/` (each subdirectory is a skill), provider command directories, and
- * Codex's deprecated `prompts/` directory. Native Codex Skills come only from
- * app-server `skills/list` and enter through the `nativeItems` boundary.
+ * `skills/` (each subdirectory is a skill) and provider command directories.
+ * Native Codex Skills and bounded custom prompts enter through the
+ * `nativeItems` boundary instead of this general filesystem scanner.
  */
 
 import { injectable } from "tsyringe";
@@ -305,7 +305,6 @@ interface ScanRoot {
 /** Build the ordered list of directories to scan for skills and commands. */
 function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
   const claudeDir = join(home, ".claude");
-  const codexDir = join(home, ".codex");
   const copilotDir = join(home, ".copilot");
   const agentsDir = join(home, ".agents");
   const cursorDir = join(home, ".cursor");
@@ -315,9 +314,6 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
     { path: join(claudeDir, "skills"), source: "user", providers: ["claude"], kind: "skills" },
     { path: join(claudeDir, "commands"), source: "user", providers: ["claude"], kind: "commands" },
     { path: join(claudeDir, ".agents", "skills"), source: "agent", providers: ["claude"], kind: "skills" },
-
-    // Codex custom prompt compatibility
-    { path: join(codexDir, "prompts"), source: "user", providers: ["codex"], kind: "commands", prefix: "prompts" },
 
     // Copilot ecosystem
     { path: join(copilotDir, "skills"), source: "user", providers: ["copilot"], kind: "skills" },

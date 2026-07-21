@@ -126,6 +126,65 @@ describe("ProviderCatalogService", () => {
     expect(repo.get(key)?.entries).toEqual(CACHED.entries);
   });
 
+  it("reconciles confirmed custom prompts while a Skill source remains stale", async () => {
+    const { repo, service } = createService();
+    const key = providerCatalogContextKey(REQUEST, "C:/repo");
+    const releasePrompt = {
+      kind: "customPrompt" as const,
+      identity: { providerId: "codex" as const, kind: "customPrompt" as const, nativeId: "release" },
+      name: "prompts:release",
+      description: "Release v1",
+    };
+    const removedPrompt = {
+      kind: "customPrompt" as const,
+      identity: { providerId: "codex" as const, kind: "customPrompt" as const, nativeId: "removed" },
+      name: "prompts:removed",
+      description: "Removed prompt",
+    };
+    repo.upsert(key, "workspace-1", "C:/repo", {
+      ...CACHED,
+      entries: [...CACHED.entries, releasePrompt, removedPrompt],
+    });
+    const changed = new Promise<ProviderCatalogChange>((resolve) => service.onChanged(resolve));
+
+    service.request({
+      request: REQUEST,
+      context: CACHED.context,
+      cwd: "C:/repo",
+      refresh: async () => ({
+        snapshot: {
+          ...CACHED,
+          entries: [
+            { ...releasePrompt, description: "Release v2" },
+            {
+              kind: "customPrompt",
+              identity: { providerId: "codex", kind: "customPrompt", nativeId: "added" },
+              name: "prompts:added",
+              description: "Added prompt",
+            },
+          ],
+          freshness: {
+            status: "stale",
+            fetchedAt: CACHED.freshness.fetchedAt,
+            reason: "Codex Skill discovery failed.",
+          },
+        },
+        confirmedEntryKinds: ["customPrompt"],
+      }),
+    });
+
+    await expect(changed).resolves.toMatchObject({
+      additions: [expect.objectContaining({ name: "prompts:added" })],
+      updates: [expect.objectContaining({ description: "Release v2" })],
+      removals: [expect.objectContaining({ nativeId: "removed" })],
+    });
+    expect(repo.get(key)?.entries).toEqual([
+      CACHED.entries[0],
+      { ...releasePrompt, description: "Release v2" },
+      expect.objectContaining({ name: "prompts:added" }),
+    ]);
+  });
+
   it("drops a delayed refresh after its workspace is deleted", async () => {
     const { repo, service } = createService();
     const key = providerCatalogContextKey(REQUEST, "C:/repo");

@@ -62,6 +62,8 @@ describe("CodexProvider permission flow", () => {
       { persistGeneratedImageFromPath: vi.fn() } as never,
       {
         currentSkills: vi.fn(() => []),
+        currentPrompts: vi.fn(() => []),
+        refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
         refresh: vi.fn(async () => ({ skills: [] })),
         onSkillsChanged: vi.fn(() => () => undefined),
         shutdown: vi.fn(async () => undefined),

@@ -647,6 +647,126 @@ describe("popup state machine", () => {
 
     expect(getProviderCatalog).toHaveBeenCalledTimes(2);
   });
+
+  it("refreshes a warm Codex catalog when the slash picker opens", async () => {
+    const getProviderCatalog = catalogMock([
+      { name: "prompts:release", description: "Prepare a release", kind: "command" },
+    ]);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+    }));
+
+    await act(async () => {});
+    expect(getProviderCatalog).toHaveBeenCalledTimes(1);
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(getProviderCatalog).toHaveBeenCalledTimes(2);
+    expect(result.current.items.map((item) => item.name)).toContain("prompts:release");
+  });
+
+  it("reconciles changed rows while the Codex picker remains open", async () => {
+    const request = { providerId: "codex" as const };
+    const getProviderCatalog = vi.fn()
+      .mockResolvedValueOnce(snapshotFromSkills([
+        { name: "prompts:release", description: "Release v1", kind: "command" },
+        { name: "review", description: "Review", kind: "skill" },
+      ], request))
+      .mockResolvedValueOnce(snapshotFromSkills([
+        { name: "prompts:release", description: "Release v2", kind: "command" },
+        { name: "review", description: "Review", kind: "skill" },
+      ], request));
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+    }));
+
+    await act(async () => {});
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.items.find((item) => item.name === "prompts:release")?.description)
+      .toBe("Release v2");
+    expect(result.current.items.map((item) => item.name)).toContain("review");
+  });
+
+  it("groups prompt additions and removals while the Codex picker remains open", async () => {
+    const request = { providerId: "codex" as const };
+    const getProviderCatalog = vi.fn()
+      .mockResolvedValueOnce(snapshotFromSkills([
+        { name: "prompts:old", description: "Old prompt", kind: "command" },
+        { name: "review", description: "Review", kind: "skill" },
+      ], request))
+      .mockResolvedValueOnce(snapshotFromSkills([
+        { name: "prompts:added", description: "Added prompt", kind: "command" },
+        { name: "review", description: "Review", kind: "skill" },
+      ], request));
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+      includeBuiltins: false,
+    }));
+
+    await act(async () => {});
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.items.map((item) => [item.name, item.namespace])).toEqual([
+      ["prompts:added", "command"],
+      ["review", "skill"],
+    ]);
+  });
+
+  it("keeps same-name Skills and custom prompts distinct by catalog identity", async () => {
+    const getProviderCatalog = vi.fn().mockResolvedValue({
+      providerId: "codex",
+      context: { scope: "user" },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T12:00:00.000Z" },
+      diagnostics: [],
+      entries: [
+        {
+          kind: "skill",
+          identity: { providerId: "codex", kind: "skill", nativeId: "C:/skills/release/SKILL.md" },
+          name: "prompts:release",
+          description: "Release Skill",
+          source: "user",
+        },
+        {
+          kind: "customPrompt",
+          identity: { providerId: "codex", kind: "customPrompt", nativeId: "release" },
+          name: "prompts:release",
+          description: "Release prompt",
+        },
+      ],
+      selectableAgents: [],
+    });
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+    }));
+
+    await act(async () => { result.current.onInputChange("/prompts:release"); });
+    await act(async () => {});
+
+    const collisions = result.current.items.filter((item) => item.name === "prompts:release");
+    expect(collisions.map((item) => item.identity?.kind)).toEqual([
+      "customPrompt",
+      "skill",
+    ]);
+  });
 });
 
 describe("includeBuiltins: false", () => {

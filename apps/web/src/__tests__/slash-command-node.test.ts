@@ -95,7 +95,11 @@ describe("SlashCommandNode", () => {
       () => {
         const paragraph = $createParagraphNode();
         paragraph.append($createTextNode("Use "));
-        paragraph.append($createSlashCommandNode("impeccable", "skill"));
+        paragraph.append($createSlashCommandNode("impeccable", "skill", {
+          providerId: "codex",
+          kind: "skill",
+          nativeId: "C:/skills/impeccable/SKILL.md",
+        }));
         $getRoot().append(paragraph);
       },
       { discrete: true },
@@ -108,6 +112,11 @@ describe("SlashCommandNode", () => {
         kind: "command",
         label: "impeccable",
         namespace: "skill",
+        capabilityIdentity: {
+          providerId: "codex",
+          kind: "skill",
+          nativeId: "C:/skills/impeccable/SKILL.md",
+        },
         range: { start: 4, end: 15 },
       }],
     });

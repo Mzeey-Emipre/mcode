@@ -46,6 +46,7 @@ import {
   CodexCatalogClientFactory,
   CodexCatalogService,
 } from "./services/codex-catalog-service";
+import { CodexCustomPromptService } from "./services/codex-custom-prompt-service";
 import { ProviderCatalogService } from "./services/provider-catalog-service";
 import { TerminalService } from "./services/terminal-service";
 import { AttachmentService } from "./services/attachment-service";
@@ -368,6 +369,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     CodexCatalogClientFactory,
     { useClass: CodexCatalogClientFactory },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    CodexCustomPromptService,
+    { useClass: CodexCustomPromptService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
