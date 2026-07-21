@@ -56,11 +56,15 @@ function makeProvider(
   skillList: (...args: unknown[]) => unknown[] = vi.fn(() => []),
   catalogService: {
     currentSkills: (cwd?: string) => unknown[];
+    currentPrompts: () => unknown[];
+    refreshCustomPrompts: () => Promise<{ prompts: unknown[] }>;
     refresh: (cwd?: string) => Promise<{ skills: unknown[] }>;
     onSkillsChanged: (handler: () => void) => () => void;
     shutdown: () => Promise<void>;
   } = {
     currentSkills: vi.fn(() => []),
+    currentPrompts: vi.fn(() => []),
+    refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
     refresh: vi.fn(async () => ({ skills: [] })),
     onSkillsChanged: vi.fn(() => () => undefined),
     shutdown: vi.fn(async () => undefined),
@@ -145,6 +149,8 @@ describe("CodexProvider first turn on new session", () => {
     const list = vi.fn((_cwd, _providerId, skills) => skills as unknown[]);
     const provider = makeProvider(list, {
       currentSkills,
+      currentPrompts: vi.fn(() => []),
+      refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
       refresh,
       onSkillsChanged: vi.fn(() => () => undefined),
       shutdown: vi.fn(async () => undefined),
@@ -393,7 +399,7 @@ describe("CodexProvider first turn on new session", () => {
         promptPath,
         "---\ndescription: Draft a PR\n---\nDraft a PR for $FILES titled $PR_TITLE. Args: $ARGUMENTS",
       );
-      const provider = makeProvider(vi.fn(() => [{
+      const prompt = {
         name: "prompts:draftpr",
         nativeName: "draftpr",
         description: "Draft a PR",
@@ -401,7 +407,19 @@ describe("CodexProvider first turn on new session", () => {
         source: "user",
         providers: ["codex"],
         path: promptPath,
-      }]));
+      };
+      const refreshCustomPrompts = vi.fn(async () => ({ prompts: [prompt] }));
+      const provider = makeProvider(
+        vi.fn((_cwd, _providerId, nativeItems) => nativeItems as unknown[]),
+        {
+          currentSkills: vi.fn(() => []),
+          currentPrompts: vi.fn(() => []),
+          refreshCustomPrompts,
+          refresh: vi.fn(async () => ({ skills: [] })),
+          onSkillsChanged: vi.fn(() => () => undefined),
+          shutdown: vi.fn(async () => undefined),
+        },
+      );
 
       await provider.sendTurn({
         sessionId: "mcode-prompt-turn",
@@ -422,6 +440,104 @@ describe("CodexProvider first turn on new session", () => {
         type: "text",
         text: 'Draft a PR for src/a.ts src/b.ts titled Add files. Args: FILES="src/a.ts src/b.ts" PR_TITLE="Add files"',
       }]);
+      expect(refreshCustomPrompts).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(promptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses selected catalog identity when a Skill and custom prompt share a name", async () => {
+    const promptDir = mkdtempSync(join(tmpdir(), "codex-provider-collision-"));
+    try {
+      const promptPath = join(promptDir, "release.md");
+      const skillPath = join(promptDir, "release-skill", "SKILL.md");
+      writeFileSync(promptPath, "Prompt release $ARGUMENTS");
+      const prompt = {
+        name: "prompts:release",
+        nativeName: "release",
+        description: "Prompt release",
+        kind: "command",
+        source: "user",
+        providers: ["codex"],
+        path: promptPath,
+      };
+      const skill = {
+        name: "prompts:release",
+        nativeName: "prompts:release",
+        description: "Skill release",
+        kind: "skill",
+        source: "user",
+        providers: ["codex"],
+        path: skillPath,
+      };
+      const provider = makeProvider(
+        vi.fn((_cwd, _providerId, nativeItems) => [skill, ...(nativeItems as unknown[])]),
+        {
+          currentSkills: vi.fn(() => [skill]),
+          currentPrompts: vi.fn(() => [prompt]),
+          refreshCustomPrompts: vi.fn(async () => ({ prompts: [prompt] })),
+          refresh: vi.fn(async () => ({ skills: [skill] })),
+          onSkillsChanged: vi.fn(() => () => undefined),
+          shutdown: vi.fn(async () => undefined),
+        },
+      );
+
+      await provider.sendTurn({
+        sessionId: "mcode-prompt-collision",
+        threadId: "prompt-collision",
+        message: "/prompts:release alpha",
+        mentions: [{
+          id: "command:command:prompts:release",
+          kind: "command",
+          label: "prompts:release",
+          namespace: "command",
+          capabilityIdentity: {
+            providerId: "codex",
+            kind: "customPrompt",
+            nativeId: "release",
+          },
+          range: { start: 0, end: 16 },
+        }],
+        cwd: process.cwd(),
+        model: "gpt-5.4",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+      await provider.sendTurn({
+        sessionId: "mcode-skill-collision",
+        threadId: "skill-collision",
+        message: "/prompts:release beta",
+        mentions: [{
+          id: "command:skill:prompts:release",
+          kind: "command",
+          label: "prompts:release",
+          namespace: "skill",
+          capabilityIdentity: {
+            providerId: "codex",
+            kind: "skill",
+            nativeId: skillPath,
+          },
+          range: { start: 0, end: 16 },
+        }],
+        cwd: process.cwd(),
+        model: "gpt-5.4",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+
+      for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+
+      expect(sendTurnMock.mock.calls[0][0]).toEqual([
+        { type: "text", text: "Prompt release alpha" },
+      ]);
+      expect(sendTurnMock.mock.calls[1][0]).toEqual([
+        { type: "skill", name: "prompts:release", path: skillPath },
+        { type: "text", text: "$prompts:release beta" },
+      ]);
     } finally {
       rmSync(promptDir, { recursive: true, force: true });
     }
@@ -430,7 +546,7 @@ describe("CodexProvider first turn on new session", () => {
   it("emits a controlled error when a listed Codex prompt cannot be read", async () => {
     const promptDir = mkdtempSync(join(tmpdir(), "missing-codex-prompt-"));
     try {
-      const provider = makeProvider(vi.fn(() => [{
+      const prompt = {
         name: "prompts:draftpr",
         nativeName: "draftpr",
         description: "Draft a PR",
@@ -438,7 +554,18 @@ describe("CodexProvider first turn on new session", () => {
         source: "user",
         providers: ["codex"],
         path: join(promptDir, "draftpr.md"),
-      }]));
+      };
+      const provider = makeProvider(
+        vi.fn((_cwd, _providerId, nativeItems) => nativeItems as unknown[]),
+        {
+          currentSkills: vi.fn(() => []),
+          currentPrompts: vi.fn(() => []),
+          refreshCustomPrompts: vi.fn(async () => ({ prompts: [prompt] })),
+          refresh: vi.fn(async () => ({ skills: [] })),
+          onSkillsChanged: vi.fn(() => () => undefined),
+          shutdown: vi.fn(async () => undefined),
+        },
+      );
       const events: AgentEvent[] = [];
       provider.on("event", (event: AgentEvent) => events.push(event));
 
@@ -502,6 +629,8 @@ describe("CodexProvider first turn on new session", () => {
     const refresh = vi.fn(async () => ({ skills: [nativeSkill] }));
     const provider = makeProvider(undefined, {
       currentSkills: vi.fn(() => []),
+      currentPrompts: vi.fn(() => []),
+      refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
       refresh,
       onSkillsChanged: vi.fn(() => () => undefined),
       shutdown: vi.fn(async () => undefined),

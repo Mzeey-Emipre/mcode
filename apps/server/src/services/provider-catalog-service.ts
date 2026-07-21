@@ -5,6 +5,7 @@ import type {
   ProviderCatalogContext,
   ProviderCatalogRequest,
   ProviderCatalogSnapshot,
+  ProviderCapabilityKind,
   SelectableProviderAgent,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
@@ -16,8 +17,14 @@ export interface ProviderCatalogLoadInput {
   readonly context: ProviderCatalogContext;
   readonly cwd?: string;
   readonly fallbackCwd?: string;
-  readonly refresh: () => Promise<ProviderCatalogSnapshot>;
+  readonly refresh: () => Promise<ProviderCatalogSnapshot | ProviderCatalogPartialRefresh>;
   readonly refreshFromCache?: () => Promise<ProviderCatalogSnapshot>;
+}
+
+/** Stale snapshot plus the entry kinds that were authoritatively refreshed. */
+export interface ProviderCatalogPartialRefresh {
+  readonly snapshot: ProviderCatalogSnapshot;
+  readonly confirmedEntryKinds: readonly ProviderCapabilityKind[];
 }
 
 const MAX_TRACKED_CATALOG_CONTEXTS = 64;
@@ -29,9 +36,35 @@ interface CatalogRefreshSubscriber {
 }
 
 interface CatalogRefreshJob {
-  readonly refresh: () => Promise<ProviderCatalogSnapshot>;
+  readonly refresh: ProviderCatalogLoadInput["refresh"];
   readonly subscribers: Map<string, CatalogRefreshSubscriber>;
   readonly pendingSubscribers: Map<string, CatalogRefreshSubscriber>;
+}
+
+function applyConfirmedEntryKinds(
+  visible: ProviderCatalogSnapshot,
+  refreshed: ProviderCatalogSnapshot,
+  confirmedEntryKinds: readonly ProviderCapabilityKind[],
+): ProviderCatalogSnapshot {
+  const confirmed = new Set(confirmedEntryKinds);
+  const refreshedByIdentity = new Map(
+    refreshed.entries.map((entry) => [capabilityIdentity(entry), entry]),
+  );
+  const entries = visible.entries.flatMap((entry) => {
+    if (!confirmed.has(entry.kind)) return [entry];
+    const updated = refreshedByIdentity.get(capabilityIdentity(entry));
+    return updated ? [updated] : [];
+  });
+  const retainedIdentities = new Set(entries.map(capabilityIdentity));
+  entries.push(...refreshed.entries.filter((entry) => (
+    confirmed.has(entry.kind) && !retainedIdentities.has(capabilityIdentity(entry))
+  )));
+  return {
+    ...visible,
+    diagnostics: refreshed.diagnostics,
+    freshness: refreshed.freshness,
+    entries,
+  };
 }
 
 function capabilityIdentity(entry: ProviderCapabilityEntry): string {
@@ -311,8 +344,15 @@ export class ProviderCatalogService {
     job: CatalogRefreshJob,
   ): Promise<void> {
     let refreshed: ProviderCatalogSnapshot;
+    let confirmedEntryKinds: readonly ProviderCapabilityKind[] | undefined;
     try {
-      refreshed = await job.refresh();
+      const result = await job.refresh();
+      if ("snapshot" in result) {
+        refreshed = result.snapshot;
+        confirmedEntryKinds = result.confirmedEntryKinds;
+      } else {
+        refreshed = result;
+      }
     } catch (error) {
       const firstSubscriber = job.subscribers.values().next().value as
         | CatalogRefreshSubscriber
@@ -342,6 +382,11 @@ export class ProviderCatalogService {
     for (const { visible, input } of job.subscribers.values()) {
       const next = refreshed.freshness.status === "fresh"
         ? { ...refreshed, context: input.context }
+        : confirmedEntryKinds
+          ? {
+              ...applyConfirmedEntryKinds(visible, refreshed, confirmedEntryKinds),
+              context: input.context,
+            }
         : {
             ...visible,
             diagnostics: refreshed.diagnostics,

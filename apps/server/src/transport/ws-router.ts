@@ -19,6 +19,7 @@ import {
   type IProviderRegistry,
   type ProviderUsageInfo,
   type ProviderCatalogContext,
+  type ProviderCapabilityKind,
   type ProviderAgentMention,
   type PreviewAnnotationBundle,
   getExtension,
@@ -1019,7 +1020,10 @@ async function dispatch(
       const buildSnapshot = async (
         catalog?: CodexCatalogRefreshResult,
       ) => {
-        const skills = deps.skillService.list(cwd, params.providerId, catalog?.skills);
+        const nativeItems = catalog
+          ? [...catalog.skills, ...catalog.prompts]
+          : undefined;
+        const skills = deps.skillService.list(cwd, params.providerId, nativeItems);
         const agentDiscovery = params.providerId === "codex"
           ? await discoverBoundedCodexAgents(resolveCodexAgentDirectories(
               deps,
@@ -1038,16 +1042,27 @@ async function dispatch(
           ...(catalog?.freshness ? { freshness: catalog.freshness } : {}),
         });
       };
+      const confirmedCodexEntryKinds = (
+        catalog: CodexCatalogRefreshResult,
+      ): ProviderCapabilityKind[] => [
+        ...(catalog.skillsAvailable
+          ? ["skill", "plugin", "providerCommand"] as const
+          : []),
+        ...(catalog.promptsAvailable ? ["customPrompt"] as const : []),
+      ];
       return deps.providerCatalogService.request({
         request: params,
         context: catalogContext,
         cwd,
         ...(params.threadId && workspaceRoot ? { fallbackCwd: workspaceRoot } : {}),
-        refresh: async () => buildSnapshot(
-          params.providerId === "codex"
-            ? await deps.codexCatalogService.refresh(cwd)
-            : undefined,
-        ),
+        refresh: async () => {
+          if (params.providerId !== "codex") return buildSnapshot();
+          const catalog = await deps.codexCatalogService.refresh(cwd);
+          return {
+            snapshot: await buildSnapshot(catalog),
+            confirmedEntryKinds: confirmedCodexEntryKinds(catalog),
+          };
+        },
         ...(params.providerId === "codex" ? {
           refreshFromCache: async () => buildSnapshot(
             deps.codexCatalogService.currentSnapshot(cwd),

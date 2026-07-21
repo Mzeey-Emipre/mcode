@@ -22,6 +22,10 @@ import type {
 import { codexPluginNameFromSkillPath } from "./skill-service.js";
 import { SettingsService } from "./settings-service.js";
 import { EnvService } from "./env-service.js";
+import {
+  CodexCustomPromptService,
+  type CodexCustomPromptDiscoveryResult,
+} from "./codex-custom-prompt-service.js";
 import type { JobObject } from "./job-object.js";
 
 const CODEX_CATALOG_IDLE_TTL_MS = 60_000;
@@ -36,12 +40,15 @@ interface PluginCandidate {
   readonly summary: Record<string, unknown>;
 }
 
-/** Result of refreshing native Codex Skills for one working-directory context. */
+/** Result of refreshing Codex capabilities for one working-directory context. */
 export interface CodexCatalogRefreshResult {
   readonly skills: SkillInfo[];
   readonly plugins: ProviderPluginCapability[];
+  readonly prompts: SkillInfo[];
   readonly diagnostics: ProviderCatalogDiagnostic[];
   readonly freshness: ProviderCatalogFreshness;
+  readonly skillsAvailable: boolean;
+  readonly promptsAvailable: boolean;
 }
 
 /** Minimal app-server surface used by the provider-wide catalog connection. */
@@ -360,9 +367,11 @@ export class CodexCatalogService {
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(EnvService) private readonly envService: EnvService,
     @inject(CodexCatalogClientFactory) private readonly clientFactory: CodexCatalogClientFactory,
+    @inject(CodexCustomPromptService)
+    private readonly customPromptService: CodexCustomPromptService,
   ) {}
 
-  /** Refreshes the complete native capability list for one working-directory context. */
+  /** Refreshes native Skills, plugins, and bounded custom prompts for one working-directory context. */
   async refresh(cwd?: string): Promise<CodexCatalogRefreshResult> {
     this.rememberContext(cwd);
     this.armIdleTimer();
@@ -378,6 +387,16 @@ export class CodexCatalogService {
   /** Returns the last complete Skill list without starting or waiting for catalog work. */
   currentSkills(cwd?: string): SkillInfo[] {
     return this.snapshots.get(catalogKey(cwd))?.skills ?? [];
+  }
+
+  /** Returns the latest bounded custom prompt list without starting filesystem work. */
+  currentPrompts(): SkillInfo[] {
+    return this.customPromptService.currentPrompts();
+  }
+
+  /** Refreshes only the bounded custom prompt adapter for an imminent invocation. */
+  refreshCustomPrompts(): Promise<CodexCustomPromptDiscoveryResult> {
+    return this.customPromptService.refresh();
   }
 
   /** Returns the last complete refresh result without touching the connection idle deadline. */
@@ -401,11 +420,13 @@ export class CodexCatalogService {
     cwd: string | undefined,
     forceReload: boolean,
   ): Promise<CodexCatalogRefreshResult> {
+    const promptRefresh = this.customPromptService.refresh();
     try {
       const client = await this.acquireClient(cwd);
-      const [skillsResult, pluginsResult] = await Promise.all([
+      const [skillsResult, pluginsResult, customPrompts] = await Promise.all([
         client.listSkills(cwd ? [cwd] : undefined, forceReload),
         client.listPlugins(cwd ? [cwd] : undefined),
+        promptRefresh,
       ]);
       const rawData = Array.isArray((skillsResult as { data?: unknown }).data)
         ? (skillsResult as { data: unknown[] }).data
@@ -440,12 +461,22 @@ export class CodexCatalogService {
       const snapshot: CodexCatalogRefreshResult = {
         skills: reconciled.skills,
         plugins: reconciledPlugins.plugins,
-        diagnostics: diagnostics.slice(0, 100),
-        freshness: { status: "fresh", fetchedAt },
+        prompts: customPrompts.prompts,
+        diagnostics: [...diagnostics, ...customPrompts.diagnostics].slice(0, 100),
+        freshness: customPrompts.available
+          ? { status: "fresh", fetchedAt }
+          : {
+              status: "stale",
+              fetchedAt,
+              reason: "Codex custom prompt discovery failed.",
+            },
+        skillsAvailable: true,
+        promptsAvailable: customPrompts.available,
       };
       this.snapshots.set(catalogKey(cwd), snapshot);
       return snapshot;
     } catch (error) {
+      const customPrompts = await promptRefresh;
       const previous = this.snapshots.get(catalogKey(cwd));
       const fetchedAt = previous?.freshness.fetchedAt ?? new Date().toISOString();
       logger.warn("Codex catalog refresh failed", {
@@ -455,16 +486,22 @@ export class CodexCatalogService {
       const snapshot: CodexCatalogRefreshResult = {
         skills: previous?.skills ?? [],
         plugins: previous?.plugins ?? [],
-        diagnostics: [{
-          severity: "warning",
-          code: "source-unavailable",
-          message: "Codex capabilities are temporarily unavailable for this catalog context.",
-        }],
+        prompts: customPrompts.prompts,
+        diagnostics: [
+          {
+            severity: "warning" as const,
+            code: "source-unavailable" as const,
+            message: "Codex capabilities are temporarily unavailable for this catalog context.",
+          },
+          ...customPrompts.diagnostics,
+        ].slice(0, 100),
         freshness: {
           status: "stale",
           fetchedAt,
           reason: "Codex capability discovery failed.",
         },
+        skillsAvailable: false,
+        promptsAvailable: customPrompts.available,
       };
       this.snapshots.set(catalogKey(cwd), snapshot);
       return snapshot;

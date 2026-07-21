@@ -8,10 +8,18 @@ describe("MessageMentionSchema", () => {
       kind: "command",
       label: "figma:use",
       namespace: "plugin",
+      capabilityIdentity: {
+        providerId: "codex",
+        kind: "skill",
+        nativeId: "C:/skills/figma-use/SKILL.md",
+      },
       range: { start: 4, end: 14 },
     });
 
     expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      capabilityIdentity: { kind: "skill", nativeId: "C:/skills/figma-use/SKILL.md" },
+    });
   });
 
   it("rejects unknown command namespaces", () => {

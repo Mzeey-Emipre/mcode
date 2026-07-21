@@ -37,6 +37,20 @@ interface CachedPromptTemplate {
 
 const promptTemplateCache = new Map<string, CachedPromptTemplate>();
 
+/** Returns true only for catalog items produced by the Codex custom-prompt adapter. */
+export function isCodexCustomPromptCatalogItem(
+  item: SkillInfo,
+): item is SkillInfo & { path: string } {
+  return (
+    item.kind === "command"
+    && item.source === "user"
+    && item.providers.includes("codex")
+    && Boolean(item.path)
+    && Boolean(item.nativeName)
+    && item.name === `prompts:${item.nativeName}`
+  );
+}
+
 function stripFrontmatter(content: string): string {
   return content.replace(FRONTMATTER_RE, "");
 }
@@ -142,8 +156,7 @@ export function isCodexPromptCommand(
   requestedName: string,
 ): item is SkillInfo & { path: string } {
   return (
-    item.kind === "command" &&
-    Boolean(item.path) &&
+    isCodexCustomPromptCatalogItem(item) &&
     item.name === requestedName
   );
 }

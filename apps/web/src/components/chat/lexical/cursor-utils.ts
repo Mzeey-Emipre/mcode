@@ -42,6 +42,9 @@ export function extractComposerMessage(editor: LexicalEditor): ExtractedComposer
             kind: "command",
             label,
             namespace: child.getNamespace(),
+            ...(child.getCapabilityIdentity()
+              ? { capabilityIdentity: child.getCapabilityIdentity() }
+              : {}),
             range: { start, end: text.length },
           });
         } else {

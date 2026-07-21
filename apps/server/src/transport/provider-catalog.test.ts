@@ -104,6 +104,27 @@ describe("provider catalog bounds", () => {
     });
   });
 
+  it("does not classify a project command as a Codex custom prompt by name", () => {
+    const snapshot = buildProviderCatalogSnapshot({
+      providerId: "codex",
+      context: { scope: "user" },
+      skills: [{
+        name: "prompts:release",
+        nativeName: "prompts:release",
+        description: "Project command",
+        kind: "command",
+        source: "project",
+        providers: ["codex"],
+        path: "C:/repo/.agents/commands/prompts:release.md",
+      }],
+      fetchedAt: "2026-07-20T12:00:00.000Z",
+    });
+
+    expect(snapshot.entries).toEqual([
+      expect.objectContaining({ kind: "providerCommand", name: "prompts:release" }),
+    ]);
+  });
+
   it("omits an invalid selectable agent while retaining valid siblings", () => {
     const snapshot = buildProviderCatalogSnapshot({
       providerId: "codex",

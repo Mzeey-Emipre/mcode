@@ -408,7 +408,7 @@ describe("SkillService", () => {
       expect(codexDeploy!.description).toBe("Native Codex deploy");
     });
 
-    it("tags prompts from ~/.codex/prompts as Codex prompt commands", () => {
+    it("leaves Codex custom prompts to the bounded catalog adapter", () => {
       const cmdDir = join(fakeHome, ".codex", "prompts");
       mkdirSync(cmdDir, { recursive: true });
       const promptPath = join(cmdDir, "deploy.md");
@@ -416,13 +416,7 @@ describe("SkillService", () => {
 
       const items = new SkillService().list(undefined, "codex");
 
-      const cmd = items.find((i) => i.name === "prompts:deploy");
-      expect(cmd).toBeDefined();
-      expect(cmd!.kind).toBe("command");
-      expect(cmd!.description).toBe("Codex deploy prompt");
-      expect(cmd!.nativeName).toBe("deploy");
-      expect(cmd!.path).toBe(promptPath);
-      expect(cmd!.providers).toEqual(["codex"]);
+      expect(items.find((i) => i.name === "prompts:deploy")).toBeUndefined();
     });
 
     it("tags skills from ~/.cursor/skills with providers=['cursor']", () => {

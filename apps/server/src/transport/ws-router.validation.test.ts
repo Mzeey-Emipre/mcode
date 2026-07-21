@@ -122,6 +122,13 @@ describe("routeMessage provider.catalog", () => {
               path: "C:/users/test/.codex/skills/review/SKILL.md",
             },
             {
+              name: "prompts:release",
+              description: "A Skill with the same name as a custom prompt",
+              enabled: true,
+              scope: "user",
+              path: "C:/users/test/.codex/skills/prompts-release/SKILL.md",
+            },
+            {
               name: projectSkill,
               description: `${projectSkill} project changes`,
               enabled: true,
@@ -177,11 +184,29 @@ describe("routeMessage provider.catalog", () => {
       readPlugin: vi.fn(async () => ({ plugin: { description: "Plugin details" } })),
     });
     const create = vi.fn(() => client);
+    const customPrompt = {
+      name: "prompts:release",
+      description: "Prepare a release",
+      kind: "command" as const,
+      source: "user" as const,
+      providers: ["codex"],
+      nativeName: "release",
+      path: "C:/users/test/.codex/prompts/release.md",
+    };
+    const customPromptService = {
+      refresh: vi.fn(async () => ({
+        prompts: [customPrompt],
+        diagnostics: [],
+        available: true,
+      })),
+      currentPrompts: vi.fn(() => [customPrompt]),
+    };
     const codexCatalogService = new CodexCatalogService(
       { get: () => ({ provider: { cli: { codex: "codex" } } }) } as never,
       { isWindowsJob: false } as never,
       { getEnv: () => ({}) } as never,
       { create } as never,
+      customPromptService as never,
     );
     const refresh = vi.spyOn(codexCatalogService, "refresh");
     const db = openMemoryDatabase();
@@ -192,18 +217,9 @@ describe("routeMessage provider.catalog", () => {
     insertWorkspace.run("workspace-2", "Workspace 2", "C:/other");
     const snapshotRepo = new ProviderCatalogSnapshotRepo(db);
     const providerCatalogService = new ProviderCatalogService(snapshotRepo);
-    const list = vi.fn().mockImplementation((_cwd, _providerId, discoveredSkills = []) => [
-      ...discoveredSkills,
-      {
-        name: "prompts:release",
-        description: "Prepare a release",
-        kind: "command" as const,
-        source: "user" as const,
-        providers: ["codex"],
-        nativeName: "release",
-        path: "C:/users/test/.codex/prompts/release.md",
-      },
-    ]);
+    const list = vi.fn().mockImplementation((_cwd, _providerId, discoveredSkills = []) => (
+      discoveredSkills
+    ));
     const threadLookup = vi.fn();
     const deps = {
       workspaceService: {
@@ -245,6 +261,7 @@ describe("routeMessage provider.catalog", () => {
           kind: "plugin",
           mentionPath: "plugin://review@personal",
         }),
+        expect.objectContaining({ name: "prompts:release", kind: "skill" }),
         expect.objectContaining({ name: "prompts:release", kind: "customPrompt" }),
       ]),
       diagnostics: [expect.objectContaining({
