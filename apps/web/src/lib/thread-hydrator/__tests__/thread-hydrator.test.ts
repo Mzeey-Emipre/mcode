@@ -478,6 +478,33 @@ describe("ThreadHydrator", () => {
     expect(getCachedRecord(THREAD_A)?.loading).toBe(false);
   });
 
+  it("restores messages added to a resident thread after its empty snapshot was cached", async () => {
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_A,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map([[THREAD_A, createEmptyThreadRecord()]]),
+    });
+    cacheRecord(THREAD_B, makeCachedRecord([msgB]));
+
+    await hydrator.hydrate(THREAD_B, "active");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(getCachedRecord(THREAD_A)?.messages).toEqual([]);
+    useThreadStore.setState((state) => {
+      const runningThreadIds = new Set(state.runningThreadIds);
+      runningThreadIds.delete(THREAD_A);
+      return {
+        runningThreadIds,
+        records: patchThreadRecord(state.records, THREAD_A, { messages: [msgA] }),
+      };
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(getTestActiveMessages()).toEqual([msgA]);
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
+  });
+
   it("reopens a running resident layer without replacing its live state", async () => {
     resetThreadStoreForTests({
       currentThreadId: THREAD_B,

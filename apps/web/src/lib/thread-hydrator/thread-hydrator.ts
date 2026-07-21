@@ -40,6 +40,12 @@ function hasResidentLayer(record: ThreadRecord): boolean {
     || record.hooks.length > 0;
 }
 
+function hasNewerResidentMessages(resident: ThreadRecord, cached: ThreadRecord): boolean {
+  const residentSequence = resident.messages.at(-1)?.sequence;
+  const cachedSequence = cached.messages.at(-1)?.sequence;
+  return residentSequence != null && (cachedSequence == null || residentSequence > cachedSequence);
+}
+
 /** Build a conversation page containing only the supplied messages and their metadata. */
 function buildConversationPageSubset(
   page: ConversationPage,
@@ -225,7 +231,11 @@ export class ThreadHydrator {
 
     const cached = getCachedRecord(threadId);
     if (cached) {
-      this.restoreCachedActive(threadId, cached, opts);
+      this.restoreCachedActive(
+        threadId,
+        resident && hasNewerResidentMessages(resident, cached) ? resident : cached,
+        opts,
+      );
       return;
     }
 
