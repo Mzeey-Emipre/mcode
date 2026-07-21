@@ -179,6 +179,22 @@ test("a phase streams a complete log while retaining bounded output", async () =
   }
 });
 
+test("log stream errors fail the phase without leaving it unsettled", async () => {
+  const cwd = mkdtempSync(resolve(tmpdir(), "mcode-verify-log-error-"));
+  try {
+    const result = await runPhase(nodePhase(
+      "log-error",
+      "process.stdout.write('evidence')",
+      { logPath: resolve(cwd, "missing", "phase.log") },
+    ));
+    assert.equal(result.code, 1);
+    assert.equal(result.exitCondition, "log-error");
+    assert.match(result.logError, /ENOENT|no such file or directory/i);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("successful phases print one line and hide child output", async () => {
   const lines = [];
   await runPhasesInParallel(

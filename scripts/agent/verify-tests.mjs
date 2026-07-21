@@ -314,8 +314,10 @@ export function runPhase({
     const startedAt = Date.now();
     let tail = Buffer.alloc(0);
     let settled = false;
+    let finishing = false;
     let exitCondition = "nonzero";
     let spawnError;
+    let logError;
     const output = logPath ? createWriteStream(logPath, { flags: "wx" }) : null;
     const executable = resolveSafeExecutable(command, env);
     const child = spawn(executable, args, {
@@ -327,17 +329,18 @@ export function runPhase({
     });
     const retain = (chunk) => {
       tail = appendBounded(tail, chunk);
-      output?.write(chunk);
+      if (!logError && !output?.destroyed) output?.write(chunk);
     };
     child.stdout?.on("data", retain);
     child.stderr?.on("data", retain);
 
     let forceKillTimer;
     let settlementTimer;
-    const finish = (code, childSignal) => {
+    const complete = (code, childSignal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      clearTimeout(forceKillTimer);
       clearTimeout(settlementTimer);
       signal?.removeEventListener("abort", cancel);
       if (child.exitCode === null && child.signalCode === null) {
@@ -346,7 +349,8 @@ export function runPhase({
         child.unref();
       }
       const normalizedCode = code ?? 1;
-      if (spawnError) exitCondition = "spawn-error";
+      if (logError) exitCondition = "log-error";
+      else if (spawnError) exitCondition = "spawn-error";
       else if (exitCondition === "timeout" || exitCondition === "cancelled") { /* Keep cause. */ }
       else if (childSignal) exitCondition = "signal";
       else exitCondition = normalizedCode === 0 ? "success" : "nonzero";
@@ -356,6 +360,7 @@ export function runPhase({
         signal: childSignal ?? null,
         exitCondition,
         spawnError,
+        logError,
         output: tail.toString("utf8"),
         outputTruncated: tail.length >= MAX_RETAINED_OUTPUT_BYTES,
         durationMs: Date.now() - startedAt,
@@ -366,9 +371,25 @@ export function runPhase({
         reproduction: formatSafeReproduction(command, args),
         logPath: logPath ?? null,
       };
-      if (output) output.end(() => resolve(result));
-      else resolve(result);
+      resolve(result);
     };
+    const finish = (code, childSignal) => {
+      if (settled || finishing) return;
+      finishing = true;
+      if (output && !output.destroyed && !logError) {
+        output.end(() => complete(code, childSignal));
+        return;
+      }
+      complete(code, childSignal);
+    };
+    output?.once("error", (error) => {
+      if (settled) return;
+      logError = error.message;
+      tail = appendBounded(tail, Buffer.from(`[log error] ${error.message}\n`));
+      terminateProcessTree(child);
+      output.destroy();
+      complete(1, null);
+    });
     const cancel = () => {
       exitCondition = "cancelled";
       terminateProcessTree(child);
