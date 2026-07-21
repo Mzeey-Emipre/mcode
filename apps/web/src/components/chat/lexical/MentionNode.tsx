@@ -176,7 +176,8 @@ export function $isMentionNode(
   return node instanceof MentionNode;
 }
 
-function createMentionId(): string {
+/** Creates a stable identifier for one composer mention. */
+export function createMentionId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }

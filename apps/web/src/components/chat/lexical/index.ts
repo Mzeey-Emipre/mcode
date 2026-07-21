@@ -1,5 +1,11 @@
 export { ComposerEditor } from "./ComposerEditor";
-export { MentionNode, $createMentionNode, $createTypedMentionNode, $isMentionNode } from "./MentionNode";
+export {
+  MentionNode,
+  $createMentionNode,
+  $createTypedMentionNode,
+  $isMentionNode,
+  createMentionId,
+} from "./MentionNode";
 export type { MentionNodeData } from "./MentionNode";
 export {
   SlashCommandNode,

@@ -65,6 +65,7 @@ import {
   ComposerEditor,
   $createSlashCommandNode,
   $createTypedMentionNode,
+  createMentionId,
   extractComposerMessage,
   insertMentionNode,
   insertSelectedPluginMention,
@@ -1345,14 +1346,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     fileAutocomplete.selectSuggestion(item);
     if (!editorRef.current) return;
 
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `mention-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const mention: MentionNodeData =
       item.kind === "agent"
         ? {
-            id,
+            id: createMentionId(),
             kind: "agent",
             label: item.label,
             name: item.name,
@@ -1360,7 +1357,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             provider: item.provider,
           }
         : {
-            id,
+            id: createMentionId(),
             kind: "file",
             label: item.label,
             path: item.path,
