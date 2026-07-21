@@ -1,12 +1,12 @@
 ---
 name: agent-workflow
-description: Use when implementing code changes autonomously after a plan is approved. Covers the mandatory verify/visual-check/deliver cycle enforced by Stop hooks.
+description: Use when implementing code changes autonomously after a plan is approved. Covers the mandatory verify, receipt, visual-check, and delivery cycle.
 ---
 
 # Agent Workflow
 
-Mandatory workflow for autonomous code implementation. Stop hooks enforce
-verification; you cannot finish a turn with failing checks.
+Mandatory workflow for autonomous code implementation. Explicit verification
+creates receipts, and Stop hooks require a current receipt before completion.
 
 ## Workflow
 
@@ -18,56 +18,101 @@ digraph workflow {
     "Exercise the running app" [shape=box];
     "Behavior correct?" [shape=diamond];
     "Add or update regular test" [shape=box];
-    "Run bun run verify" [shape=box];
+    "Run focused or changed checks" [shape=box];
+    "Commit the atomic slice" [shape=box];
+    "Candidate series complete?" [shape=diamond];
+    "Review the candidate diff" [shape=box];
+    "Run bun run verify once" [shape=box];
     "Passes?" [shape=diamond];
     "Fix errors" [shape=box];
-    "Commit + show results" [shape=box];
+    "Complete or push + show results" [shape=box];
 
     "Implement per plan" -> "Behavior change?";
     "Behavior change?" -> "Exercise the running app" [label="yes"];
-    "Behavior change?" -> "Run bun run verify" [label="no"];
+    "Behavior change?" -> "Run focused or changed checks" [label="no"];
     "Exercise the running app" -> "Behavior correct?";
     "Behavior correct?" -> "Fix errors" [label="no"];
     "Behavior correct?" -> "Add or update regular test" [label="yes"];
-    "Add or update regular test" -> "Run bun run verify";
-    "Run bun run verify" -> "Passes?";
+    "Add or update regular test" -> "Run focused or changed checks";
+    "Run focused or changed checks" -> "Commit the atomic slice";
+    "Commit the atomic slice" -> "Candidate series complete?";
+    "Candidate series complete?" -> "Implement per plan" [label="no"];
+    "Candidate series complete?" -> "Review the candidate diff" [label="yes"];
+    "Review the candidate diff" -> "Run bun run verify once";
+    "Run bun run verify once" -> "Passes?";
     "Passes?" -> "Fix errors" [label="no"];
     "Fix errors" -> "Behavior change?";
-    "Passes?" -> "Commit + show results" [label="yes"];
+    "Passes?" -> "Complete or push + show results" [label="yes"];
 }
 ```
 
-## Verify (mandatory, enforced)
+## Verify and receipts (mandatory, enforced)
 
-Verification has two tiers. The stop hook runs the **fast gate** on every
-turn so type errors and lint violations surface in seconds; the **full gate**
-runs at commit time and adds the unit-test suite on top.
+Verification has two explicit gates. Each successful or failed run writes a
+receipt for the effective repository content and selected test scope. Stop hooks
+inspect receipts; they do not run verification phases.
 
 | Tier | When it runs | What it runs | How to invoke |
 |------|--------------|--------------|---------------|
-| Fast gate | Every agent stop hook | Typecheck + Lint (parallel) | `node scripts/agent/verify-fast.mjs` |
-| Full gate | Before committing | Typecheck + Lint + Tests (parallel) | `bun run verify` |
+| Changed-file gate | During implementation, before an atomic commit when appropriate | Typecheck + lint + smallest safe maintained test scope | `bun run verify:changed` |
+| Full gate | Once after the candidate commit series and before completion or push | Typecheck + lint + complete unit-test suite | `bun run verify` |
 
-Both tiers share the same `hasCodeChanges()` early-exit bypass, so
-brainstorming-only sessions with no code edits skip verification entirely.
+Both gates skip when no verification-relevant files changed. Code, package
+manifests, lockfiles, verification scripts, and root build or test configuration
+are relevant. Documentation-only sessions skip verification.
 
-The Stop hook calls the fast gate automatically when you try to finish a
-turn. If typecheck or lint fails, you get the error output and must fix
-before you can stop. **Before committing**, run `bun run verify` yourself
-to exercise the full gate, including the unit tests. The fast gate alone
-does not certify a commit.
+Claude, Codex, and Cursor Stop hooks inspect the current content and planning
+identities. No relevant changes approve immediately. A matching success receipt
+approves, and a matching failure receipt blocks with its manifest path. A stale
+or missing receipt blocks with `bun run verify:changed` as the next command.
+Stop inspection creates no verification run or log.
 
-Do not run `tsc --noEmit` or test commands individually. Use the tier
-appropriate for what you are doing.
+Content identity follows effective verification-relevant file contents, tool
+and runtime identity, verification configuration, and selected environment
+digests. Planning identity follows the changed-file set and selected test scope
+relative to the main baseline. Staging, unstaging, or committing unchanged
+content does not invalidate a receipt when the diff relative to main stays the
+same. A full-gate success covers a changed-file Stop check only when both
+identities match. A changed-file success never covers the full gate, and failed
+receipts never cross gates. Direct verification commands always run fresh.
 
-**Test scope.** `bun run verify` runs the full unit-test gate whenever
-verification runs (it still skips entirely when no code changes are detected).
-The Stop hook calls `verify-tests.mjs` directly without `--full`, so it scopes
-each workspace's vitest run to tests related to the changed files
-(`vitest related <files> --run`) for fast feedback. Any change inside
-`packages/contracts` or `packages/shared` falls back to the full suite because
-those packages are imported across the repo and vitest's related-file import
-graph is per-project.
+Several atomic commits may occur in one agent turn. Protect each logical slice
+with its focused test or the changed-file gate as appropriate. Run the full gate
+once after the candidate commit series. Mcode adds no heavy per-commit hook.
+
+Use a focused repository-native command to reproduce a failed phase before
+editing. After the repair, rerun that command and the affected checks. Focused
+commands diagnose a failure; they do not replace `bun run verify`.
+
+**Test scope.** The changed-file gate runs related Vitest tests for web, server,
+and desktop changes. Changes in `packages/contracts`, `packages/shared`, root
+verification configuration, manifests, or lockfiles fall back to the complete
+unit-test suite. Changes under `scripts/agent` run `bun run test:scripts`.
+Typecheck, lint, and unit tests run in parallel. Agent script tests run after
+those phases because their Git fixtures otherwise compete with integration
+tests for processes and temporary repositories.
+
+**Diagnostics.** Passing phases print one summary line. Each phase streams its
+complete output to `.dev/verification/`, while failures print a bounded excerpt,
+the bounded argument vector, a reproduction command when every token is safe,
+the working directory, exit condition, full-log
+path, and manifest path. Manifests distinguish nonzero exits, spawn errors,
+signals, timeouts, and cancellations. Completed artifacts use bounded retention.
+
+## Failure recovery
+
+1. Exercise runtime behavior first when behavior changed.
+2. Add or update the nearest meaningful maintained test.
+3. Run focused checks or `bun run verify:changed` while diagnosing.
+4. If a broad gate fails, reproduce its smallest failed phase before editing.
+5. Fix the root cause. Do not weaken or skip a test.
+6. Rerun the focused failure and affected checks.
+7. Commit the repaired atomic slice after its focused checks pass.
+8. Review the complete candidate diff.
+9. Run `bun run verify` once after the candidate commit series and before
+   completion or push.
+10. Rerun the full gate only after relevant code, configuration, environment, or
+   generated artifacts change.
 
 ## Live Verification
 
@@ -104,8 +149,8 @@ regression, add the smallest regular test that would have caught it.
 
 ## Deliver
 
-Commit with a conventional commit message. Show `bun run verify` output as
-evidence that checks passed.
+Use conventional, atomic commits. Show the final `bun run verify` output as
+evidence before completion or push.
 
 ## Before You Declare Done
 
@@ -115,9 +160,8 @@ evidence that checks passed.
 - [ ] Durable behavior protected by a focused regular test
 - [ ] No relevant runtime or browser console errors
 
-The fast gate that the stop hook ran during the turn is not sufficient on
-its own because it skips the unit test phase. Run `bun run verify` explicitly
-before committing.
+The changed-file gate is not sufficient on its own. Run `bun run verify`
+explicitly after the candidate commit series and before completion or push.
 
 ## Enforcement
 

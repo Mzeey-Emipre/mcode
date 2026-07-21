@@ -1,26 +1,24 @@
 #!/usr/bin/env node
-/**
- * Codex Stop hook wrapper.
- * Runs verify-fast.mjs (typecheck + lint only, the fast gate) and returns
- * Codex's expected JSON response: {"decision":"approve"} to continue,
- * {"decision":"block","reason":"..."} to block. The full gate (typecheck +
- * lint + tests) runs at `bun run verify` time, not on every stop. See
- * docs/guides/agent-workflow.md for the two-tier model.
- */
-import { execSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
+/** Inspects the changed-file receipt and emits Codex's stop-hook protocol. */
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const verifyScript = resolve(__dirname, "..", "verify-fast.mjs");
+const script = resolve(dirname(fileURLToPath(import.meta.url)), "..", "verify-tests.mjs");
+const result = spawnSync(process.execPath, [script, "--check-receipt"], {
+  cwd: process.cwd(),
+  encoding: "utf8",
+  timeout: 10_000,
+  windowsHide: true,
+});
+const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
 
-try {
-  execSync(`node "${verifyScript}"`, { stdio: "pipe" });
-  console.log(JSON.stringify({ decision: "approve" }));
-} catch (err) {
-  const output = ((err?.stderr ?? err?.stdout) || "").toString().slice(-500);
+if (result.status === 0) {
+  console.log(JSON.stringify({ decision: "approve", reason: output.slice(-2_000) }));
+} else {
+  const condition = result.error?.code === "ETIMEDOUT" ? "timed out" : "blocked completion";
   console.log(JSON.stringify({
     decision: "block",
-    reason: `verify-fast failed: ${output.replace(/\n/g, " ").trim()}`,
+    reason: `Verification receipt check ${condition}. ${output.slice(-4_000)}`.trim(),
   }));
 }
