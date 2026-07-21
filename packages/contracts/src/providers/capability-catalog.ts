@@ -234,10 +234,25 @@ function contextForCatalogRequest(
 }
 
 function equalCatalogContext(
-  left: z.infer<ReturnType<typeof ProviderCatalogContextSchema>>,
-  right: z.infer<ReturnType<typeof ProviderCatalogContextSchema>>,
+  left: ProviderCatalogContext,
+  right: ProviderCatalogContext,
 ): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (left.scope !== right.scope) return false;
+
+  switch (left.scope) {
+    case "user":
+      return right.scope === "user";
+    case "workspace":
+      return right.scope === "workspace"
+        && left.workspaceId === right.workspaceId
+        && left.threadId === right.threadId;
+    case "path":
+      return right.scope === "path" && left.cwd === right.cwd;
+    default: {
+      const exhaustiveContext: never = left;
+      return exhaustiveContext;
+    }
+  }
 }
 
 /** Provider capability catalog snapshot for one validated discovery context. */
