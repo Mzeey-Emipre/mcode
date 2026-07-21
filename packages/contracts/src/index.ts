@@ -531,8 +531,9 @@ export {
   ProviderCustomPromptCapabilitySchema,
   ProviderCommandCapabilitySchema,
   ProviderCapabilityEntrySchema,
-  ProviderAgentMentionSchema,
   SelectableProviderAgentSchema,
+  ProviderCatalogDiagnosticSourceKindSchema,
+  ProviderCatalogSourceDiagnosticSchema,
   ProviderCatalogDiagnosticSchema,
   ProviderCatalogFreshnessSchema,
   ProviderCatalogContextSchema,
@@ -546,8 +547,9 @@ export type {
   ProviderCapabilityKind,
   ProviderPluginCapability,
   ProviderCapabilityEntry,
-  ProviderAgentMention,
   SelectableProviderAgent,
+  ProviderCatalogDiagnosticSourceKind,
+  ProviderCatalogSourceDiagnostic,
   ProviderCatalogDiagnostic,
   ProviderCatalogFreshness,
   ProviderCatalogContext,
@@ -613,7 +615,6 @@ export type {
   IAgentProvider,
   ICompletionCapable,
   IGoalCapable,
-  ISkillCatalogCapable,
   ISessionEvictable,
   IProviderRegistry,
   TurnRequest,
@@ -633,7 +634,7 @@ export {
   ModelPolicyStateSchema,
 } from "./providers/models.js";
 export type { ProviderModelInfo } from "./providers/models.js";
-export { isCompletionCapable, isGoalCapable, isSessionEvictable, isSkillCatalogCapable } from "./providers/interfaces.js";
+export { isCompletionCapable, isGoalCapable, isSessionEvictable } from "./providers/interfaces.js";
 
 export type {
   SessionForker,

@@ -22,7 +22,6 @@ import {
   type ProviderCapabilityKind,
   type PreviewAnnotationBundle,
   getExtension,
-  isSkillCatalogCapable,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
 import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discovery.js";
@@ -929,17 +928,6 @@ async function dispatch(
     case "config.discover":
       return deps.configService.discover(params.workspacePath);
 
-    // Skills
-    case "skill.list": {
-      let nativeSkills;
-      if (params.providerId === "codex") {
-        const provider = deps.providerRegistry.resolve("codex");
-        nativeSkills = isSkillCatalogCapable(provider)
-          ? await provider.listSkills(params.cwd)
-          : undefined;
-      }
-      return deps.skillService.list(params.cwd, params.providerId, nativeSkills);
-    }
     case "provider.catalog": {
       const { cwd, context: catalogContext } = resolveProviderCatalogContext(deps, params);
       const workspaceRoot = params.workspaceId
@@ -948,10 +936,9 @@ async function dispatch(
       const buildSnapshot = async (
         catalog?: CodexCatalogRefreshResult,
       ) => {
-        const nativeItems = catalog
+        const skills = catalog
           ? [...catalog.skills, ...catalog.prompts]
-          : undefined;
-        const skills = deps.skillService.list(cwd, params.providerId, nativeItems);
+          : deps.skillService.list(cwd, params.providerId);
         return buildProviderCatalogSnapshot({
           providerId: params.providerId,
           context: catalogContext,
@@ -990,9 +977,6 @@ async function dispatch(
         } : {}),
       });
     }
-    case "skill.diagnose":
-      return deps.skillService.diagnose(params.cwd);
-
     // Terminal
     case "terminal.create":
       return deps.terminalService.create(params.threadId);
@@ -1234,10 +1218,6 @@ async function dispatch(
     }
     case "providers.listAvailability": {
       return deps.providerAvailability.listAvailability();
-    }
-    case "provider.codexAgents": {
-      const { cwd } = resolveProviderCatalogContext(deps, params);
-      return (await deps.codexCatalogService.refresh(cwd)).agents;
     }
     case "provider.copilotAgents": {
       const workspace = deps.workspaceService.findById(params.workspaceId);

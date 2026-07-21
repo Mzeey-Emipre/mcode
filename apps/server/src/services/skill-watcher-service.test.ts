@@ -118,44 +118,39 @@ describe("SkillWatcherService", () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("watches Codex Skills and plugins without watching custom prompts", () => {
+  it("keeps Codex roots outside the shared filesystem watcher", () => {
     const watchSpy = vi.spyOn(watcher, "watch");
 
     watcher.start();
     const watchedPaths = watchSpy.mock.calls.map((call) => call[0] as string);
 
-    // Should watch all the new provider roots
-    expect(watchedPaths.some((p) => p.includes(".codex"))).toBe(true);
-    expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".codex/prompts"))).toBe(false);
-    expect(watchedPaths.some((p) => p.includes(".agents"))).toBe(true);
+    expect(watchedPaths.some((p) => p.includes(".codex"))).toBe(false);
+    expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".claude/.agents/skills"))).toBe(true);
+    expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".agents/commands"))).toBe(false);
     expect(watchedPaths.some((p) => p.replace(/\\/g, "/").includes(".cursor/skills"))).toBe(true);
   });
 
   it("auto-registers roots from multiple parent directories", async () => {
-    // Simulate two provider parent dirs existing at startup (e.g. ~/.claude and ~/.codex)
+    // Simulate two non-Codex provider parent directories existing at startup.
     const claudeParent = join(dir, ".claude");
-    const codexParent = join(dir, ".codex");
+    const cursorParent = join(dir, ".cursor");
     mkdirSync(claudeParent, { recursive: true });
-    mkdirSync(codexParent, { recursive: true });
+    mkdirSync(cursorParent, { recursive: true });
 
-    const codexRoot = join(codexParent, "skills");
-    // codexRoot does NOT exist at start time
+    const cursorRoot = join(cursorParent, "skills");
 
     watcher.start({
-      parentDirs: [claudeParent, codexParent],
-      roots: [join(claudeParent, "skills"), codexRoot],
+      parentDirs: [claudeParent, cursorParent],
+      roots: [join(claudeParent, "skills"), cursorRoot],
     });
 
     const invalidateSpy = vi.spyOn(svc, "invalidate");
 
-    // Create the missing codex root after start() — the codexParent watcher
-    // should detect this and auto-register codexRoot.
-    mkdirSync(codexRoot, { recursive: true });
+    mkdirSync(cursorRoot, { recursive: true });
     await waitFor(() => invalidateSpy.mock.calls.length > 0);
     invalidateSpy.mockClear();
 
-    // A change inside the late-registered codex root must invalidate
-    writeFileSync(join(codexRoot, "marker.txt"), "x");
+    writeFileSync(join(cursorRoot, "marker.txt"), "x");
     await waitFor(() => invalidateSpy.mock.calls.length > 0);
     await new Promise((r) => setTimeout(r, 250));
     expect(invalidateSpy).toHaveBeenCalledTimes(1);

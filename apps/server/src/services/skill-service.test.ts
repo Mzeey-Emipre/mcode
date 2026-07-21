@@ -218,65 +218,6 @@ describe("SkillService", () => {
       expect(items.find((i) => i.name === "documents:documents")).toBeUndefined();
     });
 
-    it("uses native Codex catalog entries instead of disk fallback duplicates", () => {
-      const skillDir = join(
-        fakeHome,
-        ".codex",
-        "plugins",
-        "cache",
-        "openai-bundled",
-        "browser",
-        "1.0.0",
-        "skills",
-        "control-in-app-browser",
-      );
-      mkdirSync(skillDir, { recursive: true });
-      const skillPath = join(skillDir, "SKILL.md");
-      writeMd(skillPath, { name: "control-in-app-browser", description: "Fallback browser skill" });
-
-      const native = {
-        name: "control-in-app-browser",
-        description: "Native browser skill",
-        kind: "skill" as const,
-        source: "plugin" as const,
-        providers: ["codex"],
-        nativeName: "control-in-app-browser",
-        path: skillPath,
-      };
-
-      const items = new SkillService().list(undefined, "codex", [native]);
-      expect(items.find((i) => i.name === "browser:control-in-app-browser")).toBeUndefined();
-      expect(items.find((i) => i.name === "control-in-app-browser")).toMatchObject({
-        description: "Native browser skill",
-        source: "plugin",
-      });
-    });
-
-    it("keeps same-name native Codex Skills distinct by path", () => {
-      const nativeSkills = [
-        {
-          name: "review",
-          description: "Global review",
-          kind: "skill" as const,
-          source: "user" as const,
-          providers: ["codex"],
-          path: "C:/users/test/.codex/skills/review/SKILL.md",
-        },
-        {
-          name: "review",
-          description: "Project review",
-          kind: "skill" as const,
-          source: "project" as const,
-          providers: ["codex"],
-          path: "C:/repo/.codex/skills/review/SKILL.md",
-        },
-      ];
-
-      const items = new SkillService().list("C:/repo", "codex", nativeSkills);
-
-      expect(items.filter((item) => item.name === "review")).toEqual(nativeSkills);
-    });
-
     it("extracts Codex plugin names from cache and runtime skill paths", () => {
       const cacheSkillPath = join(
         fakeHome,
@@ -384,30 +325,6 @@ describe("SkillService", () => {
       }
     });
 
-    it("allows a native Codex Skill to share a name with a Claude Skill", () => {
-      const claudeSkillDir = join(fakeHome, ".claude", "skills", "deploy");
-      mkdirSync(claudeSkillDir, { recursive: true });
-      writeMd(join(claudeSkillDir, "SKILL.md"), { description: "Claude deploy" });
-
-      const svc = new SkillService();
-
-      const claudeItems = svc.list(undefined, "claude");
-      const claudeDeploy = claudeItems.find((i) => i.name === "deploy");
-      expect(claudeDeploy!.description).toBe("Claude deploy");
-
-      svc.invalidate();
-      const codexItems = svc.list(undefined, "codex", [{
-        name: "deploy",
-        description: "Native Codex deploy",
-        kind: "skill",
-        source: "user",
-        providers: ["codex"],
-        path: "C:/codex/skills/deploy/SKILL.md",
-      }]);
-      const codexDeploy = codexItems.find((i) => i.name === "deploy");
-      expect(codexDeploy!.description).toBe("Native Codex deploy");
-    });
-
     it("leaves Codex custom prompts to the bounded catalog adapter", () => {
       const cmdDir = join(fakeHome, ".codex", "prompts");
       mkdirSync(cmdDir, { recursive: true });
@@ -417,6 +334,26 @@ describe("SkillService", () => {
       const items = new SkillService().list(undefined, "codex");
 
       expect(items.find((i) => i.name === "prompts:deploy")).toBeUndefined();
+    });
+
+    it("leaves Codex commands outside the two documented compatibility adapters", () => {
+      const userCommands = join(fakeHome, ".agents", "commands");
+      const cwd = tmp();
+      const projectCommands = join(cwd, ".agents", "commands");
+      mkdirSync(userCommands, { recursive: true });
+      mkdirSync(projectCommands, { recursive: true });
+      writeMd(join(userCommands, "user-command.md"), { description: "Legacy user command" });
+      writeMd(join(projectCommands, "project-command.md"), {
+        description: "Legacy project command",
+      });
+
+      try {
+        const items = new SkillService().list(cwd, "codex");
+
+        expect(items).toEqual([]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
     });
 
     it("tags skills from ~/.cursor/skills with providers=['cursor']", () => {

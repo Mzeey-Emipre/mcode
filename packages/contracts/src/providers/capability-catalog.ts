@@ -111,51 +111,18 @@ export const ProviderCapabilityEntrySchema = lazySchema(() =>
 /** Discriminated provider capability entry with a collision-safe native identity. */
 export type ProviderCapabilityEntry = z.infer<ReturnType<typeof ProviderCapabilityEntrySchema>>;
 
-/** Provider agent metadata returned by the legacy mention endpoint. */
-export const ProviderAgentMentionSchema = lazySchema(() =>
+/** Selectable provider agent kept separate from invocable catalog entries. */
+export const SelectableProviderAgentSchema = lazySchema(() =>
   z.object({
+    providerId: ProviderIdSchema,
+    nativeId: CatalogNativeIdSchema,
     name: CatalogAgentNameSchema,
     path: CatalogPathSchema,
     description: CatalogDescriptionSchema.optional(),
   }).strict(),
 );
-/** Provider agent metadata returned by the legacy mention endpoint. */
-export type ProviderAgentMention = z.infer<ReturnType<typeof ProviderAgentMentionSchema>>;
-
-/** Selectable provider agent kept separate from invocable catalog entries. */
-export const SelectableProviderAgentSchema = lazySchema(() =>
-  ProviderAgentMentionSchema().extend({
-    providerId: ProviderIdSchema,
-    nativeId: CatalogNativeIdSchema,
-  }).strict(),
-);
 /** Selectable provider agent kept separate from invocable catalog entries. */
 export type SelectableProviderAgent = z.infer<ReturnType<typeof SelectableProviderAgentSchema>>;
-
-/** Typed catalog source diagnostic safe for display or logging. */
-export const ProviderCatalogDiagnosticSchema = lazySchema(() =>
-  z.object({
-    severity: z.enum(["info", "warning", "error"]),
-    code: z.enum(["source-unavailable", "discovery-error", "partial-result"]),
-    message: z.string().min(1).max(1_000),
-  }).strict(),
-);
-/** Typed catalog source diagnostic safe for display or logging. */
-export type ProviderCatalogDiagnostic = z.infer<ReturnType<typeof ProviderCatalogDiagnosticSchema>>;
-
-/** Freshness metadata for a provider catalog snapshot. */
-export const ProviderCatalogFreshnessSchema = lazySchema(() =>
-  z.discriminatedUnion("status", [
-    z.object({ status: z.literal("fresh"), fetchedAt: z.string().datetime() }).strict(),
-    z.object({
-      status: z.literal("stale"),
-      fetchedAt: z.string().datetime(),
-      reason: z.string().min(1).max(500),
-    }).strict(),
-  ]),
-);
-/** Freshness metadata for a provider catalog snapshot. */
-export type ProviderCatalogFreshness = z.infer<ReturnType<typeof ProviderCatalogFreshnessSchema>>;
 
 /** Discovery context represented by a provider catalog snapshot. */
 export const ProviderCatalogContextSchema = lazySchema(() =>
@@ -171,6 +138,59 @@ export const ProviderCatalogContextSchema = lazySchema(() =>
 );
 /** Discovery context represented by a provider catalog snapshot. */
 export type ProviderCatalogContext = z.infer<ReturnType<typeof ProviderCatalogContextSchema>>;
+
+/** Catalog source that accepted or rejected provider capability metadata. */
+export const ProviderCatalogDiagnosticSourceKindSchema = z.enum([
+  "providerCatalog",
+  "appServerSkills",
+  "appServerPlugins",
+  "appServerConfig",
+  "customPromptAdapter",
+  "standaloneAgentAdapter",
+]);
+/** Catalog source that accepted or rejected provider capability metadata. */
+export type ProviderCatalogDiagnosticSourceKind = z.infer<
+  typeof ProviderCatalogDiagnosticSourceKindSchema
+>;
+
+/** Unscoped source diagnostic produced before a catalog request context is known. */
+export const ProviderCatalogSourceDiagnosticSchema = lazySchema(() =>
+  z.object({
+    sourceKind: ProviderCatalogDiagnosticSourceKindSchema,
+    rejectedSource: z.string().trim().min(1).max(256),
+    severity: z.enum(["info", "warning", "error"]),
+    code: z.enum(["source-unavailable", "discovery-error", "partial-result"]),
+    message: z.string().min(1).max(1_000),
+  }).strict(),
+);
+/** Unscoped source diagnostic produced before a catalog request context is known. */
+export type ProviderCatalogSourceDiagnostic = z.infer<
+  ReturnType<typeof ProviderCatalogSourceDiagnosticSchema>
+>;
+
+/** Provider and request-scoped catalog diagnostic safe for display or logging. */
+export const ProviderCatalogDiagnosticSchema = lazySchema(() =>
+  ProviderCatalogSourceDiagnosticSchema().extend({
+    providerId: ProviderIdSchema,
+    context: ProviderCatalogContextSchema(),
+  }).strict(),
+);
+/** Provider and request-scoped catalog diagnostic safe for display or logging. */
+export type ProviderCatalogDiagnostic = z.infer<ReturnType<typeof ProviderCatalogDiagnosticSchema>>;
+
+/** Freshness metadata for a provider catalog snapshot. */
+export const ProviderCatalogFreshnessSchema = lazySchema(() =>
+  z.discriminatedUnion("status", [
+    z.object({ status: z.literal("fresh"), fetchedAt: z.string().datetime() }).strict(),
+    z.object({
+      status: z.literal("stale"),
+      fetchedAt: z.string().datetime(),
+      reason: z.string().min(1).max(500),
+    }).strict(),
+  ]),
+);
+/** Freshness metadata for a provider catalog snapshot. */
+export type ProviderCatalogFreshness = z.infer<ReturnType<typeof ProviderCatalogFreshnessSchema>>;
 
 /** Validated request for a provider catalog snapshot. */
 export const ProviderCatalogRequestSchema = lazySchema(() =>
@@ -199,6 +219,27 @@ export const ProviderCatalogRequestSchema = lazySchema(() =>
 /** Validated request for a provider catalog snapshot. */
 export type ProviderCatalogRequest = z.infer<ReturnType<typeof ProviderCatalogRequestSchema>>;
 
+function contextForCatalogRequest(
+  request: z.infer<ReturnType<typeof ProviderCatalogRequestSchema>>,
+): z.infer<ReturnType<typeof ProviderCatalogContextSchema>> {
+  if (request.cwd) return { scope: "path", cwd: request.cwd };
+  if (request.workspaceId) {
+    return {
+      scope: "workspace",
+      workspaceId: request.workspaceId,
+      ...(request.threadId ? { threadId: request.threadId } : {}),
+    };
+  }
+  return { scope: "user" };
+}
+
+function equalCatalogContext(
+  left: z.infer<ReturnType<typeof ProviderCatalogContextSchema>>,
+  right: z.infer<ReturnType<typeof ProviderCatalogContextSchema>>,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 /** Provider capability catalog snapshot for one validated discovery context. */
 export const ProviderCatalogSnapshotSchema = lazySchema(() =>
   z.object({
@@ -225,6 +266,22 @@ export const ProviderCatalogSnapshotSchema = lazySchema(() =>
           code: z.ZodIssueCode.custom,
           path: ["selectableAgents", index, "providerId"],
           message: "Selectable agent providerId must match the snapshot providerId",
+        });
+      }
+    });
+    value.diagnostics.forEach((diagnostic, index) => {
+      if (diagnostic.providerId !== value.providerId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["diagnostics", index, "providerId"],
+          message: "Diagnostic providerId must match the snapshot providerId",
+        });
+      }
+      if (!equalCatalogContext(diagnostic.context, value.context)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["diagnostics", index, "context"],
+          message: "Diagnostic context must match the snapshot context",
         });
       }
     });
@@ -268,7 +325,25 @@ export const ProviderCatalogChangeSchema = lazySchema(() =>
       .max(PROVIDER_CATALOG_MAX_DIAGNOSTICS)
       .optional(),
     freshness: ProviderCatalogFreshnessSchema().optional(),
-  }).strict(),
+  }).strict().superRefine((value, context) => {
+    const expectedContext = contextForCatalogRequest(value.request);
+    value.diagnostics?.forEach((diagnostic, index) => {
+      if (diagnostic.providerId !== value.request.providerId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["diagnostics", index, "providerId"],
+          message: "Diagnostic providerId must match the change request providerId",
+        });
+      }
+      if (!equalCatalogContext(diagnostic.context, expectedContext)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["diagnostics", index, "context"],
+          message: "Diagnostic context must match the change request context",
+        });
+      }
+    });
+  }),
 );
 /** Incremental provider catalog reconciliation emitted after a background refresh. */
 export type ProviderCatalogChange = z.infer<ReturnType<typeof ProviderCatalogChangeSchema>>;

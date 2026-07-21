@@ -11,11 +11,8 @@ import type {
   WorktreeInfo,
   PrInfo,
   PrDetail,
-  SkillInfo,
-  SkillDiagnostics,
   ProviderCatalogRequest,
   ProviderCatalogSnapshot,
-  ProviderAgentMention,
   PermissionMode,
   ReasoningLevel,
   ContextWindowMode,
@@ -90,11 +87,8 @@ export type {
   WorktreeInfo,
   PrInfo,
   PrDetail,
-  SkillInfo,
-  SkillDiagnostics,
   ProviderCatalogRequest,
   ProviderCatalogSnapshot,
-  ProviderAgentMention,
   PermissionMode,
   InteractionMode,
   ContextWindowMode,
@@ -130,9 +124,6 @@ export type {
 export type { PaginatedMessages, ConversationPage, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
-
-/** Codex sub-agent metadata exposed for @ mention autocomplete. */
-export type CodexAgentMentionInfo = ProviderAgentMention;
 
 /** In-progress tool call tracked by the frontend streaming layer. */
 export interface ToolCall {
@@ -342,8 +333,6 @@ export interface McodeTransport {
 
   // File operations (@ file tagging)
   listWorkspaceFiles(workspaceId: string, threadId?: string): Promise<string[]>;
-  /** List Codex sub-agents available for @ mention autocomplete. */
-  listCodexAgents(workspaceId?: string, threadId?: string): Promise<CodexAgentMentionInfo[]>;
   readFileContent(workspaceId: string, relativePath: string, threadId?: string): Promise<string>;
 
   // Open-in app actions
@@ -425,10 +414,6 @@ export interface McodeTransport {
   // Skills
   /** Return a provider capability catalog for one validated discovery context. */
   getProviderCatalog(request: ProviderCatalogRequest): Promise<ProviderCatalogSnapshot>;
-  /** List discoverable skills and commands, optionally scoped to a workspace path and provider. */
-  listSkills(cwd?: string, providerId?: string): Promise<SkillInfo[]>;
-  /** Run a filesystem scan across all skill search paths and return per-path diagnostics. */
-  diagnoseSkills(cwd?: string): Promise<SkillDiagnostics>;
 
   // Terminal (PTY)
   /** Create a new PTY attached to a thread's working directory. Returns the pty ID and shell name. */

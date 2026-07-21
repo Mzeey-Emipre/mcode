@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PROVIDER_CATALOG_MAX_ENTRIES,
   PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS,
-  type ProviderAgentMention,
+  type SelectableProviderAgent,
   type SkillInfo,
 } from "@mcode/contracts";
 import { buildProviderCatalogSnapshot } from "./provider-catalog.js";
@@ -17,8 +17,13 @@ function skill(index: number): SkillInfo {
   };
 }
 
-function agent(index: number): ProviderAgentMention {
-  return { name: `agent-${index}`, path: `C:/agents/agent-${index}.toml` };
+function agent(index: number): SelectableProviderAgent {
+  return {
+    providerId: "codex",
+    nativeId: `agent-${index}`,
+    name: `agent-${index}`,
+    path: `C:/agents/agent-${index}.toml`,
+  };
 }
 
 describe("provider catalog bounds", () => {
@@ -52,6 +57,10 @@ describe("provider catalog bounds", () => {
 
     expect(snapshot.entries.map((entry) => entry.name)).toEqual(["skill-1", "skill-3"]);
     expect(snapshot.diagnostics).toContainEqual({
+      providerId: "codex",
+      context: { scope: "user" },
+      sourceKind: "providerCatalog",
+      rejectedSource: "metadata",
       severity: "warning",
       code: "partial-result",
       message: "Some provider catalog items were omitted because their metadata was invalid.",
@@ -86,7 +95,7 @@ describe("provider catalog bounds", () => {
       skills: [],
       agents: [
         agent(1),
-        { name: "", path: "C:/agents/invalid.toml" },
+        { providerId: "codex", nativeId: "invalid", name: "", path: "C:/agents/invalid.toml" },
         agent(3),
       ],
       fetchedAt: "2026-07-20T12:00:00.000Z",
@@ -94,6 +103,10 @@ describe("provider catalog bounds", () => {
 
     expect(snapshot.selectableAgents.map((item) => item.name)).toEqual(["agent-1", "agent-3"]);
     expect(snapshot.diagnostics).toContainEqual({
+      providerId: "codex",
+      context: { scope: "user" },
+      sourceKind: "providerCatalog",
+      rejectedSource: "metadata",
       severity: "warning",
       code: "partial-result",
       message: "Some provider catalog items were omitted because their metadata was invalid.",

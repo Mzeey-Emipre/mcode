@@ -364,6 +364,8 @@ describe("CodexCatalogService", () => {
     expect(maxActiveReads).toBeLessThanOrEqual(8);
     expect(result.plugins).toHaveLength(65);
     expect(result.diagnostics).toContainEqual({
+      sourceKind: "appServerPlugins",
+      rejectedSource: "plugin/read",
       severity: "warning",
       code: "partial-result",
       message: "Codex plugin detail reads were capped at 64 entries.",
@@ -385,10 +387,45 @@ describe("CodexCatalogService", () => {
 
     expect(result.plugins).toHaveLength(1);
     expect(result.diagnostics).toContainEqual({
+      sourceKind: "appServerPlugins",
+      rejectedSource: "broken.json",
       severity: "warning",
       code: "discovery-error",
-      message: "Codex plugin marketplace C:/marketplaces/broken.json: invalid marketplace metadata",
+      message: "Codex could not load one plugin marketplace source.",
     });
+  });
+
+  it("does not expose path-shaped plugin ids when detail reads fail", async () => {
+    const client = new ControlledCatalogClient();
+    client.listPlugins.mockResolvedValueOnce({
+      marketplaces: [{
+        name: "personal",
+        path: "C:/marketplaces/personal",
+        interface: null,
+        plugins: [{
+          id: "C:/Users/private/plugin@personal",
+          name: "plugin",
+          installed: true,
+          enabled: true,
+          version: null,
+          localVersion: null,
+          interface: null,
+        }],
+      }],
+      marketplaceLoadErrors: [],
+      featuredPluginIds: [],
+    });
+    client.readPlugin.mockRejectedValueOnce(new Error("details unavailable"));
+    const service = createService(client);
+
+    const result = await service.refresh("C:/workspaces/one");
+
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      sourceKind: "appServerPlugins",
+      rejectedSource: "plugin/read",
+      code: "partial-result",
+    }));
+    expect(JSON.stringify(result.diagnostics)).not.toContain("C:/Users/private");
   });
 
   it("includes bounded custom prompts beside native Skills", async () => {
@@ -502,6 +539,8 @@ describe("CodexCatalogService", () => {
     expect(failed.skills).toEqual(first.skills);
     expect(failed.freshness).toMatchObject({ status: "stale" });
     expect(failed.diagnostics).toEqual([{
+      sourceKind: "providerCatalog",
+      rejectedSource: "codex app-server",
       severity: "warning",
       code: "source-unavailable",
       message: "Codex capabilities and agent registrations are temporarily unavailable for this catalog context.",
@@ -533,6 +572,8 @@ describe("CodexCatalogService", () => {
 
     expect(result.skills.map((skill) => skill.name)).toEqual(["ship"]);
     expect(result.diagnostics).toContainEqual({
+      sourceKind: "appServerSkills",
+      rejectedSource: "skills/list",
       severity: "warning",
       code: "partial-result",
       message: "Some Codex Skills were omitted because their metadata was invalid.",

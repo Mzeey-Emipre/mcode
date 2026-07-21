@@ -180,8 +180,6 @@ export async function mockWebSocketServer(
         result = [];
       } else if (method === "providers.listAvailability") {
         result = [];
-      } else if (method === "provider.codexAgents") {
-        result = [];
       } else if (method === "provider.catalog") {
         const request = msg.params as {
           providerId: "claude" | "codex" | "copilot" | "cursor" | "gemini";
@@ -214,7 +212,6 @@ export async function mockWebSocketServer(
       else if (method === "push.subscribeThread" || method === "push.unsubscribeThread") result = undefined;
       else if (method === "agent.dismissPlanQuestions") result = undefined;
       else if (method === "plan.list") result = [];
-      else if (method === "skill.list") result = [];
       else if (method === "thread.syncPrs") result = [];
       else if (method === "workspace.touchLastOpened") result = null;
       else if (method === "workspace.enrich") result = { items: [] };

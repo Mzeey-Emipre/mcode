@@ -73,8 +73,8 @@ describe("Codex standalone agent discovery", () => {
       expect.objectContaining({ name: "scout", description: "Global scout" }),
     ]);
     expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "discovery-error", message: expect.stringContaining("broken.toml") }),
-      expect.objectContaining({ code: "partial-result", message: expect.stringContaining("large.toml") }),
+      expect.objectContaining({ code: "discovery-error", rejectedSource: "broken.toml" }),
+      expect.objectContaining({ code: "partial-result", rejectedSource: "large.toml" }),
     ]));
     expect(result.agents.some((agent) => agent.name === "ignored")).toBe(false);
   });
@@ -108,12 +108,12 @@ describe("Codex standalone agent discovery", () => {
     expect(result.agents.map((agent) => agent.name)).toEqual(["valid"]);
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: "discovery-error",
-      message: expect.stringContaining("blocked.toml"),
+      rejectedSource: "blocked.toml",
     }));
     expect(capped.agents).toHaveLength(1);
     expect(capped.diagnostics).toContainEqual(expect.objectContaining({
       code: "partial-result",
-      message: expect.stringContaining(`global agent directory ${agents}`),
+      rejectedSource: "global agents",
     }));
     expect(capped.diagnostics[0]?.message).toContain("capped at 1 direct TOML file");
   });
@@ -145,7 +145,7 @@ describe("Codex standalone agent discovery", () => {
     expect(result.agents).toEqual([expect.objectContaining({ name: "project" })]);
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: "partial-result",
-      message: expect.stringContaining(`global agent directory ${agents}`),
+      rejectedSource: "global agents",
     }));
     expect(result.diagnostics[0]?.message).toContain("capped at 3 direct directory entries");
   });
@@ -171,11 +171,11 @@ describe("Codex standalone agent discovery", () => {
     expect(result.agents).toEqual([]);
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: "discovery-error",
-      message: expect.stringContaining("hostile.toml"),
+      rejectedSource: "hostile.toml",
     }));
     expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: "discovery-error",
-      message: expect.stringContaining("unicode-separator.toml"),
+      rejectedSource: "unicode-separator.toml",
     }));
   });
 });

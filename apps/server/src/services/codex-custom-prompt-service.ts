@@ -20,7 +20,7 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 import { inject, injectable } from "tsyringe";
 import { parseDocument } from "yaml";
-import type { ProviderCatalogDiagnostic, SkillInfo } from "@mcode/contracts";
+import type { ProviderCatalogSourceDiagnostic, SkillInfo } from "@mcode/contracts";
 import { PROVIDER_CATALOG_PATH_MAX_CHARS } from "@mcode/contracts";
 import { EnvService } from "./env-service.js";
 
@@ -63,7 +63,7 @@ export interface CodexCustomPromptDiscoveryOptions extends CodexCustomPromptDisc
 /** Complete result of one bounded custom prompt directory refresh. */
 export interface CodexCustomPromptDiscoveryResult {
   readonly prompts: SkillInfo[];
-  readonly diagnostics: ProviderCatalogDiagnostic[];
+  readonly diagnostics: ProviderCatalogSourceDiagnostic[];
   readonly available: boolean;
 }
 
@@ -124,14 +124,16 @@ function safeSourceName(name: string): string {
 }
 
 function addDiagnostic(
-  diagnostics: ProviderCatalogDiagnostic[],
-  diagnostic: ProviderCatalogDiagnostic,
+  diagnostics: ProviderCatalogSourceDiagnostic[],
+  diagnostic: ProviderCatalogSourceDiagnostic,
 ): void {
   if (diagnostics.length < CODEX_CUSTOM_PROMPT_MAX_DIAGNOSTICS) diagnostics.push(diagnostic);
 }
 
-function discoveryError(fileName: string, reason: string): ProviderCatalogDiagnostic {
+function discoveryError(fileName: string, reason: string): ProviderCatalogSourceDiagnostic {
   return {
+    sourceKind: "customPromptAdapter",
+    rejectedSource: safeSourceName(fileName),
     severity: "warning",
     code: "discovery-error",
     message: `Codex custom prompt "${safeSourceName(fileName)}" was omitted: ${reason}`,
@@ -194,13 +196,15 @@ export async function discoverCodexCustomPrompts(
   codexHome: string,
   options: CodexCustomPromptDiscoveryOptions = DEFAULT_DISCOVERY_OPTIONS,
 ): Promise<CodexCustomPromptDiscoveryResult> {
-  const diagnostics: ProviderCatalogDiagnostic[] = [];
+  const diagnostics: ProviderCatalogSourceDiagnostic[] = [];
   const prompts: SkillInfo[] = [];
   const promptDirectory = join(codexHome, CODEX_CUSTOM_PROMPT_DIRECTORY_NAME);
   if (promptDirectory.length > PROVIDER_CATALOG_PATH_MAX_CHARS) {
     return {
       prompts,
       diagnostics: [{
+        sourceKind: "customPromptAdapter",
+        rejectedSource: "prompts",
         severity: "warning",
         code: "source-unavailable",
         message: "The effective Codex custom prompt directory path is too long.",
@@ -218,6 +222,8 @@ export async function discoverCodexCustomPrompts(
     for await (const entry of fileSystem.entries(promptDirectory)) {
       if (inspectedEntries >= maxDirectoryEntries) {
         addDiagnostic(diagnostics, {
+          sourceKind: "customPromptAdapter",
+          rejectedSource: safeSourceName(entry.name),
           severity: "warning",
           code: "partial-result",
           message: `Codex custom prompt discovery inspected at most ${maxDirectoryEntries} direct director${maxDirectoryEntries === 1 ? "y entry" : "y entries"}; "${safeSourceName(entry.name)}" and later entries were omitted.`,
@@ -228,6 +234,8 @@ export async function discoverCodexCustomPrompts(
       if (!entry.isFile || !entry.name.endsWith(CODEX_CUSTOM_PROMPT_FILE_SUFFIX)) continue;
       if (inspectedFiles >= options.maxFiles) {
         addDiagnostic(diagnostics, {
+          sourceKind: "customPromptAdapter",
+          rejectedSource: safeSourceName(entry.name),
           severity: "warning",
           code: "partial-result",
           message: `Codex custom prompt discovery inspected at most ${options.maxFiles} direct .md file${options.maxFiles === 1 ? "" : "s"}; "${safeSourceName(entry.name)}" and later files were omitted.`,
@@ -262,6 +270,8 @@ export async function discoverCodexCustomPrompts(
     return {
       prompts,
       diagnostics: [{
+        sourceKind: "customPromptAdapter",
+        rejectedSource: "prompts",
         severity: "warning",
         code: "source-unavailable",
         message: "The effective Codex custom prompt directory could not be read.",

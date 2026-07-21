@@ -14,9 +14,8 @@ vi.mock("../codex-version.js", () => ({
   meetsMinVersion: () => true,
 }));
 
-const { sendTurnMock, listSkillsMock, appServers } = vi.hoisted(() => ({
+const { sendTurnMock, appServers } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue("turn-test-id"),
-  listSkillsMock: vi.fn().mockResolvedValue({ data: [] }),
   appServers: [] as Array<import("events").EventEmitter & { isAlive: boolean; options: unknown }>,
 }));
 
@@ -36,9 +35,6 @@ vi.mock("../codex-app-server.js", async () => {
     async sendTurn(input: unknown, turnOptions: unknown): Promise<string> {
       return sendTurnMock(input, turnOptions);
     }
-    async listSkills(cwds: string[] | undefined): Promise<unknown> {
-      return listSkillsMock(cwds);
-    }
     async interruptTurn(): Promise<void> {}
     async kill(): Promise<void> {
       this.isAlive = false;
@@ -53,7 +49,6 @@ import type { AgentEvent } from "@mcode/contracts";
 import { stubEnvService } from "../../../__tests__/stub-env-service.js";
 
 function makeProvider(
-  skillList: (...args: unknown[]) => unknown[] = vi.fn(() => []),
   catalogService: {
     currentSkills: (cwd?: string) => unknown[];
     currentPrompts: () => unknown[];
@@ -74,7 +69,6 @@ function makeProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
     { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
-    { list: skillList } as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
     catalogService as never,
   );
@@ -91,8 +85,6 @@ describe("CodexProvider first turn on new session", () => {
 
   beforeEach(() => {
     sendTurnMock.mockClear();
-    listSkillsMock.mockReset();
-    listSkillsMock.mockResolvedValue({ data: [] });
     appServers.length = 0;
   });
 
@@ -146,8 +138,7 @@ describe("CodexProvider first turn on new session", () => {
     };
     const currentSkills = vi.fn(() => [nativeSkill]);
     const refresh = vi.fn(() => new Promise<{ skills: unknown[] }>(() => undefined));
-    const list = vi.fn((_cwd, _providerId, skills) => skills as unknown[]);
-    const provider = makeProvider(list, {
+    const provider = makeProvider({
       currentSkills,
       currentPrompts: vi.fn(() => []),
       refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
@@ -170,7 +161,6 @@ describe("CodexProvider first turn on new session", () => {
 
     expect(sendTurnMock).toHaveBeenCalledTimes(1);
     expect(currentSkills).toHaveBeenCalledWith("C:/repo");
-    expect(list).toHaveBeenCalledWith("C:/repo", "codex", [nativeSkill]);
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -265,7 +255,7 @@ describe("CodexProvider first turn on new session", () => {
 
   it("sends Codex native skill input for slash skill invocations", async () => {
     const skillPath = "C:\\Users\\Test\\.codex\\plugins\\cache\\openai-bundled\\browser\\1.0.0\\skills\\control-in-app-browser\\SKILL.md";
-    const provider = makeProvider(vi.fn(() => [{
+    const nativeSkill = {
       name: "browser:control-in-app-browser",
       nativeName: "control-in-app-browser",
       description: "Control browser",
@@ -273,7 +263,15 @@ describe("CodexProvider first turn on new session", () => {
       source: "plugin",
       providers: ["codex"],
       path: skillPath,
-    }]));
+    };
+    const provider = makeProvider({
+      currentSkills: vi.fn(() => [nativeSkill]),
+      currentPrompts: vi.fn(() => []),
+      refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
+      refresh: vi.fn(async () => ({ skills: [nativeSkill] })),
+      onSkillsChanged: vi.fn(() => () => undefined),
+      shutdown: vi.fn(async () => undefined),
+    });
 
     await provider.sendTurn({
       sessionId: "mcode-skill-turn",
@@ -409,17 +407,14 @@ describe("CodexProvider first turn on new session", () => {
         path: promptPath,
       };
       const refreshCustomPrompts = vi.fn(async () => ({ prompts: [prompt] }));
-      const provider = makeProvider(
-        vi.fn((_cwd, _providerId, nativeItems) => nativeItems as unknown[]),
-        {
+      const provider = makeProvider({
           currentSkills: vi.fn(() => []),
           currentPrompts: vi.fn(() => []),
           refreshCustomPrompts,
           refresh: vi.fn(async () => ({ skills: [] })),
           onSkillsChanged: vi.fn(() => () => undefined),
           shutdown: vi.fn(async () => undefined),
-        },
-      );
+      });
 
       await provider.sendTurn({
         sessionId: "mcode-prompt-turn",
@@ -470,17 +465,14 @@ describe("CodexProvider first turn on new session", () => {
         providers: ["codex"],
         path: skillPath,
       };
-      const provider = makeProvider(
-        vi.fn((_cwd, _providerId, nativeItems) => [skill, ...(nativeItems as unknown[])]),
-        {
+      const provider = makeProvider({
           currentSkills: vi.fn(() => [skill]),
           currentPrompts: vi.fn(() => [prompt]),
           refreshCustomPrompts: vi.fn(async () => ({ prompts: [prompt] })),
           refresh: vi.fn(async () => ({ skills: [skill] })),
           onSkillsChanged: vi.fn(() => () => undefined),
           shutdown: vi.fn(async () => undefined),
-        },
-      );
+      });
 
       await provider.sendTurn({
         sessionId: "mcode-prompt-collision",
@@ -555,17 +547,14 @@ describe("CodexProvider first turn on new session", () => {
         providers: ["codex"],
         path: join(promptDir, "draftpr.md"),
       };
-      const provider = makeProvider(
-        vi.fn((_cwd, _providerId, nativeItems) => nativeItems as unknown[]),
-        {
+      const provider = makeProvider({
           currentSkills: vi.fn(() => []),
           currentPrompts: vi.fn(() => []),
           refreshCustomPrompts: vi.fn(async () => ({ prompts: [prompt] })),
           refresh: vi.fn(async () => ({ skills: [] })),
           onSkillsChanged: vi.fn(() => () => undefined),
           shutdown: vi.fn(async () => undefined),
-        },
-      );
+      });
       const events: AgentEvent[] = [];
       provider.on("event", (event: AgentEvent) => events.push(event));
 
@@ -613,34 +602,6 @@ describe("CodexProvider first turn on new session", () => {
     }
 
     expect(sendTurnMock.mock.calls[0][0]).toEqual([{ type: "text", text: "/goal clear" }]);
-  });
-
-  it("lists native Codex Skills through the catalog service", async () => {
-    const cwd = process.cwd();
-    const nativeSkill = {
-      name: "control-in-app-browser",
-      description: "Short browser description",
-      kind: "skill" as const,
-      source: "plugin" as const,
-      providers: ["codex"],
-      nativeName: "control-in-app-browser",
-      path: "C:/codex/skills/control-in-app-browser/SKILL.md",
-    };
-    const refresh = vi.fn(async () => ({ skills: [nativeSkill] }));
-    const provider = makeProvider(undefined, {
-      currentSkills: vi.fn(() => []),
-      currentPrompts: vi.fn(() => []),
-      refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
-      refresh,
-      onSkillsChanged: vi.fn(() => () => undefined),
-      shutdown: vi.fn(async () => undefined),
-    });
-
-    const skills = await provider.listSkills(cwd);
-
-    expect(refresh).toHaveBeenCalledWith(cwd);
-    expect(skills).toEqual([nativeSkill]);
-    expect(listSkillsMock).not.toHaveBeenCalled();
   });
 
   it("runs side-channel handoff turns at low effort", async () => {
