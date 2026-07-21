@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PROVIDER_CATALOG_PATH_MAX_CHARS,
+  ProviderCatalogChangeSchema,
   ProviderCatalogRequestSchema,
   ProviderCatalogSnapshotSchema,
 } from "../../index.js";
@@ -59,6 +60,10 @@ describe("ProviderCatalogSnapshotSchema", () => {
       context: { scope: "user" },
       freshness: { status: "stale", fetchedAt, reason: "Refresh failed" },
       diagnostics: [{
+        providerId: "codex",
+        context: { scope: "user" },
+        sourceKind: "appServerSkills",
+        rejectedSource: "skills/list",
         severity: "warning",
         code: "source-unavailable",
         message: "The provider source is unavailable.",
@@ -79,6 +84,42 @@ describe("ProviderCatalogSnapshotSchema", () => {
     expect(snapshot.freshness.status).toBe("stale");
   });
 
+  it("rejects diagnostics that omit provider, context, or rejected-source provenance", () => {
+    const result = ProviderCatalogSnapshotSchema().safeParse({
+      providerId: "codex",
+      context: { scope: "workspace", workspaceId: "workspace-1" },
+      freshness: { status: "fresh", fetchedAt },
+      diagnostics: [{
+        severity: "warning",
+        code: "discovery-error",
+        message: "A source was rejected.",
+      }],
+      entries: [],
+      selectableAgents: [],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects diagnostics attributed to another provider or context", () => {
+    expect(ProviderCatalogSnapshotSchema().safeParse({
+      providerId: "codex",
+      context: { scope: "user" },
+      freshness: { status: "fresh", fetchedAt },
+      diagnostics: [{
+        providerId: "claude",
+        context: { scope: "path", cwd: "C:/other" },
+        sourceKind: "providerCatalog",
+        rejectedSource: "metadata",
+        severity: "warning",
+        code: "partial-result",
+        message: "Metadata was rejected.",
+      }],
+      entries: [],
+      selectableAgents: [],
+    }).success).toBe(false);
+  });
+
   it("rejects entry identities owned by another provider", () => {
     expect(ProviderCatalogSnapshotSchema().safeParse({
       providerId: "claude",
@@ -87,6 +128,27 @@ describe("ProviderCatalogSnapshotSchema", () => {
       diagnostics: [],
       entries: [entry("skill")],
       selectableAgents: [],
+    }).success).toBe(false);
+  });
+});
+
+describe("ProviderCatalogChangeSchema", () => {
+  it("rejects diagnostics attributed to another request context", () => {
+    expect(ProviderCatalogChangeSchema().safeParse({
+      request: { providerId: "codex", workspaceId: "workspace-1" },
+      additions: [],
+      updates: [],
+      removals: [],
+      selectableAgents: { additions: [], updates: [], removals: [] },
+      diagnostics: [{
+        providerId: "codex",
+        context: { scope: "user" },
+        sourceKind: "providerCatalog",
+        rejectedSource: "metadata",
+        severity: "warning",
+        code: "partial-result",
+        message: "Metadata was rejected.",
+      }],
     }).success).toBe(false);
   });
 });

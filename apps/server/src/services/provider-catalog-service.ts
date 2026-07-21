@@ -80,6 +80,23 @@ function equal(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function scopeSnapshot(
+  snapshot: ProviderCatalogSnapshot,
+  providerId: ProviderCatalogRequest["providerId"],
+  context: ProviderCatalogContext,
+): ProviderCatalogSnapshot {
+  return {
+    ...snapshot,
+    providerId,
+    context,
+    diagnostics: snapshot.diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      providerId,
+      context,
+    })),
+  };
+}
+
 /** Builds a stable persistence key for a provider and realized working directory. */
 export function providerCatalogContextKey(
   request: ProviderCatalogRequest,
@@ -120,7 +137,11 @@ function staleSnapshot(
         ? "Refreshing the last confirmed provider catalog."
         : "The provider catalog has not been confirmed yet.",
     },
-    diagnostics: snapshot?.diagnostics ?? [],
+    diagnostics: (snapshot?.diagnostics ?? []).map((diagnostic) => ({
+      ...diagnostic,
+      providerId: request.providerId,
+      context,
+    })),
     entries: snapshot?.entries ?? [],
     selectableAgents: snapshot?.selectableAgents ?? [],
   };
@@ -130,6 +151,10 @@ function capacitySnapshot(snapshot: ProviderCatalogSnapshot): ProviderCatalogSna
   return {
     ...snapshot,
     diagnostics: [{
+      providerId: snapshot.providerId,
+      context: snapshot.context,
+      sourceKind: "providerCatalog",
+      rejectedSource: "refresh capacity",
       severity: "warning",
       code: "source-unavailable",
       message: "Provider catalog refresh capacity is full for this context. Try again shortly.",
@@ -366,6 +391,10 @@ export class ProviderCatalogService {
       refreshed = {
         ...firstSubscriber.visible,
         diagnostics: [{
+          providerId: firstSubscriber.input.request.providerId,
+          context: firstSubscriber.input.context,
+          sourceKind: "providerCatalog",
+          rejectedSource: "background refresh",
           severity: "warning",
           code: "source-unavailable",
           message: "The provider catalog is temporarily unavailable for this context.",
@@ -381,17 +410,18 @@ export class ProviderCatalogService {
     let persisted = false;
     for (const { visible, input } of job.subscribers.values()) {
       const next = refreshed.freshness.status === "fresh"
-        ? { ...refreshed, context: input.context }
+        ? scopeSnapshot(refreshed, input.request.providerId, input.context)
         : confirmedEntryKinds
-          ? {
-              ...applyConfirmedEntryKinds(visible, refreshed, confirmedEntryKinds),
-              context: input.context,
-            }
-        : {
-            ...visible,
-            diagnostics: refreshed.diagnostics,
-            freshness: refreshed.freshness,
-      };
+          ? scopeSnapshot(
+              applyConfirmedEntryKinds(visible, refreshed, confirmedEntryKinds),
+              input.request.providerId,
+              input.context,
+            )
+          : scopeSnapshot({
+              ...visible,
+              diagnostics: refreshed.diagnostics,
+              freshness: refreshed.freshness,
+            }, input.request.providerId, input.context);
       if (!persisted) {
         const workspaceExists = this.snapshotRepo.upsert(
           persistenceKey,

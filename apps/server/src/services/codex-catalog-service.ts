@@ -1,10 +1,12 @@
 import { EventEmitter } from "events";
+import { basename } from "path";
 import { inject, injectable } from "tsyringe";
 import type {
-  ProviderCatalogDiagnostic,
+  ProviderCatalogDiagnosticSourceKind,
+  ProviderCatalogSourceDiagnostic,
   ProviderCatalogFreshness,
   ProviderPluginCapability,
-  ProviderAgentMention,
+  SelectableProviderAgent,
   SkillInfo,
 } from "@mcode/contracts";
 import {
@@ -12,7 +14,7 @@ import {
   ProviderPluginCapabilitySchema,
   PROVIDER_CATALOG_MAX_DIAGNOSTICS,
   PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS,
-  ProviderAgentMentionSchema,
+  SelectableProviderAgentSchema,
   SkillInfoSchema,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
@@ -54,8 +56,8 @@ export interface CodexCatalogRefreshResult {
   readonly skills: SkillInfo[];
   readonly plugins: ProviderPluginCapability[];
   readonly prompts: SkillInfo[];
-  readonly agents: ProviderAgentMention[];
-  readonly diagnostics: ProviderCatalogDiagnostic[];
+  readonly agents: SelectableProviderAgent[];
+  readonly diagnostics: ProviderCatalogSourceDiagnostic[];
   readonly freshness: ProviderCatalogFreshness;
   readonly skillsAvailable: boolean;
   readonly promptsAvailable: boolean;
@@ -119,9 +121,24 @@ function mapSkill(skill: unknown): SkillInfo | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
-function boundedDiagnosticMessage(message: string): string {
-  const normalized = message.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
-  return normalized.slice(0, 900) || "Codex did not provide a diagnostic message.";
+function safeDiagnosticSource(value: string, fallback: string): string {
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  return (normalized || fallback).slice(0, 256);
+}
+
+function sourceDiagnostic(
+  sourceKind: ProviderCatalogDiagnosticSourceKind,
+  rejectedSource: string,
+  code: ProviderCatalogSourceDiagnostic["code"],
+  message: string,
+): ProviderCatalogSourceDiagnostic {
+  return {
+    sourceKind,
+    rejectedSource: safeDiagnosticSource(rejectedSource, sourceKind),
+    severity: "warning",
+    code,
+    message,
+  };
 }
 
 function reconcileSkills(rawSkills: unknown): {
@@ -153,18 +170,19 @@ function reconcileSkills(rawSkills: unknown): {
   };
 }
 
-function upstreamDiagnostics(rawErrors: unknown): ProviderCatalogDiagnostic[] {
+function upstreamDiagnostics(rawErrors: unknown): ProviderCatalogSourceDiagnostic[] {
   if (!Array.isArray(rawErrors)) return [];
   return rawErrors.slice(0, 90).flatMap((error) => {
     const message = error && typeof error === "object"
       ? (error as Record<string, unknown>).message
       : undefined;
     return typeof message === "string"
-      ? [{
-          severity: "warning" as const,
-          code: "discovery-error" as const,
-          message: boundedDiagnosticMessage(message),
-        }]
+      ? [sourceDiagnostic(
+          "appServerSkills",
+          "skills/list",
+          "discovery-error",
+          "Codex reported a Skill catalog error.",
+        )]
       : [];
   });
 }
@@ -203,7 +221,7 @@ function pluginReadParams(
 async function readMissingPluginDescriptions(
   client: CodexCatalogClient,
   candidates: PluginCandidate[],
-  diagnostics: ProviderCatalogDiagnostic[],
+  diagnostics: ProviderCatalogSourceDiagnostic[],
 ): Promise<Map<string, string>> {
   const missing = candidates.filter(({ summary }) => (
     typeof summary.id === "string" &&
@@ -228,13 +246,12 @@ async function readMissingPluginDescriptions(
         ));
         descriptions.set(pluginId, pluginDetailDescription(detail));
       } catch {
-        diagnostics.push({
-          severity: "warning",
-          code: "partial-result",
-          message: boundedDiagnosticMessage(
-            `Codex plugin details are unavailable for ${pluginId}.`,
-          ),
-        });
+        diagnostics.push(sourceDiagnostic(
+          "appServerPlugins",
+          "plugin/read",
+          "partial-result",
+          "Codex plugin details are unavailable for one installed plugin.",
+        ));
       }
     }
   };
@@ -244,11 +261,12 @@ async function readMissingPluginDescriptions(
     worker,
   ));
   if (missing.length > CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS) {
-    diagnostics.push({
-      severity: "warning",
-      code: "partial-result",
-      message: `Codex plugin detail reads were capped at ${CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS} entries.`,
-    });
+    diagnostics.push(sourceDiagnostic(
+      "appServerPlugins",
+      "plugin/read",
+      "partial-result",
+      `Codex plugin detail reads were capped at ${CODEX_CATALOG_MAX_PLUGIN_DETAIL_READS} entries.`,
+    ));
   }
   return descriptions;
 }
@@ -258,9 +276,9 @@ async function reconcilePlugins(
   result: PluginListResult,
 ): Promise<{
   plugins: ProviderPluginCapability[];
-  diagnostics: ProviderCatalogDiagnostic[];
+  diagnostics: ProviderCatalogSourceDiagnostic[];
 }> {
-  const diagnostics: ProviderCatalogDiagnostic[] = (Array.isArray(result.marketplaceLoadErrors)
+  const diagnostics: ProviderCatalogSourceDiagnostic[] = (Array.isArray(result.marketplaceLoadErrors)
     ? result.marketplaceLoadErrors
     : []).slice(0, 90).flatMap((error) => {
       if (
@@ -270,13 +288,12 @@ async function reconcilePlugins(
       ) {
         return [];
       }
-      return [{
-        severity: "warning" as const,
-        code: "discovery-error" as const,
-        message: boundedDiagnosticMessage(
-          `Codex plugin marketplace ${error.marketplacePath}: ${error.message}`,
-        ),
-      }];
+      return [sourceDiagnostic(
+        "appServerPlugins",
+        basename(error.marketplacePath),
+        "discovery-error",
+        "Codex could not load one plugin marketplace source.",
+      )];
     });
   const candidates: PluginCandidate[] = [];
 
@@ -344,18 +361,20 @@ async function reconcilePlugins(
     else invalidMetadata = true;
   }
   if (candidates.length > PROVIDER_CATALOG_MAX_ENTRIES) {
-    diagnostics.push({
-      severity: "warning",
-      code: "partial-result",
-      message: `Codex plugins were capped at ${PROVIDER_CATALOG_MAX_ENTRIES} entries.`,
-    });
+    diagnostics.push(sourceDiagnostic(
+      "appServerPlugins",
+      "plugin/list",
+      "partial-result",
+      `Codex plugins were capped at ${PROVIDER_CATALOG_MAX_ENTRIES} entries.`,
+    ));
   }
   if (invalidMetadata) {
-    diagnostics.push({
-      severity: "warning",
-      code: "partial-result",
-      message: "Some Codex plugins were omitted because their metadata was invalid.",
-    });
+    diagnostics.push(sourceDiagnostic(
+      "appServerPlugins",
+      "plugin/list",
+      "partial-result",
+      "Some Codex plugins were omitted because their metadata was invalid.",
+    ));
   }
   return {
     plugins: [...pluginsById.values()],
@@ -364,7 +383,7 @@ async function reconcilePlugins(
 }
 
 function configuredAgents(rawConfig: unknown): {
-  agents: ProviderAgentMention[];
+  agents: SelectableProviderAgent[];
   invalidMetadata: boolean;
   entryLimitReached: boolean;
 } {
@@ -375,7 +394,7 @@ function configuredAgents(rawConfig: unknown): {
   if (!rawAgents || typeof rawAgents !== "object" || Array.isArray(rawAgents)) {
     return { agents: [], invalidMetadata: false, entryLimitReached: false };
   }
-  const agents: ProviderAgentMention[] = [];
+  const agents: SelectableProviderAgent[] = [];
   let invalidMetadata = false;
   const registrations = Object.entries(rawAgents);
   for (const [name, rawAgent] of registrations.slice(0, PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS)) {
@@ -396,7 +415,9 @@ function configuredAgents(rawConfig: unknown): {
     const configFile = typeof value.config_file === "string" && value.config_file.trim()
       ? value.config_file
       : `codex-config://agents/${encodeURIComponent(name)}`;
-    const parsed = ProviderAgentMentionSchema().safeParse({
+    const parsed = SelectableProviderAgentSchema().safeParse({
+      providerId: "codex",
+      nativeId: name,
       name,
       path: configFile,
       ...(typeof value.description === "string" && value.description.trim()
@@ -414,9 +435,9 @@ function configuredAgents(rawConfig: unknown): {
 }
 
 function mergeAgents(
-  standalone: readonly ProviderAgentMention[],
-  configured: readonly ProviderAgentMention[],
-): ProviderAgentMention[] {
+  standalone: readonly SelectableProviderAgent[],
+  configured: readonly SelectableProviderAgent[],
+): SelectableProviderAgent[] {
   const byName = new Map(standalone.map((agent) => [agent.name, agent]));
   for (const agent of configured) {
     if (!byName.has(agent.name)) byName.set(agent.name, agent);
@@ -502,11 +523,12 @@ export class CodexCatalogService {
     const standalonePromise = discoverCodexStandaloneAgents({ environment, cwd }).catch(
       (): CodexStandaloneAgentDiscovery => ({
         agents: [],
-        diagnostics: [{
-          severity: "warning",
-          code: "source-unavailable",
-          message: "Standalone Codex agent discovery is temporarily unavailable for this catalog context.",
-        }],
+        diagnostics: [sourceDiagnostic(
+          "standaloneAgentAdapter",
+          "agents",
+          "source-unavailable",
+          "Standalone Codex agent discovery is temporarily unavailable for this catalog context.",
+        )],
       }),
     );
     try {
@@ -543,39 +565,44 @@ export class CodexCatalogService {
       diagnostics.push(...reconciledPlugins.diagnostics);
       const registrations = configuredAgents(configResult.value?.config);
       if (configResult.value === undefined) {
-        diagnostics.push({
-          severity: "warning",
-          code: "source-unavailable",
-          message: "Codex agent registrations are temporarily unavailable for this catalog context.",
-        });
+        diagnostics.push(sourceDiagnostic(
+          "appServerConfig",
+          "config/read",
+          "source-unavailable",
+          "Codex agent registrations are temporarily unavailable for this catalog context.",
+        ));
       }
       if (registrations.invalidMetadata) {
-        diagnostics.push({
-          severity: "warning",
-          code: "partial-result",
-          message: "Some Codex agent registrations were omitted because their metadata was invalid.",
-        });
+        diagnostics.push(sourceDiagnostic(
+          "appServerConfig",
+          "agents",
+          "partial-result",
+          "Some Codex agent registrations were omitted because their metadata was invalid.",
+        ));
       }
       if (registrations.entryLimitReached) {
-        diagnostics.push({
-          severity: "warning",
-          code: "partial-result",
-          message: `Codex agent registrations were capped at ${PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS} entries.`,
-        });
+        diagnostics.push(sourceDiagnostic(
+          "appServerConfig",
+          "agents",
+          "partial-result",
+          `Codex agent registrations were capped at ${PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS} entries.`,
+        ));
       }
       if (reconciled.invalidMetadata) {
-        diagnostics.push({
-          severity: "warning",
-          code: "partial-result",
-          message: "Some Codex Skills were omitted because their metadata was invalid.",
-        });
+        diagnostics.push(sourceDiagnostic(
+          "appServerSkills",
+          "skills/list",
+          "partial-result",
+          "Some Codex Skills were omitted because their metadata was invalid.",
+        ));
       }
       if (reconciled.entryLimitReached) {
-        diagnostics.push({
-          severity: "warning",
-          code: "partial-result",
-          message: `Codex Skills were capped at ${PROVIDER_CATALOG_MAX_ENTRIES} entries.`,
-        });
+        diagnostics.push(sourceDiagnostic(
+          "appServerSkills",
+          "skills/list",
+          "partial-result",
+          `Codex Skills were capped at ${PROVIDER_CATALOG_MAX_ENTRIES} entries.`,
+        ));
       }
       const fetchedAt = new Date().toISOString();
       const snapshot: CodexCatalogRefreshResult = {
@@ -613,13 +640,14 @@ export class CodexCatalogService {
         cwd,
         error: error instanceof Error ? error.message : String(error),
       });
-      const diagnostics: ProviderCatalogDiagnostic[] = [
+      const diagnostics: ProviderCatalogSourceDiagnostic[] = [
         ...standalone.diagnostics,
-        {
-          severity: "warning",
-          code: "source-unavailable",
-          message: "Codex capabilities and agent registrations are temporarily unavailable for this catalog context.",
-        },
+        sourceDiagnostic(
+          "providerCatalog",
+          "codex app-server",
+          "source-unavailable",
+          "Codex capabilities and agent registrations are temporarily unavailable for this catalog context.",
+        ),
         ...customPrompts.diagnostics,
       ];
       const snapshot: CodexCatalogRefreshResult = {

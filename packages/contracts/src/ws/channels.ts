@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AgentEventSchema } from "../events/agent-event.js";
 import { ThreadStatusSchema } from "../models/enums.js";
-import { SettingsSchema } from "../models/settings.js";
+import { ProviderIdSchema, SettingsSchema } from "../models/settings.js";
 import { PlanQuestionSchema } from "../models/plan-questions.js";
 import { PlanRecordSchema } from "../models/plan-output.js";
 import { ChecksStatusSchema } from "../github.js";
@@ -65,7 +65,10 @@ export const WS_CHANNELS = {
     threadId: z.string().optional(),
   }),
   "settings.changed": SettingsSchema(),
-  "skills.changed": z.object({}),
+  /** Invalidates only providers backed by the shared filesystem catalog. */
+  "skills.changed": z.object({
+    providerIds: z.array(ProviderIdSchema).min(1).max(6),
+  }).strict(),
   /** Identity-based catalog changes produced by a completed background refresh. */
   "provider.catalogChanged": ProviderCatalogChangeSchema(),
   /** Full-list broadcast of provider availability. Replaces the client cache. */

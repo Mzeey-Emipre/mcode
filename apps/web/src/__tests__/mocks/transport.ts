@@ -3,7 +3,6 @@ import type {
   Workspace,
   Thread,
   Message,
-  SkillInfo,
   ProviderCatalogRequest,
 } from "@/transport/types";
 import { getDefaultSettings } from "@mcode/contracts";
@@ -148,7 +147,6 @@ export const mockTransport: McodeTransport = {
   saveClipboardFile: vi.fn().mockResolvedValue(null),
   listWorkspaceFiles: vi.fn().mockResolvedValue([]),
   getReviewComparison: vi.fn().mockResolvedValue({ files: [], additions: 0, deletions: 0 }),
-  listCodexAgents: vi.fn().mockResolvedValue([]),
   readFileContent: vi.fn().mockResolvedValue(""),
   listOpenInApps: vi.fn().mockResolvedValue([]),
   openIn: vi.fn().mockResolvedValue(undefined),
@@ -183,8 +181,6 @@ export const mockTransport: McodeTransport = {
     entries: [],
     selectableAgents: [],
   })),
-  listSkills: vi.fn().mockResolvedValue([] as SkillInfo[]),
-  diagnoseSkills: vi.fn().mockResolvedValue({ scanned: [], errors: [], totalSkills: 0, totalCommands: 0 }),
   terminalCreate: vi.fn().mockResolvedValue({ ptyId: "pty-mock-1", shell: "pwsh" }),
   terminalWrite: vi.fn().mockResolvedValue(undefined),
   terminalResize: vi.fn().mockResolvedValue(undefined),

@@ -1,5 +1,6 @@
 import {
   ProviderCatalogChangeSchema,
+  WS_CHANNELS,
   type ProviderAvailability,
   type Settings,
   type TurnFileEffectSummary,
@@ -331,16 +332,18 @@ export function startPushListeners(): void {
     }),
   );
 
-  // skills.changed: invalidate the cache. An open picker retains its snapshot
-  // until the user closes it, avoiding a mid-navigation list replacement.
+  // skills.changed only covers providers backed by the shared filesystem scanner.
+  // Codex invalidations arrive as provider.catalogChanged from app-server.
   unsubs.push(
-    pushEmitter.on("skills.changed", () => {
+    pushEmitter.on("skills.changed", (data) => {
+      const parsed = WS_CHANNELS["skills.changed"].safeParse(data);
+      if (!parsed.success) return;
       if (skillsInvalidationTimer !== null) {
         clearTimeout(skillsInvalidationTimer);
       }
       skillsInvalidationTimer = setTimeout(() => {
         skillsInvalidationTimer = null;
-        useProviderCatalogStore.getState().invalidate();
+        useProviderCatalogStore.getState().invalidate(parsed.data.providerIds);
       }, SKILLS_INVALIDATION_DEBOUNCE_MS);
     }),
   );

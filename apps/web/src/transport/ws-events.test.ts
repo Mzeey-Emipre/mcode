@@ -104,12 +104,14 @@ describe("ws-events skills.changed", () => {
     const invalidate = vi.spyOn(useProviderCatalogStore.getState(), "invalidate");
     startPushListeners();
 
-    pushEmitter.emit("skills.changed", {});
-    pushEmitter.emit("skills.changed", {});
-    pushEmitter.emit("skills.changed", {});
+    const change = { providerIds: ["claude", "copilot", "cursor"] as const };
+    pushEmitter.emit("skills.changed", change);
+    pushEmitter.emit("skills.changed", change);
+    pushEmitter.emit("skills.changed", change);
     vi.advanceTimersByTime(100);
 
     expect(invalidate).toHaveBeenCalledOnce();
+    expect(invalidate).toHaveBeenCalledWith(change.providerIds);
   });
 });
 

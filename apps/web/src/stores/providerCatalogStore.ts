@@ -51,8 +51,8 @@ interface ProviderCatalogState {
   entries: Readonly<Record<string, ProviderCatalogCacheEntry>>;
   /** Loads one catalog context with per-key cache and single-flight behavior. */
   load(request: ProviderCatalogRequest, force?: boolean): Promise<ProviderCatalogSnapshot>;
-  /** Marks every catalog stale while retaining visible rows during refresh. */
-  invalidate(): void;
+  /** Marks matching provider catalogs stale while retaining visible rows during refresh. */
+  invalidate(providerIds?: readonly string[]): void;
   /** Applies one server-produced identity reconciliation to a loaded context. */
   reconcile(change: ProviderCatalogChange): void;
   /** Clears every cached catalog and fences in-flight loads. */
@@ -225,18 +225,21 @@ export const useProviderCatalogStore = create<ProviderCatalogState>((set, get) =
     return promise;
   },
 
-  invalidate() {
+  invalidate(providerIds) {
+    const providerFilter = providerIds ? new Set(providerIds) : null;
     const entries = Object.fromEntries(
       Object.entries(get().entries).map(([key, entry]) => [
         key,
-        {
-          ...entry,
-          isLoading: false,
-          needsRefresh: true,
-          error: null,
-          inflight: null,
-          loadEpoch: entry.loadEpoch + 1,
-        } satisfies ProviderCatalogCacheEntry,
+        providerFilter && !providerFilter.has(JSON.parse(key)[0] as string)
+          ? entry
+          : {
+              ...entry,
+              isLoading: false,
+              needsRefresh: true,
+              error: null,
+              inflight: null,
+              loadEpoch: entry.loadEpoch + 1,
+            } satisfies ProviderCatalogCacheEntry,
       ]),
     );
     set({ entries });

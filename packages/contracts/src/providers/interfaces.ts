@@ -5,7 +5,6 @@ import type { MessageMention } from "../models/mention.js";
 import type { GoalLookupResult, GoalState } from "../models/goal.js";
 import type { PermissionDecision, PermissionRequest } from "../models/permission.js";
 import type { ContextWindowMode, ReasoningLevel } from "../models/settings.js";
-import type { SkillInfo } from "../skills.js";
 import type { ProviderModelInfo } from "./models.js";
 import type { ProviderUsageInfo } from "./usage.js";
 import type { SessionForker } from "./session-forker.js";
@@ -248,23 +247,6 @@ export interface ISessionEvictable extends IAgentProvider {
  */
 export function isSessionEvictable(provider: IAgentProvider): provider is ISessionEvictable {
   return typeof (provider as Partial<ISessionEvictable>).discardSession === "function";
-}
-
-/** Provider with a native skill catalog that can be queried without spawning a new session. */
-export interface ISkillCatalogCapable extends IAgentProvider {
-  /** Return native skills for an already-running provider session, or an empty list. */
-  listSkills(cwd?: string): Promise<SkillInfo[]>;
-  /** Subscribe to native skill invalidation notifications. */
-  onSkillsChanged(handler: () => void): void;
-}
-
-/** Type guard for providers that expose a native skill catalog. */
-export function isSkillCatalogCapable(provider: IAgentProvider): provider is ISkillCatalogCapable {
-  const candidate = provider as Partial<ISkillCatalogCapable>;
-  return (
-    typeof candidate.listSkills === "function" &&
-    typeof candidate.onSkillsChanged === "function"
-  );
 }
 
 /** Registry that resolves provider instances by ID. */

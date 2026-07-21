@@ -7,8 +7,6 @@ import type {
   BranchComparison,
   WorktreeInfo,
   AttachmentMeta,
-  SkillInfo,
-  SkillDiagnostics,
   ProviderCatalogRequest,
   ProviderCatalogSnapshot,
   PrInfo,
@@ -20,7 +18,6 @@ import type {
   GitCommit,
   ProviderModelInfo,
   CopilotSubagent,
-  CodexAgentMentionInfo,
   GitRemoteUrl,
 } from "./types";
 import type {
@@ -688,8 +685,6 @@ export function createWsTransport(
     // Skills
     getProviderCatalog: (request: ProviderCatalogRequest) =>
       rpc<ProviderCatalogSnapshot>("provider.catalog", request),
-    listSkills: (cwd?, providerId?) => rpc<SkillInfo[]>("skill.list", { cwd, providerId }),
-    diagnoseSkills: (cwd?) => rpc<SkillDiagnostics>("skill.diagnose", { cwd }),
 
     // Terminal (PTY)
     terminalCreate: (threadId) => rpc<{ ptyId: string; shell: string }>("terminal.create", { threadId }),
@@ -813,8 +808,6 @@ export function createWsTransport(
     /** Fetches all available Copilot sub-agents for the given workspace (built-in + user + project). */
     listCopilotAgents: (workspaceId) =>
       rpc<CopilotSubagent[]>("provider.copilotAgents", { workspaceId }),
-    listCodexAgents: (workspaceId, threadId?) =>
-      rpc<CodexAgentMentionInfo[]>("provider.codexAgents", { workspaceId, threadId }),
     listProviderAvailability: () =>
       rpc<ProviderAvailability[]>("providers.listAvailability", {}),
 

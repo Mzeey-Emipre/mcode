@@ -2,17 +2,17 @@ import {
   PROVIDER_CATALOG_MAX_ENTRIES,
   PROVIDER_CATALOG_MAX_DIAGNOSTICS,
   PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS,
-  ProviderAgentMentionSchema,
   ProviderCapabilityEntrySchema,
   ProviderCatalogSnapshotSchema,
   SelectableProviderAgentSchema,
   SkillInfoSchema,
-  type ProviderAgentMention,
   type ProviderCapabilityEntry,
   type ProviderCatalogContext,
   type ProviderCatalogDiagnostic,
+  type ProviderCatalogSourceDiagnostic,
   type ProviderCatalogFreshness,
   type ProviderCatalogSnapshot,
+  type SelectableProviderAgent,
   type SettingsProviderId,
   type SkillInfo,
 } from "@mcode/contracts";
@@ -24,8 +24,8 @@ export interface BuildProviderCatalogSnapshotInput {
   readonly context: ProviderCatalogContext;
   readonly skills: readonly SkillInfo[];
   readonly entries?: readonly ProviderCapabilityEntry[];
-  readonly agents?: readonly ProviderAgentMention[];
-  readonly diagnostics?: readonly ProviderCatalogDiagnostic[];
+  readonly agents?: readonly SelectableProviderAgent[];
+  readonly diagnostics?: readonly ProviderCatalogSourceDiagnostic[];
   readonly freshness?: ProviderCatalogFreshness;
   readonly fetchedAt?: string;
 }
@@ -79,8 +79,17 @@ function toProviderCapabilityEntry(
   };
 }
 
-function partialResultDiagnostic(message: string): ProviderCatalogDiagnostic {
-  return { severity: "warning", code: "partial-result", message };
+function partialResultDiagnostic(
+  rejectedSource: string,
+  message: string,
+): ProviderCatalogSourceDiagnostic {
+  return {
+    sourceKind: "providerCatalog",
+    rejectedSource,
+    severity: "warning",
+    code: "partial-result",
+    message,
+  };
 }
 
 function parseProviderCapabilityEntry(
@@ -95,30 +104,23 @@ function parseProviderCapabilityEntry(
   return entry.success ? entry.data : undefined;
 }
 
-function parseSelectableAgent(
-  providerId: SettingsProviderId,
-  item: unknown,
-) {
-  const agent = ProviderAgentMentionSchema().safeParse(item);
-  if (!agent.success) return undefined;
-  const selectableAgent = SelectableProviderAgentSchema().safeParse({
-    ...agent.data,
-    providerId,
-    nativeId: agent.data.name,
-  });
-  return selectableAgent.success ? selectableAgent.data : undefined;
+function parseSelectableAgent(providerId: SettingsProviderId, item: unknown) {
+  const agent = SelectableProviderAgentSchema().safeParse(item);
+  return agent.success && agent.data.providerId === providerId ? agent.data : undefined;
 }
 
 /** Caps and schema-validates a provider catalog snapshot before transport. */
 export function buildProviderCatalogSnapshot(
   input: BuildProviderCatalogSnapshotInput,
 ): ProviderCatalogSnapshot {
-  const diagnostics: ProviderCatalogDiagnostic[] = [
+  const sourceDiagnostics: ProviderCatalogSourceDiagnostic[] = [
     ...(input.diagnostics ?? []).slice(0, PROVIDER_CATALOG_MAX_DIAGNOSTICS),
   ];
   let diagnosticsCapped = (input.diagnostics?.length ?? 0) > PROVIDER_CATALOG_MAX_DIAGNOSTICS;
-  const addDiagnostic = (diagnostic: ProviderCatalogDiagnostic): void => {
-    if (diagnostics.length < PROVIDER_CATALOG_MAX_DIAGNOSTICS) diagnostics.push(diagnostic);
+  const addDiagnostic = (diagnostic: ProviderCatalogSourceDiagnostic): void => {
+    if (sourceDiagnostics.length < PROVIDER_CATALOG_MAX_DIAGNOSTICS) {
+      sourceDiagnostics.push(diagnostic);
+    }
     else diagnosticsCapped = true;
   };
   let invalidItemOmitted = false;
@@ -140,6 +142,7 @@ export function buildProviderCatalogSnapshot(
   }
   if (input.skills.length + (input.entries?.length ?? 0) > PROVIDER_CATALOG_MAX_ENTRIES) {
     addDiagnostic(partialResultDiagnostic(
+      "entries",
       `Catalog entries were capped at ${PROVIDER_CATALOG_MAX_ENTRIES}.`,
     ));
   }
@@ -153,17 +156,24 @@ export function buildProviderCatalogSnapshot(
   }
   if (discoveredAgents.length > PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS) {
     addDiagnostic(partialResultDiagnostic(
+      "selectableAgents",
       `Selectable agents were capped at ${PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS}.`,
     ));
   }
   if (invalidItemOmitted) {
-    addDiagnostic(partialResultDiagnostic(INVALID_CATALOG_ITEM_DIAGNOSTIC));
+    addDiagnostic(partialResultDiagnostic("metadata", INVALID_CATALOG_ITEM_DIAGNOSTIC));
   }
   if (diagnosticsCapped) {
-    diagnostics[PROVIDER_CATALOG_MAX_DIAGNOSTICS - 1] = partialResultDiagnostic(
+    sourceDiagnostics[PROVIDER_CATALOG_MAX_DIAGNOSTICS - 1] = partialResultDiagnostic(
+      "diagnostics",
       `Catalog diagnostics were capped at ${PROVIDER_CATALOG_MAX_DIAGNOSTICS}.`,
     );
   }
+  const diagnostics: ProviderCatalogDiagnostic[] = sourceDiagnostics.map((diagnostic) => ({
+    ...diagnostic,
+    providerId: input.providerId,
+    context: input.context,
+  }));
 
   return ProviderCatalogSnapshotSchema().parse({
     providerId: input.providerId,

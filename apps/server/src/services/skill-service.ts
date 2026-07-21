@@ -2,8 +2,7 @@
  * Skill and command scanning service.
  * Walks user, project, agent, and plugin directories looking for both
  * `skills/` (each subdirectory is a skill) and provider command directories.
- * Native Codex Skills and bounded custom prompts enter through the
- * `nativeItems` boundary instead of this general filesystem scanner.
+ * Codex capabilities are intentionally excluded and enter through the provider catalog.
  */
 
 import { injectable } from "tsyringe";
@@ -306,7 +305,6 @@ interface ScanRoot {
 function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
   const claudeDir = join(home, ".claude");
   const copilotDir = join(home, ".copilot");
-  const agentsDir = join(home, ".agents");
   const cursorDir = join(home, ".cursor");
 
   const roots: ScanRoot[] = [
@@ -323,9 +321,6 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
     { path: join(cursorDir, "skills"), source: "user", providers: ["cursor"], kind: "skills" },
     { path: join(cursorDir, "commands"), source: "user", providers: ["cursor"], kind: "commands" },
 
-    // Codex command compatibility
-    { path: join(agentsDir, "commands"), source: "agent", providers: ["codex"], kind: "commands" },
-
     // Copilot user-level agents (OS-native config path)
     { path: copilotUserAgentsDir(), source: "user", providers: ["copilot"], kind: "both" },
   ];
@@ -335,9 +330,6 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
       // Claude project-level
       { path: join(cwd, ".claude", "skills"), source: "project", providers: ["claude"], kind: "skills" },
       { path: join(cwd, ".claude", "commands"), source: "project", providers: ["claude"], kind: "commands" },
-
-      // Codex command compatibility
-      { path: join(cwd, ".agents", "commands"), source: "project", providers: ["codex"], kind: "commands" },
 
       // Copilot project-level agents
       { path: join(cwd, ".github", "agents"), source: "project", providers: ["copilot"], kind: "both" },
@@ -366,14 +358,14 @@ export class SkillService {
    * that id are returned. Deduplication by name (higher-priority source wins)
    * is applied per filtered set, so the same name can coexist across providers.
    */
-  list(cwd?: string, providerId?: string, nativeItems?: SkillInfo[]): SkillInfo[] {
+  list(cwd?: string, providerId?: string): SkillInfo[] {
     if (this.cache && this.cachedCwd === cwd) {
-      return this.filterAndDedup(this.cache, providerId, nativeItems);
+      return this.filterAndDedup(this.cache, providerId);
     }
     const result = this.scan(cwd);
     this.cache = result.items;
     this.cachedCwd = cwd;
-    return this.filterAndDedup(result.items, providerId, nativeItems);
+    return this.filterAndDedup(result.items, providerId);
   }
 
   /** Force a full rescan and return per-path diagnostics. Provider-agnostic. */
@@ -412,7 +404,7 @@ export class SkillService {
    * Deduplication is intentionally scoped to the filtered set so that a skill
    * named "deploy" can independently exist for both claude and codex.
    */
-  private filterAndDedup(items: SkillInfo[], providerId?: string, nativeItems: SkillInfo[] = []): SkillInfo[] {
+  private filterAndDedup(items: SkillInfo[], providerId?: string): SkillInfo[] {
     const filtered = providerId
       ? items.filter((s) => s.providers.includes(providerId))
       : items;
@@ -423,22 +415,6 @@ export class SkillService {
       if (!existing || SOURCE_PRIORITY[item.source] < SOURCE_PRIORITY[existing.source]) {
         seen.set(item.name, item);
       }
-    }
-
-    const nativeFiltered = providerId
-      ? nativeItems.filter((s) => s.providers.includes(providerId))
-      : nativeItems;
-    if (providerId === "codex") {
-      return [...seen.values(), ...nativeFiltered];
-    }
-    for (const item of nativeFiltered) {
-      const nativeKeys = new Set([item.name, item.nativeName].filter((key): key is string => !!key));
-      for (const [key, existing] of seen) {
-        if (nativeKeys.has(existing.name) || (existing.nativeName && nativeKeys.has(existing.nativeName))) {
-          seen.delete(key);
-        }
-      }
-      seen.set(item.name, item);
     }
 
     return Array.from(seen.values());

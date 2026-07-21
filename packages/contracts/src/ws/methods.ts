@@ -14,7 +14,6 @@ import { NarrativeEntrySchema, TurnRangeSchema } from "../models/narrative-entry
 import { GitBranchSchema, WorktreeSchema, BranchComparisonSchema, GitRefSchema, GitRemoteUrlSchema, GitBranchNameSchema } from "../git.js";
 import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
-import { SkillInfoSchema, SkillDiagnosticsSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
 import { PlanStatusSchema, PlanRecordSchema, PlanActionSchema } from "../models/plan-output.js";
@@ -34,7 +33,6 @@ import { ProviderAvailabilitySchema } from "../providers/availability.js";
 import {
   ProviderCatalogRequestSchema,
   ProviderCatalogSnapshotSchema,
-  ProviderAgentMentionSchema,
 } from "../providers/capability-catalog.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
@@ -743,21 +741,10 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ workspacePath: z.string() }),
     result: z.record(z.unknown()),
   },
-  "skill.list": {
-    params: z.object({
-      cwd: z.string().optional(),
-      providerId: z.string().optional(),
-    }),
-    result: z.array(SkillInfoSchema()),
-  },
   /** Returns provider capabilities for one validated discovery context. */
   "provider.catalog": {
     params: ProviderCatalogRequestSchema(),
     result: ProviderCatalogSnapshotSchema(),
-  },
-  "skill.diagnose": {
-    params: z.object({ cwd: z.string().optional() }),
-    result: SkillDiagnosticsSchema(),
   },
   "terminal.create": {
     params: z.object({ threadId: z.string() }),
@@ -954,14 +941,6 @@ export const WS_METHODS = lazySchema(() => ({
       workspaceId: z.string(),
     }),
     result: z.array(CopilotSubagentSchema()),
-  },
-  /** Fetches Codex sub-agent definitions available for @ mentions. */
-  "provider.codexAgents": {
-    params: z.object({
-      workspaceId: z.string().optional(),
-      threadId: z.string().optional(),
-    }),
-    result: z.array(ProviderAgentMentionSchema()),
   },
   "providers.listAvailability": {
     params: z.object({}),

@@ -196,7 +196,7 @@ describe("routeMessage provider.catalog", () => {
         },
         diagnostics: [expect.objectContaining({
           code: "discovery-error",
-          message: expect.stringContaining("broken.toml"),
+          rejectedSource: "broken.toml",
         })],
       });
       expect(client.readConfig).toHaveBeenCalledWith(cwd);
@@ -462,7 +462,8 @@ describe("routeMessage provider.catalog", () => {
       ]),
       diagnostics: [expect.objectContaining({
         code: "discovery-error",
-        message: expect.stringContaining("C:/marketplaces/broken.json"),
+        sourceKind: "appServerPlugins",
+        rejectedSource: "broken.json",
       })],
       freshness: { status: "fresh" },
       selectableAgents: {
@@ -477,14 +478,7 @@ describe("routeMessage provider.catalog", () => {
     expect(client.listPlugins).toHaveBeenCalledWith(["C:/repo"]);
     expect(client.readPlugin).not.toHaveBeenCalled();
     expect(client.readConfig).toHaveBeenCalledWith("C:/repo");
-    expect(list).toHaveBeenCalledWith(
-      "C:/repo",
-      "codex",
-      expect.arrayContaining([
-        expect.objectContaining({ path: "C:/users/test/.codex/skills/review/SKILL.md" }),
-        expect.objectContaining({ path: "C:/repo/.codex/skills/review/SKILL.md" }),
-      ]),
-    );
+    expect(list).not.toHaveBeenCalled();
     expect((response.result as {
       selectableAgents: Array<{ providerId: string; nativeId: string }>;
     }).selectableAgents.every((agent) => agent.providerId === "codex" && agent.nativeId.length > 0))

@@ -110,6 +110,10 @@ describe("ProviderCatalogService", () => {
           reason: "Codex Skill discovery failed.",
         },
         diagnostics: [{
+          providerId: "codex",
+          context: CACHED.context,
+          sourceKind: "appServerSkills",
+          rejectedSource: "skills/list",
           severity: "warning",
           code: "source-unavailable",
           message: "Codex Skills are temporarily unavailable for this catalog context.",

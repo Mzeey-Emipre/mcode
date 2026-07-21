@@ -21,12 +21,10 @@ import { AttachmentService } from "../../services/attachment-service.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import type { MemoryPressureLevel } from "../../services/memory-pressure-service.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
-import { SkillService } from "../../services/skill-service.js";
 import { CodexCatalogService } from "../../services/codex-catalog-service.js";
 import type {
   IAgentProvider,
   IGoalCapable,
-  ISkillCatalogCapable,
   ISessionEvictable,
   SessionForker,
   TurnRequest,
@@ -446,7 +444,7 @@ function completedAssistantText(item: CompletedItem | undefined): string {
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
 @injectable()
-export class CodexProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ISkillCatalogCapable, ProtocolAdapter<CodexSessionState> {
+export class CodexProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
   readonly id: ProviderId = "codex";
   /** Codex CLI is an agentic tool with no one-shot text completion mode. */
   readonly supportsCompletion = false;
@@ -501,7 +499,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(EnvService) private readonly envService: EnvService,
-    @inject(SkillService) private readonly skillService: SkillService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(CodexCatalogService) private readonly codexCatalogService: CodexCatalogService,
   ) {
@@ -821,11 +818,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const customPrompts = slashInvocation?.requestedName.startsWith("prompts:")
       ? (await this.codexCatalogService.refreshCustomPrompts()).prompts
       : this.codexCatalogService.currentPrompts();
-    const skillCatalog = this.skillService.list(
-      cwd,
-      "codex",
-      [...nativeSkills, ...customPrompts],
-    );
+    const skillCatalog = [...nativeSkills, ...customPrompts];
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
     let input: TurnInputPart[];
     try {
@@ -1285,16 +1278,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     } finally {
       await cleanup();
     }
-  }
-
-  /** Lists native Codex Skills through the provider-wide catalog connection. */
-  async listSkills(cwd?: string): Promise<SkillInfo[]> {
-    return (await this.codexCatalogService.refresh(cwd)).skills;
-  }
-
-  /** Subscribes to native Codex skill catalog invalidations. */
-  onSkillsChanged(handler: () => void): void {
-    this.codexCatalogService.onSkillsChanged(() => handler());
   }
 
   /** Apply a queued native goal to the app-server before dispatching a turn. */

@@ -125,6 +125,36 @@ function postShutdown(
   });
 }
 
+function providerCatalogRpc(
+  server: http.Server,
+  token: string,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address();
+    if (!addr || typeof addr === "string") {
+      reject(new Error("Server not listening on a TCP port"));
+      return;
+    }
+    const url = new URL(`ws://127.0.0.1:${addr.port}`);
+    url.searchParams.set("token", token);
+    const ws = new WebSocket(url);
+    ws.on("open", () => {
+      ws.send(JSON.stringify({
+        id: "provider-catalog-auth",
+        method: "provider.catalog",
+        params: { providerId: "claude" },
+      }));
+    });
+    ws.on("message", (data) => {
+      const response = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (response.id !== "provider-catalog-auth") return;
+      ws.close();
+      resolve(response);
+    });
+    ws.on("error", reject);
+  });
+}
+
 describe("/health endpoint", () => {
   let server: http.Server;
 
@@ -233,6 +263,81 @@ describe("single-instance WebSocket attachment", () => {
     expect(JSON.stringify(refusal)).not.toContain("wrong-auth-token");
     expect(JSON.stringify(refusal)).not.toContain("wrong-instance-token");
   });
+});
+
+describe("authenticated WebSocket provider catalog", () => {
+  let server: http.Server;
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("returns the provider catalog through the authenticated transport", async () => {
+    const request = vi.fn(async (
+      input: { refresh: () => Promise<unknown> },
+    ) => input.refresh());
+    const deps = makeMinimalDeps({
+      skillService: {
+        list: vi.fn(() => [{
+          name: "review",
+          description: "Review changes",
+          kind: "skill",
+          source: "user",
+          providers: ["claude"],
+          path: "C:/skills/review/SKILL.md",
+        }]),
+      } as unknown as RouterDeps["skillService"],
+      providerCatalogService: { request } as unknown as RouterDeps["providerCatalogService"],
+    });
+    ({ httpServer: server } = createWsServer(deps));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    const response = await providerCatalogRpc(server, "test-token-abc");
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toMatchObject({
+      providerId: "claude",
+      context: { scope: "user" },
+      freshness: { status: "fresh" },
+      entries: [expect.objectContaining({
+        kind: "skill",
+        name: "review",
+      })],
+    });
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it.each([undefined, "wrong-token"])(
+    "rejects provider catalog dispatch when the token is %s",
+    async (token) => {
+      const request = vi.fn();
+      const deps = makeMinimalDeps({
+        providerCatalogService: { request } as unknown as RouterDeps["providerCatalogService"],
+      });
+      ({ httpServer: server } = createWsServer(deps));
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const addr = server.address();
+      if (!addr || typeof addr === "string") throw new Error("Server did not bind");
+      const url = new URL(`ws://127.0.0.1:${addr.port}`);
+      if (token) url.searchParams.set("token", token);
+
+      const refusal = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
+        const ws = new WebSocket(url);
+        ws.on("open", () => {
+          ws.send(JSON.stringify({
+            id: "provider-catalog-unauthorized",
+            method: "provider.catalog",
+            params: { providerId: "claude" },
+          }));
+        });
+        ws.on("close", (code, reason) => resolve({ code, reason: reason.toString() }));
+        ws.on("error", reject);
+      });
+
+      expect(refusal).toEqual({ code: 4001, reason: "Unauthorized" });
+      expect(request).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("/shutdown endpoint", () => {

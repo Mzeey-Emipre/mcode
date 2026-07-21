@@ -140,7 +140,7 @@ describe("broadcast", () => {
     addClient(fakeOpenSocket(a));
     addClient(fakeOpenSocket(b));
 
-    broadcast("skills.changed", {});
+    broadcast("skills.changed", { providerIds: ["claude", "copilot", "cursor"] });
 
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
