@@ -257,6 +257,9 @@ function CommandRow({
       id={`slash-cmd-${index}`}
       role="option"
       aria-selected={selected}
+      aria-label={cmd.capabilityKind === "plugin"
+        ? `${commandDisplayLabel(cmd)} Plugin ${cmd.description}`
+        : `${commandDisplayLabel(cmd)} ${cmd.description}`}
       onMouseDown={(e) => {
         e.preventDefault(); // prevent textarea blur
         onSelect(cmd);
