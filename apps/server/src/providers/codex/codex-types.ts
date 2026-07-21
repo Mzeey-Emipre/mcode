@@ -23,6 +23,11 @@ export interface InitializeParams { clientInfo: { name: string; version: string 
 /** Result returned by the `initialize` RPC method. */
 export interface InitializeResult { protocolVersion: string; serverInfo: { name: string; version: string }; capabilities: Record<string, unknown> }
 
+/** Parameters for resolving effective Codex configuration. */
+export interface ConfigReadParams { includeLayers?: boolean; cwd?: string | null }
+/** Effective Codex configuration returned by `config/read`. */
+export interface ConfigReadResult { config: Record<string, unknown> }
+
 // Thread RPCs
 // Source: codex-rs/app-server-protocol/schema/typescript/v2/ThreadStartParams.ts
 

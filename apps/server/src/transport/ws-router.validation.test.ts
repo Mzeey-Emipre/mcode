@@ -1,6 +1,9 @@
 import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "events";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { WebSocket } from "ws";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
 import { CodexCatalogService } from "../services/codex-catalog-service.js";
@@ -100,12 +103,205 @@ describe("routeMessage snapshot.getCumulativeDiffStats", () => {
 });
 
 describe("routeMessage provider.catalog", () => {
+  it("merges scoped standalone agents and non-colliding config registrations", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-provider-catalog-ws-"));
+    const codexHome = join(root, "codex-home");
+    const cwd = join(root, "workspace");
+    await mkdir(join(codexHome, "agents"), { recursive: true });
+    await mkdir(join(cwd, ".codex", "agents"), { recursive: true });
+    await Promise.all([
+      writeFile(
+        join(codexHome, "agents", "reviewer.toml"),
+        'name = "reviewer"\ndescription = "Global review"\n',
+      ),
+      writeFile(
+        join(codexHome, "agents", "global-only.toml"),
+        'name = "global-only"\n',
+      ),
+      writeFile(
+        join(cwd, ".codex", "agents", "reviewer.toml"),
+        'name = "reviewer"\ndescription = "Project review"\n',
+      ),
+      writeFile(join(cwd, ".codex", "agents", "broken.toml"), 'name = "broken\n'),
+    ]);
+    const client = Object.assign(new EventEmitter(), {
+      isAlive: true,
+      start: vi.fn(async () => undefined),
+      kill: vi.fn(async () => undefined),
+      listSkills: vi.fn(async (cwds?: string[]) => ({
+        data: [{ cwd: cwds?.[0] ?? "", errors: [], skills: [] }],
+      })),
+      listPlugins: vi.fn(async () => ({
+        marketplaces: [],
+        marketplaceLoadErrors: [],
+        featuredPluginIds: [],
+      })),
+      readPlugin: vi.fn(async () => ({ plugin: {} })),
+      readConfig: vi.fn(async (configCwd?: string) => ({
+        config: {
+          agents: {
+            reviewer: {
+              description: "Configured review",
+              config_file: "C:/config/reviewer.toml",
+            },
+            configured_only: {
+              description: `Configured for ${configCwd}`,
+              config_file: "C:/config/configured-only.toml",
+            },
+          },
+        },
+      })),
+    });
+    const codexCatalogService = new CodexCatalogService(
+      { get: () => ({ provider: { cli: { codex: "codex" } } }) } as never,
+      { isWindowsJob: false } as never,
+      { getEnv: () => ({ CODEX_HOME: codexHome }) } as never,
+      { create: () => client } as never,
+      {
+        refresh: vi.fn(async () => ({ prompts: [], diagnostics: [], available: true })),
+        currentPrompts: vi.fn(() => []),
+      } as never,
+    );
+    const db = openMemoryDatabase();
+    const providerCatalogService = new ProviderCatalogService(
+      new ProviderCatalogSnapshotRepo(db),
+    );
+    const deps = {
+      codexCatalogService,
+      providerCatalogService,
+      skillService: { list: vi.fn(() => []) },
+    } as unknown as RouterDeps;
+
+    try {
+      const changed = new Promise<import("@mcode/contracts").ProviderCatalogChange>((resolve) => {
+        providerCatalogService.onChanged(resolve);
+      });
+      const response = await routeMessage(JSON.stringify({
+        id: "catalog-agents",
+        method: "provider.catalog",
+        params: { providerId: "codex", cwd },
+      }), deps);
+
+      expect(response.result).toMatchObject({
+        freshness: { status: "stale" },
+        selectableAgents: [],
+      });
+      await expect(changed).resolves.toMatchObject({
+        selectableAgents: {
+          additions: expect.arrayContaining([
+            expect.objectContaining({ name: "global-only" }),
+            expect.objectContaining({ name: "reviewer", description: "Project review" }),
+            expect.objectContaining({ name: "configured_only" }),
+          ]),
+        },
+        diagnostics: [expect.objectContaining({
+          code: "discovery-error",
+          message: expect.stringContaining("broken.toml"),
+        })],
+      });
+      expect(client.readConfig).toHaveBeenCalledWith(cwd);
+    } finally {
+      await codexCatalogService.shutdown();
+      db.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes standalone agents when the app-server catalog fails on first load", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-provider-catalog-offline-ws-"));
+    const codexHome = join(root, "codex-home");
+    const cwd = join(root, "workspace");
+    await mkdir(join(codexHome, "agents"), { recursive: true });
+    await mkdir(cwd, { recursive: true });
+    await writeFile(
+      join(codexHome, "agents", "offline-review.toml"),
+      'name = "offline-review"\ndescription = "Standalone review"\n',
+    );
+    const client = Object.assign(new EventEmitter(), {
+      isAlive: true,
+      start: vi.fn(async () => undefined),
+      kill: vi.fn(async () => undefined),
+      listSkills: vi.fn(async () => {
+        throw new Error("unavailable");
+      }),
+      listPlugins: vi.fn(async () => ({
+        marketplaces: [],
+        marketplaceLoadErrors: [],
+        featuredPluginIds: [],
+      })),
+      readPlugin: vi.fn(async () => ({ plugin: {} })),
+      readConfig: vi.fn(async () => ({ config: {} })),
+    });
+    const codexCatalogService = new CodexCatalogService(
+      { get: () => ({ provider: { cli: { codex: "codex" } } }) } as never,
+      { isWindowsJob: false } as never,
+      { getEnv: () => ({ CODEX_HOME: codexHome }) } as never,
+      { create: () => client } as never,
+      {
+        refresh: vi.fn(async () => ({ prompts: [], diagnostics: [], available: true })),
+        currentPrompts: vi.fn(() => []),
+      } as never,
+    );
+    const db = openMemoryDatabase();
+    const providerCatalogService = new ProviderCatalogService(
+      new ProviderCatalogSnapshotRepo(db),
+    );
+    const deps = {
+      codexCatalogService,
+      providerCatalogService,
+      skillService: { list: vi.fn(() => []) },
+    } as unknown as RouterDeps;
+
+    try {
+      const changed = new Promise<import("@mcode/contracts").ProviderCatalogChange>((resolve) => {
+        providerCatalogService.onChanged(resolve);
+      });
+      const response = await routeMessage(JSON.stringify({
+        id: "catalog-offline-agents",
+        method: "provider.catalog",
+        params: { providerId: "codex", cwd },
+      }), deps);
+
+      expect(response.result).toMatchObject({
+        freshness: { status: "stale" },
+        selectableAgents: [],
+      });
+      await expect(changed).resolves.toMatchObject({
+        freshness: { status: "fresh" },
+        selectableAgents: {
+          additions: [expect.objectContaining({
+            name: "offline-review",
+            description: "Standalone review",
+          })],
+        },
+        diagnostics: [expect.objectContaining({
+          code: "source-unavailable",
+          message: expect.stringContaining("agent registrations"),
+        })],
+      });
+    } finally {
+      await codexCatalogService.shutdown();
+      db.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("returns persisted Codex Skills immediately and reconciles refreshes in the background", async () => {
     let catalogVersion = 1;
     const client = Object.assign(new EventEmitter(), {
       isAlive: true,
       start: vi.fn(async () => undefined),
       kill: vi.fn(async () => undefined),
+      readConfig: vi.fn(async (cwd?: string) => ({
+        config: {
+          agents: {
+            configured_reviewer: {
+              description: `Configured reviewer for ${cwd ?? "user"}`,
+              config_file: "C:/users/test/.codex/agents/configured-reviewer.toml",
+            },
+          },
+        },
+      })),
       listSkills: vi.fn(async (cwds?: string[]) => {
         const cwd = cwds?.[0] ?? "";
         const projectSkill = catalogVersion === 1 ? "review" : "ship";
@@ -269,6 +465,9 @@ describe("routeMessage provider.catalog", () => {
         message: expect.stringContaining("C:/marketplaces/broken.json"),
       })],
       freshness: { status: "fresh" },
+      selectableAgents: {
+        additions: [expect.objectContaining({ name: "configured_reviewer" })],
+      },
     });
     expect(refresh).toHaveBeenCalledWith("C:/repo");
     expect(threadLookup).not.toHaveBeenCalled();
@@ -277,6 +476,7 @@ describe("routeMessage provider.catalog", () => {
     expect(client.listSkills).toHaveBeenCalledWith(["C:/repo"], false);
     expect(client.listPlugins).toHaveBeenCalledWith(["C:/repo"]);
     expect(client.readPlugin).not.toHaveBeenCalled();
+    expect(client.readConfig).toHaveBeenCalledWith("C:/repo");
     expect(list).toHaveBeenCalledWith(
       "C:/repo",
       "codex",

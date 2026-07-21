@@ -40,6 +40,8 @@ import type {
   PluginListResult,
   PluginReadParams,
   PluginReadResult,
+  ConfigReadParams,
+  ConfigReadResult,
   SandboxMode,
   AskForApproval,
 } from "./codex-types.js";
@@ -1015,6 +1017,18 @@ export class CodexAppServer extends EventEmitter {
       throw new Error("readPlugin called before codex app-server was ready");
     }
     return this.rpc.sendRequest<PluginReadParams, PluginReadResult>("plugin/read", params, 2_000);
+  }
+
+  /** Reads effective Codex configuration for one working directory. */
+  async readConfig(cwd?: string): Promise<ConfigReadResult> {
+    if (!this._isAlive || !this.rpc) {
+      throw new Error("readConfig called before codex app-server was ready");
+    }
+    return this.rpc.sendRequest<ConfigReadParams, ConfigReadResult>(
+      "config/read",
+      { includeLayers: false, ...(cwd ? { cwd } : {}) },
+      10000,
+    );
   }
 
   /**

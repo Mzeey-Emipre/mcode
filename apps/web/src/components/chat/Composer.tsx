@@ -1339,11 +1339,18 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const providerReason: "disabled" | "cli_missing" | null = providerUnusable
     ? (!availability!.enabled ? "disabled" : "cli_missing")
     : null;
+  const selectedCatalogWorktreePath = useWorkspaceStore(
+    (state) => state.selectedWorktree?.path,
+  );
+  const catalogCwd = isNewThread && composerMode === "existing-worktree"
+    ? selectedCatalogWorktreePath
+    : activeThread?.worktree_path ?? undefined;
 
   const fileAutocomplete = useFileAutocomplete({
     workspaceId,
     threadId,
     providerId: effectiveProviderId,
+    cwd: catalogCwd,
   });
 
   const handleMentionSelect = useCallback((item: MentionSuggestion) => {

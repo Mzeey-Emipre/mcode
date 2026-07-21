@@ -9,6 +9,8 @@ export const PROVIDER_CATALOG_PATH_MAX_CHARS = 4_096;
 export const PROVIDER_CATALOG_MAX_ENTRIES = 2_000;
 /** Maximum selectable provider agents returned per catalog snapshot. */
 export const PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS = 500;
+/** Maximum source diagnostics returned per catalog snapshot. */
+export const PROVIDER_CATALOG_MAX_DIAGNOSTICS = 100;
 /** Maximum Codex agent files inspected while building one catalog snapshot. */
 export const PROVIDER_CATALOG_MAX_CODEX_AGENT_FILES = 1_000;
 /** Maximum bytes read from one Codex agent file during catalog discovery. */
@@ -24,6 +26,10 @@ export const ProviderCapabilityKindSchema = z.enum([
 export type ProviderCapabilityKind = z.infer<typeof ProviderCapabilityKindSchema>;
 
 const CatalogNameSchema = z.string().trim().min(1).max(256);
+const CatalogAgentNameSchema = CatalogNameSchema.refine(
+  (name) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(name),
+  "Agent names cannot contain control characters",
+);
 const CatalogDescriptionSchema = z.string().max(2_000);
 const CatalogNativeIdSchema = z.string().trim().min(1).max(512);
 const CatalogPathSchema = z.string().min(1).max(PROVIDER_CATALOG_PATH_MAX_CHARS);
@@ -108,7 +114,7 @@ export type ProviderCapabilityEntry = z.infer<ReturnType<typeof ProviderCapabili
 /** Provider agent metadata returned by the legacy mention endpoint. */
 export const ProviderAgentMentionSchema = lazySchema(() =>
   z.object({
-    name: CatalogNameSchema,
+    name: CatalogAgentNameSchema,
     path: CatalogPathSchema,
     description: CatalogDescriptionSchema.optional(),
   }).strict(),
@@ -199,7 +205,7 @@ export const ProviderCatalogSnapshotSchema = lazySchema(() =>
     providerId: ProviderIdSchema,
     context: ProviderCatalogContextSchema(),
     freshness: ProviderCatalogFreshnessSchema(),
-    diagnostics: z.array(ProviderCatalogDiagnosticSchema()).max(100),
+    diagnostics: z.array(ProviderCatalogDiagnosticSchema()).max(PROVIDER_CATALOG_MAX_DIAGNOSTICS),
     entries: z.array(ProviderCapabilityEntrySchema()).max(PROVIDER_CATALOG_MAX_ENTRIES),
     selectableAgents: z.array(SelectableProviderAgentSchema())
       .max(PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS),
@@ -258,7 +264,9 @@ export const ProviderCatalogChangeSchema = lazySchema(() =>
     updates: z.array(ProviderCapabilityEntrySchema()).max(PROVIDER_CATALOG_MAX_ENTRIES),
     removals: z.array(ProviderCapabilityIdentitySchema()).max(PROVIDER_CATALOG_MAX_ENTRIES),
     selectableAgents: SelectableProviderAgentChangesSchema(),
-    diagnostics: z.array(ProviderCatalogDiagnosticSchema()).max(100).optional(),
+    diagnostics: z.array(ProviderCatalogDiagnosticSchema())
+      .max(PROVIDER_CATALOG_MAX_DIAGNOSTICS)
+      .optional(),
     freshness: ProviderCatalogFreshnessSchema().optional(),
   }).strict(),
 );

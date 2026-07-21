@@ -69,11 +69,20 @@ export function useFileTagPopup({
   // Mirror of selectedIndex read by event handlers to avoid stale closure
   // when Enter/Tab fires in the same synchronous batch as a preceding Arrow key.
   const selectedIndexRef = useRef(0);
+  const selectedItemIdRef = useRef(items[0]?.id);
+  const previousQueryRef = useRef(query);
 
-  // Reset selection when items or query change
+  // Preserve the active item while an open picker reconciles catalog changes.
   useEffect(() => {
-    setSelectedIndex(0);
-    selectedIndexRef.current = 0;
+    const queryChanged = previousQueryRef.current !== query;
+    previousQueryRef.current = query;
+    const retainedIndex = queryChanged
+      ? -1
+      : items.findIndex((item) => item.id === selectedItemIdRef.current);
+    const nextIndex = retainedIndex >= 0 ? retainedIndex : 0;
+    setSelectedIndex(nextIndex);
+    selectedIndexRef.current = nextIndex;
+    selectedItemIdRef.current = items[nextIndex]?.id;
   }, [items, query]);
 
   const handleKeyDown = useCallback(
@@ -85,6 +94,7 @@ export function useFileTagPopup({
         setSelectedIndex((prev) => {
           const next = Math.min(prev + 1, items.length - 1);
           selectedIndexRef.current = next;
+          selectedItemIdRef.current = items[next]?.id;
           return next;
         });
         return true;
@@ -94,6 +104,7 @@ export function useFileTagPopup({
         setSelectedIndex((prev) => {
           const next = Math.max(prev - 1, 0);
           selectedIndexRef.current = next;
+          selectedItemIdRef.current = items[next]?.id;
           return next;
         });
         return true;
