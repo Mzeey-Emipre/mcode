@@ -138,6 +138,11 @@ function DetailView({ row, onBack }: { readonly row: LiveSubagentRow | FinishedS
             {row.detail.activity.length > 8 && <Button type="button" variant="ghost" size="sm" onClick={() => setShowAll((value) => !value)} aria-expanded={showAll} className="mt-1 gap-1 px-1 text-xs">
               <ChevronDown size={12} className={cn(showAll && "rotate-180")} /> {showAll ? "Show less" : `Show all ${row.detail.activity.length}`}
             </Button>}
+            {row.detail.activityTruncated && (
+              <p role="note" className="mt-2 text-xs text-muted-foreground">
+                Activity history is bounded. Additional entries are omitted.
+              </p>
+            )}
           </section>}
           {row.detail.output && <section aria-labelledby="subagent-result-heading">
             <h3 id="subagent-result-heading" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Result</h3>

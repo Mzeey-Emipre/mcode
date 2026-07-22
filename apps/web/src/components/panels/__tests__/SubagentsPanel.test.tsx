@@ -159,4 +159,31 @@ describe("SubagentsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
     expect(screen.getByRole("tab", { name: /finished 1/i })).toHaveAttribute("aria-selected", "true");
   });
+
+  it("shows hydrated truncation evidence and discloses bounded activity", () => {
+    const parent = record({
+      output_truncated: 1,
+      output_total_bytes: 524_288,
+      output_artifact_path: "C:\\artifacts\\agent-1.txt",
+    });
+    const children = Array.from({ length: 40 }, (_, index) => record({
+      id: `child-${index}`,
+      parent_tool_call_id: "agent-1",
+      tool_name: "Read",
+      input_summary: `file-${index}.ts`,
+      output_summary: "",
+      sort_order: index + 1,
+    }));
+    setThread("thread-1", [], [parent, ...children]);
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Build the roster details/ }));
+
+    expect(screen.getByLabelText(/Output truncated · 512 KB total · full output saved/)).toHaveAttribute(
+      "title",
+      "C:\\artifacts\\agent-1.txt",
+    );
+    expect(screen.getByRole("note")).toHaveTextContent("Additional entries are omitted");
+    expect(screen.getByRole("button", { name: "Show all 32" })).toHaveAttribute("aria-expanded", "false");
+  });
 });

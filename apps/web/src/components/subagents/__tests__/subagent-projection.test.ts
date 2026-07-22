@@ -202,4 +202,33 @@ describe("projectSubagents", () => {
 
     expect(roster.active[0]?.detail.fileEffects.map((effect) => effect.path)).toEqual(["safe.ts"]);
   });
+
+  it("preserves hydrated output bounds and discloses persisted activity beyond the detail cap", () => {
+    const parent = record({
+      id: "hydrated-agent",
+      output_summary: "Bounded result",
+      output_truncated: 1,
+      output_total_bytes: 524_288,
+      output_artifact_path: "C:\\artifacts\\hydrated-agent.txt",
+    });
+    const children = Array.from({ length: 40 }, (_, index) => record({
+      id: `child-${index}`,
+      parent_tool_call_id: "hydrated-agent",
+      tool_name: "Read",
+      input_summary: `file-${index}.ts`,
+      output_summary: "",
+      sort_order: index + 1,
+    }));
+
+    const detail = projectSubagents([], [[parent, ...children]]).finished[0]?.detail;
+
+    expect(detail).toMatchObject({
+      output: "Bounded result",
+      outputTruncated: true,
+      outputTotalBytes: 524_288,
+      outputArtifactPath: "C:\\artifacts\\hydrated-agent.txt",
+      activityTruncated: true,
+    });
+    expect(detail?.activity).toHaveLength(32);
+  });
 });

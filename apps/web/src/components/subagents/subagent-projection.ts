@@ -312,9 +312,11 @@ export function projectSubagents(
         elapsedSeconds: elapsedSeconds(startedAt, record.status === "running" ? now : completedAt),
         detail: liveRows.get(record.id)?.row.detail ?? {
           output: nonEmptyString(record.output_summary) ?? "",
-          outputTruncated: false,
+          outputTruncated: (record.output_truncated ?? 0) > 0,
+          outputTotalBytes: record.output_total_bytes ?? undefined,
+          outputArtifactPath: record.output_artifact_path ?? undefined,
           activity: persistedActivity,
-          activityTruncated: persistedQueue.length > 0,
+          activityTruncated: persistedInspected > MAX_DETAIL_ACTIVITY || persistedQueue.length > 0,
           subtreeIds: [...persistedVisited],
           fileEffects: [],
         },
