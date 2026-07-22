@@ -162,7 +162,7 @@ describe("message sliding window", () => {
         : s.records,
     }));
 
-    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "thread-1", content: "Agent reply" } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "thread-1", content: "Agent reply", tokens: null } satisfies AgentEvent);
     vi.runAllTimers();
 
     expect(getTestActiveMessages().length).toBe(MESSAGE_WINDOW_SIZE);

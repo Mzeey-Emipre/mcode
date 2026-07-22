@@ -126,7 +126,7 @@ describe("loadMessages cache eviction", () => {
     await useThreadStore.getState().loadMessages("t1");
     expect(getCachedRecord("t1")).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "t1", content: "x" } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "t1", content: "x", tokens: null } satisfies AgentEvent);
     expect(getCachedRecord("t1")).toBeUndefined();
   });
 

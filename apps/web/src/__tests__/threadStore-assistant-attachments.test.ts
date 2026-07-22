@@ -29,7 +29,7 @@ describe("threadStore assistant attachments", () => {
     useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "thread-images", messageId: "msg-1",
       content: "",
       tokens: null,
-      attachments: [attachment] } as AgentEvent);
+      attachments: [attachment] } satisfies AgentEvent);
 
     expect(getTestThreadMessages("thread-images")).toEqual([
       expect.objectContaining({

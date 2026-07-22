@@ -47,7 +47,7 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc2", output: "done", isError: true, exitCode: 1 } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc2", output: "done", isError: true, exitCode: 1 } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -73,7 +73,7 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "unknown-id", output: "result", isError: false } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "unknown-id", output: "result", isError: false } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -102,8 +102,8 @@ describe("Tool Call Matching", () => {
     });
 
     // Resolve out of order
-    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc3", output: "third", isError: false } as AgentEvent);
-    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc1", output: "first", isError: false } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc3", output: "third", isError: false } satisfies AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc1", output: "first", isError: false } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -127,7 +127,7 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "unknown", output: "extra", isError: false } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "unknown", output: "extra", isError: false } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -151,7 +151,7 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc2", output: "second-result", isError: false } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc2", output: "second-result", isError: false } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -190,7 +190,7 @@ describe("Tool Call Matching", () => {
         toolInput: {
           model: "gpt-5.5",
           reasoningEffort: "high",
-        }, } as AgentEvent);
+        }, } satisfies AgentEvent);
     vi.runAllTimers();
 
     const [call] = getTestThreadToolCalls("thread-1");

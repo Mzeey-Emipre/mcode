@@ -284,7 +284,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: THREAD_ID, delta: "hello " } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: THREAD_ID, delta: "hello " } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
   });
@@ -293,7 +293,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: THREAD_ID, toolCallId: "tool-1", toolName: "Read", toolInput: {} } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: THREAD_ID, toolCallId: "tool-1", toolName: "Read", toolInput: {} } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
   });
@@ -302,7 +302,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: THREAD_ID } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -311,7 +311,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: THREAD_ID, content: "done", tokens: null } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: THREAD_ID, content: "done", tokens: null } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -320,7 +320,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent({ type: "error", threadId: THREAD_ID, error: "Something broke" } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "error", threadId: THREAD_ID, error: "Something broke" } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -329,7 +329,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: THREAD_ID } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: THREAD_ID } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -339,7 +339,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
 
     const { handleAgentEvent } = useThreadStore.getState();
     for (let i = 0; i < 100; i++) {
-      handleAgentEvent({ type: "textDelta", threadId: THREAD_ID, delta: `token-${i} ` } as AgentEvent);
+      handleAgentEvent({ type: "textDelta", threadId: THREAD_ID, delta: `token-${i} ` } satisfies AgentEvent);
     }
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();

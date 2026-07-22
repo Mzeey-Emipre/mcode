@@ -40,7 +40,7 @@ describe("Agent Message Flow", () => {
     useThreadStore.setState({ currentThreadId: threadId });
     const { handleAgentEvent } = useThreadStore.getState();
 
-    handleAgentEvent({ type: "message", threadId: threadId, content: "Hello world", tokens: 42 } as AgentEvent);
+    handleAgentEvent({ type: "message", threadId: threadId, content: "Hello world", tokens: 42 } satisfies AgentEvent);
     vi.runAllTimers();
 
     expect(getTestActiveMessages()).toHaveLength(1);
@@ -56,8 +56,8 @@ describe("Agent Message Flow", () => {
 
     // Codex narration turn: an assistant message lands mid-turn, then the
     // final response lands as a second message with different content.
-    handleAgentEvent({ type: "message", threadId: threadId, content: "Narration before tool batch", messageId: "msg-1" } as AgentEvent);
-    handleAgentEvent({ type: "message", threadId: threadId, content: "Final response", messageId: "msg-2" } as AgentEvent);
+    handleAgentEvent({ type: "message", threadId: threadId, content: "Narration before tool batch", messageId: "msg-1", tokens: null } satisfies AgentEvent);
+    handleAgentEvent({ type: "message", threadId: threadId, content: "Final response", messageId: "msg-2", tokens: null } satisfies AgentEvent);
     vi.runAllTimers();
 
     const keys = readThreadField(threadId, (r) => r.assistantResponseKeys)!;
@@ -77,12 +77,12 @@ describe("Agent Message Flow", () => {
     const { handleAgentEvent } = useThreadStore.getState();
 
     // Message for current thread is added
-    handleAgentEvent({ type: "message", threadId: "thread-a", content: "Alpha" } as AgentEvent);
+    handleAgentEvent({ type: "message", threadId: "thread-a", content: "Alpha", tokens: null } satisfies AgentEvent);
     vi.runAllTimers();
     expect(getTestActiveMessages()).toHaveLength(1);
 
     // The background message belongs to its target record, not the visible transcript.
-    handleAgentEvent({ type: "message", threadId: "thread-b", content: "Beta" } as AgentEvent);
+    handleAgentEvent({ type: "message", threadId: "thread-b", content: "Beta", tokens: null } satisfies AgentEvent);
     vi.runAllTimers();
     expect(getTestActiveMessages()).toHaveLength(1);
     expect(getTestActiveMessages()[0].content).toBe("Alpha");
@@ -99,7 +99,7 @@ describe("Agent Message Flow", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: threadId } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: threadId } satisfies AgentEvent);
     vi.runAllTimers();
 
     const state = useThreadStore.getState();
@@ -114,7 +114,7 @@ describe("Agent Message Flow", () => {
       currentThreadId: threadId,
     });
 
-    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: threadId, costUsd: 0.01, tokensIn: 50, tokensOut: 50 } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: threadId, reason: "end_turn", costUsd: 0.01, tokensIn: 50, tokensOut: 50 } satisfies AgentEvent);
     vi.runAllTimers();
 
     const state = useThreadStore.getState();
@@ -129,9 +129,9 @@ describe("Agent Message Flow", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: "thread-1", costUsd: 0.005,
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: "thread-1", reason: "end_turn", costUsd: 0.005,
       tokensIn: 25,
-      tokensOut: 25 } as AgentEvent);
+      tokensOut: 25 } satisfies AgentEvent);
     vi.runAllTimers();
 
     expect(getTestThreadStreaming("thread-1")).toBeUndefined();
@@ -152,8 +152,8 @@ describe("Agent Message Flow", () => {
 
     const { handleAgentEvent, handleTurnPersisted } = useThreadStore.getState();
     handleAgentEvent({ type: "message", threadId: "thread-a", content: "Alpha completed while inactive",
-        messageId: "thread-a-completed", } as AgentEvent);
-    handleAgentEvent({ type: "turnComplete", threadId: "thread-a", costUsd: 0.005, tokensIn: 25, tokensOut: 25 } as AgentEvent);
+        messageId: "thread-a-completed", tokens: null } satisfies AgentEvent);
+    handleAgentEvent({ type: "turnComplete", threadId: "thread-a", reason: "end_turn", costUsd: 0.005, tokensIn: 25, tokensOut: 25 } satisfies AgentEvent);
 
     useThreadStore.setState({ currentThreadId: "thread-a" });
     handleTurnPersisted({
@@ -195,7 +195,7 @@ describe("duplicate message prevention", () => {
     const { handleAgentEvent } = useThreadStore.getState();
 
     // session.message arrives with the final content
-    handleAgentEvent({ type: "message", threadId: "thread-1", content: "Hello world", tokens: 10 } as AgentEvent);
+    handleAgentEvent({ type: "message", threadId: "thread-1", content: "Hello world", tokens: 10 } satisfies AgentEvent);
     vi.runAllTimers();
 
     // Both streaming fields must be cleared
@@ -203,7 +203,7 @@ describe("duplicate message prevention", () => {
     expect(getTestThreadStreamingPreview("thread-1")).toBeUndefined();
 
     // Now turnComplete fires — should NOT create a second message
-    handleAgentEvent({ type: "turnComplete", threadId: "thread-1", costUsd: 0.01, tokensIn: 50, tokensOut: 50 } as AgentEvent);
+    handleAgentEvent({ type: "turnComplete", threadId: "thread-1", reason: "end_turn", costUsd: 0.01, tokensIn: 50, tokensOut: 50 } satisfies AgentEvent);
     vi.runAllTimers();
 
     const messages = getTestActiveMessages();
@@ -238,7 +238,7 @@ describe("duplicate message prevention", () => {
     const { handleAgentEvent } = useThreadStore.getState();
     handleAgentEvent({ type: "message", threadId: "thread-1", content: "Hello world",
         messageId: "persisted-msg-id",
-        tokens: 10, } as AgentEvent);
+        tokens: 10, } satisfies AgentEvent);
     vi.runAllTimers();
 
     const messages = getTestActiveMessages();
@@ -282,8 +282,8 @@ describe("session.textDelta", () => {
 
   it("appends delta to streamingByThread", async () => {
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "Hello" } as AgentEvent);
-    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: " world" } as AgentEvent);
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "Hello" } satisfies AgentEvent);
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: " world" } satisfies AgentEvent);
 
     await flushRafChain();
     expect(getTestThreadStreaming("thread-1")).toBe("Hello world");
@@ -298,7 +298,7 @@ describe("session.textDelta", () => {
     });
     const { handleAgentEvent } = useThreadStore.getState();
 
-    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "end" } as AgentEvent);
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "end" } satisfies AgentEvent);
 
     await flushRafChain();
     // Full buffer is preserved
@@ -323,7 +323,7 @@ describe("session.textDelta", () => {
       ]),
     });
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "Hi" } as AgentEvent);
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "Hi" } satisfies AgentEvent);
 
     await flushRafChain();
     const calls = getTestThreadToolCalls("thread-1");
@@ -332,7 +332,7 @@ describe("session.textDelta", () => {
 
   it("does not affect other threads", async () => {
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "ping" } as AgentEvent);
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "ping" } satisfies AgentEvent);
 
     await flushRafChain();
     expect(getTestThreadStreaming("thread-2")).toBeUndefined();
@@ -361,7 +361,7 @@ describe("session.toolProgress", () => {
 
   it("updates elapsedSeconds on the matching tool call", () => {
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent({ type: "toolProgress", threadId: "thread-1", toolCallId: "tc1", toolName: "Bash", elapsedSeconds: 5 } as AgentEvent);
+    handleAgentEvent({ type: "toolProgress", threadId: "thread-1", toolCallId: "tc1", toolName: "Bash", elapsedSeconds: 5 } satisfies AgentEvent);
 
     const calls = getTestThreadToolCalls("thread-1");
     expect(calls[0].elapsedSeconds).toBe(5);
@@ -369,7 +369,7 @@ describe("session.toolProgress", () => {
 
   it("ignores toolProgress for unknown toolCallId", () => {
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent({ type: "toolProgress", threadId: "thread-1", toolCallId: "unknown", toolName: "Bash", elapsedSeconds: 3 } as AgentEvent);
+    handleAgentEvent({ type: "toolProgress", threadId: "thread-1", toolCallId: "unknown", toolName: "Bash", elapsedSeconds: 3 } satisfies AgentEvent);
 
     const calls = getTestThreadToolCalls("thread-1");
     expect(calls[0].elapsedSeconds).toBeUndefined();
