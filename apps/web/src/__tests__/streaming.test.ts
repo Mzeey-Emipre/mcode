@@ -80,7 +80,7 @@ describe("Agent Message Flow", () => {
     expect(liveKey).not.toBe(keys["msg-2"]);
   });
 
-  it("session.message only appends when threadId matches currentThreadId", () => {
+  it("session.message retains the target thread message without changing the active transcript", () => {
     useThreadStore.setState({ currentThreadId: "thread-a" });
     const { handleAgentEvent } = useThreadStore.getState();
 
@@ -92,7 +92,7 @@ describe("Agent Message Flow", () => {
     vi.runAllTimers();
     expect(getTestActiveMessages()).toHaveLength(1);
 
-    // Message for a different thread is NOT added to the visible list
+    // The background message belongs to its target record, not the visible transcript.
     handleAgentEvent("thread-b", {
       method: "session.message",
       params: { content: "Beta" },
@@ -100,6 +100,8 @@ describe("Agent Message Flow", () => {
     vi.runAllTimers();
     expect(getTestActiveMessages()).toHaveLength(1);
     expect(getTestActiveMessages()[0].content).toBe("Alpha");
+    expect(readThreadField("thread-b", (record) => record.messages.map((message) => message.content)))
+      .toEqual(["Beta"]);
   });
 
   it("when session.ended fires, running state and streaming are cleared", () => {
@@ -138,7 +140,7 @@ describe("Agent Message Flow", () => {
     expect(state.runningThreadIds.has(threadId)).toBe(false);
   });
 
-  it("when turnComplete fires for a non-current thread, message is not added to the list", () => {
+  it("turnComplete retains streaming fallback in the target record without changing the active transcript", () => {
     resetThreadStoreForTests({
       currentThreadId: "thread-other",
       records: new Map<string, ThreadRecord>([
@@ -154,10 +156,48 @@ describe("Agent Message Flow", () => {
     });
     vi.runAllTimers();
 
-    // Streaming content is cleared even for non-current thread
     expect(getTestThreadStreaming("thread-1")).toBeUndefined();
-    // But message is NOT added since it's not the current thread
     expect(getTestActiveMessages()).toHaveLength(0);
+    expect(readThreadField("thread-1", (record) => record.messages.map((message) => message.content)))
+      .toEqual(["background response"]);
+  });
+
+  it("keeps a background response through completion and persistence after reopening the thread", () => {
+    resetThreadStoreForTests({
+      currentThreadId: "thread-b",
+      records: new Map<string, ThreadRecord>([
+        ["thread-a", createEmptyThreadRecord()],
+        ["thread-b", createEmptyThreadRecord()],
+      ]),
+      runningThreadIds: new Set(["thread-a"]),
+    });
+
+    const { handleAgentEvent, handleTurnPersisted } = useThreadStore.getState();
+    handleAgentEvent("thread-a", {
+      method: "session.message",
+      params: {
+        content: "Alpha completed while inactive",
+        messageId: "thread-a-completed",
+      },
+    });
+    handleAgentEvent("thread-a", {
+      method: "session.turnComplete",
+      params: { costUsd: 0.005, tokensIn: 25, tokensOut: 25 },
+    });
+
+    useThreadStore.setState({ currentThreadId: "thread-a" });
+    handleTurnPersisted({
+      threadId: "thread-a",
+      messageId: "thread-a-completed",
+      toolCallCount: 0,
+      filesChanged: [],
+    });
+    vi.runAllTimers();
+
+    expect(getTestActiveMessages().map((message) => message.content)).toEqual([
+      "Alpha completed while inactive",
+    ]);
+    expect(readThreadField("thread-b", (record) => record.messages)).toEqual([]);
   });
 });
 

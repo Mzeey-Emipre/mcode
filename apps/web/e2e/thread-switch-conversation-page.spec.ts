@@ -571,16 +571,8 @@ test("thread revisit keeps messages added after an empty snapshot was cached", a
     { ...thread("thread-a", "Thread A"), status: "active" as const },
     thread("thread-b", "Thread B"),
   ];
-  const completedMessage = message(
-    "thread-a",
-    "thread-a-completed",
-    "assistant",
-    "Alpha completed while inactive",
-    1,
-  );
-
   await interceptZustandStores(page);
-  await mockWebSocketServer(page, {
+  const controller = await mockWebSocketServer(page, {
     "workspace.list": [workspace],
     "thread.list": threads,
     "agent.listRunning": ["thread-a"],
@@ -616,32 +608,37 @@ test("thread revisit keeps messages added after an empty snapshot was cached", a
   await expect(page.getByText("Beta response", { exact: true })).toBeVisible();
   await page.waitForTimeout(20);
 
-  await page.evaluate(({ targetThreadId, residentMessage }) => {
-    type StoreState = {
-      records: Map<string, { messages: unknown[] }>;
-      runningThreadIds: Set<string>;
-    };
-    type StoreHandle = {
-      getState: () => Record<string, unknown>;
-      setState: (partial: Partial<StoreState>) => void;
-    };
-    const stores = (window as unknown as { __mcodeStores?: StoreHandle[] }).__mcodeStores ?? [];
-    const store = stores.find((candidate) => {
-      const state = candidate.getState();
-      return "handleAgentEvent" in state && "records" in state;
-    });
-    if (!store) throw new Error("Thread store not found");
-    const state = store.getState() as unknown as StoreState;
-    const resident = state.records.get(targetThreadId);
-    if (!resident) throw new Error("Resident thread record not found");
-    const records = new Map(state.records);
-    records.set(targetThreadId, { ...resident, messages: [residentMessage] });
-    const runningThreadIds = new Set(state.runningThreadIds);
-    runningThreadIds.delete(targetThreadId);
-    store.setState({ records, runningThreadIds });
-  }, { targetThreadId: "thread-a", residentMessage: completedMessage });
+  await controller.sendPush("agent.event", {
+    type: "message",
+    threadId: "thread-a",
+    messageId: "thread-a-completed",
+    content: "Alpha completed while inactive",
+  });
+  await controller.sendPush("agent.event", {
+    type: "turnComplete",
+    threadId: "thread-a",
+    costUsd: 0.005,
+    tokensIn: 25,
+    tokensOut: 25,
+  });
+  await expect.poll(() => readThreadRecord(page, "thread-a")).toMatchObject({
+    currentThreadId: "thread-b",
+    messageIds: ["thread-a-completed"],
+  });
+  await expect(page.getByText("Beta response", { exact: true })).toBeVisible();
+  await expect(page.getByText("Alpha completed while inactive", { exact: true })).not.toBeVisible();
 
   await threadAItem.click();
+  await expect.poll(() => readThreadRecord(page, "thread-a")).toMatchObject({
+    currentThreadId: "thread-a",
+    messageIds: ["thread-a-completed"],
+  });
+  await controller.sendPush("turn.persisted", {
+    threadId: "thread-a",
+    messageId: "thread-a-completed",
+    toolCallCount: 0,
+    filesChanged: [],
+  });
 
   await expect(page.getByText("Alpha completed while inactive", { exact: true })).toBeVisible();
   await expect(page.getByText("no messages yet", { exact: true })).not.toBeVisible();
