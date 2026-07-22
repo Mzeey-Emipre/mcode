@@ -17,6 +17,7 @@ describe("diffStore", () => {
       previewUrlByThread: {},
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
+      subagentRosterTabByThread: {},
       reviewFilesVisibleByScope: {},
       snapshotsByThread: {},
       snapshotsLoadingByThread: {},
@@ -695,6 +696,17 @@ describe("diffStore", () => {
   });
 
   describe("clearThread", () => {
+    it("keeps roster tabs isolated by thread and drops the deleted thread's choice", () => {
+      const { setSubagentRosterTab, getSubagentRosterTab, clearThread } = useDiffStore.getState();
+      setSubagentRosterTab("thread-1", "active");
+      setSubagentRosterTab("thread-2", "finished");
+
+      clearThread("thread-1");
+
+      expect(getSubagentRosterTab("thread-1")).toBeUndefined();
+      expect(getSubagentRosterTab("thread-2")).toBe("finished");
+    });
+
     it("should remove all per-thread entries", () => {
       const {
         setSnapshots,

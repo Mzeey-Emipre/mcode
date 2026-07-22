@@ -165,6 +165,50 @@ describe("ToolCallRecordRepo", () => {
     expect(records.map((r) => r.tool_name)).toEqual(["Read", "Edit", "Bash"]);
   });
 
+  it("preserves explicit lifecycle timestamps for each bulk-created record", () => {
+    repo.bulkCreate([
+      {
+        toolCallId: "agent-first",
+        messageId,
+        toolName: "Agent",
+        inputSummary: "First delegated task",
+        outputSummary: "First result",
+        status: "completed",
+        startedAt: "2026-07-22T10:00:00.000Z",
+        completedAt: "2026-07-22T10:00:20.000Z",
+        sortOrder: 0,
+      },
+      {
+        toolCallId: "agent-second",
+        messageId,
+        toolName: "Agent",
+        inputSummary: "Second delegated task",
+        outputSummary: "Second result",
+        status: "completed",
+        startedAt: "2026-07-22T10:00:05.000Z",
+        completedAt: "2026-07-22T10:00:50.000Z",
+        sortOrder: 1,
+      },
+    ]);
+
+    expect(repo.listByMessage(messageId).map((record) => ({
+      id: record.id,
+      startedAt: record.started_at,
+      completedAt: record.completed_at,
+    }))).toEqual([
+      {
+        id: "agent-first",
+        startedAt: "2026-07-22T10:00:00.000Z",
+        completedAt: "2026-07-22T10:00:20.000Z",
+      },
+      {
+        id: "agent-second",
+        startedAt: "2026-07-22T10:00:05.000Z",
+        completedAt: "2026-07-22T10:00:50.000Z",
+      },
+    ]);
+  });
+
   it("supports parent nesting via listByParent", () => {
     const parent = repo.create({
       messageId,
