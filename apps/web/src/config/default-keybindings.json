@@ -11,15 +11,31 @@
     "when": "showLanding && !commandPaletteOpen && !inputFocused"
   },
   { "key": "mod+\\", "command": "sidebar.toggle", "when": "!inputFocused" },
+  { "key": "alt+ArrowLeft", "command": "navigation.back" },
+  { "key": "alt+ArrowRight", "command": "navigation.forward" },
+  { "key": "mod+[", "command": "navigation.back" },
+  { "key": "mod+]", "command": "navigation.forward" },
   { "key": "mod+alt+b", "command": "rightPanel.toggle" },
   { "key": "mod+j", "command": "terminal.toggle" },
   { "key": "mod+,", "command": "settings.open", "when": "!inputFocused" },
-  { "key": "mod+shift+?", "command": "shortcuts.help", "when": "!inputFocused" },
+  {
+    "key": "mod+shift+?",
+    "command": "shortcuts.help",
+    "when": "!inputFocused"
+  },
   { "key": "Escape", "command": "escape.handle" },
   { "key": "mod+t", "command": "tasks.toggle", "when": "!inputFocused" },
   { "key": "mod+d", "command": "changes.toggle", "when": "!inputFocused" },
-  { "key": "mod+shift+b", "command": "preview.toggle", "when": "!inputFocused" },
-  { "key": "mod+shift+y", "command": "preview.guestDevTools.open", "when": "!inputFocused" },
+  {
+    "key": "mod+shift+b",
+    "command": "preview.toggle",
+    "when": "!inputFocused"
+  },
+  {
+    "key": "mod+shift+y",
+    "command": "preview.guestDevTools.open",
+    "when": "!inputFocused"
+  },
   { "key": "mod+shift+c", "command": "checks.open", "when": "!inputFocused" },
   { "key": "mod+1", "command": "thread.goTo1", "when": "!inputFocused" },
   { "key": "mod+2", "command": "thread.goTo2", "when": "!inputFocused" },
@@ -30,6 +46,14 @@
   { "key": "mod+7", "command": "thread.goTo7", "when": "!inputFocused" },
   { "key": "mod+8", "command": "thread.goTo8", "when": "!inputFocused" },
   { "key": "mod+9", "command": "thread.goTo9", "when": "!inputFocused" },
-  { "key": "mod+shift+g", "command": "summary.generate", "when": "!inputFocused" },
-  { "key": "mod+shift+ArrowUp", "command": "stickyUserMessage.jump", "when": "!inputFocused" }
+  {
+    "key": "mod+shift+g",
+    "command": "summary.generate",
+    "when": "!inputFocused"
+  },
+  {
+    "key": "mod+shift+ArrowUp",
+    "command": "stickyUserMessage.jump",
+    "when": "!inputFocused"
+  }
 ]

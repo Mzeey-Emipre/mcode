@@ -1,5 +1,10 @@
 import type { AttachmentMeta, OpenInApp } from "./types";
-import type { BrowserPerfCounters, BrowserTabSet, McodeBrowserCapture, PreviewPageStatus } from "@mcode/contracts";
+import type {
+  BrowserPerfCounters,
+  BrowserTabSet,
+  McodeBrowserCapture,
+  PreviewPageStatus,
+} from "@mcode/contracts";
 
 /** Discriminated union describing the auto-updater lifecycle state. */
 export type UpdateStatus =
@@ -33,7 +38,9 @@ interface AppBridge {
     allowDowngrade?: boolean;
   }): Promise<UpdateStatus>;
   /** Subscribe to push updates of update-status. Returns the listener for cleanup. */
-  onUpdateStatus(callback: (status: UpdateStatus) => void): (...args: unknown[]) => void;
+  onUpdateStatus(
+    callback: (status: UpdateStatus) => void,
+  ): (...args: unknown[]) => void;
   /** Remove a previously registered update-status listener. */
   offUpdateStatus(listener: (...args: unknown[]) => void): void;
 }
@@ -48,8 +55,7 @@ export type PreviewShellBounds = {
 
 /** Result of a preview navigation attempt (http, https, and local file paths). */
 export type PreviewNavigateResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly error: string };
+  { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 /** Result of resolving preview navigation input without loading it. */
 export type PreviewResolveNavigationResult =
@@ -113,8 +119,14 @@ interface PreviewBridge {
     workspaceId?: string | null;
   }): Promise<void>;
   /** Resolve omnibox input to a safe preview URL without loading it. */
-  resolveNavigation(url: string, workspacePath?: string | null): Promise<PreviewResolveNavigationResult>;
-  navigate(url: string, workspacePath?: string | null): Promise<PreviewNavigateResult>;
+  resolveNavigation(
+    url: string,
+    workspacePath?: string | null,
+  ): Promise<PreviewResolveNavigationResult>;
+  navigate(
+    url: string,
+    workspacePath?: string | null,
+  ): Promise<PreviewNavigateResult>;
   goBack(): Promise<boolean>;
   goForward(): Promise<boolean>;
   reload(): Promise<void>;
@@ -195,10 +207,17 @@ interface PreviewDesignBridge {
     presetId?: DesignViewportPresetId;
     widthOverride?: number;
     heightOverride?: number;
-  }): Promise<{ ok: true; data: { width: number; height: number } } | { ok: false; error: string }>;
+  }): Promise<
+    | { ok: true; data: { width: number; height: number } }
+    | { ok: false; error: string }
+  >;
   resetViewport(): Promise<{ ok: true } | { ok: false; error: string }>;
-  setInspect(enabled: boolean): Promise<{ ok: true } | { ok: false; error: string }>;
-  setAnnotationGuard(enabled: boolean): Promise<{ ok: true } | { ok: false; error: string }>;
+  setInspect(
+    enabled: boolean,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  setAnnotationGuard(
+    enabled: boolean,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 /** Wire-side result of a tab IPC call. */
@@ -215,9 +234,18 @@ export interface PreviewTabCreateData {
 /** Tab control surface mounted under `desktopBridge.preview.tabs`. */
 interface PreviewTabsBridge {
   list(threadId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
-  create(threadId: string, activate?: boolean): Promise<PreviewTabIpcResult<PreviewTabCreateData>>;
-  activate(threadId: string, tabId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
-  close(threadId: string, tabId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
+  create(
+    threadId: string,
+    activate?: boolean,
+  ): Promise<PreviewTabIpcResult<PreviewTabCreateData>>;
+  activate(
+    threadId: string,
+    tabId: string,
+  ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
+  close(
+    threadId: string,
+    tabId: string,
+  ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   closeScope(threadId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   /** Subscribe to push-style tab set updates emitted on navigation/favicon/close. */
   onUpdated(callback: (payload: BrowserTabSet) => void): () => void;
@@ -252,7 +280,9 @@ export interface SpellcheckContextMenuData {
 /** Spellcheck IPC bridge for context menu and dictionary management. */
 interface SpellcheckBridge {
   /** Listen for context-menu events. Returns the listener ref for targeted cleanup. */
-  onContextMenu(callback: (data: SpellcheckContextMenuData) => void): (...args: unknown[]) => void;
+  onContextMenu(
+    callback: (data: SpellcheckContextMenuData) => void,
+  ): (...args: unknown[]) => void;
   /** Remove a specific context-menu listener. */
   offContextMenu(listener: (...args: unknown[]) => void): void;
   /** Replace the misspelled word under the cursor with the given word. */
@@ -269,6 +299,13 @@ interface SpellcheckBridge {
  * (file dialogs, clipboard, editor launching, etc.).
  */
 interface DesktopBridge {
+  /** Platform facts and allowlisted native actions used by the Electron title bar. */
+  window: {
+    readonly platform:
+      "aix" | "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32";
+    readonly isDevelopment: boolean;
+    perform(action: DesktopWindowAction): Promise<void>;
+  };
   /** Return the URL and IPC path of the local mcode server. */
   getServerUrl(): Promise<{ url: string; ipcPath: string }>;
   /**
@@ -300,7 +337,11 @@ interface DesktopBridge {
   /** Read an image from the system clipboard. Returns metadata or null. */
   readClipboardImage(): Promise<AttachmentMeta | null>;
   /** Save a clipboard file blob to disk. Returns metadata or null. */
-  saveClipboardFile(buffer: Uint8Array, mimeType: string, fileName: string): Promise<AttachmentMeta | null>;
+  saveClipboardFile(
+    buffer: Uint8Array,
+    mimeType: string,
+    fileName: string,
+  ): Promise<AttachmentMeta | null>;
   /** Return the file path for logging output. */
   getLogPath(): Promise<string>;
   /** Return recent log lines. */
@@ -325,6 +366,23 @@ interface DesktopBridge {
   /** Embedded site preview (desktop only). */
   preview: PreviewBridge;
 }
+
+/** Native actions accepted by the desktop window IPC boundary. */
+export type DesktopWindowAction =
+  | "closeWindow"
+  | "quit"
+  | "undo"
+  | "redo"
+  | "cut"
+  | "copy"
+  | "paste"
+  | "selectAll"
+  | "zoomIn"
+  | "zoomOut"
+  | "zoomReset"
+  | "toggleFullScreen"
+  | "reload"
+  | "toggleDevTools";
 
 declare global {
   interface Window {
