@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { SubagentRow } from "../SubagentRow";
 import type { ToolCall } from "@/transport/types";
 
@@ -18,7 +18,7 @@ function mkAgent(partial: Partial<ToolCall>): ToolCall {
 }
 
 describe("SubagentRow", () => {
-  it("renders a flat row without expand control when there are no child tools", () => {
+  it("renders a compact identity-first completed control", () => {
     render(
       <SubagentRow
         toolCall={mkAgent({
@@ -34,11 +34,11 @@ describe("SubagentRow", () => {
     );
 
     expect(screen.getByText("Glob cursor provider files")).toBeTruthy();
-    expect(screen.getByText("Task")).toBeTruthy();
-    expect(screen.queryByRole("button", { expanded: false })).toBeNull();
+    expect(screen.getByText("Completed")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Open Glob cursor provider files subagent details, Completed/ })).toBeTruthy();
   });
 
-  it("renders an expandable control when child tools exist", () => {
+  it("keeps child activity out of the compact narrative control", () => {
     const child: ToolCall = {
       id: "read-1",
       toolName: "Read",
@@ -54,10 +54,11 @@ describe("SubagentRow", () => {
       <SubagentRow toolCall={mkAgent({})} children={[child]} hooks={[]} />,
     );
 
-    expect(screen.getByRole("button")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /subagent details, Completed/ })).toBeTruthy();
+    expect(screen.queryByText("x.ts")).toBeNull();
   });
 
-  it("renders completed subagent output while keeping the task prompt as the label", () => {
+  it("keeps settled output in the detail panel", () => {
     render(
       <SubagentRow
         toolCall={mkAgent({
@@ -72,12 +73,11 @@ describe("SubagentRow", () => {
 
     expect(screen.getByRole("button")).toBeTruthy();
     expect(screen.getByText("Inspect the Codex mapper tests.")).toBeTruthy();
-    expect(screen.getByTestId("subagent-result").textContent).toContain(
-      "Mapper tests cover wait suppression.",
-    );
+    expect(screen.getByText("Completed")).toBeTruthy();
+    expect(screen.queryByText("Mapper tests cover wait suppression.")).toBeNull();
   });
 
-  it("shows truncation metadata for bounded subagent output", () => {
+  it("keeps truncation metadata in the detail panel", () => {
     render(
       <SubagentRow
         toolCall={mkAgent({
@@ -91,10 +91,10 @@ describe("SubagentRow", () => {
       />,
     );
 
-    expect(screen.getByText(/Output truncated/).textContent).toContain("512 KB total");
+    expect(screen.queryByText(/Output truncated/)).toBeNull();
   });
 
-  it("keeps shell calls nested under a subagent and expands their transcript", () => {
+  it("does not inline nested shell transcripts", () => {
     const child: ToolCall = {
       id: "shell-1",
       toolName: "Shell",
@@ -109,17 +109,8 @@ describe("SubagentRow", () => {
 
     render(<SubagentRow toolCall={mkAgent({})} children={[child]} hooks={[]} />);
 
-    const parent = screen.getByRole("button", { name: /Read detection module/ });
-    fireEvent.click(parent);
-
-    const command = screen.getByRole("button", { name: /Ran command/ });
-    expect(command).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("region", { name: "Shell output" })).toBeNull();
-
-    fireEvent.click(command);
-
-    expect(screen.getByRole("region", { name: "Shell output" })).toBeTruthy();
-    expect(screen.getAllByText("git status --short")).toHaveLength(2);
-    expect(screen.getByText("M file.ts", { exact: false })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Read detection module subagent details/ })).toBeTruthy();
+    expect(screen.queryByText("git status --short")).toBeNull();
+    expect(screen.queryByText("M file.ts", { exact: false })).toBeNull();
   });
 });

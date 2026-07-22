@@ -1,0 +1,15 @@
+import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
+import { useDiffStore, type SubagentRosterTab } from "@/stores/diffStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+
+/** Opens the active thread's Subagents panel at one Agent detail. */
+export function openSubagentDetail(id: string, tab: SubagentRosterTab): boolean {
+  const { activeWorkspaceId, activeThreadId } = useWorkspaceStore.getState();
+  if (!activeWorkspaceId || !activeThreadId || id.length === 0) return false;
+
+  const diff = useDiffStore.getState();
+  diff.selectSubagentDetail(activeThreadId, { id, originTab: tab, scrollTop: 0 });
+  diff.setRightPanelTab(activeWorkspaceId, activeThreadId, "subagents");
+  showRightPanelAdaptive(activeWorkspaceId, activeThreadId);
+  return true;
+}

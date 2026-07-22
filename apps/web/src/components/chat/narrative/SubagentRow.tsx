@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import { Ban, Check, ChevronRight, ChevronDown, CircleX } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import {
   TOOL_ICONS,
@@ -20,6 +20,7 @@ import { EntityIcon } from "../EntityToken";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ShellToolCallRow } from "./ShellToolCallRow";
+import { openSubagentDetail } from "@/lib/open-subagent-detail";
 
 interface SubagentRowProps {
   toolCall: ToolCall;
@@ -77,6 +78,39 @@ export function SubagentRow({ toolCall, children, hooks, allToolCalls, depth = 0
     : "";
   const description = extractSubagentDescription(toolCall);
   const delegationTags = useMemo(() => buildDelegationTags(toolCall), [toolCall]);
+
+  if (depth === 0) {
+    const identity = [toolCall.toolInput.agentName, toolCall.toolInput.subagentName, toolCall.toolInput.name]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ?? description;
+    const lifecycle = toolCall.isCancelled
+      ? { label: "Cancelled", Icon: Ban, className: "text-muted-foreground" }
+      : isErrored
+        ? { label: "Errored", Icon: CircleX, className: "text-destructive" }
+        : isRunning
+          ? { label: "Running", Icon: null, className: "text-primary" }
+          : { label: "Completed", Icon: Check, className: "text-[var(--diff-add-strong)]" };
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => openSubagentDetail(toolCall.id, isRunning ? "active" : "finished")}
+        className={`${NARRATIVE_TOOL_ROW} h-auto w-full justify-start gap-2 rounded-md px-2 py-1 text-left hover:bg-muted/30`}
+        aria-label={`Open ${identity} subagent details, ${lifecycle.label}`}
+      >
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/65 ring-1 ring-inset ring-border/60">
+          <EntityIcon kind="agent" animated={isRunning} className={cn("flex items-center justify-center", lifecycle.className)} />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/85">{identity}</span>
+        {identity !== description && <span className="min-w-0 max-w-[45%] truncate text-xs text-muted-foreground">{description}</span>}
+        <span className={cn("flex shrink-0 items-center gap-1 text-xs font-medium", lifecycle.className)}>
+          {lifecycle.Icon && <lifecycle.Icon size={12} aria-hidden />}
+          {lifecycle.label}
+        </span>
+        <ChevronRight size={13} className="shrink-0 text-muted-foreground/50" aria-hidden />
+      </Button>
+    );
+  }
 
   if (!hasChildren && !finalOutput) {
     return (
