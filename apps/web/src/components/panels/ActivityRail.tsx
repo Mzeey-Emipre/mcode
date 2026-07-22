@@ -39,6 +39,9 @@ const RAIL_EXPAND_DELAY_MS = 140;
 /** Grace period that keeps the rail open while the pointer moves between rows. */
 const RAIL_COLLAPSE_DELAY_MS = 250;
 
+/** Shared trailing anchor for expanded-rail actions. */
+const RAIL_TRAILING_CONTROL_CLASS = "absolute left-[7.75rem] top-0";
+
 /** Catalog metadata (product label + icon) for an openable tab, by store id. */
 function metaForTab(id: RightPanelTab): PanelTabType | undefined {
   return PANEL_TAB_TYPES.find((t) => t.id === id);
@@ -204,7 +207,8 @@ function RailTab({
         title={expanded ? undefined : `Close ${label}`}
         onClick={() => onClose(id)}
         className={cn(
-          "absolute left-[7.75rem] top-0 text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+          RAIL_TRAILING_CONTROL_CLASS,
+          "text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
           expanded
             ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
             : "pointer-events-none",
@@ -311,7 +315,8 @@ function BrowserPageRailTab({
           onClose(page.id);
         }}
         className={cn(
-          "absolute left-[7.75rem] top-0 text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+          RAIL_TRAILING_CONTROL_CLASS,
+          "text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
           expanded
             ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
             : "pointer-events-none",
@@ -593,7 +598,7 @@ export function ActivityRail({
       ref={railRef}
       data-testid="activity-rail"
       data-expanded={expanded ? "true" : "false"}
-      className="relative z-10 w-12 flex-none bg-background"
+      className="relative z-30 w-12 flex-none bg-background"
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onFocusCapture={onFocusCapture}
@@ -634,7 +639,8 @@ export function ActivityRail({
           size="icon-xs"
           onClick={onToggleMaximized}
           className={cn(
-            "absolute left-[7.75rem] top-0 text-muted-foreground/70 transition-[color,opacity] motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+            RAIL_TRAILING_CONTROL_CLASS,
+            "text-muted-foreground/70 transition-[color,opacity] motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
             expanded ? "opacity-100" : "pointer-events-none opacity-0",
           )}
           aria-label={maximized ? "Restore panel" : "Maximize panel"}

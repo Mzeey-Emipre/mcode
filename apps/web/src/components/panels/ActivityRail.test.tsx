@@ -1,11 +1,28 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BrowserTabSet } from "@mcode/contracts";
 import type { RightPanelTab } from "@/stores/diffStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { ActivityRail } from "./ActivityRail";
 
 const EXPECTED_EXPAND_DELAY_MS = 140;
 const EXPECTED_COLLAPSE_DELAY_MS = 250;
+
+const browserTabSet: BrowserTabSet = {
+  threadId: "thread-activity-rail",
+  activeTabId: "browser-page",
+  tabs: [
+    {
+      id: "browser-page",
+      url: "https://example.com",
+      title: "Example",
+      faviconUrl: null,
+      active: true,
+      threadId: "thread-activity-rail",
+      warm: true,
+    },
+  ],
+};
 
 const handlers = {
   onTogglePanel: vi.fn(),
@@ -70,6 +87,55 @@ describe("ActivityRail expansion", () => {
     act(() => vi.advanceTimersByTime(1));
     expect(rail).toHaveAttribute("data-expanded", "false");
     expect(usePreviewSuppressionStore.getState().count).toBe(0);
+  });
+
+  it("keeps a fixed collapsed footprint above right-panel content", () => {
+    renderRail();
+    const rail = screen.getByTestId("activity-rail");
+
+    expect(rail).toHaveClass("z-30", "w-12", "flex-none");
+    expect(rail.firstElementChild).toHaveClass("absolute", "w-12");
+
+    fireEvent.focus(screen.getByRole("button", { name: "Terminal" }));
+
+    expect(rail.firstElementChild).toHaveClass("w-40");
+    expect(rail).toHaveClass("w-12");
+  });
+
+  it("anchors tab, Browser-page, and maximize controls to the same trailing edge", () => {
+    const { rerender } = renderRail();
+    fireEvent.focus(screen.getByRole("button", { name: "Terminal" }));
+
+    expect(screen.getByRole("button", { name: "Close Terminal" })).toHaveClass(
+      "absolute",
+      "left-[7.75rem]",
+      "top-0",
+    );
+    expect(screen.getByTestId("rail-maximize-toggle")).toHaveClass(
+      "absolute",
+      "left-[7.75rem]",
+      "top-0",
+    );
+
+    rerender(
+      <ActivityRail
+        openTabs={["preview"]}
+        activeTab="preview"
+        scope="thread"
+        scopeProgress={{ done: 0, total: 0 }}
+        changesCount={0}
+        changesFresh={false}
+        browserTabSet={browserTabSet}
+        maximized={false}
+        {...handlers}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Close page Example" })).toHaveClass(
+      "absolute",
+      "left-[7.75rem]",
+      "top-0",
+    );
   });
 
   it("cancels expansion when the pointer only crosses the rail", () => {

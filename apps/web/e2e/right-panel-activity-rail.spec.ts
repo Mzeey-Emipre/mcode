@@ -49,6 +49,82 @@ function makeThread(id: string, title: string): Thread {
 
 const THREAD = makeThread("thread-activity-rail", "Rail Thread");
 
+/** Supplies the preview bridge methods used while Browser chrome is mounted. */
+async function injectPreviewBridge(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const noop = (): Promise<void> => Promise.resolve();
+    const captureFail = (): Promise<{ ok: false; error: string }> =>
+      Promise.resolve({ ok: false, error: "no-preview" });
+    const unsub = (): (() => void) => () => undefined;
+    const emptyTabSet = (threadId: string): unknown => ({
+      threadId,
+      activeTabId: null,
+      tabs: [],
+    });
+    const tabOk = (threadId: string): Promise<unknown> =>
+      Promise.resolve({ ok: true, data: emptyTabSet(threadId) });
+    const preview = {
+      sync: noop,
+      navigate: () => Promise.resolve({ ok: true } as const),
+      goBack: () => Promise.resolve(false),
+      goForward: () => Promise.resolve(false),
+      reload: noop,
+      forceReload: noop,
+      openExternal: noop,
+      openGuestDevTools: noop,
+      onShortcutFired: unsub,
+      getNavigationState: () =>
+        Promise.resolve({ canGoBack: false, canGoForward: false }),
+      capturePictureReference: captureFail,
+      capturePictureReferenceRegion: captureFail,
+      capturePictureReferenceElementPick: captureFail,
+      capturePageContext: captureFail,
+      releaseBrowserCaptureSpills: noop,
+      onPageStatus: (
+        callback: (status: {
+          url: string | null;
+          title: string | null;
+          favicon: string | null;
+          phase: "loaded";
+        }) => void,
+      ) => {
+        callback({ url: null, title: null, favicon: null, phase: "loaded" });
+        return () => undefined;
+      },
+      cancelCapture: noop,
+      tabs: {
+        list: (threadId: string) => tabOk(threadId),
+        create: (threadId: string) =>
+          Promise.resolve({
+            ok: true,
+            data: { tabSet: emptyTabSet(threadId), createdTabId: "mock-tab" },
+          }),
+        activate: (threadId: string) => tabOk(threadId),
+        close: (threadId: string) => tabOk(threadId),
+        onUpdated: unsub,
+      },
+      getPerfCounters: () =>
+        Promise.resolve({
+          ramKb: 0,
+          frameRateHz: 60,
+          gpuProcessActive: false,
+          allocationsPerSec: 0,
+        }),
+      adoptWebview: () => Promise.resolve({ ok: true } as const),
+      releaseWebview: () => Promise.resolve({ ok: true } as const),
+      design: {
+        setViewport: () =>
+          Promise.resolve({ ok: true, data: { width: 0, height: 0 } } as const),
+        resetViewport: noop,
+        setInspect: () => Promise.resolve({ ok: true } as const),
+        setAnnotationGuard: () => Promise.resolve({ ok: true } as const),
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).desktopBridge = { preview };
+  });
+}
+
 /**
  * Seeds the stores and opens the right panel, optionally with an active thread
  * and a list of tabs pre-opened (in order; the last becomes active). With no
@@ -199,6 +275,59 @@ test.describe("Right panel activity rail", () => {
     await expect
       .poll(() => panel.evaluate((element) => Math.round(element.getBoundingClientRect().width)))
       .toBe(Math.round(inlineWidth));
+  });
+
+  test("overlays Browser chrome without shifting content and aligns trailing controls", async ({
+    page,
+  }) => {
+    await injectPreviewBridge(page);
+    await seed(page, { tabs: ["preview", "terminal"] });
+
+    const rail = page.getByTestId("activity-rail");
+    const contentPane = rail.locator("xpath=following-sibling::*[1]");
+    const terminalClose = page.getByRole("button", { name: "Close Terminal" });
+    const maximizeToggle = page.getByTestId("rail-maximize-toggle");
+    const contentBefore = await contentPane.boundingBox();
+
+    await rail.hover({ position: { x: 24, y: 16 } });
+    await expect(rail).toHaveAttribute("data-expanded", "true");
+
+    const contentAfter = await contentPane.boundingBox();
+    expect(contentBefore).not.toBeNull();
+    expect(contentAfter).not.toBeNull();
+    expect(contentAfter!.x).toBeCloseTo(contentBefore!.x, 5);
+    expect(contentAfter!.width).toBeCloseTo(contentBefore!.width, 5);
+
+    const [closeBox, maximizeBox] = await Promise.all([
+      terminalClose.boundingBox(),
+      maximizeToggle.boundingBox(),
+    ]);
+    expect(closeBox).not.toBeNull();
+    expect(maximizeBox).not.toBeNull();
+    expect(Math.abs(closeBox!.x + closeBox!.width - (maximizeBox!.x + maximizeBox!.width))).toBeLessThanOrEqual(1);
+
+    await page.locator('[data-rail-tab="preview"]').click();
+    const browserHeader = page.getByTestId("browser-header");
+    await expect(browserHeader).toBeVisible();
+
+    const overlayCoverage = await page.evaluate(() => {
+      const railElement = document.querySelector<HTMLElement>('[data-testid="activity-rail"]');
+      const overlay = railElement?.firstElementChild as HTMLElement | null;
+      const header = document.querySelector<HTMLElement>('[data-testid="browser-header"]');
+      if (!railElement || !overlay || !header) return null;
+      const overlayRect = overlay.getBoundingClientRect();
+      const headerRect = header.getBoundingClientRect();
+      const overlapLeft = Math.max(overlayRect.left, headerRect.left);
+      const overlapRight = Math.min(overlayRect.right, headerRect.right);
+      const y = headerRect.top + headerRect.height / 2;
+      const sampleXs = [overlapLeft + 4, (overlapLeft + overlapRight) / 2, overlapRight - 4];
+      return {
+        overlayWidth: overlayRect.width,
+        covered: sampleXs.every((x) => railElement.contains(document.elementFromPoint(x, y))),
+      };
+    });
+
+    expect(overlayCoverage).toEqual({ overlayWidth: 160, covered: true });
   });
 
   test("add control: hidden when nothing is creatable", async ({ page }) => {
