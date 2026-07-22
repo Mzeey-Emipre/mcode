@@ -29,6 +29,13 @@ import {
   projectConversationCacheState,
   takePrefetchedHistoryPage,
 } from "@/lib/thread-hydrator/record-cache";
+import {
+  clearPendingTurnPersistMessage,
+  projectTurnResponse,
+  queuePendingTurnPersistMessage,
+  resolveTurnPersistLocalMessageId,
+  transferTurnResponseMetadata,
+} from "./turn-response-projection";
 import { shallowEqualBy } from "@/lib/shallowEqualBy";
 import { forgetScrollTop } from "@/components/chat/scrollPositionMemory";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
@@ -398,35 +405,6 @@ function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
  * payload. Never uses {@link ThreadRecord.currentTurnMessageId} alone because
  * auto-dequeue can advance it before the prior turn's async snapshot finishes.
  */
-function resolveTurnPersistLocalMessageId(
-  rec: ThreadRecord,
-  serverMessageId: string,
-): string {
-  if (rec.pendingTurnPersistLocalMessageId) {
-    return rec.pendingTurnPersistLocalMessageId;
-  }
-  for (const [localId, mappedServerId] of Object.entries(rec.serverMessageIds)) {
-    if (mappedServerId === serverMessageId) {
-      return localId;
-    }
-  }
-  if (rec.messages.some((m) => m.id === serverMessageId)) {
-    return serverMessageId;
-  }
-  return serverMessageId;
-}
-
-/** Queue the local assistant id until matching `turn.persisted` clears it. */
-function queuePendingTurnPersistLocalMessageId(
-  rec: ThreadRecord,
-  localMessageId: string,
-): string {
-  if (rec.pendingTurnPersistLocalMessageId) {
-    return rec.pendingTurnPersistLocalMessageId;
-  }
-  return localMessageId;
-}
-
 /**
  * Ensure the transcript contains an assistant row for persisted turn metadata.
  * Tools-only turns may materialize on the server without a client `session.message`.
@@ -1352,7 +1330,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streamingPreview: "",
           toolCalls: [],
           currentTurnMessageId: "",
-          pendingTurnPersistLocalMessageId: "",
+          pendingTurnPersistMessageIds: [],
           currentTurnResponseKey: "",
           assistantResponseKeys: {},
           oldestLoadedSequence: 0,
@@ -1970,6 +1948,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             lastSeg && lastSeg.endedAt === undefined
               ? [...segments.slice(0, -1), { ...lastSeg, endedAt: Date.now() }]
               : segments;
+          const responseProjection = isGoalNotice
+            ? { messages: [...rec.messages, message] }
+            : projectTurnResponse(rec, message, event.messageId);
+          const transferredMetadata = transferTurnResponseMetadata(
+            rec,
+            responseProjection.replacedMessageId,
+            message.id,
+          );
 
           const responseIdentityPatch: Partial<
             Pick<
@@ -1979,16 +1965,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           > = isGoalNotice
             ? {}
             : (() => {
-                const { responseKey, nextLiveKey } = claimTurnResponseKey(
-                  rec,
-                  threadId,
-                  message.id,
-                );
+                const existingResponseKey = transferredMetadata.assistantResponseKeys[message.id];
+                const { responseKey, nextLiveKey } = existingResponseKey
+                  ? {
+                      responseKey: existingResponseKey,
+                      nextLiveKey: rec.currentTurnResponseKey || createTurnResponseKey(threadId),
+                    }
+                  : claimTurnResponseKey(rec, threadId, message.id);
                 return {
                   currentTurnMessageId: message.id,
                   currentTurnResponseKey: nextLiveKey,
                   assistantResponseKeys: {
-                    ...rec.assistantResponseKeys,
+                    ...transferredMetadata.assistantResponseKeys,
                     [message.id]: responseKey,
                   },
                 };
@@ -2000,76 +1988,23 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             streamingPreview: "",
             thoughtSegments: closedSegments,
           };
-
-          if (rec.messages.some((m) => m.id === message.id)) {
-            return { records: patchThreadRecord(state.records, threadId, turnPatch) };
-          }
-
-          const last = rec.messages[rec.messages.length - 1];
-          if (
-            last?.role === "assistant" &&
-            last.content === content &&
-            last.id !== message.id
-          ) {
-            const previousId = last.id;
-            const nextPersistedToolCallCounts = { ...rec.persistedToolCallCounts };
-            if (previousId in nextPersistedToolCallCounts) {
-              nextPersistedToolCallCounts[message.id] = nextPersistedToolCallCounts[previousId];
-              delete nextPersistedToolCallCounts[previousId];
-            }
-
-            const nextPersistedFilesChanged = { ...rec.persistedFilesChanged };
-            if (previousId in nextPersistedFilesChanged) {
-              nextPersistedFilesChanged[message.id] = nextPersistedFilesChanged[previousId];
-              delete nextPersistedFilesChanged[previousId];
-            }
-
-            const nextServerMessageIds = { ...rec.serverMessageIds };
-            if (previousId in nextServerMessageIds) {
-              nextServerMessageIds[message.id] = nextServerMessageIds[previousId];
-              delete nextServerMessageIds[previousId];
-            }
-
-            const nextAssistantResponseKeys = { ...rec.assistantResponseKeys };
-            if (previousId in nextAssistantResponseKeys) {
-              nextAssistantResponseKeys[message.id] = nextAssistantResponseKeys[previousId];
-              delete nextAssistantResponseKeys[previousId];
-            }
-
-            const replaced = rec.messages.slice(0, -1).concat({
-              ...last,
-              id: message.id,
-              content: message.content,
-              tokens_used: message.tokens_used,
-              timestamp: message.timestamp,
-              attachments: message.attachments,
-            });
-            const { messages: capped, evicted } = capMessages(replaced);
-            const prunedAssistantResponseKeys = pruneAssistantResponseKeys(nextAssistantResponseKeys, capped);
-            return {
-              records: patchThreadRecord(state.records, threadId, {
-                ...turnPatch,
-                messages: capped,
-                persistedToolCallCounts: nextPersistedToolCallCounts,
-                persistedFilesChanged: nextPersistedFilesChanged,
-                serverMessageIds: nextServerMessageIds,
-                assistantResponseKeys: prunedAssistantResponseKeys,
-                latestTurnWithChanges:
-                  rec.latestTurnWithChanges === previousId ? message.id : rec.latestTurnWithChanges,
-                ...(evicted ? { hasMoreMessages: true } : {}),
-              }),
-            };
-          }
-
-          const { messages: capped, evicted } = capMessages([...rec.messages, message]);
+          const { messages: capped, evicted } = capMessages(responseProjection.messages);
           const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
-            responseIdentityPatch.assistantResponseKeys ?? rec.assistantResponseKeys,
+            responseIdentityPatch.assistantResponseKeys ?? transferredMetadata.assistantResponseKeys,
             capped,
           );
           return {
             records: patchThreadRecord(state.records, threadId, {
               ...turnPatch,
               messages: capped,
+              persistedToolCallCounts: transferredMetadata.persistedToolCallCounts,
+              persistedFilesChanged: transferredMetadata.persistedFilesChanged,
+              serverMessageIds: event.messageId
+                ? { ...transferredMetadata.serverMessageIds, [message.id]: event.messageId }
+                : transferredMetadata.serverMessageIds,
+              narrativeByMessage: transferredMetadata.narrativeByMessage,
+              latestTurnWithChanges: transferredMetadata.latestTurnWithChanges,
+              pendingTurnPersistMessageIds: transferredMetadata.pendingTurnPersistMessageIds,
               assistantResponseKeys: prunedAssistantResponseKeys,
               ...(evicted ? { hasMoreMessages: true } : {}),
             }),
@@ -2657,10 +2592,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             streaming: "",
             streamingPreview: "",
             currentTurnMessageId: message.id,
-            pendingTurnPersistLocalMessageId: queuePendingTurnPersistLocalMessageId(
-              rec,
-              message.id,
-            ),
+            ...queuePendingTurnPersistMessage(rec, message.id),
             currentTurnResponseKey: nextLiveKey,
             assistantResponseKeys: {
               ...rec.assistantResponseKeys,
@@ -2711,10 +2643,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             rateLimit: undefined,
             ...(rec.currentTurnMessageId
               ? {
-                  pendingTurnPersistLocalMessageId: queuePendingTurnPersistLocalMessageId(
-                    rec,
-                    rec.currentTurnMessageId,
-                  ),
+                  ...queuePendingTurnPersistMessage(rec, rec.currentTurnMessageId),
                 }
               : {}),
           };
@@ -3216,7 +3145,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const ownsLiveFileEffects = payload.turnId != null
         && payload.turnId === rec.fileEffectTurnId
         && (localMsgId === rec.currentTurnMessageId
-          || localMsgId === rec.pendingTurnPersistLocalMessageId);
+          || rec.pendingTurnPersistMessageIds.includes(localMsgId));
       const ensuredMessages =
         payload.filesChanged.length > 0 || payload.toolCallCount > 0
           ? ensureAssistantMessageForTurnPersist(rec, payload.threadId, localMsgId)
@@ -3241,10 +3170,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             ...rec.serverMessageIds,
             [localMsgId]: payload.messageId,
           },
-          pendingTurnPersistLocalMessageId:
-            rec.pendingTurnPersistLocalMessageId === localMsgId
-              ? ""
-              : rec.pendingTurnPersistLocalMessageId,
+          ...clearPendingTurnPersistMessage(rec, localMsgId),
           interruptStopFileNotice,
           awaitingUserStopPersist,
           ...(payload.fileEffects

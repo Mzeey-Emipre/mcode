@@ -56,7 +56,7 @@ describe("handleTurnPersisted", () => {
             content: "second answer",
           }),
         ],
-        pendingTurnPersistLocalMessageId: turnOneId,
+        pendingTurnPersistMessageIds: [turnOneId],
         currentTurnMessageId: turnTwoId,
       }),
     });
@@ -73,7 +73,7 @@ describe("handleTurnPersisted", () => {
     ]);
     expect(readThreadField(THREAD_ID, (r) => r.persistedFilesChanged[turnTwoId])).toBeUndefined();
     expect(readThreadField(THREAD_ID, (r) => r.serverMessageIds[turnOneId])).toBe("server-turn-1");
-    expect(readThreadField(THREAD_ID, (r) => r.pendingTurnPersistLocalMessageId)).toBe("");
+    expect(readThreadField(THREAD_ID, (r) => r.pendingTurnPersistMessageIds)).toEqual([]);
   });
 
   it("materializes an empty assistant row for tools-only turns", () => {
@@ -192,7 +192,7 @@ describe("handleTurnPersisted", () => {
     useThreadStore.setState({
       records: seedThreadRecord(THREAD_ID, {
         currentTurnMessageId: "assistant-turn-2",
-        pendingTurnPersistLocalMessageId: "assistant-turn-1",
+        pendingTurnPersistMessageIds: ["assistant-turn-1"],
         fileEffectTurnId: "turn-2",
         fileEffectSummary: {
           revision: 1,

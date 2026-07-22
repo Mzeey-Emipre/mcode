@@ -217,6 +217,7 @@ describe("duplicate message prevention", () => {
       records: new Map<string, ThreadRecord>([
         ["thread-1", {
           ...createEmptyThreadRecord(),
+          currentTurnMessageId: "client-provisional-id",
           messages: [
             {
               id: "client-provisional-id",
