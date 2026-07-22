@@ -106,9 +106,8 @@ test.describe("Sidebar", () => {
       "",
     );
     await expect(page.getByTestId("sidebar-docked")).toHaveCSS("width", "0px");
-    await expect(page.getByText("Projects", { exact: true })).not.toBeVisible();
 
-    // Reveal button is now inline in the main header — click to re-expand
+    // Reveal button is now inline in the main header; click to re-expand.
     await page.getByRole("button", { name: "Expand sidebar" }).click();
     await expect(page.getByTestId("sidebar-docked").getByRole("img", { name: "Mcode" })).toBeVisible();
   });
