@@ -96,11 +96,18 @@ test.describe("Sidebar", () => {
     // Collapse the sidebar
     await page.getByRole("button", { name: "Collapse sidebar" }).click();
 
-    // The sidebar unmounts on collapse so brand and project tree are gone
-    await expect(page.getByTestId("sidebar-docked")).not.toBeVisible();
-    await expect(page.getByText("Projects", { exact: true })).not.toBeVisible();
+    // The retained shell animates closed, then remains inert and hidden.
+    await expect(page.getByTestId("sidebar-docked")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    await expect(page.getByTestId("sidebar-docked")).toHaveAttribute(
+      "inert",
+      "",
+    );
+    await expect(page.getByTestId("sidebar-docked")).toHaveCSS("width", "0px");
 
-    // Reveal button is now inline in the main header — click to re-expand
+    // Reveal button is now inline in the main header; click to re-expand.
     await page.getByRole("button", { name: "Expand sidebar" }).click();
     await expect(page.getByTestId("sidebar-docked").getByRole("img", { name: "Mcode" })).toBeVisible();
   });
