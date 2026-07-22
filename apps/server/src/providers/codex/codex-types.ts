@@ -320,7 +320,7 @@ export interface TurnPlanUpdatedPayload {
  *
  * Known types (from codex-rs/app-server-protocol):
  *   userMessage, agentMessage, commandExecution, fileChange, mcpToolCall,
- *   dynamicToolCall, collabAgentToolCall, reasoning, webSearch, plan,
+ *   dynamicToolCall, collabAgentToolCall, subAgentActivity, reasoning, webSearch, plan,
  *   imageView, imageGeneration, contextCompaction, enteredReviewMode, exitedReviewMode
  */
 export interface CompletedItem {
@@ -347,6 +347,11 @@ export interface CompletedItem {
   arguments?: string | Record<string, unknown>;
   result?: string | null;
   error?: string | null;
+
+  // subAgentActivity
+  agentThreadId?: string;
+  agentPath?: string;
+  kind?: string;
 
   /** `item/completed` with `type: "reasoning"` — human-readable summary lines */
   summary?: string[];

@@ -71,6 +71,57 @@ describe("NarrativeStore Move/Rename persistence sanitization", () => {
   );
 });
 
+describe("NarrativeStore sub-agent identity persistence", () => {
+  it("persists bounded explicit identity separately from delegated task text", () => {
+    let persisted: Array<{ displayName?: string; inputSummary?: string }> = [];
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      {
+        bulkCreate: (records: Array<{ displayName?: string; inputSummary?: string }>) => {
+          persisted = records;
+        },
+      } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: {
+        agentPath: `/root/${"x".repeat(120)}`,
+        description: "Inspect private task details",
+      },
+    });
+
+    store.persistNarrative("thread-1", "m1", "done", "completed");
+
+    expect(persisted[0]?.displayName).toHaveLength(96);
+    expect(persisted[0]?.displayName?.endsWith("…")).toBe(true);
+    expect(persisted[0]?.displayName).not.toContain("Inspect private task details");
+    expect(persisted[0]?.inputSummary).toContain("Inspect private task details");
+  });
+
+  it("does not promote prompt or description to display identity", () => {
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      { bulkCreate: () => undefined } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: { prompt: "Private prompt", description: "Private task" },
+    });
+
+    expect(store.getBufferedToolCalls("thread-1")[0]?.displayName).toBeUndefined();
+  });
+});
+
 describe("NarrativeStore.load (read seam)", () => {
   let db: Database.Database;
   let store: NarrativeStore;

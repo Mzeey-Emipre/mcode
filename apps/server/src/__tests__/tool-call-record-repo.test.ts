@@ -82,6 +82,7 @@ describe("ToolCallRecordRepo", () => {
     const input: CreateToolCallRecordInput = {
       messageId,
       toolName: "Read",
+      displayName: "Explorer",
       inputSummary: "file.ts",
       outputSummary: "200 lines",
       outputTruncated: true,
@@ -97,6 +98,7 @@ describe("ToolCallRecordRepo", () => {
     expect(record.id).toBeDefined();
     expect(record.message_id).toBe(messageId);
     expect(record.tool_name).toBe("Read");
+    expect(record.display_name).toBe("Explorer");
     expect(record.input_summary).toBe("file.ts");
     expect(record.output_summary).toBe("200 lines");
     expect(record.output_truncated).toBe(1);
@@ -111,6 +113,7 @@ describe("ToolCallRecordRepo", () => {
     const records = repo.listByMessage(messageId);
     expect(records).toHaveLength(1);
     expect(records[0]!.id).toBe(record.id);
+    expect(records[0]!.display_name).toBe("Explorer");
     expect(records[0]!.output_truncated).toBe(1);
     expect(records[0]!.exit_code).toBe(1);
   });

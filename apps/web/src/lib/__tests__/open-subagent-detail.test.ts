@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useUiStore } from "@/stores/uiStore";
 
 const mocks = vi.hoisted(() => ({ showRightPanelAdaptive: vi.fn() }));
 vi.mock("@/lib/right-panel-layout", () => ({ showRightPanelAdaptive: mocks.showRightPanelAdaptive }));
 
-import { openSubagentDetail } from "../open-subagent-detail";
+import { openSubagentDetail, openSubagentsPanel } from "../open-subagent-detail";
 
 describe("openSubagentDetail", () => {
   beforeEach(() => {
@@ -17,6 +18,7 @@ describe("openSubagentDetail", () => {
       subagentRosterTabByThread: {},
       subagentDetailByThread: {},
     });
+    useUiStore.setState({ rightPanelMaximized: false, rightPanelMaximizedByLayout: false });
   });
 
   it("opens Subagents and selects the matching lifecycle detail", () => {
@@ -33,11 +35,28 @@ describe("openSubagentDetail", () => {
       openTabs: ["subagents"],
     });
     expect(mocks.showRightPanelAdaptive).toHaveBeenCalledWith("workspace-1", "thread-1");
+    expect(useUiStore.getState()).toMatchObject({
+      rightPanelMaximized: true,
+      rightPanelMaximizedByLayout: false,
+    });
   });
 
   it("does nothing without an active thread scope", () => {
     useWorkspaceStore.setState({ activeThreadId: null });
     expect(openSubagentDetail("agent-1", "active")).toBe(false);
     expect(mocks.showRightPanelAdaptive).not.toHaveBeenCalled();
+  });
+
+  it("opens the Subagents roster without selecting a detail", () => {
+    expect(openSubagentsPanel()).toBe(true);
+    expect(useDiffStore.getState().subagentDetailByThread["thread-1"]).toBeUndefined();
+    expect(useDiffStore.getState().getRightPanel("workspace-1", "thread-1")).toMatchObject({
+      activeTab: "subagents",
+      openTabs: ["subagents"],
+    });
+    expect(useUiStore.getState()).toMatchObject({
+      rightPanelMaximized: true,
+      rightPanelMaximizedByLayout: false,
+    });
   });
 });

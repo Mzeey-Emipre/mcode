@@ -51,6 +51,7 @@ describe("projectSubagents", () => {
       active: [expect.objectContaining({
         id: "agent-a",
         identity: "Security reviewer",
+        hasExplicitIdentity: true,
         task: "Review auth changes",
         activity: "Read file: auth.ts",
         activityAt: 8_000,
@@ -61,6 +62,7 @@ describe("projectSubagents", () => {
     expect(roster.active[0]?.detail).toMatchObject({
       subtreeIds: ["agent-a", "child-a"],
       activity: [expect.objectContaining({ id: "child-a", depth: 1, label: "Read file" })],
+      transcript: [expect.objectContaining({ id: "child-a", parentToolCallId: undefined })],
     });
   });
 
@@ -125,7 +127,8 @@ describe("projectSubagents", () => {
     expect(roster.finished).toHaveLength(1);
     expect(roster.finished[0]).toMatchObject({
       id: "agent-1",
-      identity: "Persisted task",
+      identity: "Subagent",
+      hasExplicitIdentity: false,
       task: "Persisted task",
       activity: "Persisted result",
     });
@@ -138,7 +141,8 @@ describe("projectSubagents", () => {
 
     expect(roster.finished).toEqual([expect.objectContaining({
       id: "hydrated",
-      identity: "Inspect the persisted call",
+      identity: "Subagent",
+      hasExplicitIdentity: false,
       task: "Inspect the persisted call",
       status: "failed",
     })]);
@@ -154,8 +158,8 @@ describe("projectSubagents", () => {
 
     expect(roster.active.map((row) => row.identity)).toEqual([
       "Repository reviewer",
-      "Cursor delegated task",
-      "Review Codex collaboration events",
+      "general",
+      "Subagent",
       "Subagent",
     ]);
   });
@@ -182,6 +186,26 @@ describe("projectSubagents", () => {
     }
 
     expect(projectSubagents(calls, []).active[0]?.activityAt).toBe(129);
+  });
+
+  it("keeps explicit Subagent identity provenance distinct from the fallback label", () => {
+    const live = projectSubagents([
+      call({ id: "unnamed", toolName: "Agent", toolInput: {} }),
+      call({ id: "explicit", toolName: "Agent", toolInput: { agentName: "Subagent" } }),
+    ], []);
+    const hydrated = projectSubagents(undefined, [[
+      record({ id: "legacy" }),
+      record({ id: "named", display_name: "Subagent", sort_order: 1 }),
+    ]]);
+
+    expect(live.active.map(({ identity, hasExplicitIdentity }) => ({ identity, hasExplicitIdentity }))).toEqual([
+      { identity: "Subagent", hasExplicitIdentity: false },
+      { identity: "Subagent", hasExplicitIdentity: true },
+    ]);
+    expect(hydrated.finished.map(({ identity, hasExplicitIdentity }) => ({ identity, hasExplicitIdentity }))).toEqual([
+      { identity: "Subagent", hasExplicitIdentity: false },
+      { identity: "Subagent", hasExplicitIdentity: true },
+    ]);
   });
 
   it("shows file effects only when every recorded tool id belongs to the subtree", () => {
@@ -230,5 +254,12 @@ describe("projectSubagents", () => {
       activityTruncated: true,
     });
     expect(detail?.activity).toHaveLength(32);
+    expect(detail?.transcript).toHaveLength(32);
+    expect(detail?.transcript[0]).toMatchObject({
+      id: "child-0",
+      toolInput: { _summary: "file-0.ts" },
+      isComplete: true,
+    });
+    expect(detail?.transcript[0]).not.toHaveProperty("parentToolCallId");
   });
 });

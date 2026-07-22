@@ -1008,6 +1008,282 @@ describe("CodexEventMapper", () => {
     expect(events).toEqual([]);
   });
 
+  it("maps native sub-agent activity and attributes child file changes", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "call-explorer",
+          agentThreadId: "child-thread",
+          agentPath: "/root/explorer",
+          kind: "started",
+        },
+      },
+    });
+    const childStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "child-thread",
+        item: {
+          type: "fileChange",
+          id: "child-edit",
+          changes: [{ path: "src/example.ts", kind: "update" }],
+        },
+      },
+    });
+    const childCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-thread",
+        item: {
+          type: "fileChange",
+          id: "child-edit",
+          changes: [{ path: "src/example.ts", kind: "update" }],
+        },
+      },
+    });
+
+    expect(started).toEqual([{
+      type: "toolUse",
+      threadId: "test-thread",
+      toolCallId: "call-explorer",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "explorer",
+        agentPath: "/root/explorer",
+        description: "explorer",
+      },
+    }]);
+    expect(childStarted).toEqual([
+      expect.objectContaining({
+        type: "toolUse",
+        toolCallId: "child-edit",
+        parentToolCallId: "call-explorer",
+      }),
+    ]);
+    expect(childCompleted).toEqual([
+      expect.objectContaining({
+        type: "toolResult",
+        toolCallId: "child-edit",
+      }),
+    ]);
+  });
+
+  it("does not duplicate native sub-agent activity rows", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const activity = {
+      type: "subAgentActivity",
+      id: "call-explorer",
+      agentThreadId: "child-thread",
+      agentPath: "/root/explorer",
+      kind: "started",
+    };
+
+    const first = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { threadId: "main-thread", item: activity },
+    });
+    const duplicate = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: { threadId: "main-thread", item: activity },
+    });
+    const interacted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: { ...activity, kind: "interacted" },
+      },
+    });
+    const completed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { threadId: "main-thread", item: activity },
+    });
+
+    expect(first).toHaveLength(1);
+    expect(duplicate).toEqual([]);
+    expect(interacted).toEqual([]);
+    expect(completed).toEqual([]);
+  });
+
+  it("maps completed-only native sub-agent activity before child file changes", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const activity = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "call-explorer",
+          agentThreadId: "child-thread",
+          agentPath: "/root/explorer",
+          kind: "started",
+        },
+      },
+    });
+    const childStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "child-thread",
+        item: {
+          type: "fileChange",
+          id: "child-edit",
+          changes: [{ path: "src/example.ts", kind: "update" }],
+        },
+      },
+    });
+    const childCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-thread",
+        item: {
+          type: "fileChange",
+          id: "child-edit",
+          changes: [{ path: "src/example.ts", kind: "update" }],
+        },
+      },
+    });
+
+    expect(activity).toEqual([
+      expect.objectContaining({
+        type: "toolUse",
+        toolCallId: "call-explorer",
+        toolName: "Agent",
+      }),
+    ]);
+    expect(childStarted).toEqual([
+      expect.objectContaining({
+        type: "toolUse",
+        toolCallId: "child-edit",
+        parentToolCallId: "call-explorer",
+      }),
+    ]);
+    expect(childCompleted).toEqual([
+      expect.objectContaining({
+        type: "toolResult",
+        toolCallId: "child-edit",
+      }),
+    ]);
+  });
+
+  it("does not duplicate a legacy collab row when same-ID native activity follows", () => {
+    const collab = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "shared-agent",
+          tool: "spawnAgent",
+        },
+      },
+    });
+    const activity = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        item: {
+          type: "subAgentActivity",
+          id: "shared-agent",
+          agentThreadId: "child-thread",
+          agentPath: "/root/explorer",
+          kind: "started",
+        },
+      },
+    });
+
+    expect(collab).toEqual([
+      expect.objectContaining({ type: "toolUse", toolCallId: "shared-agent", toolName: "Agent" }),
+    ]);
+    expect(activity).toEqual([]);
+  });
+
+  it("does not duplicate native activity when same-ID collab completion follows", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const activity = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "shared-agent",
+          agentThreadId: "child-thread",
+          agentPath: "/root/explorer",
+          kind: "started",
+        },
+      },
+    });
+    const collab = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "shared-agent",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-thread"],
+        },
+      },
+    });
+
+    expect(activity).toEqual([
+      expect.objectContaining({ type: "toolUse", toolCallId: "shared-agent", toolName: "Agent" }),
+    ]);
+    expect(collab).toEqual([]);
+  });
+
+  it("keeps native activity deduplicated after same-ID collab completion", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const activity = {
+      type: "subAgentActivity",
+      id: "shared-agent",
+      agentThreadId: "child-thread",
+      agentPath: "/root/explorer",
+      kind: "started",
+    };
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { threadId: "main-thread", item: activity },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "shared-agent",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-thread"],
+        },
+      },
+    });
+
+    const duplicate = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { threadId: "main-thread", item: activity },
+    });
+
+    expect(duplicate).toEqual([]);
+  });
+
   it("suppresses wait rows and completes spawnAgent from wait child state", () => {
     const started = mapper.mapNotification({
       jsonrpc: "2.0",

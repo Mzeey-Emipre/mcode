@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildPersistedNarrativeItems,
   recordToHookExecution,
+  recordToToolCall,
 } from "./build-persisted-narrative";
 import type {
   ToolCallRecord,
@@ -55,6 +56,18 @@ function makeHook(over: Partial<HookExecutionRecord> = {}): HookExecutionRecord 
 }
 
 describe("buildPersistedNarrativeItems", () => {
+  it("hydrates persisted Agent identity separately from its task summary", () => {
+    const call = recordToToolCall(makeTool({
+      tool_name: "Agent",
+      display_name: "Explorer",
+      input_summary: "Inspect the private task",
+    }));
+
+    expect(call.toolInput).toEqual({
+      _summary: "Inspect the private task",
+      agentName: "Explorer",
+    });
+  });
   it("empty input returns no items", () => {
     expect(buildPersistedNarrativeItems({ tools: [], thoughts: [], hooks: [] })).toEqual([]);
   });

@@ -58,6 +58,11 @@
   --diff-remove-gutter: oklch(0.78 0.11 25);
   --diff-remove-text: oklch(0.48 0.15 25);
   --diff-remove-strong: oklch(0.55 0.17 25);
+  --subagent-identity-1: oklch(0.52 0.17 75);
+  --subagent-identity-2: oklch(0.5 0.16 300);
+  --subagent-identity-3: oklch(0.48 0.14 185);
+  --subagent-identity-4: oklch(0.5 0.16 340);
+  --subagent-identity-5: oklch(0.48 0.14 145);
 }
 
 .dark {
@@ -108,6 +113,17 @@
   --diff-remove-gutter: oklch(0.55 0.13 25);
   --diff-remove-text: oklch(0.86 0.09 25);
   --diff-remove-strong: oklch(0.78 0.13 25);
+  --subagent-identity-1: oklch(0.8 0.16 85);
+  --subagent-identity-2: oklch(0.72 0.16 300);
+  --subagent-identity-3: oklch(0.76 0.13 185);
+  --subagent-identity-4: oklch(0.72 0.16 340);
+  --subagent-identity-5: oklch(0.78 0.13 145);
+}
+
+.subagent-identity-glyph {
+  color: var(--subagent-identity-color);
+  background-color: color-mix(in oklch, var(--subagent-identity-color), transparent 86%);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--subagent-identity-color), transparent 70%);
 }
 
 @theme inline {

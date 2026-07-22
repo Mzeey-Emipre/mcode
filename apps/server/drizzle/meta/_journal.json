@@ -176,6 +176,13 @@
       "when": 1784563485483,
       "tag": "0023_grey_wildside",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1784724410621,
+      "tag": "0024_smart_glorian",
+      "breakpoints": true
     }
   ]
 }

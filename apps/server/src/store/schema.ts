@@ -181,6 +181,7 @@ export const toolCallRecords = sqliteTable(
       .references(() => messages.id, { onDelete: "cascade" }),
     parentToolCallId: text("parent_tool_call_id"),
     toolName: text("tool_name").notNull(),
+    displayName: text("display_name"),
     inputSummary: text("input_summary").notNull().default(""),
     outputSummary: text("output_summary").notNull().default(""),
     outputTruncated: integer("output_truncated").notNull().default(0),

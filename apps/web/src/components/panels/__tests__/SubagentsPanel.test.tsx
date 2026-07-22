@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolCall, ToolCallRecord } from "@/transport/types";
 import { useDiffStore } from "@/stores/diffStore";
@@ -35,6 +35,7 @@ function record(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
     message_id: "message-1",
     parent_tool_call_id: null,
     tool_name: "Agent",
+    display_name: "Implementation worker",
     input_summary: "Build the roster",
     output_summary: "Roster implementation complete",
     status: "completed",
@@ -45,8 +46,8 @@ function record(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
   };
 }
 
-function setThread(threadId: string, toolCalls: ToolCall[] = [], tools: ToolCallRecord[] = []): void {
-  state.records[threadId] = {
+function setThread(toolCalls: ToolCall[] = [], tools: ToolCallRecord[] = []): void {
+  state.records["thread-1"] = {
     toolCalls,
     narrativeByMessage: tools.length > 0 ? { "message-1": { tools } } : {},
   };
@@ -55,117 +56,88 @@ function setThread(threadId: string, toolCalls: ToolCall[] = [], tools: ToolCall
 describe("SubagentsPanel", () => {
   beforeEach(() => {
     state.records = {};
-    useDiffStore.setState({ subagentRosterTabByThread: {}, subagentDetailByThread: {} });
+    useDiffStore.setState({ subagentDetailByThread: {} });
   });
 
-  it("selects Active first while work runs and exposes rows, counts, and semantic running text", () => {
-    setThread("thread-1", [agent()]);
+  it("renders Active and Done on one continuous page without tabs", () => {
+    setThread([agent()], [record({ id: "finished-agent" })]);
     render(<SubagentsPanel threadId="thread-1" />);
 
-    expect(screen.getByRole("tab", { name: /active 1/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: /finished 0/i })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("heading", { name: "Active · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Done · 1" })).toBeInTheDocument();
     expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Implementation worker");
-    expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Build the roster");
-    expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("Running subagent")).toHaveClass("sr-only");
+    expect(screen.getByTestId("subagent-finished-row")).toHaveTextContent("Roster implementation complete");
+    expect(screen.getByTestId("subagent-finished-row")).not.toHaveTextContent("Build the roster");
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   });
 
-  it("renders completed, failed, and cancelled rows with explicit terminal status", () => {
-    setThread("thread-1", [], [
-      record({ id: "completed", status: "completed" }),
+  it("omits empty sections and shows one whole-panel empty state only when both are empty", () => {
+    setThread([agent()]);
+    const { rerender } = render(<SubagentsPanel threadId="thread-1" />);
+    expect(screen.getByRole("heading", { name: "Active · 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Done/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("subagents-empty")).not.toBeInTheDocument();
+
+    setThread();
+    rerender(<SubagentsPanel threadId="thread-1" />);
+    expect(screen.getByTestId("subagents-empty")).toHaveTextContent("Sub-agents will appear");
+    expect(screen.queryByRole("heading", { name: /Active/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Done/ })).not.toBeInTheDocument();
+  });
+
+  it("renders explicit finished, errored, and cancelled statuses", () => {
+    setThread([], [
+      record({ id: "completed" }),
       record({ id: "failed", status: "failed", output_summary: "Command failed" }),
       record({ id: "cancelled", status: "cancelled" }),
     ]);
     render(<SubagentsPanel threadId="thread-1" />);
 
-    expect(screen.getByRole("tab", { name: /finished 3/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getAllByTestId("subagent-finished-row")).toHaveLength(3);
-    expect(screen.getByText("Completed")).toHaveClass("text-[var(--diff-add-strong)]");
-    expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.getByText("Cancelled")).toBeInTheDocument();
-    expect(screen.getByText("Command failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Implementation worker details, Finished/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Implementation worker details, Errored/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Implementation worker details, Cancelled/ })).toBeInTheDocument();
   });
 
-  it("moves a settled Agent from Active to Finished once as the persisted narrative arrives", () => {
-    setThread("thread-1", [agent()]);
-    const { rerender } = render(<SubagentsPanel threadId="thread-1" />);
-
-    setThread("thread-1", [agent({ isComplete: true })], [record()]);
-    rerender(<SubagentsPanel threadId="thread-1" />);
-    expect(screen.getByRole("tab", { name: /active 0/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("subagents-active-empty")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("tab", { name: /finished 1/i }));
-    expect(screen.getAllByTestId("subagent-finished-row")).toHaveLength(1);
-  });
-
-  it("restores each thread's roster choice after unmount and keeps thread rows isolated", () => {
-    setThread("thread-1", [], [record({ id: "thread-1-finished" })]);
-    setThread("thread-2", [agent({ id: "thread-2-active", toolInput: { description: "Review thread two" } })]);
-    const first = render(<SubagentsPanel threadId="thread-1" />);
-
-    fireEvent.click(screen.getByRole("tab", { name: /active 0/i }));
-    expect(screen.getByTestId("subagents-active-empty")).toBeInTheDocument();
-    first.unmount();
-
-    const second = render(<SubagentsPanel threadId="thread-2" />);
-    expect(screen.getByRole("tab", { name: /active 1/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Review thread two");
-    fireEvent.click(screen.getByRole("tab", { name: /finished 0/i }));
-    second.unmount();
-
-    render(<SubagentsPanel threadId="thread-1" />);
-    expect(screen.getByRole("tab", { name: /active 0/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("subagents-active-empty")).toBeInTheDocument();
-    expect(screen.queryByText("Review thread two")).not.toBeInTheDocument();
-  });
-
-  it("keeps a selected tab when counts change and gives each empty state distinct guidance", () => {
-    setThread("thread-1");
-    const { rerender } = render(<SubagentsPanel threadId="thread-1" />);
-
-    expect(screen.getByTestId("subagents-finished-empty")).toHaveTextContent("loaded conversation");
-    fireEvent.click(screen.getByRole("tab", { name: /active 0/i }));
-    expect(screen.getByTestId("subagents-active-empty")).toHaveTextContent("running");
-
-    setThread("thread-1", [], [record()]);
-    rerender(<SubagentsPanel threadId="thread-1" />);
-    expect(screen.getByRole("tab", { name: /active 0/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("subagents-active-empty")).toBeInTheDocument();
-  });
-
-  it("supports arrow-key tab selection", () => {
-    setThread("thread-1");
+  it("keeps legacy nameless glyphs neutral and explicit Subagent identities colored", () => {
+    setThread([], [
+      record({ id: "legacy", display_name: null }),
+      record({ id: "explicit", display_name: "Subagent", sort_order: 1 }),
+    ]);
     render(<SubagentsPanel threadId="thread-1" />);
 
-    const finished = screen.getByRole("tab", { name: /finished 0/i });
-    fireEvent.keyDown(finished, { key: "ArrowLeft" });
-
-    const active = screen.getByRole("tab", { name: /active 0/i });
-    expect(active).toHaveFocus();
-    expect(active).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", active.id);
+    const rows = screen.getAllByTestId("subagent-finished-row");
+    const legacyGlyph = rows[0]?.querySelector("[data-subagent-identity-glyph]");
+    const explicitGlyph = rows[1]?.querySelector("[data-subagent-identity-glyph]");
+    expect(legacyGlyph).not.toHaveAttribute("data-subagent-palette");
+    expect(legacyGlyph).not.toHaveAttribute("style");
+    expect(explicitGlyph).toHaveAttribute("data-subagent-palette");
+    expect(explicitGlyph?.getAttribute("style")).toContain("--subagent-identity-color");
   });
 
-  it("opens a roster row in the same panel and returns to its lifecycle tab", () => {
-    setThread("thread-1", [agent({ output: "**Done**", isComplete: true })]);
+  it("opens detail with the shared narrative and response primitives, then restores row focus", async () => {
+    setThread([agent({ output: "**Done**", isComplete: true })], [
+      record({ id: "child-read", parent_tool_call_id: "agent-1", tool_name: "Read", input_summary: "src/index.ts", output_summary: "read", sort_order: 1 }),
+    ]);
     render(<SubagentsPanel threadId="thread-1" />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
+    const row = screen.getByRole("button", { name: /Open Implementation worker details/ });
+    fireEvent.click(row);
     expect(screen.getByRole("region", { name: /Implementation worker subagent details/ })).toBeInTheDocument();
-    expect(screen.getByText("Delegated task")).toBeInTheDocument();
+    expect(screen.queryByText("Build the roster")).not.toBeInTheDocument();
+    expect(screen.queryByText("Delegated task")).not.toBeInTheDocument();
+    expect(screen.queryByText("Activity")).not.toBeInTheDocument();
+    expect(screen.queryByText("Result")).not.toBeInTheDocument();
     expect(screen.getByText("**Done**")).toBeInTheDocument();
+    expect(screen.getByTestId("subagent-response-text")).toHaveClass("text-sm", "text-foreground");
 
     fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
-    expect(screen.getByRole("tab", { name: /finished 1/i })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Open Implementation worker details/ })).toHaveFocus();
+    });
   });
 
-  it("shows hydrated truncation evidence and discloses bounded activity", () => {
-    const parent = record({
-      output_truncated: 1,
-      output_total_bytes: 524_288,
-      output_artifact_path: "C:\\artifacts\\agent-1.txt",
-    });
+  it("shows hydrated truncation and bounded transcript notices", () => {
     const children = Array.from({ length: 40 }, (_, index) => record({
       id: `child-${index}`,
       parent_tool_call_id: "agent-1",
@@ -174,16 +146,11 @@ describe("SubagentsPanel", () => {
       output_summary: "",
       sort_order: index + 1,
     }));
-    setThread("thread-1", [], [parent, ...children]);
+    setThread([], [record({ output_truncated: 1, output_total_bytes: 524_288, output_artifact_path: "C:\\artifacts\\agent-1.txt" }), ...children]);
     render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
 
-    fireEvent.click(screen.getByRole("button", { name: /Open Build the roster details/ }));
-
-    expect(screen.getByLabelText(/Output truncated · 512 KB total · full output saved/)).toHaveAttribute(
-      "title",
-      "C:\\artifacts\\agent-1.txt",
-    );
-    expect(screen.getByRole("note")).toHaveTextContent("Additional entries are omitted");
-    expect(screen.getByRole("button", { name: "Show all 32" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText(/Output truncated · 512 KB total · full output saved/)).toHaveAttribute("title", "C:\\artifacts\\agent-1.txt");
+    expect(screen.getByRole("note")).toHaveTextContent("Additional child activity was omitted");
   });
 });

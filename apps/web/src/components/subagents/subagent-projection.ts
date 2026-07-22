@@ -1,7 +1,7 @@
 import { extractSubagentDescription } from "@/components/chat/narrative/extract-subagent-description";
 import { extractToolInputDetail } from "@/components/chat/narrative/tool-detail";
 import { TOOL_LABELS, resolveToolName } from "@/components/chat/tool-renderers/constants";
-import type { FileEffect, TurnFileEffectSummary } from "@mcode/contracts";
+import { resolveSubagentDisplayName, type FileEffect, type TurnFileEffectSummary } from "@mcode/contracts";
 import type { ToolCall, ToolCallRecord } from "@/transport/types";
 
 /** Maximum live graph nodes inspected beneath a single top-level subagent. */
@@ -30,6 +30,8 @@ export interface SubagentDetail {
   readonly outputTotalBytes?: number;
   readonly outputArtifactPath?: string;
   readonly activity: readonly SubagentDetailActivity[];
+  /** Descendant calls rebased for rendering through the main narrative flow. */
+  readonly transcript: readonly ToolCall[];
   readonly activityTruncated: boolean;
   readonly subtreeIds: readonly string[];
   readonly fileEffects: readonly FileEffect[];
@@ -44,6 +46,8 @@ interface SubagentRow {
   readonly id: string;
   /** Best surviving display identity for the delegated agent. */
   readonly identity: string;
+  /** Whether the identity came from explicit provider or persisted metadata. */
+  readonly hasExplicitIdentity: boolean;
   /** Stable delegated-task description. */
   readonly task: string;
   /** Latest provider-supplied activity or terminal result summary. */
@@ -87,26 +91,54 @@ function boundedDisplayText(value: string, maxLength: number): string {
   return `${trimmed.slice(0, maxLength - 1)}…`;
 }
 
-function subagentIdentity(agent: ToolCall): string {
-  const input = agent.toolInput;
-  const providerName = nonEmptyString(input.agentName)
-    ?? nonEmptyString(input.subagentName)
-    ?? nonEmptyString(input.name);
-  if (providerName) return boundedDisplayText(providerName, MAX_IDENTITY_LENGTH);
-
-  const task = extractSubagentDescription(agent);
-  return task === "Running subagent" || task === "Subagent task"
-    ? "Subagent"
-    : boundedDisplayText(task, MAX_IDENTITY_LENGTH);
+function subagentIdentity(agent: ToolCall): { identity: string; hasExplicitIdentity: boolean } {
+  const identity = resolveSubagentDisplayName(agent.toolInput);
+  return {
+    identity: identity ?? "Subagent",
+    hasExplicitIdentity: identity !== undefined,
+  };
 }
 
 function hydratedTask(record: ToolCallRecord): string {
   return boundedDisplayText(nonEmptyString(record.input_summary) ?? "Subagent task", MAX_TASK_LENGTH);
 }
 
-function hydratedIdentity(record: ToolCallRecord): string {
-  const task = hydratedTask(record);
-  return task === "Subagent task" ? "Subagent" : boundedDisplayText(task, MAX_IDENTITY_LENGTH);
+function hydratedIdentity(record: ToolCallRecord): { identity: string; hasExplicitIdentity: boolean } {
+  const identity = nonEmptyString(record.display_name);
+  return {
+    identity: boundedDisplayText(identity ?? "Subagent", MAX_IDENTITY_LENGTH),
+    hasExplicitIdentity: identity !== undefined,
+  };
+}
+
+function persistedRecordToToolCall(record: ToolCallRecord, rootId: string): ToolCall {
+  const startedAt = parsedTimestamp(record.started_at) ?? 0;
+  const completedAt = parsedTimestamp(record.completed_at);
+  return {
+    id: record.id,
+    toolName: record.tool_name,
+    toolInput: {
+      _summary: record.input_summary,
+      ...(record.tool_name === "Agent" && record.display_name
+        ? { agentName: record.display_name }
+        : {}),
+    },
+    output: nonEmptyString(record.output_summary) ?? null,
+    isError: record.status === "failed",
+    isComplete: record.status !== "running",
+    ...(record.status === "cancelled" ? { isCancelled: true } : {}),
+    ...(record.parent_tool_call_id && record.parent_tool_call_id !== rootId
+      ? { parentToolCallId: record.parent_tool_call_id }
+      : {}),
+    ...(record.output_truncated === 1 ? { outputTruncated: true } : {}),
+    ...(typeof record.output_total_bytes === "number"
+      ? { outputTotalBytes: record.output_total_bytes }
+      : {}),
+    ...(record.output_artifact_path ? { outputArtifactPath: record.output_artifact_path } : {}),
+    ...(typeof record.exit_code === "number" ? { exitCode: record.exit_code } : {}),
+    startedAt,
+    ...(completedAt === undefined ? {} : { lastActivityAt: completedAt, durationMs: Math.max(0, completedAt - startedAt) }),
+  };
 }
 
 function activityTimestamp(call: ToolCall): number {
@@ -220,6 +252,12 @@ export function projectSubagents(
           isError: call.isError,
         };
       }),
+      transcript: descendants.slice(0, MAX_DETAIL_ACTIVITY).map(({ call }) => ({
+        ...call,
+        ...(call.parentToolCallId === agent.id
+          ? { parentToolCallId: undefined }
+          : {}),
+      })),
       activityTruncated: descendants.length > MAX_DETAIL_ACTIVITY || queue.length > 0,
       subtreeIds,
       fileEffects: fileEffectSummary?.effects.filter((effect) =>
@@ -229,13 +267,21 @@ export function projectSubagents(
 
     const startedAt = agent.startedAt ?? now;
     const status = liveStatus(agent);
-    const latestActivity = activityLabel(latestCall);
+    const latestActivity = latestCall.id === agent.id
+      ? status === "running"
+        ? "Working"
+        : status === "failed"
+          ? "Errored"
+          : status === "cancelled"
+            ? "Cancelled"
+            : "Finished"
+      : activityLabel(latestCall);
     if (status === "running") {
       liveRows.set(agent.id, {
         index,
         row: {
           id: agent.id,
-          identity: subagentIdentity(agent),
+          ...subagentIdentity(agent),
           task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
           activity: latestActivity,
           activityAt: activityTimestamp(latestCall),
@@ -251,7 +297,7 @@ export function projectSubagents(
       index,
       row: {
         id: agent.id,
-        identity: subagentIdentity(agent),
+        ...subagentIdentity(agent),
         task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
         activity: terminalLiveActivity(agent, latestActivity),
         activityAt: completedAt,
@@ -279,6 +325,7 @@ export function projectSubagents(
       const task = hydratedTask(record);
       const persistedVisited = new Set<string>([record.id]);
       const persistedActivity: SubagentDetailActivity[] = [];
+      const persistedTranscript: ToolCall[] = [];
       const persistedQueue = (persistedChildren.get(record.id) ?? []).map((child) => ({ child, depth: 1 }));
       let persistedInspected = 0;
       while (persistedQueue.length > 0 && persistedInspected < MAX_SUBAGENT_GRAPH_NODES) {
@@ -298,6 +345,7 @@ export function projectSubagents(
             isComplete: next.child.status !== "running",
             isError: next.child.status === "failed",
           });
+          persistedTranscript.push(persistedRecordToToolCall(next.child, record.id));
         }
         for (const child of persistedChildren.get(next.child.id) ?? []) {
           persistedQueue.push({ child, depth: next.depth + 1 });
@@ -305,7 +353,7 @@ export function projectSubagents(
       }
       const base = {
         id: record.id,
-        identity: hydratedIdentity(record),
+        ...hydratedIdentity(record),
         task,
         activity: boundedDisplayText(nonEmptyString(record.output_summary) ?? task, MAX_ACTIVITY_LENGTH),
         activityAt: record.status === "running" ? startedAt : completedAt,
@@ -316,6 +364,7 @@ export function projectSubagents(
           outputTotalBytes: record.output_total_bytes ?? undefined,
           outputArtifactPath: record.output_artifact_path ?? undefined,
           activity: persistedActivity,
+          transcript: persistedTranscript,
           activityTruncated: persistedInspected > MAX_DETAIL_ACTIVITY || persistedQueue.length > 0,
           subtreeIds: [...persistedVisited],
           fileEffects: [],

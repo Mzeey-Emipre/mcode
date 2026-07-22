@@ -2,99 +2,90 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { SubagentRow } from "../SubagentRow";
 import type { ToolCall } from "@/transport/types";
+import { getSubagentIdentityPaletteIndex } from "@/components/subagents/SubagentIdentityGlyph";
 
-function mkAgent(partial: Partial<ToolCall>): ToolCall {
+function agent(overrides: Partial<ToolCall> = {}): ToolCall {
   return {
     id: "agent-1",
     toolName: "Agent",
-    toolInput: { description: "Read detection module" },
+    toolInput: { agentName: "Explorer", description: "Read detection module" },
     output: null,
     isError: false,
-    isComplete: true,
-    startedAt: 0,
-    parentToolCallId: undefined,
-    ...partial,
+    isComplete: false,
+    ...overrides,
   };
 }
 
+function renderRow(toolCall: ToolCall, children: readonly ToolCall[] = []) {
+  return render(<SubagentRow toolCall={toolCall} children={children} hooks={[]} />);
+}
+
 describe("SubagentRow", () => {
-  it("renders a compact identity-first completed control", () => {
-    render(
-      <SubagentRow
-        toolCall={mkAgent({
-          toolInput: {
-            description: "Glob cursor provider files",
-            model: "composer-2.5-fast",
-            subagentType: { custom: { unspecified: {} } },
-          },
-        })}
-        children={[]}
-        hooks={[]}
-      />,
-    );
+  it("shows explicit identity and Started without delegated task text", () => {
+    renderRow(agent());
 
-    expect(screen.getByText("Glob cursor provider files")).toBeTruthy();
-    expect(screen.getByText("Completed")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Open Glob cursor provider files subagent details, Completed/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Explorer subagent details, Started" })).toBeInTheDocument();
+    expect(screen.getByText("Started")).toBeInTheDocument();
+    expect(screen.queryByText("Read detection module")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-subagent-identity-glyph="Explorer"]')).toBeInTheDocument();
   });
 
-  it("keeps child activity out of the compact narrative control", () => {
-    const child: ToolCall = {
-      id: "read-1",
-      toolName: "Read",
-      toolInput: { file_path: "/x.ts" },
-      output: null,
-      isError: false,
-      isComplete: true,
-      startedAt: 1,
-      parentToolCallId: "agent-1",
-    };
+  it("keeps one identity color stable across rerenders", () => {
+    const view = renderRow(agent());
+    const firstPalette = document.querySelector('[data-subagent-identity-glyph="Explorer"]')?.getAttribute("data-subagent-palette");
 
-    render(
-      <SubagentRow toolCall={mkAgent({})} children={[child]} hooks={[]} />,
-    );
+    view.rerender(<SubagentRow toolCall={agent({ output: "Provider update" })} children={[]} hooks={[]} />);
 
-    expect(screen.getByRole("button", { name: /subagent details, Completed/ })).toBeTruthy();
-    expect(screen.queryByText("x.ts")).toBeNull();
+    expect(document.querySelector('[data-subagent-identity-glyph="Explorer"]')).toHaveAttribute("data-subagent-palette", firstPalette);
   });
 
-  it("keeps settled output in the detail panel", () => {
-    render(
-      <SubagentRow
-        toolCall={mkAgent({
-          toolInput: { prompt: "Inspect the Codex mapper tests." },
-          output: "Mapper tests cover wait suppression.",
-          isComplete: true,
-        })}
-        children={[]}
-        hooks={[]}
-      />,
-    );
+  it("uses the bounded identity palette across distinct agents", () => {
+    const identities = ["Explorer", "Reviewer", "Implementer"];
+    const paletteSlots = identities.map(getSubagentIdentityPaletteIndex);
 
-    expect(screen.getByRole("button")).toBeTruthy();
-    expect(screen.getByText("Inspect the Codex mapper tests.")).toBeTruthy();
-    expect(screen.getByText("Completed")).toBeTruthy();
-    expect(screen.queryByText("Mapper tests cover wait suppression.")).toBeNull();
+    expect(new Set(paletteSlots).size).toBeGreaterThan(1);
+    expect(paletteSlots.every((slot) => slot >= 0 && slot < 5)).toBe(true);
   });
 
-  it("keeps truncation metadata in the detail panel", () => {
-    render(
-      <SubagentRow
-        toolCall={mkAgent({
-          output: "preview",
-          outputTruncated: true,
-          outputTotalBytes: 512 * 1024,
-          outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\agent.txt",
-        })}
-        children={[]}
-        hooks={[]}
-      />,
-    );
+  it("shows Update received only for non-empty running provider output", () => {
+    renderRow(agent({ output: "Provider update" }));
 
-    expect(screen.queryByText(/Output truncated/)).toBeNull();
+    expect(screen.getByText("Update received")).toBeInTheDocument();
+    expect(screen.queryByText("Provider update")).not.toBeInTheDocument();
   });
 
-  it("does not inline nested shell transcripts", () => {
+  it.each([
+    [{ isComplete: true }, "Finished"],
+    [{ isComplete: true, isError: true }, "Errored"],
+    [{ isComplete: true, isCancelled: true }, "Cancelled"],
+  ] as const)("renders the terminal lifecycle %s", (overrides, label) => {
+    renderRow(agent(overrides));
+    expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  it("falls back to Subagent and never uses prompt or description as identity", () => {
+    renderRow(agent({ toolInput: { prompt: "Private prompt", description: "Private task" }, isComplete: true }));
+
+    expect(screen.getByRole("button", { name: "Open Subagent subagent details, Finished" })).toBeInTheDocument();
+    expect(screen.queryByText("Private prompt")).not.toBeInTheDocument();
+    expect(screen.queryByText("Private task")).not.toBeInTheDocument();
+    const glyph = document.querySelector('[data-subagent-identity-glyph="Subagent"]');
+    expect(glyph).not.toHaveAttribute("data-subagent-palette");
+    expect(glyph).not.toHaveAttribute("style");
+  });
+
+  it("colors an explicitly named Subagent instead of treating the label as anonymous", () => {
+    renderRow(agent({ toolInput: { agentName: "Subagent" } }));
+
+    const glyph = document.querySelector('[data-subagent-identity-glyph="Subagent"]');
+    expect(glyph).toHaveAttribute(
+      "data-subagent-palette",
+      String(getSubagentIdentityPaletteIndex("Subagent")),
+    );
+    expect(glyph?.getAttribute("style")).toContain("--subagent-identity-color");
+  });
+
+  it("keeps child calls and settled output out of chat", () => {
     const child: ToolCall = {
       id: "shell-1",
       toolName: "Shell",
@@ -102,15 +93,12 @@ describe("SubagentRow", () => {
       output: " M file.ts",
       isError: false,
       isComplete: true,
-      durationMs: 2_000,
-      startedAt: 1,
       parentToolCallId: "agent-1",
     };
+    renderRow(agent({ output: "Final report", isComplete: true }), [child]);
 
-    render(<SubagentRow toolCall={mkAgent({})} children={[child]} hooks={[]} />);
-
-    expect(screen.getByRole("button", { name: /Read detection module subagent details/ })).toBeTruthy();
-    expect(screen.queryByText("git status --short")).toBeNull();
-    expect(screen.queryByText("M file.ts", { exact: false })).toBeNull();
+    expect(screen.queryByText("git status --short")).not.toBeInTheDocument();
+    expect(screen.queryByText("M file.ts", { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByText("Final report")).not.toBeInTheDocument();
   });
 });

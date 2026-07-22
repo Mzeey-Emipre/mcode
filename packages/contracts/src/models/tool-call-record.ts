@@ -1,5 +1,29 @@
 import { z } from "zod";
 
+/** Maximum persisted length of a sub-agent display identity. */
+export const SUBAGENT_DISPLAY_NAME_MAX_LENGTH = 96;
+
+function explicitString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Resolves a bounded sub-agent identity without consulting delegated task text. */
+export function resolveSubagentDisplayName(input: Record<string, unknown>): string | undefined {
+  const direct = explicitString(input.agentName)
+    ?? explicitString(input.subagentName)
+    ?? explicitString(input.name);
+  const agentPath = explicitString(input.agentPath);
+  const pathTail = agentPath?.split(/[\\/]/).filter(Boolean).pop();
+  const identity = direct
+    ?? explicitString(pathTail)
+    ?? explicitString(input.subagentType)
+    ?? explicitString(input.subagent_type);
+  if (!identity || identity.length <= SUBAGENT_DISPLAY_NAME_MAX_LENGTH) return identity;
+  return `${identity.slice(0, SUBAGENT_DISPLAY_NAME_MAX_LENGTH - 1)}…`;
+}
+
 /** Status of a persisted tool call record. */
 export const ToolCallStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
 
@@ -12,6 +36,7 @@ export const ToolCallRecordSchema = z.object({
   message_id: z.string(),
   parent_tool_call_id: z.string().nullable(),
   tool_name: z.string(),
+  display_name: z.string().max(SUBAGENT_DISPLAY_NAME_MAX_LENGTH).nullable().optional(),
   input_summary: z.string(),
   output_summary: z.string(),
   output_truncated: z.number().int().optional(),

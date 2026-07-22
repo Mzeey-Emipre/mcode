@@ -51,7 +51,12 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
     toolName: r.tool_name,
     // Live components only inspect a few fields; the input summary suffices
     // for label derivation in the persisted view.
-    toolInput: { _summary: r.input_summary },
+    toolInput: {
+      _summary: r.input_summary,
+      ...(r.tool_name === AGENT_TOOL_NAME && r.display_name
+        ? { agentName: r.display_name }
+        : {}),
+    },
     output: r.output_summary || null,
     isError: r.status === "failed",
     isComplete: r.status === "completed" || r.status === "failed" || r.status === "cancelled",

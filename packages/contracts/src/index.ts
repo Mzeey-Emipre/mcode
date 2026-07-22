@@ -89,6 +89,8 @@ export type {
 export {
   ToolCallRecordSchema,
   ToolCallStatusSchema,
+  SUBAGENT_DISPLAY_NAME_MAX_LENGTH,
+  resolveSubagentDisplayName,
 } from "./models/tool-call-record.js";
 export type {
   ToolCallRecord,
