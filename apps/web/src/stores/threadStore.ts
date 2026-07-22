@@ -774,6 +774,15 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     set((s) => ({ records: patchThreadRecord(s.records, threadId, patch) }));
   };
 
+  const cacheInactiveRecord = (threadId: string): void => {
+    const state = get();
+    if (state.currentThreadId !== threadId) {
+      // The response can arrive before its database commit, so the resident
+      // transcript must replace any older snapshot used by thread switching.
+      cacheRecord(threadId, getThreadRecord(state.records, threadId));
+    }
+  };
+
   const applyGoalLookup = (threadId: string, lookup: GoalLookupResult): void => {
     const current = getRec(threadId);
     const goal = resolveGoalLookupGoal(lookup, current.goal);
@@ -1977,10 +1986,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             thoughtSegments: closedSegments,
           };
 
-          if (state.currentThreadId !== threadId) {
-            return { records: patchThreadRecord(state.records, threadId, turnPatch) };
-          }
-
           if (rec.messages.some((m) => m.id === message.id)) {
             return { records: patchThreadRecord(state.records, threadId, turnPatch) };
           }
@@ -2055,6 +2060,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             }),
           };
         });
+        cacheInactiveRecord(threadId);
       }
       return;
     }
@@ -2650,13 +2656,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             rateLimit: undefined,
           };
 
-          if (state.currentThreadId !== threadId) {
-            return {
-              runningThreadIds: nextRunning,
-              records: patchThreadRecord(state.records, threadId, basePatch),
-            };
-          }
-
           const { messages: capped, evicted } = capMessages([...rec.messages, ...pending]);
           const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
             basePatch.assistantResponseKeys,
@@ -2722,6 +2721,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           };
         });
       }
+      cacheInactiveRecord(threadId);
 
       // Update context tracker. Prefer the SDK-reported contextWindow (authoritative)
       // over the local registry. The DB is updated server-side; contextByThread is
