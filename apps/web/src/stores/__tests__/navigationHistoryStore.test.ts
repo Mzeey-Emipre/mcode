@@ -61,6 +61,28 @@ describe("navigationHistoryStore", () => {
     });
   });
 
+  it("resumes recording after a failed replay is cleared", () => {
+    const history = useNavigationHistoryStore.getState();
+    const first: NavigationLocation = { kind: "newThread", workspaceId: "one" };
+    const second: NavigationLocation = {
+      kind: "settings",
+      workspaceId: "one",
+      section: "about",
+    };
+    history.record(first);
+    history.record(second);
+    expect(history.back(valid)).toEqual(first);
+
+    history.clearReplayTarget();
+    history.record(second);
+
+    expect(useNavigationHistoryStore.getState()).toMatchObject({
+      entries: [first, second],
+      index: 1,
+      replayTarget: null,
+    });
+  });
+
   it("bounds retained entries to the current window session limit", () => {
     const history = useNavigationHistoryStore.getState();
     for (let index = 0; index < NAVIGATION_HISTORY_LIMIT + 5; index += 1) {

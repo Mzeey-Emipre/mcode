@@ -43,6 +43,7 @@ export interface NavigationHistoryState {
   forward: (isValid: NavigationLocationValidator) => NavigationLocation | null;
   canGoBack: (isValid: NavigationLocationValidator) => boolean;
   canGoForward: (isValid: NavigationLocationValidator) => boolean;
+  clearReplayTarget: () => void;
   reset: () => void;
 }
 
@@ -120,6 +121,7 @@ export const useNavigationHistoryStore = create<NavigationHistoryState>(
       const state = get();
       return findValidIndex(state.entries, state.index + 1, 1, isValid) >= 0;
     },
+    clearReplayTarget: () => set({ replayTarget: null }),
     reset: () => set({ entries: [], index: -1, replayTarget: null }),
   }),
 );

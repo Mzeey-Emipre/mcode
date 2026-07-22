@@ -182,6 +182,7 @@ export function DesktopTitleBar({
     const handleMnemonic = (event: KeyboardEvent) => {
       if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
         return;
+      if (!window.matchMedia("(min-width: 721px)").matches) return;
       const item = MENU_LABELS.find(
         ({ mnemonic }) => mnemonic === event.key.toLowerCase(),
       );

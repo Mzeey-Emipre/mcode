@@ -12,6 +12,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   window: {
     platform: process.platform,
     isDevelopment: Boolean(process.env.ELECTRON_RENDERER_URL),
+    onCommand(callback: (command: string) => void) {
+      const listener = (_event: unknown, command: string) => callback(command);
+      ipcRenderer.on("desktop:command", listener);
+      return listener;
+    },
+    offCommand(listener: (...args: unknown[]) => void): void {
+      ipcRenderer.removeListener("desktop:command", listener);
+    },
     perform(action: string): Promise<void> {
       return ipcRenderer.invoke("window:perform", action);
     },

@@ -24,7 +24,7 @@ import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { useUiStore } from "@/stores/uiStore";
 import { initShortcuts } from "@/lib/shortcuts";
 import { summonTab } from "@/lib/summon-tab";
-import { registerCommand } from "@/lib/command-registry";
+import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { setContext } from "@/lib/context-tracker";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
@@ -80,10 +80,7 @@ export function App() {
   const primarySurface = useUiStore((s) => s.primarySurface);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const threads = useWorkspaceStore((s) => s.threads);
   const activePullRequestKey = usePullRequestDetailStore((s) => s.activeKey);
-  const pullRequestEntities = usePullRequestStore((s) => s.entities);
   const navigationHistory = useNavigationHistoryStore();
   const [pullRequestTab, setPullRequestTab] =
     useState<PullRequestHistoryTab>("summary");
@@ -153,24 +150,27 @@ export function App() {
 
   const isValidLocation = useCallback(
     (location: NavigationLocation): boolean => {
+      const workspace = useWorkspaceStore.getState();
       if (
         location.workspaceId &&
-        !workspaces.some((workspace) => workspace.id === location.workspaceId)
+        !workspace.workspaces.some((item) => item.id === location.workspaceId)
       ) {
         return false;
       }
       if (location.kind === "thread") {
         return (
-          location.workspaceId !== activeWorkspaceId ||
-          threads.some((thread) => thread.id === location.threadId)
+          location.workspaceId !== workspace.activeWorkspaceId ||
+          workspace.threads.some((thread) => thread.id === location.threadId)
         );
       }
       if (location.kind === "pullRequestDetail") {
-        return Boolean(pullRequestEntities[location.identityKey]);
+        return Boolean(
+          usePullRequestStore.getState().entities[location.identityKey],
+        );
       }
       return true;
     },
-    [activeWorkspaceId, pullRequestEntities, threads, workspaces],
+    [],
   );
 
   const replayLocation = useCallback(
@@ -227,7 +227,10 @@ export function App() {
         direction === "back"
           ? history.back(isValidLocation)
           : history.forward(isValidLocation);
-      if (!location) return;
+      if (!location) {
+        history.clearReplayTarget();
+        return;
+      }
       void replayLocation(location).then((restored) => {
         if (!restored) navigateHistory(direction);
       });
@@ -552,6 +555,25 @@ export function App() {
       disposers.forEach((d) => d());
     };
   }, [navigateHistory]);
+
+  useEffect(() => {
+    const desktopWindow = window.desktopBridge?.window;
+    if (!desktopWindow?.onCommand || !desktopWindow.offCommand) return;
+    const listener = desktopWindow.onCommand((command) => {
+      if (command === "settings.keyboard" || command === "settings.about") {
+        window.dispatchEvent(
+          new CustomEvent("mcode:open-settings", {
+            detail: {
+              section: command === "settings.keyboard" ? "keyboard" : "about",
+            },
+          }),
+        );
+        return;
+      }
+      executeCommand(command);
+    });
+    return () => desktopWindow.offCommand?.(listener);
+  }, []);
 
   // Apply theme
   useEffect(() => {

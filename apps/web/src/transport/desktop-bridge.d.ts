@@ -304,6 +304,10 @@ interface DesktopBridge {
     readonly platform:
       "aix" | "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32";
     readonly isDevelopment: boolean;
+    onCommand(
+      callback: (command: DesktopRendererCommand) => void,
+    ): (...args: unknown[]) => void;
+    offCommand(listener: (...args: unknown[]) => void): void;
     perform(action: DesktopWindowAction): Promise<void>;
   };
   /** Return the URL and IPC path of the local mcode server. */
@@ -383,6 +387,15 @@ export type DesktopWindowAction =
   | "toggleFullScreen"
   | "reload"
   | "toggleDevTools";
+
+/** Renderer commands dispatched by the native macOS application menu. */
+export type DesktopRendererCommand =
+  | "workspace.new"
+  | "thread.new"
+  | "sidebar.toggle"
+  | "rightPanel.toggle"
+  | "settings.keyboard"
+  | "settings.about";
 
 declare global {
   interface Window {

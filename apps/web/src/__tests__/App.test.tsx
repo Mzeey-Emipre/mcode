@@ -95,6 +95,7 @@ describe("App", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
   });
 
   beforeEach(() => {
@@ -275,7 +276,6 @@ describe("App", () => {
     ).toBeDisabled();
 
     unmount();
-    delete (window as unknown as Record<string, unknown>).desktopBridge;
   });
 
   it("does not render the desktop title bar for a partial feature bridge", () => {
@@ -287,6 +287,5 @@ describe("App", () => {
     expect(screen.queryByTestId("desktop-title-bar")).not.toBeInTheDocument();
 
     unmount();
-    delete (window as unknown as Record<string, unknown>).desktopBridge;
   });
 });

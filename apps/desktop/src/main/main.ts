@@ -816,6 +816,20 @@ function performDesktopWindowAction(
   }
 }
 
+type DesktopRendererCommand =
+  | "workspace.new"
+  | "thread.new"
+  | "sidebar.toggle"
+  | "rightPanel.toggle"
+  | "settings.keyboard"
+  | "settings.about";
+
+function sendDesktopRendererCommand(command: DesktopRendererCommand): void {
+  const target = BrowserWindow.getFocusedWindow() ?? mainWindow;
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send("desktop:command", command);
+}
+
 function configureApplicationMenu(): void {
   if (process.platform !== "darwin") {
     Menu.setApplicationMenu(null);
@@ -824,11 +838,59 @@ function configureApplicationMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       { role: "appMenu" },
-      { role: "fileMenu" },
+      {
+        label: "File",
+        submenu: [
+          {
+            label: "New Project",
+            accelerator: "CmdOrCtrl+Shift+N",
+            click: () => sendDesktopRendererCommand("workspace.new"),
+          },
+          {
+            label: "New Thread",
+            accelerator: "CmdOrCtrl+N",
+            click: () => sendDesktopRendererCommand("thread.new"),
+          },
+          { type: "separator" },
+          { role: "close" },
+        ],
+      },
       { role: "editMenu" },
-      { role: "viewMenu" },
+      {
+        label: "View",
+        submenu: [
+          {
+            label: "Toggle Sidebar",
+            accelerator: "CmdOrCtrl+\\",
+            click: () => sendDesktopRendererCommand("sidebar.toggle"),
+          },
+          {
+            label: "Toggle Right Panel",
+            accelerator: "CmdOrCtrl+Alt+B",
+            click: () => sendDesktopRendererCommand("rightPanel.toggle"),
+          },
+          { type: "separator" },
+          { role: "resetZoom" },
+          { role: "zoomIn" },
+          { role: "zoomOut" },
+          { type: "separator" },
+          { role: "togglefullscreen" },
+        ],
+      },
       { role: "windowMenu" },
-      { role: "help", submenu: [] },
+      {
+        role: "help",
+        submenu: [
+          {
+            label: "Keyboard Shortcuts",
+            click: () => sendDesktopRendererCommand("settings.keyboard"),
+          },
+          {
+            label: "About Mcode",
+            click: () => sendDesktopRendererCommand("settings.about"),
+          },
+        ],
+      },
     ]),
   );
 }
