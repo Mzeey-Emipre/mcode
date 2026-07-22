@@ -619,9 +619,9 @@ export function App() {
                 }`}
               >
                 <div
-                  className={`min-w-0 overflow-hidden border-r border-border/45 transition-[opacity,transform] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+                  className={`min-w-0 overflow-hidden transition-[opacity,transform] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
                     dockedSidebarVisible
-                      ? "translate-x-0 opacity-100 duration-250"
+                      ? "translate-x-0 border-r border-border/45 opacity-100 duration-250"
                       : "-translate-x-2 opacity-0 duration-200"
                   }`}
                 >
