@@ -1,7 +1,6 @@
 import {
   ProviderCatalogChangeSchema,
   WS_CHANNELS,
-  type AgentEvent,
   type ProviderAvailability,
   type Settings,
   type TurnFileEffectSummary,
@@ -82,7 +81,9 @@ export function startPushListeners(): void {
   // agent.event: the server wraps each sidecar event with { threadId, type, ... }
   unsubs.push(
     pushEmitter.on("agent.event", (data) => {
-      handleAgentEvent(data as AgentEvent);
+      const parsed = WS_CHANNELS["agent.event"].safeParse(data);
+      if (!parsed.success) return;
+      handleAgentEvent(parsed.data);
     }),
   );
 
