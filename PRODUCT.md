@@ -142,8 +142,7 @@ In flight as of May 2026:
 | `AGENTS.md` | Repo conventions, workflow gates, where `bun run verify` lives. |
 | `CONTEXT.md` | Domain glossary. If you don't know what a "worktree" or "narration segment" means here, read this first. |
 | `ARCHITECTURE.md` | IPC flow, data model, directory layout. |
-| `docs/guides/ui-design-spec.md` | Designer-facing spec. How Mcode should look and feel. |
-| `DESIGN.md` | The visual design system (tokens, palette, typography, components) in Stitch format. What a UI change reads before touching pixels. |
+| `DESIGN.md` | The complete visual and interaction contract: creative direction, tokens, typography, layout, components, states, accessibility, and motion. Read it before changing UI. |
 | `docs/specs/` | Formal product specs for individual features (markdown rendering, usage tracking, context window, sort order). |
 
 ## 10. The Product Test
