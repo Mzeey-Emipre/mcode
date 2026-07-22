@@ -13,13 +13,14 @@ function ids(types: readonly { id: PanelTabTypeId }[]): PanelTabTypeId[] {
 }
 
 describe("PANEL_TAB_TYPES catalog", () => {
-  it("declares the five revamp tab types in prototype order", () => {
+  it("declares the six revamp tab types in prototype order", () => {
     expect(ids(PANEL_TAB_TYPES)).toEqual([
       "preview",
       "terminal",
       "files",
       "changes",
       "tasks",
+      "subagents",
     ]);
   });
 
@@ -28,16 +29,16 @@ describe("PANEL_TAB_TYPES catalog", () => {
     expect(comingSoon).toEqual(["files"]);
   });
 
-  it("marks only Plan as thread-only (Review is dual-scope)", () => {
+  it("marks Plan and Subagents as thread-only (Review is dual-scope)", () => {
     const threadOnly = PANEL_TAB_TYPES.filter((t) => t.needsThread).map((t) => t.id);
-    expect(threadOnly).toEqual(["tasks"]);
+    expect(threadOnly).toEqual(["tasks", "subagents"]);
   });
 
-  it("gives every openable type a commandId for keycap resolution", () => {
+  it("gives every shortcut-enabled type a commandId", () => {
     for (const type of PANEL_TAB_TYPES) {
       if (type.comingSoon) {
         expect(type.commandId).toBeUndefined();
-      } else {
+      } else if (type.id !== "subagents") {
         expect(type.commandId).toBeTruthy();
       }
     }
@@ -75,6 +76,7 @@ describe("shownTabTypes — scope filter", () => {
       "files",
       "changes",
       "tasks",
+      "subagents",
     ]);
   });
 });
@@ -90,7 +92,7 @@ describe("shownTabTypes — cardinality filter", () => {
 
   it("keeps the coming-soon teaser even when every openable type is open", () => {
     expect(
-      ids(shownTabTypes("thread", ["preview", "terminal", "changes", "tasks"])),
+      ids(shownTabTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents"])),
     ).toEqual(["files"]);
   });
 
@@ -121,6 +123,7 @@ describe("creatableTypes — coming-soon exclusion", () => {
       "terminal",
       "changes",
       "tasks",
+      "subagents",
     ]);
   });
 
@@ -143,7 +146,7 @@ describe("creatableTypes — combined scope + cardinality", () => {
 
   it("returns an empty set when every openable type is open", () => {
     expect(
-      ids(creatableTypes("thread", ["preview", "terminal", "changes", "tasks"])),
+      ids(creatableTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents"])),
     ).toEqual([]);
   });
 
@@ -168,6 +171,7 @@ describe("creatableTypes / shownTabTypes — purity", () => {
     expect(ids(creatableTypes("thread", ["tasks", "preview"]))).toEqual([
       "terminal",
       "changes",
+      "subagents",
     ]);
   });
 });

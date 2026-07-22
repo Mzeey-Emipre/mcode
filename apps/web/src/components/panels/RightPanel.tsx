@@ -27,6 +27,7 @@ import { ensureTerminalForScope } from "@/lib/ensure-terminal";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
+import { SubagentsPanel } from "./SubagentsPanel";
 
 /**
  * Tracks whether the Changes tab has unreviewed new files for the active
@@ -146,6 +147,8 @@ export function RightPanel() {
   const previewActive = activeTab === "preview" && openTabs.includes("preview");
   const terminalActive =
     activeTab === "terminal" && openTabs.includes("terminal");
+  const subagentsActive =
+    activeTab === "subagents" && openTabs.includes("subagents");
 
   const isChangesActive = panelVisible && changesActive;
   const changesFresh = useChangesFreshness(
@@ -308,6 +311,9 @@ export function RightPanel() {
           {activeTab === "tasks" &&
             openTabs.includes("tasks") &&
             activeThreadId && <PlanPanel threadId={activeThreadId} />}
+          {subagentsActive && activeThreadId && (
+            <SubagentsPanel key={activeThreadId} threadId={activeThreadId} />
+          )}
           <div
             className={
               changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"
