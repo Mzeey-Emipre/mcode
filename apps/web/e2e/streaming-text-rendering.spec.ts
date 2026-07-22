@@ -114,6 +114,7 @@ test("streaming assistant text uses plain text, then settled text uses markdown"
     type: "message",
     content: "Hello **stream**",
     messageId: "assistant-streaming-text",
+    tokens: null,
   });
 
   await expect(assistantText).toHaveCount(1);
