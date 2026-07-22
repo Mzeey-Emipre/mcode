@@ -154,7 +154,7 @@ async function setupThread(page: Page, messages: Array<Record<string, unknown>> 
 }
 
 async function dispatchThreadEvent(page: Page, threadId: string, event: unknown) {
-  await page.evaluate(({ targetThreadId, agentEvent }) => {
+  await page.evaluate(({ agentEvent }) => {
     const stores: Array<{ getState: () => Record<string, unknown> }> =
       (window as unknown as { __mcodeStores?: Array<{ getState: () => Record<string, unknown> }> })
         .__mcodeStores ?? [];
@@ -163,11 +163,11 @@ async function dispatchThreadEvent(page: Page, threadId: string, event: unknown)
       return "handleAgentEvent" in state && "records" in state;
     });
     const state = threadStore?.getState() as
-      | { handleAgentEvent: (threadId: string, event: unknown) => void }
+      | { handleAgentEvent: (event: unknown) => void }
       | undefined;
     if (!state) throw new Error("thread store not found");
-    state.handleAgentEvent(targetThreadId, agentEvent);
-  }, { targetThreadId: threadId, agentEvent: event });
+    state.handleAgentEvent(agentEvent);
+  }, { agentEvent: event });
 }
 
 async function commitAssistantMessage(page: Page, threadId: string, messageId: string, content: string) {
@@ -180,14 +180,15 @@ async function commitAssistantMessage(page: Page, threadId: string, messageId: s
       return "handleAgentEvent" in state && "records" in state;
     });
     const state = threadStore?.getState() as
-      | {
-          handleAgentEvent: (threadId: string, event: unknown) => void;
-        }
+      | { handleAgentEvent: (event: unknown) => void }
       | undefined;
     if (!state) throw new Error("thread store not found");
-    state.handleAgentEvent(targetThreadId, {
-      method: "session.message",
-      params: { content: text, messageId: targetMessageId, tokens: 12 },
+    state.handleAgentEvent({
+      type: "message",
+      threadId: targetThreadId,
+      content: text,
+      messageId: targetMessageId,
+      tokens: 12,
     });
   }, { targetThreadId: threadId, targetMessageId: messageId, text: content });
 }
@@ -259,18 +260,22 @@ test.describe("final response continuity", () => {
       "- Third visible item",
     ].join("\n");
 
-    await dispatchThreadEvent(page, THREAD.id, { method: "session.turnStarted", params: {} });
+    await dispatchThreadEvent(page, THREAD.id, { type: "turnStarted", threadId: THREAD.id });
     await dispatchThreadEvent(page, THREAD.id, {
-      method: "session.textDelta",
-      params: { delta: "Final answer", isFinalResponse: true },
+      type: "textDelta",
+      threadId: THREAD.id,
+      delta: "Final answer",
+      isFinalResponse: true,
     });
 
     const response = page.getByTestId("assistant-response-text").last();
     await expect(response).toContainText("Final answer");
 
     await dispatchThreadEvent(page, THREAD.id, {
-      method: "session.textDelta",
-      params: { delta: finalText.slice("Final answer".length), isFinalResponse: true },
+      type: "textDelta",
+      threadId: THREAD.id,
+      delta: finalText.slice("Final answer".length),
+      isFinalResponse: true,
     });
 
     await expect(page.getByTestId("assistant-message-actions").last()).toHaveAttribute("aria-hidden", "true");
@@ -327,10 +332,12 @@ test.describe("final response continuity", () => {
   test("keeps the response node when turnComplete promotes streaming text", async ({ page }) => {
     const finalText = "Codex-style final answer promoted at turn complete.";
 
-    await dispatchThreadEvent(page, THREAD.id, { method: "session.turnStarted", params: {} });
+    await dispatchThreadEvent(page, THREAD.id, { type: "turnStarted", threadId: THREAD.id });
     await dispatchThreadEvent(page, THREAD.id, {
-      method: "session.textDelta",
-      params: { delta: finalText, isFinalResponse: true },
+      type: "textDelta",
+      threadId: THREAD.id,
+      delta: finalText,
+      isFinalResponse: true,
     });
 
     const response = page.getByTestId("assistant-response-text").last();
@@ -342,8 +349,12 @@ test.describe("final response continuity", () => {
     });
 
     await dispatchThreadEvent(page, THREAD.id, {
-      method: "session.turnComplete",
-      params: { tokensIn: 0, tokensOut: 4, costUsd: 0 },
+      type: "turnComplete",
+      threadId: THREAD.id,
+      reason: "end_turn",
+      tokensIn: 0,
+      tokensOut: 4,
+      costUsd: 0,
     });
 
     const promotedMessageId = await getCurrentTurnMessageId(page, THREAD.id);

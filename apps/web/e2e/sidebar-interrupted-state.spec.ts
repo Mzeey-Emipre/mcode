@@ -1,7 +1,7 @@
 /**
  * E2E tests verifying that threads with status "interrupted" render the correct
  * amber pulsing dot in the sidebar, and that the dot clears to running (primary)
- * when the thread resumes via session.turnStarted.
+ * when the thread resumes via turnStarted.
  *
  * This tests the fix for: "copilot not persisting working state" where threads
  * showed idle/normal state after a server restart instead of interrupted state.
@@ -124,7 +124,7 @@ test.describe("Sidebar: interrupted thread state", () => {
     });
   });
 
-  test("interrupted marker switches to primary spinner when session.turnStarted fires", async ({ page }) => {
+  test("interrupted marker switches to primary spinner when turnStarted fires", async ({ page }) => {
     await setupWorkspaceState(page, {
       workspaces: [WORKSPACE],
       threads: [THREAD_INTERRUPTED],
@@ -141,7 +141,7 @@ test.describe("Sidebar: interrupted thread state", () => {
     // Confirm amber state before resume.
     await expect(statusMarker).toHaveClass(/amber/);
 
-    // Inject session.turnStarted to simulate user resuming the thread.
+    // Inject turnStarted to simulate user resuming the thread.
     await page.evaluate(
       ({ threadId }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,8 +151,7 @@ test.describe("Sidebar: interrupted thread state", () => {
           (s: any) => "handleAgentEvent" in s.getState() && "runningThreadIds" in s.getState(),
         );
         if (!threadStore) throw new Error("[E2E] thread store not found");
-        threadStore.getState().handleAgentEvent(threadId, {
-          method: "session.turnStarted",
+        threadStore.getState().handleAgentEvent({
           type: "turnStarted",
           threadId,
         });

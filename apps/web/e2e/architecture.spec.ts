@@ -554,7 +554,7 @@ test.describe("Architecture: Push events via PushEmitter", () => {
 
     await waitForActiveThreadLoaded(page);
 
-    // Simulate an agent message event via the handleAgentEvent function
+    // Simulate a flat agent message event via the handleAgentEvent function.
     await page.evaluate(
       ({ threadId }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -566,9 +566,8 @@ test.describe("Architecture: Push events via PushEmitter", () => {
         );
         if (!threadStore) throw new Error("Thread store not found");
 
-        // Simulate message event (as handleAgentEvent expects)
-        threadStore.getState().handleAgentEvent(threadId, {
-          method: "session.message",
+        threadStore.getState().handleAgentEvent({
+          type: "message",
           threadId,
           content: "Streaming from agent...",
           tokens: 50,
@@ -663,7 +662,7 @@ test.describe("Architecture: Push events via PushEmitter", () => {
 
 });
 
-test.describe("Architecture: session.turnStarted → sidebar running dot", () => {
+test.describe("Architecture: turnStarted → sidebar running dot", () => {
   test.beforeEach(async ({ page }) => {
     // Pre-seed localStorage so the workspace row is expanded on first render,
     // avoiding a manual click that would race with loadThreads().
@@ -686,7 +685,7 @@ test.describe("Architecture: session.turnStarted → sidebar running dot", () =>
     await page.waitForLoadState("networkidle");
 
     // Wait until the WS transport's initial hydration (agent.listRunning RPC)
-    // has resolved. Without this, a session.turnStarted injection below races
+    // has resolved. Without this, a turnStarted injection below races
     // hydrateRunningThreadsFromServer: the injected id gets captured in
     // `beforeRpc`, is not classified as a concurrent add, and the server's
     // empty [] response overwrites it.
@@ -696,7 +695,7 @@ test.describe("Architecture: session.turnStarted → sidebar running dot", () =>
     );
   });
 
-  test("session.turnStarted populates runningThreadIds for the sidebar spinner", async ({
+  test("turnStarted populates runningThreadIds for the sidebar spinner", async ({
     page,
   }) => {
     await setupWorkspaceState(page, {
@@ -718,7 +717,7 @@ test.describe("Architecture: session.turnStarted → sidebar running dot", () =>
       fullPage: true,
     });
 
-    // Inject session.turnStarted through the same channel the existing
+    // Inject turnStarted through the same channel the existing
     // `agent.event push updates streaming state` test uses: handleAgentEvent
     // on the thread store (which is what pushEmitter's `agent.event` listener
     // invokes in production).
@@ -734,8 +733,8 @@ test.describe("Architecture: session.turnStarted → sidebar running dot", () =>
         );
         if (!threadStore) throw new Error("[E2E] thread store not found");
 
-        threadStore.getState().handleAgentEvent(threadId, {
-          method: "session.turnStarted",
+        threadStore.getState().handleAgentEvent({
+          type: "turnStarted",
           threadId,
         });
       },

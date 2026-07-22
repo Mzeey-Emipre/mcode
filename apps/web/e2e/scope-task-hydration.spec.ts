@@ -156,17 +156,16 @@ async function emitUpdatePlan(page: Page, task: string): Promise<void> {
       (
         threadStore as {
           getState: () => {
-            handleAgentEvent: (threadId: string, event: unknown) => void;
+            handleAgentEvent: (event: unknown) => void;
           };
         }
-      ).getState().handleAgentEvent(threadId, {
-        method: "session.toolUse",
-        params: {
-          toolCallId: `live-plan-${Date.now()}`,
-          toolName: "update_plan",
-          toolInput: {
-            plan: [{ status: "pending", step: task }],
-          },
+      ).getState().handleAgentEvent({
+        type: "toolUse",
+        threadId,
+        toolCallId: `live-plan-${Date.now()}`,
+        toolName: "update_plan",
+        toolInput: {
+          plan: [{ status: "pending", step: task }],
         },
       });
     },

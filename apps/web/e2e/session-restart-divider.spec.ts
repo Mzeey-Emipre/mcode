@@ -211,16 +211,16 @@ test.describe("Session Restart Divider", () => {
     });
   });
 
-  test("handleAgentEvent session_restarted creates exactly one divider", async ({
+  test("system session_restarted creates exactly one divider", async ({
     page,
   }) => {
     await activateThread(page, FAKE_WORKSPACE, FAKE_THREAD);
     await waitForActiveThreadLoaded(page);
 
-    // Trigger the event via the production handleAgentEvent code path
+    // Trigger the flat event via the production handleAgentEvent code path.
     await dispatchAgentEvent(page, THREAD_ID, {
-      method: "session.system",
-      params: { subtype: "session_restarted" },
+      type: "system",
+      subtype: "session_restarted",
     });
 
     await page.waitForFunction(
@@ -247,14 +247,14 @@ test.describe("Session Restart Divider", () => {
     await activateThread(page, FAKE_WORKSPACE, FAKE_THREAD);
     await waitForActiveThreadLoaded(page);
 
-    // Fire two session.system events through the production reducer
+    // Fire two system events through the production reducer.
     await dispatchAgentEvent(page, THREAD_ID, {
-      method: "session.system",
-      params: { subtype: "session_restarted" },
+      type: "system",
+      subtype: "session_restarted",
     });
     await dispatchAgentEvent(page, THREAD_ID, {
-      method: "session.system",
-      params: { subtype: "session_restarted" },
+      type: "system",
+      subtype: "session_restarted",
     });
 
     await page.waitForFunction(
