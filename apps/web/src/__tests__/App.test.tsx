@@ -277,4 +277,16 @@ describe("App", () => {
     unmount();
     delete (window as unknown as Record<string, unknown>).desktopBridge;
   });
+
+  it("does not render the desktop title bar for a partial feature bridge", () => {
+    (window as unknown as Record<string, unknown>).desktopBridge = {
+      preview: {},
+    };
+
+    const { unmount } = render(<App />);
+    expect(screen.queryByTestId("desktop-title-bar")).not.toBeInTheDocument();
+
+    unmount();
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
+  });
 });

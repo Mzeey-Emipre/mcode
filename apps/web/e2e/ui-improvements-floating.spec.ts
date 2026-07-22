@@ -242,6 +242,7 @@ test.describe("Docked shell surfaces", () => {
     await page.waitForLoadState("networkidle");
 
     const sidebar = page.getByTestId("sidebar-docked");
+    const sidebarSurface = sidebar.locator(":scope > div");
     const main = page.locator("main").first();
     const metrics = await page.evaluate(() => {
       const probe = document.createElement("div");
@@ -254,7 +255,7 @@ test.describe("Docked shell surfaces", () => {
     const sidebarBackground = await sidebar.evaluate((el) =>
       getComputedStyle(el).backgroundColor,
     );
-    const rightBorder = await sidebar.evaluate((el) =>
+    const rightBorder = await sidebarSurface.evaluate((el) =>
       getComputedStyle(el).borderRightWidth,
     );
     const [sidebarBox, mainBox] = await Promise.all([

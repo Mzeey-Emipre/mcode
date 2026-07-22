@@ -66,7 +66,7 @@ const LazyPullRequestSurface = lazy(async () => {
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
-  const isDesktop = Boolean(window.desktopBridge);
+  const isDesktop = Boolean(window.desktopBridge?.window);
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
   const threadCacheSize = useSettingsStore(
     (s) => s.settings.performance.threadCacheSize,
