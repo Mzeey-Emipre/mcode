@@ -1,7 +1,11 @@
 import type { AgentEvent } from "@mcode/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
-import { createEmptyThreadRecord, patchThreadRecord } from "@/stores/thread-record";
+import {
+  createEmptyThreadRecord,
+  patchThreadRecord,
+  type ThreadRecord,
+} from "@/stores/thread-record";
 import { readThreadField, resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { createMockMessage, mockTransport } from "./mocks/transport";
 
@@ -203,6 +207,73 @@ describe("Turn response projection", () => {
     expect(readThreadField(THREAD_ID, (record) => record.pendingTurnPersistMessageIds)).toEqual([]);
     expect(readThreadField(THREAD_ID, (record) => record.messages.map((entry) => entry.id))).toEqual([
       "server-after-clear",
+    ]);
+  });
+
+  it("normalizes reconstructed records missing pending persistence state", () => {
+    const reconstructedRecord = createEmptyThreadRecord();
+    delete (reconstructedRecord as Partial<ThreadRecord>).pendingTurnPersistMessageIds;
+    useThreadStore.setState({
+      records: new Map([[THREAD_ID, reconstructedRecord]]),
+    });
+
+    message("server-final");
+
+    expect(readThreadField(THREAD_ID, (record) => record.pendingTurnPersistMessageIds)).toEqual([]);
+  });
+
+  it("normalizes reconstructed records before turn completion queues a fallback", () => {
+    const reconstructedRecord = {
+      ...createEmptyThreadRecord(),
+      streaming: "final response",
+      streamingPreview: "final response",
+    };
+    delete (reconstructedRecord as Partial<ThreadRecord>).pendingTurnPersistMessageIds;
+    useThreadStore.setState({
+      records: new Map([[THREAD_ID, reconstructedRecord]]),
+      runningThreadIds: new Set([THREAD_ID]),
+    });
+
+    completeTurn();
+
+    expect(readThreadField(THREAD_ID, (record) => record.pendingTurnPersistMessageIds)).toHaveLength(1);
+  });
+
+  it("normalizes reconstructed records before turn persistence resolves and clears a row", () => {
+    const reconstructedRecord = createEmptyThreadRecord();
+    delete (reconstructedRecord as Partial<ThreadRecord>).pendingTurnPersistMessageIds;
+    useThreadStore.setState({
+      records: new Map([[THREAD_ID, reconstructedRecord]]),
+    });
+
+    persist("server-final", 1);
+
+    expect(readThreadField(THREAD_ID, (record) => record.pendingTurnPersistMessageIds)).toEqual([]);
+    expect(readThreadField(THREAD_ID, (record) => record.persistedToolCallCounts["server-final"])).toBe(1);
+  });
+
+  it("normalizes reconstructed records before an authoritative response adopts a provisional row", () => {
+    const provisional = createMockMessage({
+      id: "provisional-response",
+      thread_id: THREAD_ID,
+      role: "assistant",
+      content: "final response",
+      sequence: 1,
+    });
+    const reconstructedRecord = {
+      ...createEmptyThreadRecord(),
+      messages: [provisional],
+      currentTurnMessageId: provisional.id,
+    };
+    delete (reconstructedRecord as Partial<ThreadRecord>).pendingTurnPersistMessageIds;
+    useThreadStore.setState({
+      records: new Map([[THREAD_ID, reconstructedRecord]]),
+    });
+
+    message("server-final");
+
+    expect(readThreadField(THREAD_ID, (record) => record.messages.map((entry) => entry.id))).toEqual([
+      "server-final",
     ]);
   });
 

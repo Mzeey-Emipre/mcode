@@ -187,7 +187,11 @@ export function getThreadRecord(
   records: Map<string, ThreadRecord>,
   threadId: string,
 ): ThreadRecord {
-  return records.get(threadId) ?? createEmptyThreadRecord();
+  const record = records.get(threadId);
+  if (!record) return createEmptyThreadRecord();
+  return record.pendingTurnPersistMessageIds === undefined
+    ? { ...record, pendingTurnPersistMessageIds: [] }
+    : record;
 }
 
 /** Immutable Map update with a partial or functional patch for one thread. */
