@@ -206,6 +206,10 @@ export function patchThreadRecord(
   const current = getThreadRecord(records, threadId);
   const delta = typeof patch === "function" ? patch(current) : patch;
   const updated = { ...current, ...delta };
+  if (!("messages" in delta || "serverMessageIds" in delta || "pendingTurnPersistMessageIds" in delta)) {
+    next.set(threadId, updated);
+    return next;
+  }
   const retainedMessageIds = new Set(updated.messages.map((message) => message.id));
   next.set(threadId, {
     ...updated,
