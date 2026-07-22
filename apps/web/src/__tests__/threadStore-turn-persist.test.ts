@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import {
@@ -15,10 +16,7 @@ vi.mock("@/transport", async () => ({
 const THREAD_ID = "thread-turn-persist";
 
 function startTrackedTurn(turnId: string): void {
-  useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-    method: "session.turnStarted",
-    fileEffectTurnId: turnId,
-  });
+  useThreadStore.getState().handleAgentEvent({ type: "turnStarted", threadId: THREAD_ID, fileEffectTurnId: turnId } as AgentEvent);
 }
 
 describe("handleTurnPersisted", () => {

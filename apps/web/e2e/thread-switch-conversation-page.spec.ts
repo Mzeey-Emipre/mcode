@@ -613,10 +613,12 @@ test("thread revisit keeps messages added after an empty snapshot was cached", a
     threadId: "thread-a",
     messageId: "thread-a-completed",
     content: "Alpha completed while inactive",
+    tokens: null,
   });
   await controller.sendPush("agent.event", {
     type: "turnComplete",
     threadId: "thread-a",
+    reason: "end_turn",
     costUsd: 0.005,
     tokensIn: 25,
     tokensOut: 25,

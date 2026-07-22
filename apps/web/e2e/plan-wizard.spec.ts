@@ -445,8 +445,11 @@ test.describe("Plan Question Wizard", () => {
     await expect(wizard).toBeVisible({ timeout: 3000 });
 
     await dispatchAgentEvent(page, THREAD.id, {
-      method: "session.turnComplete",
-      params: {},
+      type: "turnComplete",
+      reason: "end_turn",
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: null,
     });
     await wizard.locator("button", { hasText: "cancel" }).first().click();
 
@@ -474,8 +477,11 @@ test.describe("Plan Question Wizard", () => {
     ).toHaveCount(0);
 
     await dispatchAgentEvent(page, THREAD.id, {
-      method: "session.turnComplete",
-      params: {},
+      type: "turnComplete",
+      reason: "end_turn",
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: null,
     });
     await page.waitForTimeout(600);
     expect(
@@ -495,8 +501,11 @@ test.describe("Plan Question Wizard", () => {
     ).toHaveLength(0);
 
     await dispatchAgentEvent(page, THREAD.id, {
-      method: "session.turnComplete",
-      params: {},
+      type: "turnComplete",
+      reason: "end_turn",
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: null,
     });
 
     await expect.poll(async () => {

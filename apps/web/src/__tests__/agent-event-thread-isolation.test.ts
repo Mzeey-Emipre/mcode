@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestActiveMessages,
@@ -70,10 +71,7 @@ describe("Agent event thread isolation", () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
       // Thread B errors while user views Thread A
-      handleAgentEvent(THREAD_B, {
-        method: "session.error",
-        error: "Out of tokens",
-      });
+      handleAgentEvent({ type: "error", threadId: THREAD_B, error: "Out of tokens" } as AgentEvent);
 
       // Thread B's error is recorded under its own key
       expect(getTestThreadError(THREAD_B)).toBe("Out of tokens");
@@ -84,10 +82,7 @@ describe("Agent event thread isolation", () => {
     it("session.error for active thread sets error on that thread only", () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
-      handleAgentEvent(THREAD_A, {
-        method: "session.error",
-        error: "CLI not found",
-      });
+      handleAgentEvent({ type: "error", threadId: THREAD_A, error: "CLI not found" } as AgentEvent);
 
       expect(getTestThreadError(THREAD_A)).toBe("CLI not found");
       expect(getTestThreadError(THREAD_B)).toBeUndefined();
@@ -96,14 +91,8 @@ describe("Agent event thread isolation", () => {
     it("errors from two concurrent threads are tracked independently", () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
-      handleAgentEvent(THREAD_A, {
-        method: "session.error",
-        error: "Error A",
-      });
-      handleAgentEvent(THREAD_B, {
-        method: "session.error",
-        error: "Error B",
-      });
+      handleAgentEvent({ type: "error", threadId: THREAD_A, error: "Error A" } as AgentEvent);
+      handleAgentEvent({ type: "error", threadId: THREAD_B, error: "Error B" } as AgentEvent);
 
       expect(getTestThreadError(THREAD_A)).toBe("Error A");
       expect(getTestThreadError(THREAD_B)).toBe("Error B");
@@ -135,11 +124,8 @@ describe("Agent event thread isolation", () => {
     it("does not show toast when modelFallback fires on a background thread", () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
-      handleAgentEvent(THREAD_B, {
-        method: "session.modelFallback",
-        requestedModel: "claude-opus-4-6",
-        actualModel: "claude-haiku-4-5-20251001",
-      });
+      handleAgentEvent({ type: "modelFallback", threadId: THREAD_B, requestedModel: "claude-opus-4-6",
+        actualModel: "claude-haiku-4-5-20251001" } as AgentEvent);
 
       expect(useToastStore.getState().toasts).toHaveLength(0);
     });
@@ -147,11 +133,8 @@ describe("Agent event thread isolation", () => {
     it("shows toast when modelFallback fires on the active thread", () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
-      handleAgentEvent(THREAD_A, {
-        method: "session.modelFallback",
-        requestedModel: "claude-opus-4-6",
-        actualModel: "claude-haiku-4-5-20251001",
-      });
+      handleAgentEvent({ type: "modelFallback", threadId: THREAD_A, requestedModel: "claude-opus-4-6",
+        actualModel: "claude-haiku-4-5-20251001" } as AgentEvent);
 
       expect(useToastStore.getState().toasts).toHaveLength(1);
     });
@@ -163,12 +146,9 @@ describe("Agent event thread isolation", () => {
     it("does not open task panel when TodoWrite fires on a background thread", async () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
-      handleAgentEvent(THREAD_B, {
-        method: "session.toolUse",
-        toolCallId: "tc-todo",
+      handleAgentEvent({ type: "toolUse", threadId: THREAD_B, toolCallId: "tc-todo",
         toolName: "TodoWrite",
-        toolInput: { todos: [{ id: "0", content: "Plan", status: "in_progress" }] },
-      });
+        toolInput: { todos: [{ id: "0", content: "Plan", status: "in_progress" }] } } as AgentEvent);
 
       // Give the dynamic import time to resolve
       if (vi.dynamicImportSettled) {
@@ -185,12 +165,9 @@ describe("Agent event thread isolation", () => {
     it("does not auto-open task panel on TodoWrite", async () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
-      handleAgentEvent(THREAD_A, {
-        method: "session.toolUse",
-        toolCallId: "tc-todo",
+      handleAgentEvent({ type: "toolUse", threadId: THREAD_A, toolCallId: "tc-todo",
         toolName: "TodoWrite",
-        toolInput: { todos: [{ id: "0", content: "Plan", status: "in_progress" }] },
-      });
+        toolInput: { todos: [{ id: "0", content: "Plan", status: "in_progress" }] } } as AgentEvent);
 
       await vi.advanceTimersByTime(0);
       await Promise.resolve();
@@ -207,10 +184,7 @@ describe("Agent event thread isolation", () => {
     it("textDelta for background thread does not appear in active thread's streaming", async () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
-      handleAgentEvent(THREAD_B, {
-        method: "session.textDelta",
-        delta: "background text",
-      });
+      handleAgentEvent({ type: "textDelta", threadId: THREAD_B, delta: "background text" } as AgentEvent);
 
       for (let i = 0; i < 8; i++) {
         await Promise.resolve();
@@ -226,12 +200,9 @@ describe("Agent event thread isolation", () => {
         ]),
       });
 
-      useThreadStore.getState().handleAgentEvent(THREAD_B, {
-        method: "session.turnComplete",
-        costUsd: null,
-        totalTokensIn: 100,
-        totalTokensOut: 50,
-      });
+      useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: THREAD_B, reason: "end_turn", costUsd: null,
+        tokensIn: 100,
+        tokensOut: 50 } as AgentEvent);
       vi.runAllTimers();
 
       // No message added to the visible list (user is on Thread A)
@@ -247,12 +218,9 @@ describe("Agent event thread isolation", () => {
     it("toolUse for background thread does not contaminate active thread's tool calls", () => {
       const { handleAgentEvent } = useThreadStore.getState();
 
-      handleAgentEvent(THREAD_B, {
-        method: "session.toolUse",
-        toolCallId: "tc-bg",
+      handleAgentEvent({ type: "toolUse", threadId: THREAD_B, toolCallId: "tc-bg",
         toolName: "Read",
-        toolInput: { path: "/bg" },
-      });
+        toolInput: { path: "/bg" } } as AgentEvent);
 
       expect(getTestThreadToolCalls(THREAD_A)).toEqual([]);
       expect(getTestThreadToolCalls(THREAD_B)).toHaveLength(1);

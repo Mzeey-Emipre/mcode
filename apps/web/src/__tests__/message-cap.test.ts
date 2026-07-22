@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestActiveMessages,
@@ -161,10 +162,7 @@ describe("message sliding window", () => {
         : s.records,
     }));
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.message",
-      params: { content: "Agent reply" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "thread-1", content: "Agent reply", tokens: null } satisfies AgentEvent);
     vi.runAllTimers();
 
     expect(getTestActiveMessages().length).toBe(MESSAGE_WINDOW_SIZE);

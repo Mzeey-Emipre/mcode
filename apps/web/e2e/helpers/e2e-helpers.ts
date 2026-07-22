@@ -466,9 +466,9 @@ export async function dispatchAgentEvent(
       if (!threadStore) throw new Error("[E2E] thread store not found");
       (
         threadStore.getState() as {
-          handleAgentEvent: (id: string, e: unknown) => void;
+          handleAgentEvent: (event: unknown) => void;
         }
-      ).handleAgentEvent(tid, evt);
+      ).handleAgentEvent({ ...evt, threadId: tid });
     },
     { tid: threadId, evt: event, tsKeys: [...THREAD_STORE_KEYS] },
   );

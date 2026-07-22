@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentEvent } from "@mcode/contracts";
 import type { Thread } from "@/transport";
 
 vi.mock("@/transport", () => ({
@@ -10,6 +11,7 @@ import { startPushListeners, stopPushListeners } from "./ws-events";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { useDiffStore } from "@/stores/diffStore";
+import { useThreadStore } from "@/stores/threadStore";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -128,6 +130,38 @@ describe("ws-events provider.catalogChanged", () => {
     pushEmitter.emit("provider.catalogChanged", { request: { providerId: "codex" } });
 
     expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe("ws-events agent.event", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.restoreAllMocks();
+  });
+
+  it("drops malformed data before it reaches the thread store", () => {
+    const handleAgentEvent = vi.spyOn(useThreadStore.getState(), "handleAgentEvent");
+    startPushListeners();
+
+    pushEmitter.emit("agent.event", { type: "message", threadId: 42, content: "invalid" });
+
+    expect(handleAgentEvent).not.toHaveBeenCalled();
+  });
+
+  it("forwards a valid parsed event exactly once", () => {
+    const event = {
+      type: "message",
+      threadId: "thread-1",
+      content: "valid",
+      tokens: null,
+    } satisfies AgentEvent;
+    const handleAgentEvent = vi.spyOn(useThreadStore.getState(), "handleAgentEvent");
+    startPushListeners();
+
+    pushEmitter.emit("agent.event", event);
+
+    expect(handleAgentEvent).toHaveBeenCalledOnce();
+    expect(handleAgentEvent).toHaveBeenCalledWith(event);
   });
 });
 
