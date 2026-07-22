@@ -3,7 +3,7 @@ import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   getCachedRecord,
-  cacheRecord,
+  cacheRecord as cacheConversationRecord,
   cachePrefetchedHistoryPage,
   takePrefetchedHistoryPage,
   evictCachedRecord,
@@ -11,6 +11,7 @@ import {
   resizeRecordCache,
   RECORD_CACHE_SIZE,
   RECORD_MESSAGE_CACHE_SIZE,
+  projectConversationCacheState,
 } from "@/lib/thread-hydrator/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
@@ -50,6 +51,10 @@ function makeRecord(id: string): ThreadRecord {
   };
 }
 
+function cacheRecord(threadId: string, record: ThreadRecord): void {
+  cacheConversationRecord(threadId, projectConversationCacheState(record));
+}
+
 describe("recordCache", () => {
   beforeEach(() => {
     clearRecordCache();
@@ -63,7 +68,24 @@ describe("recordCache", () => {
   it("caches and retrieves a record by threadId", () => {
     const rec = makeRecord("t1");
     cacheRecord("t1", rec);
-    expect(getCachedRecord("t1")).toEqual(rec);
+    expect(getCachedRecord("t1")).toEqual(projectConversationCacheState(rec));
+  });
+
+  it("stores only explicitly projected conversation fields", () => {
+    const rec = {
+      ...makeRecord("t1"),
+      loading: true,
+      streaming: "live response",
+      currentTurnMessageId: "turn-1",
+    };
+
+    cacheRecord("t1", rec);
+
+    const cached = getCachedRecord("t1");
+    expect(cached).not.toHaveProperty("loading");
+    expect(cached).not.toHaveProperty("streaming");
+    expect(cached).not.toHaveProperty("currentTurnMessageId");
+    expect(cached).not.toHaveProperty("goal");
   });
 
   it("evicts a single thread without affecting others", () => {

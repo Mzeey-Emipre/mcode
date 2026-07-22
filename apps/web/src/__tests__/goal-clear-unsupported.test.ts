@@ -5,11 +5,12 @@ import {
   resetThreadStoreForTests,
   seedThreadRecord,
 } from "@/stores/thread-store-test-utils";
-import { createEmptyThreadRecord } from "@/stores/thread-record";
+import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
-  cacheRecord,
+  cacheRecord as cacheConversationRecord,
   clearRecordCache,
   getCachedRecord,
+  projectConversationCacheState,
 } from "@/lib/thread-hydrator/record-cache";
 import { mockTransport } from "./mocks/transport";
 
@@ -32,6 +33,10 @@ const goal: GoalState = {
   controls: { canInspect: true, canClear: true },
 };
 
+function cacheRecord(threadId: string, record: ThreadRecord): void {
+  cacheConversationRecord(threadId, projectConversationCacheState(record));
+}
+
 describe("threadStore.clearThreadGoal", () => {
   beforeEach(() => {
     clearRecordCache();
@@ -39,7 +44,7 @@ describe("threadStore.clearThreadGoal", () => {
     vi.clearAllMocks();
   });
 
-  it("applies unsupported authoritative null clear results to live and cached goal state", async () => {
+  it("applies unsupported authoritative null clear results to resident goal state", async () => {
     const threadId = "thread-unsupported";
     useThreadStore.setState({
       records: seedThreadRecord(threadId, { goal }),
@@ -55,10 +60,10 @@ describe("threadStore.clearThreadGoal", () => {
     await useThreadStore.getState().clearThreadGoal(threadId);
 
     expect(useThreadStore.getState().records.get(threadId)?.goal).toBeNull();
-    expect(getCachedRecord(threadId)?.goal).toBeNull();
+    expect(getCachedRecord(threadId)).not.toHaveProperty("goal");
   });
 
-  it("preserves live and cached goals for non-authoritative null clear results", async () => {
+  it("preserves the resident goal for non-authoritative null clear results", async () => {
     const threadId = "thread-cache";
     useThreadStore.setState({
       records: seedThreadRecord(threadId, { goal }),
@@ -74,6 +79,6 @@ describe("threadStore.clearThreadGoal", () => {
     await useThreadStore.getState().clearThreadGoal(threadId);
 
     expect(useThreadStore.getState().records.get(threadId)?.goal).toEqual(goal);
-    expect(getCachedRecord(threadId)?.goal).toEqual(goal);
+    expect(getCachedRecord(threadId)).not.toHaveProperty("goal");
   });
 });
