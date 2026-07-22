@@ -89,11 +89,52 @@ export function App() {
     useState<PullRequestHistoryTab>("summary");
   const outerRowRef = useRef<HTMLDivElement>(null);
   const contentRowRef = useRef<HTMLDivElement>(null);
+  const floatingBackdropRef = useRef<HTMLButtonElement>(null);
+  const floatingSidebarRef = useRef<HTMLDivElement>(null);
   const showNewThreadCanvas = activeThreadId === null;
   const showProjectlessCanvas =
     showNewThreadCanvas && activeWorkspaceId === null;
   const showPullRequests = primarySurface === "pullRequests" && !settingsOpen;
+  const dockedSidebarVisible =
+    !sidebarCollapsed || (settingsOpen && !isDesktop);
+  const floatingSidebarOpen =
+    sidebarFloating && !sidebarCollapsed && !settingsOpen;
+  const [floatingSidebarRendered, setFloatingSidebarRendered] =
+    useState(floatingSidebarOpen);
+  const [floatingSidebarExiting, setFloatingSidebarExiting] = useState(false);
   useIdleReclamation();
+
+  useEffect(() => {
+    if (floatingSidebarOpen) {
+      setFloatingSidebarRendered(true);
+      setFloatingSidebarExiting(false);
+      return;
+    }
+
+    if (!floatingSidebarRendered) return;
+
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      (floatingBackdropRef.current?.contains(activeElement) ||
+        floatingSidebarRef.current?.contains(activeElement))
+    ) {
+      activeElement.blur();
+    }
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setFloatingSidebarRendered(false);
+      setFloatingSidebarExiting(false);
+      return;
+    }
+
+    setFloatingSidebarExiting(true);
+    const exitTimer = window.setTimeout(() => {
+      setFloatingSidebarRendered(false);
+      setFloatingSidebarExiting(false);
+    }, 200);
+    return () => window.clearTimeout(exitTimer);
+  }, [floatingSidebarOpen, floatingSidebarRendered]);
 
   useComposerLayoutGuard(outerRowRef, contentRowRef, {
     settingsOpen,
@@ -542,13 +583,25 @@ export function App() {
             />
           ) : null}
           <div ref={outerRowRef} className="flex flex-1 overflow-hidden">
-            {/* Docked project tree: hidden when collapsed, force-shown in settings,
-              or shown as a float (see below). Maximize hides only the chat pane. */}
-            {(!sidebarCollapsed || (settingsOpen && !isDesktop)) &&
-              !sidebarFloating && (
+            {/* Retain the docked shell while collapsed so its grid track can
+              animate. Settings force-shows it on web; cramped layouts float it. */}
+            {!sidebarFloating && (
+              <div
+                data-testid="sidebar-docked"
+                aria-hidden={!dockedSidebarVisible}
+                inert={!dockedSidebarVisible}
+                className={`grid shrink-0 overflow-hidden bg-page transition-[grid-template-columns] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+                  dockedSidebarVisible
+                    ? "grid-cols-[1fr] duration-250"
+                    : "pointer-events-none grid-cols-[0fr] duration-200"
+                }`}
+              >
                 <div
-                  data-testid="sidebar-docked"
-                  className="flex shrink-0 overflow-hidden border-r border-border/45 bg-page"
+                  className={`min-w-0 overflow-hidden border-r border-border/45 transition-[opacity,transform] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+                    dockedSidebarVisible
+                      ? "translate-x-0 opacity-100 duration-250"
+                      : "-translate-x-2 opacity-0 duration-200"
+                  }`}
                 >
                   <Sidebar
                     settingsOpen={settingsOpen}
@@ -558,18 +611,33 @@ export function App() {
                     onCloseSettings={closeSettings}
                   />
                 </div>
-              )}
-            {sidebarFloating && !sidebarCollapsed && !settingsOpen && (
+              </div>
+            )}
+            {floatingSidebarRendered && (
               <>
                 <button
+                  ref={floatingBackdropRef}
                   type="button"
                   aria-label="Close project tree"
-                  className="fixed inset-0 z-40 bg-black/20"
+                  aria-hidden={floatingSidebarExiting}
+                  inert={floatingSidebarExiting}
+                  className={`fixed inset-0 z-40 bg-black/20 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
+                    floatingSidebarExiting
+                      ? "pointer-events-none animate-out fade-out-0"
+                      : "animate-in fade-in-0"
+                  }`}
                   onClick={() => useUiStore.getState().closeFloatingSidebar()}
                 />
                 <div
+                  ref={floatingSidebarRef}
                   data-testid="sidebar-floating"
-                  className="fixed bottom-1.5 left-1.5 top-1.5 z-50 flex w-72 overflow-hidden rounded-lg bg-page shadow-xl ring-1 ring-border/40"
+                  aria-hidden={floatingSidebarExiting}
+                  inert={floatingSidebarExiting}
+                  className={`fixed bottom-1.5 left-1.5 top-1.5 z-50 flex w-72 overflow-hidden rounded-lg bg-page shadow-xl ring-1 ring-border/40 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
+                    floatingSidebarExiting
+                      ? "pointer-events-none animate-out fade-out-0 slide-out-to-left-4 duration-200"
+                      : "animate-in fade-in-0 slide-in-from-left-4 duration-250"
+                  }`}
                 >
                   <Sidebar
                     className="w-full max-w-none"

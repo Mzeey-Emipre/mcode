@@ -1,11 +1,12 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { App } from "../app/App";
 import { useUiStore } from "@/stores/uiStore";
 
@@ -91,6 +92,11 @@ vi.mock("@/components/ui/scroll-area", () => ({
 await import("@/components/pull-requests/PullRequestSurface");
 
 describe("App", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     useUiStore.setState({
       primarySurface: "chat",
@@ -136,6 +142,102 @@ describe("App", () => {
     expect(floatingSidebar.firstElementChild).toHaveClass(
       "w-full",
       "max-w-none",
+    );
+    expect(floatingSidebar).toHaveClass(
+      "animate-in",
+      "slide-in-from-left-4",
+      "motion-reduce:animate-none",
+    );
+    expect(screen.getByRole("button", { name: "Close project tree" })).toHaveClass(
+      "animate-in",
+      "fade-in-0",
+      "motion-reduce:animate-none",
+    );
+  });
+
+  it("retains the floating sidebar during its pointer-inert exit", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          matches: false,
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }) as MediaQueryList,
+    );
+    useUiStore.setState({
+      sidebarCollapsed: false,
+      sidebarCollapsedByLayout: false,
+      sidebarFloating: true,
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Close project tree" }));
+
+    const backdrop = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close project tree"]',
+    );
+    const floatingSidebar = screen.getByTestId("sidebar-floating");
+    if (!backdrop) throw new Error("Floating sidebar backdrop was not retained");
+    expect(backdrop).toHaveAttribute("aria-hidden", "true");
+    expect(backdrop).toHaveAttribute("inert");
+    expect(backdrop).toHaveClass("pointer-events-none", "animate-out", "fade-out-0");
+    expect(floatingSidebar).toHaveAttribute("aria-hidden", "true");
+    expect(floatingSidebar).toHaveAttribute("inert");
+    expect(floatingSidebar).toHaveClass(
+      "pointer-events-none",
+      "animate-out",
+      "slide-out-to-left-4",
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(screen.queryByTestId("sidebar-floating")).not.toBeInTheDocument();
+  });
+
+  it("removes the floating sidebar immediately with reduced motion", () => {
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          matches: query === "(prefers-reduced-motion: reduce)",
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }) as MediaQueryList,
+    );
+    useUiStore.setState({
+      sidebarCollapsed: false,
+      sidebarCollapsedByLayout: false,
+      sidebarFloating: true,
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Close project tree" }));
+
+    expect(screen.queryByTestId("sidebar-floating")).not.toBeInTheDocument();
+  });
+
+  it("retains the collapsed docked sidebar without allowing interaction", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+    const dockedSidebar = screen.getByTestId("sidebar-docked");
+    expect(dockedSidebar).toBeInTheDocument();
+    expect(dockedSidebar).toHaveAttribute("aria-hidden", "true");
+    expect(dockedSidebar).toHaveAttribute("inert");
+    expect(dockedSidebar).toHaveClass(
+      "pointer-events-none",
+      "grid-cols-[0fr]",
+      "motion-reduce:transition-none",
     );
   });
 
