@@ -573,6 +573,35 @@ describe("handleAgentEvent branches", () => {
     expect(childCall?.isComplete).toBe(true);
     expect(childCall?.output).toBe("file contents");
   });
+
+  it("records provider activity time for tool progress and results", () => {
+    vi.setSystemTime(1_000);
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolUse",
+      params: { toolCallId: "read-1", toolName: "Read", toolInput: { file_path: "README.md" } },
+    });
+
+    vi.setSystemTime(2_000);
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolProgress",
+      params: { toolCallId: "read-1", elapsedSeconds: 1 },
+    });
+    expect(getTestThreadToolCalls("thread-1").find((call) => call.id === "read-1")?.lastActivityAt).toBe(2_000);
+
+    vi.setSystemTime(3_000);
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolProgress",
+      params: { toolCallId: "read-1", elapsedSeconds: 1 },
+    });
+    expect(getTestThreadToolCalls("thread-1").find((call) => call.id === "read-1")?.lastActivityAt).toBe(3_000);
+
+    vi.setSystemTime(4_000);
+    useThreadStore.getState().handleAgentEvent("thread-1", {
+      method: "session.toolResult",
+      params: { toolCallId: "read-1", output: "done", isError: false },
+    });
+    expect(getTestThreadToolCalls("thread-1").find((call) => call.id === "read-1")?.lastActivityAt).toBe(4_000);
+  });
 });
 
 describe("session.modelFallback", () => {

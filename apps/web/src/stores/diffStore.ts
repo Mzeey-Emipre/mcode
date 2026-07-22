@@ -5,7 +5,7 @@ import { defaultReviewView, type ReviewChangeState } from "@/lib/review-views";
 export type { GitCommit, BranchComparison };
 
 /** Active tab in the right panel. */
-export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal";
+export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal" | "subagents";
 
 /**
  * View mode within the Review (Changes) tab. The tab is dual-scope: the first

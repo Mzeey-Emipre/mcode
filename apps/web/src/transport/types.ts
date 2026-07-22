@@ -147,6 +147,8 @@ export interface ToolCall {
   elapsedSeconds?: number;
   /** Epoch ms when the toolUse event was received, used for duration display. */
   startedAt?: number;
+  /** Epoch ms when the provider last reported meaningful activity for this call. */
+  lastActivityAt?: number;
   /** Wall-clock duration when the tool call completed (ms). */
   durationMs?: number;
   /** Process exit code reported for a completed shell command. */

@@ -2245,6 +2245,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         isComplete: false,
         parentToolCallId: parentToolCallId || undefined,
         startedAt: Date.now(),
+        lastActivityAt: Date.now(),
       };
       set((state) => {
         const rec = getThreadRecord(state.records, threadId);
@@ -2334,6 +2335,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             output,
             isError,
             isComplete: true,
+            lastActivityAt: Date.now(),
             ...(outputTruncated ? { outputTruncated: true } : {}),
             ...(outputTotalBytes != null ? { outputTotalBytes } : {}),
             ...(outputArtifactPath ? { outputArtifactPath } : {}),
@@ -2419,13 +2421,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const toolCallId = (params.toolCallId as string) || "";
       const elapsedSeconds = (params.elapsedSeconds as number) ?? 0;
       if (!toolCallId) return;
+      const lastActivityAt = Date.now();
       set((state) => {
         const current = getThreadRecord(state.records, threadId).toolCalls;
         let changed = false;
         const updated = current.map((tc) => {
-          if (tc.id === toolCallId && !tc.isComplete && tc.elapsedSeconds !== elapsedSeconds) {
+          if (tc.id === toolCallId && !tc.isComplete) {
             changed = true;
-            return { ...tc, elapsedSeconds };
+            return { ...tc, elapsedSeconds, lastActivityAt };
           }
           return tc;
         });
