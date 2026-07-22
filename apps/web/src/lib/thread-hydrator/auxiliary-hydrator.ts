@@ -211,7 +211,9 @@ export class AuxiliaryHydrator {
             ...fileChanges.persistedFilesChanged,
           },
           latestTurnWithChanges: fileChanges.latestTurnWithChanges,
-          ...(!ownsLiveFileEffects ? { fileEffectSummary: fileChanges.fileEffectSummary } : {}),
+          ...(!ownsLiveFileEffects
+            ? { settledFileEffectSummary: fileChanges.fileEffectSummary }
+            : {}),
         });
 
         if (!commitToStore) return;

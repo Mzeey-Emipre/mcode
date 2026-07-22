@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { HYDRATION_TTL_MS } from "@/lib/thread-hydrator";
 import { AuxiliaryHydrator } from "@/lib/thread-hydrator/auxiliary-hydrator";
 import {
-  cacheRecord,
+  cacheRecord as cacheConversationRecord,
   clearRecordCache,
   getCachedRecord,
+  projectConversationCacheState,
 } from "@/lib/thread-hydrator/record-cache";
 import {
   createEmptyThreadRecord,
@@ -25,6 +26,10 @@ function makeThinRecord(): ThreadRecord {
     messages: [createMockMessage({ id: "m1", thread_id: THREAD_ID, sequence: 1 })],
     oldestLoadedSequence: 1,
   };
+}
+
+function cacheRecord(threadId: string, record: ThreadRecord): void {
+  cacheConversationRecord(threadId, projectConversationCacheState(record));
 }
 
 describe("AuxiliaryHydrator", () => {
@@ -413,7 +418,7 @@ describe("AuxiliaryHydrator", () => {
       });
     });
     expect(getThreadRecord(records, THREAD_ID).fileEffectSummary).toEqual(liveSummary);
-    expect(getCachedRecord(THREAD_ID)?.fileEffectSummary).toEqual(liveSummary);
+    expect(getCachedRecord(THREAD_ID)?.settledFileEffectSummary).toBeNull();
   });
 
   it("discarded file-change snapshots after the expected load epoch changed", async () => {

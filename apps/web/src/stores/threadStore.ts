@@ -26,6 +26,7 @@ import {
   cacheRecord,
   evictCachedRecord,
   getCachedRecord,
+  projectConversationCacheState,
   takePrefetchedHistoryPage,
 } from "@/lib/thread-hydrator/record-cache";
 import { shallowEqualBy } from "@/lib/shallowEqualBy";
@@ -779,7 +780,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (state.currentThreadId !== threadId) {
       // The response can arrive before its database commit, so the resident
       // transcript must replace any older snapshot used by thread switching.
-      cacheRecord(threadId, getThreadRecord(state.records, threadId));
+      cacheRecord(
+        threadId,
+        projectConversationCacheState(getThreadRecord(state.records, threadId)),
+      );
     }
   };
 
@@ -787,8 +791,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const current = getRec(threadId);
     const goal = resolveGoalLookupGoal(lookup, current.goal);
     patchRec(threadId, { goal });
-    const cached = getCachedRecord(threadId);
-    if (cached) cacheRecord(threadId, { ...cached, goal: resolveGoalLookupGoal(lookup, cached.goal) });
   };
 
   /**
@@ -1016,7 +1018,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }));
 
       const updated = getRec(threadId);
-      cacheRecord(threadId, updated);
+      cacheRecord(threadId, projectConversationCacheState(updated));
 
       // Hydrate file change data for older messages from snapshots
       const olderMsgIds = new Set(olderMessages.map((m) => m.id));
@@ -1028,10 +1030,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           );
           if (relevant.length === 0) return;
           set((state) => {
-            if (state.currentThreadId !== threadId) return {};
-            const rec = getThreadRecord(state.records, threadId);
+            const rec = state.records.get(threadId);
+            if (
+              state.currentThreadId !== threadId
+              || !rec
+              || rec.loadEpoch !== epoch
+            ) return {};
+            const retainedMessageIds = new Set(rec.messages.map((message) => message.id));
+            const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
+            if (retained.length === 0) return {};
             const nextFilesChanged = { ...rec.persistedFilesChanged };
-            for (const snap of relevant) {
+            for (const snap of retained) {
               nextFilesChanged[snap.message_id] = snap.files_changed;
             }
             return {
@@ -1043,10 +1052,21 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           // Keep the LRU message cache in sync: the cache was written before this
           // async merge, so a cache-hit thread switch otherwise drops prepended
           // turns' file lists until a full reload.
+          const current = get().records.get(threadId);
+          if (
+            get().currentThreadId !== threadId
+            || !current
+            || current.loadEpoch !== epoch
+          ) return;
           const cached = getCachedRecord(threadId);
           if (!cached) return;
+          const retainedCachedMessageIds = new Set(cached.messages.map((message) => message.id));
+          const retained = relevant.filter((snapshot) =>
+            retainedCachedMessageIds.has(snapshot.message_id),
+          );
+          if (retained.length === 0) return;
           const mergedFiles = { ...cached.persistedFilesChanged };
-          for (const snap of relevant) {
+          for (const snap of retained) {
             mergedFiles[snap.message_id] = snap.files_changed;
           }
           cacheRecord(threadId, {
@@ -1828,16 +1848,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       if (goal) {
         const openGoal = isGoalOpen(goal) ? goal : null;
         patchRec(threadId, { goal: openGoal });
-        const cached = getCachedRecord(threadId);
-        if (cached) cacheRecord(threadId, { ...cached, goal: openGoal });
       }
       return;
     }
 
     if (event.type === "goalCleared") {
       patchRec(threadId, { goal: null });
-      const cached = getCachedRecord(threadId);
-      if (cached) cacheRecord(threadId, { ...cached, goal: null });
       return;
     }
 
