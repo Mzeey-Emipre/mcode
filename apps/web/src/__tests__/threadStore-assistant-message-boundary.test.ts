@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestThreadStreaming,
@@ -31,21 +32,12 @@ describe("threadStore assistantMessageBoundary", () => {
     const tid = "thread-final";
     // Provider could not lookahead so it streamed deltas without
     // isFinalResponse=true — they landed in the thought segment buffer.
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "Autoclave is a sealed " },
-    });
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "pressure vessel." },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "Autoclave is a sealed " } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "pressure vessel." } as AgentEvent);
 
     // Boundary arrives with stop_reason=end_turn → the deltas were the final
     // response, not a thought.
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.assistantMessageBoundary",
-      isFinalResponse: true,
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "assistantMessageBoundary", threadId: tid, isFinalResponse: true } as AgentEvent);
 
     expect(getTestThreadThoughtSegments(tid) ?? []).toEqual([]);
     expect(getTestThreadStreaming(tid)).toBe(
@@ -61,15 +53,9 @@ describe("threadStore assistantMessageBoundary", () => {
     });
 
     const tid = "thread-preamble";
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "Let me look at the file." },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "Let me look at the file." } as AgentEvent);
 
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.assistantMessageBoundary",
-      isFinalResponse: false,
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "assistantMessageBoundary", threadId: tid, isFinalResponse: false } as AgentEvent);
 
     const segs = getTestThreadThoughtSegments(tid) ?? [];
     expect(segs).toHaveLength(1);
@@ -79,10 +65,7 @@ describe("threadStore assistantMessageBoundary", () => {
 
   it("is a no-op when there is no open thought segment", () => {
     const tid = "thread-empty";
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.assistantMessageBoundary",
-      isFinalResponse: true,
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "assistantMessageBoundary", threadId: tid, isFinalResponse: true } as AgentEvent);
     expect(getTestThreadThoughtSegments(tid) ?? []).toEqual([]);
   });
 
@@ -107,10 +90,7 @@ describe("threadStore assistantMessageBoundary", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.assistantMessageBoundary",
-      isFinalResponse: true,
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "assistantMessageBoundary", threadId: tid, isFinalResponse: true } as AgentEvent);
 
     const segs = getTestThreadThoughtSegments(tid) ?? [];
     expect(segs).toEqual([{ text: "old thought", startedAt: 1, endedAt: 2 }]);

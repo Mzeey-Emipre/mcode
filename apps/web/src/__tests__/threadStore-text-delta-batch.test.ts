@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestThreadStreaming,
@@ -38,10 +39,7 @@ describe("threadStore textDelta batching", () => {
 
     const tid = "thread-coalesce";
     for (let i = 0; i < 8; i++) {
-      useThreadStore.getState().handleAgentEvent(tid, {
-        method: "session.textDelta",
-        params: { delta: String(i) },
-      });
+      useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: String(i) } as AgentEvent);
     }
 
     expect(queue).toHaveLength(1);
@@ -77,10 +75,7 @@ describe("threadStore textDelta batching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: " stale delta", isFinalResponse: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: " stale delta", isFinalResponse: false } as AgentEvent);
     expect(queue).toHaveLength(1);
 
     useThreadStore.getState().hydrateRunningThreads([]);
@@ -105,14 +100,8 @@ describe("threadStore textDelta batching", () => {
     });
 
     const tid = "thread-final-flag";
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "think ", isFinalResponse: false },
-    });
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "final", isFinalResponse: true },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "think ", isFinalResponse: false } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "final", isFinalResponse: true } as AgentEvent);
     expect(queue).toHaveLength(1);
 
     queue[0]!(0);
@@ -144,10 +133,7 @@ describe("threadStore textDelta batching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "final response", isFinalResponse: true },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "final response", isFinalResponse: true } as AgentEvent);
     queue[0]!(0);
 
     expect(getTestThreadStreaming(tid)).toBe("final response");
@@ -176,10 +162,7 @@ describe("threadStore textDelta batching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "New narration", isFinalResponse: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "New narration", isFinalResponse: false } as AgentEvent);
     queue[0]!(0);
 
     const nextSegments = readThreadField(tid, (record) => record.thoughtSegments);
@@ -198,10 +181,7 @@ describe("threadStore textDelta batching", () => {
     });
 
     const tid = "thread-legacy-unclassified";
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "legacy " },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "legacy " } as AgentEvent);
     expect(queue).toHaveLength(1);
 
     queue[0]!(0);
@@ -218,16 +198,10 @@ describe("threadStore textDelta batching", () => {
     });
 
     const tid = "thread-flush";
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "hello " },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "hello " } as AgentEvent);
     expect(queue).toHaveLength(1);
 
-    useThreadStore.getState().handleAgentEvent(tid, {
-      method: "session.turnComplete",
-      params: { costUsd: null, tokensIn: 0, tokensOut: 0 },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: tid, costUsd: null, tokensIn: 0, tokensOut: 0 } as AgentEvent);
 
     expect(getTestThreadStreaming(tid)).toBeUndefined();
   });

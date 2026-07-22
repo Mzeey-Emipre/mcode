@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestActiveMessages,
@@ -125,7 +126,7 @@ describe("loadMessages cache eviction", () => {
     await useThreadStore.getState().loadMessages("t1");
     expect(getCachedRecord("t1")).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent("t1", { method: "session.message", content: "x" });
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "t1", content: "x" } as AgentEvent);
     expect(getCachedRecord("t1")).toBeUndefined();
   });
 

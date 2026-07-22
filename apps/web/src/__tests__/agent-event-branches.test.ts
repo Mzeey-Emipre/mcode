@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestActiveMessages,
@@ -49,10 +50,7 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.error clears thread running state and sets error", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.error",
-      params: { error: "Out of tokens" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "error", threadId: "thread-1", error: "Out of tokens" } as AgentEvent);
 
     const state = useThreadStore.getState();
     expect(state.runningThreadIds.has("thread-1")).toBe(false);
@@ -60,10 +58,7 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.system sdk_session_invalidated appends a reset hairline message", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.system",
-      params: { subtype: "sdk_session_invalidated" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: "thread-1", subtype: "sdk_session_invalidated" } as AgentEvent);
 
     const messages = getTestActiveMessages();
     expect(messages).toHaveLength(1);
@@ -74,19 +69,13 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.system with an unknown subtype appends no message", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.system",
-      params: { subtype: "some_other_subtype" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "system", threadId: "thread-1", subtype: "some_other_subtype" } as AgentEvent);
 
     expect(getTestActiveMessages()).toHaveLength(0);
   });
 
   it("session.turnComplete without streaming content clears state only", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.turnComplete",
-      params: { sessionId: "mcode-thread-1", reason: "end_turn", costUsd: null, totalTokensIn: 0, totalTokensOut: 0 },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: "thread-1", reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 } as AgentEvent);
     vi.runAllTimers();
 
     const state = useThreadStore.getState();
@@ -95,10 +84,7 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse adds tool call to toolCallsByThread", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: { toolCallId: "tc1", toolName: "Read", toolInput: { path: "/foo" } },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "tc1", toolName: "Read", toolInput: { path: "/foo" } } as AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -110,14 +96,8 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse ignores duplicate toolCallId (defense in depth)", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: { toolCallId: "dup", toolName: "Read", toolInput: { path: "/a" } },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: { toolCallId: "dup", toolName: "Read", toolInput: { path: "/b" } },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "dup", toolName: "Read", toolInput: { path: "/a" } } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "dup", toolName: "Read", toolInput: { path: "/b" } } as AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -126,26 +106,16 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse merges enriched Agent toolInput for duplicate toolCallId", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "agent-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "agent-1",
         toolName: "Agent",
-        toolInput: { description: "Subagent task" },
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "agent-1",
+        toolInput: { description: "Subagent task" }, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "agent-1",
         toolName: "Agent",
         toolInput: {
           description: "Read detection file",
           prompt: "Read cursor-subagent-detection.ts",
           model: "composer-2.5-fast",
-        },
-      },
-    });
+        }, } as AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -159,26 +129,16 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse updates tasks when duplicate TodoWrite enriches sparse input", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "todo-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "todo-1",
         toolName: "TodoWrite",
-        toolInput: {},
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "todo-1",
+        toolInput: {}, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "todo-1",
         toolName: "TodoWrite",
         toolInput: {
           todos: [
             { id: "a", content: "Run mapper tests", status: "in_progress" },
           ],
-        },
-      },
-    });
+        }, } as AgentEvent);
 
     const calls = getTestThreadToolCalls("thread-1");
     expect(calls).toHaveLength(1);
@@ -198,35 +158,20 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse keeps sub-agent task grouping when duplicate TodoWrite omits parent", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "agent-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "agent-1",
         toolName: "Agent",
-        toolInput: { description: "Audit child scope" },
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "todo-child",
+        toolInput: { description: "Audit child scope" }, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "todo-child",
         toolName: "TodoWrite",
         toolInput: {},
-        parentToolCallId: "agent-1",
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "todo-child",
+        parentToolCallId: "agent-1", } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "todo-child",
         toolName: "TodoWrite",
         toolInput: {
           todos: [
             { id: "child-a", content: "Trace child scope", status: "in_progress" },
           ],
-        },
-      },
-    });
+        }, } as AgentEvent);
 
     const calls = getTestThreadToolCalls("thread-1");
     expect(calls.find((call) => call.id === "todo-child")?.parentToolCallId).toBe("agent-1");
@@ -241,28 +186,18 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse updates tasks from TaskCreate tool calls", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-create-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-create-1",
         toolName: "TaskCreate",
         toolInput: {
           subject: "Buy groceries",
           description: "Pick up milk, eggs, bread",
-        },
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-create-2",
+        }, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-create-2",
         toolName: "TaskCreate",
         toolInput: {
           subject: "Clean the kitchen",
           description: "Dishes, counters, floor",
-        },
-      },
-    });
+        }, } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
       {
@@ -281,23 +216,13 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse groups sub-agent TaskCreate calls by parent Agent", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "agent-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "agent-1",
         toolName: "Agent",
-        toolInput: { description: "Prepare child tasks" },
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-create-child",
+        toolInput: { description: "Prepare child tasks" }, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-create-child",
         toolName: "TaskCreate",
         toolInput: { subject: "Check child output" },
-        parentToolCallId: "agent-1",
-      },
-    });
+        parentToolCallId: "agent-1", } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
       {
@@ -310,22 +235,12 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("captures the harness task id from a TaskCreate result", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-create-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-create-1",
         toolName: "TaskCreate",
-        toolInput: { subject: "Buy groceries", description: "milk, eggs", activeForm: "Buying groceries" },
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: {
-        toolCallId: "task-create-1",
+        toolInput: { subject: "Buy groceries", description: "milk, eggs", activeForm: "Buying groceries" }, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "task-create-1",
         output: "Task #1 created successfully: Buy groceries",
-        isError: false,
-      },
-    });
+        isError: false, } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
       {
@@ -340,26 +255,13 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("applies a TaskUpdate status transition by harness task id", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-create-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-create-1",
         toolName: "TaskCreate",
-        toolInput: { subject: "Buy groceries", description: "milk, eggs" },
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "task-create-1", output: "Task #1 created successfully", isError: false },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-update-1",
+        toolInput: { subject: "Buy groceries", description: "milk, eggs" }, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "task-create-1", output: "Task #1 created successfully", isError: false } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-update-1",
         toolName: "TaskUpdate",
-        toolInput: { taskId: "1", status: "in_progress", activeForm: "Buying groceries" },
-      },
-    });
+        toolInput: { taskId: "1", status: "in_progress", activeForm: "Buying groceries" }, } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
       {
@@ -374,39 +276,21 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("removes a task when a TaskUpdate sets status deleted", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-create-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-create-1",
         toolName: "TaskCreate",
-        toolInput: { subject: "Buy groceries" },
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "task-create-1", output: "Task #1 created successfully", isError: false },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-update-1",
+        toolInput: { subject: "Buy groceries" }, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "task-create-1", output: "Task #1 created successfully", isError: false } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-update-1",
         toolName: "TaskUpdate",
-        toolInput: { taskId: "1", status: "deleted" },
-      },
-    });
+        toolInput: { taskId: "1", status: "deleted" }, } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([]);
   });
 
   it("ignores a TaskUpdate that matches no known task", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-update-orphan",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-update-orphan",
         toolName: "TaskUpdate",
-        toolInput: { taskId: "99", status: "completed" },
-      },
-    });
+        toolInput: { taskId: "99", status: "completed" }, } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toBeUndefined();
   });
@@ -423,14 +307,9 @@ describe("handleAgentEvent branches", () => {
       { id: "sb-1", harnessTaskId: "1", content: "child B", status: "pending", group: "Sub-agent B" },
     ]);
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-update-collide",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "task-update-collide",
         toolName: "TaskUpdate",
-        toolInput: { taskId: "1", status: "completed" },
-      },
-    });
+        toolInput: { taskId: "1", status: "completed" }, } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
       { id: "sa-1", harnessTaskId: "1", content: "child A", status: "pending", group: "Sub-agent A" },
@@ -439,10 +318,7 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse updates parent scope tasks from Codex update_plan calls", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "update-plan-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "update-plan-1",
         toolName: "update_plan",
         toolInput: {
           plan: [
@@ -450,9 +326,7 @@ describe("handleAgentEvent branches", () => {
             { status: "inProgress", step: "Test todo item two with CODE-A2 and CODE-B2" },
             { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
           ],
-        },
-      },
-    });
+        }, } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
       {
@@ -477,24 +351,14 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse updates Codex update_plan tasks when duplicate enriches sparse input", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "update-plan-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "update-plan-1",
         toolName: "update_plan",
-        toolInput: {},
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "update-plan-1",
+        toolInput: {}, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "update-plan-1",
         toolName: "update_plan",
         toolInput: {
           plan: [{ status: "in_progress", step: "Fill plan after completion" }],
-        },
-      },
-    });
+        }, } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
       {
@@ -507,25 +371,15 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("session.toolUse keeps child Codex update_plan tasks out of the parent group", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "agent-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "agent-1",
         toolName: "Agent",
-        toolInput: { description: "Child work" },
-      },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "update-plan-child",
+        toolInput: { description: "Child work" }, } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "update-plan-child",
         toolName: "update_plan",
         toolInput: {
           plan: [{ status: "pending", step: "Child-only plan item" }],
         },
-        parentToolCallId: "agent-1",
-      },
-    });
+        parentToolCallId: "agent-1", } as AgentEvent);
 
     expect(useTaskStore.getState().tasksByThread["thread-1"]).toEqual([
       {
@@ -555,10 +409,7 @@ describe("handleAgentEvent branches", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "no-match", output: "file contents", isError: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "no-match", output: "file contents", isError: false } as AgentEvent);
 
     const calls = getTestThreadToolCalls("thread-1");
     const agentCall = calls.find((c) => c.id === "agent-1");
@@ -576,30 +427,18 @@ describe("handleAgentEvent branches", () => {
 
   it("records provider activity time for tool progress and results", () => {
     vi.setSystemTime(1_000);
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: { toolCallId: "read-1", toolName: "Read", toolInput: { file_path: "README.md" } },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "read-1", toolName: "Read", toolInput: { file_path: "README.md" } } as AgentEvent);
 
     vi.setSystemTime(2_000);
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolProgress",
-      params: { toolCallId: "read-1", elapsedSeconds: 1 },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolProgress", threadId: "thread-1", toolCallId: "read-1", elapsedSeconds: 1 } as AgentEvent);
     expect(getTestThreadToolCalls("thread-1").find((call) => call.id === "read-1")?.lastActivityAt).toBe(2_000);
 
     vi.setSystemTime(3_000);
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolProgress",
-      params: { toolCallId: "read-1", elapsedSeconds: 1 },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolProgress", threadId: "thread-1", toolCallId: "read-1", elapsedSeconds: 1 } as AgentEvent);
     expect(getTestThreadToolCalls("thread-1").find((call) => call.id === "read-1")?.lastActivityAt).toBe(3_000);
 
     vi.setSystemTime(4_000);
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "read-1", output: "done", isError: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "read-1", output: "done", isError: false } as AgentEvent);
     expect(getTestThreadToolCalls("thread-1").find((call) => call.id === "read-1")?.lastActivityAt).toBe(4_000);
   });
 });
@@ -637,13 +476,8 @@ describe("session.modelFallback", () => {
   });
 
   it("stores transient fallback info without mutating thread.model", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.modelFallback",
-      params: {
-        requestedModel: "claude-opus-4-6",
-        actualModel: "claude-sonnet-4-6",
-      },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "modelFallback", threadId: "thread-1", requestedModel: "claude-opus-4-6",
+        actualModel: "claude-sonnet-4-6", } as AgentEvent);
 
     // thread.model must NOT be changed
     const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "thread-1");
@@ -658,13 +492,8 @@ describe("session.modelFallback", () => {
   });
 
   it("shows an info toast on fallback", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.modelFallback",
-      params: {
-        requestedModel: "claude-opus-4-6",
-        actualModel: "claude-sonnet-4-6",
-      },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "modelFallback", threadId: "thread-1", requestedModel: "claude-opus-4-6",
+        actualModel: "claude-sonnet-4-6", } as AgentEvent);
 
     const toasts = useToastStore.getState().toasts;
     expect(toasts).toHaveLength(1);
@@ -673,13 +502,8 @@ describe("session.modelFallback", () => {
   });
 
   it("normalizes dated SDK variant in transient fallback info", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.modelFallback",
-      params: {
-        requestedModel: "claude-opus-4-6",
-        actualModel: "claude-haiku-4-5-20251001",
-      },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "modelFallback", threadId: "thread-1", requestedModel: "claude-opus-4-6",
+        actualModel: "claude-haiku-4-5-20251001", } as AgentEvent);
 
     // thread.model unchanged
     const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "thread-1");
@@ -691,13 +515,8 @@ describe("session.modelFallback", () => {
   });
 
   it("shows human-readable label in toast for dated SDK variant", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.modelFallback",
-      params: {
-        requestedModel: "claude-opus-4-6",
-        actualModel: "claude-haiku-4-5-20251001",
-      },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "modelFallback", threadId: "thread-1", requestedModel: "claude-opus-4-6",
+        actualModel: "claude-haiku-4-5-20251001", } as AgentEvent);
 
     const toasts = useToastStore.getState().toasts;
     expect(toasts[0].title).toContain("Haiku");
@@ -705,13 +524,8 @@ describe("session.modelFallback", () => {
   });
 
   it("does not show toast for unknown model IDs (uses raw ID)", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.modelFallback",
-      params: {
-        requestedModel: "claude-unknown-model",
-        actualModel: "claude-another-unknown",
-      },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "modelFallback", threadId: "thread-1", requestedModel: "claude-unknown-model",
+        actualModel: "claude-another-unknown", } as AgentEvent);
 
     const toasts = useToastStore.getState().toasts;
     expect(toasts).toHaveLength(1);
@@ -746,10 +560,7 @@ describe("subagent count via markPriorToolCallsComplete", () => {
     // A subagent's child tool calls keep arriving on the same thread after a
     // peer top-level event. Completing the parent Agent here would zero the
     // subagent counter and hide the live LiveAgentGroup mid-run.
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: { toolCallId: "tc2", toolName: "Read", toolInput: {} },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "tc2", toolName: "Read", toolInput: {} } as AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -777,10 +588,7 @@ describe("subagent count via markPriorToolCallsComplete", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolUse",
-      params: { toolCallId: "tc3", toolName: "Bash", toolInput: {} },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "tc3", toolName: "Bash", toolInput: {} } as AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -795,15 +603,9 @@ describe("subagent count via markPriorToolCallsComplete", () => {
   });
 
   it("does not let goal receipts claim current turn response identity", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.message",
-      params: { messageId: "answer-1", content: "The rendering bug is fixed." },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "thread-1", messageId: "answer-1", content: "The rendering bug is fixed." } as AgentEvent);
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.message",
-      params: { messageId: "goal-1", content: "Goal achieved in 19s." },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "thread-1", messageId: "goal-1", content: "Goal achieved in 19s." } as AgentEvent);
 
     const rec = readThreadField("thread-1", (record) => record);
     expect(rec.currentTurnMessageId).toBe("answer-1");
@@ -813,10 +615,7 @@ describe("subagent count via markPriorToolCallsComplete", () => {
   });
 
   it("keeps near-match goal receipt text as a normal assistant response", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.message",
-      params: { messageId: "answer-1", content: "Goal achieved in 19s. Here is the summary." },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "thread-1", messageId: "answer-1", content: "Goal achieved in 19s. Here is the summary." } as AgentEvent);
 
     const rec = readThreadField("thread-1", (record) => record);
     expect(rec.currentTurnMessageId).toBe("answer-1");
@@ -824,10 +623,7 @@ describe("subagent count via markPriorToolCallsComplete", () => {
   });
 
   it("clears active goal state when a goal update is complete", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.goalUpdated",
-      params: {
-        goal: {
+    useThreadStore.getState().handleAgentEvent({ type: "goalUpdated", threadId: "thread-1", goal: {
           objective: "fix rendering",
           status: "active",
           tokenBudget: null,
@@ -837,15 +633,10 @@ describe("subagent count via markPriorToolCallsComplete", () => {
           updatedAt: 1,
           source: "claude",
           controls: { canInspect: true, canClear: true },
-        },
-      },
-    });
+        }, } as AgentEvent);
     expect(readThreadField("thread-1", (record) => record.goal?.status)).toBe("active");
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.goalUpdated",
-      params: {
-        goal: {
+    useThreadStore.getState().handleAgentEvent({ type: "goalUpdated", threadId: "thread-1", goal: {
           objective: "fix rendering",
           status: "complete",
           tokenBudget: null,
@@ -855,18 +646,13 @@ describe("subagent count via markPriorToolCallsComplete", () => {
           updatedAt: 20,
           source: "codex",
           controls: { canInspect: true, canClear: false },
-        },
-      },
-    });
+        }, } as AgentEvent);
 
     expect(readThreadField("thread-1", (record) => record.goal)).toBeNull();
   });
 
   it("clears active goal state when a goalCleared event arrives", () => {
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.goalUpdated",
-      params: {
-        goal: {
+    useThreadStore.getState().handleAgentEvent({ type: "goalUpdated", threadId: "thread-1", goal: {
           objective: "say hi",
           status: "active",
           tokenBudget: null,
@@ -876,15 +662,10 @@ describe("subagent count via markPriorToolCallsComplete", () => {
           updatedAt: 1,
           source: "codex",
           controls: { canInspect: true, canClear: true },
-        },
-      },
-    });
+        }, } as AgentEvent);
     expect(readThreadField("thread-1", (record) => record.goal?.objective)).toBe("say hi");
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.goalCleared",
-      params: { providerId: "codex", reason: "completed" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "goalCleared", threadId: "thread-1", providerId: "codex", reason: "completed" } as AgentEvent);
 
     expect(readThreadField("thread-1", (record) => record.goal)).toBeNull();
   });

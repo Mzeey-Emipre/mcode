@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestThreadThoughtSegments,
@@ -42,21 +43,12 @@ describe("threadStore thought-segment coalescing", () => {
     const store = useThreadStore.getState();
 
     // Open segment with a short tail "the" and freeze it via a tool call.
-    store.handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "the", isFinalResponse: false },
-    });
+    store.handleAgentEvent({ type: "textDelta", threadId: tid, delta: "the", isFinalResponse: false } as AgentEvent);
     flush(queue);
-    store.handleAgentEvent(tid, {
-      method: "session.toolUse",
-      params: { toolCallId: "t1", toolName: "Bash", toolInput: {} },
-    });
+    store.handleAgentEvent({ type: "toolUse", threadId: tid, toolCallId: "t1", toolName: "Bash", toolInput: {} } as AgentEvent);
 
     // New delta continues the thought after the tool finishes.
-    store.handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: " changed set", isFinalResponse: false },
-    });
+    store.handleAgentEvent({ type: "textDelta", threadId: tid, delta: " changed set", isFinalResponse: false } as AgentEvent);
     flush(queue);
 
     const segs = getTestThreadThoughtSegments(tid) ?? [];
@@ -71,21 +63,12 @@ describe("threadStore thought-segment coalescing", () => {
     const store = useThreadStore.getState();
 
     const long = "I will read the file and then summarize what changed in this branch.";
-    store.handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: long, isFinalResponse: false },
-    });
+    store.handleAgentEvent({ type: "textDelta", threadId: tid, delta: long, isFinalResponse: false } as AgentEvent);
     flush(queue);
-    store.handleAgentEvent(tid, {
-      method: "session.toolUse",
-      params: { toolCallId: "t2", toolName: "Bash", toolInput: {} },
-    });
+    store.handleAgentEvent({ type: "toolUse", threadId: tid, toolCallId: "t2", toolName: "Bash", toolInput: {} } as AgentEvent);
 
     // Continuation starts uppercase and the prev ended with a period.
-    store.handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: "Now I have the result.", isFinalResponse: false },
-    });
+    store.handleAgentEvent({ type: "textDelta", threadId: tid, delta: "Now I have the result.", isFinalResponse: false } as AgentEvent);
     flush(queue);
 
     const segs = getTestThreadThoughtSegments(tid) ?? [];
@@ -100,20 +83,11 @@ describe("threadStore thought-segment coalescing", () => {
     const store = useThreadStore.getState();
 
     const prev = "I am inspecting the changeset closely so this review is";
-    store.handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: prev, isFinalResponse: false },
-    });
+    store.handleAgentEvent({ type: "textDelta", threadId: tid, delta: prev, isFinalResponse: false } as AgentEvent);
     flush(queue);
-    store.handleAgentEvent(tid, {
-      method: "session.toolUse",
-      params: { toolCallId: "t3", toolName: "Bash", toolInput: {} },
-    });
+    store.handleAgentEvent({ type: "toolUse", threadId: tid, toolCallId: "t3", toolName: "Bash", toolInput: {} } as AgentEvent);
 
-    store.handleAgentEvent(tid, {
-      method: "session.textDelta",
-      params: { delta: " entirely the uncommitted worktree delta.", isFinalResponse: false },
-    });
+    store.handleAgentEvent({ type: "textDelta", threadId: tid, delta: " entirely the uncommitted worktree delta.", isFinalResponse: false } as AgentEvent);
     flush(queue);
 
     const segs = getTestThreadThoughtSegments(tid) ?? [];
