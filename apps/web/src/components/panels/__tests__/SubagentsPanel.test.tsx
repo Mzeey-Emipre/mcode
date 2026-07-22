@@ -55,7 +55,7 @@ function setThread(threadId: string, toolCalls: ToolCall[] = [], tools: ToolCall
 describe("SubagentsPanel", () => {
   beforeEach(() => {
     state.records = {};
-    useDiffStore.setState({ subagentRosterTabByThread: {} });
+    useDiffStore.setState({ subagentRosterTabByThread: {}, subagentDetailByThread: {} });
   });
 
   it("selects Active first while work runs and exposes rows, counts, and semantic running text", () => {
@@ -145,5 +145,18 @@ describe("SubagentsPanel", () => {
     expect(active).toHaveFocus();
     expect(active).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", active.id);
+  });
+
+  it("opens a roster row in the same panel and returns to its lifecycle tab", () => {
+    setThread("thread-1", [agent({ output: "**Done**", isComplete: true })]);
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
+    expect(screen.getByRole("region", { name: /Implementation worker subagent details/ })).toBeInTheDocument();
+    expect(screen.getByText("Delegated task")).toBeInTheDocument();
+    expect(screen.getByText("**Done**")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
+    expect(screen.getByRole("tab", { name: /finished 1/i })).toHaveAttribute("aria-selected", "true");
   });
 });

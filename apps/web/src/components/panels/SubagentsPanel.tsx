@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Ban, CircleCheck, CircleX, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Ban, CircleCheck, CircleX, ChevronDown, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EntityIcon } from "@/components/chat/EntityToken";
+import { DeltaBlock } from "@/components/chat/narrative/DeltaBlock";
+import { ToolOutputTruncationNotice } from "@/components/chat/narrative/ToolOutputTruncationNotice";
 import { projectSubagents, type FinishedSubagentRow, type FinishedSubagentStatus, type LiveSubagentRow } from "@/components/subagents/subagent-projection";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/time";
@@ -23,11 +25,15 @@ function rosterPanelId(tab: RosterTab): string {
 }
 
 /** A compact live row for one running provider subagent. */
-function LiveSubagentRowView({ row }: { readonly row: LiveSubagentRow }) {
+function LiveSubagentRowView({ row, onSelect }: { readonly row: LiveSubagentRow; readonly onSelect: () => void }) {
   return (
-    <article
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-label={`Open ${row.identity} details`}
+      data-subagent-id={row.id}
       data-testid="subagent-roster-row"
-      className="flex min-w-0 gap-3 border-b border-border/50 px-4 py-3 last:border-b-0"
+      className="flex w-full min-w-0 gap-3 border-b border-border/50 px-4 py-3 text-left last:border-b-0 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
         <EntityIcon kind="agent" animated size={15} />
@@ -46,7 +52,7 @@ function LiveSubagentRowView({ row }: { readonly row: LiveSubagentRow }) {
         <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-foreground/80">{row.task}</p>
         <p className="mt-1 truncate text-xs text-muted-foreground">{row.activity}</p>
       </div>
-    </article>
+    </button>
   );
 }
 
@@ -57,12 +63,16 @@ const FINISHED_STATUS: Record<FinishedSubagentStatus, { label: string; Icon: Luc
 };
 
 /** A compact settled row for one completed, failed, or cancelled subagent. */
-function FinishedSubagentRowView({ row }: { readonly row: FinishedSubagentRow }) {
+function FinishedSubagentRowView({ row, onSelect }: { readonly row: FinishedSubagentRow; readonly onSelect: () => void }) {
   const status = FINISHED_STATUS[row.status];
   return (
-    <article
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-label={`Open ${row.identity} details`}
+      data-subagent-id={row.id}
       data-testid="subagent-finished-row"
-      className="flex min-w-0 gap-3 border-b border-border/50 px-4 py-3 last:border-b-0"
+      className="flex w-full min-w-0 gap-3 border-b border-border/50 px-4 py-3 text-left last:border-b-0 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <span className={cn("mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md", status.className)}>
         <status.Icon size={15} aria-hidden />
@@ -84,24 +94,91 @@ function FinishedSubagentRowView({ row }: { readonly row: FinishedSubagentRow })
         <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-foreground/80">{row.task}</p>
         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{row.activity}</p>
       </div>
-    </article>
+    </button>
+  );
+}
+
+function DetailView({ row, onBack }: { readonly row: LiveSubagentRow | FinishedSubagentRow; readonly onBack: () => void }) {
+  const [showAll, setShowAll] = useState(false);
+  const activities = showAll ? row.detail.activity : row.detail.activity.slice(0, 8);
+  const status = "status" in row ? FINISHED_STATUS[row.status].label : "Running";
+  const outputCall = {
+    id: row.id, toolName: "Agent", toolInput: {}, output: row.detail.output,
+    isError: "status" in row && row.status === "failed", isComplete: "status" in row,
+    outputTruncated: row.detail.outputTruncated, outputTotalBytes: row.detail.outputTotalBytes,
+    outputArtifactPath: row.detail.outputArtifactPath,
+  };
+  return (
+    <section className="flex min-h-0 flex-1 flex-col" aria-label={`${row.identity} subagent details`}>
+      <header className="shrink-0 border-b border-border/50 px-3 py-3">
+        <Button type="button" variant="ghost" size="sm" onClick={onBack} aria-label="Back to subagents" className="mb-2 -ml-1 gap-1">
+          <ArrowLeft size={14} aria-hidden /> Back
+        </Button>
+        <div className="flex min-w-0 items-center gap-2">
+          <EntityIcon kind="agent" animated={!('status' in row)} size={16} />
+          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{row.identity}</h2>
+          <span className="text-xs font-medium text-muted-foreground">{status}</span>
+          <time className="font-mono text-xs tabular-nums text-muted-foreground">{formatDuration(row.elapsedSeconds)}</time>
+        </div>
+      </header>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-5 px-4 py-4">
+          <section aria-labelledby="subagent-task-heading">
+            <h3 id="subagent-task-heading" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Delegated task</h3>
+            <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground/90">{row.task}</p>
+          </section>
+          {row.detail.activity.length > 0 && <section aria-labelledby="subagent-activity-heading">
+            <h3 id="subagent-activity-heading" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Activity</h3>
+            <ul className="mt-2 space-y-1">
+              {activities.map((item) => <li key={item.id} className="min-w-0 text-sm" style={{ paddingLeft: Math.min(item.depth - 1, 4) * 12 }}>
+                <span className="font-medium text-foreground/85">{item.label}</span>
+                <span className="ml-2 text-muted-foreground">{item.detail}</span>
+              </li>)}
+            </ul>
+            {row.detail.activity.length > 8 && <Button type="button" variant="ghost" size="sm" onClick={() => setShowAll((value) => !value)} aria-expanded={showAll} className="mt-1 gap-1 px-1 text-xs">
+              <ChevronDown size={12} className={cn(showAll && "rotate-180")} /> {showAll ? "Show less" : `Show all ${row.detail.activity.length}`}
+            </Button>}
+          </section>}
+          {row.detail.output && <section aria-labelledby="subagent-result-heading">
+            <h3 id="subagent-result-heading" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Result</h3>
+            <ToolOutputTruncationNotice toolCall={outputCall} />
+            <div className="mt-1"><DeltaBlock text={row.detail.output} isStreaming={false} showCursor={false} /></div>
+          </section>}
+          {row.detail.fileEffects.length > 0 && <section aria-labelledby="subagent-files-heading">
+            <h3 id="subagent-files-heading" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Files</h3>
+            <ul className="mt-1 space-y-1 text-sm">{row.detail.fileEffects.map((effect) => <li key={`${effect.kind}:${effect.path}`} className="truncate"><span className="capitalize text-muted-foreground">{effect.kind}</span> {effect.path}</li>)}</ul>
+          </section>}
+        </div>
+      </ScrollArea>
+    </section>
   );
 }
 
 /** Thread-only right-panel roster for live and hydrated Agent tool calls. */
 export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
-  const { toolCalls, narrativeByMessage } = useThreadRecord(threadId, (record) => ({
+  const { toolCalls, narrativeByMessage, fileEffectSummary } = useThreadRecord(threadId, (record) => ({
     toolCalls: record.toolCalls,
     narrativeByMessage: record.narrativeByMessage,
+    fileEffectSummary: record.fileEffectSummary,
   }));
   const savedTab = useDiffStore((state) => state.subagentRosterTabByThread[threadId]);
   const setSavedTab = useDiffStore((state) => state.setSubagentRosterTab);
   const [now, setNow] = useState(() => Date.now());
-  const roster = projectSubagents(toolCalls, Object.values(narrativeByMessage).map((entry) => entry?.tools), now);
+  const roster = projectSubagents(toolCalls, Object.values(narrativeByMessage).map((entry) => entry?.tools), now, fileEffectSummary);
+  const detailSelection = useDiffStore((state) => state.subagentDetailByThread[threadId]);
+  const selectDetail = useDiffStore((state) => state.selectSubagentDetail);
+  const clearDetail = useDiffStore((state) => state.clearSubagentDetail);
   const [selectedTab, setSelectedTab] = useState<RosterTab>(() => (
     savedTab ?? (roster.active.length > 0 ? "active" : "finished")
   ));
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const allRows = [...roster.active, ...roster.finished];
+  const selectedDetailRow = detailSelection ? allRows.find((row) => row.id === detailSelection.id) : undefined;
+
+  useEffect(() => {
+    if (detailSelection && !selectedDetailRow) clearDetail(threadId);
+  }, [clearDetail, detailSelection, selectedDetailRow, threadId]);
 
   useEffect(() => {
     if (!savedTab) setSavedTab(threadId, selectedTab);
@@ -112,6 +189,18 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [roster.active.length]);
+
+  if (detailSelection && selectedDetailRow) {
+    return <DetailView row={selectedDetailRow} onBack={() => {
+      clearDetail(threadId);
+      setSelectedTab(detailSelection.originTab);
+      setSavedTab(threadId, detailSelection.originTab);
+      window.requestAnimationFrame(() => {
+        if (viewportRef.current) viewportRef.current.scrollTop = detailSelection.scrollTop;
+        document.querySelector<HTMLElement>(`[data-subagent-id="${CSS.escape(detailSelection.id)}"]`)?.focus();
+      });
+    }} />;
+  }
 
   const counts: Record<RosterTab, number> = {
     active: roster.active.length,
@@ -171,7 +260,7 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
           ))}
         </div>
       </header>
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         <div
           id={rosterPanelId(selectedTab)}
           role="tabpanel"
@@ -180,14 +269,14 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
         >
           {selectedTab === "active" ? (
             roster.active.length > 0 ? (
-              roster.active.map((row) => <LiveSubagentRowView key={row.id} row={row} />)
+              roster.active.map((row) => <LiveSubagentRowView key={row.id} row={row} onSelect={() => selectDetail(threadId, { id: row.id, originTab: "active", scrollTop: viewportRef.current?.scrollTop ?? 0 })} />)
             ) : (
               <p data-testid="subagents-active-empty" className="px-4 py-6 text-sm text-muted-foreground">
                 No sub-agents are running.
               </p>
             )
           ) : roster.finished.length > 0 ? (
-            roster.finished.map((row) => <FinishedSubagentRowView key={row.id} row={row} />)
+            roster.finished.map((row) => <FinishedSubagentRowView key={row.id} row={row} onSelect={() => selectDetail(threadId, { id: row.id, originTab: "finished", scrollTop: viewportRef.current?.scrollTop ?? 0 })} />)
           ) : (
             <p data-testid="subagents-finished-empty" className="px-4 py-6 text-sm text-muted-foreground">
               No finished sub-agents in this loaded conversation.

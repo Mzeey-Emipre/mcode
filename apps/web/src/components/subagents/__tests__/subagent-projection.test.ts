@@ -48,15 +48,19 @@ describe("projectSubagents", () => {
     ], [], 11_000);
 
     expect(roster).toEqual({
-      active: [{
+      active: [expect.objectContaining({
         id: "agent-a",
         identity: "Security reviewer",
         task: "Review auth changes",
         activity: "Read file: auth.ts",
         activityAt: 8_000,
         elapsedSeconds: 10,
-      }],
+      })],
       finished: [],
+    });
+    expect(roster.active[0]?.detail).toMatchObject({
+      subtreeIds: ["agent-a", "child-a"],
+      activity: [expect.objectContaining({ id: "child-a", depth: 1, label: "Read file" })],
     });
   });
 
@@ -178,5 +182,24 @@ describe("projectSubagents", () => {
     }
 
     expect(projectSubagents(calls, []).active[0]?.activityAt).toBe(129);
+  });
+
+  it("shows file effects only when every recorded tool id belongs to the subtree", () => {
+    const roster = projectSubagents([
+      call({ id: "agent", toolName: "Agent" }),
+      call({ id: "child", toolName: "Write", parentToolCallId: "agent" }),
+    ], [], 0, {
+      revision: 1,
+      fileCount: 3,
+      additions: 1,
+      deletions: 0,
+      effects: [
+        { path: "safe.ts", kind: "edited", scope: "workspace", additions: 1, deletions: 0, binary: false, toolCallIds: ["child"] },
+        { path: "mixed.ts", kind: "edited", scope: "workspace", additions: 0, deletions: 0, binary: false, toolCallIds: ["child", "other"] },
+        { path: "unknown.ts", kind: "edited", scope: "workspace", additions: 0, deletions: 0, binary: false, toolCallIds: [] },
+      ],
+    });
+
+    expect(roster.active[0]?.detail.fileEffects.map((effect) => effect.path)).toEqual(["safe.ts"]);
   });
 });
