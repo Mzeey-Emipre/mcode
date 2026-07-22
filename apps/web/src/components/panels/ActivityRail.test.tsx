@@ -108,12 +108,12 @@ describe("ActivityRail expansion", () => {
 
     expect(screen.getByRole("button", { name: "Close Terminal" })).toHaveClass(
       "absolute",
-      "right-0",
+      "left-[7.75rem]",
       "top-0",
     );
     expect(screen.getByTestId("rail-maximize-toggle")).toHaveClass(
       "absolute",
-      "right-0",
+      "left-[7.75rem]",
       "top-0",
     );
 
@@ -133,7 +133,7 @@ describe("ActivityRail expansion", () => {
 
     expect(screen.getByRole("button", { name: "Close page Example" })).toHaveClass(
       "absolute",
-      "right-0",
+      "left-[7.75rem]",
       "top-0",
     );
   });

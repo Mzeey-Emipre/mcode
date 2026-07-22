@@ -40,7 +40,7 @@ const RAIL_EXPAND_DELAY_MS = 140;
 const RAIL_COLLAPSE_DELAY_MS = 250;
 
 /** Shared trailing anchor for expanded-rail actions. */
-const RAIL_TRAILING_CONTROL_CLASS = "absolute right-0 top-0";
+const RAIL_TRAILING_CONTROL_CLASS = "absolute left-[7.75rem] top-0";
 
 /** Catalog metadata (product label + icon) for an openable tab, by store id. */
 function metaForTab(id: RightPanelTab): PanelTabType | undefined {
