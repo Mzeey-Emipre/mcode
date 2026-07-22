@@ -397,6 +397,7 @@ export class NarrativeStore {
       inputSummary: "", // Deferred to persistNarrative
       outputSummary: "",
       status: "running",
+      startedAt: new Date().toISOString(),
       sortOrder,
       parentToolCallId,
       _rawToolInput: event.toolInput,
@@ -453,6 +454,7 @@ export class NarrativeStore {
           buffer[i].exitCode = outputMeta.exitCode;
         }
         buffer[i].status = isError ? "failed" : "completed";
+        buffer[i].completedAt = new Date().toISOString();
         if (toolInput && Object.keys(toolInput).length > 0) {
           buffer[i]._rawToolInput = {
             ...(buffer[i]._rawToolInput ?? {}),
@@ -555,6 +557,7 @@ export class NarrativeStore {
     outcome: TurnOutcome,
   ): PersistNarrativeResult {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
+    const settledAt = new Date().toISOString();
 
     for (const tc of buffer) {
       if (tc.status === "running") {
@@ -564,6 +567,7 @@ export class NarrativeStore {
         // updateBufferedToolCallOutput.
         tc.status =
           outcome === "errored" ? "failed" : outcome === "cancelled" ? "cancelled" : "completed";
+        tc.completedAt = settledAt;
       }
       tc.messageId = messageId;
 

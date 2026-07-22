@@ -1,7 +1,7 @@
 import { extractSubagentDescription } from "@/components/chat/narrative/extract-subagent-description";
 import { extractToolInputDetail } from "@/components/chat/narrative/tool-detail";
 import { TOOL_LABELS, resolveToolName } from "@/components/chat/tool-renderers/constants";
-import type { ToolCall } from "@/transport/types";
+import type { ToolCall, ToolCallRecord } from "@/transport/types";
 
 /** Maximum live graph nodes inspected beneath a single top-level subagent. */
 const MAX_SUBAGENT_GRAPH_NODES = 128;
@@ -9,28 +9,42 @@ const MAX_IDENTITY_LENGTH = 96;
 const MAX_TASK_LENGTH = 280;
 const MAX_ACTIVITY_LENGTH = 160;
 
-/** A live top-level subagent row shown by the right-panel roster. */
-export interface LiveSubagentRow {
+/** Terminal state for a settled delegated Agent call. */
+export type FinishedSubagentStatus = "completed" | "failed" | "cancelled";
+
+/** A row shared by the Active and Finished subagent rosters. */
+interface SubagentRow {
   /** Stable Agent tool-call id. */
   readonly id: string;
-  /** Best provider-supplied display identity available for the delegated agent. */
+  /** Best surviving display identity for the delegated agent. */
   readonly identity: string;
   /** Stable delegated-task description. */
   readonly task: string;
-  /** Most recent provider-supplied tool activity in the Agent graph. */
+  /** Latest provider-supplied activity or terminal result summary. */
   readonly activity: string;
-  /** Epoch milliseconds for stable latest-activity ordering. */
+  /** Epoch milliseconds for stable row ordering. */
   readonly activityAt: number;
-  /** Elapsed seconds for the running delegation. */
+  /** Elapsed seconds for the delegation. */
   readonly elapsedSeconds: number;
 }
 
-/** Live-only roster state derived from one thread's normalized tool-call graph. */
-export interface LiveSubagentRoster {
+/** A running top-level subagent row shown by the right-panel roster. */
+export type LiveSubagentRow = SubagentRow;
+
+/** A settled top-level subagent row shown by the right-panel roster. */
+export interface FinishedSubagentRow extends SubagentRow {
+  /** Explicit terminal outcome retained through narrative hydration. */
+  readonly status: FinishedSubagentStatus;
+  /** Epoch milliseconds when the Agent reached its terminal outcome. */
+  readonly completedAt: number;
+}
+
+/** Reconciled roster state for the currently loaded thread narrative. */
+export interface SubagentRoster {
   /** Running top-level Agent rows, newest meaningful activity first. */
   readonly active: readonly LiveSubagentRow[];
-  /** Completed top-level Agent boundaries still present in the live turn. */
-  readonly finishedCount: number;
+  /** Settled top-level Agent rows, newest terminal event first. */
+  readonly finished: readonly FinishedSubagentRow[];
 }
 
 function nonEmptyString(value: unknown): string | undefined {
@@ -58,6 +72,15 @@ function subagentIdentity(agent: ToolCall): string {
     : boundedDisplayText(task, MAX_IDENTITY_LENGTH);
 }
 
+function hydratedTask(record: ToolCallRecord): string {
+  return boundedDisplayText(nonEmptyString(record.input_summary) ?? "Subagent task", MAX_TASK_LENGTH);
+}
+
+function hydratedIdentity(record: ToolCallRecord): string {
+  const task = hydratedTask(record);
+  return task === "Subagent task" ? "Subagent" : boundedDisplayText(task, MAX_IDENTITY_LENGTH);
+}
+
 function activityTimestamp(call: ToolCall): number {
   return call.lastActivityAt ?? call.startedAt ?? 0;
 }
@@ -72,22 +95,43 @@ function activityLabel(call: ToolCall): string {
   );
 }
 
-/**
- * Projects the current thread's normalized tool-call graph into live roster rows.
- *
- * Only top-level Agent calls form rows. Descendant traversal is bounded and
- * cycle-safe so malformed provider parent links cannot expand render work.
- */
-export function projectLiveSubagents(
-  calls: readonly ToolCall[] | undefined,
-  now: number = Date.now(),
-): LiveSubagentRoster {
-  if (!calls?.length) return { active: [], finishedCount: 0 };
+function liveStatus(call: ToolCall): "running" | FinishedSubagentStatus {
+  if (!call.isComplete) return "running";
+  if (call.isCancelled) return "cancelled";
+  return call.isError ? "failed" : "completed";
+}
 
+function parsedTimestamp(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function elapsedSeconds(startedAt: number, completedAt: number): number {
+  return Math.max(0, Math.floor((completedAt - startedAt) / 1_000));
+}
+
+function terminalLiveActivity(agent: ToolCall, fallback: string): string {
+  return nonEmptyString(agent.output)
+    ? boundedDisplayText(agent.output!, MAX_ACTIVITY_LENGTH)
+    : fallback;
+}
+
+/**
+ * Projects live calls and the current hydrated narrative into one bounded
+ * per-thread roster. Persisted records win a same-ID reconciliation because
+ * they carry the canonical settled status and terminal time.
+ */
+export function projectSubagents(
+  calls: readonly ToolCall[] | undefined,
+  narrativeBatches: readonly (readonly ToolCallRecord[] | undefined)[] | undefined,
+  now: number = Date.now(),
+): SubagentRoster {
+  const liveRows = new Map<string, { row: LiveSubagentRow | FinishedSubagentRow; index: number }>();
   const childrenByParent = new Map<string, Array<{ call: ToolCall; index: number }>>();
   const topLevelAgents: Array<{ call: ToolCall; index: number }> = [];
 
-  calls.forEach((call, index) => {
+  calls?.forEach((call, index) => {
     const parentId = call.parentToolCallId;
     if (typeof parentId === "string" && parentId.length > 0) {
       const children = childrenByParent.get(parentId) ?? [];
@@ -98,15 +142,7 @@ export function projectLiveSubagents(
     if (call.toolName === "Agent") topLevelAgents.push({ call, index });
   });
 
-  const active: Array<LiveSubagentRow & { index: number }> = [];
-  let finishedCount = 0;
-
   for (const { call: agent, index } of topLevelAgents) {
-    if (agent.isComplete) {
-      finishedCount += 1;
-      continue;
-    }
-
     let latestCall = agent;
     let latestIndex = index;
     const queue = [...(childrenByParent.get(agent.id) ?? [])];
@@ -131,20 +167,73 @@ export function projectLiveSubagents(
     }
 
     const startedAt = agent.startedAt ?? now;
-    active.push({
-      id: agent.id,
-      identity: subagentIdentity(agent),
-      task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
-      activity: activityLabel(latestCall),
-      activityAt: activityTimestamp(latestCall),
-      elapsedSeconds: Math.max(0, Math.floor(agent.elapsedSeconds ?? (now - startedAt) / 1000)),
+    const status = liveStatus(agent);
+    const latestActivity = activityLabel(latestCall);
+    if (status === "running") {
+      liveRows.set(agent.id, {
+        index,
+        row: {
+          id: agent.id,
+          identity: subagentIdentity(agent),
+          task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
+          activity: latestActivity,
+          activityAt: activityTimestamp(latestCall),
+          elapsedSeconds: Math.max(0, Math.floor(agent.elapsedSeconds ?? (now - startedAt) / 1_000)),
+        },
+      });
+      continue;
+    }
+
+    const completedAt = agent.lastActivityAt ?? (agent.durationMs === undefined ? startedAt : startedAt + agent.durationMs);
+    liveRows.set(agent.id, {
       index,
+      row: {
+        id: agent.id,
+        identity: subagentIdentity(agent),
+        task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
+        activity: terminalLiveActivity(agent, latestActivity),
+        activityAt: completedAt,
+        elapsedSeconds: Math.max(0, Math.floor(agent.elapsedSeconds ?? (agent.durationMs ?? completedAt - startedAt) / 1_000)),
+        status,
+        completedAt,
+      },
     });
   }
 
-  active.sort((left, right) => right.activityAt - left.activityAt || left.index - right.index);
+  let persistedIndex = calls?.length ?? 0;
+  for (const batch of narrativeBatches ?? []) {
+    for (const record of batch ?? []) {
+      if (record.tool_name !== "Agent" || record.parent_tool_call_id) continue;
+      const startedAt = parsedTimestamp(record.started_at) ?? 0;
+      const completedAt = parsedTimestamp(record.completed_at) ?? startedAt;
+      const task = hydratedTask(record);
+      const base = {
+        id: record.id,
+        identity: hydratedIdentity(record),
+        task,
+        activity: boundedDisplayText(nonEmptyString(record.output_summary) ?? task, MAX_ACTIVITY_LENGTH),
+        activityAt: record.status === "running" ? startedAt : completedAt,
+        elapsedSeconds: elapsedSeconds(startedAt, record.status === "running" ? now : completedAt),
+      };
+      const row: LiveSubagentRow | FinishedSubagentRow = record.status === "running"
+        ? base
+        : { ...base, status: record.status, completedAt };
+      liveRows.set(record.id, { row, index: persistedIndex + record.sort_order });
+    }
+    persistedIndex += batch?.length ?? 0;
+  }
+
+  const active: Array<LiveSubagentRow & { index: number }> = [];
+  const finished: Array<FinishedSubagentRow & { index: number }> = [];
+  for (const { row, index } of liveRows.values()) {
+    if ("status" in row) finished.push({ ...row, index });
+    else active.push({ ...row, index });
+  }
+
+  active.sort((left, right) => right.activityAt - left.activityAt || left.index - right.index || left.id.localeCompare(right.id));
+  finished.sort((left, right) => right.completedAt - left.completedAt || left.index - right.index || left.id.localeCompare(right.id));
   return {
     active: active.map(({ index: _index, ...row }) => row),
-    finishedCount,
+    finished: finished.map(({ index: _index, ...row }) => row),
   };
 }

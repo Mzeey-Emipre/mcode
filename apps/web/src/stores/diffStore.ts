@@ -7,6 +7,9 @@ export type { GitCommit, BranchComparison };
 /** Active tab in the right panel. */
 export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal" | "subagents";
 
+/** Selected roster view within a thread's Subagents panel. */
+export type SubagentRosterTab = "active" | "finished";
+
 /**
  * View mode within the Review (Changes) tab. The tab is dual-scope: the first
  * four are threadless git working-tree views (read the workspace root); the last
@@ -279,6 +282,11 @@ interface DiffState {
    * {@link rightPanelByThread} entry. See ADR-0012.
    */
   readonly rightPanelFallbackByWorkspace: Record<string, RightPanelState>;
+  /**
+   * The remembered Subagents roster view for each thread. This inner-panel state
+   * survives right-panel unmounts but is intentionally dropped with its thread.
+   */
+  readonly subagentRosterTabByThread: Record<string, SubagentRosterTab>;
   /** Explicit Files visibility choices keyed by Review scope. Missing scopes start closed. */
   readonly reviewFilesVisibleByScope: Record<string, boolean>;
   /** View mode within the Changes tab (the single rendered view). */
@@ -418,6 +426,10 @@ interface DiffState {
    * is not open. See ADR-0004.
    */
   closeRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
+  /** Read a thread's remembered Subagents roster view, if it has one. */
+  getSubagentRosterTab: (threadId: string) => SubagentRosterTab | undefined;
+  /** Remember the selected Subagents roster view for one thread. */
+  setSubagentRosterTab: (threadId: string, tab: SubagentRosterTab) => void;
   /** Read the persisted Files visibility choice for a Review scope. */
   getReviewFilesVisible: (scopeId: string) => boolean;
   /** Persist an explicit Files visibility choice for a Review scope. */
@@ -493,6 +505,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   previewUrlByThread: {},
   rightPanelByThread: {},
   rightPanelFallbackByWorkspace: {},
+  subagentRosterTabByThread: {},
   reviewFilesVisibleByScope: readReviewFilesVisibility(),
   viewMode: "last-turn",
   reviewViewByThread: {},
@@ -581,6 +594,14 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         activeTab,
       });
     }),
+
+  getSubagentRosterTab: (threadId) => get().subagentRosterTabByThread[threadId],
+  setSubagentRosterTab: (threadId, tab) =>
+    set((state) =>
+      state.subagentRosterTabByThread[threadId] === tab
+        ? {}
+        : { subagentRosterTabByThread: { ...state.subagentRosterTabByThread, [threadId]: tab } },
+    ),
 
   getReviewFilesVisible: (scopeId) => get().reviewFilesVisibleByScope[scopeId] ?? false,
   setReviewFilesVisible: (scopeId, visible) =>
@@ -759,6 +780,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete lineWrapByThread[threadId];
       const rightPanelByThread = { ...state.rightPanelByThread };
       delete rightPanelByThread[threadId];
+      const subagentRosterTabByThread = { ...state.subagentRosterTabByThread };
+      delete subagentRosterTabByThread[threadId];
       const reviewViewByThread = { ...state.reviewViewByThread };
       delete reviewViewByThread[threadId];
       const reviewViewManuallySelectedByThread = { ...state.reviewViewManuallySelectedByThread };
@@ -792,6 +815,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         previewUrlByThread: previewUrls,
         lineWrapByThread,
         rightPanelByThread,
+        subagentRosterTabByThread,
         reviewViewByThread,
         reviewViewManuallySelectedByThread,
         diffRevisionByScope,

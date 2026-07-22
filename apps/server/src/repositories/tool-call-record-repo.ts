@@ -39,6 +39,10 @@ export interface CreateToolCallRecordInput {
   outputArtifactPath?: string;
   exitCode?: number;
   status: ToolCallStatus;
+  /** ISO timestamp captured when the provider started the tool call. */
+  startedAt?: string;
+  /** ISO timestamp captured when the tool call reached a terminal status. */
+  completedAt?: string;
   sortOrder: number;
   parentToolCallId?: string;
 }
@@ -92,7 +96,8 @@ export class ToolCallRecordRepo {
   create(input: CreateToolCallRecordInput): ToolCallRecord {
     const id = input.toolCallId ?? randomUUID();
     const now = new Date().toISOString();
-    const completedAt = input.status !== "running" ? now : null;
+    const startedAt = input.startedAt ?? now;
+    const completedAt = input.status !== "running" ? input.completedAt ?? now : null;
 
     this.stmtInsert.run(
       id,
@@ -106,7 +111,7 @@ export class ToolCallRecordRepo {
       input.outputArtifactPath ?? null,
       input.exitCode ?? null,
       input.status,
-      now,
+      startedAt,
       completedAt,
       input.sortOrder,
     );
@@ -123,7 +128,7 @@ export class ToolCallRecordRepo {
       output_artifact_path: input.outputArtifactPath ?? null,
       exit_code: input.exitCode ?? null,
       status: input.status,
-      started_at: now,
+      started_at: startedAt,
       completed_at: completedAt,
       sort_order: input.sortOrder,
     };
@@ -134,7 +139,8 @@ export class ToolCallRecordRepo {
     const tx = this.db.transaction((items: CreateToolCallRecordInput[]) => {
       const now = new Date().toISOString();
       for (const item of items) {
-        const completedAt = item.status !== "running" ? now : null;
+        const startedAt = item.startedAt ?? now;
+        const completedAt = item.status !== "running" ? item.completedAt ?? now : null;
         this.stmtInsert.run(
           item.toolCallId ?? randomUUID(),
           item.messageId,
@@ -147,7 +153,7 @@ export class ToolCallRecordRepo {
           item.outputArtifactPath ?? null,
           item.exitCode ?? null,
           item.status,
-          now,
+          startedAt,
           completedAt,
           item.sortOrder,
         );

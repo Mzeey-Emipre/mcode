@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Ban, CircleCheck, CircleX, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EntityIcon } from "@/components/chat/EntityToken";
-import { useThreadRecord } from "@/stores/thread-selectors";
+import { projectSubagents, type FinishedSubagentRow, type FinishedSubagentStatus, type LiveSubagentRow } from "@/components/subagents/subagent-projection";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/time";
-import { projectLiveSubagents, type LiveSubagentRow } from "@/components/subagents/subagent-projection";
+import { useDiffStore, type SubagentRosterTab } from "@/stores/diffStore";
+import { useThreadRecord } from "@/stores/thread-selectors";
 
-type RosterTab = "active" | "finished";
+type RosterTab = SubagentRosterTab;
 
 const ROSTER_TABS: readonly RosterTab[] = ["active", "finished"];
 
@@ -33,11 +35,7 @@ function LiveSubagentRowView({ row }: { readonly row: LiveSubagentRow }) {
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <h3 className="min-w-0 truncate text-sm font-medium text-foreground">{row.identity}</h3>
-          <Badge
-            variant="outline"
-            size="sm"
-            className="border-primary/35 bg-primary/10 text-primary"
-          >
+          <Badge variant="outline" size="sm" className="border-primary/35 bg-primary/10 text-primary">
             Running
           </Badge>
           <span className="sr-only">Running subagent</span>
@@ -52,15 +50,62 @@ function LiveSubagentRowView({ row }: { readonly row: LiveSubagentRow }) {
   );
 }
 
-/** Thread-only right-panel roster for live normalized Agent tool calls. */
+const FINISHED_STATUS: Record<FinishedSubagentStatus, { label: string; Icon: LucideIcon; className: string }> = {
+  completed: { label: "Completed", Icon: CircleCheck, className: "border-[var(--diff-add-strong)]/35 bg-[var(--diff-add-strong)]/10 text-[var(--diff-add-strong)]" },
+  failed: { label: "Failed", Icon: CircleX, className: "border-destructive/35 bg-destructive/10 text-destructive" },
+  cancelled: { label: "Cancelled", Icon: Ban, className: "border-muted-foreground/35 bg-muted text-muted-foreground" },
+};
+
+/** A compact settled row for one completed, failed, or cancelled subagent. */
+function FinishedSubagentRowView({ row }: { readonly row: FinishedSubagentRow }) {
+  const status = FINISHED_STATUS[row.status];
+  return (
+    <article
+      data-testid="subagent-finished-row"
+      className="flex min-w-0 gap-3 border-b border-border/50 px-4 py-3 last:border-b-0"
+    >
+      <span className={cn("mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md", status.className)}>
+        <status.Icon size={15} aria-hidden />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <h3 className="min-w-0 truncate text-sm font-medium text-foreground">{row.identity}</h3>
+          <Badge variant="outline" size="sm" className={status.className}>
+            {status.label}
+          </Badge>
+          <time
+            className="ml-auto shrink-0 font-mono text-xs tabular-nums text-muted-foreground"
+            dateTime={new Date(row.completedAt).toISOString()}
+            aria-label={`Finished ${new Date(row.completedAt).toISOString()} after ${formatDuration(row.elapsedSeconds)}`}
+          >
+            {formatDuration(row.elapsedSeconds)}
+          </time>
+        </div>
+        <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-foreground/80">{row.task}</p>
+        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{row.activity}</p>
+      </div>
+    </article>
+  );
+}
+
+/** Thread-only right-panel roster for live and hydrated Agent tool calls. */
 export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
-  const toolCalls = useThreadRecord(threadId, (record) => record.toolCalls);
+  const { toolCalls, narrativeByMessage } = useThreadRecord(threadId, (record) => ({
+    toolCalls: record.toolCalls,
+    narrativeByMessage: record.narrativeByMessage,
+  }));
+  const savedTab = useDiffStore((state) => state.subagentRosterTabByThread[threadId]);
+  const setSavedTab = useDiffStore((state) => state.setSubagentRosterTab);
   const [now, setNow] = useState(() => Date.now());
-  const roster = projectLiveSubagents(toolCalls, now);
+  const roster = projectSubagents(toolCalls, Object.values(narrativeByMessage).map((entry) => entry?.tools), now);
   const [selectedTab, setSelectedTab] = useState<RosterTab>(() => (
-    roster.active.length > 0 ? "active" : "finished"
+    savedTab ?? (roster.active.length > 0 ? "active" : "finished")
   ));
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  useEffect(() => {
+    if (!savedTab) setSavedTab(threadId, selectedTab);
+  }, [savedTab, selectedTab, setSavedTab, threadId]);
 
   useEffect(() => {
     if (roster.active.length === 0) return;
@@ -70,10 +115,13 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
 
   const counts: Record<RosterTab, number> = {
     active: roster.active.length,
-    finished: roster.finishedCount,
+    finished: roster.finished.length,
   };
 
-  const selectTab = (tab: RosterTab) => setSelectedTab(tab);
+  const selectTab = (tab: RosterTab) => {
+    setSelectedTab(tab);
+    setSavedTab(threadId, tab);
+  };
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let nextIndex: number | null = null;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % ROSTER_TABS.length;
@@ -138,11 +186,11 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
                 No sub-agents are running.
               </p>
             )
+          ) : roster.finished.length > 0 ? (
+            roster.finished.map((row) => <FinishedSubagentRowView key={row.id} row={row} />)
           ) : (
-            <p data-testid="subagents-finished-placeholder" className="px-4 py-6 text-sm text-muted-foreground">
-              {roster.finishedCount === 0
-                ? "No finished sub-agents in this turn."
-                : `${roster.finishedCount} finished sub-agent${roster.finishedCount === 1 ? "" : "s"} in this turn.`}
+            <p data-testid="subagents-finished-empty" className="px-4 py-6 text-sm text-muted-foreground">
+              No finished sub-agents in this loaded conversation.
             </p>
           )}
         </div>

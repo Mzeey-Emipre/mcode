@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../store/database";
 import { MessageRepo } from "../../repositories/message-repo";
@@ -439,6 +439,56 @@ describe("NarrativeStore write seam (server-side traps)", () => {
   });
 
   describe("Trap 6: counting data preserved (semantics unchanged)", () => {
+    it("persists each Agent's captured lifecycle timestamps through the real repository", () => {
+      seedAssistantMessage("m1", "", 1);
+      vi.useFakeTimers();
+      try {
+        store.beginTurn(THREAD);
+        store.resetTurnCounters(THREAD);
+        vi.setSystemTime(new Date("2026-07-22T10:00:00.000Z"));
+        store.bufferToolCall(THREAD, toolUse("agent-first", "Agent"));
+        vi.setSystemTime(new Date("2026-07-22T10:00:05.000Z"));
+        store.bufferToolCall(THREAD, toolUse("agent-second", "Agent"));
+        vi.setSystemTime(new Date("2026-07-22T10:00:10.000Z"));
+        store.bufferToolCall(THREAD, toolUse("agent-settled", "Agent"));
+        vi.setSystemTime(new Date("2026-07-22T10:00:20.000Z"));
+        store.updateBufferedToolCallOutput(THREAD, "agent-first", "First result", false);
+        vi.setSystemTime(new Date("2026-07-22T10:00:50.000Z"));
+        store.updateBufferedToolCallOutput(THREAD, "agent-second", "Second result", false);
+        vi.setSystemTime(new Date("2026-07-22T10:01:00.000Z"));
+        store.persistNarrative(THREAD, "m1", "", "completed");
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const records = new ToolCallRecordRepo(db).listByMessage("m1");
+      expect(records.map((record) => ({
+        id: record.id,
+        startedAt: record.started_at,
+        completedAt: record.completed_at,
+        durationMs: Date.parse(record.completed_at!) - Date.parse(record.started_at),
+      }))).toEqual([
+        {
+          id: "agent-first",
+          startedAt: "2026-07-22T10:00:00.000Z",
+          completedAt: "2026-07-22T10:00:20.000Z",
+          durationMs: 20_000,
+        },
+        {
+          id: "agent-second",
+          startedAt: "2026-07-22T10:00:05.000Z",
+          completedAt: "2026-07-22T10:00:50.000Z",
+          durationMs: 45_000,
+        },
+        {
+          id: "agent-settled",
+          startedAt: "2026-07-22T10:00:10.000Z",
+          completedAt: "2026-07-22T10:01:00.000Z",
+          durationMs: 50_000,
+        },
+      ]);
+    });
+
     it("persists every top-level tool call including Agent rows, so step counts are derivable", () => {
       seedAssistantMessage("m1", "", 1);
       store.beginTurn(THREAD);
