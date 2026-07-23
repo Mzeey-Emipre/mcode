@@ -63,18 +63,21 @@ describe("SubagentsPanel", () => {
     setThread([agent()], [record({ id: "finished-agent" })]);
     render(<SubagentsPanel threadId="thread-1" />);
 
-    expect(screen.getByRole("heading", { name: "Active · 1" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Done · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Active" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
     expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Implementation worker");
+    expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Running");
     expect(screen.getByTestId("subagent-finished-row")).toHaveTextContent("Roster implementation complete");
+    expect(screen.getByTestId("subagent-finished-row")).toHaveTextContent("Finished");
     expect(screen.getByTestId("subagent-finished-row")).not.toHaveTextContent("Build the roster");
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Subagents" })).not.toBeInTheDocument();
   });
 
   it("omits empty sections and shows one whole-panel empty state only when both are empty", () => {
     setThread([agent()]);
     const { rerender } = render(<SubagentsPanel threadId="thread-1" />);
-    expect(screen.getByRole("heading", { name: "Active · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Active" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /Done/ })).not.toBeInTheDocument();
     expect(screen.queryByTestId("subagents-empty")).not.toBeInTheDocument();
 
@@ -94,6 +97,9 @@ describe("SubagentsPanel", () => {
     render(<SubagentsPanel threadId="thread-1" />);
 
     expect(screen.getAllByTestId("subagent-finished-row")).toHaveLength(3);
+    expect(screen.getByText("Finished")).toBeInTheDocument();
+    expect(screen.getByText("Errored")).toBeInTheDocument();
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Implementation worker details, Finished/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Implementation worker details, Errored/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Implementation worker details, Cancelled/ })).toBeInTheDocument();

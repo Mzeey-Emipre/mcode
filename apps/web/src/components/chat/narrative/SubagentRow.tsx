@@ -1,9 +1,12 @@
-import { Ban, Check, ChevronRight, CircleX } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { resolveSubagentDisplayName } from "@mcode/contracts";
 import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
+import {
+  SubagentLifecycleStatus,
+  type SubagentLifecycleTone,
+} from "@/components/subagents/SubagentLifecycleStatus";
 import { Button } from "@/components/ui/button";
 import type { HookExecution, ToolCall } from "@/transport/types";
-import { cn } from "@/lib/utils";
 import { openSubagentDetail } from "@/lib/open-subagent-detail";
 import { NARRATIVE_TOOL_ROW } from "./narrative-layout";
 
@@ -25,17 +28,16 @@ export function SubagentRow({ toolCall }: SubagentRowProps) {
   const hasRunningOutput = !toolCall.isComplete
     && typeof toolCall.output === "string"
     && toolCall.output.trim().length > 0;
-  const lifecycle = toolCall.isCancelled
-    ? { label: "Cancelled", Icon: Ban, className: "text-muted-foreground" }
+  const lifecycle: { label: string; tone: SubagentLifecycleTone } = toolCall.isCancelled
+    ? { label: "Cancelled", tone: "muted" }
     : toolCall.isComplete && toolCall.isError
-      ? { label: "Errored", Icon: CircleX, className: "text-destructive" }
+      ? { label: "Errored", tone: "error" }
       : !toolCall.isComplete
         ? {
             label: hasRunningOutput ? "Update received" : "Started",
-            Icon: null,
-            className: "text-primary",
+            tone: "running",
           }
-        : { label: "Finished", Icon: Check, className: "text-[var(--diff-add-strong)]" };
+        : { label: "Finished", tone: "settled" };
 
   return (
     <Button
@@ -49,17 +51,13 @@ export function SubagentRow({ toolCall }: SubagentRowProps) {
       <SubagentIdentityGlyph
         identity={identity}
         hasExplicitIdentity={resolvedIdentity !== undefined}
-        animated={!toolCall.isComplete}
         className="size-5"
         size={12}
       />
       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/85">
         {identity}
       </span>
-      <span className={cn("flex shrink-0 items-center gap-1 text-xs font-medium", lifecycle.className)}>
-        {lifecycle.Icon && <lifecycle.Icon size={12} aria-hidden />}
-        {lifecycle.label}
-      </span>
+      <SubagentLifecycleStatus label={lifecycle.label} tone={lifecycle.tone} />
       <ChevronRight size={13} className="shrink-0 text-muted-foreground/50" aria-hidden />
     </Button>
   );

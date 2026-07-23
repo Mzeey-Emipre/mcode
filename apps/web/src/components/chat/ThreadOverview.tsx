@@ -2167,12 +2167,18 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                         key={row.id}
                         identity={row.identity}
                         hasExplicitIdentity={row.hasExplicitIdentity}
-                        animated={!("status" in row)}
                         size={11}
                         className="size-4 ring-2 ring-background"
                       />
                     ))}
                   </span>
+                  {subagentRoster.active.length > 0 && (
+                    <span
+                      aria-hidden
+                      data-testid="thread-overview-subagents-running"
+                      className="size-1.5 shrink-0 rounded-full bg-primary status-pulse"
+                    />
+                  )}
                   <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                     {subagentStateCopy}
                   </span>

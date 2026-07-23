@@ -227,6 +227,7 @@ describe("ThreadOverview branchless Create PR", () => {
     expect(summary).toHaveTextContent("1 active · 0 done");
     expect(summary).not.toHaveTextContent("total");
     expect(summary.querySelectorAll("[data-subagent-identity-glyph]")).toHaveLength(1);
+    expect(screen.getByTestId("thread-overview-subagents-running")).toHaveClass("bg-primary", "status-pulse");
     expect(summary.querySelector('[data-subagent-identity-glyph="Explorer"]')).toHaveAttribute(
       "data-subagent-palette",
       String(getSubagentIdentityPaletteIndex("Explorer")),

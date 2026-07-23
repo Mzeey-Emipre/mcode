@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
+import {
+  SubagentLifecycleStatus,
+  type SubagentLifecycleTone,
+} from "@/components/subagents/SubagentLifecycleStatus";
 import { DeltaBlock } from "@/components/chat/narrative/DeltaBlock";
 import { NarrativeFlow } from "@/components/chat/narrative";
 import { ToolOutputTruncationNotice } from "@/components/chat/narrative/ToolOutputTruncationNotice";
@@ -20,6 +25,12 @@ const FINISHED_STATUS: Record<FinishedSubagentStatus, string> = {
   completed: "Finished",
   failed: "Errored",
   cancelled: "Cancelled",
+};
+
+const FINISHED_TONE: Record<FinishedSubagentStatus, SubagentLifecycleTone> = {
+  completed: "settled",
+  failed: "error",
+  cancelled: "muted",
 };
 
 interface RosterRowProps {
@@ -47,21 +58,28 @@ function RosterRow({ row, onSelect, testId }: RosterRowProps) {
       <SubagentIdentityGlyph
         identity={row.identity}
         hasExplicitIdentity={row.hasExplicitIdentity}
-        animated={!finished}
         className="size-6"
         size={15}
       />
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{row.identity}</span>
-          <time
-            className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground"
-            {...(finished ? { dateTime: new Date(row.completedAt).toISOString() } : {})}
-          >
-            {formatDuration(row.elapsedSeconds)}
-          </time>
+          <span className="flex shrink-0 items-center gap-3">
+            <SubagentLifecycleStatus
+              label={status === "Active" ? "Running" : status}
+              tone={finished ? FINISHED_TONE[row.status] : "running"}
+            />
+            <time
+              className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground"
+              {...(finished ? { dateTime: new Date(row.completedAt).toISOString() } : {})}
+            >
+              {formatDuration(row.elapsedSeconds)}
+            </time>
+          </span>
         </span>
-        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{meaningfulActivity}</span>
+        {meaningfulActivity !== status && (
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">{meaningfulActivity}</span>
+        )}
       </span>
     </Button>
   );
@@ -91,14 +109,14 @@ function DetailView({ row, onBack }: { readonly row: LiveSubagentRow | FinishedS
           <SubagentIdentityGlyph
             identity={row.identity}
             hasExplicitIdentity={row.hasExplicitIdentity}
-            animated={!finished}
             className="size-6"
             size={15}
           />
           <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{row.identity}</h2>
-          <span className="text-xs font-medium text-muted-foreground">
-            {finished ? FINISHED_STATUS[row.status] : "Active"}
-          </span>
+          <SubagentLifecycleStatus
+            label={finished ? FINISHED_STATUS[row.status] : "Running"}
+            tone={finished ? FINISHED_TONE[row.status] : "running"}
+          />
           <time className="font-mono text-xs tabular-nums text-muted-foreground">{formatDuration(row.elapsedSeconds)}</time>
         </div>
       </header>
@@ -183,9 +201,6 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
   const isEmpty = roster.active.length === 0 && roster.finished.length === 0;
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Subagents">
-      <header className="shrink-0 border-b border-border/50 px-6 py-3">
-        <h2 className="text-sm font-semibold text-foreground">Subagents</h2>
-      </header>
       <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         {isEmpty ? (
           <p data-testid="subagents-empty" className="px-4 py-6 text-sm text-muted-foreground">
@@ -195,8 +210,11 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
           <div className="pb-3">
             {roster.active.length > 0 && (
               <section aria-labelledby="subagents-active-heading">
-                <div className="px-6 pb-1 pt-5">
-                  <h3 id="subagents-active-heading" className="text-xs font-medium text-muted-foreground">Active · {roster.active.length}</h3>
+                <div className="flex items-center gap-2 px-6 pb-1 pt-6">
+                  <h2 id="subagents-active-heading" className="text-sm font-semibold text-foreground">Active</h2>
+                  <Badge variant="ghost" size="sm" className="px-0 font-mono font-normal text-muted-foreground hover:bg-transparent">
+                    {roster.active.length}
+                  </Badge>
                 </div>
                 {roster.active.map((row) => (
                   <RosterRow key={row.id} row={row} testId="subagent-roster-row" onSelect={() => selectRow(row.id, "active")} />
@@ -205,8 +223,11 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
             )}
             {roster.finished.length > 0 && (
               <section aria-labelledby="subagents-done-heading">
-                <div className="px-6 pb-1 pt-5">
-                  <h3 id="subagents-done-heading" className="text-xs font-medium text-muted-foreground">Done · {roster.finished.length}</h3>
+                <div className="flex items-center gap-2 px-6 pb-1 pt-6">
+                  <h2 id="subagents-done-heading" className="text-sm font-semibold text-foreground">Done</h2>
+                  <Badge variant="ghost" size="sm" className="px-0 font-mono font-normal text-muted-foreground hover:bg-transparent">
+                    {roster.finished.length}
+                  </Badge>
                 </div>
                 {roster.finished.map((row) => (
                   <RosterRow key={row.id} row={row} testId="subagent-finished-row" onSelect={() => selectRow(row.id, "finished")} />

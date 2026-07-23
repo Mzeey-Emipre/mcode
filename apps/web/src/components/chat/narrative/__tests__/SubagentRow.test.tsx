@@ -26,6 +26,7 @@ describe("SubagentRow", () => {
 
     expect(screen.getByRole("button", { name: "Open Explorer subagent details, Started" })).toBeInTheDocument();
     expect(screen.getByText("Started")).toBeInTheDocument();
+    expect(screen.getByTestId("subagent-lifecycle-dot")).toHaveClass("bg-primary", "status-pulse");
     expect(screen.queryByText("Read detection module")).not.toBeInTheDocument();
     expect(document.querySelector('[data-subagent-identity-glyph="Explorer"]')).toBeInTheDocument();
   });
