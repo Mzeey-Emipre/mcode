@@ -148,8 +148,14 @@ describe("SubagentRow", () => {
     });
     expect(sourceButton).toHaveClass("h-8");
     expect(targetButton).toHaveClass("h-8");
+    expect(sourceButton).toHaveClass("gap-1", "rounded-full", "px-2");
+    expect(targetButton).toHaveClass("gap-1", "rounded-full", "px-2");
+    expect(sourceButton.parentElement).toHaveClass("gap-1");
+    expect(sourceButton.parentElement?.parentElement).toHaveClass("gap-2");
     expect(sourceButton).toHaveTextContent("Explorer with a deliberately long identity");
+    expect(screen.getByText("finished")).toHaveClass("shrink-0");
     expect(screen.getByText("finished")).not.toHaveAttribute("role", "button");
+    expect(document.querySelector('[data-subagent-identity-glyph="Implementer"]')).toHaveClass("size-4");
     expect(container.querySelector("[data-lucide='chevron-right']")).not.toBeInTheDocument();
 
     await userEvent.click(sourceButton);

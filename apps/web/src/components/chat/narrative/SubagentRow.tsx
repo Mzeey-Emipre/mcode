@@ -24,36 +24,38 @@ export function SubagentRow({ participants, lifecycle }: SubagentRowProps) {
   const lifecycleLabel = lifecycle === "started" ? "started working" : lifecycle;
 
   return (
-    <div className={`${NARRATIVE_TOOL_ROW} gap-1`}>
-      {participants.map((participant) => {
-        const resolvedIdentity = resolveSubagentDisplayName(participant.toolInput);
-        const identity = resolvedIdentity ?? "Subagent";
-        return (
-          <Button
-            key={participant.id}
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => openSubagentDetail(
-              participant.id,
-              participant.isComplete ? "finished" : "active",
-            )}
-            className="min-w-0 max-w-40 gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
-            aria-label={`Open ${identity} subagent details`}
-          >
-            <SubagentIdentityGlyph
-              identity={identity}
-              hasExplicitIdentity={resolvedIdentity !== undefined}
-              className="size-5"
-              size={12}
-            />
-            <span className="min-w-0 truncate text-xs font-medium text-foreground/85">
-              {identity}
-            </span>
-          </Button>
-        );
-      })}
-      <span className="min-w-0 truncate text-xs text-muted-foreground">
+    <div className={`${NARRATIVE_TOOL_ROW} gap-2`}>
+      <div className="flex min-w-0 shrink gap-1 overflow-hidden">
+        {participants.map((participant) => {
+          const resolvedIdentity = resolveSubagentDisplayName(participant.toolInput);
+          const identity = resolvedIdentity ?? "Subagent";
+          return (
+            <Button
+              key={participant.id}
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => openSubagentDetail(
+                participant.id,
+                participant.isComplete ? "finished" : "active",
+              )}
+              className="min-w-0 max-w-40 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
+              aria-label={`Open ${identity} subagent details`}
+            >
+              <SubagentIdentityGlyph
+                identity={identity}
+                hasExplicitIdentity={resolvedIdentity !== undefined}
+                className="size-4"
+                size={12}
+              />
+              <span className="min-w-0 truncate text-xs font-medium text-foreground/85">
+                {identity}
+              </span>
+            </Button>
+          );
+        })}
+      </div>
+      <span className="shrink-0 text-xs text-muted-foreground">
         {lifecycleLabel}
       </span>
     </div>
