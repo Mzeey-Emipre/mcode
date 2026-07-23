@@ -69,8 +69,9 @@ let messagesValue: {
 }[] = [{ id: "m1", sequence: 1 }];
 let hasMoreMessagesValue = false;
 let runningThreadIdsValue = new Set<string>();
+let handoffStatusByThread: Record<string, "generating" | "ready" | "fallback" | "error"> = {};
 
-function buildMockRecord() {
+function buildMockRecord(threadId = currentThreadIdValue) {
   return {
     messages: messagesValue,
     loading: loadingValue,
@@ -88,12 +89,16 @@ function buildMockRecord() {
     currentTurnMessageId: "",
     narrativeByMessage: {},
     agentStartTime: undefined,
+    ...(handoffStatusByThread[threadId] ? { handoffMeta: { status: handoffStatusByThread[threadId] } } : {}),
   };
 }
 
 vi.mock("@/stores/threadStore", () => ({
   useThreadStore: vi.fn((selector: (s: unknown) => unknown) => {
-    const records = new Map([[currentThreadIdValue, buildMockRecord()]]);
+    const records = new Map([
+      ["thread-A", buildMockRecord("thread-A")],
+      ["thread-B", buildMockRecord("thread-B")],
+    ]);
     return selector({
       records,
       currentThreadId: currentThreadIdValue,
@@ -149,6 +154,7 @@ beforeEach(() => {
   hasMoreMessagesValue = false;
   currentThreadIdValue = "thread-A";
   runningThreadIdsValue = new Set();
+  handoffStatusByThread = {};
   clearScrollMemory();
 });
 
@@ -184,6 +190,34 @@ describe("MessageList thread switch", () => {
     act(() => rerender(<MessageList />));
 
     expect(queryByText("Thinking")).not.toBeNull();
+  });
+
+  it("uses the rendered transcript thread for handoff skeletons", () => {
+    activeThreadIdValue = "thread-B";
+    currentThreadIdValue = "thread-A";
+    handoffStatusByThread = { "thread-B": "generating" };
+    messagesValue = [{
+      id: "a-user",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "user",
+      content: "Thread A request",
+    }];
+    const { container, rerender } = render(<MessageList />);
+
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
+
+    currentThreadIdValue = "thread-B";
+    messagesValue = [{
+      id: "b-user",
+      sequence: 1,
+      thread_id: "thread-B",
+      role: "user",
+      content: "Thread B request",
+    }];
+    act(() => rerender(<MessageList />));
+
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(3);
   });
 
   it("records history posture before navigation can replace the active transcript", () => {
