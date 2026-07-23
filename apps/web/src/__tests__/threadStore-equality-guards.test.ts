@@ -13,7 +13,6 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
  * (post-getMessages hydration) are exercised.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { clearRecordCache, getCachedRecord } from "@/lib/thread-hydrator/record-cache";
