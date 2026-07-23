@@ -144,7 +144,12 @@ describe("thread status refresh after reconnect", () => {
       }),
     );
     const thread = createMockThread({ workspace_id: ws.id, status: "active" });
-    const refreshConversation = vi.fn().mockResolvedValue(undefined);
+    const refreshConversation = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("refresh failed"))
+      .mockResolvedValueOnce(undefined);
+    const unhandledRejection = vi.fn();
+    process.on("unhandledRejection", unhandledRejection);
     const originalRefresh = useThreadStore.getState().refreshConversation;
     useThreadStore.setState({ refreshConversation });
     useWorkspaceStore.setState({
@@ -169,6 +174,8 @@ describe("thread status refresh after reconnect", () => {
         expect(mockTransport.listThreads).toHaveBeenCalledTimes(1);
         expect(refreshConversation).toHaveBeenCalledTimes(2);
       });
+      await Promise.resolve();
+      expect(unhandledRejection).not.toHaveBeenCalled();
 
       sockets[1]?.disconnect();
       await vi.advanceTimersByTimeAsync(1_000);
@@ -181,6 +188,7 @@ describe("thread status refresh after reconnect", () => {
       transport.close();
       vi.useRealTimers();
       vi.unstubAllGlobals();
+      process.off("unhandledRejection", unhandledRejection);
       useThreadStore.setState({ refreshConversation: originalRefresh });
     }
   });

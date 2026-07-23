@@ -281,7 +281,7 @@ export function createWsTransport(
         if (!activeWorkspaceId) return;
         const last = lastLoadThreadsAtByWorkspace.get(activeWorkspaceId) ?? 0;
         if (nowForThreads - last <= LOAD_THREADS_RECONNECT_COOLDOWN_MS) {
-          void refreshActiveConversation();
+          void refreshActiveConversation().catch(() => {});
           return;
         }
         lastLoadThreadsAtByWorkspace.set(activeWorkspaceId, nowForThreads);

@@ -906,6 +906,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   registerThreadHydrator(threadHydrator);
   const conversationResidency = createConversationResidency({
     restoreConversation: (threadId) => get().loadMessages(threadId),
+    refreshConversation: (threadId) => threadHydrator.hydrate(threadId, "active", { force: true }),
     deactivateConversation: () => threadHydrator.deactivate(),
     retainInactiveConversation: (threadId) => threadHydrator.retainInactiveConversation(threadId),
     invalidateConversation: (threadId) => threadHydrator.invalidateConversation(threadId),

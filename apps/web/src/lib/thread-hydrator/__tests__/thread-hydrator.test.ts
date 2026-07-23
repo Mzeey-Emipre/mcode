@@ -239,6 +239,29 @@ describe("ThreadHydrator", () => {
     expect(readActiveThreadField((record) => record.latestTurnWithChanges)).toBe("cached-history");
   });
 
+  it("deduplicates a resident message id when its cached sequence is stale", async () => {
+    const cachedMessage = createMockMessage({
+      id: "same-message",
+      thread_id: THREAD_A,
+      content: "stale cached content",
+      sequence: 1,
+    });
+    const residentMessage = createMockMessage({
+      id: "same-message",
+      thread_id: THREAD_A,
+      content: "resident content",
+      sequence: 2,
+    });
+    cacheRecord(THREAD_A, makeCachedRecord([cachedMessage]));
+    resetThreadStoreForTests({
+      records: new Map([[THREAD_A, makeCachedRecord([residentMessage])]]),
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(getTestActiveMessages()).toEqual([residentMessage]);
+  });
+
   it("cache miss fetches a conversation page, commits store, and populates cache", async () => {
     await hydrator.hydrate(THREAD_A, "active");
 

@@ -40,6 +40,33 @@ describe("ConversationResidency", () => {
     expect(deactivateConversation).not.toHaveBeenCalled();
   });
 
+  it("uses the refresh dependency when one is provided", async () => {
+    const restoreConversation = vi.fn().mockResolvedValue(undefined);
+    const refreshConversation = vi.fn().mockResolvedValue(undefined);
+    const residency = createConversationResidency({
+      restoreConversation,
+      refreshConversation,
+      deactivateConversation: vi.fn(),
+    });
+
+    await residency.refresh("thread-a", [{ id: "thread-a" }]);
+
+    expect(refreshConversation).toHaveBeenCalledWith("thread-a");
+    expect(restoreConversation).not.toHaveBeenCalled();
+  });
+
+  it("falls back to restoration when no refresh dependency is provided", async () => {
+    const restoreConversation = vi.fn().mockResolvedValue(undefined);
+    const residency = createConversationResidency({
+      restoreConversation,
+      deactivateConversation: vi.fn(),
+    });
+
+    await residency.refresh("thread-a", [{ id: "thread-a" }]);
+
+    expect(restoreConversation).toHaveBeenCalledWith("thread-a");
+  });
+
   it("routes event retention, persisted invalidation, pagination, and prefetch through one boundary", async () => {
     const restoreConversation = vi.fn().mockResolvedValue(undefined);
     const deactivateConversation = vi.fn();

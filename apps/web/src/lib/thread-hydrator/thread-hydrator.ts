@@ -114,8 +114,15 @@ function mergeResidentConversationCacheState(
   ) {
     return cached;
   }
+  const cachedMessageIds = new Set(cached.messages.map((message) => message.id));
   const messagesBySequence = new Map(cached.messages.map((message) => [message.sequence, message]));
   for (const message of residentCacheState.messages) {
+    if (!preferResidentAtEqualSequence && cachedMessageIds.has(message.id)) continue;
+    if (preferResidentAtEqualSequence) {
+      for (const [sequence, existing] of messagesBySequence) {
+        if (existing.id === message.id) messagesBySequence.delete(sequence);
+      }
+    }
     if (preferResidentAtEqualSequence || !messagesBySequence.has(message.sequence)) {
       messagesBySequence.set(message.sequence, message);
     }

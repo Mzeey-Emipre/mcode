@@ -216,6 +216,7 @@ interface WorkspaceState {
 
   // Thread actions
   loadThreads: (workspaceId: string) => Promise<void>;
+  /** Revalidate the selected conversation after reconnect. */
   refreshActiveConversation: () => Promise<void>;
   createThread: (
     title: string,
