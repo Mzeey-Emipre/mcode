@@ -79,6 +79,7 @@ function renderItem(item: NarrativeItem, allToolCalls: readonly ToolCall[]): Rea
       return (
         <SubagentRow
           toolCall={item.toolCall}
+          lifecycle={item.lifecycle}
           children={item.children}
           hooks={item.hooks}
           allToolCalls={allToolCalls}

@@ -1,4 +1,5 @@
 import type { ToolCall, HookExecution } from "@/transport/types";
+import type { SubagentLifecycle } from "./subagent-lifecycle";
 
 /**
  * Contiguous streamed reasoning text for one timeline row, bounded by tool use or turn end.
@@ -29,7 +30,7 @@ export type NarrativeItem =
   | { type: "thought"; segment: ThoughtSegment; isActive: boolean }
   | { type: "tool-group"; group: ToolGroup; hasError: boolean; hasCancelled: boolean }
   | { type: "hook"; hook: HookExecution }
-  | { type: "subagent"; toolCall: ToolCall; children: readonly ToolCall[]; hooks: readonly HookExecution[] }
+  | { type: "subagent"; lifecycle: SubagentLifecycle; toolCall: ToolCall; children: readonly ToolCall[]; hooks: readonly HookExecution[] }
   | { type: "active-tool"; toolCall: ToolCall }
   | { type: "delta"; text: string };
 

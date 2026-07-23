@@ -1874,7 +1874,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const subagentStateCopy = [
     subagentRoster.active.length > 0 ? `${subagentRoster.active.length} active` : null,
     `${subagentRoster.finished.length} done`,
-  ].filter(Boolean).join(" · ");
+  ].filter(Boolean).join(", ");
 
   const openSource = useCallback(
     (event: React.MouseEvent, url: string) => {
@@ -2148,19 +2148,20 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             )}
 
             {subagentTotal > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                type="button"
-                data-testid="thread-overview-subagents"
-                onClick={openSubagentsPanel}
-                aria-label={`Subagents, ${subagentRoster.active.length} active, ${subagentRoster.finished.length} done`}
-                className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-between")}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-xs font-medium">Subagents</span>
-                </span>
-                <span className="flex min-w-0 shrink-0 items-center gap-1.5">
+              <>
+                <Separator className="my-1.5" />
+                <div className="px-2 pt-1 text-xs font-medium text-muted-foreground">
+                  Subagents
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  data-testid="thread-overview-subagents"
+                  onClick={openSubagentsPanel}
+                  aria-label={`Subagents, ${subagentRoster.active.length} active, ${subagentRoster.finished.length} done`}
+                  className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-start gap-2")}
+                >
                   <span className="flex -space-x-1" aria-hidden>
                     {subagentGlyphRows.map((row) => (
                       <SubagentIdentityGlyph
@@ -2172,18 +2173,11 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                       />
                     ))}
                   </span>
-                  {subagentRoster.active.length > 0 && (
-                    <span
-                      aria-hidden
-                      data-testid="thread-overview-subagents-running"
-                      className="size-1.5 shrink-0 rounded-full bg-primary status-pulse"
-                    />
-                  )}
                   <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                     {subagentStateCopy}
                   </span>
-                </span>
-              </Button>
+                </Button>
+              </>
             )}
 
             {canShowPrActions && (

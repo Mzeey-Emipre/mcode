@@ -224,10 +224,11 @@ describe("ThreadOverview branchless Create PR", () => {
 
     const summary = screen.getByTestId("thread-overview-subagents");
     expect(summary).toHaveAccessibleName("Subagents, 1 active, 0 done");
-    expect(summary).toHaveTextContent("1 active · 0 done");
+    expect(summary).toHaveTextContent("1 active, 0 done");
     expect(summary).not.toHaveTextContent("total");
     expect(summary.querySelectorAll("[data-subagent-identity-glyph]")).toHaveLength(1);
-    expect(screen.getByTestId("thread-overview-subagents-running")).toHaveClass("bg-primary", "status-pulse");
+    expect(screen.queryByTestId("thread-overview-subagents-running")).not.toBeInTheDocument();
+    expect(screen.getByText("Subagents").compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(summary.querySelector('[data-subagent-identity-glyph="Explorer"]')).toHaveAttribute(
       "data-subagent-palette",
       String(getSubagentIdentityPaletteIndex("Explorer")),

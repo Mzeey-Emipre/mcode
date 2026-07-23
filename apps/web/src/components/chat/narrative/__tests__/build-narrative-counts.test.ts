@@ -144,6 +144,56 @@ describe("buildNarrativeItems counts", () => {
     expect(counts.subagents).toBe(1);
   });
 
+  it("renders start, repeated updates, and finish in order without counting lifecycle markers", () => {
+    const tools: ToolCall[] = [
+      mkTool({
+        id: "agent-1",
+        toolName: "Agent",
+        toolInput: { agentName: "Explorer", description: "Private delegated prompt" },
+        startedAt: 1_000,
+        durationMs: 4_000,
+      }),
+      mkTool({
+        id: "update-1",
+        toolName: "__McodeSubagentLifecycle",
+        toolInput: { lifecycle: "updated", agentName: "Explorer" },
+        parentToolCallId: "agent-1",
+        startedAt: 2_000,
+      }),
+      mkTool({
+        id: "child-command",
+        toolName: "Bash",
+        toolInput: { command: "private child command" },
+        parentToolCallId: "agent-1",
+        startedAt: 2_500,
+      }),
+      mkTool({
+        id: "update-2",
+        toolName: "__McodeSubagentLifecycle",
+        toolInput: { lifecycle: "updated", agentName: "Explorer" },
+        parentToolCallId: "agent-1",
+        startedAt: 3_000,
+      }),
+    ];
+
+    const { items, counts } = buildNarrativeItems({
+      toolCalls: tools,
+      hooks: [],
+      thoughtSegments: [],
+      streamingText: "",
+      isAgentRunning: false,
+    });
+
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
+      "started",
+      "updated",
+      "updated",
+      "finished",
+    ]);
+    expect(items.every((item) => item.type === "subagent")).toBe(true);
+    expect(counts).toEqual({ steps: 1, thoughts: 0, subagents: 1 });
+  });
+
   it("hides thoughts that duplicate the committed assistant bubble (post-turn live trail)", () => {
     const body = "README updated. Same paragraphs in thought and bubble.";
     const thoughts: ThoughtSegment[] = [

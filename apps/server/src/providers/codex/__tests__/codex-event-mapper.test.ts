@@ -1076,7 +1076,7 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
-  it("does not duplicate native sub-agent activity rows", () => {
+  it("emits a distinct parented lifecycle record for every native sub-agent interaction", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     const activity = {
       type: "subAgentActivity",
@@ -1096,9 +1096,25 @@ describe("CodexEventMapper", () => {
       method: "item/started",
       params: { threadId: "main-thread", item: activity },
     });
-    const interacted = mapper.mapNotification({
+    const firstInteraction = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: { ...activity, kind: "interacted" },
+      },
+    });
+    const secondInteraction = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: { ...activity, kind: "interacted" },
+      },
+    });
+    const interactionCompletion = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
       params: {
         threadId: "main-thread",
         item: { ...activity, kind: "interacted" },
@@ -1112,7 +1128,31 @@ describe("CodexEventMapper", () => {
 
     expect(first).toHaveLength(1);
     expect(duplicate).toEqual([]);
-    expect(interacted).toEqual([]);
+    expect(firstInteraction).toEqual([
+      expect.objectContaining({
+        type: "toolUse",
+        toolName: "__McodeSubagentLifecycle",
+        parentToolCallId: "call-explorer",
+        toolInput: expect.objectContaining({
+          lifecycle: "updated",
+          agentName: "explorer",
+        }),
+      }),
+      expect.objectContaining({
+        type: "toolResult",
+        isError: false,
+      }),
+    ]);
+    expect(secondInteraction).toHaveLength(2);
+    expect(secondInteraction[0]).toMatchObject({
+      type: "toolUse",
+      toolName: "__McodeSubagentLifecycle",
+      parentToolCallId: "call-explorer",
+    });
+    expect(secondInteraction[0]).not.toMatchObject({
+      toolCallId: (firstInteraction[0] as { toolCallId?: string } | undefined)?.toolCallId,
+    });
+    expect(interactionCompletion).toEqual([]);
     expect(completed).toEqual([]);
   });
 

@@ -241,9 +241,12 @@ describe("buildPersistedNarrativeItems", () => {
       thoughts: [],
       hooks: [],
     });
-    expect(items).toHaveLength(1);
-    expect(items[0].type).toBe("subagent");
-    if (items[0].type === "subagent") {
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
+      "started",
+      "finished",
+    ]);
+    if (items[0]?.type === "subagent") {
       expect(items[0].children).toHaveLength(1);
       expect(items[0].toolCall.id).toBe("agent-1");
     }
@@ -260,7 +263,53 @@ describe("buildPersistedNarrativeItems", () => {
       thoughts: [],
       hooks: [],
     });
-    expect(items.filter((i) => i.type === "subagent")).toHaveLength(2);
+    expect(items.filter((i) => i.type === "subagent")).toHaveLength(4);
+  });
+
+  it("hydrates every persisted lifecycle update without exposing child activity", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [
+        makeTool({
+          id: "agent-1",
+          tool_name: "Agent",
+          display_name: "Explorer",
+          input_summary: "Private delegated prompt",
+          started_at: "2026-05-15T10:00:00Z",
+          completed_at: "2026-05-15T10:00:04Z",
+          sort_order: 1,
+        }),
+        makeTool({
+          id: "update-1",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: '{"lifecycle":"updated","agentName":"Explorer"}',
+          parent_tool_call_id: "agent-1",
+          sort_order: 2,
+        }),
+        makeTool({
+          id: "child-command",
+          tool_name: "Bash",
+          input_summary: "private child command",
+          parent_tool_call_id: "agent-1",
+          sort_order: 3,
+        }),
+        makeTool({
+          id: "update-2",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: '{"lifecycle":"updated","agentName":"Explorer"}',
+          parent_tool_call_id: "agent-1",
+          sort_order: 4,
+        }),
+      ],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
+      "started",
+      "updated",
+      "updated",
+      "finished",
+    ]);
   });
 
   it("interleaves all streams by sort_order", () => {

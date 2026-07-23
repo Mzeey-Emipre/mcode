@@ -188,6 +188,23 @@ describe("projectSubagents", () => {
     expect(projectSubagents(calls, []).active[0]?.activityAt).toBe(129);
   });
 
+  it("excludes internal lifecycle records from subagent detail activity and transcript", () => {
+    const roster = projectSubagents([
+      call({ id: "agent-a", toolName: "Agent", toolInput: { agentName: "Explorer" } }),
+      call({
+        id: "update-a",
+        toolName: "__McodeSubagentLifecycle",
+        toolInput: { lifecycle: "updated", agentName: "Explorer" },
+        parentToolCallId: "agent-a",
+      }),
+    ], []);
+
+    expect(roster.active).toHaveLength(1);
+    expect(roster.active[0]?.detail.activity).toEqual([]);
+    expect(roster.active[0]?.detail.transcript).toEqual([]);
+    expect(roster.active[0]?.detail.subtreeIds).toEqual(["agent-a"]);
+  });
+
   it("keeps explicit Subagent identity provenance distinct from the fallback label", () => {
     const live = projectSubagents([
       call({ id: "unnamed", toolName: "Agent", toolInput: {} }),

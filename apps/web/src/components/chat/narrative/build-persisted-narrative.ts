@@ -6,6 +6,10 @@ import type {
   HookExecution,
 } from "@/transport/types";
 import type { ThoughtSegment, NarrativeItem } from "./types";
+import {
+  isSubagentLifecycleRecord,
+  type SubagentLifecycle,
+} from "./subagent-lifecycle";
 
 /** Inputs for `buildPersistedNarrativeItems`. */
 export interface PersistedNarrativeInputs {
@@ -117,6 +121,7 @@ export function persistedHookDetailLines(r: HookExecutionRecord): string[] {
 type TimelineEvent =
   | { kind: "thought"; segment: ThoughtSegment; sortOrder: number }
   | { kind: "tool"; call: ToolCall; sortOrder: number }
+  | { kind: "subagent"; call: ToolCall; lifecycle: SubagentLifecycle; sortOrder: number }
   | { kind: "hook"; hook: HookExecution; sortOrder: number };
 
 /**
@@ -206,11 +211,35 @@ export function buildPersistedNarrativeItems(
     });
   }
   for (const t of topLevel) {
-    timeline.push({
-      kind: "tool",
-      call: recordToToolCall(t),
-      sortOrder: t.sort_order,
-    });
+    const call = recordToToolCall(t);
+    if (t.tool_name !== AGENT_TOOL_NAME) {
+      timeline.push({ kind: "tool", call, sortOrder: t.sort_order });
+      continue;
+    }
+
+    const lifecycleMarkers = (childrenByParent.get(t.id) ?? [])
+      .filter(isSubagentLifecycleRecord);
+    timeline.push({ kind: "subagent", call, lifecycle: "started", sortOrder: t.sort_order });
+    for (const marker of lifecycleMarkers) {
+      timeline.push({
+        kind: "subagent",
+        call,
+        lifecycle: "updated",
+        sortOrder: marker.sort_order,
+      });
+    }
+    if (t.status !== "running") {
+      const terminalSortOrder = lifecycleMarkers.reduce(
+        (latest, marker) => Math.max(latest, marker.sort_order),
+        t.sort_order,
+      ) + 0.5;
+      timeline.push({
+        kind: "subagent",
+        call,
+        lifecycle: "finished",
+        sortOrder: terminalSortOrder,
+      });
+    }
   }
   for (const h of hooks) {
     if (h.phase === "stop") continue;
@@ -253,25 +282,25 @@ export function buildPersistedNarrativeItems(
       continue;
     }
 
-    const tc = evt.call;
-    if (tc.toolName === AGENT_TOOL_NAME) {
+    if (evt.kind === "subagent") {
       flushGroup();
-      const childRecords = childrenByParent.get(tc.id) ?? [];
+      const childRecords = (childrenByParent.get(evt.call.id) ?? [])
+        .filter((child) => !isSubagentLifecycleRecord(child));
       const children = childRecords
         .slice()
         .sort((a, b) => a.sort_order - b.sort_order)
         .map(recordToToolCall);
       items.push({
         type: "subagent",
-        toolCall: tc,
+        lifecycle: evt.lifecycle,
+        toolCall: evt.call,
         children,
-        // Persisted hooks aren't currently attributed to a sub-agent boundary,
-        // so we pass an empty array - matching how older history loads behave.
         hooks: liveHooks.filter((h) => h.toolName === AGENT_TOOL_NAME),
       });
       continue;
     }
 
+    const tc = evt.call;
     // Non-Agent tool: coalesce into the current tool-group.
     pendingGroup.push(tc);
   }

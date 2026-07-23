@@ -17,16 +17,16 @@ function agent(overrides: Partial<ToolCall> = {}): ToolCall {
 }
 
 function renderRow(toolCall: ToolCall, children: readonly ToolCall[] = []) {
-  return render(<SubagentRow toolCall={toolCall} children={children} hooks={[]} />);
+  return render(<SubagentRow toolCall={toolCall} lifecycle="started" children={children} hooks={[]} />);
 }
 
 describe("SubagentRow", () => {
-  it("shows explicit identity and Started without delegated task text", () => {
+  it("shows explicit identity and exact lowercase lifecycle copy without delegated task text", () => {
     renderRow(agent());
 
-    expect(screen.getByRole("button", { name: "Open Explorer subagent details, Started" })).toBeInTheDocument();
-    expect(screen.getByText("Started")).toBeInTheDocument();
-    expect(screen.getByTestId("subagent-lifecycle-dot")).toHaveClass("bg-primary", "status-pulse");
+    expect(screen.getByRole("button", { name: "Open Explorer subagent details, started working" })).toBeInTheDocument();
+    expect(screen.getByText("started working")).toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-lifecycle-dot")).not.toBeInTheDocument();
     expect(screen.queryByText("Read detection module")).not.toBeInTheDocument();
     expect(document.querySelector('[data-subagent-identity-glyph="Explorer"]')).toBeInTheDocument();
   });
@@ -35,7 +35,7 @@ describe("SubagentRow", () => {
     const view = renderRow(agent());
     const firstPalette = document.querySelector('[data-subagent-identity-glyph="Explorer"]')?.getAttribute("data-subagent-palette");
 
-    view.rerender(<SubagentRow toolCall={agent({ output: "Provider update" })} children={[]} hooks={[]} />);
+    view.rerender(<SubagentRow toolCall={agent({ output: "Provider update" })} lifecycle="updated" children={[]} hooks={[]} />);
 
     expect(document.querySelector('[data-subagent-identity-glyph="Explorer"]')).toHaveAttribute("data-subagent-palette", firstPalette);
   });
@@ -48,26 +48,25 @@ describe("SubagentRow", () => {
     expect(paletteSlots.every((slot) => slot >= 0 && slot < 5)).toBe(true);
   });
 
-  it("shows Update received only for non-empty running provider output", () => {
-    renderRow(agent({ output: "Provider update" }));
+  it("shows updated without exposing provider output", () => {
+    render(<SubagentRow toolCall={agent({ output: "Provider update" })} lifecycle="updated" children={[]} hooks={[]} />);
 
-    expect(screen.getByText("Update received")).toBeInTheDocument();
+    expect(screen.getByText("updated")).toBeInTheDocument();
     expect(screen.queryByText("Provider update")).not.toBeInTheDocument();
   });
 
-  it.each([
-    [{ isComplete: true }, "Finished"],
-    [{ isComplete: true, isError: true }, "Errored"],
-    [{ isComplete: true, isCancelled: true }, "Cancelled"],
-  ] as const)("renders the terminal lifecycle %s", (overrides, label) => {
-    renderRow(agent(overrides));
-    expect(screen.getByText(label)).toBeInTheDocument();
-  });
+  it.each([{ isComplete: true }, { isComplete: true, isError: true }, { isComplete: true, isCancelled: true }] as const)(
+    "uses finished for every terminal state in chat",
+    (overrides) => {
+      render(<SubagentRow toolCall={agent(overrides)} lifecycle="finished" children={[]} hooks={[]} />);
+      expect(screen.getByText("finished")).toBeInTheDocument();
+    },
+  );
 
   it("falls back to Subagent and never uses prompt or description as identity", () => {
-    renderRow(agent({ toolInput: { prompt: "Private prompt", description: "Private task" }, isComplete: true }));
+    render(<SubagentRow toolCall={agent({ toolInput: { prompt: "Private prompt", description: "Private task" }, isComplete: true })} lifecycle="finished" children={[]} hooks={[]} />);
 
-    expect(screen.getByRole("button", { name: "Open Subagent subagent details, Finished" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Subagent subagent details, finished" })).toBeInTheDocument();
     expect(screen.queryByText("Private prompt")).not.toBeInTheDocument();
     expect(screen.queryByText("Private task")).not.toBeInTheDocument();
     const glyph = document.querySelector('[data-subagent-identity-glyph="Subagent"]');

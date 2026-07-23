@@ -1,4 +1,8 @@
 import { extractSubagentDescription } from "@/components/chat/narrative/extract-subagent-description";
+import {
+  isSubagentLifecycleCall,
+  isSubagentLifecycleRecord,
+} from "@/components/chat/narrative/subagent-lifecycle";
 import { extractToolInputDetail } from "@/components/chat/narrative/tool-detail";
 import { TOOL_LABELS, resolveToolName } from "@/components/chat/tool-renderers/constants";
 import { resolveSubagentDisplayName, type FileEffect, type TurnFileEffectSummary } from "@mcode/contracts";
@@ -193,6 +197,7 @@ export function projectSubagents(
   const topLevelAgents: Array<{ call: ToolCall; index: number }> = [];
 
   calls?.forEach((call, index) => {
+    if (isSubagentLifecycleCall(call)) return;
     const parentId = call.parentToolCallId;
     if (typeof parentId === "string" && parentId.length > 0) {
       const children = childrenByParent.get(parentId) ?? [];
@@ -313,12 +318,14 @@ export function projectSubagents(
   for (const batch of narrativeBatches ?? []) {
     const persistedChildren = new Map<string, ToolCallRecord[]>();
     for (const child of batch ?? []) {
+      if (isSubagentLifecycleRecord(child)) continue;
       if (!child.parent_tool_call_id) continue;
       const siblings = persistedChildren.get(child.parent_tool_call_id) ?? [];
       siblings.push(child);
       persistedChildren.set(child.parent_tool_call_id, siblings);
     }
     for (const record of batch ?? []) {
+      if (isSubagentLifecycleRecord(record)) continue;
       if (record.tool_name !== "Agent" || record.parent_tool_call_id) continue;
       const startedAt = parsedTimestamp(record.started_at) ?? 0;
       const completedAt = parsedTimestamp(record.completed_at) ?? startedAt;

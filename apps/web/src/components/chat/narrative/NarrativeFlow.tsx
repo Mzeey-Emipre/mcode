@@ -103,6 +103,7 @@ function renderItem(item: NarrativeItem, _mostActiveSubagentId: string | null, a
       return (
         <SubagentRow
           toolCall={item.toolCall}
+          lifecycle={item.lifecycle}
           children={item.children}
           hooks={item.hooks}
           allToolCalls={allToolCalls}

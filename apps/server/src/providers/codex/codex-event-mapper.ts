@@ -68,6 +68,8 @@ const TOOL_LIKE_ITEM_TYPES = new Set([
 const FALLBACK_ASSISTANT_ITEM_ID = "__codex_assistant_message__";
 const MAX_EARLY_CHILD_THREADS = 8;
 const MAX_EARLY_CHILD_NOTIFICATIONS = 64;
+const SUBAGENT_LIFECYCLE_TOOL_NAME = "__McodeSubagentLifecycle";
+const MAX_LIFECYCLE_PARENT_ID_LENGTH = 128;
 const EARLY_CHILD_FILE_TOOL_NAMES = new Set([
   "apply_patch", "create", "delete", "edit", "move", "remove", "rename",
   "searchreplace", "strreplace", "write",
@@ -134,6 +136,8 @@ export class CodexEventMapper {
   private earlyChildNotificationCount = 0;
   /** Child events replayed while the current main-thread notification registers receivers. */
   private replayedChildEvents: AgentEvent[] = [];
+  /** Monotonic sequence that keeps repeated native subagent interactions distinct. */
+  private subagentInteractionSequence = 0;
   /**
    * True once `turn/completed` fired but before the next turn's `turn/started`.
    * While this is set we suppress all event emission so trailing notifications
@@ -516,14 +520,41 @@ export class CodexEventMapper {
     return next;
   }
 
-  /** Maps a native Codex sub-agent activity start to the existing Agent row contract. */
-  private mapSubAgentActivityStart(item: CompletedItem, toolCallId: string): AgentEvent[] {
-    if (item.kind !== "started") return [];
+  /** Maps native Codex sub-agent activity to Agent and persisted lifecycle records. */
+  private mapSubAgentActivityStart(
+    item: CompletedItem,
+    toolCallId: string,
+    includeInteractions: boolean,
+  ): AgentEvent[] {
     const agentThreadId = this.stringField(item, "agentThreadId");
     const agentPath = this.stringField(item, "agentPath");
     if (!agentThreadId || !agentPath) return [];
 
     const agentName = agentPath.split("/").filter(Boolean).pop() ?? agentPath;
+    if (item.kind === "interacted" && includeInteractions) {
+      this.subagentInteractionSequence += 1;
+      const lifecycleToolCallId =
+        `subagent-activity:${toolCallId.slice(0, MAX_LIFECYCLE_PARENT_ID_LENGTH)}:${this.subagentInteractionSequence}`;
+      const toolInput = {
+        lifecycle: "updated",
+        agentName,
+        agentPath,
+      };
+      return [{
+        type: AgentEventType.ToolUse,
+        threadId: this.threadId,
+        toolCallId: lifecycleToolCallId,
+        toolName: SUBAGENT_LIFECYCLE_TOOL_NAME,
+        toolInput,
+        parentToolCallId: toolCallId,
+      }, this.toolResultEvent({
+        toolCallId: lifecycleToolCallId,
+        output: "",
+        isError: false,
+      })];
+    }
+    if (item.kind !== "started") return [];
+
     const toolInput = {
       codexCollabKind: "spawnAgent",
       agentName,
@@ -1014,7 +1045,7 @@ export class CodexEventMapper {
       }
       const boundaryEvents = this.drainAssistantBoundaryBeforeItem(itemId);
       if (itemType === "subAgentActivity" && item && itemId) {
-        return [...boundaryEvents, ...this.mapSubAgentActivityStart(item, itemId)];
+        return [...boundaryEvents, ...this.mapSubAgentActivityStart(item, itemId, true)];
       }
       // The coordinator started a new tool-like item: any legacy collab whose
       // children have finished should be popped now so this new tool doesn't
@@ -1338,7 +1369,7 @@ export class CodexEventMapper {
 
     if (itemType === "subAgentActivity") {
       const toolCallId = item.id;
-      return toolCallId ? this.mapSubAgentActivityStart(item, toolCallId) : [];
+      return toolCallId ? this.mapSubAgentActivityStart(item, toolCallId, false) : [];
     }
 
     // OpenAI Responses API shape - some codex versions emit "message" items with a content array
