@@ -216,6 +216,7 @@ interface WorkspaceState {
 
   // Thread actions
   loadThreads: (workspaceId: string) => Promise<void>;
+  refreshActiveConversation: () => Promise<void>;
   createThread: (
     title: string,
     mode: "direct" | "worktree",
@@ -350,6 +351,7 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   const conversationResidency = createConversationResidency({
     restoreConversation: (threadId) => useThreadStore.getState().loadMessages(threadId),
+    refreshConversation: (threadId) => useThreadStore.getState().refreshConversation(threadId),
     deactivateConversation: () => useThreadStore.getState().deactivateConversation(),
   });
   const reconcileSelectedConversation = () => {
@@ -768,6 +770,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     } catch (e) {
       set({ error: String(e), loading: false });
     }
+  },
+
+  refreshActiveConversation: async () => {
+    await conversationResidency.refresh(get().activeThreadId, get().threads);
   },
 
   createThread: async (title, mode, branch) => {

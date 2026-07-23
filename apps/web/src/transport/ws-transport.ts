@@ -277,12 +277,17 @@ export function createWsTransport(
       // Deferred import avoids a circular dependency at module evaluation time.
       const nowForThreads = Date.now();
       import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
-        const { activeWorkspaceId, loadThreads } = useWorkspaceStore.getState();
+        const { activeWorkspaceId, loadThreads, refreshActiveConversation } = useWorkspaceStore.getState();
         if (!activeWorkspaceId) return;
         const last = lastLoadThreadsAtByWorkspace.get(activeWorkspaceId) ?? 0;
-        if (nowForThreads - last <= LOAD_THREADS_RECONNECT_COOLDOWN_MS) return;
+        if (nowForThreads - last <= LOAD_THREADS_RECONNECT_COOLDOWN_MS) {
+          void refreshActiveConversation();
+          return;
+        }
         lastLoadThreadsAtByWorkspace.set(activeWorkspaceId, nowForThreads);
-        loadThreads(activeWorkspaceId).catch(() => {});
+        loadThreads(activeWorkspaceId)
+          .then(() => refreshActiveConversation())
+          .catch(() => {});
       });
 
       // Reattach active terminals after reconnect.

@@ -22,13 +22,7 @@ import { useToastStore } from "./toastStore";
 import { findModelById } from "@/lib/model-registry";
 import { resolveContextWindow } from "@/lib/resolve-context-window";
 import { useSettingsStore } from "./settingsStore";
-import {
-  cacheRecord,
-  evictCachedRecord,
-  getCachedRecord,
-  projectConversationCacheState,
-  takePrefetchedHistoryPage,
-} from "@/lib/thread-hydrator/record-cache";
+import { createConversationResidency, registerConversationResidency } from "./conversation-residency";
 import {
   clearPendingTurnPersistMessage,
   projectTurnResponse,
@@ -96,6 +90,7 @@ interface ThreadState {
 
   // Message actions
   loadMessages: (threadId: string) => Promise<void>;
+  refreshConversation: (threadId: string) => Promise<void>;
   loadOlderMessages: (threadId: string) => Promise<void>;
   sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle, goalObjective?: string, orchestrationMode?: OrchestrationMode) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
@@ -756,15 +751,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   };
 
   const cacheInactiveRecord = (threadId: string): void => {
-    const state = get();
-    if (state.currentThreadId !== threadId) {
-      // The response can arrive before its database commit, so the resident
-      // transcript must replace any older snapshot used by thread switching.
-      cacheRecord(
-        threadId,
-        projectConversationCacheState(getThreadRecord(state.records, threadId)),
-      );
-    }
+    conversationResidency.retainInactiveConversation(threadId);
   };
 
   const applyGoalLookup = (threadId: string, lookup: GoalLookupResult): void => {
@@ -917,6 +904,19 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     getWorkspaceThreadSettings: resolveWorkspaceThreadSettings,
   });
   registerThreadHydrator(threadHydrator);
+  const conversationResidency = createConversationResidency({
+    restoreConversation: (threadId) => get().loadMessages(threadId),
+    deactivateConversation: () => threadHydrator.deactivate(),
+    retainInactiveConversation: (threadId) => threadHydrator.retainInactiveConversation(threadId),
+    invalidateConversation: (threadId) => threadHydrator.invalidateConversation(threadId),
+    synchronizeConversation: (threadId) => threadHydrator.synchronizeConversation(threadId),
+    mergeCachedFileChanges: (threadId, filesChanged) =>
+      threadHydrator.mergeCachedFileChanges(threadId, filesChanged),
+    takePrefetchedHistoryPage: (threadId, before) =>
+      threadHydrator.takePrefetchedHistoryPage(threadId, before),
+    prefetchConversation: (threadId) => threadHydrator.hydrate(threadId, "background"),
+  });
+  registerConversationResidency(conversationResidency);
 
   return {
     records: new Map<string, ThreadRecord>(),
@@ -948,6 +948,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     await threadHydrator.hydrate(threadId, "active");
   },
 
+  refreshConversation: async (threadId) => {
+    await threadHydrator.hydrate(threadId, "active", { force: true });
+  },
+
   /**
    * Fetch the next batch of older messages for scroll-up pagination.
    * Uses sequence cursor to load messages older than what is currently in memory.
@@ -963,7 +967,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     try {
       const cursor = getRec(threadId).oldestLoadedSequence;
       const epoch = getRec(threadId).loadEpoch;
-      const prefetchedPage = takePrefetchedHistoryPage(threadId, cursor);
+      const prefetchedPage = conversationResidency.takePrefetchedHistoryPage(threadId, cursor);
       const {
         messages: olderMessages,
         hasMore,
@@ -989,8 +993,21 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const newOldest = olderMessages.length > 0 ? olderMessages[0].sequence : cursor;
 
       patchRec(threadId, (r) => ({
-        messages: [...olderMessages, ...r.messages],
-        persistedToolCallCounts: { ...r.persistedToolCallCounts, ...newCounts },
+        messages: (() => {
+          const residentIds = new Set(r.messages.map((message) => message.id));
+          const byId = new Map([...olderMessages, ...r.messages].map((message) => [message.id, message]));
+          const bySequence = new Map<number, Message>();
+          for (const message of byId.values()) {
+            const existing = bySequence.get(message.sequence);
+            if (!existing || (residentIds.has(message.id) && !residentIds.has(existing.id))) {
+              bySequence.set(message.sequence, message);
+            }
+          }
+          return [...bySequence.values()].sort((left, right) =>
+            left.sequence - right.sequence || left.id.localeCompare(right.id),
+          );
+        })(),
+        persistedToolCallCounts: { ...newCounts, ...r.persistedToolCallCounts },
         narrativeByMessage: { ...narrativeByMessage, ...r.narrativeByMessage },
         answeredPlanMessageIds: new Set([
           ...r.answeredPlanMessageIds,
@@ -1001,8 +1018,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         isLoadingMore: false,
       }));
 
-      const updated = getRec(threadId);
-      cacheRecord(threadId, projectConversationCacheState(updated));
+      conversationResidency.commitPagination(threadId);
 
       // Hydrate file change data for older messages from snapshots
       const olderMsgIds = new Set(olderMessages.map((m) => m.id));
@@ -1033,30 +1049,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               }),
             };
           });
-          // Keep the LRU message cache in sync: the cache was written before this
-          // async merge, so a cache-hit thread switch otherwise drops prepended
-          // turns' file lists until a full reload.
           const current = get().records.get(threadId);
           if (
             get().currentThreadId !== threadId
             || !current
             || current.loadEpoch !== epoch
           ) return;
-          const cached = getCachedRecord(threadId);
-          if (!cached) return;
-          const retainedCachedMessageIds = new Set(cached.messages.map((message) => message.id));
-          const retained = relevant.filter((snapshot) =>
-            retainedCachedMessageIds.has(snapshot.message_id),
+          const retainedMessageIds = new Set(current.messages.map((message) => message.id));
+          const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
+          conversationResidency.mergePaginationFileChanges(
+            threadId,
+            Object.fromEntries(retained.map((snapshot) => [snapshot.message_id, snapshot.files_changed])),
           );
-          if (retained.length === 0) return;
-          const mergedFiles = { ...cached.persistedFilesChanged };
-          for (const snap of retained) {
-            mergedFiles[snap.message_id] = snap.files_changed;
-          }
-          cacheRecord(threadId, {
-            ...cached,
-            persistedFilesChanged: mergedFiles,
-          });
         })
         .catch(() => {});
     } catch {
@@ -1070,7 +1074,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * to the transport layer. On failure, rolls back the running state.
    */
   sendMessage: async (threadId, content, model, permissionMode, attachments, displayContent, reasoningLevel, provider, copilotAgent, contextWindow, thinking, codexFastMode, replyToMessageId, quotedText, planAction, mentions, previewAnnotations, goalObjective, orchestrationMode) => {
-    evictCachedRecord(threadId);
+    conversationResidency.invalidateConversation(threadId);
 
     // A `/goal` control form (show/clear/reset/bare) never starts a provider
     // turn - the server services it synchronously and returns. It must not
@@ -1324,7 +1328,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   clearMessages: () => {
     flushPendingTextDeltas();
     const current = get().currentThreadId;
-    if (current) evictCachedRecord(current);
+    if (current) conversationResidency.invalidateConversation(current);
 
     get().toolCallRecordCache.clear();
     if (current) {
@@ -1453,7 +1457,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   clearThreadState: (threadId) => {
-    evictCachedRecord(threadId);
+    conversationResidency.invalidateConversation(threadId);
     clearDequeueTimer(threadId);
     forgetScrollTop(threadId);
 
@@ -1482,7 +1486,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (threadIds.length === 0) return;
 
     for (const threadId of threadIds) {
-      evictCachedRecord(threadId);
+      conversationResidency.invalidateConversation(threadId);
       clearDequeueTimer(threadId);
       forgetScrollTop(threadId);
     }
@@ -1795,7 +1799,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       event.type === "message" ||
       event.type === "error";
     if (isStructuralEvent) {
-      evictCachedRecord(threadId);
+      conversationResidency.invalidateConversation(threadId);
     }
 
     // Helper: mark all prior incomplete tool calls as complete.
@@ -3138,7 +3142,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
   handleTurnPersisted: (payload) => {
     flushPendingTextDeltas();
-    evictCachedRecord(payload.threadId);
+    conversationResidency.invalidateConversation(payload.threadId);
 
     set((state) => {
       const rec = getThreadRecord(state.records, payload.threadId);

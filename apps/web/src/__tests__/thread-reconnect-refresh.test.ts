@@ -6,12 +6,46 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { createWsTransport } from "@/transport/ws-transport";
 import { mockTransport, createMockWorkspace, createMockThread } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
   getTransport: () => mockTransport,
 }));
+
+class ReconnectWebSocket {
+  onopen: (() => void) | null = null;
+  onclose: ((event: { code: number; reason: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  readyState = 0;
+
+  send(data: string): void {
+    const request = JSON.parse(data) as { id: string; method: string };
+    const result = request.method === "agent.listRunning" || request.method === "terminal.listActive"
+      ? []
+      : null;
+    queueMicrotask(() => {
+      this.onmessage?.({ data: JSON.stringify({ id: request.id, result }) });
+    });
+  }
+
+  close(): void {
+    this.readyState = 3;
+    this.onclose?.({ code: 1000, reason: "" });
+  }
+
+  open(): void {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  disconnect(): void {
+    this.readyState = 3;
+    this.onclose?.({ code: 1006, reason: "" });
+  }
+}
 
 describe("thread status refresh after reconnect", () => {
   const ws = createMockWorkspace();
@@ -79,6 +113,75 @@ describe("thread status refresh after reconnect", () => {
       expect(loadMessages).toHaveBeenCalledWith(thread.id);
     } finally {
       useThreadStore.setState({ loadMessages: originalLoadMessages });
+    }
+  });
+
+  it("revalidates the selected conversation without replacing its resident rows", async () => {
+    const thread = createMockThread({ workspace_id: ws.id, status: "active" });
+    const refreshConversation = vi.fn().mockResolvedValue(undefined);
+    const original = useThreadStore.getState().refreshConversation;
+    useThreadStore.setState({ refreshConversation });
+    useWorkspaceStore.setState({ threads: [thread], activeThreadId: thread.id });
+    try {
+      await useWorkspaceStore.getState().refreshActiveConversation();
+      expect(refreshConversation).toHaveBeenCalledWith(thread.id);
+    } finally {
+      useThreadStore.setState({ refreshConversation: original });
+    }
+  });
+
+  it("refreshes the selected conversation on every reconnect while throttling thread lists", async () => {
+    vi.useFakeTimers();
+    const sockets: ReconnectWebSocket[] = [];
+    vi.stubGlobal(
+      "WebSocket",
+      new Proxy(ReconnectWebSocket, {
+        construct(Target) {
+          const socket = new Target();
+          sockets.push(socket);
+          return socket;
+        },
+      }),
+    );
+    const thread = createMockThread({ workspace_id: ws.id, status: "active" });
+    const refreshConversation = vi.fn().mockResolvedValue(undefined);
+    const originalRefresh = useThreadStore.getState().refreshConversation;
+    useThreadStore.setState({ refreshConversation });
+    useWorkspaceStore.setState({
+      threads: [thread],
+      activeWorkspaceId: ws.id,
+      activeThreadId: thread.id,
+    });
+    (mockTransport.listThreads as ReturnType<typeof vi.fn>).mockResolvedValue([thread]);
+    const transport = createWsTransport("ws://localhost:1234");
+
+    try {
+      sockets[0]?.open();
+      await vi.waitFor(() => {
+        expect(mockTransport.listThreads).toHaveBeenCalledTimes(1);
+        expect(refreshConversation).toHaveBeenCalledTimes(1);
+      });
+
+      sockets[0]?.disconnect();
+      await vi.advanceTimersByTimeAsync(1_000);
+      sockets[1]?.open();
+      await vi.waitFor(() => {
+        expect(mockTransport.listThreads).toHaveBeenCalledTimes(1);
+        expect(refreshConversation).toHaveBeenCalledTimes(2);
+      });
+
+      sockets[1]?.disconnect();
+      await vi.advanceTimersByTimeAsync(1_000);
+      sockets[2]?.open();
+      await vi.waitFor(() => {
+        expect(mockTransport.listThreads).toHaveBeenCalledTimes(1);
+        expect(refreshConversation).toHaveBeenCalledTimes(3);
+      });
+    } finally {
+      transport.close();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      useThreadStore.setState({ refreshConversation: originalRefresh });
     }
   });
 });
