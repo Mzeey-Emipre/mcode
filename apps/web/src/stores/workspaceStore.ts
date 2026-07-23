@@ -15,6 +15,7 @@ import {
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
+import { createConversationResidency } from "./conversation-residency";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useTaskStore } from "./taskStore";
@@ -347,6 +348,14 @@ interface WorkspaceState {
 
 /** Zustand store for workspace, thread, branch, and PR state management. */
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
+  const conversationResidency = createConversationResidency({
+    restoreConversation: (threadId) => useThreadStore.getState().loadMessages(threadId),
+    deactivateConversation: () => useThreadStore.getState().deactivateConversation(),
+  });
+  const reconcileSelectedConversation = () => {
+    void conversationResidency.activate(get().activeThreadId, get().threads);
+  };
+
   const applyOptimisticSuccess = (
     placeholderId: string,
     workspaceId: string,
@@ -407,7 +416,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       };
     });
     if (get().activeThreadId === thread.id) {
-      void useThreadStore.getState().loadMessages(thread.id);
+      void conversationResidency.restoreAfterThreadRefresh(thread.id, get().threads);
     }
   };
 
@@ -536,6 +545,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       // Remove threads from store FIRST (same ordering as deleteThread) so
       // any in-flight timer callbacks see threads as gone before timers are cancelled.
       const deletedIdSet = new Set(deletedThreadIds);
+      const didClearActiveThread = deletedIdSet.has(get().activeThreadId ?? "");
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.id !== id),
         activeWorkspaceId:
@@ -550,6 +560,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           Object.entries(state.checksById).filter(([tid]) => !deletedIdSet.has(tid)),
         ),
       }));
+      if (didClearActiveThread) reconcileSelectedConversation();
       // One batched Zustand set() for all threads instead of N sequential calls.
       useThreadStore.getState().clearThreadStateMany(deletedThreadIds);
     } catch (e) {
@@ -588,6 +599,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       fetchingBranch: null,
       branchManuallySelected: false,
     });
+    reconcileSelectedConversation();
     if (id) {
       if (loadThreads) get().loadThreads(id);
       // Optimistically bump the local last_opened_at so the project selector
@@ -720,6 +732,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           loading: false,
         };
       });
+
+      if (get().activeWorkspaceId === workspaceId) {
+        void conversationResidency.restoreAfterThreadRefresh(
+          get().activeThreadId,
+          get().threads,
+        );
+      }
 
       const epochForPrSync = epochAtStart;
 
@@ -893,6 +912,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       newThreadBranchSource: "branch",
       error: null,
     }));
+    reconcileSelectedConversation();
 
     useThreadStore.setState((state) => ({
       runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
@@ -1020,6 +1040,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       newThreadBranchSource: "branch",
       error: null,
     }));
+    reconcileSelectedConversation();
 
     useThreadStore.setState((state) => ({
       runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
@@ -1070,10 +1091,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   dismissPreparingThread: (placeholderId) => {
     pendingThreadCreationByPlaceholderId.delete(placeholderId);
     useThreadStore.getState().clearThreadState(placeholderId);
+    const didClearActiveThread = get().activeThreadId === placeholderId;
     set((state) => ({
       threads: state.threads.filter((t) => t.id !== placeholderId),
       activeThreadId: state.activeThreadId === placeholderId ? null : state.activeThreadId,
     }));
+    if (didClearActiveThread) reconcileSelectedConversation();
   },
 
   failPreparingThreadOnConnectionLost: (placeholderId) => {
@@ -1100,6 +1123,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         useComposerDraftStore.getState().clearDraft(threadId);
         useTaskStore.getState().clearTasks(threadId);
         useDiffStore.getState().clearThread(threadId);
+        const didClearActiveThread = get().activeThreadId === threadId;
         set((state) => {
           const remainingUrls = Object.fromEntries(
             Object.entries(state.prUrlsByThreadId).filter(([k]) => k !== threadId),
@@ -1114,6 +1138,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             checksById: remainingChecks,
           };
         });
+        if (didClearActiveThread) reconcileSelectedConversation();
         useThreadStore.getState().clearThreadState(threadId);
         return;
       }
@@ -1128,6 +1153,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       useComposerDraftStore.getState().clearDraft(threadId);
       useTaskStore.getState().clearTasks(threadId);
       useDiffStore.getState().clearThread(threadId);
+      const didClearActiveThread = get().activeThreadId === threadId;
       // Remove from threads[] FIRST so any in-flight dequeue timer callback's
       // threadExists guard sees the thread as deleted before clearThreadState
       // cancels the timer. This closes the race window between the timer
@@ -1146,6 +1172,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           checksById: remainingChecks,
         };
       });
+      if (didClearActiveThread) reconcileSelectedConversation();
       useThreadStore.getState().clearThreadState(threadId);
     } catch (e) {
       set({ error: String(e) });
@@ -1172,7 +1199,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             t.id === id ? { ...t, status: "paused" as const } : t,
           )
         : state.threads,
-    }));
+      }));
+
+    reconcileSelectedConversation();
 
     if (isCompleted && id) {
       scheduleMarkThreadViewed(id);

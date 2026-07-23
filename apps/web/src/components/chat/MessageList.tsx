@@ -342,7 +342,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const latestTurnWithChanges = useActiveThreadRecord((r) => r.latestTurnWithChanges);
   const hasMore = useActiveThreadRecord((r) => r.hasMoreMessages);
   const handoffStatus = useThreadStore((s) =>
-    activeThreadId ? getHandoffStatus(getThreadRecord(s.records, activeThreadId)) : undefined,
+    currentThreadId ? getHandoffStatus(getThreadRecord(s.records, currentThreadId)) : undefined,
   );
   const isLoadingMore = useActiveThreadRecord((r) => r.isLoadingMore);
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);

@@ -330,9 +330,7 @@ const WORKSPACE_STORE_KEYS = ["activeThreadId", "threads", "workspaces"] as cons
 const THREAD_STORE_KEYS = ["records", "loadMessages"] as const;
 
 /**
- * Activate a single workspace and thread so the chat view mounts and the app's
- * own `loadMessages` runs for the thread. Sets only workspace-store fields the
- * web app reads to pick and render the active thread.
+ * Seed one workspace and thread, then select it through the production action.
  */
 export async function activateThread(
   page: Page,
@@ -349,10 +347,15 @@ export async function activateThread(
         workspaces: [ws],
         threads: [th],
         activeWorkspaceId: ws.id,
-        activeThreadId: th.id,
+        activeThreadId: null,
         loading: false,
         error: null,
       });
+      (
+        wsStore.getState() as {
+          setActiveThread: (threadId: string | null) => void;
+        }
+      ).setActiveThread(th.id);
     },
     { ws: workspace, th: thread, wsKeys: [...WORKSPACE_STORE_KEYS] },
   );

@@ -298,6 +298,22 @@ function ConversationLoadingState() {
   );
 }
 
+/** Shows a selected conversation's non-provider hydration failure. */
+function ConversationErrorState({ error }: { error: string }) {
+  return (
+    <div
+      data-testid="conversation-error"
+      role="alert"
+      className="flex h-full items-center justify-center px-4"
+    >
+      <div className="max-w-md space-y-1 text-center">
+        <p className="font-medium text-foreground">Could not load conversation</p>
+        <p className="text-sm text-muted-foreground">{error}</p>
+      </div>
+    </div>
+  );
+}
+
 /** Renders the main chat UI for sending and receiving messages within a thread. */
 export function ChatView() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
@@ -310,8 +326,6 @@ export function ChatView() {
   const activeForkMode = useActiveThreadRecord((r) => r.forkMode);
   const branchFromMessageId = activeForkMode?.messageId;
   const branchFromMessageContent = activeForkMode?.content ?? undefined;
-  const loadMessages = useThreadStore((s) => s.loadMessages);
-  const clearMessages = useThreadStore((s) => s.clearMessages);
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const hydratedThreadId = useThreadStore((s) => s.currentThreadId);
   const messageCount = useActiveThreadRecord((r) => r.messages.length);
@@ -445,6 +459,7 @@ export function ChatView() {
     !!sessionError &&
     isCliError(sessionError) &&
     sessionError !== dismissedError;
+  const showConversationError = !!sessionError && !isCliError(sessionError);
 
   const activeWorkspaceName = useMemo(
     () => workspaces.find((w) => w.id === (activeThread?.workspace_id ?? activeWorkspaceId))?.name ?? "",
@@ -605,16 +620,6 @@ export function ChatView() {
   }, []);
 
   useLayoutEffect(() => {
-    if (!activeThreadId) {
-      clearMessages();
-    } else {
-      const row = useWorkspaceStore.getState().threads.find((t) => t.id === activeThreadId);
-      if (row?.clientPreparing || row?.clientError) {
-        clearMessages();
-      } else {
-        loadMessages(activeThreadId);
-      }
-    }
     // Only evict Blink's resource cache when it exceeds the pressure threshold.
     // Avoids unnecessary re-fetches on routine thread switches.
     // Gracefully no-ops in the web-only dev server.
@@ -625,7 +630,7 @@ export function ChatView() {
       }
     }
     prevThreadIdRef.current = activeThreadId;
-  }, [activeThreadId, loadMessages, clearMessages]);
+  }, [activeThreadId]);
 
   // A threadless workspace is always the new-thread workbench. This also covers
   // cold start before the user has chosen a project.
@@ -693,6 +698,8 @@ export function ChatView() {
   const hasMessages = messageCount > 0;
   const conversationLoading = hydratedThreadId !== activeThreadId || historyLoading;
   const showEmptyState = !hasMessages && !isAgentRunning && !conversationLoading;
+  const showFullConversationError = showConversationError && !hasMessages && !isAgentRunning;
+  const showConversationErrorBanner = showConversationError && (hasMessages || isAgentRunning);
 
   return (
     <div ref={chatPaneRef} className="flex h-full flex-col bg-background" data-testid="chat-view">
@@ -760,6 +767,14 @@ export function ChatView() {
         </div>
       ) : null}
 
+      {showConversationErrorBanner ? (
+        <div className="mx-3 mb-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
+          <p data-testid="conversation-error-banner" role="alert" className="text-sm text-destructive">
+            Could not refresh conversation: {sessionError}
+          </p>
+        </div>
+      ) : null}
+
       {/* Fallback handoff banner: shown when the fork's handoff was produced
           locally because the AI provider was unavailable. */}
       <HandoffFallbackBanner threadId={activeThread.id} />
@@ -775,6 +790,8 @@ export function ChatView() {
       >
         {conversationLoading && !hasMessages && !isAgentRunning ? (
           <ConversationLoadingState />
+        ) : showFullConversationError ? (
+          <ConversationErrorState error={sessionError ?? ""} />
         ) : showEmptyState ? (
           <div className="flex h-full items-center justify-center">
             <EmptyState onPromptSelect={setPendingPrefill} />

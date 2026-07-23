@@ -55,10 +55,12 @@ vi.mock("@/stores/thread-selectors", async () => {
   const { createEmptyThreadRecord } = await import("@/stores/thread-record");
   const emptyRecord = createEmptyThreadRecord();
   return {
-    useActiveThreadRecord: (selector: (r: typeof emptyRecord) => unknown) => selector(emptyRecord),
+    useActiveThreadRecord: (selector: (r: typeof emptyRecord) => unknown) =>
+      selector((chatViewThreadMockRef.current?.activeRecord as typeof emptyRecord | undefined) ?? emptyRecord),
     useThreadRecord: (_threadId: string, selector: (r: typeof emptyRecord) => unknown) =>
-      selector(emptyRecord),
-    readThreadRecord: () => emptyRecord,
+      selector((chatViewThreadMockRef.current?.activeRecord as typeof emptyRecord | undefined) ?? emptyRecord),
+    readThreadRecord: () =>
+      (chatViewThreadMockRef.current?.activeRecord as typeof emptyRecord | undefined) ?? emptyRecord,
   };
 });
 
@@ -95,6 +97,8 @@ vi.mock("./CliErrorBanner", () => ({
 }));
 
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { createEmptyThreadRecord } from "@/stores/thread-record";
+import { createMockMessage } from "@/__tests__/mocks/transport";
 import { ChatView } from "./ChatView";
 
 /** Build a minimal Thread fixture. */
@@ -192,13 +196,16 @@ function setupWorkspaceMock(state: ReturnType<typeof defaultWorkspaceState>) {
 function defaultThreadState(overrides: Partial<{
   currentThreadId: string | null;
   runningThreadIds: Set<string>;
+  activeRecord: ReturnType<typeof createEmptyThreadRecord>;
 }> = {}) {
   return {
     records: new Map(),
     currentThreadId: overrides.currentThreadId ?? "thread-1",
     runningThreadIds: overrides.runningThreadIds ?? new Set<string>(),
+    activeRecord: overrides.activeRecord ?? createEmptyThreadRecord(),
     loadMessages: vi.fn(),
     clearMessages: vi.fn(),
+    deactivateConversation: vi.fn(),
     setForkMode: vi.fn(),
     sendMessage: vi.fn(),
   };
@@ -310,6 +317,53 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.getByTestId("chat-header-title")).toHaveTextContent("My Thread");
     expect(screen.getByTestId("conversation-loading")).toBeVisible();
     expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
+  });
+
+  it("renders a full-stage hydration error when no transcript is available", () => {
+    chatViewThreadMockRef.current = defaultThreadState({
+      activeRecord: {
+        ...createEmptyThreadRecord(),
+        error: "Conversation request failed",
+      },
+    });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("conversation-error")).toHaveTextContent("Conversation request failed");
+    expect(screen.queryByTestId("conversation-loading")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
+  });
+
+  it("keeps a live turn visible when hydration fails before any messages are resident", () => {
+    chatViewThreadMockRef.current = defaultThreadState({
+      runningThreadIds: new Set(["thread-1"]),
+      activeRecord: {
+        ...createEmptyThreadRecord(),
+        error: "Conversation refresh failed",
+      },
+    });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("conversation-error-banner")).toHaveTextContent("Conversation refresh failed");
+    expect(screen.getByTestId("message-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-error")).not.toBeInTheDocument();
+  });
+
+  it("keeps resident messages visible beside a generic hydration error", () => {
+    chatViewThreadMockRef.current = defaultThreadState({
+      activeRecord: {
+        ...createEmptyThreadRecord(),
+        messages: [createMockMessage({ id: "resident-message", thread_id: "thread-1" })],
+        error: "Conversation refresh failed",
+      },
+    });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("conversation-error-banner")).toHaveTextContent("Conversation refresh failed");
+    expect(screen.getByTestId("message-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-error")).not.toBeInTheDocument();
   });
 
   it("keeps running threads subscribed while another thread is selected", async () => {

@@ -205,10 +205,13 @@ async function setupWorkspaceState(
         workspaces,
         activeWorkspaceId,
         threads,
-        activeThreadId: activeThreadId ?? null,
+        activeThreadId: null,
         loading: false,
         error: null,
       });
+      if (activeThreadId) {
+        wsStore.getState().setActiveThread(activeThreadId);
+      }
     },
     opts,
   );
