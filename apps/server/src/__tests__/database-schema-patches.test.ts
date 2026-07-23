@@ -85,7 +85,7 @@ describe("applySchemaPatches", () => {
     expect(() => applySchemaPatches(db)).not.toThrow();
   });
 
-  it("adds nullable provider_agent_key without changing existing tool-call rows", () => {
+  it("adds nullable subagent metadata without changing existing tool-call rows", () => {
     db.prepare(
       "CREATE TABLE tool_call_records (id TEXT PRIMARY KEY, output_summary TEXT NOT NULL)",
     ).run();
@@ -95,13 +95,19 @@ describe("applySchemaPatches", () => {
 
     applySchemaPatches(db);
 
-    expect(columnNames(db, "tool_call_records")).toContain("provider_agent_key");
+    expect(columnNames(db, "tool_call_records")).toEqual(expect.arrayContaining([
+      "provider_agent_key",
+      "model",
+      "reasoning_effort",
+    ]));
     expect(db.prepare(
-      "SELECT id, output_summary, provider_agent_key FROM tool_call_records WHERE id = ?",
+      "SELECT id, output_summary, provider_agent_key, model, reasoning_effort FROM tool_call_records WHERE id = ?",
     ).get("agent-1")).toEqual({
       id: "agent-1",
       output_summary: "Existing result",
       provider_agent_key: null,
+      model: null,
+      reasoning_effort: null,
     });
   });
 

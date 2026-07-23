@@ -72,6 +72,42 @@ describe("NarrativeStore Move/Rename persistence sanitization", () => {
 });
 
 describe("NarrativeStore sub-agent identity persistence", () => {
+  it("captures bounded model and reasoning metadata only from Agent input", () => {
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      { bulkCreate: () => undefined } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent",
+      toolName: "Agent",
+      toolInput: { model: "gpt-5.3-codex", reasoningEffort: "high" },
+    });
+    store.bufferToolCall("thread-1", {
+      toolCallId: "read",
+      toolName: "Read",
+      toolInput: { model: "must-not-inherit", reasoningEffort: "low" },
+    });
+    store.bufferToolCall("thread-1", {
+      toolCallId: "oversized",
+      toolName: "Agent",
+      toolInput: { model: "x".repeat(129), reasoningEffort: "y".repeat(129) },
+    });
+
+    expect(store.getBufferedToolCalls("thread-1").map(({ model, reasoningEffort }) => ({
+      model,
+      reasoningEffort,
+    }))).toEqual([
+      { model: "gpt-5.3-codex", reasoningEffort: "high" },
+      { model: undefined, reasoningEffort: undefined },
+      { model: undefined, reasoningEffort: undefined },
+    ]);
+  });
+
   it("persists a bounded logical-agent key only for Codex spawnAgent input", () => {
     const store = new NarrativeStore(
       {} as MessageRepo,
@@ -349,6 +385,29 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(store.getCurrentParentToolCallId(THREAD)).toBe("solo");
       const childParent = store.bufferToolCall(THREAD, toolUse("child", "Read"));
       expect(childParent).toBe("solo");
+    });
+
+    it("replaces an inferred duplicate parent with explicit provider attribution and retains it", () => {
+      seedAssistantMessage("m1", "", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, toolUse("agent-a", "Agent"));
+      expect(store.bufferToolCall(THREAD, toolUse("child-x", "Read"))).toBe("agent-a");
+
+      store.bufferToolCall(THREAD, toolUse("agent-b", "Agent"));
+      expect(store.bufferToolCall(THREAD, toolUse("child-x", "Read", "agent-b"))).toBe("agent-b");
+
+      store.updateBufferedToolCallOutput(THREAD, "agent-b", "done", false);
+      expect(store.bufferToolCall(THREAD, toolUse("child-x", "Read"))).toBe("agent-b");
+      store.updateBufferedToolCallOutput(THREAD, "child-x", "read", false);
+      store.persistNarrative(THREAD, "m1", "", "completed");
+
+      const persistedChild = store.load(THREAD)
+        .find((entry) => entry.kind === "toolCall" && entry.record.id === "child-x");
+      expect(persistedChild?.kind).toBe("toolCall");
+      if (persistedChild?.kind === "toolCall") {
+        expect(persistedChild.record.parent_tool_call_id).toBe("agent-b");
+      }
     });
 
     it("returns undefined when two Agents are running (ambiguous fallback)", () => {

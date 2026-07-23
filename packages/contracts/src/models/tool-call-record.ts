@@ -4,6 +4,8 @@ import { z } from "zod";
 export const SUBAGENT_DISPLAY_NAME_MAX_LENGTH = 96;
 /** Maximum persisted length of an explicit provider logical-agent key. */
 export const PROVIDER_AGENT_KEY_MAX_LENGTH = 256;
+/** Maximum persisted length of provider model and reasoning metadata. */
+export const SUBAGENT_METADATA_MAX_LENGTH = 128;
 
 function explicitString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -36,6 +38,12 @@ export function resolveProviderAgentKey(input: Record<string, unknown>): string 
   return agentPath;
 }
 
+/** Resolves one bounded provider metadata field from an Agent tool input. */
+export function resolveSubagentMetadata(value: unknown): string | undefined {
+  const metadata = explicitString(value);
+  return metadata && metadata.length <= SUBAGENT_METADATA_MAX_LENGTH ? metadata : undefined;
+}
+
 /** Status of a persisted tool call record. */
 export const ToolCallStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
 
@@ -50,6 +58,8 @@ export const ToolCallRecordSchema = z.object({
   tool_name: z.string(),
   display_name: z.string().max(SUBAGENT_DISPLAY_NAME_MAX_LENGTH).nullable().optional(),
   provider_agent_key: z.string().max(PROVIDER_AGENT_KEY_MAX_LENGTH).nullable().optional(),
+  model: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
+  reasoning_effort: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
   input_summary: z.string(),
   output_summary: z.string(),
   output_truncated: z.number().int().optional(),

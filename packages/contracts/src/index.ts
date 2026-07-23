@@ -91,8 +91,10 @@ export {
   ToolCallStatusSchema,
   PROVIDER_AGENT_KEY_MAX_LENGTH,
   SUBAGENT_DISPLAY_NAME_MAX_LENGTH,
+  SUBAGENT_METADATA_MAX_LENGTH,
   resolveProviderAgentKey,
   resolveSubagentDisplayName,
+  resolveSubagentMetadata,
 } from "./models/tool-call-record.js";
 export type {
   ToolCallRecord,

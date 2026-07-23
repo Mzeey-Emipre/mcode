@@ -232,6 +232,12 @@ export function applySchemaPatches(db: Database.Database): void {
   if (toolCols.length > 0 && !toolCols.includes("provider_agent_key")) {
     addToolCallColumn("provider_agent_key TEXT");
   }
+  if (toolCols.length > 0 && !toolCols.includes("model")) {
+    addToolCallColumn("model TEXT");
+  }
+  if (toolCols.length > 0 && !toolCols.includes("reasoning_effort")) {
+    addToolCallColumn("reasoning_effort TEXT");
+  }
 
   const messageCols = (
     db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>

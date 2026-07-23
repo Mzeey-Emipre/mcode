@@ -15,10 +15,11 @@ interface CumulativeViewProps {
   turnCount?: number;
   refreshing?: boolean;
   onRefresh?: () => void;
+  scopeLabel?: string;
 }
 
 /** Deduplicated file list across all snapshots for the "All" cumulative view. */
-export function CumulativeView({ threadId, comparison = null, cacheVersion = "", turnCount = 0, refreshing = false, onRefresh = () => {} }: CumulativeViewProps) {
+export function CumulativeView({ threadId, comparison = null, cacheVersion = "", turnCount = 0, refreshing = false, onRefresh = () => {}, scopeLabel }: CumulativeViewProps) {
   const pending = useDiffStore((s) => s.snapshotsPendingByThread[threadId] ?? false);
   const diffSummaryEnabled = useSettingsStore((s) => s.settings.diffSummary.enabled);
   const [summaryLens, setSummaryLens] = useState(false);
@@ -45,9 +46,11 @@ export function CumulativeView({ threadId, comparison = null, cacheVersion = "",
           {files.length}
         </span>
         <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
-          file{files.length !== 1 ? "s" : ""} · {turnCount} turn{turnCount !== 1 ? "s" : ""}
+          {scopeLabel
+            ? `file${files.length !== 1 ? "s" : ""} · ${scopeLabel}`
+            : `file${files.length !== 1 ? "s" : ""} · ${turnCount} turn${turnCount !== 1 ? "s" : ""}`}
         </span>
-        {diffSummaryEnabled && (
+        {diffSummaryEnabled && !scopeLabel && (
           <Button
             type="button"
             variant={summaryLens ? "secondary" : "ghost"}
@@ -62,7 +65,7 @@ export function CumulativeView({ threadId, comparison = null, cacheVersion = "",
           </Button>
         )}
       </div>
-      {pending && (
+      {pending && !scopeLabel && (
         <div className="border-b border-primary/20 bg-primary/[0.045] px-3 py-2">
           <div className="flex items-center gap-2 rounded border border-primary/25 bg-background/80 px-2.5 py-2 shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground),transparent_94%)]">
             <span
@@ -93,7 +96,7 @@ export function CumulativeView({ threadId, comparison = null, cacheVersion = "",
           </div>
         </div>
       )}
-      {summaryLens && diffSummaryEnabled ? (
+      {summaryLens && diffSummaryEnabled && !scopeLabel ? (
         <SummaryView />
       ) : (
         <FileList

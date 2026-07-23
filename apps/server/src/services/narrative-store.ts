@@ -39,6 +39,7 @@ import { logger } from "@mcode/shared";
 import {
   resolveProviderAgentKey,
   resolveSubagentDisplayName,
+  resolveSubagentMetadata,
   type Message,
   type NarrativeEntry,
   type TurnRange,
@@ -383,9 +384,11 @@ export class NarrativeStore {
           ...(existing._rawToolInput ?? {}),
           ...event.toolInput,
         };
-        if (parentToolCallId && !existing.parentToolCallId) {
-          existing.parentToolCallId = parentToolCallId;
-        }
+      }
+      if (event.parentToolCallId) {
+        existing.parentToolCallId = event.parentToolCallId;
+      } else if (shouldMergeDuplicate && parentToolCallId && !existing.parentToolCallId) {
+        existing.parentToolCallId = parentToolCallId;
       }
       return existing.parentToolCallId;
     }
@@ -405,6 +408,12 @@ export class NarrativeStore {
         : undefined,
       providerAgentKey: event.toolName === "Agent"
         ? resolveProviderAgentKey(event.toolInput)
+        : undefined,
+      model: event.toolName === "Agent"
+        ? resolveSubagentMetadata(event.toolInput.model)
+        : undefined,
+      reasoningEffort: event.toolName === "Agent"
+        ? resolveSubagentMetadata(event.toolInput.reasoningEffort)
         : undefined,
       inputSummary: "", // Deferred to persistNarrative
       outputSummary: "",
@@ -588,6 +597,8 @@ export class NarrativeStore {
         if (tc.toolName === "Agent") {
           tc.displayName = resolveSubagentDisplayName(tc._rawToolInput);
           tc.providerAgentKey = resolveProviderAgentKey(tc._rawToolInput);
+          tc.model = resolveSubagentMetadata(tc._rawToolInput.model);
+          tc.reasoningEffort = resolveSubagentMetadata(tc._rawToolInput.reasoningEffort);
         }
         tc.inputSummary = this.summarizeInput(tc.toolName, tc._rawToolInput);
         delete tc._rawToolInput;

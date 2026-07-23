@@ -17,6 +17,14 @@ export interface SubagentDetailSelection {
   readonly scrollTop: number;
 }
 
+/** Transient file-path filter opened from one subagent detail. */
+export interface SubagentReviewScope {
+  readonly label: string;
+  readonly paths: readonly string[];
+  readonly additions: number;
+  readonly deletions: number;
+}
+
 /**
  * View mode within the Review (Changes) tab. The tab is dual-scope: the first
  * four are threadless git working-tree views (read the workspace root); the last
@@ -296,6 +304,8 @@ interface DiffState {
   readonly subagentRosterTabByThread: Record<string, SubagentRosterTab>;
   /** Selected Subagents detail and roster return position for each thread. */
   readonly subagentDetailByThread: Record<string, SubagentDetailSelection>;
+  /** Transient subagent Review filters keyed by owning thread. */
+  readonly subagentReviewScopeByThread: Record<string, SubagentReviewScope>;
   /** Explicit Files visibility choices keyed by Review scope. Missing scopes start closed. */
   readonly reviewFilesVisibleByScope: Record<string, boolean>;
   /** View mode within the Changes tab (the single rendered view). */
@@ -443,6 +453,10 @@ interface DiffState {
   selectSubagentDetail: (threadId: string, selection: SubagentDetailSelection) => void;
   /** Return one thread to its Subagents roster. */
   clearSubagentDetail: (threadId: string) => void;
+  /** Scope cumulative Review to workspace files attributed to one subagent. */
+  setSubagentReviewScope: (threadId: string, scope: SubagentReviewScope) => void;
+  /** Restore aggregate Review for one thread. */
+  clearSubagentReviewScope: (threadId: string) => void;
   /** Read the persisted Files visibility choice for a Review scope. */
   getReviewFilesVisible: (scopeId: string) => boolean;
   /** Persist an explicit Files visibility choice for a Review scope. */
@@ -520,6 +534,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   rightPanelFallbackByWorkspace: {},
   subagentRosterTabByThread: {},
   subagentDetailByThread: {},
+  subagentReviewScopeByThread: {},
   reviewFilesVisibleByScope: readReviewFilesVisibility(),
   viewMode: "last-turn",
   reviewViewByThread: {},
@@ -582,11 +597,15 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       const openTabs = current.openTabs.includes(tab)
         ? current.openTabs
         : [...current.openTabs, tab];
-      return writeRightPanel(state, workspaceId, threadId, {
+      const panelUpdate = writeRightPanel(state, workspaceId, threadId, {
         ...current,
         openTabs,
         activeTab: tab,
       });
+      if (tab !== "changes" || !threadId) return panelUpdate;
+      const subagentReviewScopeByThread = { ...state.subagentReviewScopeByThread };
+      delete subagentReviewScopeByThread[threadId];
+      return { ...panelUpdate, subagentReviewScopeByThread };
     }),
 
   closeRightPanelTab: (workspaceId, threadId, tab) =>
@@ -631,6 +650,29 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete subagentDetailByThread[threadId];
       return { subagentDetailByThread };
     }),
+  setSubagentReviewScope: (threadId, scope) =>
+    set((state) => {
+      const paths = [...new Set(scope.paths.map((path) => path.trim()).filter(Boolean))].slice(0, 256);
+      if (paths.length === 0) {
+        if (!(threadId in state.subagentReviewScopeByThread)) return {};
+        const subagentReviewScopeByThread = { ...state.subagentReviewScopeByThread };
+        delete subagentReviewScopeByThread[threadId];
+        return { subagentReviewScopeByThread };
+      }
+      return {
+        subagentReviewScopeByThread: {
+          ...state.subagentReviewScopeByThread,
+          [threadId]: { ...scope, label: scope.label.trim().slice(0, 96), paths },
+        },
+      };
+    }),
+  clearSubagentReviewScope: (threadId) =>
+    set((state) => {
+      if (!(threadId in state.subagentReviewScopeByThread)) return {};
+      const subagentReviewScopeByThread = { ...state.subagentReviewScopeByThread };
+      delete subagentReviewScopeByThread[threadId];
+      return { subagentReviewScopeByThread };
+    }),
 
   getReviewFilesVisible: (scopeId) => get().reviewFilesVisibleByScope[scopeId] ?? false,
   setReviewFilesVisible: (scopeId, visible) =>
@@ -653,18 +695,23 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     return defaultReviewView("thread", changeState);
   },
   setReviewViewForThread: (threadId, mode) =>
-    set((s) => ({
-      viewMode: mode,
-      reviewViewByThread: { ...s.reviewViewByThread, [threadId]: mode },
-      reviewViewManuallySelectedByThread: {
-        ...s.reviewViewManuallySelectedByThread,
-        [threadId]: true,
-      },
-      // Match setViewMode's resets so a fresh pick clears stale selection/operand.
-      selectedFile: null,
-      diffContent: null,
-      selectedCommitSha: null,
-    })),
+    set((s) => {
+      const subagentReviewScopeByThread = { ...s.subagentReviewScopeByThread };
+      delete subagentReviewScopeByThread[threadId];
+      return {
+        viewMode: mode,
+        reviewViewByThread: { ...s.reviewViewByThread, [threadId]: mode },
+        reviewViewManuallySelectedByThread: {
+          ...s.reviewViewManuallySelectedByThread,
+          [threadId]: true,
+        },
+        subagentReviewScopeByThread,
+        // Match setViewMode's resets so a fresh pick clears stale selection/operand.
+        selectedFile: null,
+        diffContent: null,
+        selectedCommitSha: null,
+      };
+    }),
   resolveBranchComparison: (comparison, key, revision) =>
     set((s) => {
       const sameScope = s.branchComparisonKey === key;
@@ -813,6 +860,8 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete subagentRosterTabByThread[threadId];
       const subagentDetailByThread = { ...state.subagentDetailByThread };
       delete subagentDetailByThread[threadId];
+      const subagentReviewScopeByThread = { ...state.subagentReviewScopeByThread };
+      delete subagentReviewScopeByThread[threadId];
       const reviewViewByThread = { ...state.reviewViewByThread };
       delete reviewViewByThread[threadId];
       const reviewViewManuallySelectedByThread = { ...state.reviewViewManuallySelectedByThread };
@@ -848,6 +897,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         rightPanelByThread,
         subagentRosterTabByThread,
         subagentDetailByThread,
+        subagentReviewScopeByThread,
         reviewViewByThread,
         reviewViewManuallySelectedByThread,
         diffRevisionByScope,

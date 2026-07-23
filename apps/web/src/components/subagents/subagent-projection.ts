@@ -34,6 +34,10 @@ export interface SubagentDetailActivity {
 
 /** Detail retained for a top-level delegated Agent. */
 export interface SubagentDetail {
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  readonly stepCount: number;
+  readonly subagentCount: number;
   readonly output: string;
   readonly outputTruncated: boolean;
   readonly outputTotalBytes?: number;
@@ -249,6 +253,10 @@ export function projectSubagents(
     const subtreeIds = [...visited];
     const subtreeIdSet = new Set(subtreeIds);
     const detail: SubagentDetail = {
+      model: nonEmptyString(agent.toolInput.model),
+      reasoningEffort: nonEmptyString(agent.toolInput.reasoningEffort),
+      stepCount: descendants.filter(({ depth }) => depth === 1).length,
+      subagentCount: descendants.filter(({ call, depth }) => depth === 1 && call.toolName === "Agent").length,
       output: nonEmptyString(agent.output) ?? "",
       outputTruncated: agent.outputTruncated === true,
       outputTotalBytes: agent.outputTotalBytes,
@@ -349,11 +357,17 @@ export function projectSubagents(
       const persistedTranscript: ToolCall[] = [];
       const persistedQueue = (persistedChildren.get(record.id) ?? []).map((child) => ({ child, depth: 1 }));
       let persistedInspected = 0;
+      let persistedStepCount = 0;
+      let persistedSubagentCount = 0;
       while (persistedQueue.length > 0 && persistedInspected < MAX_SUBAGENT_GRAPH_NODES) {
         const next = persistedQueue.shift();
         if (!next || persistedVisited.has(next.child.id)) continue;
         persistedVisited.add(next.child.id);
         persistedInspected += 1;
+        if (next.depth === 1) {
+          persistedStepCount += 1;
+          if (next.child.tool_name === "Agent") persistedSubagentCount += 1;
+        }
         if (persistedActivity.length < MAX_DETAIL_ACTIVITY) {
           const canonicalName = resolveToolName(next.child.tool_name);
           persistedActivity.push({
@@ -382,6 +396,10 @@ export function projectSubagents(
         activityAt: record.status === "running" ? startedAt : completedAt,
         elapsedSeconds: elapsedSeconds(startedAt, record.status === "running" ? now : completedAt),
         detail: liveRows.get(record.id)?.row.detail ?? {
+          model: nonEmptyString(record.model),
+          reasoningEffort: nonEmptyString(record.reasoning_effort),
+          stepCount: persistedStepCount,
+          subagentCount: persistedSubagentCount,
           output: nonEmptyString(record.output_summary) ?? "",
           outputTruncated: (record.output_truncated ?? 0) > 0,
           outputTotalBytes: record.output_total_bytes ?? undefined,
@@ -437,6 +455,8 @@ export function projectSubagents(
     }
     const detail: SubagentDetail = {
       ...representative.row.detail,
+      stepCount: members.reduce((total, { row }) => total + row.detail.stepCount, 0),
+      subagentCount: members.reduce((total, { row }) => total + row.detail.subagentCount, 0),
       activity: activity.slice(0, MAX_DETAIL_ACTIVITY),
       transcript: transcript.slice(0, MAX_DETAIL_ACTIVITY),
       activityTruncated: members.some(({ row }) => row.detail.activityTruncated)
@@ -455,7 +475,7 @@ export function projectSubagents(
       task: representative.row.task,
       activity: representative.row.activity,
       activityAt: representative.row.activityAt,
-      elapsedSeconds: representative.row.elapsedSeconds,
+      elapsedSeconds: members.reduce((total, { row }) => total + row.elapsedSeconds, 0),
       detail,
       index: representative.index,
       orderAt,

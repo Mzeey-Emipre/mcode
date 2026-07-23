@@ -28,6 +28,60 @@ function record(overrides: Partial<ToolCallRecord> & Pick<ToolCallRecord, "id">)
 }
 
 describe("projectSubagents", () => {
+  it("keeps explicit metadata local to the subagent and counts direct children before transcript caps", () => {
+    const calls = [
+      call({
+        id: "agent",
+        toolName: "Agent",
+        toolInput: { model: "gpt-5.3-codex", reasoningEffort: "high" },
+        startedAt: 1_000,
+        lastActivityAt: 3_000,
+        isComplete: true,
+      }),
+      ...Array.from({ length: 40 }, (_, index) =>
+        call({
+          id: `child-${index}`,
+          toolName: index === 0 ? "Agent" : "Read",
+          parentToolCallId: "agent",
+          isComplete: true,
+        })),
+    ];
+
+    const row = projectSubagents(calls, []).finished[0]!;
+
+    expect(row.detail).toMatchObject({
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
+      stepCount: 40,
+      subagentCount: 1,
+    });
+    expect(row.detail.transcript).toHaveLength(32);
+  });
+
+  it("sums runtime and direct-child counts across one logical provider agent", () => {
+    const row = projectSubagents([
+      call({
+        id: "first",
+        toolName: "Agent",
+        toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" },
+        elapsedSeconds: 5,
+        isComplete: true,
+      }),
+      call({ id: "first-child", toolName: "Read", parentToolCallId: "first" }),
+      call({
+        id: "second",
+        toolName: "Agent",
+        toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" },
+        elapsedSeconds: 7,
+        isComplete: true,
+      }),
+      call({ id: "second-child", toolName: "Write", parentToolCallId: "second" }),
+    ], []).finished[0]!;
+
+    expect(row.elapsedSeconds).toBe(12);
+    expect(row.detail.stepCount).toBe(2);
+  });
+
   it("groups repeated explicit Codex agent paths while keeping pathless calls separate", () => {
     const calls = [
       call({ id: "explorer-1", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" }, isComplete: true, lastActivityAt: 10 }),

@@ -1,10 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { TurnFileEffectSummary } from "@mcode/contracts";
 import type { ToolCall, ToolCallRecord } from "@/transport/types";
 import { useDiffStore } from "@/stores/diffStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 const state = vi.hoisted(() => ({
-  records: {} as Record<string, { toolCalls: ToolCall[]; narrativeByMessage: Record<string, { tools: ToolCallRecord[] } | undefined> }>,
+  records: {} as Record<string, {
+    toolCalls: ToolCall[];
+    narrativeByMessage: Record<string, { tools: ToolCallRecord[] } | undefined>;
+    fileEffectSummary?: TurnFileEffectSummary;
+  }>,
 }));
 
 vi.mock("@/stores/thread-selectors", () => ({
@@ -46,17 +52,23 @@ function record(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
   };
 }
 
-function setThread(toolCalls: ToolCall[] = [], tools: ToolCallRecord[] = []): void {
+function setThread(
+  toolCalls: ToolCall[] = [],
+  tools: ToolCallRecord[] = [],
+  fileEffectSummary?: TurnFileEffectSummary,
+): void {
   state.records["thread-1"] = {
     toolCalls,
     narrativeByMessage: tools.length > 0 ? { "message-1": { tools } } : {},
+    fileEffectSummary,
   };
 }
 
 describe("SubagentsPanel", () => {
   beforeEach(() => {
     state.records = {};
-    useDiffStore.setState({ subagentDetailByThread: {} });
+    useWorkspaceStore.setState({ activeWorkspaceId: "workspace-1", activeThreadId: "thread-1" });
+    useDiffStore.setState({ subagentDetailByThread: {}, subagentReviewScopeByThread: {} });
   });
 
   it("renders Active and Done on one continuous page without tabs", () => {
@@ -68,8 +80,10 @@ describe("SubagentsPanel", () => {
     expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Implementation worker");
     expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Running");
     expect(screen.getByTestId("subagent-finished-row")).toHaveTextContent("Roster implementation complete");
-    expect(screen.getByTestId("subagent-finished-row")).toHaveTextContent("Finished");
+    expect(screen.getByTestId("subagent-finished-row")).not.toHaveTextContent("Finished");
+    expect(screen.getByTestId("subagent-finished-row").querySelector("[data-testid='subagent-lifecycle-dot']")).not.toBeInTheDocument();
     expect(screen.getByTestId("subagent-finished-row")).not.toHaveTextContent("Build the roster");
+    expect(screen.getByRole("button", { name: /Open Implementation worker details, Finished/ })).toBeInTheDocument();
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Subagents" })).not.toBeInTheDocument();
   });
@@ -88,21 +102,24 @@ describe("SubagentsPanel", () => {
     expect(screen.queryByRole("heading", { name: /Done/ })).not.toBeInTheDocument();
   });
 
-  it("renders explicit finished, errored, and cancelled statuses", () => {
+  it("keeps exceptional Done statuses visible while completed rows rely on their section", () => {
     setThread([], [
       record({ id: "completed" }),
-      record({ id: "failed", status: "failed", output_summary: "Command failed" }),
-      record({ id: "cancelled", status: "cancelled" }),
+      record({ id: "failed", status: "failed", output_summary: "Command failed", sort_order: 1 }),
+      record({ id: "cancelled", status: "cancelled", sort_order: 2 }),
     ]);
     render(<SubagentsPanel threadId="thread-1" />);
 
     expect(screen.getAllByTestId("subagent-finished-row")).toHaveLength(3);
-    expect(screen.getByText("Finished")).toBeInTheDocument();
+    expect(screen.queryByText("Finished")).not.toBeInTheDocument();
     expect(screen.getByText("Errored")).toBeInTheDocument();
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open Implementation worker details, Finished/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open Implementation worker details, Errored/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open Implementation worker details, Cancelled/ })).toBeInTheDocument();
+    const completedRow = screen.getByRole("button", { name: /Open Implementation worker details, Finished/ });
+    const erroredRow = screen.getByRole("button", { name: /Open Implementation worker details, Errored/ });
+    const cancelledRow = screen.getByRole("button", { name: /Open Implementation worker details, Cancelled/ });
+    expect(completedRow.querySelector("[data-testid='subagent-lifecycle-dot']")).not.toBeInTheDocument();
+    expect(erroredRow.querySelector("[data-testid='subagent-lifecycle-dot']")).toBeInTheDocument();
+    expect(cancelledRow.querySelector("[data-testid='subagent-lifecycle-dot']")).toBeInTheDocument();
   });
 
   it("keeps legacy nameless glyphs neutral and explicit Subagent identities colored", () => {
@@ -134,12 +151,81 @@ describe("SubagentsPanel", () => {
     expect(screen.queryByText("Delegated task")).not.toBeInTheDocument();
     expect(screen.queryByText("Activity")).not.toBeInTheDocument();
     expect(screen.queryByText("Result")).not.toBeInTheDocument();
+    expect(screen.queryByText("Finished")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /Finished, ran for \d+s/ })).toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-lifecycle-dot")).not.toBeInTheDocument();
     expect(screen.getByText("**Done**")).toBeInTheDocument();
     expect(screen.getByTestId("subagent-response-text")).toHaveClass("text-sm", "text-foreground");
 
     fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /Open Implementation worker details/ })).toHaveFocus();
+    });
+  });
+
+  it("shows running detail state through the canonical dot and accessible time group", () => {
+    setThread([agent()]);
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
+
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /Running, \d+s elapsed/ })).toBeInTheDocument();
+    expect(screen.getByTestId("subagent-lifecycle-dot")).toHaveClass("status-pulse");
+  });
+
+  it("shows explicit metadata, exact footer counts, and opens attributed workspace diffs", () => {
+    setThread([
+      agent({
+        isComplete: true,
+        elapsedSeconds: 7,
+        output: "Implemented the worker.",
+        toolInput: {
+          agentName: "Implementation worker",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "high",
+        },
+      }),
+      {
+        ...agent({ id: "write-1", toolName: "Write" }),
+        parentToolCallId: "agent-1",
+      },
+    ], [], {
+      revision: 1,
+      fileCount: 1,
+      additions: 4,
+      deletions: 1,
+      effects: [{
+        path: "src/worker.ts",
+        kind: "edited",
+        scope: "workspace",
+        additions: 4,
+        deletions: 1,
+        binary: false,
+        toolCallIds: ["write-1"],
+      }],
+    });
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
+
+    const response = screen.getByTestId("subagent-response-text");
+    const byline = screen.getByTestId("subagent-response-byline");
+    const footer = screen.getByText("1 step").closest("div")!;
+    expect(byline).toHaveTextContent("GPT-5.6 Sol · High");
+    expect(byline).toHaveClass("text-right", "font-mono", "tabular-nums");
+    expect(response.compareDocumentPosition(byline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(byline.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("1 step")).toBeInTheDocument();
+    expect(screen.getByText("1 file changed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View all diffs" }));
+
+    expect(useDiffStore.getState().viewMode).toBe("cumulative");
+    expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toEqual({
+      label: "Implementation worker",
+      paths: ["src/worker.ts"],
+      additions: 4,
+      deletions: 1,
     });
   });
 
