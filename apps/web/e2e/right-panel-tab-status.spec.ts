@@ -101,8 +101,15 @@ async function seedPanel(page: Page, tab: "tasks" | "changes"): Promise<void> {
           workspaces: [workspace],
           activeWorkspaceId: workspace.id,
           threads: [thread],
-          activeThreadId: tid,
+          activeThreadId: null,
         });
+        (
+          wsStore as {
+            getState: () => {
+              setActiveThread: (threadId: string | null) => void;
+            };
+          }
+        ).getState().setActiveThread(tid);
       }
 
       const diffStore = stores.find(
