@@ -66,38 +66,40 @@ export function Sidebar({
         className,
       )}
     >
-      {/* Header */}
-      <div className="flex h-11 items-center justify-between border-b border-border/40 pl-2 pr-2.5">
-        {settingsOpen ? (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onCloseSettings}
-              aria-label="Back to projects"
-              className="text-muted-foreground"
-            >
-              <ArrowLeft size={15} />
-            </Button>
-            <span className="text-sm font-semibold text-muted-foreground">
-              Settings
-            </span>
-          </div>
-        ) : (
-          <>
-            <McodeLogo />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => collapseSidebar()}
-              aria-label="Collapse sidebar"
-              className="text-muted-foreground"
-            >
-              <PanelCollapseIcon className="transition-transform duration-200 group-hover/button:-translate-x-px" />
-            </Button>
-          </>
-        )}
-      </div>
+      {/* Desktop identity and sidebar control live in the persistent title bar. */}
+      {(!IS_DESKTOP || settingsOpen) && (
+        <div className="flex h-11 items-center justify-between border-b border-border/40 pl-2 pr-2.5">
+          {settingsOpen ? (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onCloseSettings}
+                aria-label="Back to projects"
+                className="text-muted-foreground"
+              >
+                <ArrowLeft size={15} />
+              </Button>
+              <span className="text-sm font-semibold text-muted-foreground">
+                Settings
+              </span>
+            </div>
+          ) : (
+            <>
+              <McodeLogo />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => collapseSidebar()}
+                aria-label="Collapse sidebar"
+                className="text-muted-foreground"
+              >
+                <PanelCollapseIcon className="transition-transform duration-200 group-hover/button:-translate-x-px" />
+              </Button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Body: projects use an inner ScrollArea only; avoid stacking overflow-y-auto
           here or drag transforms and autoscroll can expand this region and show a

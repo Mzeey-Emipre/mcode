@@ -16,11 +16,51 @@ export const RECORD_CACHE_SIZE = 15;
 export const RECORD_MESSAGE_CACHE_SIZE = 100;
 
 /**
- * Module-scoped LRU cache of evicted {@link ThreadRecord}s.
+ * Conversation-owned state retained for an inactive thread.
+ *
+ * This is intentionally not a `Pick<ThreadRecord, ...>`: adding a field to
+ * `ThreadRecord` cannot silently make it part of the cache contract.
+ */
+export interface ConversationCacheState {
+  messages: ThreadRecord["messages"];
+  oldestLoadedSequence: ThreadRecord["oldestLoadedSequence"];
+  hasMoreMessages: ThreadRecord["hasMoreMessages"];
+  persistedToolCallCounts: ThreadRecord["persistedToolCallCounts"];
+  persistedFilesChanged: ThreadRecord["persistedFilesChanged"];
+  latestTurnWithChanges: ThreadRecord["latestTurnWithChanges"];
+  serverMessageIds: ThreadRecord["serverMessageIds"];
+  narrativeByMessage: ThreadRecord["narrativeByMessage"];
+  answeredPlanMessageIds: ThreadRecord["answeredPlanMessageIds"];
+  assistantResponseKeys: ThreadRecord["assistantResponseKeys"];
+  /** Latest settled snapshot projection. Never populated from a live turn. */
+  settledFileEffectSummary: ThreadRecord["fileEffectSummary"] | null;
+}
+
+/** Build the explicit conversation cache contract from a resident thread record. */
+export function projectConversationCacheState(record: ThreadRecord): ConversationCacheState {
+  return {
+    messages: record.messages,
+    oldestLoadedSequence: record.oldestLoadedSequence,
+    hasMoreMessages: record.hasMoreMessages,
+    persistedToolCallCounts: record.persistedToolCallCounts,
+    persistedFilesChanged: record.persistedFilesChanged,
+    latestTurnWithChanges: record.latestTurnWithChanges,
+    serverMessageIds: record.serverMessageIds,
+    narrativeByMessage: record.narrativeByMessage,
+    answeredPlanMessageIds: record.answeredPlanMessageIds,
+    assistantResponseKeys: record.assistantResponseKeys,
+    settledFileEffectSummary: record.fileEffectTurnId.length === 0
+      ? record.fileEffectSummary
+      : null,
+  };
+}
+
+/**
+ * Module-scoped LRU cache of evicted {@link ConversationCacheState}s.
  * The hydrator owns this cache: an active-thread switch evicts records into
  * here so the next visit restores synchronously without an RPC round-trip.
  */
-const cache = new LruCache<string, ThreadRecord>(RECORD_CACHE_SIZE);
+const cache = new LruCache<string, ConversationCacheState>(RECORD_CACHE_SIZE);
 
 interface PrefetchedHistoryPage {
   before: number;
@@ -38,7 +78,7 @@ function filterMessageMetadata<T>(
   );
 }
 
-function boundRecord(threadId: string, record: ThreadRecord): ThreadRecord {
+function boundRecord(threadId: string, record: ConversationCacheState): ConversationCacheState {
   if (record.messages.length <= RECORD_MESSAGE_CACHE_SIZE) return record;
 
   const messages = record.messages.slice(-RECORD_MESSAGE_CACHE_SIZE);
@@ -110,7 +150,7 @@ function trimPrefetchedHistory(threadId: string, recordMessageCount: number): vo
 }
 
 /** Read the cached record for a thread, refreshing LRU recency on hit. */
-export function getCachedRecord(threadId: string): ThreadRecord | undefined {
+export function getCachedRecord(threadId: string): ConversationCacheState | undefined {
   return cache.get(threadId);
 }
 
@@ -120,7 +160,7 @@ export function hasCachedRecord(threadId: string): boolean {
 }
 
 /** Store a record for the given thread, evicting the LRU entry if at capacity. */
-export function cacheRecord(threadId: string, record: ThreadRecord): void {
+export function cacheRecord(threadId: string, record: ConversationCacheState): void {
   const boundedRecord = boundRecord(threadId, record);
   const evicted = cache.set(threadId, boundedRecord);
   trimPrefetchedHistory(threadId, boundedRecord.messages.length);

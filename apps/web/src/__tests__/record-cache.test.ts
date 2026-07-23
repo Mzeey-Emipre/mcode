@@ -1,8 +1,9 @@
+import type { AgentEvent } from "@mcode/contracts";
 import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   getCachedRecord,
-  cacheRecord,
+  cacheRecord as cacheConversationRecord,
   cachePrefetchedHistoryPage,
   takePrefetchedHistoryPage,
   evictCachedRecord,
@@ -10,6 +11,7 @@ import {
   resizeRecordCache,
   RECORD_CACHE_SIZE,
   RECORD_MESSAGE_CACHE_SIZE,
+  projectConversationCacheState,
 } from "@/lib/thread-hydrator/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
@@ -49,6 +51,10 @@ function makeRecord(id: string): ThreadRecord {
   };
 }
 
+function cacheRecord(threadId: string, record: ThreadRecord): void {
+  cacheConversationRecord(threadId, projectConversationCacheState(record));
+}
+
 describe("recordCache", () => {
   beforeEach(() => {
     clearRecordCache();
@@ -62,7 +68,24 @@ describe("recordCache", () => {
   it("caches and retrieves a record by threadId", () => {
     const rec = makeRecord("t1");
     cacheRecord("t1", rec);
-    expect(getCachedRecord("t1")).toEqual(rec);
+    expect(getCachedRecord("t1")).toEqual(projectConversationCacheState(rec));
+  });
+
+  it("stores only explicitly projected conversation fields", () => {
+    const rec = {
+      ...makeRecord("t1"),
+      loading: true,
+      streaming: "live response",
+      currentTurnMessageId: "turn-1",
+    };
+
+    cacheRecord("t1", rec);
+
+    const cached = getCachedRecord("t1");
+    expect(cached).not.toHaveProperty("loading");
+    expect(cached).not.toHaveProperty("streaming");
+    expect(cached).not.toHaveProperty("currentTurnMessageId");
+    expect(cached).not.toHaveProperty("goal");
   });
 
   it("evicts a single thread without affecting others", () => {
@@ -283,10 +306,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.textDelta",
-      params: { delta: "hello " },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: THREAD_ID, delta: "hello " } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
   });
@@ -295,10 +315,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.toolUse",
-      params: { id: "tool-1", name: "Read", input: "{}" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: THREAD_ID, toolCallId: "tool-1", toolName: "Read", toolInput: {} } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
   });
@@ -307,10 +324,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.turnComplete",
-      params: {},
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -319,10 +333,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.message",
-      params: { role: "assistant", content: "done" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: THREAD_ID, content: "done", tokens: null } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -331,10 +342,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.error",
-      error: "Something broke",
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "error", threadId: THREAD_ID, error: "Something broke" } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -343,10 +351,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.ended",
-      params: {},
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: THREAD_ID } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -356,10 +361,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
 
     const { handleAgentEvent } = useThreadStore.getState();
     for (let i = 0; i < 100; i++) {
-      handleAgentEvent(THREAD_ID, {
-        method: "session.textDelta",
-        params: { delta: `token-${i} ` },
-      });
+      handleAgentEvent({ type: "textDelta", threadId: THREAD_ID, delta: `token-${i} ` } satisfies AgentEvent);
     }
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();

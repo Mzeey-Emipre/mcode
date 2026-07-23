@@ -144,7 +144,7 @@ async function setupApp(
 }
 
 async function dispatchAgentEvent(page: Page, event: unknown) {
-  await page.evaluate(({ threadId, agentEvent }) => {
+  await page.evaluate(({ agentEvent }) => {
     type Store = { getState: () => Record<string, unknown> };
     const stores = (window as unknown as { __mcodeStores?: Store[] }).__mcodeStores ?? [];
     const threadStore = stores.find((store) => {
@@ -152,11 +152,11 @@ async function dispatchAgentEvent(page: Page, event: unknown) {
       return "handleAgentEvent" in state && "records" in state;
     });
     const state = threadStore?.getState() as
-      | { handleAgentEvent: (targetThreadId: string, incoming: unknown) => void }
+      | { handleAgentEvent: (event: unknown) => void }
       | undefined;
     if (!state) throw new Error("thread store not found");
-    state.handleAgentEvent(threadId, agentEvent);
-  }, { threadId: THREAD_ID, agentEvent: event });
+    state.handleAgentEvent(agentEvent);
+  }, { agentEvent: event });
 }
 
 async function expectTruncationNotice(page: Page, total: string, duration?: string) {
@@ -184,25 +184,23 @@ test.describe("tool output truncation", () => {
   test("shows live truncation notice from streamed tool result metadata", async ({ page }) => {
     await setupApp(page, [userMessage()]);
 
-    await dispatchAgentEvent(page, { method: "session.turnStarted", params: {} });
+    await dispatchAgentEvent(page, { type: "turnStarted", threadId: THREAD_ID });
     await dispatchAgentEvent(page, {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "tool-large-output",
-        toolName: "Bash",
-        toolInput: { command: "node -e large output" },
-      },
+      type: "toolUse",
+      threadId: THREAD_ID,
+      toolCallId: "tool-large-output",
+      toolName: "Bash",
+      toolInput: { command: "node -e large output" },
     });
     await dispatchAgentEvent(page, {
-      method: "session.toolResult",
-      params: {
-        toolCallId: "tool-large-output",
-        output: "HEAD\nTAIL",
-        isError: false,
-        outputTruncated: true,
-        outputTotalBytes: 350 * 1024,
-        outputArtifactPath: ARTIFACT_PATH,
-      },
+      type: "toolResult",
+      threadId: THREAD_ID,
+      toolCallId: "tool-large-output",
+      output: "HEAD\nTAIL",
+      isError: false,
+      outputTruncated: true,
+      outputTotalBytes: 350 * 1024,
+      outputArtifactPath: ARTIFACT_PATH,
     });
 
     await expectTruncationNotice(page, "350 KB total");

@@ -19,11 +19,13 @@ export {
   hasCachedRecord,
   hasPrefetchedHistoryPage,
   takePrefetchedHistoryPage,
+  projectConversationCacheState,
   clearRecordCache,
   resizeRecordCache,
   RECORD_CACHE_SIZE,
   RECORD_MESSAGE_CACHE_SIZE,
 } from "./record-cache";
+export type { ConversationCacheState } from "./record-cache";
 export { AuxiliaryHydrator } from "./auxiliary-hydrator";
 export type { AuxiliaryHydratorOptions, AuxiliaryHydratorDeps } from "./auxiliary-hydrator";
 export type {

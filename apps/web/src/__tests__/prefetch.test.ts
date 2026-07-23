@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   getCachedRecord,
-  cacheRecord,
+  cacheRecord as cacheConversationRecord,
   clearRecordCache,
+  projectConversationCacheState,
 } from "@/lib/thread-hydrator/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { mockTransport, createMockMessage } from "./mocks/transport";
@@ -23,6 +24,10 @@ function makeRecord(id: string): ThreadRecord {
     ],
     oldestLoadedSequence: 1,
   };
+}
+
+function cacheRecord(threadId: string, record: ThreadRecord): void {
+  cacheConversationRecord(threadId, projectConversationCacheState(record));
 }
 
 describe("prefetch", () => {

@@ -91,11 +91,9 @@ For user-visible frontend work, use this instruction order:
 1. The user's explicit feedback, screenshots, and selected references.
 2. [PRODUCT.md](PRODUCT.md) for audience, jobs, and product principles.
 3. [DESIGN.md](DESIGN.md) for tokens, typography, spacing, components, and
-   surface treatment.
-4. [docs/guides/ui-design-spec.md](docs/guides/ui-design-spec.md) for
-   qualitative direction where it agrees with PRODUCT.md and DESIGN.md.
-5. Existing shared components and neighboring product patterns.
-6. Generic design skills and heuristics.
+   surface treatment, interaction contracts, and qualitative direction.
+4. Existing shared components and neighboring product patterns.
+5. Generic design skills and heuristics.
 
 Higher items override lower ones. A generic design rule must not erase an
 intentional Mcode pattern or a capability the user asked to preserve.

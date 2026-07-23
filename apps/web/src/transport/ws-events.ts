@@ -81,15 +81,9 @@ export function startPushListeners(): void {
   // agent.event: the server wraps each sidecar event with { threadId, type, ... }
   unsubs.push(
     pushEmitter.on("agent.event", (data) => {
-      const event = data as Record<string, unknown>;
-      const threadId = event.threadId as string;
-      if (!threadId) return;
-
-      // Map the flat contract AgentEvent into the method-keyed shape
-      // that handleAgentEvent expects (method = "session.<type>").
-      const type = event.type as string;
-      const method = `session.${type}`;
-      handleAgentEvent(threadId, { method, ...event });
+      const parsed = WS_CHANNELS["agent.event"].safeParse(data);
+      if (!parsed.success) return;
+      handleAgentEvent(parsed.data);
     }),
   );
 

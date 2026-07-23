@@ -151,18 +151,17 @@ async function emitTaskCreate(page: Page): Promise<void> {
     (
       threadStore as {
         getState: () => {
-          handleAgentEvent: (threadId: string, event: unknown) => void;
+          handleAgentEvent: (event: unknown) => void;
         };
       }
-    ).getState().handleAgentEvent(tid, {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "task-create-live",
-        toolName: "TaskCreate",
-        toolInput: {
-          subject: "Buy groceries",
-          description: "Pick up milk, eggs, bread",
-        },
+    ).getState().handleAgentEvent({
+      type: "toolUse",
+      threadId: tid,
+      toolCallId: "task-create-live",
+      toolName: "TaskCreate",
+      toolInput: {
+        subject: "Buy groceries",
+        description: "Pick up milk, eggs, bread",
       },
     });
   }, THREAD.id);
@@ -178,21 +177,20 @@ async function emitUpdatePlan(page: Page): Promise<void> {
     (
       threadStore as {
         getState: () => {
-          handleAgentEvent: (threadId: string, event: unknown) => void;
+          handleAgentEvent: (event: unknown) => void;
         };
       }
-    ).getState().handleAgentEvent(tid, {
-      method: "session.toolUse",
-      params: {
-        toolCallId: "update-plan-live",
-        toolName: "update_plan",
-        toolInput: {
-          plan: [
-            { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
-            { status: "in_progress", step: "Test todo item two with CODE-A2 and CODE-B2" },
-            { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
-          ],
-        },
+    ).getState().handleAgentEvent({
+      type: "toolUse",
+      threadId: tid,
+      toolCallId: "update-plan-live",
+      toolName: "update_plan",
+      toolInput: {
+        plan: [
+          { status: "pending", step: "Test todo item one with CODE-A1 and CODE-B1" },
+          { status: "in_progress", step: "Test todo item two with CODE-A2 and CODE-B2" },
+          { status: "completed", step: "Test todo item three with CODE-A3 and CODE-B3" },
+        ],
       },
     });
   }, THREAD.id);

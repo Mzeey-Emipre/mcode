@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary } from "@mcode/contracts";
+import type { AgentEvent, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import {
@@ -26,6 +26,7 @@ import {
   cacheRecord,
   evictCachedRecord,
   getCachedRecord,
+  projectConversationCacheState,
   takePrefetchedHistoryPage,
 } from "@/lib/thread-hydrator/record-cache";
 import { shallowEqualBy } from "@/lib/shallowEqualBy";
@@ -127,7 +128,7 @@ interface ThreadState {
   addPermissionRequest: (request: PermissionRequest) => void;
   /** Mark a permission request as settled with its decision. */
   resolvePermissionRequest: (requestId: string, decision: PermissionDecision) => void;
-  handleAgentEvent: (threadId: string, event: Record<string, unknown>) => void;
+  handleAgentEvent: (event: AgentEvent) => void;
   /** Refresh the provider-neutral goal lookup for a thread and update cached thread state. */
   refreshThreadGoal: (threadId: string) => Promise<GoalLookupResult>;
   /** Clear the active goal through the app RPC and update cached thread state. */
@@ -774,12 +775,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     set((s) => ({ records: patchThreadRecord(s.records, threadId, patch) }));
   };
 
+  const cacheInactiveRecord = (threadId: string): void => {
+    const state = get();
+    if (state.currentThreadId !== threadId) {
+      // The response can arrive before its database commit, so the resident
+      // transcript must replace any older snapshot used by thread switching.
+      cacheRecord(
+        threadId,
+        projectConversationCacheState(getThreadRecord(state.records, threadId)),
+      );
+    }
+  };
+
   const applyGoalLookup = (threadId: string, lookup: GoalLookupResult): void => {
     const current = getRec(threadId);
     const goal = resolveGoalLookupGoal(lookup, current.goal);
     patchRec(threadId, { goal });
-    const cached = getCachedRecord(threadId);
-    if (cached) cacheRecord(threadId, { ...cached, goal: resolveGoalLookupGoal(lookup, cached.goal) });
   };
 
   /**
@@ -1007,7 +1018,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }));
 
       const updated = getRec(threadId);
-      cacheRecord(threadId, updated);
+      cacheRecord(threadId, projectConversationCacheState(updated));
 
       // Hydrate file change data for older messages from snapshots
       const olderMsgIds = new Set(olderMessages.map((m) => m.id));
@@ -1019,10 +1030,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           );
           if (relevant.length === 0) return;
           set((state) => {
-            if (state.currentThreadId !== threadId) return {};
-            const rec = getThreadRecord(state.records, threadId);
+            const rec = state.records.get(threadId);
+            if (
+              state.currentThreadId !== threadId
+              || !rec
+              || rec.loadEpoch !== epoch
+            ) return {};
+            const retainedMessageIds = new Set(rec.messages.map((message) => message.id));
+            const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
+            if (retained.length === 0) return {};
             const nextFilesChanged = { ...rec.persistedFilesChanged };
-            for (const snap of relevant) {
+            for (const snap of retained) {
               nextFilesChanged[snap.message_id] = snap.files_changed;
             }
             return {
@@ -1034,10 +1052,21 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           // Keep the LRU message cache in sync: the cache was written before this
           // async merge, so a cache-hit thread switch otherwise drops prepended
           // turns' file lists until a full reload.
+          const current = get().records.get(threadId);
+          if (
+            get().currentThreadId !== threadId
+            || !current
+            || current.loadEpoch !== epoch
+          ) return;
           const cached = getCachedRecord(threadId);
           if (!cached) return;
+          const retainedCachedMessageIds = new Set(cached.messages.map((message) => message.id));
+          const retained = relevant.filter((snapshot) =>
+            retainedCachedMessageIds.has(snapshot.message_id),
+          );
+          if (retained.length === 0) return;
           const mergedFiles = { ...cached.persistedFilesChanged };
-          for (const snap of relevant) {
+          for (const snap of retained) {
             mergedFiles[snap.message_id] = snap.files_changed;
           }
           cacheRecord(threadId, {
@@ -1762,11 +1791,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * On turn completion, commits any buffered streaming content as a
    * message and schedules tool call fade-out animations.
    */
-  handleAgentEvent: (threadId, event) => {
-    const method = (event.method as string) || "";
-    const params = (event.params as Record<string, unknown>) || event;
+  handleAgentEvent: (event) => {
+    const { threadId } = event;
 
-    if (method !== "session.textDelta") {
+    if (event.type !== "textDelta") {
       flushPendingTextDeltas();
     }
 
@@ -1774,10 +1802,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     // persisted messages. Streaming deltas (textDelta, toolProgress) are
     // ephemeral and don't change what loadMessages would return from the DB.
     const isStructuralEvent =
-      method === "session.turnComplete" ||
-      method === "session.ended" ||
-      method === "session.message" ||
-      method === "session.error";
+      event.type === "turnComplete" ||
+      event.type === "ended" ||
+      event.type === "message" ||
+      event.type === "error";
     if (isStructuralEvent) {
       evictCachedRecord(threadId);
     }
@@ -1811,30 +1839,26 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       });
     };
 
-    if (method !== "session.apiRetry" && getRec(threadId).apiRetry) {
+    if (event.type !== "apiRetry" && getRec(threadId).apiRetry) {
       patchRec(threadId, { apiRetry: undefined });
     }
 
-    if (method === "session.goalUpdated") {
-      const goal = params.goal as GoalState | undefined;
+    if (event.type === "goalUpdated") {
+      const goal = event.goal as GoalState | undefined;
       if (goal) {
         const openGoal = isGoalOpen(goal) ? goal : null;
         patchRec(threadId, { goal: openGoal });
-        const cached = getCachedRecord(threadId);
-        if (cached) cacheRecord(threadId, { ...cached, goal: openGoal });
       }
       return;
     }
 
-    if (method === "session.goalCleared") {
+    if (event.type === "goalCleared") {
       patchRec(threadId, { goal: null });
-      const cached = getCachedRecord(threadId);
-      if (cached) cacheRecord(threadId, { ...cached, goal: null });
       return;
     }
 
-    if (method === "session.system") {
-      const subtype = params.subtype as string;
+    if (event.type === "system") {
+      const subtype = event.subtype as string;
       // Both subtypes render as the quiet system-message hairline chapter-break.
       // `session_restarted`: the SDK silently restarted (lost in-memory context).
       // `sdk_session_invalidated`: a poison-pill provider state forced a reset;
@@ -1875,9 +1899,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.turnStarted") {
-      const fileEffectTurnId = typeof params.fileEffectTurnId === "string"
-        ? params.fileEffectTurnId
+    if (event.type === "turnStarted") {
+      const fileEffectTurnId = typeof event.fileEffectTurnId === "string"
+        ? event.fileEffectTurnId
         : "";
       const currentState = get();
       const currentRecord = getThreadRecord(currentState.records, threadId);
@@ -1916,27 +1940,27 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.message") {
+    if (event.type === "message") {
       markPriorToolCallsComplete();
-      const content = (params.content as string) || "";
+      const content = (event.content as string) || "";
       const isGoalNotice = isGoalStatusNotice(content);
-      const attachments = parseStoredAttachments(params.attachments);
-      if (content || attachments.length > 0 || params.messageId) {
+      const attachments = parseStoredAttachments(event.attachments);
+      if (content || attachments.length > 0 || event.messageId) {
         const message: Message = {
-          id: (params.messageId as string) || crypto.randomUUID(),
+          id: (event.messageId as string) || crypto.randomUUID(),
           thread_id: threadId,
           role: "assistant",
           content,
           tool_calls: null,
           files_changed: null,
           cost_usd: null,
-          tokens_used: (params.tokens as number) ?? null,
+          tokens_used: (event.tokens as number) ?? null,
           timestamp: new Date().toISOString(),
           sequence: messageSequenceFor(threadId),
           attachments: attachments.length > 0 ? attachments : null,
           // Server injects the model after persisting; defaults to null when
           // unknown (legacy clients, non-Claude providers without model info).
-          model: (params.model as string | null | undefined) ?? null,
+          model: (event.model as string | null | undefined) ?? null,
         };
         set((state) => {
           const rec = getThreadRecord(state.records, threadId);
@@ -1976,10 +2000,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             streamingPreview: "",
             thoughtSegments: closedSegments,
           };
-
-          if (state.currentThreadId !== threadId) {
-            return { records: patchThreadRecord(state.records, threadId, turnPatch) };
-          }
 
           if (rec.messages.some((m) => m.id === message.id)) {
             return { records: patchThreadRecord(state.records, threadId, turnPatch) };
@@ -2055,16 +2075,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             }),
           };
         });
+        cacheInactiveRecord(threadId);
       }
       return;
     }
 
-    if (method === "session.toolUse") {
-      const toolCallId = (params.toolCallId as string) || "";
+    if (event.type === "toolUse") {
+      const toolCallId = (event.toolCallId as string) || "";
       const existingCalls = getRec(threadId).toolCalls;
-      const toolName = (params.toolName as string) || "unknown";
-      const incomingInput = (params.toolInput as Record<string, unknown>) || {};
-      const parentToolCallId = params.parentToolCallId as string | undefined;
+      const toolName = (event.toolName as string) || "unknown";
+      const incomingInput = (event.toolInput as Record<string, unknown>) || {};
+      const parentToolCallId = event.parentToolCallId as string | undefined;
       const applyTodoWriteTasks = (
         toolInput: Record<string, unknown>,
         resolvedParentToolCallId: string | undefined,
@@ -2265,24 +2286,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.toolResult") {
-      const toolCallId = (params.toolCallId as string) || "";
-      const output = (params.output as string) || "";
-      const isError = (params.isError as boolean) || false;
+    if (event.type === "toolResult") {
+      const toolCallId = (event.toolCallId as string) || "";
+      const output = (event.output as string) || "";
+      const isError = (event.isError as boolean) || false;
       const exitCode =
-        typeof params.exitCode === "number" && Number.isInteger(params.exitCode)
-          ? params.exitCode
+        typeof event.exitCode === "number" && Number.isInteger(event.exitCode)
+          ? event.exitCode
           : undefined;
-      const outputTruncated = params.outputTruncated === true;
+      const outputTruncated = event.outputTruncated === true;
       const outputTotalBytes =
-        typeof params.outputTotalBytes === "number" && Number.isFinite(params.outputTotalBytes)
-          ? params.outputTotalBytes
+        typeof event.outputTotalBytes === "number" && Number.isFinite(event.outputTotalBytes)
+          ? event.outputTotalBytes
           : undefined;
       const outputArtifactPath =
-        typeof params.outputArtifactPath === "string" && params.outputArtifactPath.length > 0
-          ? params.outputArtifactPath
+        typeof event.outputArtifactPath === "string" && event.outputArtifactPath.length > 0
+          ? event.outputArtifactPath
           : undefined;
-      const rawToolInput = params.toolInput;
+      const rawToolInput = event.toolInput;
       const incomingInput =
         rawToolInput && typeof rawToolInput === "object" && !Array.isArray(rawToolInput)
           ? rawToolInput as Record<string, unknown>
@@ -2359,10 +2380,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     // session.textDelta: accumulate streaming text for live preview and finalization.
-    if (method === "session.textDelta") {
-      const delta = (params.delta as string) || "";
+    if (event.type === "textDelta") {
+      const delta = (event.delta as string) || "";
       if (!delta) return;
-      const rawIsFinalResponse = params.isFinalResponse;
+      const rawIsFinalResponse = event.isFinalResponse;
       const isFinalResponse =
         typeof rawIsFinalResponse === "boolean" ? rawIsFinalResponse : undefined;
       const hadPending = pendingTextDeltaByThread.has(threadId);
@@ -2382,7 +2403,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.assistantMessageBoundary") {
+    if (event.type === "assistantMessageBoundary") {
       // Authoritative classification of the text deltas just streamed for this
       // assistant message, derived from the Anthropic `stop_reason`.
       //
@@ -2394,7 +2415,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // - isFinalResponse=false (tool_use, pause_turn, anything else):
       //   the streamed text was preamble. Close the open thought so the next
       //   delta starts a fresh segment.
-      const isFinalResponse = params.isFinalResponse === true;
+      const isFinalResponse = event.isFinalResponse === true;
       // Flush any pending text delta chunks first so the open thought we
       // operate on reflects every delta that arrived for this message.
       flushPendingTextDeltas();
@@ -2417,9 +2438,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.toolProgress") {
-      const toolCallId = (params.toolCallId as string) || "";
-      const elapsedSeconds = (params.elapsedSeconds as number) ?? 0;
+    if (event.type === "toolProgress") {
+      const toolCallId = (event.toolCallId as string) || "";
+      const elapsedSeconds = (event.elapsedSeconds as number) ?? 0;
       if (!toolCallId) return;
       const lastActivityAt = Date.now();
       set((state) => {
@@ -2439,10 +2460,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.hookStarted") {
-      const hookName = (params.hookName as string) || "unknown";
-      const hookType = (params.hookType as "permission" | "stop") || "stop";
-      const toolName = params.toolName as string | undefined;
+    if (event.type === "hookStarted") {
+      const hookName = (event.hookName as string) || "unknown";
+      const hookType = (event.hookType as "permission" | "stop") || "stop";
+      const toolName = event.toolName as string | undefined;
       const hook: HookExecution = {
         hookName,
         hookType,
@@ -2460,9 +2481,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.hookProgress") {
-      const hookName = (params.hookName as string) || "";
-      const output = (params.output as string) || "";
+    if (event.type === "hookProgress") {
+      const hookName = (event.hookName as string) || "";
+      const output = (event.output as string) || "";
       if (!hookName || !output) return;
       set((state) => {
         const hooks = getThreadRecord(state.records, threadId).hooks;
@@ -2491,13 +2512,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.hookCompleted") {
-      const hookName = (params.hookName as string) || "";
-      const exitCode = (params.exitCode as number) ?? 1;
-      const durationMs = (params.durationMs as number) ?? 0;
-      const didBlock = (params.didBlock as boolean) ?? false;
-      const persistedMessageId = params.persistedMessageId as string | undefined;
-      const persistedHookId = params.persistedHookId as string | undefined;
+    if (event.type === "hookCompleted") {
+      const hookName = (event.hookName as string) || "";
+      const exitCode = (event.exitCode as number) ?? 1;
+      const durationMs = (event.durationMs as number) ?? 0;
+      const didBlock = (event.didBlock as boolean) ?? false;
+      const persistedMessageId = event.persistedMessageId as string | undefined;
+      const persistedHookId = event.persistedHookId as string | undefined;
       if (!hookName) return;
 
       // Late hooks (Stop/SessionEnd/PreCompact) arrive with persistedMessageId
@@ -2561,11 +2582,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.turnComplete" || method === "session.ended") {
+    if (event.type === "turnComplete" || event.type === "ended") {
       useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(threadId);
-      const costUsd = (params.costUsd as number) ?? null;
-      const tokensIn = ((params.tokensIn as number) ?? (params.totalTokensIn as number)) ?? 0;
-      const tokensOut = ((params.tokensOut as number) ?? (params.totalTokensOut as number)) ?? 0;
+      const turnComplete = event.type === "turnComplete" ? event : undefined;
+      const costUsd = turnComplete?.costUsd ?? null;
+      const tokensIn = turnComplete?.tokensIn ?? 0;
+      const tokensOut = turnComplete?.tokensOut ?? 0;
 
       // Commit any remaining streaming content and stop the agent,
       // Tool calls remain in-place and collapse into a summary.
@@ -2573,7 +2595,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
       // Build an ephemeral system message for guardrail stops (budget/turn limit).
       // Folded into the same set() call to avoid a double render pass.
-      const reason = method === "session.turnComplete" ? params.reason as string | undefined : undefined;
+      const reason = turnComplete?.reason;
       const isGuardrailStop = reason === "error_max_budget_usd" || reason === "max_turns";
       const guardrailMsg: Message | null = isGuardrailStop ? {
         id: crypto.randomUUID(),
@@ -2650,13 +2672,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             rateLimit: undefined,
           };
 
-          if (state.currentThreadId !== threadId) {
-            return {
-              runningThreadIds: nextRunning,
-              records: patchThreadRecord(state.records, threadId, basePatch),
-            };
-          }
-
           const { messages: capped, evicted } = capMessages([...rec.messages, ...pending]);
           const prunedAssistantResponseKeys = pruneAssistantResponseKeys(
             basePatch.assistantResponseKeys,
@@ -2722,6 +2737,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           };
         });
       }
+      cacheInactiveRecord(threadId);
 
       // Update context tracker. Prefer the SDK-reported contextWindow (authoritative)
       // over the local registry. The DB is updated server-side; contextByThread is
@@ -2733,8 +2749,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Compaction cleanup (isCompactingByThread) is handled solely by the
       // session.compacting handler to keep lifecycle management in one place.
       if (tokensIn > 0 && !getRec(threadId).isCompacting) {
-        const sdkContextWindow = params.contextWindow as number | undefined;
-        const totalProcessedTokens = params.totalProcessedTokens as number | undefined;
+        const sdkContextWindow = turnComplete?.contextWindow;
+        const totalProcessedTokens = turnComplete?.totalProcessedTokens;
         // Prefer the actual model that ran (post-fallback) so context window
         // sizing reflects Haiku's limits rather than the requested Opus model.
         const fallback = getRec(threadId).lastFallback;
@@ -2762,9 +2778,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               contextWindow,
               totalProcessedTokens,
               tokensOut,
-              cacheReadTokens: params.cacheReadTokens as number | undefined,
-              cacheWriteTokens: params.cacheWriteTokens as number | undefined,
-              costMultiplier: params.costMultiplier as number | undefined,
+              cacheReadTokens: turnComplete?.cacheReadTokens,
+              cacheWriteTokens: turnComplete?.cacheWriteTokens,
+              costMultiplier: turnComplete?.costMultiplier,
             },
           }),
         }));
@@ -2794,7 +2810,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Uses tracked timers to prevent double-dequeue from duplicate events.
       // Skip dequeue when a guardrail stopped the session to avoid restarting
       // an agent that was intentionally capped by budget or turn limits.
-      if (method === "session.turnComplete" && !isGuardrailStop) {
+      if (event.type === "turnComplete" && !isGuardrailStop) {
         if (hasPendingPlanQuestions(threadId)) return;
         clearDequeueTimer(threadId);
         const timer = setTimeout(() => {
@@ -2847,16 +2863,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.quotaUpdate") {
-      const providerId = params.providerId as string;
-      const categories = Array.isArray(params.categories)
-        ? (params.categories as QuotaCategory[])
+    if (event.type === "quotaUpdate") {
+      const providerId = event.providerId as string;
+      const categories = Array.isArray(event.categories)
+        ? (event.categories as QuotaCategory[])
         : [];
-      const billingMode = params.billingMode as ProviderBillingMode | undefined;
-      const sessionCostUsd = params.sessionCostUsd as number | undefined;
-      const serviceTier = params.serviceTier as "standard" | "priority" | "batch" | undefined;
-      const numTurns = params.numTurns as number | undefined;
-      const durationMs = params.durationMs as number | undefined;
+      const billingMode = event.billingMode as ProviderBillingMode | undefined;
+      const sessionCostUsd = event.sessionCostUsd as number | undefined;
+      const serviceTier = event.serviceTier as "standard" | "priority" | "batch" | undefined;
+      const numTurns = event.numTurns as number | undefined;
+      const durationMs = event.durationMs as number | undefined;
       if (providerId) {
         const incoming: ProviderUsageInfo = {
           providerId,
@@ -2891,9 +2907,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.contextEstimate") {
-      const tokensIn = params.tokensIn as number;
-      const ctxWindow = params.contextWindow as number | undefined;
+    if (event.type === "contextEstimate") {
+      const tokensIn = event.tokensIn as number;
+      const ctxWindow = event.contextWindow as number | undefined;
       // Only apply if not compacting — the compaction-start zero sentinel is
       // authoritative while compaction is in progress.
       if (tokensIn > 0 && !getRec(threadId).isCompacting) {
@@ -2914,34 +2930,34 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.rateLimited") {
-      const active = params.active as boolean;
+    if (event.type === "rateLimited") {
+      const active = event.active as boolean;
       patchRec(threadId, {
         rateLimit: active
           ? {
-              retryAfterMs: params.retryAfterMs as number | undefined,
-              limitType: params.limitType as string | undefined,
-              utilization: params.utilization as number | undefined,
+              retryAfterMs: event.retryAfterMs as number | undefined,
+              limitType: event.limitType as string | undefined,
+              utilization: event.utilization as number | undefined,
             }
           : undefined,
       });
       return;
     }
 
-    if (method === "session.apiRetry") {
+    if (event.type === "apiRetry") {
       patchRec(threadId, {
         apiRetry: {
-          reason: params.reason as string,
-          attempt: params.attempt as number | undefined,
-          maxRetries: params.maxRetries as number | undefined,
-          delayMs: params.delayMs as number | undefined,
+          reason: event.reason as string,
+          attempt: event.attempt as number | undefined,
+          maxRetries: event.maxRetries as number | undefined,
+          delayMs: event.delayMs as number | undefined,
         },
       });
       return;
     }
 
-    if (method === "session.compacting") {
-      const active = params.active as boolean;
+    if (event.type === "compacting") {
+      const active = event.active as boolean;
       if (!active) {
         const wasCompacting = getRec(threadId).isCompacting;
         if (wasCompacting && get().currentThreadId === threadId) {
@@ -2983,9 +2999,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.modelFallback") {
-      const requestedModel = params.requestedModel as string;
-      const actualModel = params.actualModel as string;
+    if (event.type === "modelFallback") {
+      const requestedModel = event.requestedModel as string;
+      const actualModel = event.actualModel as string;
 
       const actualDefinition = findModelById(actualModel);
       const normalizedActual = actualDefinition?.id ?? actualModel;
@@ -3007,8 +3023,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
 
-    if (method === "session.error") {
-      const errorMsg = typeof params.error === "string" ? params.error : String(params.error ?? "Unknown error");
+    if (event.type === "error") {
+      const errorMsg = typeof event.error === "string" ? event.error : String(event.error ?? "Unknown error");
       const errorMessage: Message = {
         id: crypto.randomUUID(),
         thread_id: threadId,
@@ -3068,6 +3084,21 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }));
       return;
     }
+
+    // These event types are either consumed server-side or have no thread
+    // conversation effect in the current web client.
+    if (
+      event.type === "generatedAttachment" ||
+      event.type === "compactSummary" ||
+      event.type === "toolInputDelta" ||
+      event.type === "providerUnavailable" ||
+      event.type === "mcpServerStartupStatus"
+    ) {
+      return;
+    }
+
+    const unsupportedEvent: never = event;
+    void unsupportedEvent;
 
   },
 
