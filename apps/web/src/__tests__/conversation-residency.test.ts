@@ -2,10 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import { createConversationResidency } from "@/stores/conversation-residency";
 
 describe("ConversationResidency", () => {
+  const requiredDeps = () => ({
+    refreshConversation: vi.fn().mockResolvedValue(undefined),
+    retainInactiveConversation: vi.fn(),
+    invalidateConversation: vi.fn(),
+    synchronizeConversation: vi.fn(),
+    mergeCachedFileChanges: vi.fn(),
+    takePrefetchedHistoryPage: vi.fn(),
+    prefetchConversation: vi.fn().mockResolvedValue(undefined),
+  });
+
   it("activates only persisted selected threads through its restoration dependency", async () => {
     const restoreConversation = vi.fn().mockResolvedValue(undefined);
     const deactivateConversation = vi.fn();
-    const residency = createConversationResidency({ restoreConversation, deactivateConversation });
+    const residency = createConversationResidency({ restoreConversation, deactivateConversation, ...requiredDeps() });
 
     await residency.activate("thread-a", [{ id: "thread-a" }]);
 
@@ -21,7 +31,7 @@ describe("ConversationResidency", () => {
   ])("deactivates without restoring unavailable selection %s", async (threadId, threads) => {
     const restoreConversation = vi.fn().mockResolvedValue(undefined);
     const deactivateConversation = vi.fn();
-    const residency = createConversationResidency({ restoreConversation, deactivateConversation });
+    const residency = createConversationResidency({ restoreConversation, deactivateConversation, ...requiredDeps() });
 
     await residency.activate(threadId, threads);
 
@@ -29,42 +39,20 @@ describe("ConversationResidency", () => {
     expect(deactivateConversation).toHaveBeenCalledOnce();
   });
 
-  it("routes same-selection refresh restoration through the same boundary", async () => {
-    const restoreConversation = vi.fn().mockResolvedValue(undefined);
-    const deactivateConversation = vi.fn();
-    const residency = createConversationResidency({ restoreConversation, deactivateConversation });
-
-    await residency.restoreAfterThreadRefresh("thread-a", [{ id: "thread-a" }]);
-
-    expect(restoreConversation).toHaveBeenCalledWith("thread-a");
-    expect(deactivateConversation).not.toHaveBeenCalled();
-  });
-
-  it("uses the refresh dependency when one is provided", async () => {
+  it("routes forced selected-conversation revalidation through its refresh dependency", async () => {
     const restoreConversation = vi.fn().mockResolvedValue(undefined);
     const refreshConversation = vi.fn().mockResolvedValue(undefined);
     const residency = createConversationResidency({
       restoreConversation,
-      refreshConversation,
       deactivateConversation: vi.fn(),
+      ...requiredDeps(),
+      refreshConversation,
     });
 
     await residency.refresh("thread-a", [{ id: "thread-a" }]);
 
     expect(refreshConversation).toHaveBeenCalledWith("thread-a");
     expect(restoreConversation).not.toHaveBeenCalled();
-  });
-
-  it("falls back to restoration when no refresh dependency is provided", async () => {
-    const restoreConversation = vi.fn().mockResolvedValue(undefined);
-    const residency = createConversationResidency({
-      restoreConversation,
-      deactivateConversation: vi.fn(),
-    });
-
-    await residency.refresh("thread-a", [{ id: "thread-a" }]);
-
-    expect(restoreConversation).toHaveBeenCalledWith("thread-a");
   });
 
   it("routes event retention, persisted invalidation, pagination, and prefetch through one boundary", async () => {
@@ -83,6 +71,8 @@ describe("ConversationResidency", () => {
       synchronizeConversation,
       mergeCachedFileChanges,
       prefetchConversation,
+      refreshConversation: vi.fn().mockResolvedValue(undefined),
+      takePrefetchedHistoryPage: vi.fn(),
     });
     residency.invalidateConversation("thread-a");
     residency.retainInactiveConversation("thread-a");

@@ -3,6 +3,7 @@ import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import type { PlanQuestion } from "@mcode/contracts";
 import { LruCache } from "@/lib/lru-cache";
 import { useThreadStore, TOOL_CALL_CACHE_SIZE } from "./threadStore";
+import { getConversationResidency } from "./conversation-residency";
 import {
   createEmptyThreadRecord,
   patchThreadRecord,
@@ -51,6 +52,11 @@ export function resetThreadStoreForTests(opts?: {
     recentlyAnsweredPlanMessageIds:
       opts?.recentlyAnsweredPlanMessageIds ?? baseline.recentlyAnsweredPlanMessageIds,
   });
+}
+
+/** Activate one persisted test conversation through the production residency authority. */
+export function activateTestConversation(threadId: string): Promise<void> {
+  return getConversationResidency().activate(threadId, [{ id: threadId }]);
 }
 
 /** Read a field from an existing thread record; undefined when the thread is absent. */

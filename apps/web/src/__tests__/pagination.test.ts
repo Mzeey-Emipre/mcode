@@ -1,4 +1,5 @@
 import {
+  activateTestConversation,
   resetThreadStoreForTests,
   getTestActiveMessages,
   getTestThreadOldestLoadedSequence,
@@ -56,7 +57,7 @@ describe("Chat Pagination", () => {
       hasMore: true,
     });
 
-    await useThreadStore.getState().loadMessages(threadId);
+await activateTestConversation(threadId);
 
     expect(getTestActiveMessages()).toEqual(messages);
     expect(getTestThreadOldestLoadedSequence(threadId)).toBe(51);

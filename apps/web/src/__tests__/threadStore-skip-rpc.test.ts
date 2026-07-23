@@ -1,4 +1,4 @@
-import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
+import { activateTestConversation, resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 /**
  * Tests that loadMessages() skips the listSnapshots RPC when a thread has no
@@ -59,7 +59,7 @@ describe("loadMessages - listSnapshots RPC gating", () => {
     const thread = createMockThread({ id: THREAD_ID, has_file_changes: false });
     useWorkspaceStore.setState({ threads: [thread] });
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+await activateTestConversation(THREAD_ID);
 
     // Allow any async microtasks to flush
     await vi.waitFor(() => {
@@ -74,7 +74,7 @@ describe("loadMessages - listSnapshots RPC gating", () => {
     const thread = createMockThread({ id: THREAD_ID, has_file_changes: true });
     useWorkspaceStore.setState({ threads: [thread] });
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     // listSnapshots is fired in a void async block - wait for it to resolve
     await vi.waitFor(() => {
@@ -88,7 +88,7 @@ describe("loadMessages - listSnapshots RPC gating", () => {
     // Workspace store has no threads - simulates a race during initial workspace load
     useWorkspaceStore.setState({ threads: [] });
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.listSnapshots).toHaveBeenCalledTimes(1);
@@ -108,7 +108,7 @@ describe("loadMessages (cache-hit) - hydration staleness gate", () => {
     useWorkspaceStore.setState({ threads: [thread] });
 
     // First load: cache-miss path populates cache AND stamps lastHydratedByThread.
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
     await vi.waitFor(() => {
       expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_ID, MESSAGE_FETCH_SIZE);
     });
@@ -118,7 +118,7 @@ describe("loadMessages (cache-hit) - hydration staleness gate", () => {
     vi.clearAllMocks();
 
     // Second load within 2s of the first - the gate should suppress both side-effect RPCs.
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
     // Give any erroneously-scheduled microtasks a chance to fire.
     await new Promise((r) => setTimeout(r, 20));
 
@@ -132,7 +132,7 @@ describe("loadMessages (cache-hit) - hydration staleness gate", () => {
     const thread = createMockThread({ id: THREAD_ID, has_file_changes: false });
     useWorkspaceStore.setState({ threads: [thread] });
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
     await vi.waitFor(() => {
       expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_ID, MESSAGE_FETCH_SIZE);
     });
@@ -146,7 +146,7 @@ describe("loadMessages (cache-hit) - hydration staleness gate", () => {
     });
     vi.clearAllMocks();
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.listPendingPermissions).toHaveBeenCalledWith(THREAD_ID);

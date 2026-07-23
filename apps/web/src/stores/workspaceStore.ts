@@ -15,7 +15,7 @@ import {
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
-import { createConversationResidency } from "./conversation-residency";
+import { getConversationResidency } from "./conversation-residency";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useTaskStore } from "./taskStore";
@@ -350,13 +350,8 @@ interface WorkspaceState {
 
 /** Zustand store for workspace, thread, branch, and PR state management. */
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
-  const conversationResidency = createConversationResidency({
-    restoreConversation: (threadId) => useThreadStore.getState().loadMessages(threadId),
-    refreshConversation: (threadId) => useThreadStore.getState().refreshConversation(threadId),
-    deactivateConversation: () => useThreadStore.getState().deactivateConversation(),
-  });
   const reconcileSelectedConversation = () => {
-    void conversationResidency.activate(get().activeThreadId, get().threads);
+    void getConversationResidency().activate(get().activeThreadId, get().threads);
   };
 
   const applyOptimisticSuccess = (
@@ -419,7 +414,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       };
     });
     if (get().activeThreadId === thread.id) {
-      void conversationResidency.restoreAfterThreadRefresh(thread.id, get().threads);
+      void getConversationResidency().activate(thread.id, get().threads);
     }
   };
 
@@ -736,13 +731,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         };
       });
 
-      if (get().activeWorkspaceId === workspaceId) {
-        void conversationResidency.restoreAfterThreadRefresh(
-          get().activeThreadId,
-          get().threads,
-        );
-      }
-
       const epochForPrSync = epochAtStart;
 
       // Background PR sync: scanned for new PRs and refreshed stale PR states (throttled)
@@ -774,7 +762,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   refreshActiveConversation: async () => {
-    await conversationResidency.refresh(get().activeThreadId, get().threads);
+    await getConversationResidency().refresh(get().activeThreadId, get().threads);
   },
 
   createThread: async (title, mode, branch) => {
