@@ -1,6 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
 import type { Thread } from "@mcode/contracts";
-import { mockWebSocketServer, interceptZustandStores } from "./helpers/e2e-helpers";
+import {
+  interceptZustandStores,
+  mockWebSocketServer,
+  waitForActiveThreadLoaded,
+} from "./helpers/e2e-helpers";
 
 const now = new Date().toISOString();
 
@@ -66,7 +70,7 @@ async function seedTaskBubbleThread(page: Page): Promise<void> {
           workspaces: [workspace],
           activeWorkspaceId: workspace.id,
           threads: [thread],
-          activeThreadId: thread.id,
+          activeThreadId: null,
         });
       }
 
@@ -97,7 +101,7 @@ async function setRunningAndResetHydration(page: Page, running: boolean): Promis
         (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
       const threadStore = stores.find((s) => {
         const state = (s as { getState: () => Record<string, unknown> }).getState();
-        return "loadMessages" in state && "runningThreadIds" in state;
+        return "records" in state && "currentThreadId" in state && "runningThreadIds" in state;
       });
       if (!threadStore) throw new Error("thread store missing");
 
@@ -126,21 +130,23 @@ async function setRunningAndResetHydration(page: Page, running: boolean): Promis
   );
 }
 
-async function loadMessages(page: Page): Promise<void> {
-  await page.evaluate(async (threadId) => {
+async function selectThreadAndWaitForHydration(page: Page): Promise<void> {
+  await page.evaluate((threadId) => {
     const stores: unknown[] =
       (window as unknown as { __mcodeStores?: unknown[] }).__mcodeStores ?? [];
-    const threadStore = stores.find((s) => {
+    const workspaceStore = stores.find((s) => {
       const state = (s as { getState: () => Record<string, unknown> }).getState();
-      return "loadMessages" in state && "runningThreadIds" in state;
+      return "activeThreadId" in state && "threads" in state && "setActiveThread" in state;
     });
-    if (!threadStore) throw new Error("thread store missing");
-    await (
-      threadStore as {
-        getState: () => { loadMessages: (threadId: string) => Promise<void> };
+    if (!workspaceStore) throw new Error("workspace store missing");
+    (
+      workspaceStore as {
+        getState: () => { setActiveThread: (threadId: string) => void };
       }
-    ).getState().loadMessages(threadId);
+    ).getState().setActiveThread(threadId);
   }, THREAD.id);
+
+  await waitForActiveThreadLoaded(page);
 }
 
 async function emitUpdatePlan(page: Page, task: string): Promise<void> {
@@ -207,7 +213,7 @@ test.describe("Task bubble hydration", () => {
       { timeout: 30_000 },
     );
     await seedTaskBubbleThread(page);
-    await loadMessages(page);
+    await selectThreadAndWaitForHydration(page);
     await expandTaskBubble(page, /0\/1 steps/i);
     await expect(page.getByText("Old stale task")).toBeVisible();
 
@@ -219,7 +225,7 @@ test.describe("Task bubble hydration", () => {
       },
     ];
     await setRunningAndResetHydration(page, false);
-    await loadMessages(page);
+    await selectThreadAndWaitForHydration(page);
 
     await expandTaskBubble(page, /1\/1 steps/i);
     await expect(page.getByText("New persisted task from hydration")).toBeVisible();
@@ -237,7 +243,7 @@ test.describe("Task bubble hydration", () => {
       },
     ];
     await setRunningAndResetHydration(page, true);
-    await loadMessages(page);
+    await selectThreadAndWaitForHydration(page);
 
     await expect(page.getByText("Live running task stays visible")).toBeVisible();
     await expect(page.getByText("Persisted stale while running")).toHaveCount(0);

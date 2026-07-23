@@ -217,7 +217,7 @@ async function setupWorkspaceState(
   );
 }
 
-/** Inject messages into the active thread's record after loadMessages completes. */
+/** Inject messages into the active thread's record after residency hydration completes. */
 async function injectMessages(
   page: Page,
   messages: ReturnType<typeof makeMessage>[],
@@ -273,7 +273,8 @@ test.describe("Architecture: Workspace management", () => {
 
     const hasThreadStore = await findStore(page, [
       "records",
-      "loadMessages",
+      "currentThreadId",
+      "runningThreadIds",
       "handleAgentEvent",
     ]);
     expect(hasThreadStore).toBe(true);
