@@ -24,10 +24,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const measureSpy = vi.fn();
 const scrollToIndexSpy = vi.fn();
 const loadOlderMessagesSpy = vi.fn();
+const loadNarrativeForMessageSpy = vi.fn();
 let totalSizeValue = 0;
+let virtualizerOptions: { count: number } | null = null;
 
 const mockVirtualizer = {
-  getVirtualItems: () => [],
+  getVirtualItems: () => Array.from(
+    { length: virtualizerOptions?.count ?? 0 },
+    (_, index) => ({ index, key: String(index), start: index * 80 }),
+  ),
   getTotalSize: () => totalSizeValue,
   measure: measureSpy,
   scrollToIndex: scrollToIndexSpy,
@@ -36,7 +41,10 @@ const mockVirtualizer = {
 };
 
 vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: vi.fn(() => mockVirtualizer),
+  useVirtualizer: vi.fn((options: { count: number }) => {
+    virtualizerOptions = options;
+    return mockVirtualizer;
+  }),
   defaultRangeExtractor: ({ startIndex, endIndex, overscan, count }: {
     startIndex: number;
     endIndex: number;
@@ -51,8 +59,16 @@ vi.mock("@tanstack/react-virtual", () => ({
 // Minimal store mocks; control `loading` and `activeThreadId` between renders.
 let loadingValue = false;
 let activeThreadIdValue = "thread-A";
-let messagesValue: { id: string; sequence: number; thread_id?: string }[] = [{ id: "m1", sequence: 1 }];
+let currentThreadIdValue = "thread-A";
+let messagesValue: {
+  id: string;
+  sequence: number;
+  thread_id?: string;
+  role?: "user" | "assistant";
+  content?: string;
+}[] = [{ id: "m1", sequence: 1 }];
 let hasMoreMessagesValue = false;
+let runningThreadIdsValue = new Set<string>();
 
 function buildMockRecord() {
   return {
@@ -77,12 +93,13 @@ function buildMockRecord() {
 
 vi.mock("@/stores/threadStore", () => ({
   useThreadStore: vi.fn((selector: (s: unknown) => unknown) => {
-    const records = new Map([[activeThreadIdValue, buildMockRecord()]]);
+    const records = new Map([[currentThreadIdValue, buildMockRecord()]]);
     return selector({
       records,
-      currentThreadId: activeThreadIdValue,
-      runningThreadIds: new Set(),
+      currentThreadId: currentThreadIdValue,
+      runningThreadIds: runningThreadIdsValue,
       loadOlderMessages: loadOlderMessagesSpy,
+      loadNarrativeForMessage: loadNarrativeForMessageSpy,
     });
   }),
 }));
@@ -100,14 +117,19 @@ vi.mock("@/stores/workspaceStore", () => ({
 }));
 
 // Stub heavy children.
-vi.mock("../MessageBubble", () => ({ MessageBubble: () => null }));
+vi.mock("../MessageBubble", () => ({
+  MessageBubble: ({ message }: { message: { content: string } }) => <div>{message.content}</div>,
+}));
 vi.mock("../ToolCallCard", () => ({ ToolCallCard: () => null }));
 vi.mock("../StreamingIndicator", () => ({ StreamingIndicator: () => null }));
 vi.mock("../StreamingCard", () => ({ StreamingCard: () => null }));
 vi.mock("../TurnChangeSummary", () => ({ TurnChangeSummary: () => null }));
 vi.mock("../PermissionRequestCard", () => ({ PermissionRequestCard: () => null }));
 vi.mock("../HookActivitySection", () => ({ HookActivitySection: () => null }));
-vi.mock("../narrative", () => ({ NarrativeFlow: () => null }));
+vi.mock("../narrative", () => ({
+  NarrativeFlow: ({ isAgentRunning }: { isAgentRunning: boolean }) =>
+    isAgentRunning ? <div>Thinking</div> : null,
+}));
 
 import { MessageList, preservePrependedVirtualRange } from "../MessageList";
 import {
@@ -122,8 +144,11 @@ beforeEach(() => {
   measureSpy.mockClear();
   scrollToIndexSpy.mockClear();
   loadOlderMessagesSpy.mockClear();
+  loadNarrativeForMessageSpy.mockClear();
   totalSizeValue = 0;
   hasMoreMessagesValue = false;
+  currentThreadIdValue = "thread-A";
+  runningThreadIdsValue = new Set();
   clearScrollMemory();
 });
 
@@ -132,6 +157,35 @@ afterEach(() => {
 });
 
 describe("MessageList thread switch", () => {
+  it("does not pair a cached transcript with another thread's running narrative", () => {
+    activeThreadIdValue = "thread-B";
+    currentThreadIdValue = "thread-A";
+    runningThreadIdsValue = new Set(["thread-B"]);
+    messagesValue = [{
+      id: "a-final",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Thread A final response",
+    }];
+    const { queryByText, rerender } = render(<MessageList />);
+
+    expect(queryByText("Thread A final response")).not.toBeNull();
+    expect(queryByText("Thinking")).toBeNull();
+
+    currentThreadIdValue = "thread-B";
+    messagesValue = [{
+      id: "b-user",
+      sequence: 1,
+      thread_id: "thread-B",
+      role: "user",
+      content: "Thread B request",
+    }];
+    act(() => rerender(<MessageList />));
+
+    expect(queryByText("Thinking")).not.toBeNull();
+  });
+
   it("records history posture before navigation can replace the active transcript", () => {
     loadingValue = false;
     activeThreadIdValue = "thread-A";

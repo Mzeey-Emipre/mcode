@@ -318,8 +318,9 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   const messages = useActiveThreadRecord((r) => r.messages);
   const loading = useActiveThreadRecord((r) => r.loading);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const currentThreadId = useThreadStore((s) => s.currentThreadId);
   const isAgentRunning = useThreadStore((s) =>
-    activeThreadId ? s.runningThreadIds.has(activeThreadId) : false,
+    currentThreadId ? s.runningThreadIds.has(currentThreadId) : false,
   );
   const agentStartTime = useActiveThreadRecord((r) => r.agentStartTime);
   const streamingText = useActiveThreadRecord((r) => r.streaming);
@@ -345,7 +346,6 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   );
   const isLoadingMore = useActiveThreadRecord((r) => r.isLoadingMore);
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
-  const currentThreadId = activeThreadId;
   const renderedThreadId = messages[0]?.thread_id ?? null;
   const permissions = useActiveThreadRecord((r) => r.permissions);
   const hooks = useActiveThreadRecord((r) => r.hooks);
