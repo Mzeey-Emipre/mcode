@@ -4,7 +4,7 @@ import {
   hasTestThreadRecord,
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useDiffStore } from "@/stores/diffStore";
@@ -380,28 +380,6 @@ describe("Workspace Behavior", () => {
   });
 
   describe("selected conversation reconciliation after removal", () => {
-    let originalLoadMessages: ReturnType<typeof useThreadStore.getState>["loadMessages"];
-    let originalDeactivateConversation: ReturnType<typeof useThreadStore.getState>["deactivateConversation"];
-
-    beforeEach(() => {
-      originalLoadMessages = useThreadStore.getState().loadMessages;
-      originalDeactivateConversation = useThreadStore.getState().deactivateConversation;
-    });
-
-    afterEach(() => {
-      useThreadStore.setState({
-        loadMessages: originalLoadMessages,
-        deactivateConversation: originalDeactivateConversation,
-      });
-    });
-
-    function spyOnConversationResidency() {
-      const loadMessages = vi.fn().mockResolvedValue(undefined);
-      const deactivateConversation = vi.fn();
-      useThreadStore.setState({ loadMessages, deactivateConversation });
-      return { loadMessages, deactivateConversation };
-    }
-
     type RemovalPath = "workspace" | "preparing" | "client-only" | "persisted";
 
     async function removeThread(path: RemovalPath, threadId: string, workspaceId: string): Promise<void> {
@@ -428,8 +406,6 @@ describe("Workspace Behavior", () => {
           ...createMockThread({ id: "thread-removed", workspace_id: path === "workspace" ? removedWorkspace.id : activeWorkspace.id }),
           ...(path === "preparing" || path === "client-only" ? { clientPreparing: true } : {}),
         };
-        const { loadMessages, deactivateConversation } = spyOnConversationResidency();
-
         useWorkspaceStore.setState({
           workspaces: path === "workspace" ? [activeWorkspace, removedWorkspace] : [activeWorkspace],
           activeWorkspaceId: activeWorkspace.id,
@@ -439,8 +415,7 @@ describe("Workspace Behavior", () => {
 
         await removeThread(path, path === "workspace" ? activeThread.id : removedThread.id, removedWorkspace.id);
 
-        expect(loadMessages).not.toHaveBeenCalled();
-        expect(deactivateConversation).not.toHaveBeenCalled();
+        expect(useWorkspaceStore.getState().activeThreadId).toBe(activeThread.id);
       },
     );
 
@@ -452,8 +427,6 @@ describe("Workspace Behavior", () => {
           ...createMockThread({ id: "thread-selected", workspace_id: workspace.id }),
           ...(path === "preparing" || path === "client-only" ? { clientPreparing: true } : {}),
         };
-        const { deactivateConversation } = spyOnConversationResidency();
-
         useWorkspaceStore.setState({
           workspaces: [workspace],
           activeWorkspaceId: workspace.id,
@@ -463,7 +436,6 @@ describe("Workspace Behavior", () => {
 
         await removeThread(path, selectedThread.id, workspace.id);
 
-        expect(deactivateConversation).toHaveBeenCalledOnce();
         expect(useWorkspaceStore.getState().activeThreadId).toBeNull();
       },
     );

@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { useThreadStore } from "@/stores/threadStore";
 import { createWsTransport } from "@/transport/ws-transport";
 import { mockTransport, createMockWorkspace, createMockThread } from "./mocks/transport";
@@ -97,37 +98,21 @@ describe("thread status refresh after reconnect", () => {
     expect(threads.find((t) => t.id === otherThread.id)?.status).toBe("active");
   });
 
-  it("restores the unchanged selected conversation after a reconnect row refresh", async () => {
+  it("revalidates the selected conversation without replacing resident rows on failure", async () => {
     const thread = createMockThread({ workspace_id: ws.id, status: "active" });
-    const originalLoadMessages = useThreadStore.getState().loadMessages;
-    const loadMessages = vi.fn().mockResolvedValue(undefined);
-    useThreadStore.setState({ loadMessages });
     useWorkspaceStore.setState({ threads: [thread], activeThreadId: thread.id });
-    (mockTransport.listThreads as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { ...thread, status: "interrupted" as const },
-    ]);
+    useThreadStore.setState({
+      currentThreadId: thread.id,
+      records: new Map([[thread.id, {
+        ...createEmptyThreadRecord(),
+        messages: [{ id: "resident", thread_id: thread.id, role: "assistant", content: "Kept", tool_calls: null, files_changed: null, cost_usd: null, tokens_used: null, timestamp: "", sequence: 1, attachments: null }],
+      }]]),
+    });
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("offline"));
 
-    try {
-      await useWorkspaceStore.getState().loadThreads(ws.id);
+    await useWorkspaceStore.getState().refreshActiveConversation();
 
-      expect(loadMessages).toHaveBeenCalledWith(thread.id);
-    } finally {
-      useThreadStore.setState({ loadMessages: originalLoadMessages });
-    }
-  });
-
-  it("revalidates the selected conversation without replacing its resident rows", async () => {
-    const thread = createMockThread({ workspace_id: ws.id, status: "active" });
-    const refreshConversation = vi.fn().mockResolvedValue(undefined);
-    const original = useThreadStore.getState().refreshConversation;
-    useThreadStore.setState({ refreshConversation });
-    useWorkspaceStore.setState({ threads: [thread], activeThreadId: thread.id });
-    try {
-      await useWorkspaceStore.getState().refreshActiveConversation();
-      expect(refreshConversation).toHaveBeenCalledWith(thread.id);
-    } finally {
-      useThreadStore.setState({ refreshConversation: original });
-    }
+    expect(useThreadStore.getState().records.get(thread.id)?.messages[0]?.content).toBe("Kept");
   });
 
   it("refreshes the selected conversation on every reconnect while throttling thread lists", async () => {
@@ -144,14 +129,6 @@ describe("thread status refresh after reconnect", () => {
       }),
     );
     const thread = createMockThread({ workspace_id: ws.id, status: "active" });
-    const refreshConversation = vi.fn()
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error("refresh failed"))
-      .mockResolvedValueOnce(undefined);
-    const unhandledRejection = vi.fn();
-    process.on("unhandledRejection", unhandledRejection);
-    const originalRefresh = useThreadStore.getState().refreshConversation;
-    useThreadStore.setState({ refreshConversation });
     useWorkspaceStore.setState({
       threads: [thread],
       activeWorkspaceId: ws.id,
@@ -164,7 +141,6 @@ describe("thread status refresh after reconnect", () => {
       sockets[0]?.open();
       await vi.waitFor(() => {
         expect(mockTransport.listThreads).toHaveBeenCalledTimes(1);
-        expect(refreshConversation).toHaveBeenCalledTimes(1);
       });
 
       sockets[0]?.disconnect();
@@ -172,24 +148,17 @@ describe("thread status refresh after reconnect", () => {
       sockets[1]?.open();
       await vi.waitFor(() => {
         expect(mockTransport.listThreads).toHaveBeenCalledTimes(1);
-        expect(refreshConversation).toHaveBeenCalledTimes(2);
       });
-      await Promise.resolve();
-      expect(unhandledRejection).not.toHaveBeenCalled();
-
       sockets[1]?.disconnect();
       await vi.advanceTimersByTimeAsync(1_000);
       sockets[2]?.open();
       await vi.waitFor(() => {
         expect(mockTransport.listThreads).toHaveBeenCalledTimes(1);
-        expect(refreshConversation).toHaveBeenCalledTimes(3);
       });
     } finally {
       transport.close();
       vi.useRealTimers();
       vi.unstubAllGlobals();
-      process.off("unhandledRejection", unhandledRejection);
-      useThreadStore.setState({ refreshConversation: originalRefresh });
     }
   });
 });

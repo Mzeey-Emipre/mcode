@@ -203,7 +203,6 @@ function defaultThreadState(overrides: Partial<{
     currentThreadId: overrides.currentThreadId ?? "thread-1",
     runningThreadIds: overrides.runningThreadIds ?? new Set<string>(),
     activeRecord: overrides.activeRecord ?? createEmptyThreadRecord(),
-    loadMessages: vi.fn(),
     clearMessages: vi.fn(),
     deactivateConversation: vi.fn(),
     setForkMode: vi.fn(),

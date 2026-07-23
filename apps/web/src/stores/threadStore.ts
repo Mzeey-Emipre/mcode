@@ -89,8 +89,6 @@ interface ThreadState {
   clearToolCallRecordCache: () => void;
 
   // Message actions
-  loadMessages: (threadId: string) => Promise<void>;
-  refreshConversation: (threadId: string) => Promise<void>;
   loadOlderMessages: (threadId: string) => Promise<void>;
   sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle, goalObjective?: string, orchestrationMode?: OrchestrationMode) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
@@ -750,10 +748,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     set((s) => ({ records: patchThreadRecord(s.records, threadId, patch) }));
   };
 
-  const cacheInactiveRecord = (threadId: string): void => {
-    conversationResidency.retainInactiveConversation(threadId);
-  };
-
   const applyGoalLookup = (threadId: string, lookup: GoalLookupResult): void => {
     const current = getRec(threadId);
     const goal = resolveGoalLookupGoal(lookup, current.goal);
@@ -905,7 +899,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   });
   registerThreadHydrator(threadHydrator);
   const conversationResidency = createConversationResidency({
-    restoreConversation: (threadId) => get().loadMessages(threadId),
+    restoreConversation: (threadId) => threadHydrator.hydrate(threadId, "active"),
     refreshConversation: (threadId) => threadHydrator.hydrate(threadId, "active", { force: true }),
     deactivateConversation: () => threadHydrator.deactivate(),
     retainInactiveConversation: (threadId) => threadHydrator.retainInactiveConversation(threadId),
@@ -938,19 +932,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   /** Evict the entire tool call record cache. Records are re-fetched on next expand. */
   clearToolCallRecordCache: () => {
     get().toolCallRecordCache.clear();
-  },
-
-  /**
-   * Fetch persisted messages for a thread from the database.
-   * Delegates to {@link ThreadHydrator} which owns cache lookup, RPC fetch,
-   * auxiliary fanout, and narrative prefetch.
-   */
-  loadMessages: async (threadId) => {
-    await threadHydrator.hydrate(threadId, "active");
-  },
-
-  refreshConversation: async (threadId) => {
-    await threadHydrator.hydrate(threadId, "active", { force: true });
   },
 
   /**
@@ -2025,7 +2006,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             }),
           };
         });
-        cacheInactiveRecord(threadId);
+        conversationResidency.retainInactiveConversation(threadId);
       }
       return;
     }
@@ -2681,7 +2662,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           };
         });
       }
-      cacheInactiveRecord(threadId);
+      conversationResidency.retainInactiveConversation(threadId);
 
       // Update context tracker. Prefer the SDK-reported contextWindow (authoritative)
       // over the local registry. The DB is updated server-side; contextByThread is

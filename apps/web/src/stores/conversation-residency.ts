@@ -7,21 +7,21 @@ export interface ConversationResidencyThread {
   clientError?: string | null;
 }
 
-/** Collaborators used to restore or deactivate the selected conversation layer. */
+/** Dependency contract for conversation residency behavior. */
 export interface ConversationResidencyDeps {
   restoreConversation: (threadId: string) => Promise<void>;
-  refreshConversation?: (threadId: string) => Promise<void>;
+  refreshConversation: (threadId: string) => Promise<void>;
   deactivateConversation: () => void;
-  retainInactiveConversation?: (threadId: string) => void;
-  invalidateConversation?: (threadId: string) => void;
-  synchronizeConversation?: (threadId: string) => void;
-  mergeCachedFileChanges?: (threadId: string, filesChanged: Record<string, string[]>) => void;
-  takePrefetchedHistoryPage?: (threadId: string, before: number) => ConversationPage | undefined;
-  prefetchConversation?: (threadId: string) => Promise<void>;
+  retainInactiveConversation: (threadId: string) => void;
+  invalidateConversation: (threadId: string) => void;
+  synchronizeConversation: (threadId: string) => void;
+  mergeCachedFileChanges: (threadId: string, filesChanged: Record<string, string[]>) => void;
+  takePrefetchedHistoryPage: (threadId: string, before: number) => ConversationPage | undefined;
+  prefetchConversation: (threadId: string) => Promise<void>;
 }
 
 /**
- * Owns selected-conversation activation and post-refresh restoration.
+ * Owns selected-conversation activation, revalidation, and cache routing.
  * Transport, cache freshness, and live-record precedence stay in ThreadHydrator.
  */
 export class ConversationResidency {
@@ -37,49 +37,41 @@ export class ConversationResidency {
     return this.deps.restoreConversation(thread.id);
   }
 
-  /** Reconcile an unchanged selection after its workspace rows refresh. */
-  restoreAfterThreadRefresh(
-    selectedThreadId: string | null,
-    threads: readonly ConversationResidencyThread[],
-  ): Promise<void> {
-    return this.activate(selectedThreadId, threads);
-  }
-
   /** Revalidate the selected transcript without clearing its resident rendering. */
   refresh(selectedThreadId: string | null, threads: readonly ConversationResidencyThread[]): Promise<void> {
     const thread = selectedThreadId ? threads.find((candidate) => candidate.id === selectedThreadId) : undefined;
     if (!thread || thread.clientPreparing || thread.clientError) return Promise.resolve();
-    return this.deps.refreshConversation?.(thread.id) ?? this.deps.restoreConversation(thread.id);
+    return this.deps.refreshConversation(thread.id);
   }
 
   /** Retain a completed background conversation through the bounded cache. */
   retainInactiveConversation(threadId: string): void {
-    this.deps.retainInactiveConversation?.(threadId);
+    this.deps.retainInactiveConversation(threadId);
   }
 
   /** Invalidate stale conversation cache state before an authoritative mutation. */
   invalidateConversation(threadId: string): void {
-    this.deps.invalidateConversation?.(threadId);
+    this.deps.invalidateConversation(threadId);
   }
 
   /** Commit a pagination page after its state guards have accepted it. */
   commitPagination(threadId: string): void {
-    this.deps.synchronizeConversation?.(threadId);
+    this.deps.synchronizeConversation(threadId);
   }
 
   /** Merge delayed pagination file metadata only into the current cache entry. */
   mergePaginationFileChanges(threadId: string, filesChanged: Record<string, string[]>): void {
-    this.deps.mergeCachedFileChanges?.(threadId, filesChanged);
+    this.deps.mergeCachedFileChanges(threadId, filesChanged);
   }
 
   /** Consume the matching warm history page through the cache authority. */
   takePrefetchedHistoryPage(threadId: string, before: number): ConversationPage | undefined {
-    return this.deps.takePrefetchedHistoryPage?.(threadId, before);
+    return this.deps.takePrefetchedHistoryPage(threadId, before);
   }
 
   /** Warm a non-selected conversation without mutating the live selection. */
   prefetch(threadId: string): Promise<void> {
-    return this.deps.prefetchConversation?.(threadId) ?? Promise.resolve();
+    return this.deps.prefetchConversation(threadId);
   }
 }
 

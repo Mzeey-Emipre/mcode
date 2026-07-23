@@ -146,7 +146,7 @@ apps/web/src/
     types.ts                  McodeTransport interface, shared frontend types
   app/                        Routes and providers
   components/                 UI components (sidebar, chat, terminal, diff, pull requests)
-  stores/                     Zustand state management, including bounded PR stores
+  stores/                     Zustand state management, including Thread conversation residency
   lib/                        Utilities and types
 ```
 
@@ -691,6 +691,9 @@ The WebSocket transport includes automatic reconnection:
 - All pending RPC calls are rejected with "WebSocket disconnected" on close
 - Push channel listeners persist across reconnects (they live on the `PushEmitter`, not the WebSocket)
 - Connection readiness is tracked with a resettable Promise that gates `rpc()` calls
+- After a reconnect refreshes the active workspace's thread list, the registered
+  Thread conversation residency forces one selected-conversation revalidation.
+  A failed refresh keeps its resident rows visible.
 
 ### 10.4 Push Event Listeners
 
@@ -704,6 +707,13 @@ The WebSocket transport includes automatic reconnection:
 | `thread.status` | Updates thread status in `workspaceStore` |
 | `files.changed` | Clears the file autocomplete cache for the workspace |
 | `skills.changed` | Reserved for future skill cache invalidation |
+
+The renderer has one conversation residency authority, registered by
+`threadStore`. `workspaceStore` owns sidebar selection and rows only. The
+residency owns selected activation, forced refresh, bounded inactive retention,
+pagination cache synchronization, and prefetch routing. `threadStore` projects
+validated AgentEvents into resident Thread records. The server remains the
+durability authority for messages and persisted narrative metadata.
 
 ## 11. Session Lifecycle
 

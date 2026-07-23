@@ -209,6 +209,14 @@ A single chat conversation between a user and an AI agent. Threads belong to
 workspaces and run against a provider. Distinct from a git branch even though
 threads can be associated with a worktree.
 
+### Thread conversation residency
+The renderer's single client authority for a selected Thread's conversation.
+It activates and revalidates the selected transcript, retains inactive
+transcripts within a bounded cache, routes pagination and prefetch work, and
+routes refresh work. `threadStore` projects validated AgentEvents into resident
+Thread records. Server messages and narrative metadata remain durable data;
+live Turn state remains client memory.
+
 ### Fork (verb), forked thread (noun)
 The act of branching a conversation from a specific message in a parent
 thread, creating a new child thread that picks up from that anchor point.

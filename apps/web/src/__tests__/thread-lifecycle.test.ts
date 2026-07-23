@@ -1,4 +1,5 @@
 import {
+  activateTestConversation,
   resetThreadStoreForTests,
   getTestActiveMessages,
   getTestThreadMessages,
@@ -273,7 +274,7 @@ describe("Thread Lifecycle Behavior", () => {
       mockTransport.getMessages as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce({ messages: msgs, hasMore: false });
 
-    await useThreadStore.getState().loadMessages(threadId);
+await activateTestConversation(threadId);
 
     const state = useThreadStore.getState();
     expect(state.currentThreadId).toBe(threadId);
@@ -287,7 +288,7 @@ describe("Thread Lifecycle Behavior", () => {
       mockTransport.getMessages as ReturnType<typeof vi.fn>
     ).mockRejectedValueOnce(new Error("db connection failed"));
 
-    await useThreadStore.getState().loadMessages(threadId);
+    await activateTestConversation(threadId);
 
     expect(getTestThreadError("thread-1")).toContain("db connection failed");
     expect(readActiveThreadField((r) => r.loading) ?? false).toBe(false);

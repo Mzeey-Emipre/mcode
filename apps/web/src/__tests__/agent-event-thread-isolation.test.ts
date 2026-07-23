@@ -1,5 +1,6 @@
 import type { AgentEvent } from "@mcode/contracts";
 import {
+  activateTestConversation,
   resetThreadStoreForTests,
   getTestActiveMessages,
   getTestActiveLatestTurnWithChanges,
@@ -110,7 +111,7 @@ describe("Agent event thread isolation", () => {
         hasMore: false,
       });
 
-      await useThreadStore.getState().loadMessages(THREAD_A);
+await activateTestConversation(THREAD_A);
 
       expect(getTestThreadError(THREAD_A)).toBeUndefined();
       // Thread B's error is preserved

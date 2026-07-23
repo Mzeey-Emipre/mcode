@@ -160,7 +160,7 @@ export async function mockWebSocketServer(
       // Default responses
       let result: unknown;
       // `message.list` matches the generic *.list branch below but must return a
-      // paginated shape; returning [] leaves loadMessages in an error state.
+      // paginated shape; returning [] leaves conversation hydration in an error state.
       if (method === "message.list") {
         result = { messages: [], hasMore: false, answeredPlanMessageIds: [] };
       } else if (method === "conversation.page") {
@@ -324,10 +324,9 @@ type StoreHandle = {
 /** Identifying keys for the workspace store in the `__mcodeStores` registry. */
 const WORKSPACE_STORE_KEYS = ["activeThreadId", "threads", "workspaces"] as const;
 /**
- * Identifying keys for the thread store. `loadMessages` is unique to the thread
- * store, and `records` is its per-thread state Map; together they single it out.
+ * Identifying keys for the thread store's resident records and active hydration state.
  */
-const THREAD_STORE_KEYS = ["records", "loadMessages"] as const;
+const THREAD_STORE_KEYS = ["records", "currentThreadId", "runningThreadIds"] as const;
 
 /**
  * Seed one workspace and thread, then select it through the production action.
@@ -362,7 +361,7 @@ export async function activateThread(
 }
 
 /**
- * Wait until the app's own `loadMessages` has settled for the active thread:
+ * Wait until the active thread's residency hydration has settled:
  * the thread store's `currentThreadId` matches the workspace store's
  * `activeThreadId` and that thread's record reports `loading: false`. Because
  * `currentThreadId` is unset until hydration starts, this also avoids the
