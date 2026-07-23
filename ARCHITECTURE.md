@@ -711,9 +711,9 @@ The WebSocket transport includes automatic reconnection:
 The renderer has one conversation residency authority, registered by
 `threadStore`. `workspaceStore` owns sidebar selection and rows only. The
 residency owns selected activation, forced refresh, bounded inactive retention,
-pagination cache synchronization, prefetch routing, and projection of validated
-AgentEvents. The server remains the durability authority for messages and
-persisted narrative metadata.
+pagination cache synchronization, and prefetch routing. `threadStore` projects
+validated AgentEvents into resident Thread records. The server remains the
+durability authority for messages and persisted narrative metadata.
 
 ## 11. Session Lifecycle
 

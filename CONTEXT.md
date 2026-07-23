@@ -213,8 +213,9 @@ threads can be associated with a worktree.
 The renderer's single client authority for a selected Thread's conversation.
 It activates and revalidates the selected transcript, retains inactive
 transcripts within a bounded cache, routes pagination and prefetch work, and
-projects validated AgentEvents into the resident Thread. Server messages and
-narrative metadata remain durable data; live Turn state remains client memory.
+routes refresh work. `threadStore` projects validated AgentEvents into resident
+Thread records. Server messages and narrative metadata remain durable data;
+live Turn state remains client memory.
 
 ### Fork (verb), forked thread (noun)
 The act of branching a conversation from a specific message in a parent

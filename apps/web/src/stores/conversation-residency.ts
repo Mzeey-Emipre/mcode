@@ -7,7 +7,7 @@ export interface ConversationResidencyThread {
   clientError?: string | null;
 }
 
-/** Collaborators used to restore or deactivate the selected conversation layer. */
+/** Dependency contract for conversation residency behavior. */
 export interface ConversationResidencyDeps {
   restoreConversation: (threadId: string) => Promise<void>;
   refreshConversation: (threadId: string) => Promise<void>;
