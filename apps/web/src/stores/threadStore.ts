@@ -879,7 +879,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
   };
 
-  const messageSequenceFor = (threadId: string) => getRec(threadId).messages.length + 1;
+  const messageSequenceFor = (threadId: string) =>
+    getRec(threadId).messages.reduce(
+      (latestSequence, message) => Math.max(latestSequence, message.sequence),
+      0,
+    ) + 1;
 
   const scheduleTextDeltaFlush = () => {
     if (textDeltaFlushRaf != null) return;

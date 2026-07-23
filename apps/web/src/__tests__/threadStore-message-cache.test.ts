@@ -80,6 +80,42 @@ describe("loadMessages cache integration", () => {
     expect(useThreadStore.getState().currentThreadId).toBe("t1");
   });
 
+  it("appends an optimistic user message after a restored high-sequence cache tail", async () => {
+    const cachedTail = [
+      createMockMessage({ id: "m99", thread_id: "t1", sequence: 99 }),
+      createMockMessage({ id: "m100", thread_id: "t1", sequence: 100 }),
+    ];
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: cachedTail,
+      hasMore: true,
+      narrativeByMessage: {},
+    });
+
+    await useThreadStore.getState().loadMessages("t1");
+    useThreadStore.setState((s) => ({
+      currentThreadId: "t2",
+      records: patchThreadRecord(s.records, "t2", { messages: [] }),
+    }));
+    await useThreadStore.getState().loadMessages("t1");
+
+    await useThreadStore.getState().sendMessage("t1", "new user message");
+
+    const messages = getTestActiveMessages();
+    expect(messages.map((message) => message.sequence)).toEqual([99, 100, 101]);
+    expect(messages.at(-1)?.content).toBe("new user message");
+  });
+
+  it("starts optimistic messages at sequence one for an empty record", async () => {
+    useThreadStore.setState((s) => ({
+      currentThreadId: "t1",
+      records: patchThreadRecord(s.records, "t1", { messages: [] }),
+    }));
+
+    await useThreadStore.getState().sendMessage("t1", "first user message");
+
+    expect(getTestActiveMessages().at(-1)?.sequence).toBe(1);
+  });
+
   it("does NOT clear toolCallRecordCache on cache hit", async () => {
     await useThreadStore.getState().loadMessages("t1");
     useThreadStore.getState().cacheToolCallRecords("t1:m1", [
