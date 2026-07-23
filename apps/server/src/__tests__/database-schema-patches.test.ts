@@ -85,6 +85,26 @@ describe("applySchemaPatches", () => {
     expect(() => applySchemaPatches(db)).not.toThrow();
   });
 
+  it("adds nullable provider_agent_key without changing existing tool-call rows", () => {
+    db.prepare(
+      "CREATE TABLE tool_call_records (id TEXT PRIMARY KEY, output_summary TEXT NOT NULL)",
+    ).run();
+    db.prepare(
+      "INSERT INTO tool_call_records (id, output_summary) VALUES (?, ?)",
+    ).run("agent-1", "Existing result");
+
+    applySchemaPatches(db);
+
+    expect(columnNames(db, "tool_call_records")).toContain("provider_agent_key");
+    expect(db.prepare(
+      "SELECT id, output_summary, provider_agent_key FROM tool_call_records WHERE id = ?",
+    ).get("agent-1")).toEqual({
+      id: "agent-1",
+      output_summary: "Existing result",
+      provider_agent_key: null,
+    });
+  });
+
   it("swallows duplicate column name error to survive a concurrent startup race", () => {
     // Simulate: PRAGMA check passed but another process already added the column
     db.prepare(

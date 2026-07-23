@@ -182,6 +182,7 @@ export const toolCallRecords = sqliteTable(
     parentToolCallId: text("parent_tool_call_id"),
     toolName: text("tool_name").notNull(),
     displayName: text("display_name"),
+    providerAgentKey: text("provider_agent_key"),
     inputSummary: text("input_summary").notNull().default(""),
     outputSummary: text("output_summary").notNull().default(""),
     outputTruncated: integer("output_truncated").notNull().default(0),

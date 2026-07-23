@@ -5,7 +5,12 @@ import {
 } from "@/components/chat/narrative/subagent-lifecycle";
 import { extractToolInputDetail } from "@/components/chat/narrative/tool-detail";
 import { TOOL_LABELS, resolveToolName } from "@/components/chat/tool-renderers/constants";
-import { resolveSubagentDisplayName, type FileEffect, type TurnFileEffectSummary } from "@mcode/contracts";
+import {
+  resolveProviderAgentKey,
+  resolveSubagentDisplayName,
+  type FileEffect,
+  type TurnFileEffectSummary,
+} from "@mcode/contracts";
 import type { ToolCall, ToolCallRecord } from "@/transport/types";
 
 /** Maximum live graph nodes inspected beneath a single top-level subagent. */
@@ -48,6 +53,10 @@ export type FinishedSubagentStatus = "completed" | "failed" | "cancelled";
 interface SubagentRow {
   /** Stable Agent tool-call id. */
   readonly id: string;
+  /** Every dispatch call represented by this logical roster row. */
+  readonly memberCallIds: readonly string[];
+  /** Explicit provider identity used only for safe logical grouping. */
+  readonly providerAgentKey?: string;
   /** Best surviving display identity for the delegated agent. */
   readonly identity: string;
   /** Whether the identity came from explicit provider or persisted metadata. */
@@ -272,6 +281,7 @@ export function projectSubagents(
 
     const startedAt = agent.startedAt ?? now;
     const status = liveStatus(agent);
+    const providerAgentKey = resolveProviderAgentKey(agent.toolInput);
     const latestActivity = latestCall.id === agent.id
       ? status === "running"
         ? "Working"
@@ -286,6 +296,8 @@ export function projectSubagents(
         index,
         row: {
           id: agent.id,
+          memberCallIds: [agent.id],
+          providerAgentKey,
           ...subagentIdentity(agent),
           task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
           activity: latestActivity,
@@ -302,6 +314,8 @@ export function projectSubagents(
       index,
       row: {
         id: agent.id,
+        memberCallIds: [agent.id],
+        providerAgentKey,
         ...subagentIdentity(agent),
         task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
         activity: terminalLiveActivity(agent, latestActivity),
@@ -360,6 +374,8 @@ export function projectSubagents(
       }
       const base = {
         id: record.id,
+        memberCallIds: [record.id],
+        providerAgentKey: nonEmptyString(record.provider_agent_key),
         ...hydratedIdentity(record),
         task,
         activity: boundedDisplayText(nonEmptyString(record.output_summary) ?? task, MAX_ACTIVITY_LENGTH),
@@ -385,17 +401,80 @@ export function projectSubagents(
     persistedIndex += batch?.length ?? 0;
   }
 
-  const active: Array<LiveSubagentRow & { index: number }> = [];
-  const finished: Array<FinishedSubagentRow & { index: number }> = [];
-  for (const { row, index } of liveRows.values()) {
-    if ("status" in row) finished.push({ ...row, index });
-    else active.push({ ...row, index });
+  const active: Array<LiveSubagentRow & { index: number; orderAt: number }> = [];
+  const finished: Array<FinishedSubagentRow & { index: number; orderAt: number }> = [];
+  const logicalGroups = new Map<string, Array<{ row: LiveSubagentRow | FinishedSubagentRow; index: number }>>();
+  for (const member of liveRows.values()) {
+    const groupKey = member.row.providerAgentKey
+      ? `provider:${member.row.providerAgentKey}`
+      : `call:${member.row.id}`;
+    const group = logicalGroups.get(groupKey) ?? [];
+    group.push(member);
+    logicalGroups.set(groupKey, group);
   }
 
-  active.sort((left, right) => right.activityAt - left.activityAt || left.index - right.index || left.id.localeCompare(right.id));
-  finished.sort((left, right) => right.completedAt - left.completedAt || left.index - right.index || left.id.localeCompare(right.id));
+  for (const members of logicalGroups.values()) {
+    const representative = [...members].sort((left, right) =>
+      right.index - left.index
+      || right.row.id.localeCompare(left.row.id)
+    )[0]!;
+    const isActive = members.some(({ row }) => !("status" in row));
+    const orderAt = Math.max(...members.map(({ row }) =>
+      "completedAt" in row ? row.completedAt : row.activityAt
+    ));
+    const allSubtreeIds = [...new Set(members.flatMap(({ row }) => row.detail.subtreeIds))];
+    const subtreeIds = allSubtreeIds.slice(0, MAX_SUBAGENT_GRAPH_NODES);
+    const subtreeIdSet = new Set(allSubtreeIds);
+    const activity = members.flatMap(({ row }) => row.detail.activity);
+    const transcript = members.flatMap(({ row }) => row.detail.transcript);
+    const fileEffects = new Map<string, FileEffect>();
+    const trustworthyEffects = fileEffectSummary?.effects.filter((effect) =>
+      effect.toolCallIds.length > 0 && effect.toolCallIds.every((id) => subtreeIdSet.has(id)),
+    ) ?? members.flatMap(({ row }) => row.detail.fileEffects);
+    for (const effect of trustworthyEffects) {
+      const key = `${effect.scope}:${effect.kind}:${effect.path}:${effect.toolCallIds.join(",")}`;
+      if (!fileEffects.has(key)) fileEffects.set(key, effect);
+    }
+    const detail: SubagentDetail = {
+      ...representative.row.detail,
+      activity: activity.slice(0, MAX_DETAIL_ACTIVITY),
+      transcript: transcript.slice(0, MAX_DETAIL_ACTIVITY),
+      activityTruncated: members.some(({ row }) => row.detail.activityTruncated)
+        || activity.length > MAX_DETAIL_ACTIVITY
+        || transcript.length > MAX_DETAIL_ACTIVITY
+        || allSubtreeIds.length > MAX_SUBAGENT_GRAPH_NODES,
+      subtreeIds,
+      fileEffects: [...fileEffects.values()],
+    };
+    const shared: LiveSubagentRow & { index: number; orderAt: number } = {
+      id: representative.row.id,
+      memberCallIds: members.map(({ row }) => row.id),
+      providerAgentKey: representative.row.providerAgentKey,
+      identity: representative.row.identity,
+      hasExplicitIdentity: representative.row.hasExplicitIdentity,
+      task: representative.row.task,
+      activity: representative.row.activity,
+      activityAt: representative.row.activityAt,
+      elapsedSeconds: representative.row.elapsedSeconds,
+      detail,
+      index: representative.index,
+      orderAt,
+    };
+    if (isActive) {
+      active.push(shared);
+    } else if ("status" in representative.row) {
+      finished.push({
+        ...shared,
+        status: representative.row.status,
+        completedAt: representative.row.completedAt,
+      });
+    }
+  }
+
+  active.sort((left, right) => right.orderAt - left.orderAt || left.index - right.index || left.id.localeCompare(right.id));
+  finished.sort((left, right) => right.orderAt - left.orderAt || left.index - right.index || left.id.localeCompare(right.id));
   return {
-    active: active.map(({ index: _index, ...row }) => row),
-    finished: finished.map(({ index: _index, ...row }) => row),
+    active: active.map(({ index: _index, orderAt: _orderAt, ...row }) => row),
+    finished: finished.map(({ index: _index, orderAt: _orderAt, ...row }) => row),
   };
 }

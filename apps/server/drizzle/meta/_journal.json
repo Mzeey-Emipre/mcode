@@ -183,6 +183,13 @@
       "when": 1784724410621,
       "tag": "0024_smart_glorian",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1784802369305,
+      "tag": "0025_wise_night_nurse",
+      "breakpoints": true
     }
   ]
 }

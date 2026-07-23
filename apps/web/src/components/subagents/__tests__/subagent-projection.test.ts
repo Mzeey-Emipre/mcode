@@ -28,6 +28,223 @@ function record(overrides: Partial<ToolCallRecord> & Pick<ToolCallRecord, "id">)
 }
 
 describe("projectSubagents", () => {
+  it("groups repeated explicit Codex agent paths while keeping pathless calls separate", () => {
+    const calls = [
+      call({ id: "explorer-1", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" }, isComplete: true, lastActivityAt: 10 }),
+      call({ id: "explorer-2", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" }, isComplete: true, lastActivityAt: 20 }),
+      call({ id: "explorer-3", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" }, isComplete: true, lastActivityAt: 30 }),
+      call({ id: "explorer-4", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" }, output: "Latest explorer result", isComplete: true, lastActivityAt: 40 }),
+      call({ id: "legacy", toolName: "Agent", toolInput: { agentName: "Explorer" }, isComplete: true, lastActivityAt: 50 }),
+    ];
+
+    const roster = projectSubagents(calls, []);
+
+    expect(roster.finished).toHaveLength(2);
+    expect(roster.finished[0]).toMatchObject({
+      id: "legacy",
+      memberCallIds: ["legacy"],
+    });
+    expect(roster.finished[1]).toMatchObject({
+      id: "explorer-4",
+      identity: "explorer",
+      memberCallIds: ["explorer-1", "explorer-2", "explorer-3", "explorer-4"],
+      detail: {
+        output: "Latest explorer result",
+        subtreeIds: ["explorer-1", "explorer-2", "explorer-3", "explorer-4"],
+      },
+    });
+  });
+
+  it("keeps matching display tails from different full agent paths distinct", () => {
+    const roster = projectSubagents([
+      call({ id: "a", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/a/explorer" }, isComplete: true }),
+      call({ id: "b", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/b/explorer" }, isComplete: true }),
+    ], []);
+
+    expect(roster.finished).toHaveLength(2);
+    expect(roster.finished.map((row) => row.memberCallIds)).toEqual([["a"], ["b"]]);
+  });
+
+  it("keeps a logical agent active while any same-path dispatch remains active", () => {
+    const roster = projectSubagents([
+      call({ id: "settled", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" }, output: "Earlier result", isComplete: true, lastActivityAt: 10 }),
+      call({ id: "running", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" }, isComplete: false, lastActivityAt: 20 }),
+    ], []);
+
+    expect(roster.finished).toEqual([]);
+    expect(roster.active).toEqual([expect.objectContaining({
+      id: "running",
+      memberCallIds: ["settled", "running"],
+    })]);
+  });
+
+  it("uses the newest dispatch copy and status when an earlier dispatch settles later", () => {
+    const roster = projectSubagents([
+      call({
+        id: "earlier",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/explorer",
+          agentName: "Earlier explorer",
+          description: "Earlier task",
+        },
+        output: "Earlier result",
+        isComplete: true,
+        lastActivityAt: 100,
+      }),
+      call({
+        id: "newer",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/explorer",
+          agentName: "Newer explorer",
+          description: "Newer task",
+        },
+        output: "Newer failure",
+        isComplete: true,
+        isError: true,
+        lastActivityAt: 50,
+      }),
+      call({
+        id: "other",
+        toolName: "Agent",
+        toolInput: { agentName: "Other explorer" },
+        isComplete: true,
+        lastActivityAt: 75,
+      }),
+    ], []);
+
+    expect(roster.finished.map((row) => row.id)).toEqual(["newer", "other"]);
+    expect(roster.finished[0]).toEqual(expect.objectContaining({
+      id: "newer",
+      identity: "Newer explorer",
+      task: "Newer task",
+      activity: "Newer failure",
+      status: "failed",
+      memberCallIds: ["earlier", "newer"],
+      detail: expect.objectContaining({ output: "Newer failure" }),
+    }));
+  });
+
+  it("keeps an earlier dispatch active while using copy from the newest settled dispatch", () => {
+    const roster = projectSubagents([
+      call({
+        id: "earlier-running",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/explorer",
+          agentName: "Earlier explorer",
+          description: "Earlier active task",
+        },
+        lastActivityAt: 100,
+      }),
+      call({
+        id: "newer-settled",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/explorer",
+          agentName: "Newer explorer",
+          description: "Newer settled task",
+        },
+        output: "Newer settled result",
+        isComplete: true,
+        lastActivityAt: 50,
+      }),
+      call({
+        id: "other-running",
+        toolName: "Agent",
+        toolInput: { agentName: "Other explorer" },
+        lastActivityAt: 75,
+      }),
+    ], []);
+
+    expect(roster.finished).toEqual([]);
+    expect(roster.active.map((row) => row.id)).toEqual(["newer-settled", "other-running"]);
+    expect(roster.active[0]).toEqual(expect.objectContaining({
+      id: "newer-settled",
+      identity: "Newer explorer",
+      task: "Newer settled task",
+      activity: "Newer settled result",
+      memberCallIds: ["earlier-running", "newer-settled"],
+      detail: expect.objectContaining({ output: "Newer settled result" }),
+    }));
+    expect(roster.active[0]).not.toHaveProperty("status");
+  });
+
+  it("retains trustworthy file effects spanning dispatches in one logical group", () => {
+    const roster = projectSubagents([
+      call({ id: "first", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" } }),
+      call({ id: "first-write", toolName: "Write", parentToolCallId: "first" }),
+      call({ id: "second", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" } }),
+      call({ id: "second-write", toolName: "Write", parentToolCallId: "second" }),
+    ], [], 0, {
+      revision: 1,
+      fileCount: 1,
+      additions: 2,
+      deletions: 0,
+      effects: [{
+        path: "shared.ts",
+        kind: "edited",
+        scope: "workspace",
+        additions: 2,
+        deletions: 0,
+        binary: false,
+        toolCallIds: ["first-write", "second-write"],
+      }],
+    });
+
+    expect(roster.active[0]?.detail.fileEffects.map((effect) => effect.path)).toEqual(["shared.ts"]);
+  });
+
+  it("hydrates the same logical grouping and aggregates bounded member detail", () => {
+    const roster = projectSubagents([], [[
+      record({
+        id: "first",
+        provider_agent_key: "/root/explorer",
+        output_summary: "Earlier result",
+        sort_order: 0,
+      }),
+      record({
+        id: "first-child",
+        parent_tool_call_id: "first",
+        tool_name: "Read",
+        input_summary: "first.ts",
+        sort_order: 1,
+      }),
+      record({
+        id: "latest",
+        provider_agent_key: "/root/explorer",
+        output_summary: "Latest result",
+        completed_at: "2026-07-22T10:02:00.000Z",
+        sort_order: 2,
+      }),
+      record({
+        id: "latest-child",
+        parent_tool_call_id: "latest",
+        tool_name: "Write",
+        input_summary: "latest.ts",
+        sort_order: 3,
+      }),
+    ]]);
+
+    expect(roster.finished).toEqual([expect.objectContaining({
+      id: "latest",
+      memberCallIds: ["first", "latest"],
+      detail: expect.objectContaining({
+        output: "Latest result",
+        subtreeIds: ["first", "first-child", "latest", "latest-child"],
+        activity: [
+          expect.objectContaining({ id: "first-child" }),
+          expect.objectContaining({ id: "latest-child" }),
+        ],
+      }),
+    })]);
+  });
+
   it("projects top-level running Agents with provider identity, task, descendant activity, and elapsed time", () => {
     const roster = projectSubagents([
       call({

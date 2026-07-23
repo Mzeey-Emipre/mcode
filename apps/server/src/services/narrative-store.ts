@@ -36,7 +36,13 @@
 import { injectable, inject } from "tsyringe";
 import { randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
-import { resolveSubagentDisplayName, type Message, type NarrativeEntry, type TurnRange } from "@mcode/contracts";
+import {
+  resolveProviderAgentKey,
+  resolveSubagentDisplayName,
+  type Message,
+  type NarrativeEntry,
+  type TurnRange,
+} from "@mcode/contracts";
 import { MessageRepo } from "../repositories/message-repo";
 import {
   ToolCallRecordRepo,
@@ -397,6 +403,9 @@ export class NarrativeStore {
       displayName: event.toolName === "Agent"
         ? resolveSubagentDisplayName(event.toolInput)
         : undefined,
+      providerAgentKey: event.toolName === "Agent"
+        ? resolveProviderAgentKey(event.toolInput)
+        : undefined,
       inputSummary: "", // Deferred to persistNarrative
       outputSummary: "",
       status: "running",
@@ -578,6 +587,7 @@ export class NarrativeStore {
       if (!tc.inputSummary && tc._rawToolInput) {
         if (tc.toolName === "Agent") {
           tc.displayName = resolveSubagentDisplayName(tc._rawToolInput);
+          tc.providerAgentKey = resolveProviderAgentKey(tc._rawToolInput);
         }
         tc.inputSummary = this.summarizeInput(tc.toolName, tc._rawToolInput);
         delete tc._rawToolInput;

@@ -72,6 +72,45 @@ describe("NarrativeStore Move/Rename persistence sanitization", () => {
 });
 
 describe("NarrativeStore sub-agent identity persistence", () => {
+  it("persists a bounded logical-agent key only for Codex spawnAgent input", () => {
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      { bulkCreate: () => undefined } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+
+    store.bufferToolCall("thread-1", {
+      toolCallId: "codex",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentPath: "/root/explorer",
+      },
+    });
+    store.bufferToolCall("thread-1", {
+      toolCallId: "other-provider",
+      toolName: "Agent",
+      toolInput: { agentPath: "/root/explorer" },
+    });
+    store.bufferToolCall("thread-1", {
+      toolCallId: "oversized",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentPath: `/${"x".repeat(300)}`,
+      },
+    });
+
+    expect(store.getBufferedToolCalls("thread-1").map((item) => item.providerAgentKey)).toEqual([
+      "/root/explorer",
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("persists bounded explicit identity separately from delegated task text", () => {
     let persisted: Array<{ displayName?: string; inputSummary?: string }> = [];
     const store = new NarrativeStore(

@@ -143,6 +143,40 @@ describe("SubagentsPanel", () => {
     });
   });
 
+  it("opens grouped detail from a historical member call id, then restores focus to the visible grouped row", async () => {
+    setThread([], [
+      record({
+        id: "explorer-first",
+        provider_agent_key: "/root/explorer",
+        output_summary: "Earlier result",
+      }),
+      record({
+        id: "explorer-latest",
+        provider_agent_key: "/root/explorer",
+        output_summary: "Latest result",
+        completed_at: "2026-07-22T10:02:00.000Z",
+        sort_order: 1,
+      }),
+    ]);
+    useDiffStore.getState().selectSubagentDetail("thread-1", {
+      id: "explorer-first",
+      originTab: "finished",
+      scrollTop: 0,
+    });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    expect(screen.getByRole("region", { name: /Implementation worker subagent details/ })).toBeInTheDocument();
+    expect(screen.getByText("Latest result")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
+    await waitFor(() => {
+      const groupedRow = screen.getByRole("button", { name: /Open Implementation worker details/ });
+      expect(groupedRow).toHaveAttribute("data-subagent-id", "explorer-latest");
+      expect(groupedRow).toHaveFocus();
+    });
+  });
+
   it("shows hydrated truncation and bounded transcript notices", () => {
     const children = Array.from({ length: 40 }, (_, index) => record({
       id: `child-${index}`,

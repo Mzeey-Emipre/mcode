@@ -2,6 +2,8 @@ import { z } from "zod";
 
 /** Maximum persisted length of a sub-agent display identity. */
 export const SUBAGENT_DISPLAY_NAME_MAX_LENGTH = 96;
+/** Maximum persisted length of an explicit provider logical-agent key. */
+export const PROVIDER_AGENT_KEY_MAX_LENGTH = 256;
 
 function explicitString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -24,6 +26,16 @@ export function resolveSubagentDisplayName(input: Record<string, unknown>): stri
   return `${identity.slice(0, SUBAGENT_DISPLAY_NAME_MAX_LENGTH - 1)}…`;
 }
 
+/** Resolves the bounded canonical path emitted by a Codex spawnAgent call. */
+export function resolveProviderAgentKey(input: Record<string, unknown>): string | undefined {
+  if (input.codexCollabKind !== "spawnAgent") return undefined;
+  const agentPath = explicitString(input.agentPath);
+  if (!agentPath?.startsWith("/") || agentPath.length > PROVIDER_AGENT_KEY_MAX_LENGTH) {
+    return undefined;
+  }
+  return agentPath;
+}
+
 /** Status of a persisted tool call record. */
 export const ToolCallStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
 
@@ -37,6 +49,7 @@ export const ToolCallRecordSchema = z.object({
   parent_tool_call_id: z.string().nullable(),
   tool_name: z.string(),
   display_name: z.string().max(SUBAGENT_DISPLAY_NAME_MAX_LENGTH).nullable().optional(),
+  provider_agent_key: z.string().max(PROVIDER_AGENT_KEY_MAX_LENGTH).nullable().optional(),
   input_summary: z.string(),
   output_summary: z.string(),
   output_truncated: z.number().int().optional(),

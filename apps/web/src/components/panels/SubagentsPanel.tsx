@@ -172,7 +172,9 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
   const clearDetail = useDiffStore((state) => state.clearSubagentDetail);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const allRows = [...roster.active, ...roster.finished];
-  const selectedDetailRow = detailSelection ? allRows.find((row) => row.id === detailSelection.id) : undefined;
+  const selectedDetailRow = detailSelection
+    ? allRows.find((row) => row.id === detailSelection.id || row.memberCallIds.includes(detailSelection.id))
+    : undefined;
 
   useEffect(() => {
     if (detailSelection && !selectedDetailRow) clearDetail(threadId);
@@ -193,7 +195,7 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
       clearDetail(threadId);
       window.requestAnimationFrame(() => {
         if (viewportRef.current) viewportRef.current.scrollTop = detailSelection.scrollTop;
-        document.querySelector<HTMLElement>(`[data-subagent-id="${CSS.escape(detailSelection.id)}"]`)?.focus();
+        document.querySelector<HTMLElement>(`[data-subagent-id="${CSS.escape(selectedDetailRow.id)}"]`)?.focus();
       });
     }} />;
   }

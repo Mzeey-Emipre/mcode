@@ -290,6 +290,46 @@ describe("ThreadOverview branchless Create PR", () => {
     expect(summary.querySelectorAll("[data-subagent-identity-glyph]")).toHaveLength(4);
   });
 
+  it("counts repeated Codex paths as one logical subagent and keeps pathless calls separate", () => {
+    const thread = makeThread();
+    const explorerDispatches = Array.from({ length: 4 }, (_, index) => ({
+      id: `explorer-${index}`,
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "explorer",
+        agentPath: "/root/explorer",
+      },
+      output: "Done",
+      isError: false,
+      isComplete: true,
+      lastActivityAt: index,
+    }));
+    mockThreadRecords.set(thread.id, {
+      ...createEmptyThreadRecord(),
+      toolCalls: [
+        ...explorerDispatches,
+        {
+          id: "legacy",
+          toolName: "Agent",
+          toolInput: { agentName: "Explorer" },
+          output: "Done",
+          isError: false,
+          isComplete: true,
+          lastActivityAt: 10,
+        },
+      ],
+      narrativeByMessage: {},
+    });
+
+    render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
+
+    const summary = screen.getByTestId("thread-overview-subagents");
+    expect(summary).toHaveAccessibleName("Subagents, 0 active, 2 done");
+    expect(summary).toHaveTextContent("2 done");
+    expect(summary.querySelectorAll("[data-subagent-identity-glyph]")).toHaveLength(2);
+  });
+
   it("renders unnamed and explicitly named Subagent identities with distinct provenance", () => {
     const thread = makeThread();
     mockThreadRecords.set(thread.id, {
