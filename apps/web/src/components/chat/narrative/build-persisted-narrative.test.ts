@@ -312,6 +312,67 @@ describe("buildPersistedNarrativeItems", () => {
     ]);
   });
 
+  it("matches live source-then-target participants and tolerates legacy markers", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [
+        makeTool({
+          id: "agent-source",
+          tool_name: "Agent",
+          display_name: "Explorer",
+          sort_order: 1,
+        }),
+        makeTool({
+          id: "agent-target",
+          tool_name: "Agent",
+          display_name: "Implementer",
+          parent_tool_call_id: "agent-source",
+          sort_order: 2,
+        }),
+        makeTool({
+          id: "update-target",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: JSON.stringify({
+            lifecycle: "updated",
+            sourceAgentName: "Explorer",
+            sourceAgentToolCallId: "agent-source",
+          }),
+          parent_tool_call_id: "agent-target",
+          sort_order: 3,
+        }),
+        makeTool({
+          id: "legacy-update",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: "",
+          parent_tool_call_id: "agent-source",
+          sort_order: 4,
+        }),
+      ],
+      thoughts: [],
+      hooks: [],
+    });
+    const targetRows = items.filter(
+      (item) => item.type === "subagent" && item.toolCall.id === "agent-target",
+    );
+    const legacyRow = items.find(
+      (item) => item.type === "subagent"
+        && item.toolCall.id === "agent-source"
+        && item.lifecycle === "updated",
+    );
+
+    expect(targetRows.map((item) => item.type === "subagent" ? item.lifecycle : "")).toEqual([
+      "started",
+      "updated",
+      "finished",
+    ]);
+    expect(targetRows.every(
+      (item) => item.type === "subagent"
+        && item.participants.map((participant) => participant.id).join(",") === "agent-source,agent-target",
+    )).toBe(true);
+    expect(legacyRow?.type === "subagent"
+      ? legacyRow.participants.map((participant) => participant.id)
+      : []).toEqual(["agent-source"]);
+  });
+
   it("interleaves all streams by sort_order", () => {
     const items = buildPersistedNarrativeItems({
       tools: [

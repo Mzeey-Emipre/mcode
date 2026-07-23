@@ -325,6 +325,9 @@ export class CodexEventMapper {
       const item = notification.params.item as CompletedItem | undefined;
       const itemType = item?.type;
       const itemId = typeof item?.id === "string" ? item.id : undefined;
+      if (itemType === "subAgentActivity" && itemId && item) {
+        return this.mapSubAgentActivityStart(item, itemId, true, notification);
+      }
       if (itemType === "collabAgentToolCall" && itemId && item) {
         if (this.isWaitCollab(item)) return [];
         this.collabToolUseFromStartIds.add(itemId);
@@ -349,6 +352,10 @@ export class CodexEventMapper {
     if (method === "item/completed") {
       const item = notification.params.item;
       const itemType = item?.type;
+      const itemId = typeof item?.id === "string" ? item.id : undefined;
+      if (item && itemType === "subAgentActivity" && itemId) {
+        return this.mapSubAgentActivityStart(item, itemId, false, notification);
+      }
       if (
         itemType === "commandExecution"
         || itemType === "fileChange"
@@ -525,17 +532,32 @@ export class CodexEventMapper {
     item: CompletedItem,
     toolCallId: string,
     includeInteractions: boolean,
+    notification?: CodexNotification,
   ): AgentEvent[] {
     const agentThreadId = this.stringField(item, "agentThreadId");
     const agentPath = this.stringField(item, "agentPath");
     if (!agentThreadId || !agentPath) return [];
 
     const agentName = agentPath.split("/").filter(Boolean).pop() ?? agentPath;
+    const notificationThreadId = notification
+      ? this.notificationThreadId(notification)
+      : undefined;
+    const sourceAgentToolCallId = notificationThreadId
+      ? this.collabReceiverThreadToCollabId.get(notificationThreadId)
+      : undefined;
+    const sourceToolInput = sourceAgentToolCallId
+      ? this.spawnAgentToolInputById.get(sourceAgentToolCallId)
+      : undefined;
+    const sourceAgentName = sourceToolInput
+      ? this.stringField(sourceToolInput, "agentName")
+      : undefined;
     if (item.kind === "interacted" && includeInteractions) {
       this.subagentInteractionSequence += 1;
       const lifecycleToolCallId =
         `subagent-activity:${toolCallId.slice(0, MAX_LIFECYCLE_PARENT_ID_LENGTH)}:${this.subagentInteractionSequence}`;
       const toolInput = {
+        ...(sourceAgentName ? { sourceAgentName } : {}),
+        ...(sourceAgentToolCallId ? { sourceAgentToolCallId } : {}),
         lifecycle: "updated",
         agentName,
         agentPath,
@@ -574,6 +596,7 @@ export class CodexEventMapper {
       toolCallId,
       toolName: "Agent",
       toolInput,
+      ...(sourceAgentToolCallId ? { parentToolCallId: sourceAgentToolCallId } : {}),
     }];
   }
 
@@ -1045,7 +1068,7 @@ export class CodexEventMapper {
       }
       const boundaryEvents = this.drainAssistantBoundaryBeforeItem(itemId);
       if (itemType === "subAgentActivity" && item && itemId) {
-        return [...boundaryEvents, ...this.mapSubAgentActivityStart(item, itemId, true)];
+        return [...boundaryEvents, ...this.mapSubAgentActivityStart(item, itemId, true, notification)];
       }
       // The coordinator started a new tool-like item: any legacy collab whose
       // children have finished should be popped now so this new tool doesn't
@@ -1369,7 +1392,7 @@ export class CodexEventMapper {
 
     if (itemType === "subAgentActivity") {
       const toolCallId = item.id;
-      return toolCallId ? this.mapSubAgentActivityStart(item, toolCallId, false) : [];
+      return toolCallId ? this.mapSubAgentActivityStart(item, toolCallId, false, notification) : [];
     }
 
     // OpenAI Responses API shape - some codex versions emit "message" items with a content array

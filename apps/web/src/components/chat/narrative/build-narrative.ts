@@ -2,6 +2,7 @@ import type { ToolCall, HookExecution } from "@/transport/types";
 import type { ThoughtSegment, NarrativeItem, NarrativeBuildResult } from "./types";
 import {
   isSubagentLifecycleCall,
+  subagentLifecycleParticipants,
   type SubagentLifecycle,
 } from "./subagent-lifecycle";
 
@@ -95,7 +96,7 @@ function hasCancelledCall(calls: readonly ToolCall[]): boolean {
 type TimelineEvent =
   | { kind: "thought"; segment: ThoughtSegment; startedAt: number }
   | { kind: "tool"; call: ToolCall; startedAt: number }
-  | { kind: "subagent"; call: ToolCall; lifecycle: SubagentLifecycle; startedAt: number }
+  | { kind: "subagent"; call: ToolCall; marker?: ToolCall; lifecycle: SubagentLifecycle; startedAt: number }
   | { kind: "hook"; hook: HookExecution; startedAt: number };
 
 /**
@@ -185,8 +186,10 @@ export function buildNarrativeItems(params: {
     if (tc === activeTc) continue; // Active tool emitted at the end
     if (tc.toolName !== AGENT_TOOL_NAME) {
       timeline.push({ kind: "tool", call: tc, startedAt: tc.startedAt ?? Date.now() });
-      continue;
     }
+  }
+  for (const tc of toolCalls) {
+    if (tc.toolName !== AGENT_TOOL_NAME) continue;
 
     const startedAt = tc.startedAt ?? Date.now();
     const lifecycleMarkers = (childrenMap.get(tc.id) ?? []).filter(isSubagentLifecycleCall);
@@ -195,6 +198,7 @@ export function buildNarrativeItems(params: {
       timeline.push({
         kind: "subagent",
         call: tc,
+        marker,
         lifecycle: "updated",
         startedAt: marker.startedAt ?? startedAt,
       });
@@ -291,6 +295,7 @@ export function buildNarrativeItems(params: {
         type: "subagent",
         lifecycle: evt.lifecycle,
         toolCall: evt.call,
+        participants: subagentLifecycleParticipants(evt.call, evt.marker, toolCalls),
         children: (childrenMap.get(evt.call.id) ?? []).filter(
           (child) => !isSubagentLifecycleCall(child),
         ),

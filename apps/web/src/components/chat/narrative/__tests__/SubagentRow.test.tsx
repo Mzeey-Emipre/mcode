@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { SubagentRow } from "../SubagentRow";
 import type { ToolCall } from "@/transport/types";
 import { getSubagentIdentityPaletteIndex } from "@/components/subagents/SubagentIdentityGlyph";
+
+const { openSubagentDetail } = vi.hoisted(() => ({ openSubagentDetail: vi.fn() }));
+vi.mock("@/lib/open-subagent-detail", () => ({ openSubagentDetail }));
 
 function agent(overrides: Partial<ToolCall> = {}): ToolCall {
   return {
@@ -17,14 +21,22 @@ function agent(overrides: Partial<ToolCall> = {}): ToolCall {
 }
 
 function renderRow(toolCall: ToolCall, children: readonly ToolCall[] = []) {
-  return render(<SubagentRow toolCall={toolCall} lifecycle="started" children={children} hooks={[]} />);
+  return render(
+    <SubagentRow
+      toolCall={toolCall}
+      participants={[toolCall]}
+      lifecycle="started"
+      children={children}
+      hooks={[]}
+    />,
+  );
 }
 
 describe("SubagentRow", () => {
   it("shows explicit identity and exact lowercase lifecycle copy without delegated task text", () => {
     renderRow(agent());
 
-    expect(screen.getByRole("button", { name: "Open Explorer subagent details, started working" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Explorer subagent details" })).toBeInTheDocument();
     expect(screen.getByText("started working")).toBeInTheDocument();
     expect(screen.queryByTestId("subagent-lifecycle-dot")).not.toBeInTheDocument();
     expect(screen.queryByText("Read detection module")).not.toBeInTheDocument();
@@ -35,7 +47,8 @@ describe("SubagentRow", () => {
     const view = renderRow(agent());
     const firstPalette = document.querySelector('[data-subagent-identity-glyph="Explorer"]')?.getAttribute("data-subagent-palette");
 
-    view.rerender(<SubagentRow toolCall={agent({ output: "Provider update" })} lifecycle="updated" children={[]} hooks={[]} />);
+    const updatedAgent = agent({ output: "Provider update" });
+    view.rerender(<SubagentRow toolCall={updatedAgent} participants={[updatedAgent]} lifecycle="updated" children={[]} hooks={[]} />);
 
     expect(document.querySelector('[data-subagent-identity-glyph="Explorer"]')).toHaveAttribute("data-subagent-palette", firstPalette);
   });
@@ -49,7 +62,8 @@ describe("SubagentRow", () => {
   });
 
   it("shows updated without exposing provider output", () => {
-    render(<SubagentRow toolCall={agent({ output: "Provider update" })} lifecycle="updated" children={[]} hooks={[]} />);
+    const updatedAgent = agent({ output: "Provider update" });
+    render(<SubagentRow toolCall={updatedAgent} participants={[updatedAgent]} lifecycle="updated" children={[]} hooks={[]} />);
 
     expect(screen.getByText("updated")).toBeInTheDocument();
     expect(screen.queryByText("Provider update")).not.toBeInTheDocument();
@@ -58,15 +72,17 @@ describe("SubagentRow", () => {
   it.each([{ isComplete: true }, { isComplete: true, isError: true }, { isComplete: true, isCancelled: true }] as const)(
     "uses finished for every terminal state in chat",
     (overrides) => {
-      render(<SubagentRow toolCall={agent(overrides)} lifecycle="finished" children={[]} hooks={[]} />);
+      const finishedAgent = agent(overrides);
+      render(<SubagentRow toolCall={finishedAgent} participants={[finishedAgent]} lifecycle="finished" children={[]} hooks={[]} />);
       expect(screen.getByText("finished")).toBeInTheDocument();
     },
   );
 
   it("falls back to Subagent and never uses prompt or description as identity", () => {
-    render(<SubagentRow toolCall={agent({ toolInput: { prompt: "Private prompt", description: "Private task" }, isComplete: true })} lifecycle="finished" children={[]} hooks={[]} />);
+    const anonymousAgent = agent({ toolInput: { prompt: "Private prompt", description: "Private task" }, isComplete: true });
+    render(<SubagentRow toolCall={anonymousAgent} participants={[anonymousAgent]} lifecycle="finished" children={[]} hooks={[]} />);
 
-    expect(screen.getByRole("button", { name: "Open Subagent subagent details, finished" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Subagent subagent details" })).toBeInTheDocument();
     expect(screen.queryByText("Private prompt")).not.toBeInTheDocument();
     expect(screen.queryByText("Private task")).not.toBeInTheDocument();
     const glyph = document.querySelector('[data-subagent-identity-glyph="Subagent"]');
@@ -100,5 +116,45 @@ describe("SubagentRow", () => {
     expect(screen.queryByText("git status --short")).not.toBeInTheDocument();
     expect(screen.queryByText("M file.ts", { exact: false })).not.toBeInTheDocument();
     expect(screen.queryByText("Final report")).not.toBeInTheDocument();
+  });
+
+  it("renders source and target as independent compact controls without a chevron", async () => {
+    const source = agent({
+      id: "agent-source",
+      toolInput: { agentName: "Explorer with a deliberately long identity" },
+      isComplete: true,
+    });
+    const target = agent({
+      id: "agent-target",
+      toolInput: { agentName: "Implementer" },
+      isComplete: true,
+    });
+
+    const { container } = render(
+      <SubagentRow
+        toolCall={target}
+        participants={[source, target]}
+        lifecycle="finished"
+        children={[]}
+        hooks={[]}
+      />,
+    );
+
+    const sourceButton = screen.getByRole("button", {
+      name: "Open Explorer with a deliberately long identity subagent details",
+    });
+    const targetButton = screen.getByRole("button", {
+      name: "Open Implementer subagent details",
+    });
+    expect(sourceButton).toHaveClass("h-8");
+    expect(targetButton).toHaveClass("h-8");
+    expect(sourceButton).toHaveTextContent("Explorer with a deliberately long identity");
+    expect(screen.getByText("finished")).not.toHaveAttribute("role", "button");
+    expect(container.querySelector("[data-lucide='chevron-right']")).not.toBeInTheDocument();
+
+    await userEvent.click(sourceButton);
+    await userEvent.click(targetButton);
+    expect(openSubagentDetail).toHaveBeenNthCalledWith(1, "agent-source", "finished");
+    expect(openSubagentDetail).toHaveBeenNthCalledWith(2, "agent-target", "finished");
   });
 });

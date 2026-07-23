@@ -15,3 +15,32 @@ export function isSubagentLifecycleCall(call: Pick<ToolCall, "toolName">): boole
 export function isSubagentLifecycleRecord(record: Pick<ToolCallRecord, "tool_name">): boolean {
   return record.tool_name === SUBAGENT_LIFECYCLE_TOOL_NAME;
 }
+
+/** Parses persisted metadata for an internal lifecycle marker. */
+export function parseSubagentLifecycleInput(inputSummary: string): Record<string, unknown> {
+  if (!inputSummary) return {};
+  try {
+    const parsed: unknown = JSON.parse(inputSummary);
+    return parsed != null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Returns authoritative lifecycle participants in source-then-target order. */
+export function subagentLifecycleParticipants(
+  target: ToolCall,
+  marker: ToolCall | undefined,
+  allToolCalls: readonly ToolCall[],
+): ToolCall[] {
+  const explicitSourceId = marker?.toolInput.sourceAgentToolCallId;
+  const sourceId = typeof explicitSourceId === "string" && explicitSourceId.length > 0
+    ? explicitSourceId
+    : target.parentToolCallId;
+  const source = sourceId
+    ? allToolCalls.find((call) => call.id === sourceId && call.toolName === "Agent")
+    : undefined;
+  return source && source.id !== target.id ? [source, target] : [target];
+}

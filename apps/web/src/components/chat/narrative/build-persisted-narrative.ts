@@ -8,6 +8,8 @@ import type {
 import type { ThoughtSegment, NarrativeItem } from "./types";
 import {
   isSubagentLifecycleRecord,
+  parseSubagentLifecycleInput,
+  subagentLifecycleParticipants,
   type SubagentLifecycle,
 } from "./subagent-lifecycle";
 
@@ -49,13 +51,16 @@ function persistedDurationMs(
 /** Map a persisted tool record to the live `ToolCall` shape used by row components. */
 export function recordToToolCall(r: ToolCallRecord): ToolCall {
   const durationMs = persistedDurationMs(r.started_at, r.completed_at);
+  const lifecycleInput = isSubagentLifecycleRecord(r)
+    ? parseSubagentLifecycleInput(r.input_summary)
+    : undefined;
 
   return {
     id: r.id,
     toolName: r.tool_name,
     // Live components only inspect a few fields; the input summary suffices
     // for label derivation in the persisted view.
-    toolInput: {
+    toolInput: lifecycleInput ?? {
       _summary: r.input_summary,
       ...(r.tool_name === AGENT_TOOL_NAME && r.display_name
         ? { agentName: r.display_name }
@@ -121,7 +126,7 @@ export function persistedHookDetailLines(r: HookExecutionRecord): string[] {
 type TimelineEvent =
   | { kind: "thought"; segment: ThoughtSegment; sortOrder: number }
   | { kind: "tool"; call: ToolCall; sortOrder: number }
-  | { kind: "subagent"; call: ToolCall; lifecycle: SubagentLifecycle; sortOrder: number }
+  | { kind: "subagent"; call: ToolCall; marker?: ToolCall; lifecycle: SubagentLifecycle; sortOrder: number }
   | { kind: "hook"; hook: HookExecution; sortOrder: number };
 
 /**
@@ -214,8 +219,11 @@ export function buildPersistedNarrativeItems(
     const call = recordToToolCall(t);
     if (t.tool_name !== AGENT_TOOL_NAME) {
       timeline.push({ kind: "tool", call, sortOrder: t.sort_order });
-      continue;
     }
+  }
+  const agentRecords = tools.filter((tool) => tool.tool_name === AGENT_TOOL_NAME);
+  for (const t of agentRecords) {
+    const call = recordToToolCall(t);
 
     const lifecycleMarkers = (childrenByParent.get(t.id) ?? [])
       .filter(isSubagentLifecycleRecord);
@@ -224,6 +232,7 @@ export function buildPersistedNarrativeItems(
       timeline.push({
         kind: "subagent",
         call,
+        marker: recordToToolCall(marker),
         lifecycle: "updated",
         sortOrder: marker.sort_order,
       });
@@ -252,6 +261,7 @@ export function buildPersistedNarrativeItems(
   timeline.sort((a, b) => a.sortOrder - b.sortOrder);
 
   const items: NarrativeItem[] = [];
+  const allToolCalls = tools.map(recordToToolCall);
   const pendingGroup: ToolCall[] = [];
 
   const flushGroup = () => {
@@ -294,6 +304,7 @@ export function buildPersistedNarrativeItems(
         type: "subagent",
         lifecycle: evt.lifecycle,
         toolCall: evt.call,
+        participants: subagentLifecycleParticipants(evt.call, evt.marker, allToolCalls),
         children,
         hooks: liveHooks.filter((h) => h.toolName === AGENT_TOOL_NAME),
       });

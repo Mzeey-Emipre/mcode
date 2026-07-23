@@ -299,8 +299,45 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(byId.get("c2")).toBe("a2");
       expect(byId.get("c3")).toBe("a3");
       expect(byId.get("c4")).toBe("a4");
-      // Agent rows themselves never get a parent.
+      // Agent rows without an explicit provider parent remain top-level.
       expect(byId.get("a1")).toBeUndefined();
+    });
+
+    it("persists explicit nested Agent parents without stack-parenting other Agents", () => {
+      seedAssistantMessage("m1", "", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, {
+        ...toolUse("agent-source", "Agent"),
+        toolInput: { agentName: "Explorer" },
+      });
+      store.bufferToolCall(THREAD, {
+        ...toolUse("agent-unparented", "Agent"),
+        toolInput: { agentName: "Reviewer" },
+      });
+      store.bufferToolCall(THREAD, {
+        ...toolUse("agent-target", "Agent", "agent-source"),
+        toolInput: { agentName: "Implementer" },
+      });
+      store.bufferToolCall(THREAD, {
+        ...toolUse("marker-target", "__McodeSubagentLifecycle", "agent-target"),
+        toolInput: {
+          lifecycle: "updated",
+          sourceAgentName: "Explorer",
+          sourceAgentToolCallId: "agent-source",
+        },
+      });
+
+      store.persistNarrative(THREAD, "m1", "", "completed");
+
+      const persistedTools = store.load(THREAD)
+        .filter((entry) => entry.kind === "toolCall")
+        .map((entry) => entry.record);
+      const byId = new Map(persistedTools.map((record) => [record.id, record]));
+      expect(byId.get("agent-source")?.parent_tool_call_id).toBeNull();
+      expect(byId.get("agent-unparented")?.parent_tool_call_id).toBeNull();
+      expect(byId.get("agent-target")?.parent_tool_call_id).toBe("agent-source");
+      expect(byId.get("marker-target")?.parent_tool_call_id).toBe("agent-target");
     });
 
     it("falls back to the only running Agent when the SDK omits the parent", () => {

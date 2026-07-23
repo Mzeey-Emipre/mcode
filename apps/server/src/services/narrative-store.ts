@@ -340,20 +340,20 @@ export class NarrativeStore {
 
   /**
    * Buffer a tool call event for later persistence and return the parent tool
-   * call ID attributed to it. The SDK `parent_tool_use_id` wins; the stack
-   * fallback fills in only when exactly one Agent is still running (Trap 1).
-   * Agent calls are pushed onto the `agentCallStack` (Trap 2 push site).
+   * call ID attributed to it. An explicit provider parent always wins. The
+   * stack fallback applies only to non-Agent calls when exactly one Agent is
+   * still running (Trap 1). Agent calls never inherit a stack-derived parent
+   * and are pushed onto the `agentCallStack` (Trap 2 push site).
    */
   bufferToolCall(threadId: string, event: BufferToolCallEvent): string | undefined {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
 
     const stack = this.agentCallStack.get(threadId) ?? [];
-    // Prefer the SDK-provided parent_tool_use_id on the event (set by the
-    // provider). Parallel subagents require it; stack fallback aligns with
-    // `getCurrentParentToolCallId` / index.ts enrichment.
+    // Preserve provider attribution for every call. Only non-Agent calls may
+    // use the stack fallback because it cannot identify a nested Agent source.
     const parentToolCallId =
       event.toolName === "Agent"
-        ? undefined
+        ? event.parentToolCallId
         : event.parentToolCallId ?? this.getStackDerivedParentFallback(threadId);
     // Diagnostic: trace parent attribution when a mismatch is suspected.
     if (event.toolName !== "Agent" && parentToolCallId) {

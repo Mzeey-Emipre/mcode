@@ -1143,6 +1143,8 @@ describe("CodexEventMapper", () => {
         isError: false,
       }),
     ]);
+    expect(firstInteraction[0]).not.toHaveProperty("toolInput.sourceAgentName");
+    expect(firstInteraction[0]).not.toHaveProperty("toolInput.sourceAgentToolCallId");
     expect(secondInteraction).toHaveLength(2);
     expect(secondInteraction[0]).toMatchObject({
       type: "toolUse",
@@ -1154,6 +1156,72 @@ describe("CodexEventMapper", () => {
     });
     expect(interactionCompletion).toEqual([]);
     expect(completed).toEqual([]);
+  });
+
+  it("uses the notification thread as the authoritative source for nested activity", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "call-explorer",
+          agentThreadId: "explorer-thread",
+          agentPath: "/root/explorer",
+          kind: "started",
+        },
+      },
+    });
+
+    const nestedStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "explorer-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "call-implementer",
+          agentThreadId: "implementer-thread",
+          agentPath: "/root/implementer",
+          kind: "started",
+        },
+      },
+    });
+    const interaction = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "explorer-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "call-implementer",
+          agentThreadId: "implementer-thread",
+          agentPath: "/root/implementer",
+          kind: "interacted",
+        },
+      },
+    });
+
+    expect(nestedStarted).toEqual([
+      expect.objectContaining({
+        type: "toolUse",
+        toolCallId: "call-implementer",
+        parentToolCallId: "call-explorer",
+      }),
+    ]);
+    expect(interaction[0]).toEqual(expect.objectContaining({
+      type: "toolUse",
+      toolName: "__McodeSubagentLifecycle",
+      parentToolCallId: "call-implementer",
+      toolInput: expect.objectContaining({
+        lifecycle: "updated",
+        agentName: "implementer",
+        sourceAgentName: "explorer",
+        sourceAgentToolCallId: "call-explorer",
+      }),
+    }));
   });
 
   it("maps completed-only native sub-agent activity before child file changes", () => {
