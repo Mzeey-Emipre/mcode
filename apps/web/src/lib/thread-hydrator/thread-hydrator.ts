@@ -42,6 +42,28 @@ function hasResidentLayer(record: ThreadRecord): boolean {
     || record.hooks.length > 0;
 }
 
+/** Snapshot the transcript and volatile layers that an active page fetch must not replace. */
+function conversationRevision(record: ThreadRecord): string {
+  return JSON.stringify({
+    messages: record.messages,
+    persistedToolCallCounts: record.persistedToolCallCounts,
+    persistedFilesChanged: record.persistedFilesChanged,
+    latestTurnWithChanges: record.latestTurnWithChanges,
+    serverMessageIds: record.serverMessageIds,
+    narrativeByMessage: record.narrativeByMessage,
+    answeredPlanMessageIds: [...record.answeredPlanMessageIds],
+    streaming: record.streaming,
+    streamingPreview: record.streamingPreview,
+    toolCalls: record.toolCalls,
+    thoughtSegments: record.thoughtSegments,
+    hooks: record.hooks,
+    currentTurnMessageId: record.currentTurnMessageId,
+    pendingTurnPersistMessageIds: record.pendingTurnPersistMessageIds,
+    currentTurnResponseKey: record.currentTurnResponseKey,
+    assistantResponseKeys: record.assistantResponseKeys,
+  });
+}
+
 function mergeMessageMetadata<T>(
   cached: Record<string, T>,
   resident: Record<string, T>,
@@ -69,11 +91,17 @@ function findLatestTurnWithChanges(
 function mergeResidentConversationCacheState(
   resident: ThreadRecord,
   cached: ConversationCacheState,
+  preserveResidentAtEqualSequence = true,
 ): ConversationCacheState {
   const residentCacheState = projectConversationCacheState(resident);
   const residentSequence = residentCacheState.messages.at(-1)?.sequence;
   const cachedSequence = cached.messages.at(-1)?.sequence;
-  if (residentSequence == null || (cachedSequence != null && cachedSequence > residentSequence)) {
+  if (
+    residentSequence == null
+    || (cachedSequence != null
+      && (cachedSequence > residentSequence
+        || (!preserveResidentAtEqualSequence && cachedSequence === residentSequence)))
+  ) {
     return cached;
   }
 
@@ -197,6 +225,27 @@ export class ThreadHydrator {
       return;
     }
     await this.hydrateActive(threadId, opts);
+  }
+
+  /** Retire the selected conversation when no thread remains active. */
+  deactivate(): void {
+    const threadId = this.deps.getState().currentThreadId;
+    if (!threadId) return;
+
+    this.deps.flushPendingTextDeltas();
+    const hadActiveHydrate = this.activeHydrates.has(threadId);
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      if (state.currentThreadId !== threadId) return {};
+      return {
+        records: patchThreadRecord(state.records, threadId, (record) => ({
+          loading: false,
+          isLoadingMore: false,
+          loadEpoch: record.loadEpoch + 1,
+        })),
+        currentThreadId: null,
+      };
+    });
+    this.retireInactiveRecord(threadId, hadActiveHydrate);
   }
 
   /** Speculative cache warm on sidebar hover — no live-store mutation. */
@@ -691,6 +740,9 @@ export class ThreadHydrator {
       this.prepareActiveLoad(threadId);
     }
     const expectedEpoch = getThreadRecord(getState().records, threadId).loadEpoch;
+    const expectedConversationRevision = conversationRevision(
+      getThreadRecord(getState().records, threadId),
+    );
 
     try {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
@@ -706,10 +758,23 @@ export class ThreadHydrator {
       );
 
       const stateAtCommit = getState();
-      if (
-        stateAtCommit.currentThreadId !== threadId
-        || getThreadRecord(stateAtCommit.records, threadId).loadEpoch !== expectedEpoch
-      ) return;
+      const recordAtCommit = getThreadRecord(stateAtCommit.records, threadId);
+      if (stateAtCommit.currentThreadId !== threadId || recordAtCommit.loadEpoch !== expectedEpoch) {
+        return;
+      }
+      if (conversationRevision(recordAtCommit) !== expectedConversationRevision) {
+        setState((state: ThreadHydratorWriteState) => {
+          const current = getThreadRecord(state.records, threadId);
+          if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return {};
+          return {
+            records: patchThreadRecord(state.records, threadId, {
+              loading: false,
+              isLoadingMore: false,
+            }),
+          };
+        });
+        return;
+      }
 
       const patch = snapshotBuilder.build({
         messages: pageResult.messages,
@@ -719,13 +784,20 @@ export class ThreadHydrator {
 
       setState((state: ThreadHydratorWriteState) => {
         const current = getThreadRecord(state.records, threadId);
+        const fetchedConversation = projectConversationCacheState({
+          ...createEmptyThreadRecord(),
+          ...patch,
+          narrativeByMessage: pageResult.narrativeByMessage,
+        });
+        const conversation = hasResidentLayer(current)
+          ? mergeResidentConversationCacheState(current, fetchedConversation, false)
+          : fetchedConversation;
         const ownsLiveFileEffects = current.fileEffectTurnId.length > 0
           || state.runningThreadIds.has(threadId);
         return {
           records: patchThreadRecord(state.records, threadId, {
-            ...patch,
+            ...conversation,
             ...(ownsLiveFileEffects ? { fileEffectSummary: current.fileEffectSummary } : {}),
-            narrativeByMessage: pageResult.narrativeByMessage,
             loading: false,
             isLoadingMore: false,
             settings: this.deps.getWorkspaceThreadSettings(threadId),

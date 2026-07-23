@@ -15,6 +15,7 @@ import {
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
+import { createConversationResidency } from "./conversation-residency";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useTaskStore } from "./taskStore";
@@ -347,6 +348,14 @@ interface WorkspaceState {
 
 /** Zustand store for workspace, thread, branch, and PR state management. */
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
+  const conversationResidency = createConversationResidency({
+    restoreConversation: (threadId) => useThreadStore.getState().loadMessages(threadId),
+    deactivateConversation: () => useThreadStore.getState().deactivateConversation(),
+  });
+  const reconcileSelectedConversation = () => {
+    void conversationResidency.activate(get().activeThreadId, get().threads);
+  };
+
   const applyOptimisticSuccess = (
     placeholderId: string,
     workspaceId: string,
@@ -407,7 +416,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       };
     });
     if (get().activeThreadId === thread.id) {
-      void useThreadStore.getState().loadMessages(thread.id);
+      void conversationResidency.restoreAfterThreadRefresh(thread.id, get().threads);
     }
   };
 
@@ -550,6 +559,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           Object.entries(state.checksById).filter(([tid]) => !deletedIdSet.has(tid)),
         ),
       }));
+      reconcileSelectedConversation();
       // One batched Zustand set() for all threads instead of N sequential calls.
       useThreadStore.getState().clearThreadStateMany(deletedThreadIds);
     } catch (e) {
@@ -588,6 +598,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       fetchingBranch: null,
       branchManuallySelected: false,
     });
+    reconcileSelectedConversation();
     if (id) {
       if (loadThreads) get().loadThreads(id);
       // Optimistically bump the local last_opened_at so the project selector
@@ -720,6 +731,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           loading: false,
         };
       });
+
+      if (get().activeWorkspaceId === workspaceId) {
+        void conversationResidency.restoreAfterThreadRefresh(
+          get().activeThreadId,
+          get().threads,
+        );
+      }
 
       const epochForPrSync = epochAtStart;
 
@@ -893,6 +911,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       newThreadBranchSource: "branch",
       error: null,
     }));
+    reconcileSelectedConversation();
 
     useThreadStore.setState((state) => ({
       runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
@@ -1020,6 +1039,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       newThreadBranchSource: "branch",
       error: null,
     }));
+    reconcileSelectedConversation();
 
     useThreadStore.setState((state) => ({
       runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
@@ -1074,6 +1094,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       threads: state.threads.filter((t) => t.id !== placeholderId),
       activeThreadId: state.activeThreadId === placeholderId ? null : state.activeThreadId,
     }));
+    reconcileSelectedConversation();
   },
 
   failPreparingThreadOnConnectionLost: (placeholderId) => {
@@ -1114,6 +1135,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             checksById: remainingChecks,
           };
         });
+        reconcileSelectedConversation();
         useThreadStore.getState().clearThreadState(threadId);
         return;
       }
@@ -1146,6 +1168,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           checksById: remainingChecks,
         };
       });
+      reconcileSelectedConversation();
       useThreadStore.getState().clearThreadState(threadId);
     } catch (e) {
       set({ error: String(e) });
@@ -1172,7 +1195,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             t.id === id ? { ...t, status: "paused" as const } : t,
           )
         : state.threads,
-    }));
+      }));
+
+    reconcileSelectedConversation();
 
     if (isCompleted && id) {
       scheduleMarkThreadViewed(id);

@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockWorkspace, createMockThread } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({
@@ -60,5 +61,24 @@ describe("thread status refresh after reconnect", () => {
     expect(threads.find((t) => t.id === myThread.id)?.status).toBe("interrupted");
     // Other workspace's thread is preserved unchanged
     expect(threads.find((t) => t.id === otherThread.id)?.status).toBe("active");
+  });
+
+  it("restores the unchanged selected conversation after a reconnect row refresh", async () => {
+    const thread = createMockThread({ workspace_id: ws.id, status: "active" });
+    const originalLoadMessages = useThreadStore.getState().loadMessages;
+    const loadMessages = vi.fn().mockResolvedValue(undefined);
+    useThreadStore.setState({ loadMessages });
+    useWorkspaceStore.setState({ threads: [thread], activeThreadId: thread.id });
+    (mockTransport.listThreads as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...thread, status: "interrupted" as const },
+    ]);
+
+    try {
+      await useWorkspaceStore.getState().loadThreads(ws.id);
+
+      expect(loadMessages).toHaveBeenCalledWith(thread.id);
+    } finally {
+      useThreadStore.setState({ loadMessages: originalLoadMessages });
+    }
   });
 });
