@@ -81,6 +81,31 @@ Use browser use or computer use against the running app before claiming the chan
 
 ### Minimum bar
 
-For every matching change, inspect the affected state at relevant viewport sizes, exercise its interaction and keyboard paths, check accessibility state and console output, and capture visual evidence. Put any task-specific scripts, fixtures, logs, screenshots, or annotations under `.dev/verification/`.
+For every matching change, inspect the affected state at relevant viewport sizes, exercise its interaction and keyboard paths, check accessibility state and console output, and capture visual evidence. Put temporary Playwright specs and fixtures under `.dev/playwright-scratch`. Put logs, screenshots, and annotations under `.dev/verification/`.
 
 Add or update focused Vitest or Testing Library coverage for durable behavior. Run `bun run verify` and report the live observation plus the regular test result. Do not claim success without fresh evidence.
+
+### Browser fallback order
+
+Use this order for local UI verification:
+
+1. Use the repository's existing Playwright coverage or write a temporary
+   deterministic spec under `.dev/playwright-scratch`.
+2. Start the worktree-local runtime and exercise the exact changed state.
+3. Use browser use or computer use when an existing interactive session is
+   available or the behavior requires desktop-only inspection.
+4. When existing data does not expose the state, create a bounded fixture for
+   the temporary Playwright spec.
+5. Declare live verification blocked only when both the runtime and
+   repository-owned Playwright cannot launch or exercise the behavior.
+
+A missing connected browser is not a Playwright failure. Do not treat it as a
+reason to skip repository-owned browser testing. Keep screenshots, logs, and
+other evidence under `.dev/verification/`, and remove temporary specs before
+committing.
+
+Report the evidence separately:
+
+- **DOM and interaction:** what Playwright exercised and asserted.
+- **Provider or runtime event:** whether the real event path was observed.
+- **Visual inspection:** which viewport and state were captured.
