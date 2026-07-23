@@ -334,6 +334,22 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
   });
 
+  it("keeps a live turn visible when hydration fails before any messages are resident", () => {
+    chatViewThreadMockRef.current = defaultThreadState({
+      runningThreadIds: new Set(["thread-1"]),
+      activeRecord: {
+        ...createEmptyThreadRecord(),
+        error: "Conversation refresh failed",
+      },
+    });
+
+    render(<ChatView />);
+
+    expect(screen.getByTestId("conversation-error-banner")).toHaveTextContent("Conversation refresh failed");
+    expect(screen.getByTestId("message-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-error")).not.toBeInTheDocument();
+  });
+
   it("keeps resident messages visible beside a generic hydration error", () => {
     chatViewThreadMockRef.current = defaultThreadState({
       activeRecord: {

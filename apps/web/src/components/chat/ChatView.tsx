@@ -698,8 +698,8 @@ export function ChatView() {
   const hasMessages = messageCount > 0;
   const conversationLoading = hydratedThreadId !== activeThreadId || historyLoading;
   const showEmptyState = !hasMessages && !isAgentRunning && !conversationLoading;
-  const showFullConversationError = showConversationError && !hasMessages;
-  const showConversationErrorBanner = showConversationError && hasMessages;
+  const showFullConversationError = showConversationError && !hasMessages && !isAgentRunning;
+  const showConversationErrorBanner = showConversationError && (hasMessages || isAgentRunning);
 
   return (
     <div ref={chatPaneRef} className="flex h-full flex-col bg-background" data-testid="chat-view">

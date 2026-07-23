@@ -4,7 +4,7 @@ import {
   hasTestThreadRecord,
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useDiffStore } from "@/stores/diffStore";
@@ -377,6 +377,96 @@ describe("Workspace Behavior", () => {
     expect(state.threads).toHaveLength(1);
     expect(state.threads[0].id).toBe("t-2");
     expect(state.activeThreadId).toBeNull();
+  });
+
+  describe("selected conversation reconciliation after removal", () => {
+    let originalLoadMessages: ReturnType<typeof useThreadStore.getState>["loadMessages"];
+    let originalDeactivateConversation: ReturnType<typeof useThreadStore.getState>["deactivateConversation"];
+
+    beforeEach(() => {
+      originalLoadMessages = useThreadStore.getState().loadMessages;
+      originalDeactivateConversation = useThreadStore.getState().deactivateConversation;
+    });
+
+    afterEach(() => {
+      useThreadStore.setState({
+        loadMessages: originalLoadMessages,
+        deactivateConversation: originalDeactivateConversation,
+      });
+    });
+
+    function spyOnConversationResidency() {
+      const loadMessages = vi.fn().mockResolvedValue(undefined);
+      const deactivateConversation = vi.fn();
+      useThreadStore.setState({ loadMessages, deactivateConversation });
+      return { loadMessages, deactivateConversation };
+    }
+
+    type RemovalPath = "workspace" | "preparing" | "client-only" | "persisted";
+
+    async function removeThread(path: RemovalPath, threadId: string, workspaceId: string): Promise<void> {
+      switch (path) {
+        case "workspace":
+          await useWorkspaceStore.getState().deleteWorkspace(workspaceId);
+          return;
+        case "preparing":
+          useWorkspaceStore.getState().dismissPreparingThread(threadId);
+          return;
+        case "client-only":
+        case "persisted":
+          await useWorkspaceStore.getState().deleteThread(threadId, false);
+      }
+    }
+
+    it.each<RemovalPath>(["workspace", "preparing", "client-only", "persisted"])(
+      "does not reload the selected conversation after removing an unrelated %s",
+      async (path) => {
+        const activeWorkspace = createMockWorkspace({ id: "ws-active" });
+        const removedWorkspace = createMockWorkspace({ id: "ws-removed" });
+        const activeThread = createMockThread({ id: "thread-active", workspace_id: activeWorkspace.id });
+        const removedThread = {
+          ...createMockThread({ id: "thread-removed", workspace_id: path === "workspace" ? removedWorkspace.id : activeWorkspace.id }),
+          ...(path === "preparing" || path === "client-only" ? { clientPreparing: true } : {}),
+        };
+        const { loadMessages, deactivateConversation } = spyOnConversationResidency();
+
+        useWorkspaceStore.setState({
+          workspaces: path === "workspace" ? [activeWorkspace, removedWorkspace] : [activeWorkspace],
+          activeWorkspaceId: activeWorkspace.id,
+          threads: [activeThread, removedThread],
+          activeThreadId: activeThread.id,
+        });
+
+        await removeThread(path, path === "workspace" ? activeThread.id : removedThread.id, removedWorkspace.id);
+
+        expect(loadMessages).not.toHaveBeenCalled();
+        expect(deactivateConversation).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each<RemovalPath>(["workspace", "preparing", "client-only", "persisted"])(
+      "deactivates the selected conversation after removing the selected %s",
+      async (path) => {
+        const workspace = createMockWorkspace({ id: "ws-selected" });
+        const selectedThread = {
+          ...createMockThread({ id: "thread-selected", workspace_id: workspace.id }),
+          ...(path === "preparing" || path === "client-only" ? { clientPreparing: true } : {}),
+        };
+        const { deactivateConversation } = spyOnConversationResidency();
+
+        useWorkspaceStore.setState({
+          workspaces: [workspace],
+          activeWorkspaceId: workspace.id,
+          threads: [selectedThread],
+          activeThreadId: selectedThread.id,
+        });
+
+        await removeThread(path, selectedThread.id, workspace.id);
+
+        expect(deactivateConversation).toHaveBeenCalledOnce();
+        expect(useWorkspaceStore.getState().activeThreadId).toBeNull();
+      },
+    );
   });
 
   // ── deleteThread → clearThreadState integration ──────────────────────
