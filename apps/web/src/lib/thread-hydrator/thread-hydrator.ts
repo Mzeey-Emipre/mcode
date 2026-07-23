@@ -6,6 +6,7 @@ import {
   hasCachedRecord,
   hasPrefetchedHistoryPage,
   projectConversationCacheState,
+  takePrefetchedHistoryPage,
 } from "./record-cache";
 import type { ConversationCacheState } from "./record-cache";
 import {
@@ -87,11 +88,20 @@ function findLatestTurnWithChanges(
   return null;
 }
 
+function chooseSettledFileEffectSummary(
+  resident: ConversationCacheState["settledFileEffectSummary"],
+  cached: ConversationCacheState["settledFileEffectSummary"],
+): ConversationCacheState["settledFileEffectSummary"] {
+  if (!resident) return cached;
+  if (!cached) return resident;
+  return resident.revision >= cached.revision ? resident : cached;
+}
+
 /** Prefer an equally recent resident update while retaining disjoint cached history. */
 function mergeResidentConversationCacheState(
   resident: ThreadRecord,
   cached: ConversationCacheState,
-  preserveResidentAtEqualSequence = true,
+  preferResidentAtEqualSequence = true,
 ): ConversationCacheState {
   const residentCacheState = projectConversationCacheState(resident);
   const residentSequence = residentCacheState.messages.at(-1)?.sequence;
@@ -100,16 +110,26 @@ function mergeResidentConversationCacheState(
     residentSequence == null
     || (cachedSequence != null
       && (cachedSequence > residentSequence
-        || (!preserveResidentAtEqualSequence && cachedSequence === residentSequence)))
+        || (!preferResidentAtEqualSequence && cachedSequence === residentSequence)))
   ) {
     return cached;
   }
-
+  const cachedMessageIds = new Set(cached.messages.map((message) => message.id));
   const messagesBySequence = new Map(cached.messages.map((message) => [message.sequence, message]));
   for (const message of residentCacheState.messages) {
-    messagesBySequence.set(message.sequence, message);
+    if (!preferResidentAtEqualSequence && cachedMessageIds.has(message.id)) continue;
+    if (preferResidentAtEqualSequence) {
+      for (const [sequence, existing] of messagesBySequence) {
+        if (existing.id === message.id) messagesBySequence.delete(sequence);
+      }
+    }
+    if (preferResidentAtEqualSequence || !messagesBySequence.has(message.sequence)) {
+      messagesBySequence.set(message.sequence, message);
+    }
   }
-  const messages = [...messagesBySequence.values()].sort((left, right) => left.sequence - right.sequence);
+  const messages = [...messagesBySequence.values()].sort((left, right) =>
+    left.sequence - right.sequence || left.id.localeCompare(right.id),
+  );
   const retainedMessageIds = new Set(messages.map((message) => message.id));
   const persistedFilesChanged = mergeMessageMetadata(
     cached.persistedFilesChanged,
@@ -149,8 +169,10 @@ function mergeResidentConversationCacheState(
       residentCacheState.assistantResponseKeys,
       retainedMessageIds,
     ),
-    settledFileEffectSummary:
-      residentCacheState.settledFileEffectSummary ?? cached.settledFileEffectSummary,
+    settledFileEffectSummary: chooseSettledFileEffectSummary(
+      residentCacheState.settledFileEffectSummary,
+      cached.settledFileEffectSummary,
+    ),
   };
 }
 
@@ -225,6 +247,44 @@ export class ThreadHydrator {
       return;
     }
     await this.hydrateActive(threadId, opts);
+  }
+
+  /** Retain an inactive resident transcript through the bounded conversation cache. */
+  retainInactiveConversation(threadId: string): void {
+    const state = this.deps.getState();
+    if (state.currentThreadId === threadId) return;
+    cacheRecord(threadId, projectConversationCacheState(getThreadRecord(state.records, threadId)));
+  }
+
+  /** Discard a stale cached conversation before an authoritative mutation. */
+  invalidateConversation(threadId: string): void {
+    evictCachedRecord(threadId);
+  }
+
+  /** Synchronize the current resident conversation into its bounded cache entry. */
+  synchronizeConversation(threadId: string): void {
+    const record = this.deps.getState().records.get(threadId);
+    if (record) cacheRecord(threadId, projectConversationCacheState(record));
+  }
+
+  /** Merge delayed file metadata only when the current cache still retains those messages. */
+  mergeCachedFileChanges(threadId: string, filesChanged: Record<string, string[]>): void {
+    const cached = getCachedRecord(threadId);
+    if (!cached) return;
+    const retainedMessageIds = new Set(cached.messages.map((message) => message.id));
+    const retainedChanges = Object.fromEntries(
+      Object.entries(filesChanged).filter(([messageId]) => retainedMessageIds.has(messageId)),
+    );
+    if (Object.keys(retainedChanges).length === 0) return;
+    cacheRecord(threadId, {
+      ...cached,
+      persistedFilesChanged: { ...cached.persistedFilesChanged, ...retainedChanges },
+    });
+  }
+
+  /** Consume a warmed older-history page through the conversation cache. */
+  takePrefetchedHistoryPage(threadId: string, before: number): ConversationPage | undefined {
+    return takePrefetchedHistoryPage(threadId, before);
   }
 
   /** Retire the selected conversation when no thread remains active. */
@@ -365,7 +425,7 @@ export class ThreadHydrator {
     }
 
     const cached = getCachedRecord(threadId);
-    if (cached) {
+    if (cached && !opts?.force) {
       this.restoreCachedActive(
         threadId,
         resident ? mergeResidentConversationCacheState(resident, cached) : cached,
@@ -794,10 +854,15 @@ export class ThreadHydrator {
           : fetchedConversation;
         const ownsLiveFileEffects = current.fileEffectTurnId.length > 0
           || state.runningThreadIds.has(threadId);
+        const { settledFileEffectSummary, ...conversationFields } = conversation;
         return {
           records: patchThreadRecord(state.records, threadId, {
-            ...conversation,
-            ...(ownsLiveFileEffects ? { fileEffectSummary: current.fileEffectSummary } : {}),
+            ...conversationFields,
+            ...(!ownsLiveFileEffects && settledFileEffectSummary
+              ? { fileEffectSummary: settledFileEffectSummary }
+              : ownsLiveFileEffects
+                ? { fileEffectSummary: current.fileEffectSummary }
+                : {}),
             loading: false,
             isLoadingMore: false,
             settings: this.deps.getWorkspaceThreadSettings(threadId),

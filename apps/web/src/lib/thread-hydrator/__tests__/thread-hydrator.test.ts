@@ -239,6 +239,29 @@ describe("ThreadHydrator", () => {
     expect(readActiveThreadField((record) => record.latestTurnWithChanges)).toBe("cached-history");
   });
 
+  it("deduplicates a resident message id when its cached sequence is stale", async () => {
+    const cachedMessage = createMockMessage({
+      id: "same-message",
+      thread_id: THREAD_A,
+      content: "stale cached content",
+      sequence: 1,
+    });
+    const residentMessage = createMockMessage({
+      id: "same-message",
+      thread_id: THREAD_A,
+      content: "resident content",
+      sequence: 2,
+    });
+    cacheRecord(THREAD_A, makeCachedRecord([cachedMessage]));
+    resetThreadStoreForTests({
+      records: new Map([[THREAD_A, makeCachedRecord([residentMessage])]]),
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(getTestActiveMessages()).toEqual([residentMessage]);
+  });
+
   it("cache miss fetches a conversation page, commits store, and populates cache", async () => {
     await hydrator.hydrate(THREAD_A, "active");
 
@@ -363,6 +386,105 @@ describe("ThreadHydrator", () => {
 
     expect(getTestActiveMessages()).toEqual(history.slice(88));
     expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer resident row through compact cache restore, pagination, and refresh", async () => {
+    const persistedTail = Array.from({ length: 4 }, (_, index) => createMockMessage({
+      id: `persisted-high-${index + 97}`,
+      thread_id: THREAD_A,
+      sequence: index + 97,
+    }));
+    const resident = createMockMessage({
+      id: "resident-newer-than-cache",
+      thread_id: THREAD_A,
+      content: "live resident row",
+      sequence: 101,
+    });
+    const refreshedPersisted = createMockMessage({
+      id: "persisted-high-100",
+      thread_id: THREAD_A,
+      content: "persisted refresh",
+      sequence: 100,
+    });
+    cacheRecord(THREAD_A, {
+      ...makeCachedRecord(persistedTail),
+      hasMoreMessages: true,
+    });
+    resetThreadStoreForTests({
+      records: new Map([[THREAD_A, {
+        ...makeCachedRecord([resident]),
+        hasMoreMessages: true,
+      }]]),
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+
+    expect(getTestActiveMessages()).toEqual([persistedTail[3], resident]);
+    await useThreadStore.getState().loadOlderMessages(THREAD_A);
+    expect(getTestActiveMessages()).toEqual([...persistedTail, resident]);
+
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      messages: [refreshedPersisted],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+    await hydrator.hydrate(THREAD_A, "active", { force: true });
+
+    expect(getTestActiveMessages()).toEqual([
+      persistedTail[0],
+      persistedTail[1],
+      persistedTail[2],
+      refreshedPersisted,
+      resident,
+    ]);
+  });
+
+  it("chooses the highest settled file summary while preserving a live owner", async () => {
+    const low = { revision: 2, fileCount: 2, additions: 2, deletions: 2, effects: [] };
+    const high = { revision: 8, fileCount: 8, additions: 8, deletions: 8, effects: [] };
+    const live = { revision: 1, fileCount: 1, additions: 1, deletions: 1, effects: [] };
+
+    cacheConversationRecord(THREAD_A, {
+      ...projectConversationCacheState(makeCachedRecord()),
+      settledFileEffectSummary: low,
+    });
+    resetThreadStoreForTests({
+      records: new Map([[THREAD_A, { ...makeCachedRecord(), fileEffectSummary: high }]]),
+    });
+    await hydrator.hydrate(THREAD_A, "active");
+    expect(readActiveThreadField((record) => record.fileEffectSummary)).toEqual(high);
+
+    resetStores();
+    hydrator = createStoreHydrator();
+    cacheConversationRecord(THREAD_A, {
+      ...projectConversationCacheState(makeCachedRecord()),
+      settledFileEffectSummary: high,
+    });
+    expect(getCachedRecord(THREAD_A)?.settledFileEffectSummary).toEqual(high);
+    resetThreadStoreForTests({
+      records: new Map([[THREAD_A, { ...makeCachedRecord(), fileEffectSummary: low }]]),
+    });
+    await hydrator.hydrate(THREAD_A, "active");
+    expect(getCachedRecord(THREAD_A)?.settledFileEffectSummary).toEqual(high);
+    expect(readActiveThreadField((record) => record.fileEffectSummary)).toEqual(high);
+
+    resetStores();
+    hydrator = createStoreHydrator();
+    cacheConversationRecord(THREAD_A, {
+      ...projectConversationCacheState(makeCachedRecord()),
+      settledFileEffectSummary: high,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_A,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map([[THREAD_A, {
+        ...makeCachedRecord(),
+        fileEffectSummary: live,
+        fileEffectTurnId: "live-turn",
+      }]]),
+    });
+    await hydrator.hydrate(THREAD_A, "active");
+    expect(readActiveThreadField((record) => record.fileEffectSummary)).toEqual(live);
   });
 
   it("restores the loaded window when returning to a cached history position", async () => {

@@ -1,5 +1,5 @@
 import { hasCachedRecord } from "./record-cache";
-import { getThreadHydrator } from "./thread-hydrator";
+import { getConversationResidency } from "@/stores/conversation-residency";
 
 /** Threads currently being prefetched, to avoid duplicate requests. */
 const inflight = new Set<string>();
@@ -41,7 +41,7 @@ async function prefetchThread(threadId: string): Promise<void> {
   if (hasCachedRecord(threadId) || inflight.has(threadId)) return;
   inflight.add(threadId);
   try {
-    await getThreadHydrator().hydrate(threadId, "background");
+    await getConversationResidency().prefetch(threadId);
   } catch {
     // Prefetch is speculative; swallow errors silently
   } finally {
