@@ -12,6 +12,7 @@ on:
 concurrency:
   group: nightly-release-mutations
   cancel-in-progress: false
+  queue: max
 
 env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"

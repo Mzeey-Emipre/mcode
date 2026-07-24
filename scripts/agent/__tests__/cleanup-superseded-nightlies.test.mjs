@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { main } from "../cleanup-superseded-nightlies.mjs";
 
@@ -111,6 +112,18 @@ test("dry run selects only old superseded nightlies without mutating GitHub", ()
       tag_name: "v1.0.0-nightly.20251201.8",
       immutable: true,
     }),
+    nightly({
+      id: 9,
+      tag_name: "v01.2.0-nightly.20251201.9",
+    }),
+    nightly({
+      id: 10,
+      tag_name: "v1.2.0-nightly.20261340.10",
+    }),
+    nightly({
+      id: 11,
+      tag_name: "v1.2.0-nightly.20251201.01",
+    }),
   ];
   const harness = createHarness({ releases });
 
@@ -167,6 +180,31 @@ test("apply re-fetches candidates, skips stale plans, then deletes release befor
       `repos/${REPO}/git/refs/tags/v1.1.9-nightly.20251231.2`,
     ],
   ]);
+});
+
+test("apply preserves every nightly tag with non-canonical grammar", () => {
+  for (const tag of [
+    "v01.2.0-nightly.20251201.9",
+    "v1.2.0-nightly.20261340.10",
+    "v1.2.0-nightly.20251201.01",
+  ]) {
+    const harness = createHarness({
+      releases: [nightly({ tag_name: tag })],
+    });
+
+    assert.equal(
+      main(["--repo", REPO, "--stable-tag", STABLE_TAG, "--apply"], {
+        gh: harness.gh,
+        io: harness.io,
+      }),
+      0,
+    );
+    assert.equal(
+      harness.calls.some((args) => args.includes("DELETE")),
+      false,
+      tag,
+    );
+  }
 });
 
 test("apply reports a partial failure and exits nonzero", () => {
@@ -249,4 +287,18 @@ test("a full tenth page reaches the enumeration cap and fails closed", () => {
   );
   assert.match(stderr.join("\n"), /1,000-release safety cap/);
   assert.equal(calls.length, 11);
+});
+
+test("release workflows share the non-cancelling bounded mutation queue", () => {
+  for (const path of [
+    ".github/workflows/nightly-desktop.yml",
+    ".github/workflows/release-please.yml",
+  ]) {
+    const workflow = readFileSync(path, "utf8");
+    assert.match(
+      workflow,
+      /concurrency:\r?\n  group: nightly-release-mutations\r?\n  cancel-in-progress: false\r?\n  queue: max/,
+      path,
+    );
+  }
 });

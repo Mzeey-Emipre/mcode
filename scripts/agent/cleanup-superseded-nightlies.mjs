@@ -6,8 +6,13 @@ import { pathToFileURL } from "node:url";
 const PAGE_SIZE = 100;
 const MAX_RELEASES = 1_000;
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
-const STABLE_TAG_PATTERN = /^mcode-v(\d+)\.(\d+)\.(\d+)$/;
-const NIGHTLY_TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)-nightly\.(\d{8})\.(\d+)$/;
+const NUMERIC_IDENTIFIER = "(0|[1-9]\\d*)";
+const STABLE_TAG_PATTERN = new RegExp(
+  `^mcode-v${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}$`,
+);
+const NIGHTLY_TAG_PATTERN = new RegExp(
+  `^v${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}-nightly\\.(\\d{8})\\.${NUMERIC_IDENTIFIER}$`,
+);
 
 function defaultGh(args) {
   return execFileSync("gh", args, {
@@ -96,6 +101,24 @@ function compareVersions(left, right) {
   return 0;
 }
 
+function isCalendarDate(value) {
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(4, 6));
+  const day = Number(value.slice(6, 8));
+  if (year === 0 || month === 0 || day === 0) {
+    return false;
+  }
+
+  const timestamp = Date.parse(
+    `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T00:00:00Z`,
+  );
+  return (
+    Number.isFinite(timestamp) &&
+    new Date(timestamp).toISOString().slice(0, 10) ===
+      `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+  );
+}
+
 function validateStableRelease(release, expectedTag) {
   if (!release || typeof release !== "object" || Array.isArray(release)) {
     throw new Error("GitHub did not return a stable release object.");
@@ -139,6 +162,9 @@ function isCandidate(release, stableVersion, cutoff) {
       ? NIGHTLY_TAG_PATTERN.exec(release.tag_name)
       : null;
   if (!tagMatch) {
+    return false;
+  }
+  if (!isCalendarDate(tagMatch[4])) {
     return false;
   }
   if (compareVersions(parseVersion(tagMatch), stableVersion) > 0) {
