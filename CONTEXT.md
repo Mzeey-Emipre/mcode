@@ -736,15 +736,20 @@ Browser tabs — is defined on each tab type below, not here.)
 
 ### Tab availability
 The rule set governing which tab types a user can create at a given moment.
-Every top-level tab is a **singleton** — at most one Browser, one Terminal,
-one Review, one Plan, one Files. Multiplicity lives *inside* a tab (the
-Browser holds many pages, the Terminal many shells), never as duplicate
-top-level tabs. The set of **creatable** types is filtered twice: by
-**scope** (types needing a thread are dropped when no thread is active) and
-by **cardinality** (singletons already open are dropped). When exactly one
-type is creatable, the add affordance opens it directly instead of showing
-a menu; when none are, the add affordance is hidden. The empty panel and
-the add menu present this same creatable-types set.
+Browser, Review, Plan, and Files are **singletons** at the top level.
+Terminal is repeatable: each open Terminal tab represents one **shell
+session**. The set of **creatable** types is filtered by **scope** (types
+needing a thread are dropped when no thread is active) and by
+**cardinality** (open singleton types are dropped, while Terminal remains
+creatable until its limit of four shell sessions per terminal scope is
+reached). When exactly one type is creatable, the add affordance opens it
+directly instead of showing a menu; when none are, the add affordance is
+hidden. The empty panel and the add menu present this same creatable-types
+set. Tabs share one creation-ordered sequence regardless of type. A newly
+created tab appends to that sequence. The user can reorder any tab by pointer
+drag or keyboard movement without changing its content or the panel's size.
+Each thread preserves its own tab order. The workspace-level panel used with
+no active thread preserves a separate order.
 
 ### Plan tab
 The right-panel tab that shows a thread's saved plan documents. It is
@@ -777,10 +782,14 @@ attributed. It is separate from the Plan tab.
 _Avoid_: Scope task list
 
 ### Terminal tab
-The right-panel tab that hosts one or more **shell sessions** against the
-active **terminal scope** (a thread when one is active, otherwise the
-workspace root). Singleton at the panel level; multiplicity is internal
-(one tab, many shells).
+A repeatable right-panel tab that represents one **shell session** against
+the active **terminal scope** (a thread when one is active, otherwise the
+workspace root). Creating another shell session creates another Terminal
+tab. Selecting a Terminal tab shows only that tab's shell session. Closing
+a Terminal tab closes its shell session and terminates the entire process
+tree rooted at that shell. If closing it leaves no right-panel tabs, the
+right panel closes. When a shell exits on its own, its Terminal tab may show
+the exit status briefly, then closes automatically.
 
 ### Terminal scope
 The thread or workspace a shell session runs against. When a thread is
@@ -792,14 +801,15 @@ _Avoid_: Using "thread id" alone when the scope may be a workspace.
 ### Shell session
 A running shell process (e.g. PowerShell, bash) tied to one terminal scope.
 Survives thread switches and terminal-tab hides; the process keeps running
-until the user kills it or closes the shell. Output keeps draining into
-server-side scrollback even when no terminal view is mounted.
+until the user kills it or closes its Terminal tab. Closing it terminates the
+shell and every descendant process that it started. Output keeps draining
+into server-side scrollback even when no terminal view is mounted.
 _Avoid_: PTY (implementation term), terminal instance (ambiguous with the view).
 
 ### Active shell
-The one shell session whose terminal view is mounted. At most one terminal
-view exists in the app. Its view may stay warm while the Terminal tab or right
-panel is hidden; all other shells run without a view.
+The shell session represented by the selected Terminal tab. At most one
+terminal view exists in the app. Its view may stay warm while its Terminal tab
+or the right panel is hidden; all other shells run without a view.
 _Avoid_: Mounting a view for every open shell (background shells stay
 server-side only).
 
@@ -809,7 +819,8 @@ Only the **active shell** has a view; others keep running without one. Hiding
 the terminal surface preserves that view for a fast return. Switching shells
 replaces it. A returning view follows the latest output when the user was at
 the tail, or restores the same retained content when the user was reading
-history.
+history. Restoration preserves terminal text and ANSI styling without exposing
+control-sequence fragments as visible characters.
 _Avoid_: xterm (implementation term), conflating with shell session.
 
 ### Scrollback
