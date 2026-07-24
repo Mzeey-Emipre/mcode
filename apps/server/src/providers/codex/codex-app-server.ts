@@ -44,6 +44,7 @@ import type {
   ConfigReadResult,
   SandboxMode,
   AskForApproval,
+  ReasoningEffort,
 } from "./codex-types.js";
 
 /** Incoming approval request from the codex app-server, passed to approvalHandler. */
@@ -375,6 +376,14 @@ const RECOVERABLE_RESUME_ERROR_PHRASES = [
   "unknown thread",
   "thread does not exist",
 ] as const;
+
+const CHILD_THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** Authoritative model configuration returned for a native sub-agent thread. */
+export interface CodexChildThreadMetadata {
+  model: string;
+  reasoningEffort: ReasoningEffort;
+}
 
 /**
  * Returns true when `thread/resume` failed because the stored Codex thread or
@@ -904,6 +913,21 @@ export class CodexAppServer extends EventEmitter {
       logger.debug("Codex turn/start acknowledged", { threadId: this.threadId, turnId });
     }
     return turnId;
+  }
+
+  /** Reads a child thread's effective model settings without changing this server's active thread. */
+  async getChildThreadMetadata(childThreadId: string): Promise<CodexChildThreadMetadata | null> {
+    if (!CHILD_THREAD_ID_PATTERN.test(childThreadId)) return null;
+
+    const result = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
+      "thread/resume",
+      { threadId: childThreadId },
+      10_000,
+    );
+    const model = typeof result.model === "string" ? result.model.trim() : "";
+    const reasoningEffort = result.reasoningEffort;
+    if (!model || !reasoningEffort) return null;
+    return { model, reasoningEffort };
   }
 
   /** Set or update the native Codex thread goal. */

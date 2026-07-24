@@ -144,6 +144,113 @@ describe("buildNarrativeItems counts", () => {
     expect(counts.subagents).toBe(1);
   });
 
+  it("renders start, repeated updates, and finish in order without counting lifecycle markers", () => {
+    const tools: ToolCall[] = [
+      mkTool({
+        id: "agent-1",
+        toolName: "Agent",
+        toolInput: { agentName: "Explorer", description: "Private delegated prompt" },
+        startedAt: 1_000,
+        durationMs: 4_000,
+      }),
+      mkTool({
+        id: "update-1",
+        toolName: "__McodeSubagentLifecycle",
+        toolInput: { lifecycle: "updated", agentName: "Explorer" },
+        parentToolCallId: "agent-1",
+        startedAt: 2_000,
+      }),
+      mkTool({
+        id: "child-command",
+        toolName: "Bash",
+        toolInput: { command: "private child command" },
+        parentToolCallId: "agent-1",
+        startedAt: 2_500,
+      }),
+      mkTool({
+        id: "update-2",
+        toolName: "__McodeSubagentLifecycle",
+        toolInput: { lifecycle: "updated", agentName: "Explorer" },
+        parentToolCallId: "agent-1",
+        startedAt: 3_000,
+      }),
+    ];
+
+    const { items, counts } = buildNarrativeItems({
+      toolCalls: tools,
+      hooks: [],
+      thoughtSegments: [],
+      streamingText: "",
+      isAgentRunning: false,
+    });
+
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
+      "started",
+      "updated",
+      "updated",
+      "finished",
+    ]);
+    expect(items.every((item) => item.type === "subagent")).toBe(true);
+    expect(items[0]?.type === "subagent"
+      ? items[0].participants.map((participant) => participant.id)
+      : []).toEqual(["agent-1"]);
+    expect(counts).toEqual({ steps: 1, thoughts: 0, subagents: 1 });
+  });
+
+  it("builds authoritative source-then-target participants for nested handoffs", () => {
+    const tools: ToolCall[] = [
+      mkTool({
+        id: "agent-source",
+        toolName: "Agent",
+        toolInput: { agentName: "Explorer" },
+        startedAt: 1_000,
+      }),
+      mkTool({
+        id: "agent-target",
+        toolName: "Agent",
+        toolInput: { agentName: "Implementer" },
+        parentToolCallId: "agent-source",
+        startedAt: 2_000,
+      }),
+      mkTool({
+        id: "update-target",
+        toolName: "__McodeSubagentLifecycle",
+        toolInput: {
+          lifecycle: "updated",
+          sourceAgentName: "Explorer",
+          sourceAgentToolCallId: "agent-source",
+        },
+        parentToolCallId: "agent-target",
+        startedAt: 3_000,
+      }),
+    ];
+
+    const { items } = buildNarrativeItems({
+      toolCalls: tools,
+      hooks: [],
+      thoughtSegments: [],
+      streamingText: "",
+      isAgentRunning: false,
+    });
+    const targetRows = items.filter(
+      (item) => item.type === "subagent" && item.toolCall.id === "agent-target",
+    );
+
+    expect(targetRows.map((item) => item.type === "subagent" ? item.lifecycle : "")).toEqual([
+      "started",
+      "updated",
+      "finished",
+    ]);
+    for (const row of targetRows) {
+      if (row.type === "subagent") {
+        expect(row.participants.map((participant) => participant.id)).toEqual([
+          "agent-source",
+          "agent-target",
+        ]);
+      }
+    }
+  });
+
   it("hides thoughts that duplicate the committed assistant bubble (post-turn live trail)", () => {
     const body = "README updated. Same paragraphs in thought and bubble.";
     const thoughts: ThoughtSegment[] = [

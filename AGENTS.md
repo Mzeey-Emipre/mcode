@@ -112,7 +112,7 @@ viewport, split position, state, and transition that the user reported.
 
 When working on frontend code, follow the component registry and rules in **[docs/guides/ui-components.md](docs/guides/ui-components.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
 
-That guide's **Testing UI Changes** section defines the live checks required for interactive components, responsive layout, accessibility semantics, theme tokens, floating overlays, and persisted first-paint state. Use browser use or computer use against the running app, report the observed result, and keep any task-specific scripts or artifacts under `.dev/verification/`.
+That guide's **Testing UI Changes** section defines the live checks required for interactive components, responsive layout, accessibility semantics, theme tokens, floating overlays, and persisted first-paint state. Use browser use or computer use against the running app, report the observed result, keep temporary Playwright specs under `.dev/playwright-scratch`, and keep captured evidence under `.dev/verification/`.
 
 ## Narrative Timeline
 
@@ -180,6 +180,15 @@ UI behavior, IPC handlers, server endpoints, stores, and agent-service behavior.
    closest `__tests__/` directory that asserts the observed behavior. Do not
    commit task-specific browser-driving or screenshot scripts.
 3. Run the regression floor with `bun run verify`.
+
+For local UI changes, use the repository's Playwright setup when a connected
+browser or computer-use session is unavailable. A missing connected browser
+does not block live verification. Write temporary deterministic specs in
+`.dev/playwright-scratch` and keep screenshots, logs, and other evidence under
+`.dev/verification/`. If existing data does not expose the changed state, create
+a bounded test fixture instead of skipping the UI check. Report live
+verification as blocked only when the runtime and repository-owned Playwright
+cannot launch or exercise the behavior.
 
 Report all three: the live action and observed outcome, the regular test that
 protects it, and the `bun run verify` result. If the environment blocks live

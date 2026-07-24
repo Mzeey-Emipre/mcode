@@ -85,6 +85,10 @@ export interface ThreadResumeResult {
   threadId?: string;
   /** Nested thread object (codex app-server >= 0.104.0). The session ID is at `thread.id`. */
   thread?: { id: string; [key: string]: unknown };
+  /** Effective model selected for the resumed thread. */
+  model?: string | null;
+  /** Effective reasoning effort selected for the resumed thread. */
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 // Turn RPCs
@@ -320,7 +324,7 @@ export interface TurnPlanUpdatedPayload {
  *
  * Known types (from codex-rs/app-server-protocol):
  *   userMessage, agentMessage, commandExecution, fileChange, mcpToolCall,
- *   dynamicToolCall, collabAgentToolCall, reasoning, webSearch, plan,
+ *   dynamicToolCall, collabAgentToolCall, subAgentActivity, reasoning, webSearch, plan,
  *   imageView, imageGeneration, contextCompaction, enteredReviewMode, exitedReviewMode
  */
 export interface CompletedItem {
@@ -348,6 +352,11 @@ export interface CompletedItem {
   result?: string | null;
   error?: string | null;
 
+  // subAgentActivity
+  agentThreadId?: string;
+  agentPath?: string;
+  kind?: string;
+
   /** `item/completed` with `type: "reasoning"` — human-readable summary lines */
   summary?: string[];
   /** `item/completed` with `type: "reasoning"` — raw reasoning text segments */
@@ -365,6 +374,16 @@ export interface CompletedItem {
 export interface ItemStartedPayload { threadId?: string; turnId?: string; item?: CompletedItem }
 /** Payload for the `item/completed` notification. */
 export interface ItemCompletedPayload { threadId?: string; turnId?: string; item?: CompletedItem }
+
+/** Authoritative effective model settings for a Codex thread. */
+export interface ThreadSettingsUpdatedPayload {
+  threadId: string;
+  threadSettings: {
+    model?: string | null;
+    effort?: ReasoningEffort | null;
+    [key: string]: unknown;
+  };
+}
 
 // turn/completed payload
 
@@ -458,6 +477,7 @@ export interface McpServerStartupStatusUpdatedPayload {
  */
 export type CodexNotification =
   | (JsonRpcNotification<LifecyclePayload> & { method: "turn/started" })
+  | (JsonRpcNotification<ThreadSettingsUpdatedPayload> & { method: "thread/settings/updated" })
   | (JsonRpcNotification<ItemStartedPayload> & { method: "item/started" })
   | (JsonRpcNotification<AgentMessageDeltaPayload> & { method: "item/agentMessage/delta" })
   | (JsonRpcNotification<CommandExecOutputDeltaPayload> & { method: "item/commandExecution/outputDelta" })

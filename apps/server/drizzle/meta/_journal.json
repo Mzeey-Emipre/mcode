@@ -176,6 +176,27 @@
       "when": 1784563485483,
       "tag": "0023_grey_wildside",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1784724410621,
+      "tag": "0024_smart_glorian",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1784802369305,
+      "tag": "0025_wise_night_nurse",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1784821020555,
+      "tag": "0026_furry_red_hulk",
+      "breakpoints": true
     }
   ]
 }

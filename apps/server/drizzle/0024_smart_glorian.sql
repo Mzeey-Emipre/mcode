@@ -1,0 +1,1 @@
+ALTER TABLE `tool_call_records` ADD `display_name` text;

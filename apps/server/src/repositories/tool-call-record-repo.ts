@@ -14,6 +14,10 @@ interface ToolCallRecordRow {
   message_id: string;
   parent_tool_call_id: string | null;
   tool_name: string;
+  display_name: string | null;
+  provider_agent_key: string | null;
+  model: string | null;
+  reasoning_effort: string | null;
   input_summary: string;
   output_summary: string;
   output_truncated: number;
@@ -32,6 +36,10 @@ export interface CreateToolCallRecordInput {
   toolCallId?: string;
   messageId: string;
   toolName: string;
+  displayName?: string;
+  providerAgentKey?: string;
+  model?: string;
+  reasoningEffort?: string;
   inputSummary: string;
   outputSummary: string;
   outputTruncated?: boolean;
@@ -53,6 +61,10 @@ function rowToToolCallRecord(row: ToolCallRecordRow): ToolCallRecord {
     message_id: row.message_id,
     parent_tool_call_id: row.parent_tool_call_id,
     tool_name: row.tool_name,
+    display_name: row.display_name,
+    provider_agent_key: row.provider_agent_key,
+    model: row.model,
+    reasoning_effort: row.reasoning_effort,
     input_summary: row.input_summary,
     output_summary: row.output_summary,
     output_truncated: row.output_truncated,
@@ -67,7 +79,7 @@ function rowToToolCallRecord(row: ToolCallRecordRow): ToolCallRecord {
 }
 
 const TOOL_CALL_RECORD_COLUMNS =
-  "id, message_id, parent_tool_call_id, tool_name, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order";
+  "id, message_id, parent_tool_call_id, tool_name, display_name, provider_agent_key, model, reasoning_effort, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order";
 
 /** Repository for tool call record creation and retrieval against SQLite. */
 @injectable()
@@ -79,7 +91,7 @@ export class ToolCallRecordRepo {
 
   constructor(@inject("Database") private readonly db: Database.Database) {
     this.stmtInsert = db.prepare(
-      "INSERT OR IGNORE INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, display_name, provider_agent_key, model, reasoning_effort, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     this.stmtListByMessage = db.prepare(
       `SELECT ${TOOL_CALL_RECORD_COLUMNS} FROM tool_call_records WHERE message_id = ? ORDER BY sort_order ASC`,
@@ -104,6 +116,10 @@ export class ToolCallRecordRepo {
       input.messageId,
       input.parentToolCallId ?? null,
       input.toolName,
+      input.displayName ?? null,
+      input.providerAgentKey ?? null,
+      input.model ?? null,
+      input.reasoningEffort ?? null,
       input.inputSummary,
       input.outputSummary,
       input.outputTruncated === true ? 1 : 0,
@@ -121,6 +137,10 @@ export class ToolCallRecordRepo {
       message_id: input.messageId,
       parent_tool_call_id: input.parentToolCallId ?? null,
       tool_name: input.toolName,
+      display_name: input.displayName ?? null,
+      provider_agent_key: input.providerAgentKey ?? null,
+      model: input.model ?? null,
+      reasoning_effort: input.reasoningEffort ?? null,
       input_summary: input.inputSummary,
       output_summary: input.outputSummary,
       output_truncated: input.outputTruncated === true ? 1 : 0,
@@ -146,6 +166,10 @@ export class ToolCallRecordRepo {
           item.messageId,
           item.parentToolCallId ?? null,
           item.toolName,
+          item.displayName ?? null,
+          item.providerAgentKey ?? null,
+          item.model ?? null,
+          item.reasoningEffort ?? null,
           item.inputSummary,
           item.outputSummary,
           item.outputTruncated === true ? 1 : 0,

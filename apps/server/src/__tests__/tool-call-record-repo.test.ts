@@ -60,6 +60,7 @@ describe("V7 migration", () => {
       "output_total_bytes",
       "output_artifact_path",
       "exit_code",
+      "provider_agent_key",
     ]));
 
     db.close();
@@ -82,6 +83,10 @@ describe("ToolCallRecordRepo", () => {
     const input: CreateToolCallRecordInput = {
       messageId,
       toolName: "Read",
+      displayName: "Explorer",
+      providerAgentKey: "/root/explorer",
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
       inputSummary: "file.ts",
       outputSummary: "200 lines",
       outputTruncated: true,
@@ -97,6 +102,10 @@ describe("ToolCallRecordRepo", () => {
     expect(record.id).toBeDefined();
     expect(record.message_id).toBe(messageId);
     expect(record.tool_name).toBe("Read");
+    expect(record.display_name).toBe("Explorer");
+    expect(record.provider_agent_key).toBe("/root/explorer");
+    expect(record.model).toBe("gpt-5.3-codex");
+    expect(record.reasoning_effort).toBe("high");
     expect(record.input_summary).toBe("file.ts");
     expect(record.output_summary).toBe("200 lines");
     expect(record.output_truncated).toBe(1);
@@ -111,6 +120,10 @@ describe("ToolCallRecordRepo", () => {
     const records = repo.listByMessage(messageId);
     expect(records).toHaveLength(1);
     expect(records[0]!.id).toBe(record.id);
+    expect(records[0]!.display_name).toBe("Explorer");
+    expect(records[0]!.provider_agent_key).toBe("/root/explorer");
+    expect(records[0]!.model).toBe("gpt-5.3-codex");
+    expect(records[0]!.reasoning_effort).toBe("high");
     expect(records[0]!.output_truncated).toBe(1);
     expect(records[0]!.exit_code).toBe(1);
   });

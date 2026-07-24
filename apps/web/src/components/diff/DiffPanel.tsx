@@ -39,6 +39,9 @@ export function DiffPanel() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const viewMode = useDiffStore((s) => s.viewMode);
+  const subagentScope = useDiffStore((s) =>
+    activeThreadId ? s.subagentReviewScopeByThread[activeThreadId] : undefined,
+  );
   const snapshots = useDiffStore((s) =>
     activeThreadId ? s.snapshotsByThread[activeThreadId] : undefined,
   );
@@ -143,7 +146,32 @@ export function DiffPanel() {
   const snapshotVersion = (snapshots ?? []).map((snapshot) => `${snapshot.id}:${snapshot.ref_after}`).join("|");
   comparisonIdentityRef.current = comparisonIdentity;
   const visibleSettled = settled?.identity === comparisonIdentity ? settled : null;
-  const comparisonFiles: ReviewFileChange[] = visibleSettled?.comparison.files ?? [];
+  const visibleComparison = useMemo<ReviewComparison | null>(() => {
+    const comparison = visibleSettled?.comparison;
+    if (!subagentScope || viewMode !== "cumulative") return comparison ?? null;
+    const settledFilesByPath = new Map(
+      comparison?.files.map((file) => [file.path, file]),
+    );
+    return {
+      files: subagentScope.paths.map(
+        (path): ReviewFileChange => settledFilesByPath.get(path) ?? ({
+          path,
+          previousPath: null,
+          changeType: "modified",
+          binary: false,
+        }),
+      ),
+      additions: subagentScope.additions,
+      deletions: subagentScope.deletions,
+    };
+  }, [subagentScope, viewMode, visibleSettled]);
+  const comparisonFiles: ReviewFileChange[] = visibleComparison?.files ?? [];
+
+  useEffect(() => {
+    setReviewDiffStat(visibleComparison
+      ? { additions: visibleComparison.additions, deletions: visibleComparison.deletions }
+      : null);
+  }, [setReviewDiffStat, visibleComparison]);
 
   useEffect(() => {
     if (!activeWorkspaceId || !diffScopeId) return;
@@ -232,7 +260,6 @@ export function DiffPanel() {
     void load().then((next) => {
       if (cancelled) return;
       setSettled({ identity: comparisonIdentity, ...next });
-      setReviewDiffStat({ additions: next.comparison.additions, deletions: next.comparison.deletions });
       setComparisonLoading(false);
     }).catch(() => {
       if (!cancelled) {
@@ -241,7 +268,7 @@ export function DiffPanel() {
       }
     });
     return () => { cancelled = true; };
-  }, [activeWorkspaceId, activeThreadId, diffScopeId, viewMode, selectedCommitSha, branchComparison, branchRange, mutableComparisonRevision, snapshots, snapshotsLoading, snapshotVersion, snapshotRefreshRevision, latestSnapshot, comparisonIdentity, setReviewDiffStat]);
+  }, [activeWorkspaceId, activeThreadId, diffScopeId, viewMode, selectedCommitSha, branchComparison, branchRange, mutableComparisonRevision, snapshots, snapshotsLoading, snapshotVersion, snapshotRefreshRevision, latestSnapshot, comparisonIdentity]);
 
   const refreshComparison = useCallback(() => {
     if (!diffScopeId || comparisonLoading || viewMode === "commit") return;
@@ -322,6 +349,7 @@ export function DiffPanel() {
     snapshotsLoading ||
     comparisonLoading ||
     (!visibleSettled && comparisonErrorIdentity !== comparisonIdentity);
+  const scopedCumulative = viewMode === "cumulative" && subagentScope !== undefined;
 
   return (
     <div ref={panelRootRef} className="flex flex-1 flex-col overflow-hidden min-h-0">
@@ -337,13 +365,21 @@ export function DiffPanel() {
           // thread's checkout (passed via threadId), alongside the turn views.
           isGitView(viewMode) && activeWorkspaceId ? (
             <GitDiffView resolved={visibleSettled?.git ?? null} threadId={activeThreadId} loading={comparisonPending} immutable={viewMode === "commit"} onRefresh={refreshComparison} emptyLabel={viewMode === "commit" ? "No commit yet" : "No changes"} />
-          ) : comparisonPending && !visibleSettled ? (
+          ) : comparisonPending && !visibleSettled && !scopedCumulative ? (
             <LoadingPulse />
           ) : viewMode === "cumulative" ? (
-            <CumulativeView threadId={activeThreadId} comparison={visibleSettled?.comparison ?? null} cacheVersion={visibleSettled?.cacheVersion ?? ""} turnCount={visibleSettled?.turnCount ?? 0} refreshing={comparisonLoading} onRefresh={refreshComparison} />
+            <CumulativeView
+              threadId={activeThreadId}
+              comparison={visibleComparison}
+              cacheVersion={visibleSettled?.cacheVersion ?? ""}
+              turnCount={visibleSettled?.turnCount ?? 0}
+              refreshing={comparisonLoading}
+              onRefresh={refreshComparison}
+              scopeLabel={subagentScope?.label}
+            />
           ) : (
             // Default (and "last-turn") thread view: the most recent turn's diff.
-            <LastTurnView threadId={activeThreadId} comparison={visibleSettled?.comparison ?? null} snapshotId={visibleSettled?.snapshotId ?? null} cacheVersion={visibleSettled?.cacheVersion ?? ""} refreshing={comparisonLoading} onRefresh={refreshComparison} />
+            <LastTurnView threadId={activeThreadId} comparison={visibleComparison} snapshotId={visibleSettled?.snapshotId ?? null} cacheVersion={visibleSettled?.cacheVersion ?? ""} refreshing={comparisonLoading} onRefresh={refreshComparison} />
           )
         ) : activeWorkspaceId && isGitView(viewMode) ? (
           <GitDiffView resolved={visibleSettled?.git ?? null} threadId={activeWorkspaceId} loading={comparisonPending} immutable={viewMode === "commit"} onRefresh={refreshComparison} emptyLabel={viewMode === "commit" ? "No commit yet" : "No changes"} />
@@ -353,7 +389,7 @@ export function DiffPanel() {
         <WorktreeFilesPane
           files={comparisonFiles}
           activePath={activeWorktreePath}
-          loading={!visibleSettled && comparisonErrorIdentity !== comparisonIdentity}
+          loading={!visibleSettled && comparisonErrorIdentity !== comparisonIdentity && !scopedCumulative}
           error={null}
           width={filesPanelWidth}
           minWidth={FILES_PANEL_MIN_WIDTH}
@@ -376,7 +412,7 @@ export function DiffPanel() {
         <WorktreeFilesPane
           files={comparisonFiles}
           activePath={activeWorktreePath}
-          loading={!visibleSettled && comparisonErrorIdentity !== comparisonIdentity}
+          loading={!visibleSettled && comparisonErrorIdentity !== comparisonIdentity && !scopedCumulative}
           error={null}
           width={Math.min(filesPanelWidth, floatingFilesPanelMaxWidth)}
           minWidth={floatingFilesPanelMinWidth}

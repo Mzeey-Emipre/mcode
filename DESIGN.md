@@ -819,6 +819,25 @@ errored. Settled states may omit the visible label when the selected surface or
 adjacent copy already states the outcome. Tooltips may clarify status but cannot
 be the only source of critical information. Never add a second colored chip.
 
+### Status-dot placement
+
+Status dots are ambient attention signals, not universal completion ornaments.
+Use one when an object appears on a glance surface while its underlying content
+is hidden, or when its state changed while the user was elsewhere. Appropriate
+uses include a thread in the project tree, a collapsed CI result in Thread
+Overview, and a background run that completed outside the current view.
+
+Do not use a dot to repeat state already stated by the current section, label,
+or open content. A completed item inside `Done`, or a completed detail view,
+does not need a sage dot solely to restate completion. Running, waiting,
+disconnected, and errored states may retain a dot when they require immediate
+attention.
+
+When the user opens the object, its local content becomes the primary source of
+state. Remove the ambient dot unless ongoing activity or an exceptional state
+still needs monitoring. Preserve the state through visible text or accessible
+semantics; color and motion remain supplementary.
+
 ### Conversation and Narrative
 
 - Render the conversation as a readable document, not alternating speech
@@ -989,8 +1008,9 @@ Selection, focus, and live status are distinct:
 
 - **Selection** answers "which object am I viewing?" Use row fill or tab state.
 - **Focus** answers "where will the next keyboard action land?" Use Cool Ring.
-- **Live status** answers "what is happening now?" Use the status dot and local
-  motion.
+- **Live status** answers "what is happening now?" On glance surfaces or for
+  hidden state, use the status dot and local motion. Open content carries its
+  own state and does not repeat a settled ambient dot.
 
 Do not use Filament Amber for all three on the same element.
 
@@ -1091,7 +1111,7 @@ state the condition; supporting copy explains the next useful move.
 - Filament Amber on cool slate carries brand identity.
 - Public Sans and tabular mono separate human and machine information.
 - The right panel supports inspection without turning Mcode into an editor.
-- The status dot and curated Next-Step Slot are signature components.
+- The ambient status dot and curated Next-Step Slot are signature components.
 
 ### External references
 

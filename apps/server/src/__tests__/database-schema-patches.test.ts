@@ -85,6 +85,32 @@ describe("applySchemaPatches", () => {
     expect(() => applySchemaPatches(db)).not.toThrow();
   });
 
+  it("adds nullable subagent metadata without changing existing tool-call rows", () => {
+    db.prepare(
+      "CREATE TABLE tool_call_records (id TEXT PRIMARY KEY, output_summary TEXT NOT NULL)",
+    ).run();
+    db.prepare(
+      "INSERT INTO tool_call_records (id, output_summary) VALUES (?, ?)",
+    ).run("agent-1", "Existing result");
+
+    applySchemaPatches(db);
+
+    expect(columnNames(db, "tool_call_records")).toEqual(expect.arrayContaining([
+      "provider_agent_key",
+      "model",
+      "reasoning_effort",
+    ]));
+    expect(db.prepare(
+      "SELECT id, output_summary, provider_agent_key, model, reasoning_effort FROM tool_call_records WHERE id = ?",
+    ).get("agent-1")).toEqual({
+      id: "agent-1",
+      output_summary: "Existing result",
+      provider_agent_key: null,
+      model: null,
+      reasoning_effort: null,
+    });
+  });
+
   it("swallows duplicate column name error to survive a concurrent startup race", () => {
     // Simulate: PRAGMA check passed but another process already added the column
     db.prepare(

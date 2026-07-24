@@ -61,6 +61,9 @@ import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
 import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
+import { openSubagentsPanel } from "@/lib/open-subagent-detail";
+import { projectSubagents } from "@/components/subagents/subagent-projection";
+import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
 import { cn } from "@/lib/utils";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
 import { formatUsageResetText } from "@/lib/usage-reset-format";
@@ -1851,6 +1854,27 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     () => (open ? extractThreadSources(sourceMessages) : []),
     [open, sourceMessages],
   );
+  const overviewToolCalls = useThreadStore((state) => (
+    open ? state.records.get(thread.id)?.toolCalls : undefined
+  ));
+  const overviewNarrative = useThreadStore((state) => (
+    open ? state.records.get(thread.id)?.narrativeByMessage : undefined
+  ));
+  const subagentRoster = useMemo(
+    () => projectSubagents(
+      overviewToolCalls,
+      overviewNarrative
+        ? Object.values(overviewNarrative).map((entry) => entry?.tools)
+        : undefined,
+    ),
+    [overviewNarrative, overviewToolCalls],
+  );
+  const subagentTotal = subagentRoster.active.length + subagentRoster.finished.length;
+  const subagentGlyphRows = [...subagentRoster.active, ...subagentRoster.finished].slice(0, 4);
+  const subagentStateCopy = [
+    subagentRoster.active.length > 0 ? `${subagentRoster.active.length} active` : null,
+    `${subagentRoster.finished.length} done`,
+  ].filter(Boolean).join(", ");
 
   const openSource = useCallback(
     (event: React.MouseEvent, url: string) => {
@@ -2120,6 +2144,39 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                   sessionCostSummary={sessionCostSummary}
                   usageStatus={usageInfo?.usageStatus}
                 />
+              </>
+            )}
+
+            {subagentTotal > 0 && (
+              <>
+                <Separator className="my-1.5" />
+                <div className="px-2 pt-1 text-xs font-medium text-muted-foreground">
+                  Subagents
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  data-testid="thread-overview-subagents"
+                  onClick={openSubagentsPanel}
+                  aria-label={`Subagents, ${subagentRoster.active.length} active, ${subagentRoster.finished.length} done`}
+                  className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-start gap-2")}
+                >
+                  <span className="flex -space-x-1" aria-hidden>
+                    {subagentGlyphRows.map((row) => (
+                      <SubagentIdentityGlyph
+                        key={row.id}
+                        identity={row.identity}
+                        hasExplicitIdentity={row.hasExplicitIdentity}
+                        size={11}
+                        className="size-4 ring-2 ring-background"
+                      />
+                    ))}
+                  </span>
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {subagentStateCopy}
+                  </span>
+                </Button>
               </>
             )}
 

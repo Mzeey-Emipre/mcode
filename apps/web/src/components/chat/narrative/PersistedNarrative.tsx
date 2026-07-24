@@ -54,7 +54,7 @@ function keyForItem(item: NarrativeItem, index: number): string {
     case "hook":
       return `hook-${item.hook.hookName}-${item.hook.startedAt}-${index}`;
     case "subagent":
-      return `subagent-${item.toolCall.id}`;
+      return `subagent-${item.toolCall.id}-${item.lifecycle}-${index}`;
     default:
       return `item-${index}`;
   }
@@ -79,6 +79,8 @@ function renderItem(item: NarrativeItem, allToolCalls: readonly ToolCall[]): Rea
       return (
         <SubagentRow
           toolCall={item.toolCall}
+          participants={item.participants}
+          lifecycle={item.lifecycle}
           children={item.children}
           hooks={item.hooks}
           allToolCalls={allToolCalls}

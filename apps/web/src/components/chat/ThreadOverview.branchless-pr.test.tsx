@@ -3,12 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import type { Thread } from "@/transport";
 import { useOverviewStore } from "@/stores/overviewStore";
+import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 
 const {
   mockCreateBranch,
+  mockOpenSubagentsPanel,
+  mockThreadRecords,
   mockWorkspaceState,
 } = vi.hoisted(() => ({
   mockCreateBranch: vi.fn(),
+  mockOpenSubagentsPanel: vi.fn(),
+  mockThreadRecords: new Map<string, ThreadRecord>(),
   mockWorkspaceState: {
     workspaces: [{ id: "ws-1", path: "/repo" }],
     threads: [] as Thread[],
@@ -84,8 +89,12 @@ vi.mock("@/stores/diffStore", async (importOriginal) => {
 
 vi.mock("@/stores/threadStore", () => ({
   useThreadStore: vi.fn((selector: (state: unknown) => unknown) =>
-    selector({ records: new Map(), fetchProviderUsage: vi.fn() }),
+    selector({ records: mockThreadRecords, fetchProviderUsage: vi.fn() }),
   ),
+}));
+
+vi.mock("@/lib/open-subagent-detail", () => ({
+  openSubagentsPanel: mockOpenSubagentsPanel,
 }));
 
 vi.mock("@/components/ui/popover", () => ({
@@ -122,6 +131,7 @@ vi.mock("./CreatePrDialog", () => ({
 }));
 
 import { ThreadOverview, canStartBranchlessCreatePr } from "./ThreadOverview";
+import { getSubagentIdentityPaletteIndex } from "@/components/subagents/SubagentIdentityGlyph";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -171,6 +181,8 @@ describe("ThreadOverview branchless Create PR", () => {
     mockWorkspaceState.checksById = {};
     mockWorkspaceState.worktreesLoadedForWorkspace = "ws-1";
     mockCreateBranch.mockReset().mockResolvedValue({ branch: "feat/issue-801" });
+    mockOpenSubagentsPanel.mockReset();
+    mockThreadRecords.clear();
     useOverviewStore.setState({ reserveSpace: false, requestedThreadId: null });
   });
 
@@ -188,6 +200,172 @@ describe("ThreadOverview branchless Create PR", () => {
     await waitFor(() =>
       expect(useOverviewStore.getState().requestedThreadId).toBeNull(),
     );
+  });
+
+  it("shows a loaded sub-agent summary only when present and opens its panel", () => {
+    const thread = makeThread();
+    const first = render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
+    expect(screen.queryByTestId("thread-overview-subagents")).not.toBeInTheDocument();
+    first.unmount();
+
+    mockThreadRecords.set(thread.id, {
+      ...createEmptyThreadRecord(),
+      toolCalls: [{
+        id: "agent-1",
+        toolName: "Agent",
+        toolInput: { agentName: "Explorer" },
+        output: null,
+        isError: false,
+        isComplete: false,
+      }],
+      narrativeByMessage: {},
+    });
+    render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
+
+    const summary = screen.getByTestId("thread-overview-subagents");
+    expect(summary).toHaveAccessibleName("Subagents, 1 active, 0 done");
+    expect(summary).toHaveTextContent("1 active, 0 done");
+    expect(summary).not.toHaveTextContent("total");
+    expect(summary.querySelectorAll("[data-subagent-identity-glyph]")).toHaveLength(1);
+    expect(screen.queryByTestId("thread-overview-subagents-running")).not.toBeInTheDocument();
+    expect(screen.getByText("Subagents").compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(summary.querySelector('[data-subagent-identity-glyph="Explorer"]')).toHaveAttribute(
+      "data-subagent-palette",
+      String(getSubagentIdentityPaletteIndex("Explorer")),
+    );
+    fireEvent.click(summary);
+    expect(mockOpenSubagentsPanel).toHaveBeenCalledOnce();
+  });
+
+  it("renders the sub-agent summary below Usage", () => {
+    const thread = makeThread();
+    mockThreadRecords.set(thread.id, {
+      ...createEmptyThreadRecord(),
+      toolCalls: [{
+        id: "agent-1",
+        toolName: "Agent",
+        toolInput: { agentName: "Explorer" },
+        output: null,
+        isError: false,
+        isComplete: false,
+      }],
+      narrativeByMessage: {},
+      usageByProvider: {
+        claude: {
+          providerId: "claude",
+          quotaCategories: [],
+          usageStatus: "ready-empty",
+        },
+      },
+    });
+
+    render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
+
+    const usage = screen.getByTestId("thread-overview-usage");
+    const subagents = screen.getByTestId("thread-overview-subagents");
+    expect(usage.compareDocumentPosition(subagents) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  });
+
+  it("bounds finished identity glyphs and omits the zero active count", () => {
+    const thread = makeThread();
+    mockThreadRecords.set(thread.id, {
+      ...createEmptyThreadRecord(),
+      toolCalls: Array.from({ length: 5 }, (_, index) => ({
+        id: `agent-${index}`,
+        toolName: "Agent",
+        toolInput: { agentName: `Worker ${index}` },
+        output: "Done",
+        isError: false,
+        isComplete: true,
+      })),
+      narrativeByMessage: {},
+    });
+
+    render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
+
+    const summary = screen.getByTestId("thread-overview-subagents");
+    expect(summary).toHaveAccessibleName("Subagents, 0 active, 5 done");
+    expect(summary).toHaveTextContent("5 done");
+    expect(summary).not.toHaveTextContent("active");
+    expect(summary.querySelectorAll("[data-subagent-identity-glyph]")).toHaveLength(4);
+  });
+
+  it("counts repeated Codex paths as one logical subagent and keeps pathless calls separate", () => {
+    const thread = makeThread();
+    const explorerDispatches = Array.from({ length: 4 }, (_, index) => ({
+      id: `explorer-${index}`,
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "explorer",
+        agentPath: "/root/explorer",
+      },
+      output: "Done",
+      isError: false,
+      isComplete: true,
+      lastActivityAt: index,
+    }));
+    mockThreadRecords.set(thread.id, {
+      ...createEmptyThreadRecord(),
+      toolCalls: [
+        ...explorerDispatches,
+        {
+          id: "legacy",
+          toolName: "Agent",
+          toolInput: { agentName: "Explorer" },
+          output: "Done",
+          isError: false,
+          isComplete: true,
+          lastActivityAt: 10,
+        },
+      ],
+      narrativeByMessage: {},
+    });
+
+    render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
+
+    const summary = screen.getByTestId("thread-overview-subagents");
+    expect(summary).toHaveAccessibleName("Subagents, 0 active, 2 done");
+    expect(summary).toHaveTextContent("2 done");
+    expect(summary.querySelectorAll("[data-subagent-identity-glyph]")).toHaveLength(2);
+  });
+
+  it("renders unnamed and explicitly named Subagent identities with distinct provenance", () => {
+    const thread = makeThread();
+    mockThreadRecords.set(thread.id, {
+      ...createEmptyThreadRecord(),
+      toolCalls: [
+        {
+          id: "unnamed",
+          toolName: "Agent",
+          toolInput: {},
+          output: null,
+          isError: false,
+          isComplete: false,
+        },
+        {
+          id: "explicit",
+          toolName: "Agent",
+          toolInput: { agentName: "Subagent" },
+          output: null,
+          isError: false,
+          isComplete: false,
+        },
+      ],
+      narrativeByMessage: {},
+    });
+
+    render(<ThreadOverview thread={thread} threadPaneWidth={1400} />);
+
+    const glyphs = screen.getByTestId("thread-overview-subagents")
+      .querySelectorAll('[data-subagent-identity-glyph="Subagent"]');
+    expect(glyphs[0]).not.toHaveAttribute("data-subagent-palette");
+    expect(glyphs[0]).not.toHaveAttribute("style");
+    expect(glyphs[1]).toHaveAttribute(
+      "data-subagent-palette",
+      String(getSubagentIdentityPaletteIndex("Subagent")),
+    );
+    expect(glyphs[1]?.getAttribute("style")).toContain("--subagent-identity-color");
   });
 
   it("creates a named branch from the branchless worktree row", async () => {

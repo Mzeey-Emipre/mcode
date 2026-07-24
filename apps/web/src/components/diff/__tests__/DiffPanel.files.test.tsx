@@ -307,4 +307,104 @@ describe("DiffPanel worktree files", () => {
     await waitFor(() => expect(useDiffStore.getState().snapshotsByThread["thread-1"]).toEqual([oldSnapshot]));
     expect(screen.queryByText("stale.ts")).not.toBeInTheDocument();
   });
+
+  it("renders an authoritative subagent scope before aggregate comparison settles", async () => {
+    const aggregateStats = deferred<ReturnType<typeof stats>>();
+    transport.getCumulativeDiffStats.mockReset().mockReturnValueOnce(aggregateStats.promise);
+    useDiffStore.setState({
+      viewMode: "cumulative",
+      snapshotsByThread: { "thread-1": [] },
+      subagentReviewScopeByThread: {
+        "thread-1": {
+          label: "Explorer",
+          paths: ["subagent-proof.txt"],
+          additions: 1,
+          deletions: 0,
+        },
+      },
+    });
+    const user = userEvent.setup();
+
+    render(<DiffPanel />);
+
+    expect(screen.getByTestId("cumulative-diff")).toHaveTextContent("subagent-proof.txt");
+    expect(screen.getByText("Refreshing cumulative comparison")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.getByTestId("worktree-files")).toHaveTextContent("subagent-proof.txt");
+    expect(useDiffStore.getState().reviewDiffStat).toEqual({ additions: 1, deletions: 0 });
+
+    aggregateStats.resolve([]);
+    await waitFor(() => expect(screen.queryByText("Refreshing cumulative comparison")).not.toBeInTheDocument());
+    expect(screen.getByTestId("cumulative-diff")).toHaveTextContent("subagent-proof.txt");
+    expect(screen.getByTestId("worktree-files")).toHaveTextContent("subagent-proof.txt");
+  });
+
+  it("replaces a settled scoped comparison without showing stale aggregate membership", async () => {
+    const first = snapshot("snapshot-first", "first.ts");
+    first.files_changed = ["first.ts", "second.ts"];
+    transport.getCumulativeDiffStats.mockResolvedValue([
+      { filePath: "first.ts", additions: 2, deletions: 0 },
+      { filePath: "second.ts", additions: 3, deletions: 1 },
+    ]);
+    useDiffStore.setState({
+      viewMode: "cumulative",
+      snapshotsByThread: { "thread-1": [first] },
+      subagentReviewScopeByThread: {
+        "thread-1": {
+          label: "Explorer",
+          paths: ["first.ts"],
+          additions: 2,
+          deletions: 0,
+        },
+      },
+    });
+
+    render(<DiffPanel />);
+    await waitFor(() => expect(screen.getByTestId("cumulative-diff")).toHaveTextContent("first.ts"));
+
+    act(() => {
+      useDiffStore.getState().setSubagentReviewScope("thread-1", {
+        label: "Reviewer",
+        paths: ["review-only.ts"],
+        additions: 1,
+        deletions: 0,
+      });
+    });
+
+    expect(screen.getByTestId("cumulative-diff")).toHaveTextContent("review-only.ts");
+    expect(screen.getByTestId("cumulative-diff")).not.toHaveTextContent("first.ts");
+    expect(screen.getByTestId("cumulative-diff")).not.toHaveTextContent("second.ts");
+  });
+
+  it("applies one subagent scope to both cumulative diff and Files navigation", async () => {
+    const first = snapshot("snapshot-first", "first.ts");
+    const second = snapshot("snapshot-second", "second.ts");
+    first.files_changed = ["first.ts", "second.ts"];
+    transport.getCumulativeDiffStats.mockResolvedValue([
+      { filePath: "first.ts", additions: 2, deletions: 0 },
+      { filePath: "second.ts", additions: 3, deletions: 1 },
+    ]);
+    useDiffStore.setState({
+      viewMode: "cumulative",
+      snapshotsByThread: { "thread-1": [first, second] },
+      subagentReviewScopeByThread: {
+        "thread-1": {
+          label: "Explorer",
+          paths: ["second.ts"],
+          additions: 3,
+          deletions: 1,
+        },
+      },
+    });
+    const user = userEvent.setup();
+
+    render(<DiffPanel />);
+
+    await waitFor(() => expect(screen.getByTestId("cumulative-diff")).toHaveTextContent("second.ts"));
+    expect(screen.getByTestId("cumulative-diff")).not.toHaveTextContent("first.ts");
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.getByTestId("worktree-files")).toHaveTextContent("second.ts");
+    expect(screen.getByTestId("worktree-files")).not.toHaveTextContent("first.ts");
+    expect(useDiffStore.getState().reviewDiffStat).toEqual({ additions: 3, deletions: 1 });
+  });
 });

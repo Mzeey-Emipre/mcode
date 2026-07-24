@@ -18,6 +18,8 @@ describe("diffStore", () => {
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
       subagentRosterTabByThread: {},
+      subagentDetailByThread: {},
+      subagentReviewScopeByThread: {},
       reviewFilesVisibleByScope: {},
       snapshotsByThread: {},
       snapshotsLoadingByThread: {},
@@ -52,6 +54,69 @@ describe("diffStore", () => {
       expect(useDiffStore.getState().getReviewFilesVisible("thread-1")).toBe(true);
       expect(useDiffStore.getState().getReviewFilesVisible("thread-2")).toBe(false);
       expect(localStorage.getItem("mcode.review-files-visible.v1")).toContain('"thread-1":true');
+    });
+  });
+
+  describe("subagent Review scope", () => {
+    const scope = {
+      label: "Explorer",
+      paths: ["src/a.ts", "src/a.ts", "src/b.ts"],
+      additions: 4,
+      deletions: 1,
+    } as const;
+
+    it("bounds and deduplicates paths per thread without leaking to siblings", () => {
+      useDiffStore.getState().setSubagentReviewScope("thread-1", scope);
+
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toEqual({
+        ...scope,
+        paths: ["src/a.ts", "src/b.ts"],
+      });
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-2"]).toBeUndefined();
+    });
+
+    it("replaces a valid scope immediately and clears it when replacement paths normalize empty", () => {
+      const store = useDiffStore.getState();
+      store.setSubagentReviewScope("thread-1", scope);
+      store.setSubagentReviewScope("thread-1", {
+        label: "Reviewer",
+        paths: ["src/review.ts"],
+        additions: 2,
+        deletions: 0,
+      });
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toMatchObject({
+        label: "Reviewer",
+        paths: ["src/review.ts"],
+      });
+
+      useDiffStore.getState().setSubagentReviewScope("thread-1", {
+        label: "Empty",
+        paths: ["", "   "],
+        additions: 0,
+        deletions: 0,
+      });
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
+    });
+
+    it("preserves scope while focusing or refocusing Changes", () => {
+      const store = useDiffStore.getState();
+      store.setSubagentReviewScope("thread-1", scope);
+      store.setRightPanelTab("workspace-1", "thread-1", "changes");
+      store.setRightPanelTab("workspace-1", "thread-1", "changes");
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toEqual({
+        ...scope,
+        paths: ["src/a.ts", "src/b.ts"],
+      });
+    });
+
+    it("clears on ordinary Review navigation and thread deletion", () => {
+      useDiffStore.getState().setSubagentReviewScope("thread-1", scope);
+      useDiffStore.getState().setReviewViewForThread("thread-1", "cumulative");
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
+
+      useDiffStore.getState().setSubagentReviewScope("thread-1", scope);
+      useDiffStore.getState().clearThread("thread-1");
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
     });
   });
 
@@ -696,6 +761,17 @@ describe("diffStore", () => {
   });
 
   describe("clearThread", () => {
+    it("stores detail navigation per thread and clears it with the thread", () => {
+      const { selectSubagentDetail, clearSubagentDetail, clearThread } = useDiffStore.getState();
+      selectSubagentDetail("thread-1", { id: "agent-1", originTab: "active", scrollTop: 48 });
+      selectSubagentDetail("thread-2", { id: "agent-2", originTab: "finished", scrollTop: 0 });
+
+      clearSubagentDetail("thread-1");
+      expect(useDiffStore.getState().subagentDetailByThread["thread-1"]).toBeUndefined();
+      clearThread("thread-2");
+      expect(useDiffStore.getState().subagentDetailByThread["thread-2"]).toBeUndefined();
+    });
+
     it("keeps roster tabs isolated by thread and drops the deleted thread's choice", () => {
       const { setSubagentRosterTab, getSubagentRosterTab, clearThread } = useDiffStore.getState();
       setSubagentRosterTab("thread-1", "active");

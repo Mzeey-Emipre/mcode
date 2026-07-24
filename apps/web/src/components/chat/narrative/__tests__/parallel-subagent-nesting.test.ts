@@ -56,17 +56,24 @@ describe("parallel sub-agent nesting", () => {
     });
 
     const subagentItems = items.filter((i) => i.type === "subagent");
-    expect(subagentItems.length).toBe(4);
+    expect(subagentItems.length).toBe(8);
 
-    const byId = new Map<string, ToolCall[]>();
-    for (const item of subagentItems) {
-      if (item.type !== "subagent") continue;
-      byId.set(item.toolCall.id, [...item.children]);
+    for (const agentId of ["agent-sec", "agent-perf", "agent-qual", "agent-corr"]) {
+      expect(
+        subagentItems
+          .filter((item) => item.toolCall.id === agentId)
+          .map((item) => item.lifecycle),
+      ).toEqual(["started", "finished"]);
     }
-    expect(byId.get("agent-sec")?.map((c) => c.id)).toEqual(["c1", "c2"]);
-    expect(byId.get("agent-perf")?.map((c) => c.id)).toEqual(["c3"]);
-    expect(byId.get("agent-qual")?.map((c) => c.id)).toEqual(["c4", "c5", "c6"]);
-    expect(byId.get("agent-corr")?.map((c) => c.id)).toEqual(["c7"]);
+
+    const startedRow = (agentId: string) =>
+      subagentItems.find(
+        (item) => item.toolCall.id === agentId && item.lifecycle === "started",
+      );
+    expect(startedRow("agent-sec")?.children.map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(startedRow("agent-perf")?.children.map((c) => c.id)).toEqual(["c3"]);
+    expect(startedRow("agent-qual")?.children.map((c) => c.id)).toEqual(["c4", "c5", "c6"]);
+    expect(startedRow("agent-corr")?.children.map((c) => c.id)).toEqual(["c7"]);
 
     expect(counts.steps).toBe(4); // 4 top-level Agent rows
     expect(counts.subagents).toBe(4);
