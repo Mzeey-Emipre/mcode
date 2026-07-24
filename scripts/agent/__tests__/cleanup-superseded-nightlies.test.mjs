@@ -182,14 +182,18 @@ test("apply re-fetches candidates, skips stale plans, then deletes release befor
   ]);
 });
 
-test("apply preserves every nightly tag with non-canonical grammar", () => {
-  for (const tag of [
+test("apply explicitly skips malformed tags returned by candidate revalidation", () => {
+  for (const malformedTag of [
     "v01.2.0-nightly.20251201.9",
     "v1.2.0-nightly.20261340.10",
     "v1.2.0-nightly.20251201.01",
   ]) {
+    const planned = nightly();
     const harness = createHarness({
-      releases: [nightly({ tag_name: tag })],
+      releases: [planned],
+      refetched: new Map([
+        [planned.id, { ...planned, tag_name: malformedTag }],
+      ]),
     });
 
     assert.equal(
@@ -199,10 +203,16 @@ test("apply preserves every nightly tag with non-canonical grammar", () => {
       }),
       0,
     );
+    assert.ok(
+      harness.stdout.includes(
+        `Skipped ${planned.tag_name}: release no longer matches the cleanup plan.`,
+      ),
+      malformedTag,
+    );
     assert.equal(
       harness.calls.some((args) => args.includes("DELETE")),
       false,
-      tag,
+      malformedTag,
     );
   }
 });
@@ -257,6 +267,36 @@ test("an invalid stable release fails before nightly enumeration", () => {
     1,
   );
   assert.equal(harness.calls.length, 1);
+});
+
+test("malformed stable tags fail before release enumeration", () => {
+  for (const stableTag of [
+    "mcode-v01.2.0",
+    "mcode-v1.02.0",
+    "mcode-v1.2.00",
+    "mcode-v1.2",
+  ]) {
+    const calls = [];
+    const stderr = [];
+    const gh = (args) => {
+      calls.push(args);
+      return JSON.stringify({
+        ...STABLE_RELEASE,
+        tag_name: stableTag,
+      });
+    };
+
+    assert.equal(
+      main(["--repo", REPO, "--stable-tag", stableTag], {
+        gh,
+        io: { stdout() {}, stderr: (line) => stderr.push(line) },
+      }),
+      1,
+      stableTag,
+    );
+    assert.equal(calls.length, 1, stableTag);
+    assert.match(stderr.join("\n"), /exactly match mcode-vX\.Y\.Z/, stableTag);
+  }
 });
 
 test("a full tenth page reaches the enumeration cap and fails closed", () => {
