@@ -10,8 +10,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: nightly-desktop
-  cancel-in-progress: true
+  group: nightly-release-mutations
+  cancel-in-progress: false
+  queue: max
 
 env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
