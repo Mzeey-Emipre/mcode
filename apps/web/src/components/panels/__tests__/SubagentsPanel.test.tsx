@@ -174,6 +174,25 @@ describe("SubagentsPanel", () => {
     expect(screen.getByTestId("subagent-lifecycle-dot")).toHaveClass("status-pulse");
   });
 
+  it("shows model and reasoning metadata in running detail before output or completion", () => {
+    setThread([agent({
+      isComplete: false,
+      output: null,
+      toolInput: {
+        agentName: "Implementation worker",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      },
+    })]);
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
+
+    expect(screen.getByRole("group", { name: /Running, \d+s elapsed/ })).toBeInTheDocument();
+    expect(screen.getByTestId("subagent-response-byline")).toHaveTextContent("GPT-5.6 Sol · High");
+    expect(screen.queryByTestId("subagent-response-text")).not.toBeInTheDocument();
+  });
+
   it("shows explicit metadata, exact footer counts, and opens attributed workspace diffs", () => {
     setThread([
       agent({

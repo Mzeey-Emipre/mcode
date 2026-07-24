@@ -243,6 +243,8 @@ interface CodexSessionState {
   runTurnSeq: number;
   /** Codex `turn.id` from the latest `turn/started` for this session. */
   pendingTurnId: string | null;
+  /** Child threads already queried for authoritative model metadata this session. */
+  childMetadataFetches: Set<string>;
   /** Clears the in-flight `runTurn` listener when a new turn preempts it. */
   abortPendingTurnWait?: () => void;
 }
@@ -431,6 +433,15 @@ function isMainThreadNotification(
     ? params.threadId
     : undefined;
   return !notifThreadId || !server.threadId || notifThreadId === server.threadId;
+}
+
+/** Returns the child thread id when a native sub-agent activity starts. */
+function nativeSubAgentThreadId(notification: { method?: string; params?: Record<string, unknown> }): string | undefined {
+  if (notification.method !== "item/started" && notification.method !== "item/completed") return undefined;
+  const item = notification.params?.item;
+  if (!isRecord(item) || item.type !== "subAgentActivity" || item.kind !== "started") return undefined;
+  const childThreadId = item.agentThreadId;
+  return typeof childThreadId === "string" && childThreadId.length > 0 ? childThreadId : undefined;
 }
 
 function completedAssistantText(item: CompletedItem | undefined): string {
@@ -1008,7 +1019,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           typeof n.params?.turnId === "string" ? n.params.turnId : undefined;
         const turnId = turn?.id ?? flatTurnId;
         const entry = this.runtime.get(sessionId);
-        if (entry && turnId) entry.pendingTurnId = turnId;
+        if (entry && turnId) {
+          entry.pendingTurnId = turnId;
+          entry.childMetadataFetches.clear();
+        }
       }
       if (server.threadId) {
         mapper.setMainCodexThreadId(server.threadId);
@@ -1023,6 +1037,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         this.recordGoalEvent(sessionId, event);
         this.emit("event", event);
       }
+      const childThreadId = nativeSubAgentThreadId(n);
+      if (childThreadId) this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId);
     });
 
     server.on("fatal", (error: string) => {
@@ -1089,6 +1105,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       sandboxMode: sandbox,
       runTurnSeq: 0,
       pendingTurnId: null,
+      childMetadataFetches: new Set(),
     };
     this.liveSessionIds.add(sessionId);
 
@@ -1110,6 +1127,39 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     }
 
     return { state, pids: [] };
+  }
+
+  /** Fetches one native child thread's authoritative model settings without affecting the parent turn. */
+  private fetchChildThreadMetadata(
+    sessionId: string,
+    threadId: string,
+    server: CodexAppServer,
+    mapper: CodexEventMapper,
+    childThreadId: string,
+  ): void {
+    const state = this.runtime.get(sessionId);
+    if (!state || state.mapper !== mapper || state.childMetadataFetches.has(childThreadId)) return;
+    state.childMetadataFetches.add(childThreadId);
+    const runTurnSeq = state.runTurnSeq;
+
+    void server.getChildThreadMetadata(childThreadId)
+      .then((metadata) => {
+        const activeState = this.runtime.get(sessionId);
+        if (!metadata || !activeState || activeState.mapper !== mapper || activeState.runTurnSeq !== runTurnSeq) return;
+        const events = mapper.applyChildThreadMetadata(childThreadId, metadata);
+        traceCodexIngest(threadId, "child/thread-resume", { childThreadId }, events);
+        for (const event of events) {
+          this.recordGoalEvent(sessionId, event);
+          this.emit("event", event);
+        }
+      })
+      .catch((error: unknown) => {
+        logger.debug("Codex child metadata lookup failed", {
+          sessionId,
+          childThreadId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   /** Eviction guard: a turn is in flight while sendTurn is awaiting completion. */

@@ -85,6 +85,10 @@ export interface ThreadResumeResult {
   threadId?: string;
   /** Nested thread object (codex app-server >= 0.104.0). The session ID is at `thread.id`. */
   thread?: { id: string; [key: string]: unknown };
+  /** Effective model selected for the resumed thread. */
+  model?: string | null;
+  /** Effective reasoning effort selected for the resumed thread. */
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 // Turn RPCs
@@ -371,6 +375,16 @@ export interface ItemStartedPayload { threadId?: string; turnId?: string; item?:
 /** Payload for the `item/completed` notification. */
 export interface ItemCompletedPayload { threadId?: string; turnId?: string; item?: CompletedItem }
 
+/** Authoritative effective model settings for a Codex thread. */
+export interface ThreadSettingsUpdatedPayload {
+  threadId: string;
+  threadSettings: {
+    model?: string | null;
+    effort?: ReasoningEffort | null;
+    [key: string]: unknown;
+  };
+}
+
 // turn/completed payload
 
 /** Error detail from a failed turn or error notification. */
@@ -463,6 +477,7 @@ export interface McpServerStartupStatusUpdatedPayload {
  */
 export type CodexNotification =
   | (JsonRpcNotification<LifecyclePayload> & { method: "turn/started" })
+  | (JsonRpcNotification<ThreadSettingsUpdatedPayload> & { method: "thread/settings/updated" })
   | (JsonRpcNotification<ItemStartedPayload> & { method: "item/started" })
   | (JsonRpcNotification<AgentMessageDeltaPayload> & { method: "item/agentMessage/delta" })
   | (JsonRpcNotification<CommandExecOutputDeltaPayload> & { method: "item/commandExecution/outputDelta" })

@@ -7,7 +7,14 @@ import {
   boundToolOutput,
   type BoundedToolOutputResult,
 } from "../../services/bounded-tool-output.js";
-import type { CodexNotification, CompletedItem, ThreadGoal } from "./codex-types.js";
+import type {
+  CodexNotification,
+  CompletedItem,
+  ThreadGoal,
+  ThreadSettingsUpdatedPayload,
+} from "./codex-types.js";
+
+type ToolResultAgentEvent = Extract<AgentEvent, { type: typeof AgentEventType.ToolResult }>;
 
 /** Notification methods that produce no agent events (module-level to avoid per-call allocation). */
 const SILENCED_METHODS = new Set([
@@ -112,8 +119,14 @@ export class CodexEventMapper {
   private openSpawnAgentIds = new Set<string>();
   /** Spawn-agent rows already completed by child turn completion or wait state. */
   private completedSpawnAgentIds = new Set<string>();
+  /** Completed spawn results retained for late metadata-only updates. */
+  private completedSpawnAgentResults = new Map<string, ToolResultAgentEvent>();
   /** Late metadata for spawned Agent rows, keyed by parent collab item id. */
   private spawnAgentToolInputById = new Map<string, Record<string, unknown>>();
+  /** Authoritative Codex child-thread model metadata, keyed by child thread id. */
+  private childThreadMetadataById = new Map<string, Record<string, string>>();
+  /** Parent Agent rows for nested native sub-agents, keyed by child Agent row id. */
+  private parentAgentToolCallIdById = new Map<string, string>();
   /** Private assistant text streamed by Codex child threads, keyed by child thread id. */
   private childAssistantTextByThreadId = new Map<string, BoundedToolOutputBuffer>();
   /** Forces streamed output through artifact spooling during memory pressure. */
@@ -217,7 +230,7 @@ export class CodexEventMapper {
     exitCode?: number;
     toolInput?: Record<string, unknown>;
     fallback?: string;
-  }): AgentEvent {
+  }): ToolResultAgentEvent {
     const bounded = this.boundedOutput(args.toolCallId, args.output, args.fallback);
     return {
       type: AgentEventType.ToolResult,
@@ -551,6 +564,7 @@ export class CodexEventMapper {
     const sourceAgentName = sourceToolInput
       ? this.stringField(sourceToolInput, "agentName")
       : undefined;
+    const childThreadMetadata = this.childThreadMetadataById.get(agentThreadId);
     if (item.kind === "interacted" && includeInteractions) {
       this.subagentInteractionSequence += 1;
       const lifecycleToolCallId =
@@ -582,8 +596,10 @@ export class CodexEventMapper {
       agentName,
       agentPath,
       description: agentName,
+      ...childThreadMetadata,
     };
     this.spawnAgentToolInputById.set(toolCallId, toolInput);
+    if (sourceAgentToolCallId) this.parentAgentToolCallIdById.set(toolCallId, sourceAgentToolCallId);
     this.registerReceiverThread(toolCallId, agentThreadId);
     this.openSpawnAgentIds.add(toolCallId);
     if (this.emittedAgentToolUseIds.has(toolCallId)) return [];
@@ -597,6 +613,48 @@ export class CodexEventMapper {
       toolName: "Agent",
       toolInput,
       ...(sourceAgentToolCallId ? { parentToolCallId: sourceAgentToolCallId } : {}),
+    }];
+  }
+
+  /** Stores authoritative child-thread settings and updates any mapped Agent row. */
+  private mapThreadSettingsUpdated(params: ThreadSettingsUpdatedPayload): AgentEvent[] {
+    const childThreadId = params.threadId;
+    const settings = params.threadSettings;
+    if (!childThreadId || !settings || typeof settings !== "object" || Array.isArray(settings)) return [];
+
+    const record = settings as Record<string, unknown>;
+    const model = this.stringField(record, "model");
+    const reasoningEffort = this.stringField(record, "effort");
+    if (!model || !reasoningEffort) return [];
+    return this.applyChildThreadMetadata(childThreadId, { model, reasoningEffort });
+  }
+
+  /** Applies authoritative child-thread model settings to the matching Agent row. */
+  applyChildThreadMetadata(
+    childThreadId: string,
+    metadata: { model: string; reasoningEffort: string },
+  ): AgentEvent[] {
+    if (!childThreadId || !metadata.model || !metadata.reasoningEffort) return [];
+
+    this.childThreadMetadataById.set(childThreadId, metadata);
+    const toolCallId = this.collabReceiverThreadToCollabId.get(childThreadId);
+    const existingToolInput = toolCallId ? this.spawnAgentToolInputById.get(toolCallId) : undefined;
+    if (!toolCallId || !existingToolInput) return [];
+
+    const toolInput = { ...existingToolInput, ...metadata };
+    this.spawnAgentToolInputById.set(toolCallId, toolInput);
+    const completedResult = this.completedSpawnAgentResults.get(toolCallId);
+    if (completedResult) return [{ ...completedResult, toolInput }];
+
+    return [{
+      type: AgentEventType.ToolUse,
+      threadId: this.threadId,
+      toolCallId,
+      toolName: "Agent",
+      toolInput,
+      ...(this.parentAgentToolCallIdById.get(toolCallId)
+        ? { parentToolCallId: this.parentAgentToolCallIdById.get(toolCallId) }
+        : {}),
     }];
   }
 
@@ -645,7 +703,9 @@ export class CodexEventMapper {
     this.openSpawnAgentIds.delete(collabId);
     this.popCollabFromScopeStack(collabId);
     const toolInput = this.spawnAgentToolInputById.get(collabId);
-    return [this.toolResultEvent({ toolCallId: collabId, output, isError, toolInput })];
+    const result = this.toolResultEvent({ toolCallId: collabId, output, isError, toolInput });
+    this.completedSpawnAgentResults.set(collabId, result);
+    return [result];
   }
 
   /** Maps a `wait` collab's per-child state payload into Agent ToolResults. */
@@ -962,6 +1022,10 @@ export class CodexEventMapper {
     if (method === "warning") {
       logger.warn("Codex warning notification", { method, params: notification.params });
       return [];
+    }
+
+    if (method === "thread/settings/updated") {
+      return this.mapThreadSettingsUpdated(notification.params as ThreadSettingsUpdatedPayload);
     }
 
     const route = this.classifyNotificationThread(notification);
@@ -1322,7 +1386,10 @@ export class CodexEventMapper {
     this.emittedAgentToolUseIds.clear();
     this.openSpawnAgentIds.clear();
     this.completedSpawnAgentIds.clear();
+    this.completedSpawnAgentResults.clear();
     this.spawnAgentToolInputById.clear();
+    this.childThreadMetadataById.clear();
+    this.parentAgentToolCallIdById.clear();
     this.childAssistantTextByThreadId.clear();
     this.pendingLegacyCollabPops.clear();
     this.collabReceiverThreadToCollabId.clear();
@@ -1484,14 +1551,21 @@ export class CodexEventMapper {
         output: out || `Collaboration (${kind})`,
       });
       const receiverCount = isSpawn ? this.registerCollabReceiverThreads(toolCallId, item) : 0;
+      const mergedToolInput = isSpawn
+        ? this.mergeSpawnAgentToolInput(toolCallId, item)
+        : undefined;
       if (isSpawn) {
-        this.mergeSpawnAgentToolInput(toolCallId, item);
         if (receiverCount > 0) this.openSpawnAgentIds.add(toolCallId);
       }
       if (this.collabToolUseFromStartIds.has(toolCallId)) {
         this.collabToolUseFromStartIds.delete(toolCallId);
         if (route === "main") this.popCollabFromScopeStack(toolCallId);
-        if (isSpawn) return [];
+        if (isSpawn) {
+          const completedResult = this.completedSpawnAgentResults.get(toolCallId);
+          return completedResult && mergedToolInput
+            ? [{ ...completedResult, toolInput: mergedToolInput }]
+            : [];
+        }
         return [toolResultEvent];
       }
       if (route === "child") {

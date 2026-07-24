@@ -1076,6 +1076,116 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
+  it("uses native child thread settings for sub-agent model and reasoning metadata", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+
+    const settings = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "thread/settings/updated",
+      params: {
+        threadId: "child-metadata",
+        threadSettings: { model: "gpt-5.5", effort: "high" },
+      },
+    });
+
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "call-metadata",
+          agentThreadId: "child-metadata",
+          agentPath: "/root/explorer",
+          kind: "started",
+        },
+      },
+    });
+
+    expect(settings).toEqual([]);
+    expect(started).toEqual([{
+      type: "toolUse",
+      threadId: "test-thread",
+      toolCallId: "call-metadata",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "explorer",
+        agentPath: "/root/explorer",
+        description: "explorer",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+      },
+    }]);
+  });
+
+  it("updates a completed native sub-agent when child settings arrive late", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "call-late-settings",
+          agentThreadId: "child-late-settings",
+          agentPath: "/root/explorer",
+          kind: "started",
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-late-settings", delta: "Child output is authoritative." },
+    });
+
+    const childCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-late-settings", turn: { status: "completed" } },
+    });
+    const settings = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "thread/settings/updated",
+      params: {
+        threadId: "child-late-settings",
+        threadSettings: { model: "gpt-5.5", effort: "high" },
+      },
+    });
+
+    expect(childCompleted).toEqual([{
+      type: "toolResult",
+      threadId: "test-thread",
+      toolCallId: "call-late-settings",
+      output: "Child output is authoritative.",
+      isError: false,
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "explorer",
+        agentPath: "/root/explorer",
+        description: "explorer",
+      },
+    }]);
+    expect(settings).toEqual([{
+      type: "toolResult",
+      threadId: "test-thread",
+      toolCallId: "call-late-settings",
+      output: "Child output is authoritative.",
+      isError: false,
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "explorer",
+        agentPath: "/root/explorer",
+        description: "explorer",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+      },
+    }]);
+  });
+
   it("emits a distinct parented lifecycle record for every native sub-agent interaction", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     const activity = {
@@ -1536,6 +1646,100 @@ describe("CodexEventMapper", () => {
           codexCollabKind: "spawnAgent",
           description: "Inspect mapper metadata.",
           prompt: "Inspect mapper metadata.",
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
+      },
+    ]);
+  });
+
+  it("updates a completed spawnAgent with metadata when parent completion arrives late", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-late-meta",
+          tool: "spawnAgent",
+          prompt: "Inspect reverse-order metadata.",
+          model: "",
+          reasoningEffort: "medium",
+          receiverThreadIds: ["child-late-meta"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-late-meta", delta: "Child output is authoritative." },
+    });
+
+    const childCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-late-meta", turn: { status: "completed" } },
+    });
+    const parentCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-late-meta",
+          tool: "spawnAgent",
+          prompt: "Inspect reverse-order metadata.",
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+          receiverThreadIds: ["child-late-meta"],
+          result: "parent dispatch result",
+        },
+      },
+    });
+
+    expect(started).toEqual([
+      {
+        type: "toolUse",
+        threadId: "test-thread",
+        toolCallId: "spawn-late-meta",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          description: "Inspect reverse-order metadata.",
+          prompt: "Inspect reverse-order metadata.",
+          reasoningEffort: "medium",
+        },
+      },
+    ]);
+    expect(childCompleted).toEqual([
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "spawn-late-meta",
+        output: "Child output is authoritative.",
+        isError: false,
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          description: "Inspect reverse-order metadata.",
+          prompt: "Inspect reverse-order metadata.",
+          reasoningEffort: "medium",
+        },
+      },
+    ]);
+    expect(parentCompleted).toEqual([
+      {
+        type: "toolResult",
+        threadId: "test-thread",
+        toolCallId: "spawn-late-meta",
+        output: "Child output is authoritative.",
+        isError: false,
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          description: "Inspect reverse-order metadata.",
+          prompt: "Inspect reverse-order metadata.",
           model: "gpt-5.5",
           reasoningEffort: "high",
         },
