@@ -37,11 +37,21 @@ describe("pickProviderModelsForSettings", () => {
 });
 
 describe("ModelRegistry", () => {
-  it("MODEL_PROVIDERS contains Claude with 7 models", () => {
+  it("MODEL_PROVIDERS contains Claude with 8 models", () => {
     const claude = MODEL_PROVIDERS.find((p) => p.id === "claude");
     expect(claude).toBeTruthy();
-    expect(claude?.models).toHaveLength(7);
+    expect(claude?.models).toHaveLength(8);
     expect(claude?.comingSoon).toBe(false);
+  });
+
+  it("findModelById returns Opus 5 with the standard-mode context clamp", () => {
+    const model = findModelById("claude-opus-5");
+    expect(model).toEqual({
+      id: "claude-opus-5",
+      label: "Claude Opus 5",
+      providerId: "claude",
+      contextWindow: 200_000,
+    });
   });
 
   it("findModelById returns Fable 5 with no availability end date", () => {

@@ -82,6 +82,8 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     comingSoon: false,
     supportsCompletion: true,
     models: [
+      { id: "claude-opus-5", label: "Claude Opus 5", providerId: "claude",
+        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-opus-5"] },
       { id: "claude-fable-5", label: "Claude Fable 5", providerId: "claude",
         contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-fable-5"] },
       { id: "claude-sonnet-5", label: "Claude Sonnet 5", providerId: "claude",
