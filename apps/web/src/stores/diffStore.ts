@@ -602,10 +602,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         openTabs,
         activeTab: tab,
       });
-      if (tab !== "changes" || !threadId) return panelUpdate;
-      const subagentReviewScopeByThread = { ...state.subagentReviewScopeByThread };
-      delete subagentReviewScopeByThread[threadId];
-      return { ...panelUpdate, subagentReviewScopeByThread };
+      return panelUpdate;
     }),
 
   closeRightPanelTab: (workspaceId, threadId, tab) =>

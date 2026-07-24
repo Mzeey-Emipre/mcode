@@ -98,12 +98,18 @@ describe("diffStore", () => {
       expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
     });
 
-    it("clears on ordinary Review navigation and thread deletion", () => {
+    it("preserves scope while focusing or refocusing Changes", () => {
       const store = useDiffStore.getState();
       store.setSubagentReviewScope("thread-1", scope);
       store.setRightPanelTab("workspace-1", "thread-1", "changes");
-      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
+      store.setRightPanelTab("workspace-1", "thread-1", "changes");
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toEqual({
+        ...scope,
+        paths: ["src/a.ts", "src/b.ts"],
+      });
+    });
 
+    it("clears on ordinary Review navigation and thread deletion", () => {
       useDiffStore.getState().setSubagentReviewScope("thread-1", scope);
       useDiffStore.getState().setReviewViewForThread("thread-1", "cumulative");
       expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
