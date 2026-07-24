@@ -9,6 +9,7 @@ import {
   PANEL_SPLIT_GAP_PX,
   maxPanelWidthInSplit,
   createDefaultRightPanelState,
+  rightPanelTabInstances,
   getDefaultPanelWidthPx,
 } from "@/stores/diffStore";
 import { PlanPanel } from "./plan";
@@ -93,6 +94,11 @@ export function RightPanel() {
   // the panel shows the card-grid empty state. Defensive default for any stored
   // row that predates the openTabs field. See ADR-0004 / issue #610.
   const openTabs = panelState.openTabs ?? [];
+  const tabInstances = rightPanelTabInstances(panelState);
+  const activeTabId =
+    panelState.activeTabId ??
+    tabInstances.find((instance) => instance.type === activeTab)?.id ??
+    null;
   // Plan is creatable only in a thread; threadless the panel runs
   // against the workspace root and offers just Browser/Terminal/Files.
   const panelScope: PanelScope = activeThreadId ? "thread" : "threadless";
@@ -120,7 +126,13 @@ export function RightPanel() {
   // Zustand action refs are stable (same identity for the store's lifetime),
   // so destructuring from getState() at render time is safe and avoids
   // adding actions to useCallback/useEffect dependency arrays.
-  const { setRightPanelWidth, setRightPanelTab, closeRightPanelTab } =
+  const {
+    setRightPanelWidth,
+    setRightPanelTab,
+    closeRightPanelTab,
+    closeRightPanelTabInstance,
+    reorderRightPanelTab,
+  } =
     useDiffStore.getState();
 
   // Tab-strip glance status. Changes counts
@@ -247,8 +259,8 @@ export function RightPanel() {
           keeps those panel actions beside the empty-state create list. */}
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
         <ActivityRail
-          openTabs={openTabs}
-          activeTab={activeTab}
+          tabInstances={tabInstances}
+          activeTabId={activeTabId}
           scope={panelScope}
           scopeProgress={scope}
           changesCount={changesCount}
@@ -262,8 +274,16 @@ export function RightPanel() {
           onSelect={(id) =>
             setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
           }
-          onClose={(id) =>
-            closeRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+          onClose={(instanceId) =>
+            closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId)
+          }
+          onReorder={(instanceId, direction) =>
+            reorderRightPanelTab(
+              activeWorkspaceId!,
+              activeThreadId,
+              instanceId,
+              direction,
+            )
           }
           onCreate={(id) =>
             setRightPanelTab(activeWorkspaceId!, activeThreadId, id)

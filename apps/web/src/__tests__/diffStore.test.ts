@@ -455,6 +455,64 @@ describe("diffStore", () => {
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview", "terminal"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
+
+    it("creates deterministic singleton instances in insertion order", () => {
+      const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+
+      expect(getRightPanel("ws-1").tabInstances).toEqual([
+        { id: "singleton:terminal", type: "terminal" },
+        { id: "singleton:preview", type: "preview" },
+        { id: "singleton:changes", type: "changes" },
+      ]);
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:changes");
+    });
+  });
+
+  describe("reorderRightPanelTab", () => {
+    it("moves instances without regrouping types and stops at boundaries", () => {
+      const { setRightPanelTab, reorderRightPanelTab, getRightPanel } =
+        useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+
+      reorderRightPanelTab("ws-1", null, "singleton:changes", -1);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "changes",
+        "preview",
+      ]);
+
+      reorderRightPanelTab("ws-1", null, "singleton:terminal", -1);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "changes",
+        "preview",
+      ]);
+    });
+
+    it("keeps thread and workspace fallback order independent", () => {
+      const { setRightPanelTab, reorderRightPanelTab, getRightPanel } =
+        useDiffStore.getState();
+      for (const tab of ["terminal", "preview", "changes"] as const) {
+        setRightPanelTab("ws-1", null, tab);
+      }
+      reorderRightPanelTab("ws-1", "thread-1", "singleton:preview", -1);
+
+      expect(getRightPanel("ws-1", "thread-1").openTabs).toEqual([
+        "preview",
+        "terminal",
+        "changes",
+      ]);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "preview",
+        "changes",
+      ]);
+    });
   });
 
   describe("closeRightPanelTab", () => {
@@ -473,6 +531,24 @@ describe("diffStore", () => {
       closeRightPanelTab("ws-1", null, "terminal");
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
+    });
+
+    it("selects the item now at the removed index, then the previous item", () => {
+      const {
+        setRightPanelTab,
+        closeRightPanelTabInstance,
+        getRightPanel,
+      } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+      setRightPanelTab("ws-1", null, "preview");
+
+      closeRightPanelTabInstance("ws-1", null, "singleton:preview");
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:changes");
+
+      closeRightPanelTabInstance("ws-1", null, "singleton:changes");
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:terminal");
     });
 
     it("leaves the active tab unchanged when closing an inactive tab", () => {

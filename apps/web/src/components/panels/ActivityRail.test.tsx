@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserTabSet } from "@mcode/contracts";
-import type { RightPanelTab } from "@/stores/diffStore";
+import { rightPanelSingletonId, type RightPanelTab } from "@/stores/diffStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { ActivityRail } from "./ActivityRail";
 
@@ -29,6 +29,7 @@ const handlers = {
   onToggleMaximized: vi.fn(),
   onSelect: vi.fn(),
   onClose: vi.fn(),
+  onReorder: vi.fn(),
   onCreate: vi.fn(),
   onSelectBrowserPage: vi.fn(),
   onCloseBrowserPage: vi.fn(),
@@ -37,8 +38,8 @@ const handlers = {
 function railElement(openTabs: readonly RightPanelTab[] = ["terminal", "changes"]) {
   return (
     <ActivityRail
-      openTabs={openTabs}
-      activeTab="terminal"
+      tabInstances={openTabs.map((type) => ({ id: rightPanelSingletonId(type), type }))}
+      activeTabId={rightPanelSingletonId("terminal")}
       scope="thread"
       scopeProgress={{ done: 0, total: 0 }}
       changesCount={3}
@@ -119,8 +120,8 @@ describe("ActivityRail expansion", () => {
 
     rerender(
       <ActivityRail
-        openTabs={["preview"]}
-        activeTab="preview"
+        tabInstances={[{ id: rightPanelSingletonId("preview"), type: "preview" }]}
+        activeTabId={rightPanelSingletonId("preview")}
         scope="thread"
         scopeProgress={{ done: 0, total: 0 }}
         changesCount={0}
@@ -171,8 +172,11 @@ describe("ActivityRail expansion", () => {
 
     rerender(
       <ActivityRail
-        openTabs={["terminal", "changes"]}
-        activeTab="terminal"
+        tabInstances={["terminal", "changes"].map((type) => ({
+          id: rightPanelSingletonId(type as RightPanelTab),
+          type: type as RightPanelTab,
+        }))}
+        activeTabId={rightPanelSingletonId("terminal")}
         scope="thread"
         scopeProgress={{ done: 0, total: 0 }}
         changesCount={3}
@@ -211,5 +215,41 @@ describe("ActivityRail expansion", () => {
     unmount();
 
     expect(usePreviewSuppressionStore.getState().count).toBe(0);
+  });
+
+  it("reorders only from a focused rail tab keyboard shortcut", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    act(() => terminal.focus());
+
+    fireEvent.keyDown(terminal, { key: "ArrowDown", altKey: true, shiftKey: true });
+
+    expect(handlers.onReorder).toHaveBeenCalledWith(
+      rightPanelSingletonId("terminal"),
+      1,
+    );
+    expect(terminal).toHaveFocus();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Close panel" }), {
+      key: "ArrowDown",
+      altKey: true,
+      shiftKey: true,
+    });
+    expect(handlers.onReorder).toHaveBeenCalledTimes(1);
+  });
+
+  it("reorders a top-level tab after bounded pointer movement", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+
+    fireEvent.pointerDown(terminal, { button: 0, pointerId: 1, clientY: 20 });
+    fireEvent.pointerMove(terminal, { pointerId: 1, clientY: 30 });
+    expect(handlers.onReorder).not.toHaveBeenCalled();
+
+    fireEvent.pointerMove(terminal, { pointerId: 1, clientY: 40 });
+    expect(handlers.onReorder).toHaveBeenCalledWith(
+      rightPanelSingletonId("terminal"),
+      1,
+    );
   });
 });

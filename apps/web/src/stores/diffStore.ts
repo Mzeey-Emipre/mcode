@@ -146,7 +146,32 @@ export type RightPanelState = {
    */
   readonly openTabs: readonly RightPanelTab[];
   readonly activeTab: RightPanelTab;
+  /** Ordered tab instances. Singleton tools use deterministic IDs. */
+  readonly tabInstances?: readonly RightPanelTabInstance[];
+  /** Stable identity of the active tab instance. */
+  readonly activeTabId?: string | null;
 };
+
+/** One open right-panel tab, identified independently from its tool type. */
+export type RightPanelTabInstance = {
+  readonly id: string;
+  readonly type: RightPanelTab;
+};
+
+/** Stable identity for an open singleton tool. */
+export function rightPanelSingletonId(type: RightPanelTab): string {
+  return `singleton:${type}`;
+}
+
+/** Resolve ordered instances from current or legacy in-memory panel state. */
+export function rightPanelTabInstances(
+  state: Pick<RightPanelState, "openTabs"> & Partial<Pick<RightPanelState, "tabInstances">>,
+): readonly RightPanelTabInstance[] {
+  return state.tabInstances ?? state.openTabs.map((type) => ({
+    id: rightPanelSingletonId(type),
+    type,
+  }));
+}
 
 /** Default line-wrap preference for a thread with no stored override. */
 export const DEFAULT_LINE_WRAP = true;
@@ -162,6 +187,8 @@ export function createDefaultRightPanelState(): RightPanelState {
     widthSource: "auto",
     openTabs: [],
     activeTab: "tasks",
+    tabInstances: [],
+    activeTabId: null,
   };
 }
 
@@ -276,6 +303,8 @@ export const RIGHT_PANEL_DEFAULTS: RightPanelState = {
   widthSource: "auto",
   openTabs: [],
   activeTab: "tasks",
+  tabInstances: [],
+  activeTabId: null,
 } as const;
 
 /** Zustand state shape for the diff panel. */
@@ -438,6 +467,19 @@ interface DiffState {
     source?: "auto" | "user" | "preserve",
   ) => void;
   setRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
+  /** Move one tab instance by one bounded position in its scope. */
+  reorderRightPanelTab: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    instanceId: string,
+    direction: -1 | 1,
+  ) => void;
+  /** Close one tab by stable instance identity. */
+  closeRightPanelTabInstance: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    instanceId: string,
+  ) => void;
   /**
    * Close (remove) a singleton tab from the open set. When the closed tab was
    * active, focus falls back to the most-recently-opened remaining tab; with
@@ -597,33 +639,64 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       const openTabs = current.openTabs.includes(tab)
         ? current.openTabs
         : [...current.openTabs, tab];
+      const instanceId = rightPanelSingletonId(tab);
+      const currentInstances = rightPanelTabInstances(current);
+      const tabInstances = currentInstances.some((instance) => instance.id === instanceId)
+        ? currentInstances
+        : [...currentInstances, { id: instanceId, type: tab }];
       const panelUpdate = writeRightPanel(state, workspaceId, threadId, {
         ...current,
         openTabs,
         activeTab: tab,
+        tabInstances,
+        activeTabId: instanceId,
       });
       return panelUpdate;
     }),
 
-  closeRightPanelTab: (workspaceId, threadId, tab) =>
+  reorderRightPanelTab: (workspaceId, threadId, instanceId, direction) =>
     set((state) => {
       const current = effectiveRightPanel(state, workspaceId, threadId);
-      if (!current.openTabs.includes(tab)) return {};
-      const openTabs = current.openTabs.filter((t) => t !== tab);
-      // Closing the active tab hands focus to the most-recently-opened survivor
-      // (the rail's right-most/last entry); with none left, activeTab is left
-      // untouched and inert — the empty-state grid renders and the panel's
-      // content guards on openTabs.includes(activeTab).
-      const activeTab =
-        current.activeTab === tab
-          ? (openTabs[openTabs.length - 1] ?? current.activeTab)
-          : current.activeTab;
+      const currentInstances = rightPanelTabInstances(current);
+      const from = currentInstances.findIndex((instance) => instance.id === instanceId);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= currentInstances.length) return {};
+      const tabInstances = [...currentInstances];
+      [tabInstances[from], tabInstances[to]] = [tabInstances[to], tabInstances[from]];
       return writeRightPanel(state, workspaceId, threadId, {
         ...current,
-        openTabs,
-        activeTab,
+        tabInstances,
+        openTabs: tabInstances.map((instance) => instance.type),
       });
     }),
+
+  closeRightPanelTabInstance: (workspaceId, threadId, instanceId) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      const currentInstances = rightPanelTabInstances(current);
+      const removedIndex = currentInstances.findIndex(
+        (instance) => instance.id === instanceId,
+      );
+      if (removedIndex < 0) return {};
+      const tabInstances = currentInstances.filter(
+        (instance) => instance.id !== instanceId,
+      );
+      const activeTabId = current.activeTabId ?? rightPanelSingletonId(current.activeTab);
+      const nextActive =
+        activeTabId === instanceId
+          ? (tabInstances[removedIndex] ?? tabInstances[removedIndex - 1] ?? null)
+          : null;
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        tabInstances,
+        openTabs: tabInstances.map((instance) => instance.type),
+        activeTabId: activeTabId === instanceId ? nextActive?.id ?? null : activeTabId,
+        activeTab: nextActive?.type ?? current.activeTab,
+      });
+    }),
+
+  closeRightPanelTab: (workspaceId, threadId, tab) =>
+    get().closeRightPanelTabInstance(workspaceId, threadId, rightPanelSingletonId(tab)),
 
   getSubagentRosterTab: (threadId) => get().subagentRosterTabByThread[threadId],
   setSubagentRosterTab: (threadId, tab) =>
