@@ -1159,3 +1159,19 @@ A background preview tab whose renderer has been killed to reclaim memory,
 keeping only a cold placeholder (title, URL, favicon). Reopening reloads the
 page; scroll position and form state are not preserved. Governed by
 `preview.memorySaver.*` settings and ADR 0002.
+
+## Release channels
+
+### Stable release
+A supported Mcode version published for general use.
+_Avoid_: Major release, production release
+
+### Nightly release
+A prerelease build published from ongoing development for early use and
+testing.
+_Avoid_: Stable release
+
+### Superseded nightly
+A nightly release whose intended version has since shipped as a stable release.
+It has no continuing rollback or support role.
+_Avoid_: Supported release, archived nightly
