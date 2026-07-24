@@ -23,20 +23,35 @@ describe("terminalStore pause/resume wiring", () => {
     });
   });
 
-  it("pauses all PTYs on hide and resumes on show", () => {
+  it("pauses and resumes only the selected PTY", () => {
     const store = useTerminalStore.getState();
     store.addTerminal("thread-1", "pty-a");
     store.addTerminal("thread-1", "pty-b");
-    // addTerminal makes the panel visible; no pause/resume should have fired yet.
-    expect(terminalPause).not.toHaveBeenCalled();
+    // Selecting the new shell pauses the renderer that is about to unmount.
+    expect(terminalPause).toHaveBeenCalledWith("pty-a");
     expect(terminalResume).not.toHaveBeenCalled();
+    terminalPause.mockClear();
 
     store.hideTerminalPanel("thread-1");
-    expect(terminalPause).toHaveBeenCalledTimes(2);
+    expect(terminalPause).toHaveBeenCalledOnce();
+    expect(terminalPause).toHaveBeenCalledWith("pty-b");
     expect(terminalResume).not.toHaveBeenCalled();
 
     store.showTerminalPanel("thread-1");
-    expect(terminalResume).toHaveBeenCalledTimes(2);
+    expect(terminalResume).toHaveBeenCalledOnce();
+    expect(terminalResume).toHaveBeenCalledWith("pty-b");
+  });
+
+  it("pauses the prior selection and resumes only the next selection", () => {
+    const store = useTerminalStore.getState();
+    store.addTerminal("thread-1", "pty-a");
+    store.addTerminal("thread-1", "pty-b");
+    terminalPause.mockClear();
+
+    store.setActiveTerminal("thread-1", "pty-a");
+
+    expect(terminalPause).toHaveBeenCalledWith("pty-b");
+    expect(terminalResume).toHaveBeenCalledWith("pty-a");
   });
 
   it("no-ops when hiding an already-hidden panel", () => {

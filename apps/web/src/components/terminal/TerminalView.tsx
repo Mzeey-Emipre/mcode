@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Terminal, IDisposable } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+import type { SerializeAddon } from "@xterm/addon-serialize";
 import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
@@ -323,7 +324,11 @@ export const TerminalView = memo(function TerminalView({
 
     async function init(el: HTMLElement) {
       // Cached after the first mount, so remounts skip the cold import cost.
-      const { Terminal: XTerminal, FitAddon: XFitAddon } = await loadXtermModules();
+      const [{ Terminal: XTerminal, FitAddon: XFitAddon }, serializeModule] =
+        await Promise.all([
+          loadXtermModules(),
+          import("@xterm/addon-serialize"),
+        ]);
 
       if (disposed || !containerRef.current) return;
 
@@ -339,7 +344,9 @@ export const TerminalView = memo(function TerminalView({
       });
 
       const fitAddon = new XFitAddon();
+      const serializeAddon: SerializeAddon = new serializeModule.SerializeAddon();
       term.loadAddon(fitAddon);
+      term.loadAddon(serializeAddon);
       term.open(el);
       incrementLiveTerminalCount();
 
@@ -606,6 +613,11 @@ export const TerminalView = memo(function TerminalView({
         // #751: remember where the user was before this view goes away so the
         // next remount can restore it (no-op when they were following the tail).
         captureRemountAnchor(ptyId, term);
+        const checkpointSeq = Number.isFinite(lastWrittenSeq) ? lastWrittenSeq : -1;
+        const checkpoint = serializeAddon.serialize();
+        void transport
+          .terminalCheckpoint(ptyId, checkpointSeq, checkpoint)
+          .catch(() => {});
         term.dispose();
         decrementLiveTerminalCount();
       };
@@ -631,14 +643,24 @@ export const TerminalView = memo(function TerminalView({
         replaying = true;
         replayMode = mode;
         return transport
-          .terminalReattach(ptyId, lastSeq)
-        .then(({ gapped }) => {
+          .terminalReattach(ptyId, lastSeq, mode === "cold")
+        .then((result) => {
           if (disposed) return;
-          if (gapped) {
-            // The shell exceeded the scrollback budget, so the oldest output
-            // was evicted server-side. Flag the trim at the top of the replay.
+          if (result.mode === "checkpoint") {
+            replayPending.unshift({
+              ptyId,
+              seq: -1,
+              payload: new TextEncoder().encode(result.checkpoint),
+            });
+          } else if (result.mode === "reset") {
+            lastWrittenSeq = result.discardThrough;
+            replayPending.splice(
+              0,
+              replayPending.length,
+              ...replayPending.filter((frame) => frame.seq > result.discardThrough),
+            );
             term.write(
-              "\r\n\x1b[90m[Earlier output beyond the scrollback limit was trimmed]\x1b[0m\r\n",
+              "\r\n[Earlier output beyond the scrollback limit was trimmed]\r\n",
             );
           }
           flushReplayGate();

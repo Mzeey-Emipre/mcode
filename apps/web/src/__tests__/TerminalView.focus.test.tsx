@@ -21,6 +21,10 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 const bufferActive = { viewportY: 42, length: 100 };
 
 let onDataListener: ((data: string) => void) | null = null;
+type RestoreResult =
+  | { mode: "delta" }
+  | { mode: "checkpoint"; checkpoint: string }
+  | { mode: "reset"; discardThrough: number };
 
 const term = {
   options: { scrollback: 0, disableStdin: false },
@@ -51,7 +55,10 @@ const transport = {
   terminalResize: vi.fn(() => Promise.resolve()),
   terminalPause: vi.fn(() => Promise.resolve()),
   terminalResume: vi.fn(() => Promise.resolve()),
-  terminalReattach: vi.fn(() => Promise.resolve({ gapped: false })),
+  terminalReattach: vi.fn<() => Promise<RestoreResult>>(() =>
+    Promise.resolve({ mode: "delta" }),
+  ),
+  terminalCheckpoint: vi.fn(() => Promise.resolve({ accepted: true })),
   ptySetLastSeq: vi.fn(),
   ptyDeleteLastSeq: vi.fn(),
 };
@@ -72,6 +79,12 @@ vi.mock("@xterm/addon-fit", () => {
   }
   return { FitAddon };
 });
+
+vi.mock("@xterm/addon-serialize", () => ({
+  SerializeAddon: class {
+    serialize = vi.fn(() => "serialized-screen");
+  },
+}));
 
 vi.mock("@/transport", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/transport")>();
@@ -101,7 +114,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     onDataListener = null;
     term.write.mockImplementation((_data: string | Uint8Array, cb?: () => void) => cb?.());
     // clearAllMocks resets call history but keeps implementations.
-    transport.terminalReattach.mockResolvedValue({ gapped: false });
+    transport.terminalReattach.mockResolvedValue({ mode: "delta" });
     // The remount-scroll anchor store is module-global; React Testing Library's
     // per-test unmount captures one, so clear it for deterministic mounts.
     for (const id of [
@@ -152,7 +165,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     });
     await settle();
 
-    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-1", -1);
+    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-1", -1, true);
   });
 
   // Newly created PTYs are paused server-side; the view releases them on mount.
@@ -163,6 +176,49 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     await settle();
 
     expect(transport.terminalResume).toHaveBeenCalledWith("pty-1");
+  });
+
+  it("submits serialized state at the last painted sequence before cold disposal", async () => {
+    const view = render(
+      <TerminalView ptyId="pty-cold" visible={true} threadActive={true} />,
+    );
+    await settle();
+    act(() => {
+      emitPtyData({
+        ptyId: "pty-cold",
+        seq: 7,
+        payload: new TextEncoder().encode("painted"),
+      });
+    });
+
+    view.unmount();
+
+    expect(transport.terminalCheckpoint).toHaveBeenCalledWith(
+      "pty-cold",
+      7,
+      "serialized-screen",
+    );
+  });
+
+  it("writes a serialized checkpoint before its contiguous delta", async () => {
+    transport.terminalReattach.mockImplementationOnce(async () => {
+      emitPtyData({
+        ptyId: "pty-cold",
+        seq: 8,
+        payload: new TextEncoder().encode("delta"),
+      });
+      return { mode: "checkpoint", checkpoint: "\u001b[31mred" };
+    });
+
+    render(<TerminalView ptyId="pty-cold" visible={true} threadActive={true} />);
+    await settle();
+
+    const combined = term.write.mock.calls
+      .map(([data]) =>
+        typeof data === "string" ? data : new TextDecoder().decode(data),
+      )
+      .join("");
+    expect(combined).toContain("\u001b[31mreddelta");
   });
 
   // #748: viewport opens at the tail after replay completes.
@@ -177,7 +233,10 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
 
   // #746/#748: a gap in the retained window surfaces a trim banner at the top.
   it("writes a trim banner when the replay reports a gap", async () => {
-    transport.terminalReattach.mockResolvedValueOnce({ gapped: true });
+    transport.terminalReattach.mockResolvedValueOnce({
+      mode: "reset",
+      discardThrough: 12,
+    });
 
     await act(async () => {
       render(<TerminalView ptyId="pty-2" visible={true} threadActive={true} />);
@@ -197,7 +256,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       <TerminalView ptyId="pty-a" visible={true} threadActive={true} />,
     );
     await settle();
-    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-a", -1);
+    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-a", -1, true);
 
     await act(async () => {
       rerender(<TerminalView ptyId="pty-b" visible={true} threadActive={true} />);
@@ -207,13 +266,13 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     // Old view torn down (its per-pty seq tracking is cleared)...
     expect(transport.ptyDeleteLastSeq).toHaveBeenCalledWith("pty-a");
     // ...and the new pty reattaches at its own latest output.
-    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-b", -1);
+    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-b", -1, true);
   });
 
   // #749: the replay burst is written in a single batched term.write rather
   // than one main-thread task per chunk.
   it("batches replayed frames into a single term.write", async () => {
-    let resolveReattach: (v: { gapped: boolean }) => void = () => {};
+    let resolveReattach: (v: { mode: "delta" }) => void = () => {};
     transport.terminalReattach.mockReturnValueOnce(
       new Promise((r) => {
         resolveReattach = r;
@@ -232,7 +291,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     });
 
     await act(async () => {
-      resolveReattach({ gapped: false });
+      resolveReattach({ mode: "delta" });
     });
     await settle();
 
@@ -244,7 +303,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
   });
 
   it("keeps a cold view hidden until replay has painted", async () => {
-    let resolveReattach: (value: { gapped: boolean }) => void = () => {};
+    let resolveReattach: (value: { mode: "delta" }) => void = () => {};
     let finishReplayWrite: (() => void) | undefined;
     transport.terminalReattach.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -266,7 +325,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
 
     await act(async () => {
       emitPtyData({ ptyId: "pty-cold", seq: 0, payload: new Uint8Array([65]) });
-      resolveReattach({ gapped: false });
+      resolveReattach({ mode: "delta" });
     });
     await settle();
 
@@ -317,7 +376,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     );
     await settle();
 
-    expect(transport.terminalReattach).toHaveBeenLastCalledWith("pty-warm", 5);
+    expect(transport.terminalReattach).toHaveBeenLastCalledWith("pty-warm", 5, false);
     expect(term.dispose).not.toHaveBeenCalled();
   });
 });

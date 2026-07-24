@@ -437,7 +437,21 @@ export interface McodeTransport {
    * The server replays any buffered output with seq > lastSeq as binary frames
    * before returning. Returns gapped=true when eviction means output was lost.
    */
-  terminalReattach(ptyId: string, lastSeq: number): Promise<{ gapped: boolean }>;
+  terminalReattach(
+    ptyId: string,
+    lastSeq: number,
+    cold?: boolean,
+  ): Promise<
+    | { mode: "delta" }
+    | { mode: "checkpoint"; checkpoint: string }
+    | { mode: "reset"; discardThrough: number }
+  >;
+  /** Save a bounded serialized xterm state for a later cold renderer mount. */
+  terminalCheckpoint(
+    ptyId: string,
+    seq: number,
+    data: string,
+  ): Promise<{ accepted: boolean }>;
   /** List all active PTY sessions on the server. Used during reconnect. */
   terminalListActive(): Promise<Array<{ ptyId: string; threadId: string }>>;
   /** Check whether a PTY has non-shell child processes running. */
