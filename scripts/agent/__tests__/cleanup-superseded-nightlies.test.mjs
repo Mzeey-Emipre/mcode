@@ -342,3 +342,19 @@ test("release workflows share the non-cancelling bounded mutation queue", () => 
     );
   }
 });
+
+test("stable release cleanup uses least-privilege checkout and token settings", () => {
+  const workflow = readFileSync(".github/workflows/release-please.yml", "utf8");
+  const cleanupJob = workflow.slice(
+    workflow.indexOf("  cleanup-superseded-nightlies:"),
+  );
+
+  assert.match(
+    cleanupJob,
+    /- uses: actions\/checkout@v4\r?\n\s+with:\r?\n\s+persist-credentials: false/,
+  );
+  assert.match(
+    cleanupJob,
+    /uses: actions\/create-github-app-token@v1\r?\n\s+with:\r?\n(?:\s+.+\r?\n)*?\s+permission-contents: write/,
+  );
+});
