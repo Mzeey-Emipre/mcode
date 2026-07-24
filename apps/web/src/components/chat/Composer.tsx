@@ -1532,7 +1532,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       }
     },
   });
-
   const worktrees = useWorkspaceStore((s) => s.worktrees);
   const worktreesLoading = useWorkspaceStore((s) => s.worktreesLoading);
   const selectedWorktree = useWorkspaceStore((s) => s.selectedWorktree);
@@ -3741,6 +3740,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         state={slashCommand.state}
         selectedIndex={slashCommand.selectedIndex}
         anchorRect={slashCommand.anchorRect}
+        workspacePath={activeWorkspace?.path}
         onSelect={handleSlashSelect}
         onDismiss={slashCommand.onDismiss}
         onRetry={slashCommand.onRetry}
