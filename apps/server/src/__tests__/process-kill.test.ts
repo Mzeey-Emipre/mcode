@@ -26,6 +26,11 @@ import {
 } from "../services/process-kill";
 import { logger } from "@mcode/shared";
 
+function stableThenGone(stableReads = 2): (pid: number) => Promise<string | null> {
+  let reads = 0;
+  return async (pid) => ++reads <= stableReads ? `start-${pid}` : null;
+}
+
 describe("killProcessTree", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -38,7 +43,11 @@ describe("killProcessTree", () => {
     try {
       mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
 
-      await killProcessTree(1234);
+      await killProcessTree(1234, {
+        platform: "win32",
+        execFile: mockExecFile,
+        getProcessStartMarker: stableThenGone(),
+      });
 
       expect(mockExecFile).toHaveBeenCalledWith(
         "taskkill",
@@ -59,7 +68,11 @@ describe("killProcessTree", () => {
         .mockResolvedValueOnce({ stdout: "", stderr: "" })
         .mockRejectedValueOnce(new Error("process not found"));
 
-      await expect(killProcessTree(1234)).rejects.toThrow("process not found");
+      await expect(killProcessTree(1234, {
+        platform: "win32",
+        execFile: mockExecFile,
+        getProcessStartMarker: stableThenGone(),
+      })).rejects.toThrow("process not found");
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ pid: 1234 }),
@@ -85,7 +98,7 @@ describe("killProcessTree", () => {
         platform: "linux",
         processKill: killSpy,
         execFile: mockExecFile,
-        getProcessStartMarker: async () => null,
+        getProcessStartMarker: stableThenGone(),
       });
 
       expect(killSpy).toHaveBeenCalledWith(-5678, "SIGKILL");
@@ -106,7 +119,12 @@ describe("killProcessTree", () => {
         throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
       });
 
-      await expect(killProcessTree(5678)).resolves.toBeUndefined();
+      await expect(killProcessTree(5678, {
+        platform: "linux",
+        processKill: killSpy,
+        execFile: mockExecFile,
+        getProcessStartMarker: stableThenGone(),
+      })).resolves.toBeUndefined();
       // ESRCH means process already gone - expected; logged at debug, not warn.
       expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
         expect.any(String),
@@ -141,7 +159,7 @@ describe("killProcessTree", () => {
       execFile: mockExecFile,
       getProcessStartMarker: async () => {
         markerReads += 1;
-        return markerReads < 5 ? "start-5678" : null;
+        return markerReads < 6 ? "start-5678" : null;
       },
     });
 
@@ -213,6 +231,42 @@ describe("killProcessTree", () => {
     expect(processKill).not.toHaveBeenCalledWith(6789, "SIGKILL");
   });
 
+  it("does not signal a Unix root group after the captured root is replaced", async () => {
+    mockExecFile.mockRejectedValue(
+      Object.assign(new Error("no matches"), { code: 1 }),
+    );
+    let markerRead = 0;
+    const processKill = vi.fn();
+
+    await killProcessTree(5678, {
+      platform: "linux",
+      processKill,
+      execFile: mockExecFile,
+      getProcessStartMarker: async () => ++markerRead === 1 ? "original" : "replacement",
+    });
+
+    expect(processKill).not.toHaveBeenCalledWith(-5678, "SIGKILL");
+    expect(processKill).not.toHaveBeenCalledWith(5678, "SIGKILL");
+  });
+
+  it("does not taskkill a Windows root after the captured root is replaced", async () => {
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+    let markerRead = 0;
+
+    await killProcessTree(1234, {
+      platform: "win32",
+      processKill: vi.fn(),
+      execFile: mockExecFile,
+      getProcessStartMarker: async () => ++markerRead === 1 ? "original" : "replacement",
+    });
+
+    expect(mockExecFile).not.toHaveBeenCalledWith(
+      "taskkill",
+      expect.arrayContaining(["1234"]),
+      expect.any(Object),
+    );
+  });
+
   it("rejects when a captured process remains after the verification timeout", async () => {
     let now = 0;
     const sleep = vi.fn(async (ms: number) => {
@@ -249,6 +303,7 @@ describe("killProcessTree", () => {
       platform: "win32",
       processKill,
       execFile: mockExecFile,
+      getProcessStartMarker: stableThenGone(),
     });
 
     expect(mockExecFile).toHaveBeenCalledWith(
@@ -260,7 +315,6 @@ describe("killProcessTree", () => {
   });
 
   it("runs taskkill then rejects honestly when CIM enumeration is unavailable", async () => {
-    let markerRead = 0;
     mockExecFile
       .mockRejectedValueOnce(new Error("powershell unavailable"))
       .mockResolvedValueOnce({ stdout: "", stderr: "" });
@@ -269,7 +323,7 @@ describe("killProcessTree", () => {
       killProcessTree(1234, {
         platform: "win32",
         processKill: vi.fn(),
-        getProcessStartMarker: async () => ++markerRead === 1 ? "start-1234" : null,
+        getProcessStartMarker: stableThenGone(),
         execFile: mockExecFile,
       }),
     ).rejects.toThrow("descendant verification was unavailable");
@@ -414,17 +468,28 @@ describe("killDescendantsByName", () => {
           stderr: "",
         })
         .mockResolvedValueOnce({
+          stdout: "start-5555",
+          stderr: "",
+        })
+        .mockResolvedValueOnce({
           stdout: "",
           stderr: "",
         })
+        .mockResolvedValueOnce({
+          stdout: "start-5555",
+          stderr: "",
+        })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
         .mockResolvedValueOnce({ stdout: "", stderr: "" });
 
       await killDescendantsByName(1234, "claude.exe");
 
-      // Last call should be taskkill
-      const lastCall = mockExecFile.mock.calls[mockExecFile.mock.calls.length - 1];
-      expect(lastCall?.[0]).toBe("taskkill");
-      expect(lastCall?.[1]).toEqual(["/T", "/F", "/PID", "5555"]);
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "taskkill",
+        ["/T", "/F", "/PID", "5555"],
+        expect.any(Object),
+      );
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }

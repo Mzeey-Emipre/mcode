@@ -280,16 +280,7 @@ export class TerminalService {
         current.pendingExit = { exitCode, signal };
         return;
       }
-      logger.info("PTY exited", {
-        id,
-        pid: pty.pid,
-        scopeId,
-        shell,
-        exitCode,
-        signal,
-        reason: "natural-exit",
-      });
-      this.finalizePty(current, exitCode);
+      this.handleNaturalExit(current, { exitCode, signal });
     });
 
     const session: PtySession = {
@@ -555,7 +546,7 @@ export class TerminalService {
         session.status = "running";
         session.closePromise = null;
         if (session.pendingExit) {
-          this.finalizePty(session, session.pendingExit.exitCode);
+          this.handleNaturalExit(session, session.pendingExit);
         }
         throw err;
       }
@@ -573,6 +564,22 @@ export class TerminalService {
       });
     }
     this.finalizePty(session);
+  }
+
+  private handleNaturalExit(
+    session: PtySession,
+    exit: { readonly exitCode: number; readonly signal?: number },
+  ): void {
+    logger.info("PTY exited", {
+      id: session.id,
+      pid: session.pty.pid,
+      scopeId: session.threadId,
+      shell: session.shell,
+      exitCode: exit.exitCode,
+      signal: exit.signal,
+      reason: "natural-exit",
+    });
+    this.finalizePty(session, exit.exitCode);
   }
 
   private finalizePty(session: PtySession, exitCode?: number): void {

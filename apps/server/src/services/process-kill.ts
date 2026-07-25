@@ -94,15 +94,21 @@ export async function killProcessTree(
       : (targetPid: number) => readProcessStartMarker(targetPid, platform, ef));
   const capture = await captureProcessTree(pid, platform, ef, getProcessStartMarker);
   const identities = capture.identities;
+  const capturedRoot = identities.find((identity) => identity.depth === 0);
+  const rootStillMatches =
+    capturedRoot !== undefined &&
+    await identityStillMatches(capturedRoot, getProcessStartMarker);
 
   try {
     if (platform === "win32") {
-      await ef("taskkill", ["/T", "/F", "/PID", String(pid)], {
-        timeout: TASKKILL_TIMEOUT_MS,
-      });
+      if (rootStillMatches) {
+        await ef("taskkill", ["/T", "/F", "/PID", String(pid)], {
+          timeout: TASKKILL_TIMEOUT_MS,
+        });
+      }
     } else {
       // Guard against pid <= 0: process.kill(0) would kill the server's own group.
-      if (pid > 0) {
+      if (pid > 0 && rootStillMatches) {
         processKill(-pid, "SIGKILL");
       }
     }

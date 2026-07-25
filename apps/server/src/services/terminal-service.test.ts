@@ -30,6 +30,7 @@ vi.mock("@mcode/shared", () => ({
   },
 }));
 
+import { logger } from "@mcode/shared";
 import { TerminalService } from "./terminal-service";
 import { TerminalReplayBuffer } from "./terminal-replay-buffer";
 
@@ -261,6 +262,15 @@ describe("TerminalService Windows teardown", () => {
 
     expect(sender.json).toHaveBeenCalledOnce();
     expect(sender.json).toHaveBeenCalledWith("terminal.exit", { ptyId, code: 11 });
+    expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      "PTY exited",
+      expect.objectContaining({
+        id: ptyId,
+        exitCode: 11,
+        signal: 0,
+        reason: "natural-exit",
+      }),
+    );
     expect(service.listActiveSessions()).toEqual([]);
     expect(dataDispose).toHaveBeenCalledOnce();
     expect(exitDispose).toHaveBeenCalledOnce();
