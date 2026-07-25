@@ -1,7 +1,6 @@
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { useDiffStore, type SubagentRosterTab } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useUiStore } from "@/stores/uiStore";
 
 /** Opens the active thread's Subagents panel. */
 export function openSubagentsPanel(): boolean {
@@ -11,7 +10,6 @@ export function openSubagentsPanel(): boolean {
   const diff = useDiffStore.getState();
   diff.setRightPanelTab(activeWorkspaceId, activeThreadId, "subagents");
   showRightPanelAdaptive(activeWorkspaceId, activeThreadId);
-  useUiStore.getState().setRightPanelMaximized(true, "user");
   return true;
 }
 
