@@ -385,7 +385,7 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
       ...BASE_OVERRIDES,
       "terminal.reattach": (_params: unknown) => {
         state.reattachCalls += 1;
-        return { gapped: false };
+        return { mode: "delta" };
       },
     });
     await interceptZustandStores(page);
@@ -433,7 +433,7 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
       ...BASE_OVERRIDES,
       "terminal.reattach": (params: unknown) => {
         calls.reattach.push(params as { ptyId?: string; lastSeq?: number });
-        return { gapped: false };
+        return { mode: "delta" };
       },
       "terminal.kill": () => {
         calls.kill += 1;
@@ -571,6 +571,7 @@ test.describe("Terminal remount lifecycle (ADR-0010)", () => {
     expect(calls.reattach.at(-1)).toEqual({
       ptyId: "pty-thread-a",
       lastSeq: 10,
+      cold: false,
     });
 
   });
