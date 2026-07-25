@@ -59,10 +59,17 @@ After cross-package changes (function signatures, shared interfaces), typecheck 
 |------|---------|---------|
 | `bun` | Package manager + runtime | https://bun.sh |
 | `git` | Version control | https://git-scm.com |
-| `node` | Script execution | https://nodejs.org |
+| `node` | Script execution, exact version 20.20.0 | https://nodejs.org |
 
 > **Note:** Electron bundles its own Node.js binary for the renderer/server process.
 > The system `node` is only needed for running scripts at the repo root.
+
+The repository records its exact Node.js requirement in `.node-version`. Use
+your Node version manager to install and select Node.js 20.20.0 before running
+`bun install`, `bun run doctor`, or a verification command. Version managers
+that support `.node-version` can switch automatically when you enter the
+repository. The install and verification scripts stop before native or
+artifact work when the active executable does not match.
 
 > **Note:** `better-sqlite3` has two native bindings: one compiled for the system
 > Node ABI (used by root scripts) and one compiled for Electron's ABI (used by the

@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -32,6 +32,7 @@ import {
   formatSafeReproduction,
   getChangedFiles,
   inspectVerificationReceipt,
+  isVerificationRelevant,
   runPhase,
   runPhasesInParallel,
   runVerification,
@@ -159,6 +160,20 @@ test("git inspection includes relevant untracked config but skips docs", () => {
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test(".node-version is verification-relevant", () => {
+  assert.equal(isVerificationRelevant(".node-version"), true);
+});
+
+test("verification phases prefer the validated Node executable directory", async () => {
+  const result = await runPhase(nodePhase(
+    "runtime path",
+    "console.log(process.env.PATH ?? process.env.Path)",
+    { env: { ...process.env, PATH: "ambient-path" } },
+  ));
+  assert.equal(result.code, 0);
+  assert.equal(result.output.trim().split(delimiter)[0], dirname(process.execPath));
 });
 
 test("a phase streams a complete log while retaining bounded output", async () => {
@@ -384,6 +399,19 @@ test("verification configuration changes content identity without changing test 
     const second = calculateVerificationIdentities({ cwd, env: {} });
     assert.notEqual(first.contentIdentity, second.contentIdentity);
     assert.equal(first.planningIdentity, second.planningIdentity);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test(".node-version changes verification content identity", () => {
+  const { cwd } = initRepo();
+  try {
+    writeFileSync(resolve(cwd, ".node-version"), "20.20.0\n");
+    const first = calculateVerificationIdentities({ cwd, env: {} });
+    writeFileSync(resolve(cwd, ".node-version"), "20.20.1\n");
+    const second = calculateVerificationIdentities({ cwd, env: {} });
+    assert.notEqual(first.contentIdentity, second.contentIdentity);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

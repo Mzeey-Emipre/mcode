@@ -14,6 +14,7 @@ import {
   isElectronBinaryInstalled,
   resolveElectronPackageDir,
 } from './ensure-electron.mjs';
+import { validateNodeRuntime } from './node-runtime.mjs';
 
 const require = createRequire(import.meta.url);
 const mainRoot = resolveMainRoot();
@@ -54,7 +55,10 @@ function hasCommand(cmd) {
 
 console.log('Checking prerequisites...\n');
 
-// 1-3. Required binaries
+// The runtime check comes first because every install and verification command depends on it.
+if (!validateNodeRuntime({ rootDir: root, printer: console.log }).ok) process.exit(1);
+
+// Required binaries
 check('bun in PATH',  () => hasCommand('bun'),  'Install from https://bun.sh');
 check('git in PATH',  () => hasCommand('git'),  'Install from https://git-scm.com');
 check('node in PATH', () => hasCommand('node'), 'Install from https://nodejs.org');
