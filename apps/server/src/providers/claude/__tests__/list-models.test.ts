@@ -55,13 +55,21 @@ describe("listClaudeModels", () => {
 
   it("returns ProviderModelInfo[] filtered to claude models", async () => {
     const result = await listClaudeModels();
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result[0]).toEqual<ProviderModelInfo>({
+      id: "claude-opus-5",
+      name: "Claude Opus 5",
+      contextWindow: 1_000_000,
+      supportsReasoning: true,
+      supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultReasoningEffort: "high",
+    });
+    expect(result[1]).toEqual<ProviderModelInfo>({
       id: "claude-sonnet-4-6-20250514",
       name: "Claude Sonnet 4.6",
       contextWindow: 1_000_000,
     });
-    expect(result[1]).toEqual<ProviderModelInfo>({
+    expect(result[2]).toEqual<ProviderModelInfo>({
       id: "claude-haiku-4-5-20251001",
       name: "Claude Haiku 4.5",
       contextWindow: 200_000,
@@ -81,10 +89,19 @@ describe("listClaudeModels", () => {
     );
   });
 
-  it("returns empty array when ANTHROPIC_API_KEY is missing", async () => {
+  it("returns the Opus 5 fallback when ANTHROPIC_API_KEY is missing", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     const result = await listClaudeModels();
-    expect(result).toEqual([]);
+    expect(result).toEqual<ProviderModelInfo[]>([
+      {
+        id: "claude-opus-5",
+        name: "Claude Opus 5",
+        contextWindow: 1_000_000,
+        supportsReasoning: true,
+        supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+        defaultReasoningEffort: "high",
+      },
+    ]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

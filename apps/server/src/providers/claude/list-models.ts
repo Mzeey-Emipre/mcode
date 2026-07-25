@@ -12,6 +12,16 @@ import type { ProviderModelInfo } from "@mcode/contracts";
 /** Cache TTL: 5 minutes, matching the design spec. */
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/** Opus 5 metadata available even when the Anthropic Models API cannot be queried. */
+const OPUS_5_FALLBACK: ProviderModelInfo = {
+  id: "claude-opus-5",
+  name: "Claude Opus 5",
+  contextWindow: 1_000_000,
+  supportsReasoning: true,
+  supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+  defaultReasoningEffort: "high",
+};
+
 /** Shape of a single model from the Anthropic Models API. */
 interface AnthropicModelInfo {
   id: string;
@@ -32,6 +42,13 @@ interface AnthropicModelsResponse {
 let cachedModels: ProviderModelInfo[] | null = null;
 let cacheTimestamp = 0;
 let inflight: Promise<ProviderModelInfo[]> | null = null;
+
+/** Adds Opus 5 capability metadata while preserving every model returned by the API. */
+function mergeOpus5Fallback(models: ProviderModelInfo[]): ProviderModelInfo[] {
+  const opus5 = models.find((model) => model.id === OPUS_5_FALLBACK.id);
+  const otherModels = models.filter((model) => model.id !== OPUS_5_FALLBACK.id);
+  return [{ ...OPUS_5_FALLBACK, ...opus5 }, ...otherModels];
+}
 
 /**
  * Resets the in-memory model cache and any inflight request.
@@ -59,7 +76,7 @@ async function fetchModels(): Promise<ProviderModelInfo[]> {
     // is often absent. Return empty and let the static registry provide
     // model data instead of surfacing an error to the user.
     logger.debug("ANTHROPIC_API_KEY not set, skipping models API fetch");
-    return [];
+    return [OPUS_5_FALLBACK];
   }
 
   // limit=100 covers all current Claude models without pagination.
@@ -81,13 +98,13 @@ async function fetchModels(): Promise<ProviderModelInfo[]> {
 
   const body = (await res.json()) as AnthropicModelsResponse;
 
-  const models: ProviderModelInfo[] = body.data
+  const models = mergeOpus5Fallback(body.data
     .filter((m) => m.id.startsWith("claude-"))
     .map((m) => ({
       id: m.id,
       name: m.display_name,
       contextWindow: m.max_input_tokens ?? undefined,
-    }));
+    })));
 
   cachedModels = models;
   cacheTimestamp = Date.now();
