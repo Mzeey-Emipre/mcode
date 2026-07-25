@@ -4,20 +4,12 @@ import type {
   WorktreeListInput,
   WorktreeListResult,
 } from "@mcode/contracts";
+import type { InternalThreadControlAuthority } from "@mcode/thread-orchestration";
+export type { InternalThreadControlAuthority } from "@mcode/thread-orchestration";
 import { inject, injectable } from "tsyringe";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { WorktreeRepo } from "../repositories/worktree-repo.js";
 import { GitService } from "./git-service.js";
-
-/** Server-derived authority for one active internal provider turn. */
-export interface InternalThreadControlAuthority {
-  userId: string;
-  sourceThreadId: string;
-  sourceTurnId: string;
-  sourceToolCallId: string;
-  sourceProviderId: string;
-  permissionMode: "supervised" | "full";
-}
 
 /** Git worktree discovery restricted to a registered workspace. */
 export interface ThreadControlGitDiscovery {

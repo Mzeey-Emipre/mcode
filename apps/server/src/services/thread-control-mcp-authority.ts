@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import type { InternalThreadControlAuthority } from "./thread-control-service.js";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import type { InternalThreadControlAuthority } from "@mcode/thread-orchestration";
 
 /** Mutable server-owned lease for an internal provider-session MCP credential. */
 interface ActiveLease {
@@ -25,6 +25,13 @@ export interface InternalThreadControlMcpLease {
   sessionId: string;
 }
 
+/** Compares two bearer values without exposing equal-length match timing. */
+export function constantTimeCredentialEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
 /** Owns opaque credentials and revocable authority for internal MCP sessions. */
 export class InternalThreadControlMcpAuthority {
   private readonly leases = new Map<string, { credential: string; active?: ActiveLease }>();
@@ -47,8 +54,9 @@ export class InternalThreadControlMcpAuthority {
   authorize(credential: string, sourceToolCallId: string): InternalThreadControlAuthority | undefined {
     if (sourceToolCallId.length < 1 || sourceToolCallId.length > 128) return undefined;
     for (const entry of this.leases.values()) {
-      if (entry.credential !== credential || !entry.active?.active) continue;
+      if (!constantTimeCredentialEqual(entry.credential, credential) || !entry.active?.active) continue;
       return {
+        type: "internal",
         userId: "local-user",
         sourceThreadId: entry.active.sourceThreadId,
         sourceTurnId: entry.active.sourceTurnId,

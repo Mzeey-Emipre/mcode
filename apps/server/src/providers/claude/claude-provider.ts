@@ -1487,8 +1487,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   }
 
   /** Provider teardown: close the SDK query handle. */
-  close(state: ClaudeSessionState): void {
-    this.threadControlMcp?.close(state.sessionId);
+  async close(state: ClaudeSessionState): Promise<void> {
+    await this.threadControlMcp?.close(state.sessionId);
     state.query.close();
   }
 

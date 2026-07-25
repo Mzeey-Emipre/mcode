@@ -68,6 +68,7 @@ function buildService(): {
   sendTurn: ReturnType<typeof vi.fn>;
   discardSession: ReturnType<typeof vi.fn>;
   waitForSessionExit: ReturnType<typeof vi.fn>;
+  threadControlMcp: { activate: ReturnType<typeof vi.fn> };
   providerEmitter: EventEmitter;
   threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
 } {
@@ -157,6 +158,7 @@ function buildService(): {
     isAnswered: vi.fn(() => false),
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as PlanQuestionAnswersRepo;
+  const threadControlMcp = { activate: vi.fn(), revoke: vi.fn(), close: vi.fn() };
   const db = {
     transaction: vi.fn((fn: (...args: unknown[]) => unknown) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
@@ -189,9 +191,11 @@ function buildService(): {
       { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
     ),
     new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+    undefined,
+    threadControlMcp as never,
   );
 
-  return { service, sendTurn, discardSession, waitForSessionExit, providerEmitter, threadRepo };
+  return { service, sendTurn, discardSession, waitForSessionExit, providerEmitter, threadRepo, threadControlMcp };
 }
 
 describe("AgentService transient-failure auto-retry", () => {
@@ -224,6 +228,29 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(discardSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
     expect(threadRepo.clearSdkSessionId).toHaveBeenCalledWith(THREAD_ID);
     expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "errored");
+  });
+
+  it("reactivates the same turn authority after retry discards its provider session", async () => {
+    const { service, sendTurn, threadControlMcp } = buildService();
+    service.init();
+    sendTurn.mockRejectedValueOnce(new Error("read ECONNRESET")).mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "full",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    expect(threadControlMcp.activate).toHaveBeenCalledTimes(2);
+    expect(threadControlMcp.activate.mock.calls[1][0]).toMatchObject({
+      sourceThreadId: THREAD_ID,
+      sourceTurnId: threadControlMcp.activate.mock.calls[0][0].sourceTurnId,
+      sourceProviderId: "claude",
+      permissionMode: "full",
+    });
   });
 
   it("does not retry a fatal send failure", async () => {

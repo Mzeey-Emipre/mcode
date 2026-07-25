@@ -305,6 +305,7 @@ export class AgentService {
       /** False once the in-flight `sendTurn` promise has settled (success or throw). */
       sendTurnInFlight: boolean;
       sessionName: string;
+      sourceTurnId: string;
       resolvedProvider: import("@mcode/contracts").IAgentProvider;
       effectiveProvider: ProviderId;
       turnRequest: TurnRequest;
@@ -893,6 +894,7 @@ export class AgentService {
       retryInFlight: false,
       sendTurnInFlight: false,
       sessionName,
+      sourceTurnId,
       resolvedProvider,
       effectiveProvider,
       turnRequest: baseTurnRequest,
@@ -2043,6 +2045,15 @@ export class AgentService {
         logger.warn("Failed to discard pooled session before retry", {
           threadId,
           error: evictErr instanceof Error ? evictErr.message : String(evictErr),
+        });
+      }
+      if (dispatch.effectiveProvider === "claude" || dispatch.effectiveProvider === "codex") {
+        this.threadControlMcp?.activate({
+          sessionId: dispatch.sessionName,
+          sourceThreadId: threadId,
+          sourceTurnId: dispatch.sourceTurnId,
+          sourceProviderId: dispatch.effectiveProvider,
+          permissionMode: dispatch.turnRequest.permissionMode === "full" ? "full" : "supervised",
         });
       }
       try {

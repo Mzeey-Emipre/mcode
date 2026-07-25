@@ -1186,7 +1186,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    * Drives every teardown path (stop, shutdown, eviction, stale-discard).
    */
   async close(state: CodexSessionState): Promise<void> {
-    this.threadControlMcp?.close(state.sessionId);
+    await this.threadControlMcp?.close(state.sessionId);
     for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
       this.emit("event", event);
     }

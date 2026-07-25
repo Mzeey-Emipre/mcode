@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InternalThreadControlMcpAuthority } from "../thread-control-mcp-authority.js";
+import { constantTimeCredentialEqual, InternalThreadControlMcpAuthority } from "../thread-control-mcp-authority.js";
 
 describe("InternalThreadControlMcpAuthority", () => {
   it("keeps one opaque credential per pooled session while rotating its active turn lease", () => {
@@ -30,6 +30,7 @@ describe("InternalThreadControlMcpAuthority", () => {
     expect(retry.credential).toBe(first.credential);
     expect(nextTurn.credential).toBe(first.credential);
     expect(authority.authorize(first.credential, "call-1")).toMatchObject({
+      type: "internal",
       userId: "local-user",
       sourceTurnId: "turn-two",
       sourceToolCallId: "call-1",
@@ -50,5 +51,10 @@ describe("InternalThreadControlMcpAuthority", () => {
     authority.revoke("mcode-source");
 
     expect(authority.authorize(lease.credential, "call-1")).toBeUndefined();
+  });
+
+  it("rejects unequal credential lengths before constant-time comparison", () => {
+    expect(constantTimeCredentialEqual("credential", "credential")).toBe(true);
+    expect(constantTimeCredentialEqual("credential", "credential-extra")).toBe(false);
   });
 });

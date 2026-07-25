@@ -2,7 +2,11 @@ import { createServer, type Server } from "node:http";
 import { inject, injectable } from "tsyringe";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { InternalThreadControlMcpAuthority, type ActivateInternalThreadControlMcpLease } from "./thread-control-mcp-authority.js";
+import {
+  constantTimeCredentialEqual,
+  InternalThreadControlMcpAuthority,
+  type ActivateInternalThreadControlMcpLease,
+} from "./thread-control-mcp-authority.js";
 import { createInternalThreadControlMcpSession } from "./thread-control-mcp-transport.js";
 import { ThreadControlService } from "./thread-control-service.js";
 
@@ -16,6 +20,7 @@ export class InternalThreadControlMcpRuntime {
   private readonly httpSessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
   private httpServer: Server | undefined;
   private httpPort: number | undefined;
+  private httpServerStartup: Promise<void> | undefined;
 
   constructor(
     @inject(ThreadControlService) service: ThreadControlService,
@@ -35,15 +40,20 @@ export class InternalThreadControlMcpRuntime {
   }
 
   /** Closes all MCP state owned by a provider session. */
-  close(sessionId: string): void {
+  async close(sessionId: string): Promise<void> {
     this.authority.close(sessionId);
     const entry = this.httpSessions.get(sessionId);
     this.httpSessions.delete(sessionId);
-    void entry?.transport.close();
-    if (this.httpSessions.size === 0 && this.httpServer) {
-      void new Promise<void>((resolve) => this.httpServer?.close(() => resolve()));
+    if (entry) {
+      await entry.transport.close().catch(() => undefined);
+    }
+    const server = this.httpSessions.size === 0 ? this.httpServer : undefined;
+    if (server) {
       this.httpServer = undefined;
       this.httpPort = undefined;
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
     }
   }
 
@@ -77,15 +87,33 @@ export class InternalThreadControlMcpRuntime {
 
   private async ensureHttpServer(): Promise<void> {
     if (this.httpServer) return;
+    if (this.httpServerStartup) return this.httpServerStartup;
+    const startup = this.startHttpServer();
+    this.httpServerStartup = startup;
+    try {
+      await startup;
+    } finally {
+      if (this.httpServerStartup === startup) this.httpServerStartup = undefined;
+    }
+  }
+
+  private async startHttpServer(): Promise<void> {
     const server = createServer((request, response) => {
-      const sessionId = request.url?.slice(1);
-      if (!sessionId || request.method !== "POST") {
+      const encodedSessionId = request.url?.slice(1);
+      if (!encodedSessionId || request.method !== "POST") {
         response.writeHead(404).end();
         return;
       }
-      const entry = this.httpSessions.get(decodeURIComponent(sessionId));
-      const credential = entry && this.authority.credential(decodeURIComponent(sessionId));
-      if (!entry || !credential || request.headers.authorization !== `Bearer ${credential}`) {
+      let sessionId: string;
+      try {
+        sessionId = decodeURIComponent(encodedSessionId);
+      } catch {
+        response.writeHead(401).end();
+        return;
+      }
+      const entry = this.httpSessions.get(sessionId);
+      const credential = entry && this.authority.credential(sessionId);
+      if (!entry || !credential || !constantTimeCredentialEqual(request.headers.authorization ?? "", `Bearer ${credential}`)) {
         response.writeHead(401).end();
         return;
       }

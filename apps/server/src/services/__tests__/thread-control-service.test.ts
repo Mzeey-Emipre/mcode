@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ThreadControlService, type InternalThreadControlAuthority } from "../thread-control-service.js";
 
 const authority: InternalThreadControlAuthority = {
+  type: "internal",
   userId: "local-user",
   sourceThreadId: "thread-1",
   sourceTurnId: "turn-1",
