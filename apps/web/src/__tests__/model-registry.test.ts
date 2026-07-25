@@ -51,6 +51,23 @@ describe("pickProviderModelsForSettings", () => {
     }]);
   });
 
+  it("uses dynamic context updates for non-Claude models", () => {
+    const staticCodex = [{
+      id: "gpt-test",
+      label: "GPT Test",
+      providerId: "codex",
+      contextWindow: 200_000,
+    }];
+    const dynamicCodex = [{
+      id: "gpt-test",
+      label: "GPT Test",
+      providerId: "codex",
+      contextWindow: 400_000,
+    }];
+
+    expect(pickProviderModelsForSettings(staticCodex, dynamicCodex)).toEqual(dynamicCodex);
+  });
+
   it("falls back to static models when dynamic is undefined", () => {
     expect(pickProviderModelsForSettings(staticModels, undefined)).toEqual(staticModels);
   });

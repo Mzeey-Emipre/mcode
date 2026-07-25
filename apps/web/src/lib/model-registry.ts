@@ -156,7 +156,9 @@ export function pickProviderModelsForSettings(
       return {
         ...model,
         ...dynamicModel,
-        contextWindow: model.contextWindow ?? dynamicModel?.contextWindow,
+        contextWindow: model.providerId === "claude"
+          ? model.contextWindow ?? dynamicModel?.contextWindow
+          : dynamicModel?.contextWindow ?? model.contextWindow,
       };
     });
     const staticIds = new Set(staticModels.map((model) => model.id));
