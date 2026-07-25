@@ -159,6 +159,10 @@ describe("TerminalService Windows teardown", () => {
       pty,
       dataDisposable: { dispose: vi.fn() },
       exitDisposable: { dispose: vi.fn() },
+      processScope: {
+        ownsProcessTree: false,
+        close: vi.fn(),
+      },
     };
     const internals = service as unknown as {
       sessions: Map<string, typeof session>;
@@ -295,7 +299,130 @@ describe("TerminalService Windows teardown", () => {
     expect(service.listActiveSessions()).toEqual([]);
   });
 
-  function createService(): TerminalService {
+  it("uses the healthy Windows process scope without the slow process-tree fallback", async () => {
+    const terminate = vi.fn(() => ({ ok: true }));
+    const waitForEmpty = vi.fn().mockResolvedValue({ ok: true });
+    const close = vi.fn();
+    const processScope = {
+      ready: true,
+      ownsProcessTree: true,
+      assign: vi.fn(() => ({ ok: true })),
+      terminate,
+      waitForEmpty,
+      close,
+    };
+    const service = createService(
+      { assign: vi.fn(() => true), setDescription: vi.fn() },
+      { create: () => processScope },
+    );
+    const { ptyId } = service.create("thread-1");
+
+    await service.kill(ptyId);
+
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(waitForEmpty).toHaveBeenCalledWith(1_900);
+    expect(killProcessTree).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("assigns the global job before the terminal child job", () => {
+    const calls: string[] = [];
+    const service = createService(
+      { assign: vi.fn(() => { calls.push("global"); return true; }), setDescription: vi.fn() },
+      {
+        create: () => ({
+          ready: true,
+          ownsProcessTree: true,
+          assign: vi.fn(() => { calls.push("child"); return { ok: true }; }),
+          terminate: vi.fn(),
+          waitForEmpty: vi.fn(),
+          close: vi.fn(),
+        }),
+      },
+    );
+
+    service.create("thread-1");
+
+    expect(calls).toEqual(["global", "child"]);
+  });
+
+  it("closes the child scope when the terminal exits naturally", () => {
+    const close = vi.fn();
+    const service = createService(
+      { assign: vi.fn(() => true), setDescription: vi.fn() },
+      {
+        create: () => ({
+          ready: true,
+          ownsProcessTree: true,
+          assign: vi.fn(() => ({ ok: true })),
+          terminate: vi.fn(),
+          waitForEmpty: vi.fn(),
+          close,
+        }),
+      },
+    );
+    service.create("thread-1");
+
+    onExit?.({ exitCode: 0, signal: 0 });
+
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("checks the healthy Windows scope without launching child-process discovery", async () => {
+    const queryProcessIds = vi.fn(() => ({
+      ok: true,
+      processIds: [10_001, 10_002],
+      overflow: false,
+    }));
+    const service = createService(
+      { assign: vi.fn(() => true), setDescription: vi.fn() },
+      {
+        create: () => ({
+          ready: true,
+          ownsProcessTree: true,
+          assign: vi.fn(() => ({ ok: true })),
+          queryProcessIds,
+          terminate: vi.fn(),
+          waitForEmpty: vi.fn(),
+          close: vi.fn(),
+        }),
+      },
+    );
+    const { ptyId } = service.create("thread-1");
+
+    await expect(service.hasChildren(ptyId)).resolves.toEqual({ hasChildren: true });
+    expect(queryProcessIds).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the session and listeners when scoped termination fails", async () => {
+    const close = vi.fn();
+    const service = createService(
+      { assign: vi.fn(() => true), setDescription: vi.fn() },
+      {
+        create: () => ({
+          ready: true,
+          ownsProcessTree: true,
+          assign: vi.fn(() => ({ ok: true })),
+          terminate: vi.fn(() => ({ ok: false, error: "native termination failed" })),
+          waitForEmpty: vi.fn(),
+          close,
+        }),
+      },
+    );
+    const { ptyId } = service.create("thread-1");
+
+    await expect(service.kill(ptyId)).rejects.toThrow("native termination failed");
+
+    expect(service.listActiveSessions()).toEqual([{ ptyId, threadId: "thread-1" }]);
+    expect(dataDispose).not.toHaveBeenCalled();
+    expect(exitDispose).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  function createService(
+    jobObject: object = { assign: vi.fn(), setDescription: vi.fn() },
+    processScopeFactory?: object,
+  ): TerminalService {
     const cwd = process.cwd();
     return new TerminalService(
       { findById: () => ({ workspace_id: "workspace-1", mode: "direct", worktree_path: null }) } as never,
@@ -312,7 +439,8 @@ describe("TerminalService Windows teardown", () => {
       } as never,
       { getEnv: () => ({}) } as never,
       { register: vi.fn(), deregister: vi.fn(), clear: vi.fn() } as never,
-      { assign: vi.fn(), setDescription: vi.fn() } as never,
+      jobObject as never,
+      processScopeFactory as never,
     );
   }
 });

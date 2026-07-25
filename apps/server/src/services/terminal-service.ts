@@ -20,6 +20,10 @@ import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitService } from "./git-service";
 import type { SettingsService } from "./settings-service";
 import { EnvService } from "./env-service.js";
+import {
+  WindowsProcessScopeFactory,
+  type WindowsProcessScope,
+} from "./windows-process-scope.js";
 
 // createRequire lets us load native CJS modules (node-pty) from both ESM
 // (Bun running `src/index.ts`) and the CJS production / dev bundle.
@@ -68,6 +72,7 @@ interface PtySession {
   status: "running" | "closing";
   pendingExit: { readonly exitCode: number; readonly signal?: number } | null;
   closePromise: Promise<void> | null;
+  readonly processScope: WindowsProcessScope;
 }
 
 /** Callbacks for streaming PTY output and exit events to connected clients. */
@@ -118,6 +123,7 @@ export class TerminalService {
     @inject(EnvService) private readonly envService: EnvService,
     @inject("PtyPidRegistry") private readonly pidRegistry: PtyPidRegistry,
     @inject("JobObject") private readonly jobObject: import("./job-object.js").JobObject,
+    private readonly processScopeFactory: WindowsProcessScopeFactory = new WindowsProcessScopeFactory(),
   ) {
     // Keep server-side scrollback retention in sync with the terminal.scrollback
     // setting: when the user changes it, resize all live replay buffers so
@@ -257,7 +263,26 @@ export class TerminalService {
     // on Windows, which can spawn processes with CREATE_BREAKAWAY_FROM_JOB,
     // so explicit assignment is needed — inheritance alone is not sufficient.
     // Best-effort: no-op on non-Windows or if JobObject failed to init.
-    this.jobObject.assign(pty.pid);
+    const processScope = this.processScopeFactory.create();
+    const globalAssigned = this.jobObject.assign(pty.pid);
+    if (process.platform === "win32" && (!globalAssigned || !processScope.ready)) {
+      logger.warn("PTY process scope unavailable; close will use process-tree fallback", {
+        id,
+        pid: pty.pid,
+        reason: !globalAssigned ? "global-job-assignment-failed" : "child-job-init-failed",
+      });
+      processScope.close();
+    } else if (process.platform === "win32") {
+      const assignment = processScope.assign(pty.pid);
+      if (!assignment.ok) {
+        logger.warn("PTY process scope assignment failed; close will use process-tree fallback", {
+          id,
+          pid: pty.pid,
+          error: assignment.error,
+        });
+        processScope.close();
+      }
+    }
     this.jobObject.setDescription(pty.pid, `Mcode Terminal: ${shellBasename(shell)}`);
 
     const dataDisposable = pty.onData((data: string) => {
@@ -294,6 +319,7 @@ export class TerminalService {
       status: "running",
       pendingExit: null,
       closePromise: null,
+      processScope,
     };
     this.sessions = new Map([...this.sessions, [id, session]]);
 
@@ -507,6 +533,15 @@ export class TerminalService {
     const session = this.sessions.get(ptyId);
     if (!session) throw new Error(`PTY not found: ${ptyId}`);
 
+    if (process.platform === "win32" && session.processScope.ownsProcessTree) {
+      const snapshot = session.processScope.queryProcessIds();
+      if (snapshot.ok && !snapshot.overflow) {
+        return {
+          hasChildren: snapshot.processIds.some((pid) => pid !== session.pty.pid),
+        };
+      }
+    }
+
     const pending = [session.pty.pid];
     const visited = new Set<number>();
     try {
@@ -539,6 +574,17 @@ export class TerminalService {
     // identifies its descendants. Closing ConPTY first can orphan children.
     if (this.useGracefulKill) {
       await gracefulKillProcessTree(session.pty.pid);
+    } else if (process.platform === "win32" && session.processScope.ownsProcessTree) {
+      const terminated = session.processScope.terminate(1);
+      const emptied = terminated.ok
+        ? await session.processScope.waitForEmpty(1_900)
+        : terminated;
+      if (!terminated.ok || !emptied.ok) {
+        session.status = "running";
+        session.closePromise = null;
+        if (session.pendingExit) this.handleNaturalExit(session, session.pendingExit);
+        throw new Error(terminated.error ?? emptied.error ?? "Windows process scope termination failed");
+      }
     } else {
       try {
         await killProcessTree(session.pty.pid);
@@ -603,6 +649,7 @@ export class TerminalService {
       this.sender?.json("terminal.exit", { ptyId: session.id, code: exitCode });
     }
     this.removePty(session.id);
+    session.processScope.close();
   }
 
   private removePty(ptyId: string): void {

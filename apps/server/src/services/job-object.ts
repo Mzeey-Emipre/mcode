@@ -57,10 +57,10 @@ export class JobObject {
     }
   }
 
-  /** Attach a process to the job. No-op on non-Windows or if the job failed to init. */
-  assign(pid: number): void {
-    if (!this.initialized) return;
-    this.assignWindows(pid);
+  /** Attach a process to the job and report whether required Windows assignment succeeded. */
+  assign(pid: number): boolean {
+    if (!this.initialized) return !this.isWindowsJob;
+    return this.assignWindows(pid);
   }
 
   /** Close the job handle, terminating all assigned processes (Windows). */
@@ -128,24 +128,27 @@ export class JobObject {
     }
   }
 
-  private assignWindows(pid: number): void {
+  private assignWindows(pid: number): boolean {
     const s = this.windowsState!;
     let procHandle: unknown = null;
     try {
       procHandle = s.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
       if (!procHandle) {
         // Process may already be dead, or we lack access. Best-effort.
-        return;
+        return false;
       }
       const ok = s.AssignProcessToJobObject(s.jobHandle, procHandle);
       if (!ok) {
         logger.debug("JobObject: AssignProcessToJobObject failed", { pid });
+        return false;
       }
+      return true;
     } catch (err) {
       logger.debug("JobObject: assign threw", {
         pid,
         error: err instanceof Error ? err.message : String(err),
       });
+      return false;
     } finally {
       if (procHandle) {
         try { s.CloseHandle(procHandle); } catch { /* ignore */ }
