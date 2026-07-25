@@ -20,7 +20,6 @@ const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
 const LIST_SURFACE_PADDING = 8;
 const LIST_BOTTOM_FADE_HEIGHT = 20;
 const NAMED_MCODE_CAPABILITIES = new Set(["goal", "plan", "ultra", "compact"]);
-type SkillOrigin = "Project" | "Shared" | "Local" | "Provider";
 
 function commandDisplayLabel(command: Command): string {
   if (command.capabilityKind === "plugin") return `@${command.name}`;
@@ -49,7 +48,7 @@ interface SlashCommandPopupProps {
   tone?: "default" | "dark";
   /** Extra class names for border/positioning overrides that don't belong in tone. */
   className?: string;
-  /** Active workspace root used to distinguish project skills from local skills. */
+  /** Active workspace root used to identify local workspace skills. */
   workspacePath?: string;
 }
 
@@ -201,7 +200,7 @@ function CommandRow({
   selected: boolean;
   onSelect: (cmd: Command) => void;
   tone?: "default" | "dark";
-  origin?: Exclude<SkillOrigin, "Shared">;
+  origin?: "Local";
 }) {
   return (
     <Button
@@ -212,15 +211,18 @@ function CommandRow({
       role="option"
       aria-selected={selected}
       data-index={index}
-      aria-label={cmd.capabilityKind === "plugin"
-        ? `${commandDisplayLabel(cmd)} Plugin ${cmd.description}`
-        : `${commandDisplayLabel(cmd)} ${cmd.description}`}
+      aria-label={[
+        commandDisplayLabel(cmd),
+        cmd.capabilityKind === "plugin" ? "Plugin" : undefined,
+        cmd.description,
+        origin,
+      ].filter(Boolean).join(" ")}
       onMouseDown={(e) => {
         e.preventDefault(); // prevent textarea blur
         onSelect(cmd);
       }}
       className={cn(
-        "h-10 w-full justify-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+        "h-10 min-w-0 w-full justify-start gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left transition-colors",
         tone === "dark"
           ? selected
             ? "bg-white/[0.12]"
@@ -231,15 +233,15 @@ function CommandRow({
       )}
     >
       <CommandIdentityMark command={cmd} tone={tone} />
-      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      <span className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
         <span className={cn(
-          "shrink-0 text-sm font-medium",
+          "min-w-0 shrink truncate text-sm font-medium",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
           {commandDisplayLabel(cmd)}
         </span>
         <span className={cn(
-          "min-w-0 flex-1 overflow-hidden whitespace-nowrap text-xs font-normal",
+          "min-w-12 flex-1 overflow-hidden whitespace-nowrap text-xs font-normal",
           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
         )} style={{
           maskImage: "linear-gradient(to right, black calc(100% - 2.5rem), transparent)",
@@ -321,7 +323,7 @@ function duplicateSkillOriginTag(
   command: Command,
   commands: Command[],
   workspacePath?: string,
-): Exclude<SkillOrigin, "Shared"> | undefined {
+): "Local" | undefined {
   if (
     command.capabilityKind !== "skill" ||
     !commands.some(
@@ -334,29 +336,17 @@ function duplicateSkillOriginTag(
     return undefined;
   }
 
-  const origin = inferOrigin(command, workspacePath);
-  return origin === "Shared" ? undefined : origin;
-}
-
-function inferOrigin(command: Command, workspacePath?: string): SkillOrigin {
   const nativePath = normalizePath(command.identity?.nativeId ?? command.nativeId);
-  const projectPath = workspacePath
+  const localSkillPath = workspacePath
     ? `${normalizePath(workspacePath).replace(/\/+$/, "")}/.codex/skills/`
-    : null;
-  if (projectPath && nativePath.startsWith(projectPath)) return "Project";
-  if (
-    nativePath.startsWith(".agents/skills/") ||
-    nativePath.includes("/.agents/skills/")
-  ) {
-    return "Shared";
-  }
-  if (
+    : undefined;
+  const isCodexSkillPath =
     nativePath.startsWith(".codex/skills/") ||
-    nativePath.includes("/.codex/skills/")
-  ) {
-    return "Local";
-  }
-  return "Provider";
+    nativePath.includes("/.codex/skills/");
+  return (localSkillPath !== undefined && nativePath.startsWith(localSkillPath)) ||
+    isCodexSkillPath
+    ? "Local"
+    : undefined;
 }
 
 function normalizePath(path: string): string {

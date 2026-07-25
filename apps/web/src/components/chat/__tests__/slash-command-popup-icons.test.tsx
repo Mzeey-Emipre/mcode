@@ -61,7 +61,7 @@ function renderDuplicateSkillPopup() {
     {
       id: "skill:shared:grill-with-docs",
       name: "grill-with-docs",
-      description: "Shared interviewing workflow",
+      description: "Interviewing workflow",
       namespace: "skill",
       capabilityKind: "skill",
       nativeId: "C:/Users/test/.agents/skills/grill-with-docs/SKILL.md",
@@ -69,7 +69,7 @@ function renderDuplicateSkillPopup() {
     {
       id: "skill:project:grill-with-docs",
       name: "grill-with-docs",
-      description: "Project interviewing workflow",
+      description: "Interviewing workflow",
       namespace: "skill",
       capabilityKind: "skill",
       nativeId: "C:/workspace/project/.codex/skills/grill-with-docs/SKILL.md",
@@ -80,6 +80,40 @@ function renderDuplicateSkillPopup() {
     <SlashCommandPopup
       state={{ kind: "ready", items: commands }}
       selectedIndex={0}
+      anchorRect={makeAnchorRect()}
+      workspacePath="C:/workspace/project"
+      onSelect={() => {}}
+      onDismiss={() => {}}
+      onRetry={() => {}}
+    />,
+  );
+}
+
+function renderLongDuplicateSkillPopup() {
+  const name = "a-very-long-capability-title-that-must-not-collide-with-its-source";
+  const commands: Command[] = [
+    {
+      id: `skill:shared:${name}`,
+      name,
+      description: "Runs the capability",
+      namespace: "skill",
+      capabilityKind: "skill",
+      nativeId: `C:/Users/test/.agents/skills/${name}/SKILL.md`,
+    },
+    {
+      id: `skill:local:${name}`,
+      name,
+      description: "Runs the capability",
+      namespace: "skill",
+      capabilityKind: "skill",
+      nativeId: `C:/workspace/project/.codex/skills/${name}/SKILL.md`,
+    },
+  ];
+
+  return render(
+    <SlashCommandPopup
+      state={{ kind: "ready", items: commands }}
+      selectedIndex={1}
       anchorRect={makeAnchorRect()}
       workspacePath="C:/workspace/project"
       onSelect={() => {}}
@@ -125,21 +159,48 @@ function renderReservedNameCapabilities() {
 }
 
 describe("SlashCommandPopup row presentation", () => {
-  it("renders duplicate skill rows directly and tags only the project copy", () => {
+  it("labels only the local duplicate and gives identical copies distinct accessible names", () => {
     renderDuplicateSkillPopup();
 
     expect(screen.queryByTestId(/slash-command-group/)).not.toBeInTheDocument();
     expect(screen.queryByText("Skills")).not.toBeInTheDocument();
 
-    const rows = screen.getAllByRole("option", { name: /grill-with-docs/ });
-    expect(within(rows[0]).queryByText("Shared")).not.toBeInTheDocument();
-    expect(within(rows[1]).getByText("Project")).toBeInTheDocument();
-    expect(rows[0]).toHaveClass("h-10");
-    expect(rows[0].querySelector(".lucide-badge-check")).not.toBeNull();
+    const sharedRow = screen.getByRole("option", {
+      name: "grill-with-docs Interviewing workflow",
+    });
+    const localRow = screen.getByRole("option", {
+      name: "grill-with-docs Interviewing workflow Local",
+    });
+    expect(within(sharedRow).queryByText("Local")).not.toBeInTheDocument();
+    expect(within(localRow).getByText("Local")).toBeInTheDocument();
+    expect(screen.queryByText("Project")).not.toBeInTheDocument();
+    expect(screen.queryByText("Provider")).not.toBeInTheDocument();
+    expect(sharedRow).toHaveClass("h-10");
+    expect(sharedRow.querySelector(".lucide-badge-check")).not.toBeNull();
 
-    const content = within(rows[0]).getByText("grill-with-docs").parentElement;
+    const content = within(sharedRow).getByText("grill-with-docs").parentElement;
     expect(content).toHaveClass("items-baseline");
-    expect(content).toContainElement(within(rows[0]).getByText("Shared interviewing workflow"));
+    expect(content).toContainElement(within(sharedRow).getByText("Interviewing workflow"));
+  });
+
+  it("keeps a long local title bounded before its source badge", () => {
+    renderLongDuplicateSkillPopup();
+
+    const localRow = screen.getByRole("option", {
+      name: /Local$/,
+    });
+    const title = within(localRow).getByText(
+      "a-very-long-capability-title-that-must-not-collide-with-its-source",
+    );
+    const description = within(localRow).getByText("Runs the capability");
+    const badge = within(localRow).getByText("Local");
+
+    expect(localRow).toHaveClass("min-w-0", "overflow-hidden");
+    expect(title).toHaveClass("min-w-0", "truncate");
+    expect(description).toHaveClass("min-w-12", "overflow-hidden");
+    expect(description).not.toHaveClass("truncate");
+    expect(title.parentElement).toHaveClass("min-w-0", "overflow-hidden", "items-baseline");
+    expect(badge).toHaveClass("shrink-0");
   });
 
   it("renders rows without namespace headings", () => {
