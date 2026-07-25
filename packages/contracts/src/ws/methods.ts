@@ -807,7 +807,11 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.discriminatedUnion("mode", [
       z.object({ mode: z.literal("delta") }),
-      z.object({ mode: z.literal("checkpoint"), checkpoint: z.string() }),
+      z.object({
+        mode: z.literal("checkpoint"),
+        checkpoint: z.string(),
+        checkpointThrough: z.number().int().min(-1),
+      }),
       z.object({
         mode: z.literal("reset"),
         discardThrough: z.number().int().min(-1),

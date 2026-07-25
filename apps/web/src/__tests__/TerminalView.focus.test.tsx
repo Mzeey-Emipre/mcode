@@ -23,7 +23,7 @@ const bufferActive = { viewportY: 42, length: 100 };
 let onDataListener: ((data: string) => void) | null = null;
 type RestoreResult =
   | { mode: "delta" }
-  | { mode: "checkpoint"; checkpoint: string }
+  | { mode: "checkpoint"; checkpoint: string; checkpointThrough: number }
   | { mode: "reset"; discardThrough: number };
 
 const term = {
@@ -207,7 +207,11 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
         seq: 8,
         payload: new TextEncoder().encode("delta"),
       });
-      return { mode: "checkpoint", checkpoint: "\u001b[31mred" };
+      return {
+        mode: "checkpoint",
+        checkpoint: "\u001b[31mred",
+        checkpointThrough: 7,
+      };
     });
 
     render(<TerminalView ptyId="pty-cold" visible={true} threadActive={true} />);
@@ -219,6 +223,27 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       )
       .join("");
     expect(combined).toContain("\u001b[31mreddelta");
+    expect(transport.ptySetLastSeq).toHaveBeenCalledWith("pty-cold", 8);
+  });
+
+  it("advances the processed floor for a checkpoint-only remount", async () => {
+    transport.terminalReattach.mockResolvedValueOnce({
+      mode: "checkpoint",
+      checkpoint: "checkpoint-only",
+      checkpointThrough: 41,
+    });
+
+    render(<TerminalView ptyId="pty-cold" visible={true} threadActive={true} />);
+    await settle();
+
+    expect(transport.ptySetLastSeq).toHaveBeenCalledWith("pty-cold", 41);
+    const checkpointWrite = term.write.mock.calls.find(
+      ([data]) =>
+        data instanceof Uint8Array &&
+        new TextDecoder().decode(data) === "checkpoint-only",
+    );
+    expect(checkpointWrite).toBeDefined();
+    expect(checkpointWrite?.[1]).toEqual(expect.any(Function));
   });
 
   // #748: viewport opens at the tail after replay completes.
@@ -233,9 +258,16 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
 
   // #746/#748: a gap in the retained window surfaces a trim banner at the top.
   it("writes a trim banner when the replay reports a gap", async () => {
-    transport.terminalReattach.mockResolvedValueOnce({
-      mode: "reset",
-      discardThrough: 12,
+    transport.terminalReattach.mockImplementationOnce(async () => {
+      emitPtyData({
+        ptyId: "pty-2",
+        seq: 12,
+        payload: new TextEncoder().encode("unsafe-retained-tail"),
+      });
+      return {
+        mode: "reset",
+        discardThrough: 12,
+      };
     });
 
     await act(async () => {
@@ -247,6 +279,28 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       ([data]) => typeof data === "string" && data.includes("scrollback limit"),
     );
     expect(wroteBanner).toBe(true);
+    expect(
+      term.write.mock.calls.some(([data]) =>
+        new TextDecoder().decode(
+          typeof data === "string" ? new TextEncoder().encode(data) : data,
+        ).includes("unsafe-retained-tail"),
+      ),
+    ).toBe(false);
+
+    act(() => {
+      emitPtyData({
+        ptyId: "pty-2",
+        seq: 13,
+        payload: new TextEncoder().encode("future-safe"),
+      });
+    });
+    expect(
+      term.write.mock.calls.some(([data]) =>
+        new TextDecoder().decode(
+          typeof data === "string" ? new TextEncoder().encode(data) : data,
+        ).includes("future-safe"),
+      ),
+    ).toBe(true);
   });
 
   // Remount path (shell-tab / thread switch): changing ptyId disposes the old
@@ -283,6 +337,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       render(<TerminalView ptyId="pty-batch" visible={true} threadActive={true} />);
     });
     await settle(); // mounted with listeners attached; reattach still pending
+    expect(transport.terminalResume).not.toHaveBeenCalled();
 
     // Two replayed frames arrive while the gate is open.
     await act(async () => {
@@ -300,6 +355,10 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     );
     expect(dataWrites.length).toBe(1);
     expect(Array.from(dataWrites[0][0] as Uint8Array)).toEqual([65, 66]);
+    expect(transport.terminalResume).toHaveBeenCalledWith("pty-batch");
+    expect(
+      transport.terminalReattach.mock.invocationCallOrder[0],
+    ).toBeLessThan(transport.terminalResume.mock.invocationCallOrder[0]!);
   });
 
   it("keeps a cold view hidden until replay has painted", async () => {

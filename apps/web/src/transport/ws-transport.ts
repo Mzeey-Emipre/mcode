@@ -314,14 +314,21 @@ export function createWsTransport(
                 const lastSeq = ptyLastSeqMap.get(p.ptyId) ?? -1;
                 const result = await rpc<
                   | { mode: "delta" }
-                  | { mode: "checkpoint"; checkpoint: string }
+                  | {
+                      mode: "checkpoint";
+                      checkpoint: string;
+                      checkpointThrough: number;
+                    }
                   | { mode: "reset"; discardThrough: number }
                 >(
                   "terminal.reattach",
                   { ptyId: p.ptyId, lastSeq },
                 );
                 if (result.mode === "reset") {
+                  ptyLastSeqMap.set(p.ptyId, result.discardThrough);
                   emitPtyReconnectGap({ ptyId: p.ptyId });
+                } else if (result.mode === "checkpoint") {
+                  ptyLastSeqMap.set(p.ptyId, result.checkpointThrough);
                 }
               }),
           );
@@ -708,7 +715,11 @@ export function createWsTransport(
     terminalReattach: (ptyId, lastSeq, cold) =>
       rpc<
         | { mode: "delta" }
-        | { mode: "checkpoint"; checkpoint: string }
+        | {
+            mode: "checkpoint";
+            checkpoint: string;
+            checkpointThrough: number;
+          }
         | { mode: "reset"; discardThrough: number }
       >("terminal.reattach", { ptyId, lastSeq, cold }),
     terminalCheckpoint: (ptyId, seq, data) =>

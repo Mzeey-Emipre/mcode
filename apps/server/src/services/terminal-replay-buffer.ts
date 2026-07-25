@@ -131,6 +131,11 @@ export class TerminalReplayBuffer {
     return this.capBytes;
   }
 
+  /** Highest sequence recorded, including output no longer retained. */
+  get latest(): number {
+    return this.latestSeq;
+  }
+
   /**
    * Adjust the retention cap at runtime, e.g. when `terminal.scrollback`
    * changes for live sessions.
@@ -215,10 +220,15 @@ export class TerminalReplayBuffer {
    */
   checkpointAt(seq: number, data: string): boolean {
     const bytes = new TextEncoder().encode(data).length;
+    const active = this.buffer.slice(this.head);
+    const firstLaterSeq = active.find((chunk) => chunk.seq > seq)?.seq;
+    const contiguousWithRetainedOutput =
+      firstLaterSeq === undefined ? seq === this.latestSeq : firstLaterSeq === seq + 1;
     if (
       seq < (this.checkpoint?.seq ?? -1) ||
       seq > this.latestSeq ||
-      bytes > this.capBytes
+      bytes > this.capBytes ||
+      !contiguousWithRetainedOutput
     ) {
       return false;
     }
@@ -260,9 +270,8 @@ export class TerminalReplayBuffer {
   }
 
   private enforceCap(): void {
-    const checkpointBytes = this.checkpoint?.bytes ?? 0;
     while (
-      checkpointBytes + this.bufferedBytes > this.capBytes &&
+      (this.checkpoint?.bytes ?? 0) + this.bufferedBytes > this.capBytes &&
       this.head < this.buffer.length
     ) {
       const evicted = this.buffer[this.head++]!;

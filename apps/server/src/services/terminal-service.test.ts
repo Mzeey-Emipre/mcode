@@ -22,6 +22,65 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { TerminalService } from "./terminal-service";
+import { TerminalReplayBuffer } from "./terminal-replay-buffer";
+
+function terminalServiceWithReplay(
+  replay: TerminalReplayBuffer,
+  data: ReturnType<typeof vi.fn>,
+): TerminalService {
+  const settingsService = {
+    get: () => ({ terminal: { scrollback: 1_000 } }),
+    on: () => vi.fn(),
+  };
+  const service = new TerminalService(
+    {} as never,
+    {} as never,
+    {} as never,
+    settingsService as never,
+    {} as never,
+    { clear: vi.fn() } as never,
+    {} as never,
+  );
+  const internals = service as unknown as {
+    replayBuffers: Map<string, TerminalReplayBuffer>;
+    sender: { data: typeof data };
+  };
+  internals.replayBuffers.set("pty-1", replay);
+  internals.sender = { data };
+  return service;
+}
+
+describe("TerminalService replay authority", () => {
+  it("does not emit retained frames for a warm reconnect gap", () => {
+    const replay = new TerminalReplayBuffer(4);
+    replay.record(1, new Uint8Array(4));
+    replay.record(2, new Uint8Array(4));
+    const data = vi.fn();
+    const service = terminalServiceWithReplay(replay, data);
+
+    expect(service.reattach("pty-1", 0)).toEqual({
+      mode: "reset",
+      discardThrough: 2,
+    });
+    expect(data).not.toHaveBeenCalled();
+  });
+
+  it("returns the checkpoint sequence before emitting its contiguous delta", () => {
+    const replay = new TerminalReplayBuffer(64);
+    replay.record(1, new Uint8Array([1]));
+    expect(replay.checkpointAt(1, "screen")).toBe(true);
+    replay.record(2, new Uint8Array([2]));
+    const data = vi.fn();
+    const service = terminalServiceWithReplay(replay, data);
+
+    expect(service.reattach("pty-1", -1, true)).toEqual({
+      mode: "checkpoint",
+      checkpoint: "screen",
+      checkpointThrough: 1,
+    });
+    expect(data).toHaveBeenCalledWith("pty-1", 2, new Uint8Array([2]));
+  });
+});
 
 describe("TerminalService Windows teardown", () => {
   const originalPlatform = process.platform;

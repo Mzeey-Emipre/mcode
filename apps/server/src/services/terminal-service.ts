@@ -435,7 +435,7 @@ export class TerminalService {
   ):
     | { mode: "delta" }
     | { mode: "reset"; discardThrough: number }
-    | { mode: "checkpoint"; checkpoint: string } {
+    | { mode: "checkpoint"; checkpoint: string; checkpointThrough: number } {
     const replayBuffer = this.replayBuffers.get(ptyId);
     if (!replayBuffer) throw new Error(`PTY not found: ${ptyId}`);
 
@@ -445,19 +445,23 @@ export class TerminalService {
       : replayBuffer.replay(lastSeq);
     // Capture sender once to avoid repeated null checks inside the loop.
     const sender = this.sender;
-    if (sender) {
+    if (sender && !gapped) {
       for (const { seq, bytes } of chunks) {
         sender.data(ptyId, seq, bytes);
       }
     }
     if (restore?.mode === "checkpoint") {
-      return { mode: "checkpoint", checkpoint: restore.checkpoint.data };
+      return {
+        mode: "checkpoint",
+        checkpoint: restore.checkpoint.data,
+        checkpointThrough: restore.checkpoint.seq,
+      };
     }
     if (restore?.mode === "reset") {
       return { mode: "reset", discardThrough: restore.discardThrough };
     }
     if (gapped) {
-      return { mode: "reset", discardThrough: lastSeq };
+      return { mode: "reset", discardThrough: replayBuffer.latest };
     }
     return { mode: "delta" };
   }

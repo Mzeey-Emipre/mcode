@@ -425,6 +425,7 @@ export const TerminalView = memo(function TerminalView({
       let replaying = true;
       let replayMode: "cold" | "warm" = "cold";
       const replayPending: PtyDataPayload[] = [];
+      let replayPrefix: Uint8Array | null = null;
       // Highest seq actually written. seq is monotonic per PTY, so anything not
       // strictly newer has already been painted. Guards against double delivery:
       // a newly created PTY's first prompt is both retained in the replay buffer
@@ -453,6 +454,11 @@ export const TerminalView = memo(function TerminalView({
         replayPending.sort((a, b) => a.seq - b.seq);
         const frames: Uint8Array[] = [];
         let totalBytes = 0;
+        if (replayPrefix) {
+          frames.push(replayPrefix);
+          totalBytes += replayPrefix.length;
+          replayPrefix = null;
+        }
         for (const detail of replayPending) {
           if (detail.seq <= lastWrittenSeq) continue;
           lastWrittenSeq = detail.seq;
@@ -647,11 +653,9 @@ export const TerminalView = memo(function TerminalView({
         .then((result) => {
           if (disposed) return;
           if (result.mode === "checkpoint") {
-            replayPending.unshift({
-              ptyId,
-              seq: -1,
-              payload: new TextEncoder().encode(result.checkpoint),
-            });
+            lastWrittenSeq = result.checkpointThrough;
+            transport.ptySetLastSeq(ptyId, result.checkpointThrough);
+            replayPrefix = new TextEncoder().encode(result.checkpoint);
           } else if (result.mode === "reset") {
             lastWrittenSeq = result.discardThrough;
             replayPending.splice(

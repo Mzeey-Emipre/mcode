@@ -212,6 +212,31 @@ describe("TerminalReplayBuffer", () => {
       });
     });
 
+    it("rejects a delayed checkpoint when an intermediate delta was evicted", () => {
+      const buf = new TerminalReplayBuffer(4);
+      buf.record(1, new Uint8Array(4));
+      buf.record(2, new Uint8Array(4));
+      buf.record(3, new Uint8Array(4));
+
+      expect(buf.checkpointAt(1, "one")).toBe(false);
+      expect(buf.restoreCold()).toEqual({
+        mode: "reset",
+        chunks: [],
+        discardThrough: 3,
+      });
+    });
+
+    it("recomputes the byte total after checkpoint invalidation", () => {
+      const buf = new TerminalReplayBuffer(10);
+      buf.record(1, new Uint8Array([1]));
+      expect(buf.checkpointAt(1, "123456789")).toBe(true);
+      buf.record(2, new Uint8Array(1));
+      buf.record(3, new Uint8Array(2));
+
+      expect(buf.replay(2).chunks.map((chunk) => chunk.seq)).toEqual([3]);
+      expect(buf.bufferedBytes).toBe(2);
+    });
+
     it("returns no retained tail when checkpoint continuity is lost", () => {
       const buf = new TerminalReplayBuffer(12);
       buf.record(1, new Uint8Array([1]));

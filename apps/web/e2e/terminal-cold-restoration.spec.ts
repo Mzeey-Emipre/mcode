@@ -184,7 +184,7 @@ test.describe("terminal cold restoration", () => {
         attachCounts.set(ptyId, count);
         const checkpoint = checkpoints.get(ptyId);
         return count > 1 && checkpoint
-          ? { mode: "checkpoint", checkpoint }
+          ? { mode: "checkpoint", checkpoint, checkpointThrough: 2 }
           : { mode: "delta" };
       },
     });

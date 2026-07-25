@@ -443,7 +443,11 @@ export interface McodeTransport {
     cold?: boolean,
   ): Promise<
     | { mode: "delta" }
-    | { mode: "checkpoint"; checkpoint: string }
+    | {
+        mode: "checkpoint";
+        checkpoint: string;
+        checkpointThrough: number;
+      }
     | { mode: "reset"; discardThrough: number }
   >;
   /** Save a bounded serialized xterm state for a later cold renderer mount. */
