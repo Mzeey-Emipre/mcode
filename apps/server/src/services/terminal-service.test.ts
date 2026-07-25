@@ -426,12 +426,15 @@ describe("TerminalService Windows teardown", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it("falls back when descendant reconciliation cannot establish authority", async () => {
+  it("falls back when descendant reconciliation rejects a partial enumeration", async () => {
     const processScope = {
       ready: true,
       ownsProcessTree: false,
       assign: vi.fn(() => ({ ok: true })),
-      reconcile: vi.fn().mockResolvedValue({ ok: false, error: "identity changed" }),
+      reconcile: vi.fn().mockResolvedValue({
+        ok: false,
+        error: "Process32NextW failed (5)",
+      }),
       terminate: vi.fn(),
       waitForEmpty: vi.fn(),
       close: vi.fn(),

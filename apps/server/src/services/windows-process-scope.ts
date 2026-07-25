@@ -6,6 +6,7 @@ const PROCESS_TERMINATE = 0x0001;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 const JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3;
 const ERROR_MORE_DATA = 234;
+const ERROR_NO_MORE_FILES = 18;
 const MAX_PROCESS_IDS = 128;
 const POINTER_BYTES = process.arch === "ia32" ? 4 : 8;
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9;
@@ -299,6 +300,13 @@ export class WindowsProcessScope {
       const entry = Buffer.alloc(PROCESS_ENTRY_SIZE);
       entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
       let hasEntry = native.process32First(snapshot, entry);
+      if (!hasEntry) {
+        const errorCode = readLastError(native);
+        if (errorCode !== ERROR_NO_MORE_FILES) {
+          throw new Error(`Process32FirstW failed (${errorCode})`);
+        }
+        return [];
+      }
       let count = 0;
       while (hasEntry && count < PROCESS_ENUMERATION_LIMIT) {
         parentByPid.set(entry.readUInt32LE(8), entry.readUInt32LE(PROCESS_ENTRY_PARENT_OFFSET));
@@ -308,6 +316,10 @@ export class WindowsProcessScope {
         count += 1;
       }
       if (hasEntry) throw new Error(`process enumeration exceeds ${PROCESS_ENUMERATION_LIMIT}-entry limit`);
+      const errorCode = readLastError(native);
+      if (errorCode !== ERROR_NO_MORE_FILES) {
+        throw new Error(`Process32NextW failed (${errorCode})`);
+      }
     } finally {
       native.closeHandle(snapshot);
     }
@@ -405,4 +417,17 @@ export class WindowsProcessScopeFactory {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function readLastError(native: WindowsProcessScopeNative): number {
+  let errorCode: number;
+  try {
+    errorCode = native.getLastError();
+  } catch (error) {
+    throw new Error(`GetLastError failed: ${describeError(error)}`);
+  }
+  if (!Number.isInteger(errorCode) || errorCode < 0 || errorCode > 0xffff_ffff) {
+    throw new Error("GetLastError returned invalid value");
+  }
+  return errorCode;
 }

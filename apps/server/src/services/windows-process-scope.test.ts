@@ -155,4 +155,126 @@ describe("WindowsProcessScope", () => {
     expect(result.ok).toBe(false);
     expect(scope.ownsProcessTree).toBe(false);
   });
+
+  it("rejects Process32FirstW failure with a non-exhaustion error", async () => {
+    const snapshotHandle = { kind: "snapshot" };
+    const native = createNative([101]);
+    Object.assign(native, {
+      createToolhelp32Snapshot: vi.fn(() => snapshotHandle),
+      process32First: vi.fn(() => 0),
+      process32Next: vi.fn(() => 0),
+      getProcessTimes: vi.fn(() => 1),
+    });
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+
+    const result = await scope.reconcile(101);
+
+    expect(result).toEqual({ ok: false, error: "Process32FirstW failed (5)" });
+    expect(scope.ownsProcessTree).toBe(false);
+    expect(native.closeHandle).toHaveBeenCalledWith(snapshotHandle);
+    expect(vi.mocked(native.closeHandle).mock.calls.filter(([handle]) => handle === snapshotHandle)).toHaveLength(1);
+  });
+
+  it("rejects a partial snapshot when Process32NextW fails unexpectedly", async () => {
+    const snapshotHandle = { kind: "snapshot" };
+    const native = createNative([101]);
+    Object.assign(native, {
+      createToolhelp32Snapshot: vi.fn(() => snapshotHandle),
+      process32First: vi.fn((_snapshot: unknown, entry: Buffer) => {
+        writeProcessEntry(entry, 101, 1);
+        return 1;
+      }),
+      process32Next: vi.fn(() => 0),
+      getProcessTimes: vi.fn((_process: unknown, creation: Buffer) => {
+        creation.writeBigUInt64LE(1n);
+        return 1;
+      }),
+    });
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+
+    const result = await scope.reconcile(101);
+
+    expect(result).toEqual({ ok: false, error: "Process32NextW failed (5)" });
+    expect(scope.ownsProcessTree).toBe(false);
+    expect(vi.mocked(native.closeHandle).mock.calls.filter(([handle]) => handle === snapshotHandle)).toHaveLength(1);
+  });
+
+  it("accepts ERROR_NO_MORE_FILES as complete Process32NextW exhaustion", async () => {
+    const snapshotHandle = { kind: "snapshot" };
+    const native = createNative([101]);
+    vi.mocked(native.getLastError).mockReturnValue(18);
+    Object.assign(native, {
+      createToolhelp32Snapshot: vi.fn(() => snapshotHandle),
+      process32First: vi.fn((_snapshot: unknown, entry: Buffer) => {
+        writeProcessEntry(entry, 101, 1);
+        return 1;
+      }),
+      process32Next: vi.fn(() => 0),
+      getProcessTimes: vi.fn((_process: unknown, creation: Buffer) => {
+        creation.writeBigUInt64LE(1n);
+        return 1;
+      }),
+    });
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+
+    await expect(scope.reconcile(101)).resolves.toEqual({ ok: true });
+
+    expect(scope.ownsProcessTree).toBe(true);
+    expect(vi.mocked(native.closeHandle).mock.calls.filter(([handle]) => handle === snapshotHandle)).toHaveLength(1);
+  });
+
+  it("fails closed when GetLastError returns an invalid value", async () => {
+    const native = createNative([101]);
+    vi.mocked(native.getLastError).mockReturnValue(Number.NaN);
+    Object.assign(native, {
+      createToolhelp32Snapshot: vi.fn(() => ({ kind: "snapshot" })),
+      process32First: vi.fn((_snapshot: unknown, entry: Buffer) => {
+        writeProcessEntry(entry, 101, 1);
+        return 1;
+      }),
+      process32Next: vi.fn(() => 0),
+      getProcessTimes: vi.fn(() => 1),
+    });
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+
+    const result = await scope.reconcile(101);
+
+    expect(result).toEqual({ ok: false, error: "GetLastError returned invalid value" });
+    expect(scope.ownsProcessTree).toBe(false);
+  });
+
+  it("fails closed when GetLastError binding throws", async () => {
+    const native = createNative([101]);
+    vi.mocked(native.getLastError).mockImplementation(() => {
+      throw new Error("binding unavailable");
+    });
+    Object.assign(native, {
+      createToolhelp32Snapshot: vi.fn(() => ({ kind: "snapshot" })),
+      process32First: vi.fn((_snapshot: unknown, entry: Buffer) => {
+        writeProcessEntry(entry, 101, 1);
+        return 1;
+      }),
+      process32Next: vi.fn(() => 0),
+      getProcessTimes: vi.fn(() => 1),
+    });
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+
+    const result = await scope.reconcile(101);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "GetLastError failed: binding unavailable",
+    });
+    expect(scope.ownsProcessTree).toBe(false);
+  });
 });
+
+function writeProcessEntry(entry: Buffer, pid: number, parentPid: number): void {
+  entry.writeUInt32LE(pid, 8);
+  entry.writeUInt32LE(parentPid, process.arch === "ia32" ? 24 : 32);
+}
