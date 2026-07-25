@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
+import { AppErrorBoundary } from "./app/AppErrorBoundary";
 import { initTransport } from "./transport";
 import { initDesktopPowerReporting } from "./lib/desktop-power";
 import "./index.css";
@@ -71,7 +72,9 @@ initTransport()
     root.innerHTML = "";
     createRoot(root).render(
       <StrictMode>
-        <App />
+        <AppErrorBoundary>
+          <App />
+        </AppErrorBoundary>
       </StrictMode>
     );
   })
