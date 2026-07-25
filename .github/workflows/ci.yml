@@ -54,7 +54,7 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
           restore-keys: |
             ${{ runner.os }}-bun-
       - name: Cache Turbo outputs
@@ -100,7 +100,7 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
           restore-keys: |
             ${{ runner.os }}-bun-
       - name: Cache Turbo outputs
@@ -157,7 +157,7 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
           restore-keys: |
             ${{ runner.os }}-bun-
       - name: Cache Turbo outputs
@@ -211,7 +211,7 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
           restore-keys: |
             ${{ runner.os }}-bun-
       - run: bun install --frozen-lockfile
@@ -285,7 +285,7 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
           restore-keys: |
             ${{ runner.os }}-bun-
       - name: Cache Turbo outputs
