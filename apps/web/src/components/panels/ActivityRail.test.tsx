@@ -269,6 +269,31 @@ describe("ActivityRail expansion", () => {
     expect(terminal).toHaveFocus();
   });
 
+  it("selects a tab when pointer jitter does not become a drag", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    const terminalItem = terminal.closest("[data-rail-instance]") as HTMLElement;
+    const changesItem = screen
+      .getByRole("button", { name: "Review, 3 files changed" })
+      .closest("[data-rail-instance]") as HTMLElement;
+    vi.spyOn(terminalItem, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 40,
+    } as DOMRect);
+    vi.spyOn(changesItem, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 88,
+    } as DOMRect);
+
+    fireEvent.pointerDown(terminal, { button: 0, pointerId: 4, clientY: 20 });
+    fireEvent.pointerMove(terminal, { pointerId: 4, clientY: 21 });
+    fireEvent.pointerUp(terminal, { pointerId: 4, clientY: 21 });
+    fireEvent.click(terminal);
+
+    expect(handlers.onReorder).not.toHaveBeenCalled();
+    expect(handlers.onSelect).toHaveBeenCalledWith("singleton:terminal");
+  });
+
   it("excludes close presses from drag and click activation", () => {
     renderRail();
     const terminal = screen.getByRole("button", { name: "Terminal" });

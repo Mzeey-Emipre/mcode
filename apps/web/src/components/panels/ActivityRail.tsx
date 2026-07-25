@@ -57,6 +57,7 @@ function ReorderableRailItem({
   onReorder: (instanceId: string, direction: -1 | 1) => void;
 }) {
   const draggingRef = useRef(false);
+  const dragStartYRef = useRef<number | null>(null);
   const suppressClickRef = useRef(false);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -64,11 +65,16 @@ function ReorderableRailItem({
     const target = event.target as HTMLElement;
     if (target.closest("[data-rail-close]")) return;
     draggingRef.current = true;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    dragStartYRef.current = event.clientY;
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return;
+    const dragStartY = dragStartYRef.current;
+    if (dragStartY === null || Math.abs(event.clientY - dragStartY) < 4) return;
+    if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
     const item = event.currentTarget;
     const siblings = Array.from(
       item.parentElement?.querySelectorAll<HTMLElement>(":scope > [data-rail-instance]") ?? [],
@@ -89,6 +95,7 @@ function ReorderableRailItem({
 
   const onPointerEnd = () => {
     draggingRef.current = false;
+    dragStartYRef.current = null;
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {

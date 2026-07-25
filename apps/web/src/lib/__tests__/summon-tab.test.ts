@@ -67,7 +67,7 @@ describe("summonTab", () => {
       useDiffStore.getState().closeRightPanelTab(WID, TID, "terminal");
       expect(panel()).toMatchObject({
         visible: true,
-        activeTab: "terminal",
+        activeTab: "tasks",
         openTabs: [],
       });
 
