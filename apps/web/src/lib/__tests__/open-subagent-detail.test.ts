@@ -36,7 +36,7 @@ describe("openSubagentDetail", () => {
     });
     expect(mocks.showRightPanelAdaptive).toHaveBeenCalledWith("workspace-1", "thread-1");
     expect(useUiStore.getState()).toMatchObject({
-      rightPanelMaximized: true,
+      rightPanelMaximized: false,
       rightPanelMaximizedByLayout: false,
     });
   });
@@ -55,7 +55,7 @@ describe("openSubagentDetail", () => {
       openTabs: ["subagents"],
     });
     expect(useUiStore.getState()).toMatchObject({
-      rightPanelMaximized: true,
+      rightPanelMaximized: false,
       rightPanelMaximizedByLayout: false,
     });
   });
