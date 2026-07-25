@@ -74,6 +74,9 @@ import { ModelCacheService } from "./services/model-cache-service";
 import { ProtectedEnvStore } from "./services/protected-env-store";
 import { ShellEnvResolver } from "./services/shell-env-resolver";
 import { EnvService } from "./services/env-service";
+import { ThreadControlService } from "./services/thread-control-service";
+import { InternalThreadControlMcpAuthority } from "./services/thread-control-mcp-authority";
+import { InternalThreadControlMcpRuntime } from "./services/thread-control-mcp-runtime";
 import { UtilityCompletionService } from "./services/utility-completion-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
@@ -328,6 +331,9 @@ export function setupContainer(mcodeDir: string): typeof container {
     { useClass: AgentService },
     { lifecycle: Lifecycle.Singleton },
   );
+  container.register(ThreadControlService, { useClass: ThreadControlService }, { lifecycle: Lifecycle.Singleton });
+  container.register(InternalThreadControlMcpAuthority, { useClass: InternalThreadControlMcpAuthority }, { lifecycle: Lifecycle.Singleton });
+  container.register(InternalThreadControlMcpRuntime, { useClass: InternalThreadControlMcpRuntime }, { lifecycle: Lifecycle.Singleton });
   container.register(
     ThreadTeardownService,
     { useClass: ThreadTeardownService },

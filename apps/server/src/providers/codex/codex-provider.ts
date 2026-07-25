@@ -16,6 +16,7 @@ import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import { JobObject } from "../../services/job-object.js";
 import { EnvService } from "../../services/env-service.js";
+import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import { AttachmentService } from "../../services/attachment-service.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
@@ -512,6 +513,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     @inject(EnvService) private readonly envService: EnvService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(CodexCatalogService) private readonly codexCatalogService: CodexCatalogService,
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
     super();
     this.runtime = new SessionRuntime<CodexSessionState>(this, {
@@ -982,6 +985,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // still runs locally), so this guard is defensive and keeps the wiring
     // obvious in logs.
     const supervised = approvalPolicy === "on-request";
+    const internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
 
     const server = new CodexAppServer({
       cliPath,
@@ -996,7 +1000,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         ? (req) => this.handleApprovalRequest(sessionId, threadId, req)
         : undefined,
       jobObject: this.jobObject,
-      getSpawnEnv: () => args.env,
+      getSpawnEnv: () => ({ ...args.env, ...internalMcp?.env }),
+      configOverrides: internalMcp?.configOverrides,
     });
 
     const mapper = new CodexEventMapper(threadId, undefined, (event) => {
@@ -1181,6 +1186,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    * Drives every teardown path (stop, shutdown, eviction, stale-discard).
    */
   async close(state: CodexSessionState): Promise<void> {
+    this.threadControlMcp?.close(state.sessionId);
     for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
       this.emit("event", event);
     }

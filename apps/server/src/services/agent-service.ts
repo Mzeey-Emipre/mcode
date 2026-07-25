@@ -8,6 +8,7 @@
 import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
+import { randomUUID } from "node:crypto";
 import { logger, validateBranchName } from "@mcode/shared";
 import {
   AgentEventType,
@@ -77,6 +78,7 @@ import { HandoffCoordinator } from "./handoff/handoff-coordinator.js";
 import { ScopedPreGrantService } from "./scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "./turn-error-policy.js";
+import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js";
 import type { TurnOutcome } from "./turn-outcome.js";
 
 /**
@@ -377,6 +379,8 @@ export class AgentService {
     @inject(PlanQuestionService)
     private readonly planQuestionService: PlanQuestionService,
     @inject(FileService) private readonly fileService?: FileService,
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
   ) {
     this.turnFileTracker = new TurnFileTracker(
       (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
@@ -797,6 +801,7 @@ export class AgentService {
     });
 
     const sessionName = `mcode-${threadId}`;
+    const sourceTurnId = randomUUID();
     // A branched child has a system handoff at seq 1 but no sdk_session_id.
     // Only treat as resume if there is actually a session to resume.
     const isResume = nextSeq > 1 && !!thread.sdk_session_id;
@@ -874,6 +879,15 @@ export class AgentService {
       resumeFrom: attemptResumeFrom,
       providerOptions,
     } as TurnRequest;
+    if (effectiveProvider === "claude" || effectiveProvider === "codex") {
+      this.threadControlMcp?.activate({
+        sessionId: sessionName,
+        sourceThreadId: threadId,
+        sourceTurnId,
+        sourceProviderId: effectiveProvider,
+        permissionMode: permissionMode === "full" ? "full" : "supervised",
+      });
+    }
     this.turnRetryDispatchByThread.set(threadId, {
       attempt: 1,
       retryInFlight: false,
@@ -2574,6 +2588,7 @@ export class AgentService {
           // before the compaction API call, but the session continues
           // automatically.
           if (!this.compactionInProgressByThread.has(event.threadId)) {
+            this.threadControlMcp?.revoke(`mcode-${event.threadId}`);
             this.trackSessionEnded(event.threadId);
             this.disarmTurnRetryWindow(event.threadId);
             void this.refreshNativeClaudeGoalAfterTurn(event.threadId);
@@ -2735,6 +2750,7 @@ export class AgentService {
             void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
           }
           this.trackSessionEnded(event.threadId);
+          this.threadControlMcp?.revoke(`mcode-${event.threadId}`);
           // Turn-scoped cleanup of any one-shot handoff Read grant. No-op on
           // later turns since the grant is already gone (consumed or cleared).
           this.scopedPreGrant.clear(event.threadId);

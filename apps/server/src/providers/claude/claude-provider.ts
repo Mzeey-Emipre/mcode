@@ -44,6 +44,7 @@ import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
 import { ScopedPreGrantService } from "../../services/scoped-pre-grant.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
+import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { listDirectChildren } from "../../services/process-kill.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
@@ -399,6 +400,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     // pipeline-issued handoff grants are visible here.
     @inject(ScopedPreGrantService)
     private readonly scopedPreGrant: ScopedPreGrantService = new ScopedPreGrantService(),
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
     super();
     this.runtime = new SessionRuntime<ClaudeSessionState>(this, {
@@ -1025,6 +1028,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
     const autoCompactWindow = resolveAutoCompactWindow(contextWindowMode, resolvedModel);
 
+    const internalMcpServer = this.threadControlMcp?.createClaudeServer(sessionId);
     const baseOptions = {
       cwd: resolvedCwd,
       // sdkModelSlug appends "[1m]" when the user opted into the 1M context window
@@ -1044,6 +1048,11 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         type: "preset" as const,
         preset: "claude_code" as const,
       },
+      ...(internalMcpServer && {
+        mcpServers: {
+          mcode_internal_thread_control: { type: "sdk" as const, instance: internalMcpServer },
+        },
+      }),
       // EnterPlanMode is disallowed because Mcode controls plan entry.
       // ExitPlanMode is NOT disallowed: we intercept it in canUseTool.
       // In plan-answer mode we capture the plan; in normal mode we deny
@@ -1479,6 +1488,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
   /** Provider teardown: close the SDK query handle. */
   close(state: ClaudeSessionState): void {
+    this.threadControlMcp?.close(state.sessionId);
     state.query.close();
   }
 

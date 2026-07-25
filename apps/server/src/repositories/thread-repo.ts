@@ -405,6 +405,9 @@ export class ThreadRepo {
         this.db.prepare(
           "UPDATE pull_request_review_links SET primary_thread_id = NULL, updated_at = ? WHERE primary_thread_id = ?",
         ).run(now, id);
+        this.db.prepare(
+          "UPDATE threads SET delegation_coordinator_thread_id = NULL, updated_at = ? WHERE delegation_coordinator_thread_id = ? AND workspace_id != (SELECT workspace_id FROM threads WHERE id = ?)",
+        ).run(now, id, id);
       }
       return result.changes > 0;
     })();
@@ -608,6 +611,33 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
+  /** Persist delegation provenance after a delegated thread is created. */
+  updateDelegationLineage(
+    id: string,
+    lineage: {
+      coordinatorThreadId: string;
+      creatorTurnId: string;
+      creatorToolCallId: string;
+      creationKind: "thread_delegation";
+      integrationId?: string;
+    },
+  ): boolean {
+    const result = this.db
+      .prepare(
+        "UPDATE threads SET delegation_coordinator_thread_id = ?, delegation_creator_turn_id = ?, delegation_creator_tool_call_id = ?, delegation_creation_kind = ?, created_by_integration_id = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(
+        lineage.coordinatorThreadId,
+        lineage.creatorTurnId,
+        lineage.creatorToolCallId,
+        lineage.creationKind,
+        lineage.integrationId ?? null,
+        new Date().toISOString(),
+        id,
+      );
+    return result.changes > 0;
+  }
+
   /**
    * Find all threads in a workspace that have a worktree_path set (both active and deleted).
    * Used during workspace deletion to know which threads need filesystem cleanup.
@@ -642,7 +672,7 @@ export class ThreadRepo {
   nullifyExternalLineage(workspaceId: string): number {
     const result = this.db
       .prepare(
-        `UPDATE threads SET parent_thread_id = NULL, forked_from_message_id = NULL, updated_at = ?
+        `UPDATE threads SET parent_thread_id = NULL, forked_from_message_id = NULL, delegation_coordinator_thread_id = NULL, updated_at = ?
          WHERE parent_thread_id IN (SELECT id FROM threads WHERE workspace_id = ?)
          AND workspace_id != ?`,
       )
