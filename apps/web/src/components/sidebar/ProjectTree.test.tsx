@@ -273,6 +273,27 @@ describe("ProjectTree thread interactions", () => {
     expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
   });
 
+  it("keeps expanded threads mounted when a project drag starts", () => {
+    localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": true }),
+    );
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+    expect(screen.getByRole("button", { name: /My Thread/i })).toBeVisible();
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    projectRow.focus();
+    fireEvent.keyDown(projectRow, { key: " " });
+
+    expect(screen.getByRole("button", { name: /My Thread/i })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Toggle threads for Test Project" }),
+    ).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.keyDown(projectRow, { key: " " });
+  });
+
   it("reveals project actions when the project row is hovered or focused", () => {
     setupStoreMocks();
 
