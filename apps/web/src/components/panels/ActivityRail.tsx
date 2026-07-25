@@ -221,7 +221,7 @@ function RailTab({
   scope: ScopeProgress;
   changesCount: number;
   changesFresh: boolean;
-  onSelect: (instanceId: string) => void;
+  onSelect: (id: RightPanelTab) => void;
   onClose: (id: RightPanelTab) => void;
 }) {
   const meta = metaForTab(id);
@@ -587,7 +587,7 @@ export function ActivityRail({
   readonly maximized: boolean;
   onTogglePanel: () => void;
   onToggleMaximized: () => void;
-  onSelect: (id: RightPanelTab) => void;
+  onSelect: (instanceId: string) => void;
   onClose: (instanceId: string) => void;
   onReorder: (instanceId: string, direction: -1 | 1) => void;
   onCreate: (id: RightPanelTab) => void;

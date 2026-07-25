@@ -191,8 +191,8 @@ type RightPanelStateInput = Omit<
   readonly activeTabId?: string | null;
 };
 
-/** Normalize legacy type-based fields into one canonical instance representation. */
-function canonicalRightPanelState(input: RightPanelStateInput): RightPanelState {
+/** Build panel state whose compatibility fields are derived from canonical instances. */
+export function createRightPanelState(input: RightPanelStateInput): RightPanelState {
   const tabInstances =
     input.tabInstances ??
     (input.openTabs ?? []).map((type) => ({ id: rightPanelSingletonId(type), type }));
@@ -226,7 +226,7 @@ export const DEFAULT_LINE_WRAP = true;
  * fallback has a stored record yet (default width, closed, no open tabs).
  */
 export function createDefaultRightPanelState(): RightPanelState {
-  return canonicalRightPanelState({
+  return createRightPanelState({
     visible: false,
     width: getDefaultPanelWidthPx(),
     widthSource: "auto",
@@ -288,10 +288,10 @@ function effectiveRightPanel(
 ): RightPanelState {
   if (threadId) {
     const own = state.rightPanelByThread[threadId];
-    if (own) return canonicalRightPanelState(own);
+    if (own) return createRightPanelState(own);
   }
   const fallback = state.rightPanelFallbackByWorkspace[workspaceId];
-  return fallback ? canonicalRightPanelState(fallback) : createDefaultRightPanelState();
+  return fallback ? createRightPanelState(fallback) : createDefaultRightPanelState();
 }
 
 /**
@@ -310,14 +310,14 @@ function writeRightPanel(
     return {
       rightPanelByThread: {
         ...state.rightPanelByThread,
-        [threadId]: canonicalRightPanelState(next),
+        [threadId]: createRightPanelState(next),
       },
     };
   }
   return {
     rightPanelFallbackByWorkspace: {
       ...state.rightPanelFallbackByWorkspace,
-      [workspaceId]: canonicalRightPanelState(next),
+      [workspaceId]: createRightPanelState(next),
     },
   };
 }
@@ -344,7 +344,7 @@ function setPanelVisible(
  * Static defaults for workspaces with no panel store row; live width uses
  * {@link getDefaultPanelWidthPx} through {@link createDefaultRightPanelState}.
  */
-export const RIGHT_PANEL_DEFAULTS: RightPanelState = canonicalRightPanelState({
+export const RIGHT_PANEL_DEFAULTS: RightPanelState = createRightPanelState({
   visible: false,
   width: PANEL_DEFAULT_WIDTH,
   widthSource: "auto",
