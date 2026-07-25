@@ -294,6 +294,37 @@ describe("ActivityRail expansion", () => {
     expect(handlers.onSelect).toHaveBeenCalledWith("singleton:terminal");
   });
 
+  it("selects normally after a cancelled drag gesture", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    const terminalItem = terminal.closest("[data-rail-instance]") as HTMLElement;
+    const changesItem = screen
+      .getByRole("button", { name: "Review, 3 files changed" })
+      .closest("[data-rail-instance]") as HTMLElement;
+    vi.spyOn(terminalItem, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 40,
+    } as DOMRect);
+    vi.spyOn(changesItem, "getBoundingClientRect").mockReturnValue({
+      top: 48,
+      bottom: 88,
+    } as DOMRect);
+
+    fireEvent.pointerDown(terminal, { button: 0, pointerId: 5, clientY: 20 });
+    fireEvent.pointerMove(terminal, { pointerId: 5, clientY: 48 });
+    expect(handlers.onReorder).toHaveBeenCalledWith(
+      rightPanelSingletonId("terminal"),
+      1,
+    );
+    fireEvent.pointerCancel(terminal, { pointerId: 5, clientY: 48 });
+
+    fireEvent.pointerDown(terminal, { button: 0, pointerId: 6, clientY: 20 });
+    fireEvent.pointerUp(terminal, { pointerId: 6, clientY: 20 });
+    fireEvent.click(terminal);
+
+    expect(handlers.onSelect).toHaveBeenCalledWith("singleton:terminal");
+  });
+
   it("excludes close presses from drag and click activation", () => {
     renderRail();
     const terminal = screen.getByRole("button", { name: "Terminal" });

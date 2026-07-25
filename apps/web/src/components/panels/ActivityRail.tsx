@@ -64,6 +64,7 @@ function ReorderableRailItem({
     if (event.button !== 0) return;
     const target = event.target as HTMLElement;
     if (target.closest("[data-rail-close]")) return;
+    suppressClickRef.current = false;
     draggingRef.current = true;
     dragStartYRef.current = event.clientY;
   };
@@ -93,9 +94,15 @@ function ReorderableRailItem({
     suppressClickRef.current = true;
   };
 
-  const onPointerEnd = () => {
+  const onPointerUp = () => {
     draggingRef.current = false;
     dragStartYRef.current = null;
+  };
+
+  const onPointerCancel = () => {
+    draggingRef.current = false;
+    dragStartYRef.current = null;
+    suppressClickRef.current = false;
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -111,8 +118,8 @@ function ReorderableRailItem({
       data-rail-instance={instanceId}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={onPointerEnd}
-      onPointerCancel={onPointerEnd}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onKeyDown={onKeyDown}
       onClickCapture={(event) => {
         if (!suppressClickRef.current) return;
