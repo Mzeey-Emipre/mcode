@@ -56,7 +56,7 @@ describe("killProcessTree", () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     try {
       mockExecFile
-        .mockResolvedValueOnce({ stdout: "Name,ProcessId\r\n", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" })
         .mockRejectedValueOnce(new Error("process not found"));
 
       await expect(killProcessTree(1234)).rejects.toThrow("process not found");
@@ -173,6 +173,52 @@ describe("killProcessTree", () => {
     );
   });
 
+  it("kills and verifies on Windows without invoking wmic", async () => {
+    const processKill = vi.fn(() => {
+      throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    });
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+
+    await killProcessTree(1234, {
+      platform: "win32",
+      processKill,
+      execFile: mockExecFile,
+    });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      "taskkill",
+      ["/T", "/F", "/PID", "1234"],
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+    expect(mockExecFile.mock.calls.some(([command]) => command === "wmic")).toBe(false);
+  });
+
+  it("runs taskkill then rejects honestly when CIM enumeration is unavailable", async () => {
+    mockExecFile
+      .mockRejectedValueOnce(new Error("powershell unavailable"))
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+
+    await expect(
+      killProcessTree(1234, {
+        platform: "win32",
+        processKill: vi.fn(() => {
+          throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        }),
+        execFile: mockExecFile,
+      }),
+    ).rejects.toThrow("descendant verification was unavailable");
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      "taskkill",
+      ["/T", "/F", "/PID", "1234"],
+      expect.any(Object),
+    );
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "killProcessTree: descendant verification unavailable",
+      expect.objectContaining({ pid: 1234, capturedProcessCount: 1 }),
+    );
+  });
+
   it("does nothing when pid is 0 on Unix", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
@@ -195,26 +241,28 @@ describe("findDescendantsByName", () => {
     mockExecFile.mockReset();
   });
 
-  it("returns matching PIDs from wmic output on Windows", async () => {
+  it("returns matching PIDs from PowerShell CIM output on Windows", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
     try {
-      // wmic outputs CSV-like lines: first call for direct children, recursive
       mockExecFile
         .mockResolvedValueOnce({
-          stdout: "Name,ProcessId\r\nclaude.exe,5555\r\nnode.exe,6666\r\n",
+          stdout: JSON.stringify([
+            { Name: "claude.exe", ProcessId: 5555 },
+            { Name: "node.exe", ProcessId: 6666 },
+          ]),
           stderr: "",
         })
         .mockResolvedValueOnce({
-          stdout: "Name,ProcessId\r\n",
+          stdout: "",
           stderr: "",
         })
         .mockResolvedValueOnce({
-          stdout: "Name,ProcessId\r\nclaude.exe,7777\r\n",
+          stdout: JSON.stringify({ Name: "claude.exe", ProcessId: 7777 }),
           stderr: "",
         })
         .mockResolvedValueOnce({
-          stdout: "Name,ProcessId\r\n",
+          stdout: "",
           stderr: "",
         });
 
@@ -233,7 +281,7 @@ describe("findDescendantsByName", () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     try {
       mockExecFile.mockResolvedValue({
-        stdout: "Name,ProcessId\r\n",
+        stdout: "",
         stderr: "",
       });
 
@@ -245,11 +293,11 @@ describe("findDescendantsByName", () => {
     }
   });
 
-  it("returns empty array when wmic fails", async () => {
+  it("returns empty array when PowerShell CIM fails", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
     try {
-      mockExecFile.mockRejectedValue(new Error("wmic not found"));
+      mockExecFile.mockRejectedValue(new Error("powershell unavailable"));
 
       const pids = await findDescendantsByName(1234, "claude.exe");
 
@@ -292,14 +340,17 @@ describe("killDescendantsByName", () => {
       // First call: findDescendantsByName queries children
       mockExecFile
         .mockResolvedValueOnce({
-          stdout: "Name,ProcessId\r\nclaude.exe,5555\r\n",
+          stdout: JSON.stringify({ Name: "claude.exe", ProcessId: 5555 }),
           stderr: "",
         })
         .mockResolvedValueOnce({
-          stdout: "Name,ProcessId\r\n",
+          stdout: "",
           stderr: "",
         })
-        // Second call: taskkill for the found PID
+        .mockResolvedValueOnce({
+          stdout: "",
+          stderr: "",
+        })
         .mockResolvedValueOnce({ stdout: "", stderr: "" });
 
       await killDescendantsByName(1234, "claude.exe");
@@ -318,13 +369,13 @@ describe("killDescendantsByName", () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     try {
       mockExecFile.mockResolvedValue({
-        stdout: "Name,ProcessId\r\n",
+        stdout: "",
         stderr: "",
       });
 
       await killDescendantsByName(1234, "claude.exe");
 
-      // Only the wmic query calls, no taskkill
+      // Only PowerShell CIM enumeration runs when no descendants match.
       for (const call of mockExecFile.mock.calls) {
         expect(call[0]).not.toBe("taskkill");
       }

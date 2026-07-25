@@ -16,8 +16,13 @@ const execFile = promisify(execFileCb);
 // without blocking server shutdown or the cleanup worker's retry loop.
 const TASKKILL_TIMEOUT_MS = 5_000;
 const PROCESS_TREE_LIMIT = 128;
+const PROCESS_ENUMERATION_MAX_BUFFER = 256 * 1024;
 const TERMINATION_VERIFY_TIMEOUT_MS = 2_000;
 const TERMINATION_VERIFY_POLL_MS = 50;
+const POWERSHELL_CHILD_PROCESS_SCRIPT =
+  "& { param([int]$ParentPid) $ErrorActionPreference = 'Stop'; " +
+  "Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $ParentPid) | " +
+  "Select-Object Name,ProcessId | ConvertTo-Json -Compress }";
 
 /** Injectable process-tree termination dependencies for focused verification tests. */
 export interface KillProcessTreeDeps {
@@ -62,16 +67,8 @@ export async function killProcessTree(
     deps?.sleep ??
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = deps?.now ?? Date.now;
-  let identities: number[];
-  try {
-    identities = await captureProcessTree(pid, platform, ef);
-  } catch (err) {
-    logger.warn("killProcessTree: failed to capture process identities", {
-      pid,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
+  const capture = await captureProcessTree(pid, platform, ef);
+  const identities = capture.identities;
 
   try {
     if (platform === "win32") {
@@ -124,6 +121,17 @@ export async function killProcessTree(
       `Process-tree termination verification timed out for PTY PID ${pid}; ${remaining.length} process(es) remain`,
     );
   }
+  if (capture.error) {
+    logger.warn("killProcessTree: descendant verification unavailable", {
+      pid,
+      capturedProcessCount: identities.length,
+      error: capture.error instanceof Error ? capture.error.message : String(capture.error),
+    });
+    throw new Error(
+      `Process tree rooted at PTY PID ${pid} was terminated, but descendant verification was unavailable`,
+      { cause: capture.error },
+    );
+  }
   logger.info("Process tree termination verified", {
     pid,
     capturedProcessCount: identities.length,
@@ -134,8 +142,8 @@ async function captureProcessTree(
   rootPid: number,
   platform: NodeJS.Platform,
   ef: typeof execFile,
-): Promise<number[]> {
-  if (rootPid <= 0) return [];
+): Promise<{ identities: number[]; error?: unknown }> {
+  if (rootPid <= 0) return { identities: [] };
   const identities: number[] = [];
   const pending = [rootPid];
   const visited = new Set<number>();
@@ -144,7 +152,12 @@ async function captureProcessTree(
     if (visited.has(currentPid)) continue;
     visited.add(currentPid);
     identities.push(currentPid);
-    const children = await listDirectChildrenWith(currentPid, platform, ef);
+    let children: Array<{ name: string; pid: number }>;
+    try {
+      children = await listDirectChildrenWith(currentPid, platform, ef);
+    } catch (error) {
+      return { identities, error };
+    }
     pending.push(...children.map((child) => child.pid));
   }
   if (pending.length > 0) {
@@ -152,7 +165,7 @@ async function captureProcessTree(
       `Process tree rooted at PTY PID ${rootPid} exceeds the ${PROCESS_TREE_LIMIT}-process verification limit`,
     );
   }
-  return identities;
+  return { identities };
 }
 
 function isProcessRunning(
@@ -170,7 +183,7 @@ function isProcessRunning(
 
 /**
  * Recursively find descendant processes matching a given name.
- * On Windows uses wmic to query the process tree (returns name + PID).
+ * On Windows uses PowerShell CIM to query the process tree (returns name + PID).
  * On Unix uses pgrep (returns PIDs only, without names), so name matching
  * will never produce results there. Callers that need name-based filtering
  * should guard with a platform check (see {@link killDescendantsByName}).
@@ -214,7 +227,7 @@ export async function findDescendantsByName(
  *
  * Windows-only: on Unix, process cwd does not hold ancestor directory
  * handles, so the directory locking problem this solves does not occur.
- * The wmic-based process tree scan also has no Unix equivalent that
+ * The Windows process tree scan also has no Unix equivalent that
  * returns process names without additional per-PID lookups.
  */
 export async function killDescendantsByName(
@@ -364,11 +377,22 @@ async function listDirectChildrenWith(
 ): Promise<Array<{ name: string; pid: number }>> {
   if (platform === "win32") {
     const { stdout } = await ef(
-      "wmic",
-      ["process", "where", `ParentProcessId=${pid}`, "get", "Name,ProcessId", "/format:csv"],
-      { timeout: TASKKILL_TIMEOUT_MS },
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        POWERSHELL_CHILD_PROCESS_SCRIPT,
+        String(pid),
+      ],
+      {
+        timeout: TASKKILL_TIMEOUT_MS,
+        maxBuffer: PROCESS_ENUMERATION_MAX_BUFFER,
+        windowsHide: true,
+      },
     );
-    return parseWmicCsv(stdout);
+    return parsePowerShellProcesses(stdout);
   }
 
   // Unix: pgrep -P returns child PIDs, one per line
@@ -390,21 +414,27 @@ async function listDirectChildrenWith(
     .filter((entry) => !isNaN(entry.pid));
 }
 
-/** Parse wmic CSV output into name/pid pairs. */
-function parseWmicCsv(output: string): Array<{ name: string; pid: number }> {
-  const lines = output.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
-
-  const header = lines[0]!.toLowerCase();
-  const nameIdx = header.split(",").findIndex((col) => col.trim() === "name");
-  const pidIdx = header.split(",").findIndex((col) => col.trim() === "processid");
-  if (nameIdx === -1 || pidIdx === -1) return [];
-
-  return lines.slice(1).reduce<Array<{ name: string; pid: number }>>((acc, line) => {
-    const cols = line.split(",");
-    const name = cols[nameIdx]?.trim() ?? "";
-    const pid = parseInt(cols[pidIdx]?.trim() ?? "", 10);
-    if (name && !isNaN(pid)) acc.push({ name, pid });
-    return acc;
-  }, []);
+/** Parse bounded PowerShell CIM JSON into validated name/PID pairs. */
+function parsePowerShellProcesses(
+  output: string,
+): Array<{ name: string; pid: number }> {
+  if (!output.trim()) return [];
+  const parsed: unknown = JSON.parse(output);
+  const values = Array.isArray(parsed) ? parsed : [parsed];
+  return values.flatMap((value) => {
+    if (typeof value !== "object" || value === null) return [];
+    const record = value as Record<string, unknown>;
+    const name = record["Name"];
+    const pid = record["ProcessId"];
+    if (
+      typeof name !== "string" ||
+      name.length === 0 ||
+      typeof pid !== "number" ||
+      !Number.isSafeInteger(pid) ||
+      pid <= 0
+    ) {
+      return [];
+    }
+    return [{ name, pid }];
+  });
 }
