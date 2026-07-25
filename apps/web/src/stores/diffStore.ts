@@ -147,9 +147,9 @@ export type RightPanelState = {
   readonly openTabs: readonly RightPanelTab[];
   readonly activeTab: RightPanelTab;
   /** Ordered tab instances. Singleton tools use deterministic IDs. */
-  readonly tabInstances?: readonly RightPanelTabInstance[];
+  readonly tabInstances: readonly RightPanelTabInstance[];
   /** Stable identity of the active tab instance. */
-  readonly activeTabId?: string | null;
+  readonly activeTabId: string | null;
 };
 
 /** One open right-panel tab, identified independently from its tool type. */
@@ -173,6 +173,51 @@ export function rightPanelTabInstances(
   }));
 }
 
+/** Resolve the active tool type from canonical instance state. */
+export function rightPanelActiveTab(state: RightPanelState): RightPanelTab {
+  return (
+    state.tabInstances.find((instance) => instance.id === state.activeTabId)?.type ??
+    "tasks"
+  );
+}
+
+type RightPanelStateInput = Omit<
+  RightPanelState,
+  "openTabs" | "activeTab" | "tabInstances" | "activeTabId"
+> & {
+  readonly openTabs?: readonly RightPanelTab[];
+  readonly activeTab?: RightPanelTab;
+  readonly tabInstances?: readonly RightPanelTabInstance[];
+  readonly activeTabId?: string | null;
+};
+
+/** Normalize legacy type-based fields into one canonical instance representation. */
+function canonicalRightPanelState(input: RightPanelStateInput): RightPanelState {
+  const tabInstances =
+    input.tabInstances ??
+    (input.openTabs ?? []).map((type) => ({ id: rightPanelSingletonId(type), type }));
+  const activeTabId =
+    input.activeTabId ??
+    tabInstances.find((instance) => instance.type === input.activeTab)?.id ??
+    null;
+  const state = {
+    ...input,
+    tabInstances,
+    activeTabId,
+  } as RightPanelState;
+  Object.defineProperties(state, {
+    openTabs: {
+      enumerable: true,
+      get: () => state.tabInstances.map((instance) => instance.type),
+    },
+    activeTab: {
+      enumerable: true,
+      get: () => rightPanelActiveTab(state),
+    },
+  });
+  return state;
+}
+
 /** Default line-wrap preference for a thread with no stored override. */
 export const DEFAULT_LINE_WRAP = true;
 
@@ -181,15 +226,13 @@ export const DEFAULT_LINE_WRAP = true;
  * fallback has a stored record yet (default width, closed, no open tabs).
  */
 export function createDefaultRightPanelState(): RightPanelState {
-  return {
+  return canonicalRightPanelState({
     visible: false,
     width: getDefaultPanelWidthPx(),
     widthSource: "auto",
-    openTabs: [],
-    activeTab: "tasks",
     tabInstances: [],
     activeTabId: null,
-  };
+  });
 }
 
 /** Stable cache key for one inline diff payload. */
@@ -245,9 +288,10 @@ function effectiveRightPanel(
 ): RightPanelState {
   if (threadId) {
     const own = state.rightPanelByThread[threadId];
-    if (own) return own;
+    if (own) return canonicalRightPanelState(own);
   }
-  return state.rightPanelFallbackByWorkspace[workspaceId] ?? createDefaultRightPanelState();
+  const fallback = state.rightPanelFallbackByWorkspace[workspaceId];
+  return fallback ? canonicalRightPanelState(fallback) : createDefaultRightPanelState();
 }
 
 /**
@@ -264,13 +308,16 @@ function writeRightPanel(
 ): Partial<DiffState> {
   if (threadId) {
     return {
-      rightPanelByThread: { ...state.rightPanelByThread, [threadId]: next },
+      rightPanelByThread: {
+        ...state.rightPanelByThread,
+        [threadId]: canonicalRightPanelState(next),
+      },
     };
   }
   return {
     rightPanelFallbackByWorkspace: {
       ...state.rightPanelFallbackByWorkspace,
-      [workspaceId]: next,
+      [workspaceId]: canonicalRightPanelState(next),
     },
   };
 }
@@ -297,15 +344,13 @@ function setPanelVisible(
  * Static defaults for workspaces with no panel store row; live width uses
  * {@link getDefaultPanelWidthPx} through {@link createDefaultRightPanelState}.
  */
-export const RIGHT_PANEL_DEFAULTS: RightPanelState = {
+export const RIGHT_PANEL_DEFAULTS: RightPanelState = canonicalRightPanelState({
   visible: false,
   width: PANEL_DEFAULT_WIDTH,
   widthSource: "auto",
-  openTabs: [],
-  activeTab: "tasks",
   tabInstances: [],
   activeTabId: null,
-} as const;
+});
 
 /** Zustand state shape for the diff panel. */
 interface DiffState {
@@ -467,6 +512,11 @@ interface DiffState {
     source?: "auto" | "user" | "preserve",
   ) => void;
   setRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
+  setRightPanelTabInstance: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    instanceId: string,
+  ) => void;
   /** Move one tab instance by one bounded position in its scope. */
   reorderRightPanelTab: (
     workspaceId: string,
@@ -636,9 +686,6 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       // Activating a tab opens it: tabs are singletons created on demand, so
       // focusing one that is not yet open adds it to the open set (the card grid
       // is the create surface). Already-open tabs are just refocused.
-      const openTabs = current.openTabs.includes(tab)
-        ? current.openTabs
-        : [...current.openTabs, tab];
       const instanceId = rightPanelSingletonId(tab);
       const currentInstances = rightPanelTabInstances(current);
       const tabInstances = currentInstances.some((instance) => instance.id === instanceId)
@@ -646,12 +693,23 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         : [...currentInstances, { id: instanceId, type: tab }];
       const panelUpdate = writeRightPanel(state, workspaceId, threadId, {
         ...current,
-        openTabs,
-        activeTab: tab,
         tabInstances,
         activeTabId: instanceId,
       });
       return panelUpdate;
+    }),
+
+  setRightPanelTabInstance: (workspaceId, threadId, instanceId) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      const instance = rightPanelTabInstances(current).find(
+        (candidate) => candidate.id === instanceId,
+      );
+      if (!instance) return {};
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        activeTabId: instance.id,
+      });
     }),
 
   reorderRightPanelTab: (workspaceId, threadId, instanceId, direction) =>
@@ -666,7 +724,6 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       return writeRightPanel(state, workspaceId, threadId, {
         ...current,
         tabInstances,
-        openTabs: tabInstances.map((instance) => instance.type),
       });
     }),
 
@@ -681,7 +738,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       const tabInstances = currentInstances.filter(
         (instance) => instance.id !== instanceId,
       );
-      const activeTabId = current.activeTabId ?? rightPanelSingletonId(current.activeTab);
+      const activeTabId = current.activeTabId;
       const nextActive =
         activeTabId === instanceId
           ? (tabInstances[removedIndex] ?? tabInstances[removedIndex - 1] ?? null)
@@ -689,9 +746,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       return writeRightPanel(state, workspaceId, threadId, {
         ...current,
         tabInstances,
-        openTabs: tabInstances.map((instance) => instance.type),
         activeTabId: activeTabId === instanceId ? nextActive?.id ?? null : activeTabId,
-        activeTab: nextActive?.type ?? current.activeTab,
       });
     }),
 

@@ -46,8 +46,6 @@ const RAIL_COLLAPSE_DELAY_MS = 250;
 
 /** Shared trailing anchor for expanded-rail actions. */
 const RAIL_TRAILING_CONTROL_CLASS = "absolute left-[7.75rem] top-0";
-const RAIL_REORDER_THRESHOLD_PX = 16;
-
 /** Pointer and keyboard reorder boundary for one top-level rail instance. */
 function ReorderableRailItem({
   instanceId,
@@ -58,28 +56,39 @@ function ReorderableRailItem({
   children: ReactNode;
   onReorder: (instanceId: string, direction: -1 | 1) => void;
 }) {
-  const pointerYRef = useRef<number | null>(null);
+  const draggingRef = useRef(false);
   const suppressClickRef = useRef(false);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     const target = event.target as HTMLElement;
     if (target.closest("[data-rail-close]")) return;
-    pointerYRef.current = event.clientY;
+    draggingRef.current = true;
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (pointerYRef.current === null) return;
-    const delta = event.clientY - pointerYRef.current;
-    if (Math.abs(delta) < RAIL_REORDER_THRESHOLD_PX) return;
-    onReorder(instanceId, delta < 0 ? -1 : 1);
-    pointerYRef.current = event.clientY;
+    if (!draggingRef.current) return;
+    const item = event.currentTarget;
+    const siblings = Array.from(
+      item.parentElement?.querySelectorAll<HTMLElement>(":scope > [data-rail-instance]") ?? [],
+    );
+    const index = siblings.indexOf(item);
+    const previous = siblings[index - 1];
+    const next = siblings[index + 1];
+    const direction =
+      previous && event.clientY <= previous.getBoundingClientRect().bottom
+        ? -1
+        : next && event.clientY >= next.getBoundingClientRect().top
+          ? 1
+          : null;
+    if (direction === null) return;
+    onReorder(instanceId, direction);
     suppressClickRef.current = true;
   };
 
   const onPointerEnd = () => {
-    pointerYRef.current = null;
+    draggingRef.current = false;
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -212,7 +221,7 @@ function RailTab({
   scope: ScopeProgress;
   changesCount: number;
   changesFresh: boolean;
-  onSelect: (id: RightPanelTab) => void;
+  onSelect: (instanceId: string) => void;
   onClose: (id: RightPanelTab) => void;
 }) {
   const meta = metaForTab(id);
@@ -582,7 +591,7 @@ export function ActivityRail({
   onClose: (instanceId: string) => void;
   onReorder: (instanceId: string, direction: -1 | 1) => void;
   onCreate: (id: RightPanelTab) => void;
-  onSelectBrowserPage: (pageId: string) => void;
+  onSelectBrowserPage: (instanceId: string, pageId: string) => void;
   onCloseBrowserPage: (pageId: string) => void;
 }) {
   const openTabs = tabInstances.map((instance) => instance.type);
@@ -738,7 +747,7 @@ export function ActivityRail({
                 tabSet={browserTabSet}
                 browserActive={activeTabId === instanceId}
                 expanded={expanded}
-                onSelectPage={onSelectBrowserPage}
+                onSelectPage={(pageId) => onSelectBrowserPage(instanceId, pageId)}
                 onClosePage={onCloseBrowserPage}
               />
             </ReorderableRailItem>
@@ -753,7 +762,7 @@ export function ActivityRail({
               scope={scopeProgress}
               changesCount={changesCount}
               changesFresh={changesFresh}
-              onSelect={onSelect}
+              onSelect={() => onSelect(instanceId)}
               onClose={() => onClose(instanceId)}
             />
           </ReorderableRailItem>

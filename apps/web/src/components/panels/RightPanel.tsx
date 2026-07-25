@@ -129,6 +129,7 @@ export function RightPanel() {
   const {
     setRightPanelWidth,
     setRightPanelTab,
+    setRightPanelTabInstance,
     closeRightPanelTab,
     closeRightPanelTabInstance,
     reorderRightPanelTab,
@@ -271,8 +272,8 @@ export function RightPanel() {
             toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId)
           }
           onToggleMaximized={toggleMaximized}
-          onSelect={(id) =>
-            setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+          onSelect={(instanceId) =>
+            setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId)
           }
           onClose={(instanceId) =>
             closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId)
@@ -288,9 +289,9 @@ export function RightPanel() {
           onCreate={(id) =>
             setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
           }
-          onSelectBrowserPage={(pageId) => {
+          onSelectBrowserPage={(instanceId, pageId) => {
             // Focus the Browser tab and switch the guest to that page.
-            setRightPanelTab(activeWorkspaceId!, activeThreadId, "preview");
+            setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
             if (panelScopeId) {
               void usePreviewTabsStore
                 .getState()

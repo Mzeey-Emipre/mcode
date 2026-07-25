@@ -469,6 +469,30 @@ describe("diffStore", () => {
       ]);
       expect(getRightPanel("ws-1").activeTabId).toBe("singleton:changes");
     });
+
+    it("selects a repeatable tab by stable instance identity", () => {
+      useDiffStore.setState({
+        rightPanelFallbackByWorkspace: {
+          "ws-1": {
+            ...useDiffStore.getState().getRightPanel("ws-1"),
+            tabInstances: [
+              { id: "terminal:first", type: "terminal" },
+              { id: "terminal:second", type: "terminal" },
+            ],
+            activeTabId: "terminal:first",
+          },
+        },
+      });
+
+      const { setRightPanelTabInstance, getRightPanel } = useDiffStore.getState();
+      setRightPanelTabInstance("ws-1", null, "terminal:second");
+
+      expect(getRightPanel("ws-1").activeTabId).toBe("terminal:second");
+      expect(getRightPanel("ws-1").tabInstances).toEqual([
+        { id: "terminal:first", type: "terminal" },
+        { id: "terminal:second", type: "terminal" },
+      ]);
+    });
   });
 
   describe("reorderRightPanelTab", () => {
