@@ -203,7 +203,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     );
   });
 
-  it("waits for a replay batch to paint before checkpointing and disposing", async () => {
+  it("does not resume after a paused replay batch paints during cleanup", async () => {
     let finishWrite: (() => void) | undefined;
     let resolveReattach: (value: { mode: "delta" }) => void = () => {};
     transport.terminalReattach.mockReturnValueOnce(
@@ -229,11 +229,13 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       emitPtyData({
         ptyId: "pty-cold",
         seq: 7,
-        payload: new TextEncoder().encode("painted"),
+        payload: new Uint8Array(262_145),
       });
       resolveReattach({ mode: "delta" });
     });
     await settle();
+    expect(transport.terminalPause).toHaveBeenCalledWith("pty-cold");
+    transport.terminalResume.mockClear();
 
     view.unmount();
 
@@ -251,6 +253,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       7,
       "painted",
     );
+    expect(transport.terminalResume).not.toHaveBeenCalled();
     expect(term.dispose).toHaveBeenCalledOnce();
   });
 

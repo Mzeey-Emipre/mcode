@@ -378,7 +378,10 @@ export const TerminalView = memo(function TerminalView({
         useSettingsStore.getState().settings.terminal.flowControl;
       const fc = new ClientTerminalFlowControl({
         onPause: () => transport.terminalPause(ptyId).catch(() => {}),
-        onResume: () => transport.terminalResume(ptyId).catch(() => {}),
+        onResume: () => {
+          if (disposed) return;
+          transport.terminalResume(ptyId).catch(() => {});
+        },
         highBytes: flowSettings.clientHighBytes,
         lowBytes: flowSettings.clientLowBytes,
       });
