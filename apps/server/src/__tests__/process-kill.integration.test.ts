@@ -41,5 +41,5 @@ describe.runIf(process.platform === "win32")("killProcessTree integration", () =
 
     await expect.poll(() => isRunning(root.pid!), { timeout: 5_000 }).toBe(false);
     await expect.poll(() => isRunning(childPid), { timeout: 5_000 }).toBe(false);
-  }, 30_000);
+  }, 60_000);
 });

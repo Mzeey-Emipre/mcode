@@ -15,6 +15,18 @@ const execFile = promisify(execFileCb);
 // 5 s gives taskkill enough time to propagate through a deep process tree
 // without blocking server shutdown or the cleanup worker's retry loop.
 const TASKKILL_TIMEOUT_MS = 5_000;
+const PROCESS_TREE_LIMIT = 128;
+const TERMINATION_VERIFY_TIMEOUT_MS = 2_000;
+const TERMINATION_VERIFY_POLL_MS = 50;
+
+/** Injectable process-tree termination dependencies for focused verification tests. */
+export interface KillProcessTreeDeps {
+  readonly execFile?: typeof execFile;
+  readonly platform?: NodeJS.Platform;
+  readonly processKill?: (pid: number, signal: string | number) => void;
+  readonly sleep?: (ms: number) => Promise<void>;
+  readonly now?: () => number;
+}
 
 /**
  * Returns true when the error indicates the process was already gone.
@@ -35,16 +47,41 @@ function isProcessGoneError(err: unknown): boolean {
  * Kill an entire process tree rooted at the given PID.
  * Rejects when termination fails for a reason other than an already-gone root.
  */
-export async function killProcessTree(pid: number): Promise<void> {
+export async function killProcessTree(
+  pid: number,
+  deps?: KillProcessTreeDeps,
+): Promise<void> {
+  const ef = deps?.execFile ?? execFile;
+  const platform = deps?.platform ?? process.platform;
+  const processKill =
+    deps?.processKill ??
+    ((targetPid: number, signal: string | number) => {
+      process.kill(targetPid, signal as NodeJS.Signals);
+    });
+  const sleep =
+    deps?.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = deps?.now ?? Date.now;
+  let identities: number[];
   try {
-    if (process.platform === "win32") {
-      await execFile("taskkill", ["/T", "/F", "/PID", String(pid)], {
+    identities = await captureProcessTree(pid, platform, ef);
+  } catch (err) {
+    logger.warn("killProcessTree: failed to capture process identities", {
+      pid,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+
+  try {
+    if (platform === "win32") {
+      await ef("taskkill", ["/T", "/F", "/PID", String(pid)], {
         timeout: TASKKILL_TIMEOUT_MS,
       });
     } else {
       // Guard against pid <= 0: process.kill(0) would kill the server's own group.
       if (pid > 0) {
-        process.kill(-pid, "SIGKILL");
+        processKill(-pid, "SIGKILL");
       }
     }
   } catch (err) {
@@ -58,6 +95,76 @@ export async function killProcessTree(pid: number): Promise<void> {
       });
       throw err;
     }
+  }
+
+  const deadline = now() + TERMINATION_VERIFY_TIMEOUT_MS;
+  let remaining: number[];
+  try {
+    remaining = identities.filter((identity) => isProcessRunning(identity, processKill));
+    while (remaining.length > 0 && now() < deadline) {
+      await sleep(TERMINATION_VERIFY_POLL_MS);
+      remaining = remaining.filter((identity) => isProcessRunning(identity, processKill));
+    }
+  } catch (err) {
+    logger.warn("killProcessTree: termination verification failed", {
+      pid,
+      capturedProcessCount: identities.length,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+  if (remaining.length > 0) {
+    logger.warn("killProcessTree: termination verification timed out", {
+      pid,
+      capturedProcessCount: identities.length,
+      remainingPids: remaining,
+      timeoutMs: TERMINATION_VERIFY_TIMEOUT_MS,
+    });
+    throw new Error(
+      `Process-tree termination verification timed out for PTY PID ${pid}; ${remaining.length} process(es) remain`,
+    );
+  }
+  logger.info("Process tree termination verified", {
+    pid,
+    capturedProcessCount: identities.length,
+  });
+}
+
+async function captureProcessTree(
+  rootPid: number,
+  platform: NodeJS.Platform,
+  ef: typeof execFile,
+): Promise<number[]> {
+  if (rootPid <= 0) return [];
+  const identities: number[] = [];
+  const pending = [rootPid];
+  const visited = new Set<number>();
+  while (pending.length > 0 && identities.length < PROCESS_TREE_LIMIT) {
+    const currentPid = pending.shift()!;
+    if (visited.has(currentPid)) continue;
+    visited.add(currentPid);
+    identities.push(currentPid);
+    const children = await listDirectChildrenWith(currentPid, platform, ef);
+    pending.push(...children.map((child) => child.pid));
+  }
+  if (pending.length > 0) {
+    throw new Error(
+      `Process tree rooted at PTY PID ${rootPid} exceeds the ${PROCESS_TREE_LIMIT}-process verification limit`,
+    );
+  }
+  return identities;
+}
+
+function isProcessRunning(
+  pid: number,
+  processKill: (pid: number, signal: string | number) => void,
+): boolean {
+  try {
+    processKill(pid, 0);
+    return true;
+  } catch (err) {
+    if (isProcessGoneError(err)) return false;
+    throw err;
   }
 }
 
@@ -247,8 +354,16 @@ function isEsrch(err: unknown): boolean {
 export async function listDirectChildren(
   pid: number,
 ): Promise<Array<{ name: string; pid: number }>> {
-  if (process.platform === "win32") {
-    const { stdout } = await execFile(
+  return listDirectChildrenWith(pid, process.platform, execFile);
+}
+
+async function listDirectChildrenWith(
+  pid: number,
+  platform: NodeJS.Platform,
+  ef: typeof execFile,
+): Promise<Array<{ name: string; pid: number }>> {
+  if (platform === "win32") {
+    const { stdout } = await ef(
       "wmic",
       ["process", "where", `ParentProcessId=${pid}`, "get", "Name,ProcessId", "/format:csv"],
       { timeout: TASKKILL_TIMEOUT_MS },
@@ -259,7 +374,7 @@ export async function listDirectChildren(
   // Unix: pgrep -P returns child PIDs, one per line
   let stdout: string;
   try {
-    ({ stdout } = await execFile("pgrep", ["-P", String(pid)], {
+    ({ stdout } = await ef("pgrep", ["-P", String(pid)], {
       timeout: TASKKILL_TIMEOUT_MS,
     }));
   } catch (err) {

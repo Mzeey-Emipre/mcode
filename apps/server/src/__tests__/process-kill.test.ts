@@ -29,6 +29,7 @@ import { logger } from "@mcode/shared";
 describe("killProcessTree", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockExecFile.mockReset();
   });
 
   it("calls taskkill with /T /F on Windows", async () => {
@@ -54,7 +55,9 @@ describe("killProcessTree", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
     try {
-      mockExecFile.mockRejectedValue(new Error("process not found"));
+      mockExecFile
+        .mockResolvedValueOnce({ stdout: "Name,ProcessId\r\n", stderr: "" })
+        .mockRejectedValueOnce(new Error("process not found"));
 
       await expect(killProcessTree(1234)).rejects.toThrow("process not found");
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
@@ -70,12 +73,22 @@ describe("killProcessTree", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
     try {
-      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+      mockExecFile.mockRejectedValue(
+        Object.assign(new Error("no matches"), { code: 1 }),
+      );
+      const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
+        if (pid > 0) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        return true;
+      });
 
       await killProcessTree(5678);
 
       expect(killSpy).toHaveBeenCalledWith(-5678, "SIGKILL");
-      expect(mockExecFile).not.toHaveBeenCalled();
+      expect(mockExecFile).toHaveBeenCalledWith(
+        "pgrep",
+        ["-P", "5678"],
+        expect.objectContaining({ timeout: expect.any(Number) }),
+      );
       killSpy.mockRestore();
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
@@ -86,6 +99,9 @@ describe("killProcessTree", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
     try {
+      mockExecFile.mockRejectedValue(
+        Object.assign(new Error("no matches"), { code: 1 }),
+      );
       const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
         throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
       });
@@ -101,6 +117,60 @@ describe("killProcessTree", () => {
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
+  });
+
+  it("polls captured identities until every process is absent", async () => {
+    let now = 0;
+    let probes = 0;
+    const sleep = vi.fn(async (ms: number) => {
+      now += ms;
+    });
+    const processKill = vi.fn((targetPid: number) => {
+      if (targetPid < 0) return;
+      probes += 1;
+      if (probes < 3) return;
+      throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    });
+    mockExecFile.mockRejectedValue(
+      Object.assign(new Error("no matches"), { code: 1 }),
+    );
+
+    await killProcessTree(5678, {
+      platform: "linux",
+      processKill,
+      sleep,
+      now: () => now,
+      execFile: mockExecFile,
+    });
+
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(processKill).toHaveBeenCalledWith(-5678, "SIGKILL");
+  });
+
+  it("rejects when a captured process remains after the verification timeout", async () => {
+    let now = 0;
+    const sleep = vi.fn(async (ms: number) => {
+      now += ms;
+    });
+    mockExecFile.mockRejectedValue(
+      Object.assign(new Error("no matches"), { code: 1 }),
+    );
+
+    await expect(
+      killProcessTree(5678, {
+        platform: "linux",
+        processKill: vi.fn(),
+        sleep,
+        now: () => now,
+        execFile: mockExecFile,
+      }),
+    ).rejects.toThrow("termination verification timed out");
+
+    expect(sleep).toHaveBeenCalledTimes(40);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "killProcessTree: termination verification timed out",
+      expect.objectContaining({ pid: 5678, remainingPids: [5678] }),
+    );
   });
 
   it("does nothing when pid is 0 on Unix", async () => {
@@ -122,6 +192,7 @@ describe("killProcessTree", () => {
 describe("findDescendantsByName", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockExecFile.mockReset();
   });
 
   it("returns matching PIDs from wmic output on Windows", async () => {
@@ -190,6 +261,11 @@ describe("findDescendantsByName", () => {
 });
 
 describe("listDirectChildren", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExecFile.mockReset();
+  });
+
   it("treats pgrep exit code 1 as an idle process with no children", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "linux" });
@@ -206,6 +282,7 @@ describe("listDirectChildren", () => {
 describe("killDescendantsByName", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockExecFile.mockReset();
   });
 
   it("finds and kills matching descendants on Windows", async () => {
