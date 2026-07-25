@@ -73,6 +73,7 @@ interface PtySession {
   pendingExit: { readonly exitCode: number; readonly signal?: number } | null;
   closePromise: Promise<void> | null;
   readonly processScope: WindowsProcessScope;
+  readonly processScopeReady: Promise<boolean>;
 }
 
 /** Callbacks for streaming PTY output and exit events to connected clients. */
@@ -264,6 +265,7 @@ export class TerminalService {
     // so explicit assignment is needed — inheritance alone is not sufficient.
     // Best-effort: no-op on non-Windows or if JobObject failed to init.
     const processScope = this.processScopeFactory.create();
+    let processScopeReady = Promise.resolve(false);
     const globalAssigned = this.jobObject.assign(pty.pid);
     if (process.platform === "win32" && (!globalAssigned || !processScope.ready)) {
       logger.warn("PTY process scope unavailable; close will use process-tree fallback", {
@@ -281,6 +283,17 @@ export class TerminalService {
           error: assignment.error,
         });
         processScope.close();
+      } else {
+        processScopeReady = processScope.reconcile(pty.pid).then((result) => {
+          if (!result.ok) {
+            logger.warn("PTY process scope reconciliation failed; close will use process-tree fallback", {
+              id,
+              pid: pty.pid,
+              error: result.error,
+            });
+          }
+          return result.ok;
+        });
       }
     }
     this.jobObject.setDescription(pty.pid, `Mcode Terminal: ${shellBasename(shell)}`);
@@ -320,6 +333,7 @@ export class TerminalService {
       pendingExit: null,
       closePromise: null,
       processScope,
+      processScopeReady,
     };
     this.sessions = new Map([...this.sessions, [id, session]]);
 
@@ -533,6 +547,7 @@ export class TerminalService {
     const session = this.sessions.get(ptyId);
     if (!session) throw new Error(`PTY not found: ${ptyId}`);
 
+    await this.awaitProcessScopeAuthority(session, 500);
     if (process.platform === "win32" && session.processScope.ownsProcessTree) {
       const snapshot = session.processScope.queryProcessIds();
       if (snapshot.ok && !snapshot.overflow) {
@@ -574,7 +589,11 @@ export class TerminalService {
     // identifies its descendants. Closing ConPTY first can orphan children.
     if (this.useGracefulKill) {
       await gracefulKillProcessTree(session.pty.pid);
-    } else if (process.platform === "win32" && session.processScope.ownsProcessTree) {
+    } else if (
+      process.platform === "win32" &&
+      await this.awaitProcessScopeAuthority(session, 500) &&
+      session.processScope.ownsProcessTree
+    ) {
       const terminated = session.processScope.terminate(1);
       const emptied = terminated.ok
         ? await session.processScope.waitForEmpty(1_900)
@@ -610,6 +629,17 @@ export class TerminalService {
       });
     }
     this.finalizePty(session);
+  }
+
+  private async awaitProcessScopeAuthority(
+    session: PtySession,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (process.platform !== "win32") return false;
+    return Promise.race([
+      session.processScopeReady,
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+    ]);
   }
 
   private handleNaturalExit(

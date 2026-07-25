@@ -163,6 +163,7 @@ describe("TerminalService Windows teardown", () => {
         ownsProcessTree: false,
         close: vi.fn(),
       },
+      processScopeReady: Promise.resolve(false),
     };
     const internals = service as unknown as {
       sessions: Map<string, typeof session>;
@@ -293,6 +294,7 @@ describe("TerminalService Windows teardown", () => {
     const first = service.kill(ptyId);
     const second = service.kill(ptyId);
 
+    await vi.waitFor(() => expect(killProcessTree).toHaveBeenCalledOnce());
     expect(killProcessTree).toHaveBeenCalledOnce();
     resolveTermination();
     await Promise.all([first, second]);
@@ -307,6 +309,7 @@ describe("TerminalService Windows teardown", () => {
       ready: true,
       ownsProcessTree: true,
       assign: vi.fn(() => ({ ok: true })),
+      reconcile: vi.fn().mockResolvedValue({ ok: true }),
       terminate,
       waitForEmpty,
       close,
@@ -334,6 +337,7 @@ describe("TerminalService Windows teardown", () => {
           ready: true,
           ownsProcessTree: true,
           assign: vi.fn(() => { calls.push("child"); return { ok: true }; }),
+          reconcile: vi.fn().mockResolvedValue({ ok: true }),
           terminate: vi.fn(),
           waitForEmpty: vi.fn(),
           close: vi.fn(),
@@ -355,6 +359,7 @@ describe("TerminalService Windows teardown", () => {
           ready: true,
           ownsProcessTree: true,
           assign: vi.fn(() => ({ ok: true })),
+          reconcile: vi.fn().mockResolvedValue({ ok: true }),
           terminate: vi.fn(),
           waitForEmpty: vi.fn(),
           close,
@@ -381,6 +386,7 @@ describe("TerminalService Windows teardown", () => {
           ready: true,
           ownsProcessTree: true,
           assign: vi.fn(() => ({ ok: true })),
+          reconcile: vi.fn().mockResolvedValue({ ok: true }),
           queryProcessIds,
           terminate: vi.fn(),
           waitForEmpty: vi.fn(),
@@ -403,6 +409,7 @@ describe("TerminalService Windows teardown", () => {
           ready: true,
           ownsProcessTree: true,
           assign: vi.fn(() => ({ ok: true })),
+          reconcile: vi.fn().mockResolvedValue({ ok: true }),
           terminate: vi.fn(() => ({ ok: false, error: "native termination failed" })),
           waitForEmpty: vi.fn(),
           close,
@@ -417,6 +424,28 @@ describe("TerminalService Windows teardown", () => {
     expect(dataDispose).not.toHaveBeenCalled();
     expect(exitDispose).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
+  });
+
+  it("falls back when descendant reconciliation cannot establish authority", async () => {
+    const processScope = {
+      ready: true,
+      ownsProcessTree: false,
+      assign: vi.fn(() => ({ ok: true })),
+      reconcile: vi.fn().mockResolvedValue({ ok: false, error: "identity changed" }),
+      terminate: vi.fn(),
+      waitForEmpty: vi.fn(),
+      close: vi.fn(),
+    };
+    const service = createService(
+      { assign: vi.fn(() => true), setDescription: vi.fn() },
+      { create: () => processScope },
+    );
+    const { ptyId } = service.create("thread-1");
+
+    await service.kill(ptyId);
+
+    expect(killProcessTree).toHaveBeenCalledOnce();
+    expect(processScope.terminate).not.toHaveBeenCalled();
   });
 
   function createService(

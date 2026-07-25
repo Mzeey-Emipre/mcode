@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 const nativeRequire = createRequire(import.meta.url);
 const PROCESS_SET_QUOTA = 0x0100;
 const PROCESS_TERMINATE = 0x0001;
+const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 const JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3;
 const ERROR_MORE_DATA = 234;
 const MAX_PROCESS_IDS = 128;
@@ -10,6 +11,11 @@ const POINTER_BYTES = process.arch === "ia32" ? 4 : 8;
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9;
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 const EXTENDED_LIMIT_SIZE = process.arch === "ia32" ? 112 : 144;
+const TH32CS_SNAPPROCESS = 0x00000002;
+const PROCESS_ENTRY_SIZE = process.arch === "ia32" ? 556 : 568;
+const PROCESS_ENTRY_PARENT_OFFSET = process.arch === "ia32" ? 24 : 32;
+const PROCESS_ENUMERATION_LIMIT = 16_384;
+const RECONCILIATION_PASS_LIMIT = 5;
 
 /** Result returned by a Windows process-scope operation. */
 export interface WindowsProcessScopeResult {
@@ -38,12 +44,31 @@ export interface WindowsProcessScopeNative {
     returnLength: Buffer,
   ) => number;
   readonly getLastError: () => number;
+  readonly createToolhelp32Snapshot?: (flags: number, processId: number) => unknown;
+  readonly process32First?: (snapshot: unknown, entry: Buffer) => number;
+  readonly process32Next?: (snapshot: unknown, entry: Buffer) => number;
+  readonly getProcessTimes?: (
+    process: unknown,
+    creation: Buffer,
+    exit: Buffer,
+    kernel: Buffer,
+    user: Buffer,
+  ) => number;
+}
+
+/** Creation-identity record used while reconciling a terminal process tree. */
+export interface WindowsProcessScopeIdentity {
+  readonly pid: number;
+  readonly parentPid: number | null;
+  readonly startMarker: string;
+  readonly depth: number;
 }
 
 /** Owns one terminal process tree with a nested Windows Job Object. */
 export class WindowsProcessScope {
   private native: WindowsProcessScopeNative | null;
   private assigned = false;
+  private authoritative = false;
 
   constructor(native: WindowsProcessScopeNative | null) {
     this.native = native;
@@ -56,7 +81,7 @@ export class WindowsProcessScope {
 
   /** Whether the terminal root was successfully assigned to this scope. */
   get ownsProcessTree(): boolean {
-    return this.assigned && this.native !== null;
+    return this.authoritative && this.native !== null;
   }
 
   /** Assign a terminal root process to this child Job Object. */
@@ -79,6 +104,89 @@ export class WindowsProcessScope {
         try { native.closeHandle(processHandle); } catch { /* best effort */ }
       }
     }
+  }
+
+  /**
+   * Reconcile descendants that existed before the root entered this Job Object.
+   * Authority is granted only after a complete pass observes no missing members.
+   */
+  async reconcile(
+    rootPid: number,
+    capture: () => Promise<readonly WindowsProcessScopeIdentity[]> =
+      async () => this.captureProcessTree(rootPid),
+  ): Promise<WindowsProcessScopeResult> {
+    if (!this.assigned || !this.native) {
+      return { ok: false, error: "scope root is not assigned" };
+    }
+    this.authoritative = false;
+    for (let pass = 0; pass < RECONCILIATION_PASS_LIMIT; pass += 1) {
+      let descendants: readonly WindowsProcessScopeIdentity[];
+      try {
+        descendants = await capture();
+      } catch (error) {
+        return { ok: false, error: describeError(error) };
+      }
+      if (descendants.length === 0 || descendants[0]?.pid !== rootPid) {
+        return { ok: false, error: "root creation identity unavailable" };
+      }
+      if (descendants.length > MAX_PROCESS_IDS) {
+        return { ok: false, error: `process tree exceeds ${MAX_PROCESS_IDS}-process limit` };
+      }
+      const membership = this.queryProcessIds();
+      if (!membership.ok || membership.overflow) {
+        return { ok: false, error: membership.error ?? "job membership overflow" };
+      }
+      const memberIds = new Set(membership.processIds);
+      const missing = descendants
+        .filter((identity) => !memberIds.has(identity.pid))
+        .sort((left, right) => left.depth - right.depth);
+      if (missing.length === 0) {
+        this.authoritative = true;
+        return { ok: true };
+      }
+
+      let validation: readonly WindowsProcessScopeIdentity[];
+      try {
+        validation = await capture();
+      } catch (error) {
+        return { ok: false, error: describeError(error) };
+      }
+      const validationByPid = new Map(validation.map((identity) => [identity.pid, identity]));
+      for (const identity of missing) {
+        const current = validationByPid.get(identity.pid);
+        if (!current || current.startMarker !== identity.startMarker) {
+          return { ok: false, error: `process identity changed for PID ${identity.pid}` };
+        }
+        const currentMembership = this.queryProcessIds();
+        if (!currentMembership.ok || currentMembership.overflow) {
+          return { ok: false, error: currentMembership.error ?? "job membership overflow" };
+        }
+        if (currentMembership.processIds.includes(identity.pid)) continue;
+        const assignment = this.assignProcess(identity.pid);
+        if (!assignment.ok) {
+          const racedMembership = this.queryProcessIds();
+          let racedIdentity: WindowsProcessScopeIdentity | undefined;
+          try {
+            racedIdentity = (await capture()).find((candidate) => candidate.pid === identity.pid);
+          } catch {
+            // Preserve the original assignment failure when race validation is unavailable.
+          }
+          if (
+            racedMembership.ok &&
+            !racedMembership.overflow &&
+            racedMembership.processIds.includes(identity.pid) &&
+            racedIdentity?.startMarker === identity.startMarker
+          ) {
+            continue;
+          }
+          return {
+            ok: false,
+            error: `${assignment.error ?? "process assignment failed"} for PID ${identity.pid}`,
+          };
+        }
+      }
+    }
+    return { ok: false, error: `process scope did not converge after ${RECONCILIATION_PASS_LIMIT} passes` };
   }
 
   /** Atomically terminate every process owned by this scope. */
@@ -146,11 +254,102 @@ export class WindowsProcessScope {
     if (!native) return;
     this.native = null;
     this.assigned = false;
+    this.authoritative = false;
     try { native.closeHandle(native.jobHandle); } catch { /* best effort */ }
   }
 
   private nativeFailure(native: WindowsProcessScopeNative, operation: string): WindowsProcessScopeResult {
     return { ok: false, error: `${operation} failed (${native.getLastError()})` };
+  }
+
+  private assignProcess(pid: number): WindowsProcessScopeResult {
+    const native = this.native;
+    if (!native) return { ok: false, error: "scope unavailable" };
+    let processHandle: unknown = null;
+    try {
+      processHandle = native.openProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+      if (!processHandle) return this.nativeFailure(native, "OpenProcess");
+      return native.assignProcessToJobObject(native.jobHandle, processHandle)
+        ? { ok: true }
+        : this.nativeFailure(native, "AssignProcessToJobObject");
+    } catch (error) {
+      return { ok: false, error: describeError(error) };
+    } finally {
+      if (processHandle) {
+        try { native.closeHandle(processHandle); } catch { /* best effort */ }
+      }
+    }
+  }
+
+  private captureProcessTree(rootPid: number): WindowsProcessScopeIdentity[] {
+    const native = this.native;
+    if (
+      !native ||
+      !native.createToolhelp32Snapshot ||
+      !native.process32First ||
+      !native.process32Next ||
+      !native.getProcessTimes
+    ) {
+      throw new Error("native process snapshot unavailable");
+    }
+    const snapshot = native.createToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (!snapshot) throw new Error(`CreateToolhelp32Snapshot failed (${native.getLastError()})`);
+    const parentByPid = new Map<number, number>();
+    try {
+      const entry = Buffer.alloc(PROCESS_ENTRY_SIZE);
+      entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
+      let hasEntry = native.process32First(snapshot, entry);
+      let count = 0;
+      while (hasEntry && count < PROCESS_ENUMERATION_LIMIT) {
+        parentByPid.set(entry.readUInt32LE(8), entry.readUInt32LE(PROCESS_ENTRY_PARENT_OFFSET));
+        entry.fill(0);
+        entry.writeUInt32LE(PROCESS_ENTRY_SIZE, 0);
+        hasEntry = native.process32Next(snapshot, entry);
+        count += 1;
+      }
+      if (hasEntry) throw new Error(`process enumeration exceeds ${PROCESS_ENUMERATION_LIMIT}-entry limit`);
+    } finally {
+      native.closeHandle(snapshot);
+    }
+
+    const childrenByParent = new Map<number, number[]>();
+    for (const [pid, parentPid] of parentByPid) {
+      const children = childrenByParent.get(parentPid) ?? [];
+      children.push(pid);
+      childrenByParent.set(parentPid, children);
+    }
+    const pending = [{ pid: rootPid, parentPid: null as number | null, depth: 0 }];
+    const identities: WindowsProcessScopeIdentity[] = [];
+    const visited = new Set<number>();
+    while (pending.length > 0 && identities.length < MAX_PROCESS_IDS) {
+      const identity = pending.shift()!;
+      if (visited.has(identity.pid) || !parentByPid.has(identity.pid)) continue;
+      visited.add(identity.pid);
+      const startMarker = this.readStartMarker(identity.pid);
+      if (!startMarker) throw new Error(`creation identity unavailable for PID ${identity.pid}`);
+      identities.push({ ...identity, startMarker });
+      pending.push(...(childrenByParent.get(identity.pid) ?? []).map((pid) => ({
+        pid,
+        parentPid: identity.pid,
+        depth: identity.depth + 1,
+      })));
+    }
+    if (pending.length > 0) throw new Error(`process tree exceeds ${MAX_PROCESS_IDS}-process limit`);
+    return identities;
+  }
+
+  private readStartMarker(pid: number): string | null {
+    const native = this.native;
+    if (!native?.getProcessTimes) return null;
+    const processHandle = native.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if (!processHandle) return null;
+    try {
+      const times = [Buffer.alloc(8), Buffer.alloc(8), Buffer.alloc(8), Buffer.alloc(8)] as const;
+      if (!native.getProcessTimes(processHandle, ...times)) return null;
+      return times[0].toString("hex");
+    } finally {
+      native.closeHandle(processHandle);
+    }
   }
 }
 
@@ -189,6 +388,14 @@ export class WindowsProcessScopeFactory {
         terminateJobObject: kernel32.func("int __stdcall TerminateJobObject(void*, uint32)"),
         queryInformationJobObject: kernel32.func("int __stdcall QueryInformationJobObject(void*, int, void*, uint32, void*)"),
         getLastError: kernel32.func("uint32 __stdcall GetLastError()"),
+        createToolhelp32Snapshot: kernel32.func(
+          "void* __stdcall CreateToolhelp32Snapshot(uint32, uint32)",
+        ),
+        process32First: kernel32.func("int __stdcall Process32FirstW(void*, void*)"),
+        process32Next: kernel32.func("int __stdcall Process32NextW(void*, void*)"),
+        getProcessTimes: kernel32.func(
+          "int __stdcall GetProcessTimes(void*, void*, void*, void*, void*)",
+        ),
       });
     } catch {
       return new WindowsProcessScope(null);

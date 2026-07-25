@@ -16,8 +16,10 @@ describe.runIf(process.platform === "win32")("WindowsProcessScope integration", 
     try {
       expect(globalJob.assign(processA.pid!)).toBe(true);
       expect(scopeA.assign(processA.pid!).ok).toBe(true);
+      expect((await scopeA.reconcile(processA.pid!)).ok).toBe(true);
       expect(globalJob.assign(processB.pid!)).toBe(true);
       expect(scopeB.assign(processB.pid!).ok).toBe(true);
+      expect((await scopeB.reconcile(processB.pid!)).ok).toBe(true);
 
       await waitForMembership(scopeA, 2);
       await waitForMembership(scopeB, 2);
@@ -33,6 +35,42 @@ describe.runIf(process.platform === "win32")("WindowsProcessScope integration", 
       globalJob.close();
       processA.kill();
       processB.kill();
+    }
+  }, 15_000);
+
+  it("reconciles and terminates a descendant created before root assignment", async () => {
+    const globalJob = new JobObject();
+    const scope = new WindowsProcessScopeFactory().create();
+    const root = spawn(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$p=Start-Process ping.exe -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden -PassThru; Write-Output $p.Id; Start-Sleep -Seconds 30",
+      ],
+      { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
+    );
+    const childPid = await readFirstPid(root);
+
+    try {
+      expect(globalJob.assign(root.pid!)).toBe(true);
+      expect(scope.assign(root.pid!).ok).toBe(true);
+      expect((await scope.reconcile(root.pid!)).ok).toBe(true);
+      expect(scope.queryProcessIds().processIds).toEqual(
+        expect.arrayContaining([root.pid!, childPid]),
+      );
+
+      expect(scope.terminate(1).ok).toBe(true);
+      await expect(scope.waitForEmpty(1_900)).resolves.toEqual({ ok: true });
+      expect(await hasExited(root, 100)).toBe(true);
+      expect(processIsAlive(childPid)).toBe(false);
+    } finally {
+      scope.close();
+      globalJob.close();
+      root.kill();
+      try { process.kill(childPid); } catch { /* already gone */ }
     }
   }, 15_000);
 });
@@ -70,4 +108,28 @@ async function hasExited(process: ChildProcess, timeoutMs: number): Promise<bool
     new Promise<true>((resolve) => process.once("exit", () => resolve(true))),
     delay(timeoutMs).then(() => false),
   ]);
+}
+
+async function readFirstPid(process: ChildProcess): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    const timeout = setTimeout(() => reject(new Error("child PID output timed out")), 3_000);
+    process.stdout!.on("data", (chunk) => {
+      output += String(chunk);
+      const match = output.match(/\d+/);
+      if (!match) return;
+      clearTimeout(timeout);
+      resolve(Number(match[0]));
+    });
+    process.once("error", reject);
+  });
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }

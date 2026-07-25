@@ -31,6 +31,10 @@ describe("WindowsProcessScope", () => {
     const scope = new WindowsProcessScope(native);
 
     expect(scope.assign(101)).toEqual({ ok: true });
+    await expect(scope.reconcile(101, async () => [
+      { pid: 101, parentPid: null, startMarker: "root", depth: 0 },
+      { pid: 102, parentPid: 101, startMarker: "child", depth: 1 },
+    ])).resolves.toEqual({ ok: true });
     expect(scope.ownsProcessTree).toBe(true);
     expect(scope.queryProcessIds()).toEqual({
       ok: true,
@@ -79,5 +83,76 @@ describe("WindowsProcessScope", () => {
     expect(scope.terminate().ok).toBe(false);
     await expect(scope.waitForEmpty(1)).resolves.toMatchObject({ ok: false });
     expect(() => scope.close()).not.toThrow();
+  });
+
+  it("assigns pre-existing descendants shallowest-first and converges", async () => {
+    const members: number[] = [];
+    const native = createNative(members);
+    vi.mocked(native.assignProcessToJobObject).mockImplementation((_job, process) => {
+      const pid = (process as { pid?: number }).pid;
+      if (pid) members.push(pid);
+      return 1;
+    });
+    vi.mocked(native.openProcess).mockImplementation((_access, _inherit, pid) => ({ pid }));
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+    const tree = [
+      { pid: 101, parentPid: null, startMarker: "root", depth: 0 },
+      { pid: 102, parentPid: 101, startMarker: "child", depth: 1 },
+      { pid: 103, parentPid: 102, startMarker: "grandchild", depth: 2 },
+    ] as const;
+
+    await expect(scope.reconcile(101, async () => tree)).resolves.toEqual({ ok: true });
+
+    expect(scope.ownsProcessTree).toBe(true);
+    expect(members).toEqual([101, 102, 103]);
+  });
+
+  it("captures a child spawned during reconciliation on the next pass", async () => {
+    const members: number[] = [];
+    const native = createNative(members);
+    vi.mocked(native.assignProcessToJobObject).mockImplementation((_job, process) => {
+      const pid = (process as { pid?: number }).pid;
+      if (pid) members.push(pid);
+      return 1;
+    });
+    vi.mocked(native.openProcess).mockImplementation((_access, _inherit, pid) => ({ pid }));
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+    let captures = 0;
+
+    await expect(scope.reconcile(101, async () => {
+      captures += 1;
+      return captures < 3
+        ? [
+            { pid: 101, parentPid: null, startMarker: "root", depth: 0 },
+            { pid: 102, parentPid: 101, startMarker: "child", depth: 1 },
+          ]
+        : [
+            { pid: 101, parentPid: null, startMarker: "root", depth: 0 },
+            { pid: 102, parentPid: 101, startMarker: "child", depth: 1 },
+            { pid: 103, parentPid: 102, startMarker: "grandchild", depth: 2 },
+          ];
+    })).resolves.toEqual({ ok: true });
+
+    expect(members).toContain(103);
+    expect(scope.ownsProcessTree).toBe(true);
+  });
+
+  it("fails closed when reconciliation never converges", async () => {
+    const members: number[] = [];
+    const native = createNative(members);
+    vi.mocked(native.openProcess).mockImplementation((_access, _inherit, pid) => ({ pid }));
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+    let nextPid = 102;
+
+    const result = await scope.reconcile(101, async () => [
+      { pid: 101, parentPid: null, startMarker: "root", depth: 0 },
+      { pid: nextPid++, parentPid: 101, startMarker: `child-${nextPid}`, depth: 1 },
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(scope.ownsProcessTree).toBe(false);
   });
 });
