@@ -55,7 +55,7 @@ describe("listClaudeModels", () => {
 
   it("returns ProviderModelInfo[] filtered to claude models", async () => {
     const result = await listClaudeModels();
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(10);
     expect(result[0]).toEqual<ProviderModelInfo>({
       id: "claude-opus-5",
       name: "Claude Opus 5",
@@ -64,12 +64,12 @@ describe("listClaudeModels", () => {
       supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
       defaultReasoningEffort: "high",
     });
-    expect(result[1]).toEqual<ProviderModelInfo>({
+    expect(result.find((model) => model.id === "claude-sonnet-4-6-20250514")).toEqual<ProviderModelInfo>({
       id: "claude-sonnet-4-6-20250514",
       name: "Claude Sonnet 4.6",
       contextWindow: 1_000_000,
     });
-    expect(result[2]).toEqual<ProviderModelInfo>({
+    expect(result.find((model) => model.id === "claude-haiku-4-5-20251001")).toEqual<ProviderModelInfo>({
       id: "claude-haiku-4-5-20251001",
       name: "Claude Haiku 4.5",
       contextWindow: 200_000,
@@ -89,20 +89,45 @@ describe("listClaudeModels", () => {
     );
   });
 
-  it("returns the Opus 5 fallback when ANTHROPIC_API_KEY is missing", async () => {
+  it("returns the complete static catalog when ANTHROPIC_API_KEY is missing", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     const result = await listClaudeModels();
-    expect(result).toEqual<ProviderModelInfo[]>([
-      {
-        id: "claude-opus-5",
-        name: "Claude Opus 5",
-        contextWindow: 1_000_000,
-        supportsReasoning: true,
-        supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-        defaultReasoningEffort: "high",
-      },
+    expect(result).toHaveLength(8);
+    expect(result.map((model) => model.id)).toEqual([
+      "claude-opus-5",
+      "claude-fable-5",
+      "claude-sonnet-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5",
     ]);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps fallback capabilities when the API omits Opus 5 fields", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        data: [{
+          id: "claude-opus-5",
+          display_name: "Claude Opus 5",
+          type: "model",
+          max_input_tokens: null,
+          max_tokens: null,
+        }],
+        has_more: false,
+      }),
+    });
+
+    const [opus5] = await listClaudeModels();
+    expect(opus5).toMatchObject({
+      id: "claude-opus-5",
+      contextWindow: 1_000_000,
+      supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultReasoningEffort: "high",
+    });
   });
 
   it("throws on non-OK response", async () => {

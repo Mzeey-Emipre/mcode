@@ -7,20 +7,11 @@
  */
 
 import { logger } from "@mcode/shared";
+import { CLAUDE_STATIC_MODELS } from "@mcode/contracts";
 import type { ProviderModelInfo } from "@mcode/contracts";
 
 /** Cache TTL: 5 minutes, matching the design spec. */
 const CACHE_TTL_MS = 5 * 60 * 1000;
-
-/** Opus 5 metadata available even when the Anthropic Models API cannot be queried. */
-const OPUS_5_FALLBACK: ProviderModelInfo = {
-  id: "claude-opus-5",
-  name: "Claude Opus 5",
-  contextWindow: 1_000_000,
-  supportsReasoning: true,
-  supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  defaultReasoningEffort: "high",
-};
 
 /** Shape of a single model from the Anthropic Models API. */
 interface AnthropicModelInfo {
@@ -43,11 +34,19 @@ let cachedModels: ProviderModelInfo[] | null = null;
 let cacheTimestamp = 0;
 let inflight: Promise<ProviderModelInfo[]> | null = null;
 
-/** Adds Opus 5 capability metadata while preserving every model returned by the API. */
-function mergeOpus5Fallback(models: ProviderModelInfo[]): ProviderModelInfo[] {
-  const opus5 = models.find((model) => model.id === OPUS_5_FALLBACK.id);
-  const otherModels = models.filter((model) => model.id !== OPUS_5_FALLBACK.id);
-  return [{ ...OPUS_5_FALLBACK, ...opus5 }, ...otherModels];
+/** Merges API metadata into the complete fallback catalog without losing defined fallback fields. */
+function mergeStaticCatalog(models: ProviderModelInfo[]): ProviderModelInfo[] {
+  const dynamicById = new Map(models.map((model) => [model.id, model]));
+  const merged = CLAUDE_STATIC_MODELS.map((fallback) => {
+    const dynamic = dynamicById.get(fallback.id);
+    if (!dynamic) return fallback;
+    const definedDynamic = Object.fromEntries(
+      Object.entries(dynamic).filter(([, value]) => value !== undefined),
+    );
+    return { ...fallback, ...definedDynamic } as ProviderModelInfo;
+  });
+  const staticIds = new Set(CLAUDE_STATIC_MODELS.map((model) => model.id));
+  return [...merged, ...models.filter((model) => !staticIds.has(model.id))];
 }
 
 /**
@@ -76,7 +75,7 @@ async function fetchModels(): Promise<ProviderModelInfo[]> {
     // is often absent. Return empty and let the static registry provide
     // model data instead of surfacing an error to the user.
     logger.debug("ANTHROPIC_API_KEY not set, skipping models API fetch");
-    return [OPUS_5_FALLBACK];
+    return [...CLAUDE_STATIC_MODELS];
   }
 
   // limit=100 covers all current Claude models without pagination.
@@ -98,7 +97,7 @@ async function fetchModels(): Promise<ProviderModelInfo[]> {
 
   const body = (await res.json()) as AnthropicModelsResponse;
 
-  const models = mergeOpus5Fallback(body.data
+  const models = mergeStaticCatalog(body.data
     .filter((m) => m.id.startsWith("claude-"))
     .map((m) => ({
       id: m.id,

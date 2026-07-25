@@ -22,9 +22,12 @@ import {
 describe("pickProviderModelsForSettings", () => {
   const staticModels = [{ id: "a", label: "A", providerId: "cursor" }];
 
-  it("prefers a non-empty dynamic list", () => {
+  it("merges a non-empty dynamic list without hiding static models", () => {
     const dynamic = [{ id: "b", label: "B", providerId: "cursor" }];
-    expect(pickProviderModelsForSettings(staticModels, dynamic)).toEqual(dynamic);
+    expect(pickProviderModelsForSettings(staticModels, dynamic)).toEqual([
+      ...staticModels,
+      ...dynamic,
+    ]);
   });
 
   it("falls back to static models when dynamic is undefined", () => {
