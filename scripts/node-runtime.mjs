@@ -15,7 +15,7 @@ export function readRequiredNodeVersion({ rootDir = repositoryRoot } = {}) {
   const versionPath = resolve(rootDir, ".node-version");
   const version = readFileSync(versionPath, "utf8").trim();
   if (!EXACT_NODE_VERSION.test(version)) {
-    throw new Error(`${versionPath} must contain one exact Node.js version such as 20.20.0.`);
+    throw new Error(`${versionPath} must contain one exact semantic version.`);
   }
   const packagePath = resolve(rootDir, "package.json");
   const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));

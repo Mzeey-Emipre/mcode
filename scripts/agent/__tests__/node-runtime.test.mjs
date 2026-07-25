@@ -1,7 +1,7 @@
 /** Tests for the repository Node runtime contract. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
@@ -9,6 +9,8 @@ import {
   readRequiredNodeVersion,
   validateNodeRuntime,
 } from "../../node-runtime.mjs";
+
+const repositoryRoot = resolve(import.meta.dirname, "../../..");
 
 function runtimeFixture(version = "20.20.0") {
   const rootDir = mkdtempSync(resolve(tmpdir(), "mcode-node-runtime-"));
@@ -79,4 +81,23 @@ test("package engine must match .node-version", () => {
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }
+});
+
+test("direct package test entry points run the runtime guard first", () => {
+  const packageJson = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8"));
+  for (const name of ["test", "test:scripts", "verify:e2e"]) {
+    assert.match(
+      packageJson.scripts[name],
+      /^node scripts\/node-runtime\.mjs && /,
+      `${name} must run the runtime guard first`,
+    );
+  }
+});
+
+test("direct E2E entry point validates before probing or launching Playwright", () => {
+  const source = readFileSync(resolve(repositoryRoot, "scripts/agent/verify-e2e.mjs"), "utf8");
+  const guard = source.indexOf("validateNodeRuntime()");
+  const probe = source.indexOf("probeBaseUrl(BASE_URL)");
+  assert.ok(guard >= 0, "verify:e2e must validate the runtime");
+  assert.ok(guard < probe, "verify:e2e must validate before probing the dev server");
 });

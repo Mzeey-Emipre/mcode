@@ -9,10 +9,13 @@ import { execSync } from "node:child_process";
 import { createConnection } from "node:net";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateNodeRuntime } from "../node-runtime.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
 const webDir = resolve(repoRoot, "apps/web");
+
+if (!validateNodeRuntime().ok) process.exit(1);
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173";
 

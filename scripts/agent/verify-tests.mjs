@@ -303,14 +303,27 @@ function resolveSafeExecutable(command, env) {
   }
 }
 
+/** Compares normalized PATH entries with platform-appropriate case sensitivity. */
+export function pathEntriesMatch(left, right, { platform = process.platform } = {}) {
+  const normalizedLeft = resolvePath(left);
+  const normalizedRight = resolvePath(right);
+  return platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
 /** Places the validated Node.js executable directory first in PATH for child phases. */
-export function withValidatedNodePath(env = process.env, execPath = process.execPath) {
+export function withValidatedNodePath(
+  env = process.env,
+  execPath = process.execPath,
+  options = {},
+) {
   const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
   const currentPath = env[pathKey] ?? "";
   const nodeDirectory = dirname(execPath);
   const entries = currentPath.split(delimiter).filter(Boolean);
   const remaining = entries.filter(
-    (entry) => resolvePath(entry).toLowerCase() !== resolvePath(nodeDirectory).toLowerCase(),
+    (entry) => !pathEntriesMatch(entry, nodeDirectory, options),
   );
   const normalized = { ...env };
   for (const key of Object.keys(normalized)) {
@@ -742,7 +755,16 @@ export function inspectVerificationReceipt({
   gate = "changed",
   env = process.env,
   printer = console.log,
+  runtime = {},
 } = {}) {
+  if (!validateNodeRuntime({ ...runtime, printer }).ok) {
+    return {
+      code: 1,
+      approved: false,
+      runtimeMismatch: true,
+      reason: "Verification blocked by the Node runtime check.",
+    };
+  }
   const changedFiles = getChangedFiles({ cwd });
   if (changedFiles !== null && changedFiles.length === 0) {
     const message = "Verification receipt not required: no relevant changes.";
@@ -774,7 +796,11 @@ export async function runVerification({
   printer = console.log,
   timeoutMs = DEFAULT_PHASE_TIMEOUT_MS,
   env = process.env,
+  runtime = {},
 } = {}) {
+  if (!validateNodeRuntime({ ...runtime, printer }).ok) {
+    return { code: 1, runtimeMismatch: true };
+  }
   const changedFiles = getChangedFiles({ cwd });
   const identities = calculateVerificationIdentities({ cwd, env, changedFiles });
   if (!identities) {

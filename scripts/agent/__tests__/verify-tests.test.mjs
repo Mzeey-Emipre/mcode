@@ -33,11 +33,13 @@ import {
   getChangedFiles,
   inspectVerificationReceipt,
   isVerificationRelevant,
+  pathEntriesMatch,
   runPhase,
   runPhasesInParallel,
   runVerification,
   runVerificationPhases,
   selectTestPhases,
+  withValidatedNodePath,
 } from "../verify-tests.mjs";
 
 const NODE = process.execPath;
@@ -174,6 +176,19 @@ test("verification phases prefer the validated Node executable directory", async
   ));
   assert.equal(result.code, 0);
   assert.equal(result.output.trim().split(delimiter)[0], dirname(process.execPath));
+});
+
+test("runtime PATH comparison preserves POSIX case distinctions", () => {
+  const upper = resolve(tmpdir(), "Node");
+  const lower = resolve(tmpdir(), "node");
+  assert.equal(pathEntriesMatch(upper, lower, { platform: "linux" }), false);
+  assert.equal(pathEntriesMatch(upper, lower, { platform: "win32" }), true);
+
+  const env = { PATH: [upper, lower].join(delimiter) };
+  const posix = withValidatedNodePath(env, resolve(upper, "node"), { platform: "linux" });
+  const windows = withValidatedNodePath(env, resolve(upper, "node.exe"), { platform: "win32" });
+  assert.deepEqual(posix.PATH.split(delimiter), [upper, lower]);
+  assert.deepEqual(windows.PATH.split(delimiter), [upper]);
 });
 
 test("a phase streams a complete log while retaining bounded output", async () => {
@@ -506,6 +521,30 @@ test("verification fails closed when receipt identities cannot be calculated", a
     assert.equal(result.identityFailure, true);
     assert.match(lines.join("\n"), /could not calculate receipt identities/);
     assert.equal(existsSync(resolve(cwd, ".dev", "verification")), false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("imported verification rejects a runtime mismatch before creating artifacts", async () => {
+  const { cwd } = initRepo();
+  const lines = [];
+  try {
+    writeFileSync(resolve(cwd, "source.ts"), "export {};\n");
+    const result = await runVerification({
+      cwd,
+      env: { PATH: "" },
+      printer: (line) => lines.push(line),
+      runtime: {
+        actualVersion: "v99.0.0",
+        execPath: resolve(cwd, "wrong-node"),
+      },
+    });
+    assert.equal(result.code, 1);
+    assert.equal(result.runtimeMismatch, true);
+    assert.equal(existsSync(resolve(cwd, ".dev", "verification")), false);
+    assert.match(lines.join("\n"), /Expected: v20\.20\.0/);
+    assert.match(lines.join("\n"), /Actual: v99\.0\.0/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

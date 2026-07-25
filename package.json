@@ -20,7 +20,7 @@
     "dev:server": "cd apps/server && bun run start",
     "prod:desktop": "cd apps/desktop && bun run prod",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "node scripts/node-runtime.mjs && turbo run test",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "logs:tail": "node scripts/logs-tail.mjs",
@@ -33,10 +33,10 @@
     "sync:cursor-models": "bun apps/server/scripts/sync-cursor-models-snapshot.ts",
     "verify": "node scripts/agent/verify-tests.mjs --full",
     "verify:changed": "node scripts/agent/verify-tests.mjs",
-    "verify:e2e": "node scripts/agent/verify-e2e.mjs",
+    "verify:e2e": "node scripts/node-runtime.mjs && node scripts/agent/verify-e2e.mjs",
     "verify:all": "node scripts/agent/verify-all.mjs",
     "audit:baseline": "node scripts/security/check-bun-audit-baseline.mjs",
-    "test:scripts": "node --test scripts/agent/__tests__/*.test.mjs"
+    "test:scripts": "node scripts/node-runtime.mjs && node --test scripts/agent/__tests__/*.test.mjs"
   },
   "engines": {
     "node": "20.20.0"
