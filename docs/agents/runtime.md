@@ -59,13 +59,13 @@ After cross-package changes (function signatures, shared interfaces), typecheck 
 |------|---------|---------|
 | `bun` | Package manager + runtime | https://bun.sh |
 | `git` | Version control | https://git-scm.com |
-| `node` | Script execution, exact version 20.20.0 | https://nodejs.org |
+| `node` | Script execution, exact version 24.18.0 | https://nodejs.org |
 
 > **Note:** Electron bundles its own Node.js binary for the renderer/server process.
 > The system `node` is only needed for running scripts at the repo root.
 
 The repository records its exact Node.js requirement in `.node-version`. Use
-your Node version manager to install and select Node.js 20.20.0 before running
+your Node version manager to install and select Node.js 24.18.0 before running
 `bun install`, `bun run doctor`, or a verification command. Version managers
 that support `.node-version` can switch automatically when you enter the
 repository. The install and verification scripts stop before native or

@@ -14,7 +14,7 @@ AI agent orchestration desktop app. Run coding sessions across multiple provider
 
 ## Quick Start
 
-**Prerequisites:** [Bun](https://bun.sh/), [Git](https://git-scm.com/), and Node.js 20.20.0.
+**Prerequisites:** [Bun](https://bun.sh/), [Git](https://git-scm.com/), and Node.js 24.18.0.
 The exact Node.js version in [`.node-version`](.node-version) prevents native
 module ABI mismatches. Before installing dependencies, use your Node version
 manager to install and select that version. Version managers that support

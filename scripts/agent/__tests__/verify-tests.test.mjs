@@ -422,9 +422,9 @@ test("verification configuration changes content identity without changing test 
 test(".node-version changes verification content identity", () => {
   const { cwd } = initRepo();
   try {
-    writeFileSync(resolve(cwd, ".node-version"), "20.20.0\n");
+    writeFileSync(resolve(cwd, ".node-version"), "24.18.0\n");
     const first = calculateVerificationIdentities({ cwd, env: {} });
-    writeFileSync(resolve(cwd, ".node-version"), "20.20.1\n");
+    writeFileSync(resolve(cwd, ".node-version"), "24.18.1\n");
     const second = calculateVerificationIdentities({ cwd, env: {} });
     assert.notEqual(first.contentIdentity, second.contentIdentity);
   } finally {
@@ -543,7 +543,7 @@ test("imported verification rejects a runtime mismatch before creating artifacts
     assert.equal(result.code, 1);
     assert.equal(result.runtimeMismatch, true);
     assert.equal(existsSync(resolve(cwd, ".dev", "verification")), false);
-    assert.match(lines.join("\n"), /Expected: v20\.20\.0/);
+    assert.match(lines.join("\n"), /Expected: v24\.18\.0/);
     assert.match(lines.join("\n"), /Actual: v99\.0\.0/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });

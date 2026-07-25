@@ -39,7 +39,7 @@
     "test:scripts": "node scripts/node-runtime.mjs && node --test scripts/agent/__tests__/*.test.mjs"
   },
   "engines": {
-    "node": "20.20.0"
+    "node": "24.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",
