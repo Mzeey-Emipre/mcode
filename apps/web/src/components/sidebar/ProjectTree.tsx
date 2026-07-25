@@ -1804,7 +1804,7 @@ const ProjectNode = memo(function ProjectNode({
 });
 
 /**
- * Wraps {@link ProjectNode} with `@dnd-kit/sortable` transforms.
+ * Preserves project and thread rendering while applying sortable positioning.
  */
 const SortableProjectShell = memo(function SortableProjectShell(
   props: ProjectNodeProps & { sortableId: string },
