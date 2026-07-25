@@ -1,58 +1,31 @@
 import { useEffect, useRef } from "react";
+import {
+  BadgeCheck,
+  Gauge,
+  ListTodo,
+  Minimize2,
+  Plug,
+  Target,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Command, PopupState } from "./useSlashCommand";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 import { EntityIcon } from "./EntityToken";
-import { Button } from "@/components/ui/button";
 
-const ITEM_HEIGHT = 44; // px per row
+const ITEM_HEIGHT = 40;
 const VISIBLE_ITEMS = 8;
-const GROUP_HEADER_HEIGHT = 28;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
 const LIST_SURFACE_PADDING = 8;
 const LIST_BOTTOM_FADE_HEIGHT = 20;
-
-const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
-  mcode: "Mcode",
-  command: "Commands",
-  skill: "Skills",
-  plugin: "Plugins",
-};
+const NAMED_MCODE_CAPABILITIES = new Set(["goal", "plan", "ultra", "compact"]);
 
 function commandDisplayLabel(command: Command): string {
   if (command.capabilityKind === "plugin") return `@${command.name}`;
   if (command.namespace === "skill") return command.name;
   if (command.namespace === "plugin") return command.name.split(":").at(-1) ?? command.name;
   return `/${command.name}`;
-}
-
-function commandKindLabel(command: Command): string {
-  switch (command.capabilityKind) {
-    case "customPrompt": return "Prompt";
-    case "providerCommand": return "Command";
-    case "plugin": return "Plugin";
-    case "skill": return "Skill";
-    case "mcode": return "Mcode";
-  }
-}
-
-/** Preserve command ordering while exposing the source context of each command. */
-function groupCommands(
-  items: Command[],
-): Array<{ namespace: Command["namespace"]; items: Array<{ command: Command; index: number }> }> {
-  const groups: Array<{
-    namespace: Command["namespace"];
-    items: Array<{ command: Command; index: number }>;
-  }> = [];
-  for (const [index, command] of items.entries()) {
-    const current = groups.at(-1);
-    if (current?.namespace === command.namespace) {
-      current.items.push({ command, index });
-      continue;
-    }
-    groups.push({ namespace: command.namespace, items: [{ command, index }] });
-  }
-  return groups;
 }
 
 /** Props for the {@link SlashCommandPopup} component. */
@@ -75,6 +48,8 @@ interface SlashCommandPopupProps {
   tone?: "default" | "dark";
   /** Extra class names for border/positioning overrides that don't belong in tone. */
   className?: string;
+  /** Active workspace root used to identify local workspace skills. */
+  workspacePath?: string;
 }
 
 /**
@@ -94,13 +69,13 @@ export function SlashCommandPopup({
   onRetry,
   tone = "default",
   className,
+  workspacePath,
 }: SlashCommandPopupProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // The list-bearing states carry the items; all others render no list.
   const items: Command[] =
     state.kind === "ready" || state.kind === "staleRevalidating" ? state.items : [];
-  const commandGroups = groupCommands(items);
   const isOpen = state.kind !== "closed";
 
   // Scroll selected item into view
@@ -124,16 +99,13 @@ export function SlashCommandPopup({
 
   if (state.kind === "closed" || !anchorRect) return null;
 
-  const listMaxHeight =
-    VISIBLE_ITEMS * ITEM_HEIGHT +
-    Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT +
-    LIST_BOTTOM_FADE_HEIGHT;
+  const listMaxHeight = VISIBLE_ITEMS * ITEM_HEIGHT + LIST_BOTTOM_FADE_HEIGHT;
 
   // Estimate the rendered popup height before positioning. The scrollport is
   // inset from the surface so its native scrollbar clears the rounded corner.
   const willRenderList = state.kind === "ready" || state.kind === "staleRevalidating";
   const renderedListHeight = Math.min(
-    items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT + LIST_BOTTOM_FADE_HEIGHT,
+    items.length * ITEM_HEIGHT + LIST_BOTTOM_FADE_HEIGHT,
     listMaxHeight,
   );
   const estimatedHeight =
@@ -181,37 +153,16 @@ export function SlashCommandPopup({
                     style={{ maxHeight: listMaxHeight, scrollbarGutter: "stable" }}
                   >
                     <div className="pb-5">
-                      {commandGroups.map(({ namespace, items: groupItems }) => (
-                        <div
-                          key={namespace}
-                          role="group"
-                          aria-label={NAMESPACE_LABELS[namespace]}
-                          data-testid={`slash-command-group-${namespace}`}
-                        >
-                          <div
-                            data-slash-group-heading
-                            role="presentation"
-                            className={cn(
-                              "bg-popover px-2 py-1.5 text-xs font-medium text-foreground",
-                              tone === "dark" && "bg-[#1e1e1e] text-neutral-100",
-                            )}
-                          >
-                            {NAMESPACE_LABELS[namespace]}
-                          </div>
-                          {groupItems.map(({ command: cmd, index }) => {
-                            return (
-                              <div key={cmd.id} role="presentation" data-index={index}>
-                                <CommandRow
-                                  cmd={cmd}
-                                  index={index}
-                                  selected={index === selectedIndex}
-                                  onSelect={onSelect}
-                                  tone={tone}
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
+                      {items.map((cmd, index) => (
+                        <CommandRow
+                          key={cmd.id}
+                          cmd={cmd}
+                          index={index}
+                          selected={index === selectedIndex}
+                          onSelect={onSelect}
+                          tone={tone}
+                          origin={duplicateSkillOriginTag(cmd, items, workspacePath)}
+                        />
                       ))}
                     </div>
                   </div>
@@ -242,12 +193,14 @@ function CommandRow({
   selected,
   onSelect,
   tone = "default",
+  origin,
 }: {
   cmd: Command;
   index: number;
   selected: boolean;
   onSelect: (cmd: Command) => void;
   tone?: "default" | "dark";
+  origin?: "Local";
 }) {
   return (
     <Button
@@ -257,15 +210,19 @@ function CommandRow({
       id={`slash-cmd-${index}`}
       role="option"
       aria-selected={selected}
-      aria-label={cmd.capabilityKind === "plugin"
-        ? `${commandDisplayLabel(cmd)} Plugin ${cmd.description}`
-        : `${commandDisplayLabel(cmd)} ${cmd.description}`}
+      data-index={index}
+      aria-label={[
+        commandDisplayLabel(cmd),
+        cmd.capabilityKind === "plugin" ? "Plugin" : undefined,
+        cmd.description,
+        origin,
+      ].filter(Boolean).join(" ")}
       onMouseDown={(e) => {
         e.preventDefault(); // prevent textarea blur
         onSelect(cmd);
       }}
       className={cn(
-        "h-auto w-full justify-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+        "h-10 min-w-0 w-full justify-start gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left transition-colors",
         tone === "dark"
           ? selected
             ? "bg-white/[0.12]"
@@ -275,45 +232,125 @@ function CommandRow({
             : "hover:bg-accent/50",
       )}
     >
-      {/* Icon column */}
-      <span className={cn(
-        "flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset",
-        tone === "dark"
-          ? "bg-white/[0.06] text-neutral-400 ring-white/10"
-          : "bg-muted/65 text-muted-foreground ring-border/60",
-      )}>
-        <EntityIcon
-          kind={cmd.capabilityKind === "mcode" ? "mcode" : cmd.capabilityKind === "customPrompt" || cmd.capabilityKind === "providerCommand" ? "command" : cmd.capabilityKind}
-          size={14}
-          className="flex items-center justify-center"
-        />
-      </span>
-
-      {/* Name + description */}
-      <span className="flex min-w-0 flex-1 flex-col">
+      <CommandIdentityMark command={cmd} tone={tone} />
+      <span className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
         <span className={cn(
-          "truncate text-sm font-medium leading-4",
+          "min-w-0 shrink truncate text-sm font-medium",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
-          <span>{commandDisplayLabel(cmd)}</span>
-          <span className={cn(
-            "ml-2 text-xs font-medium uppercase tracking-wide",
-            tone === "dark" ? "text-neutral-500" : "text-muted-foreground",
-          )}>
-            {commandKindLabel(cmd)}
-          </span>
+          {commandDisplayLabel(cmd)}
         </span>
         <span className={cn(
-          "overflow-hidden whitespace-nowrap text-xs font-normal leading-4",
+          "min-w-12 flex-1 overflow-hidden whitespace-nowrap text-xs font-normal",
           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
         )} style={{
-          maskImage: "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+          maskImage: "linear-gradient(to right, black calc(100% - 2.5rem), transparent)",
+          WebkitMaskImage: "linear-gradient(to right, black calc(100% - 2.5rem), transparent)",
         }}>
           {cmd.description}
         </span>
       </span>
+      {origin && (
+        <Badge
+          variant="outline"
+          size="sm"
+          className={cn(tone === "dark" && "border-white/10 text-neutral-300")}
+        >
+          {origin}
+        </Badge>
+      )}
     </Button>
   );
+}
+
+function CommandIdentityMark({
+  command,
+  tone,
+}: {
+  command: Command;
+  tone: "default" | "dark";
+}) {
+  const semanticIcon =
+    command.name === "goal"
+      ? Target
+      : command.name === "plan"
+        ? ListTodo
+        : command.name === "ultra"
+          ? Gauge
+          : command.name === "compact"
+            ? Minimize2
+            : null;
+  const CapabilityIcon =
+    command.capabilityKind === "skill"
+      ? BadgeCheck
+      : command.capabilityKind === "plugin"
+        ? Plug
+        : null;
+  const Icon = CapabilityIcon ?? semanticIcon;
+
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "flex size-8 shrink-0 items-center justify-center rounded-md ring-1 ring-inset",
+        tone === "dark"
+          ? "bg-white/[0.06] text-neutral-400 ring-white/10"
+          : "bg-muted/65 text-muted-foreground ring-border/60",
+      )}
+    >
+      {Icon ? (
+        <Icon className="size-4" strokeWidth={2.2} />
+      ) : (
+        <EntityIcon
+          kind={
+            command.capabilityKind === "mcode" ||
+            NAMED_MCODE_CAPABILITIES.has(command.name)
+              ? "mcode"
+              : command.capabilityKind === "customPrompt" ||
+                  command.capabilityKind === "providerCommand"
+                ? "command"
+                : command.capabilityKind
+          }
+          size={14}
+          className="flex items-center justify-center"
+        />
+      )}
+    </span>
+  );
+}
+
+function duplicateSkillOriginTag(
+  command: Command,
+  commands: Command[],
+  workspacePath?: string,
+): "Local" | undefined {
+  if (
+    command.capabilityKind !== "skill" ||
+    !commands.some(
+      (candidate) =>
+        candidate.capabilityKind === "skill" &&
+        candidate.name === command.name &&
+        candidate.id !== command.id,
+    )
+  ) {
+    return undefined;
+  }
+
+  const nativePath = normalizePath(command.identity?.nativeId ?? command.nativeId);
+  const localSkillPath = workspacePath
+    ? `${normalizePath(workspacePath).replace(/\/+$/, "")}/.codex/skills/`
+    : undefined;
+  const isCodexSkillPath =
+    nativePath.startsWith(".codex/skills/") ||
+    nativePath.includes("/.codex/skills/");
+  return (localSkillPath !== undefined && nativePath.startsWith(localSkillPath)) ||
+    isCodexSkillPath
+    ? "Local"
+    : undefined;
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").toLowerCase();
 }
 
 /**

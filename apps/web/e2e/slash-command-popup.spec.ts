@@ -181,11 +181,24 @@ test.describe("Slash command popup", () => {
     expect(
       Math.abs((popupBox?.y ?? 0) + (popupBox?.height ?? 0) - (composerBox?.y ?? 0)),
     ).toBeLessThanOrEqual(2);
-    await expect(popup.getByText("/compact")).toBeVisible();
-    await expect(popup.getByText("brainstorming")).toBeVisible();
-    await expect(popup.getByText("hookify", { exact: true })).toBeVisible();
-    await expect(popup.getByTestId("slash-command-group-mcode")).toContainText("Mcode");
-    await expect(popup.getByTestId("slash-command-group-plugin")).toContainText("Plugins");
+    await expect(popup.locator('[data-testid^="slash-command-group-"]')).toHaveCount(0);
+    await expect(popup.getByText(/^(Mcode|Commands|Skills|Plugins)$/)).toHaveCount(0);
+    await expect(popup.getByRole("option", {
+      name: "/goal Attach Goal to the composer",
+      exact: true,
+    })).toBeVisible();
+    await expect(popup.getByRole("option", {
+      name: "/review-pr Review a pull request end-to-end",
+      exact: true,
+    })).toBeVisible();
+    await expect(popup.getByRole("option", {
+      name: "brainstorming Generate ideas creatively",
+      exact: true,
+    })).toBeVisible();
+    await expect(popup.getByRole("option", {
+      name: "hookify Configure hookify rules",
+      exact: true,
+    })).toBeVisible();
 
     await page.screenshot({
       path: "e2e/screenshots/slash-command/01-popup-open.png",
