@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useToastStore } from "@/stores/toastStore";
 import { Terminal } from "lucide-react";
 import { useTerminalStore, type TerminalInstance } from "@/stores/terminalStore";
-import { useSettingsStore } from "@/stores/settingsStore";
 import { getTransport } from "@/transport";
 import { Button } from "@/components/ui/button";
 import { TerminalList } from "./TerminalList";
 import { TerminalKillConfirmDialog } from "./TerminalKillConfirmDialog";
 
 const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
+
+type PendingClose =
+  | { readonly kind: "one"; readonly ptyId: string; readonly name: string; readonly trigger: HTMLButtonElement }
+  | { readonly kind: "all"; readonly name: string; readonly trigger: HTMLButtonElement };
 
 const {
   addTerminal: storeAddTerminal,
@@ -33,15 +36,15 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
   );
   const hasTerminals = terminals.length > 0;
 
-  const confirmOnKill = useSettingsStore((s) => s.settings.terminal.confirmOnKill);
-
-  const [pendingKill, setPendingKill] = useState<(() => void) | null>(null);
+  const [pendingKill, setPendingKill] = useState<PendingClose | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
   /** Bumped on thread change so stale async kill confirmations are ignored. */
   const opGenRef = useRef(0);
 
   useEffect(() => {
     opGenRef.current += 1;
     setPendingKill(null);
+    setIsClosing(false);
   }, [threadId]);
 
   /** Creates a new terminal for the thread. */
@@ -59,22 +62,22 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
   }, [threadId]);
 
   /** Immediate kill without guard. Waits for server RPC before evicting local state. */
-  const doCloseTerminal = useCallback(async (ptyId: string) => {
+  const doCloseTerminal = useCallback(async (ptyId: string): Promise<boolean> => {
     try {
       await getTransport().terminalKill(ptyId);
       storeRemoveTerminal(ptyId);
+      return true;
     } catch (err) {
       console.error("[terminal] Failed to kill terminal", ptyId, err);
+      return false;
     }
   }, [threadId]);
 
   /** Kill with optional confirmation. */
   const closeTerminal = useCallback(
-    (ptyId: string) => {
-      if (confirmOnKill === "never") {
-        void doCloseTerminal(ptyId);
-        return;
-      }
+    (ptyId: string, trigger: HTMLButtonElement) => {
+      const terminal = terminals.find((candidate) => candidate.id === ptyId);
+      if (!terminal) return;
       const opGen = opGenRef.current;
       getTransport()
         .terminalHasChildren(ptyId)
@@ -84,31 +87,31 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
             void doCloseTerminal(ptyId);
             return;
           }
-          setPendingKill(() => () => {
-            void doCloseTerminal(ptyId);
-          });
+          setPendingKill({ kind: "one", ptyId, name: terminal.label, trigger });
         })
         .catch(() => {
           if (opGen !== opGenRef.current) return;
-          void doCloseTerminal(ptyId);
+          setPendingKill({ kind: "one", ptyId, name: terminal.label, trigger });
         });
     },
-    [confirmOnKill, doCloseTerminal],
+    [terminals, doCloseTerminal],
   );
 
   /** Immediate kill-all without guard. Waits for server RPC before evicting local state. */
-  const doCloseAllTerminals = useCallback(async () => {
+  const doCloseAllTerminals = useCallback(async (): Promise<boolean> => {
     try {
       await getTransport().terminalKillByThread(threadId);
       removeAllTerminals(threadId);
+      return true;
     } catch (err) {
       console.error("[terminal] Failed to kill terminals for thread", threadId, err);
+      return false;
     }
   }, [threadId]);
 
   /** Kill-all with optional confirmation. */
-  const closeAllTerminals = useCallback(() => {
-    if (confirmOnKill === "never" || terminals.length === 0) {
+  const closeAllTerminals = useCallback((trigger: HTMLButtonElement) => {
+    if (terminals.length === 0) {
       void doCloseAllTerminals();
       return;
     }
@@ -127,25 +130,38 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
         void doCloseAllTerminals();
         return;
       }
-      setPendingKill(() => () => {
-        void doCloseAllTerminals();
-      });
+      setPendingKill({ kind: "all", name: `${terminals.length} terminals`, trigger });
     });
-  }, [confirmOnKill, terminals, doCloseAllTerminals]);
+  }, [terminals, doCloseAllTerminals]);
 
-  const confirmKill = useCallback(() => {
-    pendingKill?.();
-    setPendingKill(null);
-  }, [pendingKill]);
+  const confirmKill = useCallback(async () => {
+    if (!pendingKill || isClosing) return;
+    const operation = pendingKill;
+    setIsClosing(true);
+    try {
+      const closed = operation.kind === "one"
+        ? await doCloseTerminal(operation.ptyId)
+        : await doCloseAllTerminals();
+      if (closed) {
+        setPendingKill((current) => current === operation ? null : current);
+      }
+    } finally {
+      setIsClosing(false);
+    }
+  }, [pendingKill, isClosing, doCloseTerminal, doCloseAllTerminals]);
 
   const cancelKill = useCallback(() => {
+    const trigger = pendingKill?.trigger ?? null;
     setPendingKill(null);
-  }, []);
+    window.setTimeout(() => trigger?.focus(), 0);
+  }, [pendingKill]);
 
   return (
     <>
       <TerminalKillConfirmDialog
         open={pendingKill !== null}
+        targetName={pendingKill?.name ?? "terminal"}
+        pending={isClosing}
         onConfirm={confirmKill}
         onCancel={cancelKill}
       />

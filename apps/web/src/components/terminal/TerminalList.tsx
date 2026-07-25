@@ -10,9 +10,9 @@ const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
 /** Props for the terminal sidebar. */
 interface TerminalListProps {
   readonly threadId: string;
-  readonly onClose: (ptyId: string) => void;
+  readonly onClose: (ptyId: string, trigger: HTMLButtonElement) => void;
   readonly onAdd: () => void;
-  readonly onDeleteAll: () => void;
+  readonly onDeleteAll: (trigger: HTMLButtonElement) => void;
 }
 
 // Stable action refs.
@@ -149,7 +149,7 @@ export const TerminalList = memo(function TerminalList({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                onClick={onDeleteAll}
+                onClick={(event) => onDeleteAll(event.currentTarget)}
                 className="text-muted-foreground hover:text-foreground"
                 aria-label="Kill all terminals"
               />
@@ -196,7 +196,7 @@ export const TerminalList = memo(function TerminalList({
                 variant="ghost"
                 size="icon-xs"
                 className="shrink-0 bg-transparent opacity-0 transition-opacity hover:bg-transparent active:translate-y-0 active:bg-transparent focus-visible:opacity-100 group-hover:opacity-60"
-                onClick={() => onClose(terminal.id)}
+                onClick={(event) => onClose(terminal.id, event.currentTarget)}
                 aria-label={`Close ${terminal.label}`}
               >
                 <X />

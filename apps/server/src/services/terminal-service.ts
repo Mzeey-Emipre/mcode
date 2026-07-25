@@ -20,6 +20,10 @@ import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitService } from "./git-service";
 import type { SettingsService } from "./settings-service";
 import { EnvService } from "./env-service.js";
+import {
+  WindowsProcessScopeFactory,
+  type WindowsProcessScope,
+} from "./windows-process-scope.js";
 
 // createRequire lets us load native CJS modules (node-pty) from both ESM
 // (Bun running `src/index.ts`) and the CJS production / dev bundle.
@@ -65,6 +69,11 @@ interface PtySession {
   readonly pty: IPty;
   readonly dataDisposable: IDisposable;
   readonly exitDisposable: IDisposable;
+  status: "running" | "closing";
+  pendingExit: { readonly exitCode: number; readonly signal?: number } | null;
+  closePromise: Promise<void> | null;
+  readonly processScope: WindowsProcessScope;
+  readonly processScopeReady: Promise<boolean>;
 }
 
 /** Callbacks for streaming PTY output and exit events to connected clients. */
@@ -115,6 +124,7 @@ export class TerminalService {
     @inject(EnvService) private readonly envService: EnvService,
     @inject("PtyPidRegistry") private readonly pidRegistry: PtyPidRegistry,
     @inject("JobObject") private readonly jobObject: import("./job-object.js").JobObject,
+    private readonly processScopeFactory: WindowsProcessScopeFactory = new WindowsProcessScopeFactory(),
   ) {
     // Keep server-side scrollback retention in sync with the terminal.scrollback
     // setting: when the user changes it, resize all live replay buffers so
@@ -254,7 +264,48 @@ export class TerminalService {
     // on Windows, which can spawn processes with CREATE_BREAKAWAY_FROM_JOB,
     // so explicit assignment is needed — inheritance alone is not sufficient.
     // Best-effort: no-op on non-Windows or if JobObject failed to init.
-    this.jobObject.assign(pty.pid);
+    const processScope = this.processScopeFactory.create();
+    let processScopeReady = Promise.resolve(false);
+    const globalAssigned = this.jobObject.assign(pty.pid);
+    if (process.platform === "win32" && (!globalAssigned || !processScope.ready)) {
+      logger.warn("PTY process scope unavailable; close will use process-tree fallback", {
+        id,
+        pid: pty.pid,
+        reason: !globalAssigned ? "global-job-assignment-failed" : "child-job-init-failed",
+      });
+      processScope.close();
+    } else if (process.platform === "win32") {
+      const assignment = processScope.assign(pty.pid);
+      if (!assignment.ok) {
+        logger.warn("PTY process scope assignment failed; close will use process-tree fallback", {
+          id,
+          pid: pty.pid,
+          error: assignment.error,
+        });
+        processScope.close();
+      } else {
+        processScopeReady = processScope.reconcile(pty.pid).then(
+          (result) => {
+            if (!result.ok) {
+              logger.warn("PTY process scope reconciliation failed; close will use process-tree fallback", {
+                id,
+                pid: pty.pid,
+                error: result.error,
+              });
+            }
+            return result.ok;
+          },
+          (error: unknown) => {
+            logger.warn("PTY process scope reconciliation failed; close will use process-tree fallback", {
+              id,
+              pid: pty.pid,
+              error: describeError(error),
+            });
+            return false;
+          },
+        );
+      }
+    }
     this.jobObject.setDescription(pty.pid, `Mcode Terminal: ${shellBasename(shell)}`);
 
     const dataDisposable = pty.onData((data: string) => {
@@ -271,17 +322,13 @@ export class TerminalService {
     });
 
     const exitDisposable = pty.onExit(({ exitCode, signal }) => {
-      logger.info("PTY exited", {
-        id,
-        pid: pty.pid,
-        scopeId,
-        shell,
-        cwd,
-        exitCode,
-        signal,
-      });
-      this.sender?.json("terminal.exit", { ptyId: id, code: exitCode });
-      this.removePty(id);
+      const current = this.sessions.get(id);
+      if (!current) return;
+      if (current.status === "closing") {
+        current.pendingExit = { exitCode, signal };
+        return;
+      }
+      this.handleNaturalExit(current, { exitCode, signal });
     });
 
     const session: PtySession = {
@@ -292,6 +339,11 @@ export class TerminalService {
       pty,
       dataDisposable,
       exitDisposable,
+      status: "running",
+      pendingExit: null,
+      closePromise: null,
+      processScope,
+      processScopeReady,
     };
     this.sessions = new Map([...this.sessions, [id, session]]);
 
@@ -381,18 +433,27 @@ export class TerminalService {
   }
 
   /** Kill a single PTY session. No-op if the ID is unknown. */
-  async kill(ptyId: string): Promise<void> {
+  async kill(
+    ptyId: string,
+    reason: "user-requested-process-tree-close" | "app-shutdown" =
+      "user-requested-process-tree-close",
+  ): Promise<void> {
     const session = this.sessions.get(ptyId);
     if (!session) return;
+    if (session.status === "closing" && session.closePromise) {
+      return session.closePromise;
+    }
     logger.info("PTY kill requested", {
       id: session.id,
       pid: session.pty.pid,
       threadId: session.threadId,
       shell: session.shell,
-      cwd: session.cwd,
+      reason,
     });
-    await this.destroyPty(session);
-    this.removePty(ptyId);
+    session.status = "closing";
+    const closePromise = this.closePty(session);
+    session.closePromise = closePromise;
+    return closePromise;
   }
 
   /** Kill all PTY sessions for a given thread, concurrently. */
@@ -407,7 +468,9 @@ export class TerminalService {
   /** Kill all PTY sessions across all threads. */
   async shutdown(): Promise<void> {
     this.unsubscribeSettings();
-    await Promise.all([...this.sessions.keys()].map((ptyId) => this.kill(ptyId)));
+    await Promise.all(
+      [...this.sessions.keys()].map((ptyId) => this.kill(ptyId, "app-shutdown")),
+    );
     this.pidRegistry.clear();
   }
 
@@ -494,68 +557,146 @@ export class TerminalService {
     const session = this.sessions.get(ptyId);
     if (!session) throw new Error(`PTY not found: ${ptyId}`);
 
-    let children: Array<{ name: string; pid: number }>;
-    try {
-      children = await listDirectChildren(session.pty.pid);
-    } catch {
-      return { hasChildren: false };
+    await this.awaitProcessScopeAuthority(session, 500);
+    if (process.platform === "win32" && session.processScope.ownsProcessTree) {
+      const snapshot = session.processScope.queryProcessIds();
+      if (snapshot.ok && !snapshot.overflow) {
+        return {
+          hasChildren: snapshot.processIds.some((pid) => pid !== session.pty.pid),
+        };
+      }
     }
 
-    const nonShellChildren = children.filter((child) => {
-      const basename = child.name.toLowerCase().split(/[\\/]/).pop() ?? child.name.toLowerCase();
-      return !SHELL_BASENAMES.has(basename);
-    });
-
-    return { hasChildren: nonShellChildren.length > 0 };
+    const pending = [session.pty.pid];
+    const visited = new Set<number>();
+    try {
+      while (pending.length > 0 && visited.size < 128) {
+        const parentPid = pending.shift()!;
+        if (visited.has(parentPid)) continue;
+        visited.add(parentPid);
+        const children = await listDirectChildren(parentPid);
+        for (const child of children) {
+          const basename =
+            child.name.toLowerCase().split(/[\\/]/).pop() ?? child.name.toLowerCase();
+          if (!SHELL_BASENAMES.has(basename)) return { hasChildren: true };
+          pending.push(child.pid);
+        }
+      }
+      return { hasChildren: pending.length > 0 };
+    } catch (err) {
+      logger.warn("Failed to inspect PTY process tree", {
+        id: session.id,
+        pid: session.pty.pid,
+        threadId: session.threadId,
+        error: describeError(err),
+      });
+      return { hasChildren: true };
+    }
   }
 
-  private async destroyPty(session: PtySession): Promise<void> {
-    try {
-      session.dataDisposable.dispose();
-    } catch (err) {
-      logger.warn("Failed to dispose data listener", {
-        id: session.id,
-        pid: session.pty.pid,
-        threadId: session.threadId,
-        error: describeError(err),
-      });
+  private async closePty(session: PtySession): Promise<void> {
+    // Terminate the operating-system process tree while the root PID still
+    // identifies its descendants. Closing ConPTY first can orphan children.
+    if (this.useGracefulKill) {
+      await gracefulKillProcessTree(session.pty.pid);
+    } else if (
+      process.platform === "win32" &&
+      await this.awaitProcessScopeAuthority(session, 500) &&
+      session.processScope.ownsProcessTree
+    ) {
+      const terminated = session.processScope.terminate(1);
+      const emptied = terminated.ok
+        ? await session.processScope.waitForEmpty(1_900)
+        : terminated;
+      if (!terminated.ok || !emptied.ok) {
+        session.status = "running";
+        session.closePromise = null;
+        if (session.pendingExit) this.handleNaturalExit(session, session.pendingExit);
+        throw new Error(terminated.error ?? emptied.error ?? "Windows process scope termination failed");
+      }
+    } else {
+      try {
+        await killProcessTree(session.pty.pid);
+      } catch (err) {
+        session.status = "running";
+        session.closePromise = null;
+        if (session.pendingExit) {
+          this.handleNaturalExit(session, session.pendingExit);
+        }
+        throw err;
+      }
     }
-    try {
-      session.exitDisposable.dispose();
-    } catch (err) {
-      logger.warn("Failed to dispose exit listener", {
-        id: session.id,
-        pid: session.pty.pid,
-        threadId: session.threadId,
-        error: describeError(err),
-      });
-    }
-    // node-pty owns the ConPTY process-tree shutdown on Windows. Windows PTYs
-    // are spawned with useConptyDll so this call closes the pseudo console
-    // directly without launching node-pty's fragile console-list helper.
-    let ptyKillSucceeded = false;
+
     try {
       session.pty.kill();
-      ptyKillSucceeded = true;
     } catch (err) {
       logger.warn("Failed to kill PTY process", {
         id: session.id,
         pid: session.pty.pid,
         threadId: session.threadId,
         shell: session.shell,
-        cwd: session.cwd,
         error: describeError(err),
       });
     }
-    if (process.platform === "win32" && ptyKillSucceeded) return;
+    this.finalizePty(session);
+  }
 
-    // Unix uses the existing process-tree fallback. Windows reaches this path
-    // only when node-pty could not begin its own process-tree shutdown.
-    if (this.useGracefulKill) {
-      await gracefulKillProcessTree(session.pty.pid);
-    } else {
-      await killProcessTree(session.pty.pid);
+  private async awaitProcessScopeAuthority(
+    session: PtySession,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (process.platform !== "win32") return false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        session.processScopeReady,
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => resolve(false), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
     }
+  }
+
+  private handleNaturalExit(
+    session: PtySession,
+    exit: { readonly exitCode: number; readonly signal?: number },
+  ): void {
+    logger.info("PTY exited", {
+      id: session.id,
+      pid: session.pty.pid,
+      scopeId: session.threadId,
+      shell: session.shell,
+      exitCode: exit.exitCode,
+      signal: exit.signal,
+      reason: "natural-exit",
+    });
+    this.finalizePty(session, exit.exitCode);
+  }
+
+  private finalizePty(session: PtySession, exitCode?: number): void {
+    if (!this.sessions.has(session.id)) return;
+    for (const [label, disposable] of [
+      ["data", session.dataDisposable],
+      ["exit", session.exitDisposable],
+    ] as const) {
+      try {
+        disposable.dispose();
+      } catch (err) {
+        logger.warn(`Failed to dispose ${label} listener`, {
+          id: session.id,
+          pid: session.pty.pid,
+          threadId: session.threadId,
+          error: describeError(err),
+        });
+      }
+    }
+    if (exitCode !== undefined) {
+      this.sender?.json("terminal.exit", { ptyId: session.id, code: exitCode });
+    }
+    this.removePty(session.id);
+    session.processScope.close();
   }
 
   private removePty(ptyId: string): void {

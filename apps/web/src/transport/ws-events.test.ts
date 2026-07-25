@@ -12,6 +12,8 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useTerminalStore } from "@/stores/terminalStore";
+import { onPtyExit } from "@/components/terminal/ptyDataRegistry";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -191,5 +193,35 @@ describe("ws-events turn.persisted Review invalidation", () => {
       filesChanged: ["src/changed.ts"],
     });
     expect(useDiffStore.getState().diffRevisionByScope["thread-1"]).toBe(1);
+  });
+});
+
+describe("ws-events terminal.exit", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.useRealTimers();
+  });
+
+  it("reports a natural exit before removing its terminal after two seconds", () => {
+    vi.useFakeTimers();
+    useTerminalStore.setState({
+      terminals: {
+        "thread-1": [{ id: "pty-1", threadId: "thread-1", label: "PowerShell" }],
+      },
+      ptyToThread: { "pty-1": "thread-1" },
+    });
+    const onExit = vi.fn();
+    const unsubscribe = onPtyExit("pty-1", onExit);
+    startPushListeners();
+
+    pushEmitter.emit("terminal.exit", { ptyId: "pty-1", code: 7 });
+
+    expect(onExit).toHaveBeenCalledWith({ ptyId: "pty-1", code: 7 });
+    expect(useTerminalStore.getState().terminals["thread-1"]).toHaveLength(1);
+    vi.advanceTimersByTime(1_999);
+    expect(useTerminalStore.getState().terminals["thread-1"]).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(useTerminalStore.getState().terminals["thread-1"]).toBeUndefined();
+    unsubscribe();
   });
 });
