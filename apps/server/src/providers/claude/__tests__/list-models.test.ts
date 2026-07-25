@@ -133,8 +133,10 @@ describe("listClaudeModels", () => {
   it("returns the static catalog when the request is rejected", async () => {
     fetchSpy.mockRejectedValueOnce(new Error("network unavailable"));
     const result = await listClaudeModels();
+    await listClaudeModels();
     expect(result).toHaveLength(8);
     expect(result[0]?.id).toBe("claude-opus-5");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("returns the static catalog on a non-OK response", async () => {
@@ -144,8 +146,10 @@ describe("listClaudeModels", () => {
       statusText: "Unauthorized",
     });
     const result = await listClaudeModels();
+    await listClaudeModels();
     expect(result).toHaveLength(8);
     expect(result[0]?.id).toBe("claude-opus-5");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("returns the static catalog when the response contains invalid JSON", async () => {
@@ -156,6 +160,18 @@ describe("listClaudeModels", () => {
     const result = await listClaudeModels();
     expect(result).toHaveLength(8);
     expect(result[0]?.id).toBe("claude-opus-5");
+  });
+
+  it("retries discovery after the cached failure fallback expires", async () => {
+    fetchSpy.mockRejectedValueOnce(new Error("network unavailable"));
+    await listClaudeModels();
+
+    const dateSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5 * 60 * 1001);
+    const result = await listClaudeModels();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(10);
+    dateSpy.mockRestore();
   });
 
   it("returns cached result on second call without re-fetching", async () => {

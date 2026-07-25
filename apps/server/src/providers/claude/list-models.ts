@@ -114,7 +114,10 @@ async function fetchModels(): Promise<ProviderModelInfo[]> {
     logger.warn("Claude model discovery failed; using static catalog", {
       errorName: error instanceof Error ? error.name : "UnknownError",
     });
-    return [...CLAUDE_STATIC_MODELS];
+    const fallbackModels = [...CLAUDE_STATIC_MODELS];
+    cachedModels = fallbackModels;
+    cacheTimestamp = Date.now();
+    return fallbackModels;
   }
 }
 
