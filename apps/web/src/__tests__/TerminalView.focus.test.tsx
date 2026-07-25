@@ -21,6 +21,7 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 const bufferActive = { viewportY: 42, length: 100 };
 
 let onDataListener: ((data: string) => void) | null = null;
+let serializedScreen = "serialized-screen";
 type RestoreResult =
   | { mode: "delta" }
   | { mode: "checkpoint"; checkpoint: string; checkpointThrough: number }
@@ -82,7 +83,7 @@ vi.mock("@xterm/addon-fit", () => {
 
 vi.mock("@xterm/addon-serialize", () => ({
   SerializeAddon: class {
-    serialize = vi.fn(() => "serialized-screen");
+    serialize = vi.fn(() => serializedScreen);
   },
 }));
 
@@ -112,6 +113,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     term.options.disableStdin = false;
     vi.clearAllMocks();
     onDataListener = null;
+    serializedScreen = "serialized-screen";
     term.write.mockImplementation((_data: string | Uint8Array, cb?: () => void) => cb?.());
     // clearAllMocks resets call history but keeps implementations.
     transport.terminalReattach.mockResolvedValue({ mode: "delta" });
@@ -192,12 +194,103 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     });
 
     view.unmount();
+    await settle();
 
     expect(transport.terminalCheckpoint).toHaveBeenCalledWith(
       "pty-cold",
       7,
       "serialized-screen",
     );
+  });
+
+  it("waits for a replay batch to paint before checkpointing and disposing", async () => {
+    let finishWrite: (() => void) | undefined;
+    let resolveReattach: (value: { mode: "delta" }) => void = () => {};
+    transport.terminalReattach.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveReattach = resolve;
+      }),
+    );
+    term.write.mockImplementation((data: string | Uint8Array, cb?: () => void) => {
+      if (data instanceof Uint8Array) {
+        finishWrite = () => {
+          cb?.();
+        };
+        return;
+      }
+      cb?.();
+    });
+
+    const view = render(
+      <TerminalView ptyId="pty-cold" visible={true} threadActive={true} />,
+    );
+    await settle();
+    act(() => {
+      emitPtyData({
+        ptyId: "pty-cold",
+        seq: 7,
+        payload: new TextEncoder().encode("painted"),
+      });
+      resolveReattach({ mode: "delta" });
+    });
+    await settle();
+
+    view.unmount();
+
+    expect(transport.terminalCheckpoint).not.toHaveBeenCalled();
+    expect(term.dispose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      serializedScreen = "painted";
+      finishWrite?.();
+    });
+    await settle();
+
+    expect(transport.terminalCheckpoint).toHaveBeenCalledWith(
+      "pty-cold",
+      7,
+      "painted",
+    );
+    expect(term.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("waits for a boundary write before checkpointing and disposing", async () => {
+    let finishBoundaryWrite: (() => void) | undefined;
+    term.write.mockImplementation((data: string | Uint8Array, cb?: () => void) => {
+      if (typeof data === "string" && data.includes("Process exited")) {
+        finishBoundaryWrite = () => {
+          serializedScreen = data;
+          cb?.();
+        };
+        return;
+      }
+      cb?.();
+    });
+
+    const view = render(
+      <TerminalView ptyId="pty-exit" visible={true} threadActive={true} />,
+    );
+    await settle();
+    act(() => {
+      emitPtyExit({ ptyId: "pty-exit", code: 1 });
+    });
+
+    view.unmount();
+
+    expect(transport.terminalCheckpoint).not.toHaveBeenCalled();
+    expect(term.dispose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishBoundaryWrite?.();
+    });
+    await settle();
+
+    expect(transport.terminalCheckpoint).toHaveBeenCalledWith(
+      "pty-exit",
+      -1,
+      expect.stringContaining("Process exited with code 1"),
+    );
+    expect(term.dispose).toHaveBeenCalledOnce();
   });
 
   it("writes a serialized checkpoint before its contiguous delta", async () => {
