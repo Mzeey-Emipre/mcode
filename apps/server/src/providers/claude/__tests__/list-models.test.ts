@@ -130,13 +130,32 @@ describe("listClaudeModels", () => {
     });
   });
 
-  it("throws on non-OK response", async () => {
+  it("returns the static catalog when the request is rejected", async () => {
+    fetchSpy.mockRejectedValueOnce(new Error("network unavailable"));
+    const result = await listClaudeModels();
+    expect(result).toHaveLength(8);
+    expect(result[0]?.id).toBe("claude-opus-5");
+  });
+
+  it("returns the static catalog on a non-OK response", async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: false,
       status: 401,
       statusText: "Unauthorized",
     });
-    await expect(listClaudeModels()).rejects.toThrow("401");
+    const result = await listClaudeModels();
+    expect(result).toHaveLength(8);
+    expect(result[0]?.id).toBe("claude-opus-5");
+  });
+
+  it("returns the static catalog when the response contains invalid JSON", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.reject(new SyntaxError("invalid JSON")),
+    });
+    const result = await listClaudeModels();
+    expect(result).toHaveLength(8);
+    expect(result[0]?.id).toBe("claude-opus-5");
   });
 
   it("returns cached result on second call without re-fetching", async () => {

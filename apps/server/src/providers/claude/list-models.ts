@@ -72,45 +72,50 @@ async function fetchModels(): Promise<ProviderModelInfo[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     // The Claude Agent SDK uses its own auth mechanism, so this env var
-    // is often absent. Return empty and let the static registry provide
-    // model data instead of surfacing an error to the user.
+    // is often absent. Return the complete static catalog instead of
+    // surfacing an error to the user.
     logger.debug("ANTHROPIC_API_KEY not set, skipping models API fetch");
     return [...CLAUDE_STATIC_MODELS];
   }
 
-  // limit=100 covers all current Claude models without pagination.
-  // Anthropic has far fewer than 100 Claude models at present, so we
-  // intentionally do not follow has_more / last_id pagination.
-  const res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
-    signal: AbortSignal.timeout(10_000),
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-  });
+  try {
+    // limit=100 covers all current Claude models without pagination.
+    // Anthropic has far fewer than 100 Claude models at present, so we
+    // intentionally do not follow has_more / last_id pagination.
+    const res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+    });
 
-  if (!res.ok) {
-    throw new Error(
-      `Anthropic Models API returned ${res.status} ${res.statusText}`,
-    );
+    if (!res.ok) {
+      throw new Error("Anthropic Models API returned a non-OK response");
+    }
+
+    const body = (await res.json()) as AnthropicModelsResponse;
+
+    const models = mergeStaticCatalog(body.data
+      .filter((m) => m.id.startsWith("claude-"))
+      .map((m) => ({
+        id: m.id,
+        name: m.display_name,
+        contextWindow: m.max_input_tokens ?? undefined,
+      })));
+
+    cachedModels = models;
+    cacheTimestamp = Date.now();
+
+    logger.debug("Fetched Claude models from API", { count: models.length });
+
+    return models;
+  } catch (error) {
+    logger.warn("Claude model discovery failed; using static catalog", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    return [...CLAUDE_STATIC_MODELS];
   }
-
-  const body = (await res.json()) as AnthropicModelsResponse;
-
-  const models = mergeStaticCatalog(body.data
-    .filter((m) => m.id.startsWith("claude-"))
-    .map((m) => ({
-      id: m.id,
-      name: m.display_name,
-      contextWindow: m.max_input_tokens ?? undefined,
-    })));
-
-  cachedModels = models;
-  cacheTimestamp = Date.now();
-
-  logger.debug("Fetched Claude models from API", { count: models.length });
-
-  return models;
 }
 
 /**
