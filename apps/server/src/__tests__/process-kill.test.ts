@@ -31,6 +31,10 @@ function stableThenGone(stableReads = 2): (pid: number) => Promise<string | null
   return async (pid) => ++reads <= stableReads ? `start-${pid}` : null;
 }
 
+const ROOT_SNAPSHOT = [
+  { pid: 1234, parentPid: 1, startMarker: "root", name: "pwsh.exe" },
+] as const;
+
 describe("killProcessTree", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -46,7 +50,8 @@ describe("killProcessTree", () => {
       await killProcessTree(1234, {
         platform: "win32",
         execFile: mockExecFile,
-        getProcessStartMarker: stableThenGone(),
+        getWindowsProcessSnapshot: vi.fn().mockResolvedValue(ROOT_SNAPSHOT),
+        isProcessAlive: () => false,
       });
 
       expect(mockExecFile).toHaveBeenCalledWith(
@@ -64,14 +69,13 @@ describe("killProcessTree", () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
     try {
-      mockExecFile
-        .mockResolvedValueOnce({ stdout: "", stderr: "" })
-        .mockRejectedValueOnce(new Error("process not found"));
+      mockExecFile.mockRejectedValue(new Error("process not found"));
 
       await expect(killProcessTree(1234, {
         platform: "win32",
         execFile: mockExecFile,
-        getProcessStartMarker: stableThenGone(),
+        getWindowsProcessSnapshot: vi.fn().mockResolvedValue(ROOT_SNAPSHOT),
+        isProcessAlive: () => false,
       })).rejects.toThrow("process not found");
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         expect.any(String),
@@ -251,13 +255,18 @@ describe("killProcessTree", () => {
 
   it("does not taskkill a Windows root after the captured root is replaced", async () => {
     mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
-    let markerRead = 0;
+    const snapshot = vi.fn()
+      .mockResolvedValueOnce(ROOT_SNAPSHOT)
+      .mockResolvedValueOnce([
+        { pid: 1234, parentPid: 1, startMarker: "replacement", name: "other.exe" },
+      ]);
 
     await killProcessTree(1234, {
       platform: "win32",
       processKill: vi.fn(),
       execFile: mockExecFile,
-      getProcessStartMarker: async () => ++markerRead === 1 ? "original" : "replacement",
+      getWindowsProcessSnapshot: snapshot,
+      isProcessAlive: () => false,
     });
 
     expect(mockExecFile).not.toHaveBeenCalledWith(
@@ -265,6 +274,119 @@ describe("killProcessTree", () => {
       expect.arrayContaining(["1234"]),
       expect.any(Object),
     );
+  });
+
+  it("captures a multi-process Windows tree with one snapshot", async () => {
+    const snapshot = vi.fn()
+      .mockResolvedValueOnce([
+        { pid: 1234, parentPid: 1, startMarker: "root", name: "pwsh.exe" },
+        { pid: 2345, parentPid: 1234, startMarker: "child", name: "node.exe" },
+        { pid: 3456, parentPid: 2345, startMarker: "grandchild", name: "cmd.exe" },
+      ])
+      .mockResolvedValueOnce([
+        { pid: 1234, parentPid: 1, startMarker: "root", name: "pwsh.exe" },
+        { pid: 2345, parentPid: 1234, startMarker: "child", name: "node.exe" },
+        { pid: 3456, parentPid: 2345, startMarker: "grandchild", name: "cmd.exe" },
+      ]);
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+
+    await killProcessTree(1234, {
+      platform: "win32",
+      execFile: mockExecFile,
+      getWindowsProcessSnapshot: snapshot,
+      isProcessAlive: () => false,
+    });
+
+    expect(snapshot).toHaveBeenCalledTimes(2);
+    expect(mockExecFile).toHaveBeenCalledWith(
+      "taskkill",
+      ["/T", "/F", "/PID", "1234"],
+      expect.any(Object),
+    );
+  });
+
+  it("verifies multiple already-gone Windows identities without marker CIM commands", async () => {
+    const snapshot = vi.fn().mockResolvedValue([
+      { pid: 1234, parentPid: 1, startMarker: "root", name: "pwsh.exe" },
+      { pid: 2345, parentPid: 1234, startMarker: "child", name: "node.exe" },
+    ]);
+    mockExecFile.mockResolvedValue({ stdout: "", stderr: "" });
+
+    await killProcessTree(1234, {
+      platform: "win32",
+      execFile: mockExecFile,
+      getWindowsProcessSnapshot: snapshot,
+      isProcessAlive: () => false,
+    });
+
+    expect(
+      mockExecFile.mock.calls.filter(([command]) => command === "powershell.exe"),
+    ).toEqual([]);
+    expect(snapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it("classifies Windows survivors and reused PIDs with one post-kill snapshot", async () => {
+    const snapshot = vi.fn()
+      .mockResolvedValueOnce([
+        { pid: 1234, parentPid: 1, startMarker: "root", name: "pwsh.exe" },
+        { pid: 2345, parentPid: 1234, startMarker: "child", name: "node.exe" },
+        { pid: 3456, parentPid: 1234, startMarker: "old", name: "cmd.exe" },
+      ])
+      .mockResolvedValueOnce([
+        { pid: 1234, parentPid: 1, startMarker: "root", name: "pwsh.exe" },
+        { pid: 2345, parentPid: 1234, startMarker: "child", name: "node.exe" },
+        { pid: 3456, parentPid: 1234, startMarker: "old", name: "cmd.exe" },
+      ])
+      .mockResolvedValueOnce([
+        { pid: 2345, parentPid: 1, startMarker: "child", name: "node.exe" },
+        { pid: 3456, parentPid: 1, startMarker: "replacement", name: "other.exe" },
+      ]);
+    const apparentlyAlive = new Set<number>();
+    mockExecFile.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "taskkill" && args.includes("/T")) {
+        apparentlyAlive.add(2345);
+        apparentlyAlive.add(3456);
+      }
+      if (command === "taskkill" && args.includes("/F") && !args.includes("/T")) {
+        apparentlyAlive.delete(Number(args.at(-1)));
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    await killProcessTree(1234, {
+      platform: "win32",
+      execFile: mockExecFile,
+      getWindowsProcessSnapshot: snapshot,
+      isProcessAlive: (pid) => apparentlyAlive.has(pid),
+    });
+
+    expect(snapshot).toHaveBeenCalledTimes(3);
+    expect(mockExecFile).toHaveBeenCalledWith(
+      "taskkill",
+      ["/F", "/PID", "2345"],
+      expect.any(Object),
+    );
+    expect(mockExecFile).not.toHaveBeenCalledWith(
+      "taskkill",
+      ["/F", "/PID", "3456"],
+      expect.any(Object),
+    );
+  });
+
+  it("treats a missing Windows process after taskkill as successful termination", async () => {
+    const snapshot = vi.fn().mockResolvedValue([
+      { pid: 1234, parentPid: 1, startMarker: "root", name: "pwsh.exe" },
+    ]);
+    mockExecFile.mockRejectedValue(
+      Object.assign(new Error("not found"), { code: 128 }),
+    );
+
+    await expect(killProcessTree(1234, {
+      platform: "win32",
+      execFile: mockExecFile,
+      getWindowsProcessSnapshot: snapshot,
+      isProcessAlive: () => false,
+    })).resolves.toBeUndefined();
   });
 
   it("rejects when a captured process remains after the verification timeout", async () => {
@@ -303,7 +425,8 @@ describe("killProcessTree", () => {
       platform: "win32",
       processKill,
       execFile: mockExecFile,
-      getProcessStartMarker: stableThenGone(),
+      getWindowsProcessSnapshot: vi.fn().mockResolvedValue(ROOT_SNAPSHOT),
+      isProcessAlive: () => false,
     });
 
     expect(mockExecFile).toHaveBeenCalledWith(
@@ -315,27 +438,20 @@ describe("killProcessTree", () => {
   });
 
   it("runs taskkill then rejects honestly when CIM enumeration is unavailable", async () => {
-    mockExecFile
-      .mockRejectedValueOnce(new Error("powershell unavailable"))
-      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+    mockExecFile.mockRejectedValue(new Error("powershell unavailable"));
 
     await expect(
       killProcessTree(1234, {
         platform: "win32",
         processKill: vi.fn(),
-        getProcessStartMarker: stableThenGone(),
         execFile: mockExecFile,
       }),
-    ).rejects.toThrow("descendant verification was unavailable");
+    ).rejects.toThrow("powershell unavailable");
 
-    expect(mockExecFile).toHaveBeenCalledWith(
+    expect(mockExecFile).not.toHaveBeenCalledWith(
       "taskkill",
-      ["/T", "/F", "/PID", "1234"],
+      expect.any(Array),
       expect.any(Object),
-    );
-    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-      "killProcessTree: descendant verification unavailable",
-      expect.objectContaining({ pid: 1234, capturedProcessCount: 1 }),
     );
   });
 
@@ -456,6 +572,9 @@ describe("killDescendantsByName", () => {
   it("finds and kills matching descendants on Windows", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    });
     try {
       // First call: findDescendantsByName queries children
       mockExecFile
@@ -468,19 +587,23 @@ describe("killDescendantsByName", () => {
           stderr: "",
         })
         .mockResolvedValueOnce({
-          stdout: "start-5555",
+          stdout: JSON.stringify({
+            Name: "claude.exe",
+            ProcessId: 5555,
+            ParentProcessId: 1234,
+            CreationDate: "start-5555",
+          }),
           stderr: "",
         })
         .mockResolvedValueOnce({
-          stdout: "",
+          stdout: JSON.stringify({
+            Name: "claude.exe",
+            ProcessId: 5555,
+            ParentProcessId: 1234,
+            CreationDate: "start-5555",
+          }),
           stderr: "",
         })
-        .mockResolvedValueOnce({
-          stdout: "start-5555",
-          stderr: "",
-        })
-        .mockResolvedValueOnce({ stdout: "", stderr: "" })
-        .mockResolvedValueOnce({ stdout: "", stderr: "" })
         .mockResolvedValueOnce({ stdout: "", stderr: "" });
 
       await killDescendantsByName(1234, "claude.exe");
@@ -491,6 +614,7 @@ describe("killDescendantsByName", () => {
         expect.any(Object),
       );
     } finally {
+      killSpy.mockRestore();
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
   });

@@ -23,10 +23,17 @@ const POWERSHELL_CHILD_PROCESS_SCRIPT =
   "& { param([int]$ParentPid) $ErrorActionPreference = 'Stop'; " +
   "Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $ParentPid) | " +
   "Select-Object Name,ProcessId | ConvertTo-Json -Compress }";
-const POWERSHELL_START_MARKER_SCRIPT =
-  "& { param([int]$ProcessId) $ErrorActionPreference = 'Stop'; " +
-  "Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $ProcessId) | " +
-  "Select-Object -ExpandProperty CreationDate }";
+const POWERSHELL_PROCESS_SNAPSHOT_SCRIPT =
+  "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process | " +
+  "Select-Object Name,ProcessId,ParentProcessId,CreationDate | ConvertTo-Json -Compress";
+
+/** Validated process record returned by a bounded Windows CIM snapshot. */
+export interface WindowsProcessSnapshotEntry {
+  readonly pid: number;
+  readonly parentPid: number;
+  readonly startMarker: string;
+  readonly name: string;
+}
 
 interface ProcessIdentity {
   readonly pid: number;
@@ -43,6 +50,8 @@ export interface KillProcessTreeDeps {
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
   readonly getProcessStartMarker?: (pid: number) => Promise<string | null>;
+  readonly getWindowsProcessSnapshot?: () => Promise<readonly WindowsProcessSnapshotEntry[]>;
+  readonly isProcessAlive?: (pid: number) => boolean;
 }
 
 /**
@@ -79,6 +88,28 @@ export async function killProcessTree(
     deps?.sleep ??
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = deps?.now ?? Date.now;
+  if (platform === "win32") {
+    return killWindowsProcessTree(pid, {
+      execFile: ef,
+      processKill,
+      sleep,
+      now,
+      getSnapshot:
+        deps?.getWindowsProcessSnapshot ??
+        (() => readWindowsProcessSnapshot(ef)),
+      isProcessAlive:
+        deps?.isProcessAlive ??
+        ((targetPid) => {
+          try {
+            processKill(targetPid, 0);
+            return true;
+          } catch (err) {
+            if (isProcessGoneError(err)) return false;
+            throw err;
+          }
+        }),
+    });
+  }
   const getProcessStartMarker =
     deps?.getProcessStartMarker ??
     (deps?.processKill
@@ -91,7 +122,7 @@ export async function killProcessTree(
             throw err;
           }
         }
-      : (targetPid: number) => readProcessStartMarker(targetPid, platform, ef));
+      : (targetPid: number) => readUnixProcessStartMarker(targetPid, ef));
   const capture = await captureProcessTree(pid, platform, ef, getProcessStartMarker);
   const identities = capture.identities;
   const capturedRoot = identities.find((identity) => identity.depth === 0);
@@ -100,17 +131,9 @@ export async function killProcessTree(
     await identityStillMatches(capturedRoot, getProcessStartMarker);
 
   try {
-    if (platform === "win32") {
-      if (rootStillMatches) {
-        await ef("taskkill", ["/T", "/F", "/PID", String(pid)], {
-          timeout: TASKKILL_TIMEOUT_MS,
-        });
-      }
-    } else {
-      // Guard against pid <= 0: process.kill(0) would kill the server's own group.
-      if (pid > 0 && rootStillMatches) {
-        processKill(-pid, "SIGKILL");
-      }
+    // Guard against pid <= 0: process.kill(0) would kill the server's own group.
+    if (pid > 0 && rootStillMatches) {
+      processKill(-pid, "SIGKILL");
     }
   } catch (err) {
     if (isProcessGoneError(err)) {
@@ -128,13 +151,7 @@ export async function killProcessTree(
   for (const identity of [...identities].sort((a, b) => b.depth - a.depth)) {
     if (!(await identityStillMatches(identity, getProcessStartMarker))) continue;
     try {
-      if (platform === "win32") {
-        await ef("taskkill", ["/F", "/PID", String(identity.pid)], {
-          timeout: TASKKILL_TIMEOUT_MS,
-        });
-      } else {
-        processKill(identity.pid, "SIGKILL");
-      }
+      processKill(identity.pid, "SIGKILL");
     } catch (err) {
       if (!isProcessGoneError(err)) throw err;
     }
@@ -193,6 +210,189 @@ export async function killProcessTree(
   });
 }
 
+interface WindowsKillContext {
+  readonly execFile: typeof execFile;
+  readonly processKill: (pid: number, signal: string | number) => void;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly now: () => number;
+  readonly getSnapshot: () => Promise<readonly WindowsProcessSnapshotEntry[]>;
+  readonly isProcessAlive: (pid: number) => boolean;
+}
+
+async function killWindowsProcessTree(
+  pid: number,
+  context: WindowsKillContext,
+): Promise<void> {
+  if (pid <= 0) return;
+  const captured = buildWindowsProcessTree(pid, await context.getSnapshot());
+  const root = captured.find((identity) => identity.depth === 0);
+  const beforeKill = indexWindowsSnapshot(await context.getSnapshot());
+  const rootStillMatches =
+    root !== undefined &&
+    beforeKill.get(root.pid)?.startMarker === root.startMarker;
+
+  if (rootStillMatches) {
+    try {
+      await context.execFile("taskkill", ["/T", "/F", "/PID", String(pid)], {
+        timeout: TASKKILL_TIMEOUT_MS,
+      });
+    } catch (err) {
+      if (isProcessGoneError(err)) {
+        logger.debug("killProcessTree: process already gone", { pid });
+      } else {
+        logger.warn("killProcessTree: unexpected error killing process tree", {
+          pid,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
+    }
+  }
+
+  const survivors = await classifyMatchingWindowsProcesses(captured, context);
+  const signaled: ProcessIdentity[] = [];
+  for (const identity of [...survivors].sort((a, b) => b.depth - a.depth)) {
+    try {
+      await context.execFile("taskkill", ["/F", "/PID", String(identity.pid)], {
+        timeout: TASKKILL_TIMEOUT_MS,
+      });
+      signaled.push(identity);
+    } catch (err) {
+      if (!isProcessGoneError(err)) throw err;
+    }
+  }
+
+  const deadline = context.now() + TERMINATION_VERIFY_TIMEOUT_MS;
+  let remaining = await classifyMatchingWindowsProcesses(signaled, context);
+  while (remaining.length > 0 && context.now() < deadline) {
+    await context.sleep(TERMINATION_VERIFY_POLL_MS);
+    remaining = await classifyMatchingWindowsProcesses(remaining, context);
+  }
+  if (remaining.length > 0) {
+    logger.warn("killProcessTree: termination verification timed out", {
+      pid,
+      capturedProcessCount: captured.length,
+      remainingPids: remaining.map((identity) => identity.pid),
+      timeoutMs: TERMINATION_VERIFY_TIMEOUT_MS,
+    });
+    throw new Error(
+      `Process-tree termination verification timed out for PTY PID ${pid}; ${remaining.length} process(es) remain`,
+    );
+  }
+  logger.info("Process tree termination verified", {
+    pid,
+    capturedProcessCount: captured.length,
+  });
+}
+
+async function classifyMatchingWindowsProcesses(
+  identities: readonly ProcessIdentity[],
+  context: WindowsKillContext,
+): Promise<ProcessIdentity[]> {
+  const apparentlyAlive = identities.filter((identity) =>
+    context.isProcessAlive(identity.pid));
+  if (apparentlyAlive.length === 0) return [];
+  const snapshot = indexWindowsSnapshot(await context.getSnapshot());
+  return apparentlyAlive.filter(
+    (identity) => snapshot.get(identity.pid)?.startMarker === identity.startMarker,
+  );
+}
+
+function buildWindowsProcessTree(
+  rootPid: number,
+  snapshot: readonly WindowsProcessSnapshotEntry[],
+): ProcessIdentity[] {
+  const byPid = indexWindowsSnapshot(snapshot);
+  const root = byPid.get(rootPid);
+  if (!root) return [];
+  const childrenByParent = new Map<number, WindowsProcessSnapshotEntry[]>();
+  for (const entry of snapshot) {
+    const children = childrenByParent.get(entry.parentPid) ?? [];
+    children.push(entry);
+    childrenByParent.set(entry.parentPid, children);
+  }
+  const identities: ProcessIdentity[] = [];
+  const pending = [{ pid: rootPid, parentPid: null as number | null, depth: 0 }];
+  const visited = new Set<number>();
+  while (pending.length > 0 && identities.length < PROCESS_TREE_LIMIT) {
+    const current = pending.shift()!;
+    if (visited.has(current.pid)) continue;
+    visited.add(current.pid);
+    const entry = byPid.get(current.pid);
+    if (!entry) continue;
+    identities.push({ ...current, startMarker: entry.startMarker });
+    pending.push(
+      ...(childrenByParent.get(current.pid) ?? []).map((child) => ({
+        pid: child.pid,
+        parentPid: current.pid,
+        depth: current.depth + 1,
+      })),
+    );
+  }
+  if (pending.length > 0) {
+    throw new Error(
+      `Process tree rooted at PTY PID ${rootPid} exceeds the ${PROCESS_TREE_LIMIT}-process verification limit`,
+    );
+  }
+  return identities;
+}
+
+function indexWindowsSnapshot(
+  snapshot: readonly WindowsProcessSnapshotEntry[],
+): Map<number, WindowsProcessSnapshotEntry> {
+  return new Map(snapshot.map((entry) => [entry.pid, entry]));
+}
+
+async function readWindowsProcessSnapshot(
+  ef: typeof execFile,
+): Promise<WindowsProcessSnapshotEntry[]> {
+  const { stdout } = await ef(
+    "powershell.exe",
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      POWERSHELL_PROCESS_SNAPSHOT_SCRIPT,
+    ],
+    {
+      timeout: TASKKILL_TIMEOUT_MS,
+      maxBuffer: PROCESS_ENUMERATION_MAX_BUFFER,
+      windowsHide: true,
+    },
+  );
+  return parseWindowsProcessSnapshot(stdout);
+}
+
+function parseWindowsProcessSnapshot(output: string): WindowsProcessSnapshotEntry[] {
+  if (!output.trim()) return [];
+  const parsed: unknown = JSON.parse(output);
+  const values = Array.isArray(parsed) ? parsed : [parsed];
+  return values.flatMap((value) => {
+    if (typeof value !== "object" || value === null) return [];
+    const record = value as Record<string, unknown>;
+    const pid = record["ProcessId"];
+    const parentPid = record["ParentProcessId"];
+    const startMarker = record["CreationDate"];
+    const name = record["Name"];
+    if (
+      typeof pid !== "number" ||
+      !Number.isSafeInteger(pid) ||
+      pid <= 0 ||
+      typeof parentPid !== "number" ||
+      !Number.isSafeInteger(parentPid) ||
+      parentPid < 0 ||
+      typeof startMarker !== "string" ||
+      startMarker.length === 0 ||
+      typeof name !== "string" ||
+      name.length === 0
+    ) {
+      return [];
+    }
+    return [{ pid, parentPid, startMarker, name }];
+  });
+}
+
 async function captureProcessTree(
   rootPid: number,
   platform: NodeJS.Platform,
@@ -245,31 +445,11 @@ async function identityStillMatches(
   return (await getProcessStartMarker(identity.pid)) === identity.startMarker;
 }
 
-async function readProcessStartMarker(
+async function readUnixProcessStartMarker(
   pid: number,
-  platform: NodeJS.Platform,
   ef: typeof execFile,
 ): Promise<string | null> {
   try {
-    if (platform === "win32") {
-      const { stdout } = await ef(
-        "powershell.exe",
-        [
-          "-NoLogo",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          POWERSHELL_START_MARKER_SCRIPT,
-          String(pid),
-        ],
-        {
-          timeout: TASKKILL_TIMEOUT_MS,
-          maxBuffer: PROCESS_ENUMERATION_MAX_BUFFER,
-          windowsHide: true,
-        },
-      );
-      return stdout.trim() || null;
-    }
     const { stdout } = await ef("ps", ["-o", "lstart=", "-p", String(pid)], {
       timeout: TASKKILL_TIMEOUT_MS,
     });
