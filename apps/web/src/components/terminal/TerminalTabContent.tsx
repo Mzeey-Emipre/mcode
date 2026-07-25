@@ -11,7 +11,7 @@ const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
 
 type PendingClose =
   | { readonly kind: "one"; readonly ptyId: string; readonly name: string; readonly trigger: HTMLButtonElement }
-  | { readonly kind: "all"; readonly name: string };
+  | { readonly kind: "all"; readonly name: string; readonly trigger: HTMLButtonElement };
 
 const {
   addTerminal: storeAddTerminal,
@@ -110,7 +110,7 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
   }, [threadId]);
 
   /** Kill-all with optional confirmation. */
-  const closeAllTerminals = useCallback(() => {
+  const closeAllTerminals = useCallback((trigger: HTMLButtonElement) => {
     if (terminals.length === 0) {
       void doCloseAllTerminals();
       return;
@@ -130,7 +130,7 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
         void doCloseAllTerminals();
         return;
       }
-      setPendingKill({ kind: "all", name: `${terminals.length} terminals` });
+      setPendingKill({ kind: "all", name: `${terminals.length} terminals`, trigger });
     });
   }, [terminals, doCloseAllTerminals]);
 
@@ -151,7 +151,7 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
   }, [pendingKill, isClosing, doCloseTerminal, doCloseAllTerminals]);
 
   const cancelKill = useCallback(() => {
-    const trigger = pendingKill?.kind === "one" ? pendingKill.trigger : null;
+    const trigger = pendingKill?.trigger ?? null;
     setPendingKill(null);
     window.setTimeout(() => trigger?.focus(), 0);
   }, [pendingKill]);

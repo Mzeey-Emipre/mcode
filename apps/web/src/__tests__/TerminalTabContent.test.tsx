@@ -107,6 +107,43 @@ describe("TerminalTabContent process-tree close", () => {
     expect(useTerminalStore.getState().terminals["thread-1"]).toBeUndefined();
   });
 
+  it("blocks Escape and outside dismissal while termination is pending", async () => {
+    terminalHasChildren.mockResolvedValue({ hasChildren: true });
+    let resolveKill!: () => void;
+    terminalKill.mockReturnValue(new Promise<void>((resolve) => { resolveKill = resolve; }));
+    render(<TerminalTabContent threadId="thread-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close PowerShell" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close process tree" }));
+    const dialog = screen.getByRole("dialog");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    const backdrop = document.querySelector('[data-slot="dialog-overlay"]');
+    expect(backdrop).not.toBeNull();
+    fireEvent.pointerDown(backdrop!);
+    fireEvent.click(backdrop!);
+
+    expect(dialog).toBeInTheDocument();
+    expect(terminalKill).toHaveBeenCalledOnce();
+
+    await act(async () => resolveKill());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("restores focus to the kill-all control after cancellation", async () => {
+    seedTwoTerminals();
+    terminalHasChildren.mockResolvedValue({ hasChildren: true });
+    render(<TerminalTabContent threadId="thread-1" />);
+    const killAll = screen.getByRole("button", { name: "Kill all terminals" });
+
+    fireEvent.click(killAll);
+    expect(await screen.findByText("Close 2 terminals?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(killAll).toHaveFocus());
+    expect(terminalKillByThread).not.toHaveBeenCalled();
+  });
+
   it("confirms sequential active-child terminal closes", async () => {
     seedTwoTerminals();
     terminalHasChildren.mockResolvedValue({ hasChildren: true });

@@ -451,6 +451,51 @@ describe("TerminalService Windows teardown", () => {
     expect(processScope.terminate).not.toHaveBeenCalled();
   });
 
+  it("falls back when descendant reconciliation rejects its promise", async () => {
+    const processScope = {
+      ready: true,
+      ownsProcessTree: false,
+      assign: vi.fn(() => ({ ok: true })),
+      reconcile: vi.fn().mockRejectedValue(new Error("snapshot failed")),
+      terminate: vi.fn(),
+      waitForEmpty: vi.fn(),
+      close: vi.fn(),
+    };
+    const service = createService(
+      { assign: vi.fn(() => true), setDescription: vi.fn() },
+      { create: () => processScope },
+    );
+    const { ptyId } = service.create("thread-1");
+
+    await service.kill(ptyId);
+
+    expect(killProcessTree).toHaveBeenCalledOnce();
+    expect(processScope.terminate).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "PTY process scope reconciliation failed; close will use process-tree fallback",
+      expect.objectContaining({ error: "snapshot failed" }),
+    );
+  });
+
+  it("clears the authority timeout when reconciliation settles first", async () => {
+    const service = createService();
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const awaitAuthority = (
+      service as unknown as {
+        awaitProcessScopeAuthority: (
+          session: { processScopeReady: Promise<boolean> },
+          timeoutMs: number,
+        ) => Promise<boolean>;
+      }
+    ).awaitProcessScopeAuthority.bind(service);
+
+    await expect(awaitAuthority({ processScopeReady: Promise.resolve(true) }, 500))
+      .resolves.toBe(true);
+
+    expect(clearTimeoutSpy).toHaveBeenCalledOnce();
+    clearTimeoutSpy.mockRestore();
+  });
+
   function createService(
     jobObject: object = { assign: vi.fn(), setDescription: vi.fn() },
     processScopeFactory?: object,

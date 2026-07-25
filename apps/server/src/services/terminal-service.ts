@@ -284,16 +284,26 @@ export class TerminalService {
         });
         processScope.close();
       } else {
-        processScopeReady = processScope.reconcile(pty.pid).then((result) => {
-          if (!result.ok) {
+        processScopeReady = processScope.reconcile(pty.pid).then(
+          (result) => {
+            if (!result.ok) {
+              logger.warn("PTY process scope reconciliation failed; close will use process-tree fallback", {
+                id,
+                pid: pty.pid,
+                error: result.error,
+              });
+            }
+            return result.ok;
+          },
+          (error: unknown) => {
             logger.warn("PTY process scope reconciliation failed; close will use process-tree fallback", {
               id,
               pid: pty.pid,
-              error: result.error,
+              error: describeError(error),
             });
-          }
-          return result.ok;
-        });
+            return false;
+          },
+        );
       }
     }
     this.jobObject.setDescription(pty.pid, `Mcode Terminal: ${shellBasename(shell)}`);
@@ -636,10 +646,17 @@ export class TerminalService {
     timeoutMs: number,
   ): Promise<boolean> {
     if (process.platform !== "win32") return false;
-    return Promise.race([
-      session.processScopeReady,
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-    ]);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        session.processScopeReady,
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => resolve(false), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
   }
 
   private handleNaturalExit(

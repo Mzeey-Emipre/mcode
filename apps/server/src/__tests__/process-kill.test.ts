@@ -171,6 +171,40 @@ describe("killProcessTree", () => {
     expect(processKill).toHaveBeenCalledWith(-5678, "SIGKILL");
   });
 
+  it("batches default Unix verification markers once per poll", async () => {
+    let batchRead = 0;
+    mockExecFile.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "pgrep" && args.includes("5678")) {
+        return { stdout: "6789\n", stderr: "" };
+      }
+      if (command === "pgrep") {
+        throw Object.assign(new Error("no matches"), { code: 1 });
+      }
+      if (command === "ps" && args.includes("pid=,lstart=")) {
+        batchRead += 1;
+        return batchRead === 1
+          ? { stdout: "5678 Mon Jan  1 00:00:00 2024\n6789 replacement\n", stderr: "" }
+          : { stdout: "", stderr: "" };
+      }
+      return { stdout: "Mon Jan  1 00:00:00 2024\n", stderr: "" };
+    });
+    const processKill = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    await killProcessTree(5678, {
+      platform: "linux",
+      execFile: mockExecFile,
+    });
+
+    const batchCalls = mockExecFile.mock.calls.filter(
+      ([command, args]) => command === "ps" && args.includes("pid=,lstart="),
+    );
+    expect(batchCalls).toHaveLength(2);
+    expect(batchCalls[0]?.[1]).toContain("5678,6789");
+    expect(batchCalls[1]?.[1]).toContain("5678");
+    expect(batchCalls[1]?.[1]).not.toContain("6789");
+    processKill.mockRestore();
+  });
+
   it("explicitly kills an escaped descendant deepest-first after the root group signal", async () => {
     mockExecFile.mockImplementation(async (_command: string, args: string[]) => {
       if (args.includes("5678")) return { stdout: "6789\n", stderr: "" };
@@ -437,7 +471,7 @@ describe("killProcessTree", () => {
     expect(mockExecFile.mock.calls.some(([command]) => command === "wmic")).toBe(false);
   });
 
-  it("runs taskkill then rejects honestly when CIM enumeration is unavailable", async () => {
+  it("rejects before taskkill when CIM enumeration is unavailable", async () => {
     mockExecFile.mockRejectedValue(new Error("powershell unavailable"));
 
     await expect(

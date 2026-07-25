@@ -52,6 +52,7 @@ describe.runIf(process.platform === "win32")("killProcessTree integration", () =
       root.stdout.once("data", (chunk) => resolve(Number(String(chunk).trim())));
       root.once("error", reject);
     });
+    spawnedRoots.add(childPid);
     expect(await isRunning(root.pid)).toBe(true);
     expect(await isRunning(childPid)).toBe(true);
 
@@ -59,6 +60,7 @@ describe.runIf(process.platform === "win32")("killProcessTree integration", () =
     await killProcessTree(root.pid);
     const durationMs = performance.now() - startedAt;
     spawnedRoots.delete(root.pid);
+    spawnedRoots.delete(childPid);
 
     expect(durationMs).toBeLessThan(12_000);
     await expect.poll(() => isRunning(root.pid!), { timeout: 5_000 }).toBe(false);

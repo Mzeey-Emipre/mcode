@@ -34,13 +34,20 @@ export const TerminalKillConfirmDialog = memo(function TerminalKillConfirmDialog
   onCancel,
 }: TerminalKillConfirmDialogProps) {
   const handleOpenChange = useCallback(
-    (isOpen: boolean) => { if (!isOpen) onCancel(); },
-    [onCancel],
+    (isOpen: boolean, eventDetails: { cancel: () => void }) => {
+      if (isOpen) return;
+      if (pending) {
+        eventDetails.cancel();
+        return;
+      }
+      onCancel();
+    },
+    [onCancel, pending],
   );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" showCloseButton={!pending}>
         <div className="space-y-3">
           <DialogTitle className="text-sm font-medium">
             Close {targetName}?

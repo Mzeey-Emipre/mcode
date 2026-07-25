@@ -125,6 +125,7 @@ export class WindowsProcessScope {
       try {
         descendants = await capture();
       } catch (error) {
+        if (pass + 1 < RECONCILIATION_PASS_LIMIT) continue;
         return { ok: false, error: describeError(error) };
       }
       if (descendants.length === 0 || descendants[0]?.pid !== rootPid) {
@@ -150,6 +151,7 @@ export class WindowsProcessScope {
       try {
         validation = await capture();
       } catch (error) {
+        if (pass + 1 < RECONCILIATION_PASS_LIMIT) continue;
         return { ok: false, error: describeError(error) };
       }
       const validationByPid = new Map(validation.map((identity) => [identity.pid, identity]));

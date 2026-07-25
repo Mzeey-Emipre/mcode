@@ -156,6 +156,37 @@ describe("WindowsProcessScope", () => {
     expect(scope.ownsProcessTree).toBe(false);
   });
 
+  it("retries a transient capture failure and then grants authority", async () => {
+    const native = createNative([101]);
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+    const capture = vi.fn()
+      .mockRejectedValueOnce(new Error("snapshot busy"))
+      .mockResolvedValueOnce([
+        { pid: 101, parentPid: null, startMarker: "root", depth: 0 },
+      ]);
+
+    await expect(scope.reconcile(101, capture)).resolves.toEqual({ ok: true });
+
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(scope.ownsProcessTree).toBe(true);
+  });
+
+  it("fails closed after every capture pass fails", async () => {
+    const native = createNative([101]);
+    const scope = new WindowsProcessScope(native);
+    expect(scope.assign(101).ok).toBe(true);
+    const capture = vi.fn().mockRejectedValue(new Error("snapshot unavailable"));
+
+    await expect(scope.reconcile(101, capture)).resolves.toEqual({
+      ok: false,
+      error: "snapshot unavailable",
+    });
+
+    expect(capture).toHaveBeenCalledTimes(5);
+    expect(scope.ownsProcessTree).toBe(false);
+  });
+
   it("rejects Process32FirstW failure with a non-exhaustion error", async () => {
     const snapshotHandle = { kind: "snapshot" };
     const native = createNative([101]);
@@ -173,7 +204,7 @@ describe("WindowsProcessScope", () => {
     expect(result).toEqual({ ok: false, error: "Process32FirstW failed (5)" });
     expect(scope.ownsProcessTree).toBe(false);
     expect(native.closeHandle).toHaveBeenCalledWith(snapshotHandle);
-    expect(vi.mocked(native.closeHandle).mock.calls.filter(([handle]) => handle === snapshotHandle)).toHaveLength(1);
+    expect(vi.mocked(native.closeHandle).mock.calls.filter(([handle]) => handle === snapshotHandle)).toHaveLength(5);
   });
 
   it("rejects a partial snapshot when Process32NextW fails unexpectedly", async () => {
@@ -198,7 +229,7 @@ describe("WindowsProcessScope", () => {
 
     expect(result).toEqual({ ok: false, error: "Process32NextW failed (5)" });
     expect(scope.ownsProcessTree).toBe(false);
-    expect(vi.mocked(native.closeHandle).mock.calls.filter(([handle]) => handle === snapshotHandle)).toHaveLength(1);
+    expect(vi.mocked(native.closeHandle).mock.calls.filter(([handle]) => handle === snapshotHandle)).toHaveLength(5);
   });
 
   it("accepts ERROR_NO_MORE_FILES as complete Process32NextW exhaustion", async () => {

@@ -12,7 +12,7 @@ interface TerminalListProps {
   readonly threadId: string;
   readonly onClose: (ptyId: string, trigger: HTMLButtonElement) => void;
   readonly onAdd: () => void;
-  readonly onDeleteAll: () => void;
+  readonly onDeleteAll: (trigger: HTMLButtonElement) => void;
 }
 
 // Stable action refs.
@@ -149,7 +149,7 @@ export const TerminalList = memo(function TerminalList({
               <Button
                 variant="ghost"
                 size="icon-xs"
-                onClick={onDeleteAll}
+                onClick={(event) => onDeleteAll(event.currentTarget)}
                 className="text-muted-foreground hover:text-foreground"
                 aria-label="Kill all terminals"
               />

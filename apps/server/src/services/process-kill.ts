@@ -123,6 +123,17 @@ export async function killProcessTree(
           }
         }
       : (targetPid: number) => readUnixProcessStartMarker(targetPid, ef));
+  const getRemainingProcessStartMarkers =
+    deps?.getProcessStartMarker || deps?.processKill
+    ? async (identities: readonly ProcessIdentity[]) => {
+        const markers = new Map<number, string | null>();
+        for (const identity of identities) {
+          markers.set(identity.pid, await getProcessStartMarker(identity.pid));
+        }
+        return markers;
+      }
+    : (identities: readonly ProcessIdentity[]) =>
+        readUnixProcessStartMarkers(identities.map((identity) => identity.pid), ef);
   const capture = await captureProcessTree(pid, platform, ef, getProcessStartMarker);
   const identities = capture.identities;
   const capturedRoot = identities.find((identity) => identity.depth === 0);
@@ -160,19 +171,16 @@ export async function killProcessTree(
   const deadline = now() + TERMINATION_VERIFY_TIMEOUT_MS;
   let remaining: ProcessIdentity[];
   try {
-    remaining = [];
-    for (const identity of identities) {
-      if (await identityStillMatches(identity, getProcessStartMarker)) remaining.push(identity);
-    }
+    remaining = matchingIdentities(
+      identities,
+      await getRemainingProcessStartMarkers(identities),
+    );
     while (remaining.length > 0 && now() < deadline) {
       await sleep(TERMINATION_VERIFY_POLL_MS);
-      const stillRunning: ProcessIdentity[] = [];
-      for (const identity of remaining) {
-        if (await identityStillMatches(identity, getProcessStartMarker)) {
-          stillRunning.push(identity);
-        }
-      }
-      remaining = stillRunning;
+      remaining = matchingIdentities(
+        remaining,
+        await getRemainingProcessStartMarkers(remaining),
+      );
     }
   } catch (err) {
     logger.warn("killProcessTree: termination verification failed", {
@@ -443,6 +451,39 @@ async function identityStillMatches(
   getProcessStartMarker: (pid: number) => Promise<string | null>,
 ): Promise<boolean> {
   return (await getProcessStartMarker(identity.pid)) === identity.startMarker;
+}
+
+function matchingIdentities(
+  identities: readonly ProcessIdentity[],
+  markers: ReadonlyMap<number, string | null>,
+): ProcessIdentity[] {
+  return identities.filter(
+    (identity) => markers.get(identity.pid) === identity.startMarker,
+  );
+}
+
+async function readUnixProcessStartMarkers(
+  pids: readonly number[],
+  ef: typeof execFile,
+): Promise<Map<number, string>> {
+  if (pids.length === 0) return new Map();
+  try {
+    const { stdout } = await ef(
+      "ps",
+      ["-o", "pid=,lstart=", "-p", pids.join(",")],
+      { timeout: TASKKILL_TIMEOUT_MS },
+    );
+    const markers = new Map<number, string>();
+    for (const line of stdout.split(/\r?\n/)) {
+      const match = /^\s*(\d+)\s+(.+?)\s*$/.exec(line);
+      if (!match) continue;
+      markers.set(Number(match[1]), match[2]);
+    }
+    return markers;
+  } catch (err) {
+    if (isProcessGoneError(err) || (err as { code?: unknown }).code === 1) return new Map();
+    throw err;
+  }
 }
 
 async function readUnixProcessStartMarker(
