@@ -151,10 +151,14 @@ export function pickProviderModelsForSettings(
 ): ModelDefinition[] {
   if (dynamicModels != null && dynamicModels.length > 0) {
     const dynamicById = new Map(dynamicModels.map((model) => [model.id, model]));
-    const merged = staticModels.map((model) => ({
-      ...model,
-      ...dynamicById.get(model.id),
-    }));
+    const merged = staticModels.map((model) => {
+      const dynamicModel = dynamicById.get(model.id);
+      return {
+        ...model,
+        ...dynamicModel,
+        contextWindow: model.contextWindow ?? dynamicModel?.contextWindow,
+      };
+    });
     const staticIds = new Set(staticModels.map((model) => model.id));
     return [...merged, ...dynamicModels.filter((model) => !staticIds.has(model.id))];
   }

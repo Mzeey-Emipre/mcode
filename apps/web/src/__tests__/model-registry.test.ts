@@ -30,6 +30,27 @@ describe("pickProviderModelsForSettings", () => {
     ]);
   });
 
+  it("preserves the settings context window when dynamic discovery reports provider capacity", () => {
+    const staticClaude = [{
+      id: "claude-opus-5",
+      label: "Claude Opus 5",
+      providerId: "claude",
+      contextWindow: 200_000,
+    }];
+    const dynamicClaude = [{
+      id: "claude-opus-5",
+      label: "Claude Opus 5",
+      providerId: "claude",
+      contextWindow: 1_000_000,
+      supportedReasoningLevels: ["low", "high", "max"] as const,
+    }];
+
+    expect(pickProviderModelsForSettings(staticClaude, dynamicClaude)).toEqual([{
+      ...dynamicClaude[0],
+      contextWindow: 200_000,
+    }]);
+  });
+
   it("falls back to static models when dynamic is undefined", () => {
     expect(pickProviderModelsForSettings(staticModels, undefined)).toEqual(staticModels);
   });
