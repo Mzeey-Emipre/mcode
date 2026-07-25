@@ -31,6 +31,22 @@ function seedTerminal(): void {
   });
 }
 
+function seedTwoTerminals(): void {
+  useTerminalStore.setState({
+    terminals: {
+      "thread-1": [
+        { id: "pty-1", threadId: "thread-1", label: "PowerShell" },
+        { id: "pty-2", threadId: "thread-1", label: "Command Prompt" },
+      ],
+    },
+    terminalPanelByThread: {
+      "thread-1": { visible: true, height: 300, activeTerminalId: "pty-1" },
+    },
+    ptyToThread: { "pty-1": "thread-1", "pty-2": "thread-1" },
+    splitMode: true,
+  });
+}
+
 describe("TerminalTabContent process-tree close", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -88,6 +104,28 @@ describe("TerminalTabContent process-tree close", () => {
     await act(async () => resolveKill());
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(terminalKill).toHaveBeenCalledOnce();
+    expect(useTerminalStore.getState().terminals["thread-1"]).toBeUndefined();
+  });
+
+  it("confirms sequential active-child terminal closes", async () => {
+    seedTwoTerminals();
+    terminalHasChildren.mockResolvedValue({ hasChildren: true });
+    render(<TerminalTabContent threadId="thread-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close PowerShell" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close process tree" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    const secondClose = screen.getByRole("button", { name: "Close Command Prompt" });
+    expect(secondClose).toBeEnabled();
+    fireEvent.click(secondClose);
+    const secondConfirm = await screen.findByRole("button", { name: "Close process tree" });
+    expect(secondConfirm).toBeEnabled();
+    fireEvent.click(secondConfirm);
+
+    await waitFor(() => expect(terminalKill).toHaveBeenCalledTimes(2));
+    expect(terminalKill).toHaveBeenNthCalledWith(1, "pty-1");
+    expect(terminalKill).toHaveBeenNthCalledWith(2, "pty-2");
     expect(useTerminalStore.getState().terminals["thread-1"]).toBeUndefined();
   });
 

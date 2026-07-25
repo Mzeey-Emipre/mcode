@@ -93,13 +93,25 @@ describe("TerminalService replay authority", () => {
 
 describe("TerminalService Windows teardown", () => {
   const originalPlatform = process.platform;
+  let onData: ((data: string) => void) | undefined;
+  let onExit: ((event: { exitCode: number; signal: number }) => void) | undefined;
+  let dataDispose: ReturnType<typeof vi.fn>;
+  let exitDispose: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    dataDispose = vi.fn();
+    exitDispose = vi.fn();
     spawnPty.mockImplementation(() => ({
       pid: 10_000 + spawnPty.mock.calls.length,
-      onData: () => ({ dispose: vi.fn() }),
-      onExit: () => ({ dispose: vi.fn() }),
+      onData: (callback: (data: string) => void) => {
+        onData = callback;
+        return { dispose: dataDispose };
+      },
+      onExit: (callback: (event: { exitCode: number; signal: number }) => void) => {
+        onExit = callback;
+        return { dispose: exitDispose };
+      },
       kill: vi.fn(),
     }));
     Object.defineProperty(process, "platform", {
@@ -193,4 +205,104 @@ describe("TerminalService Windows teardown", () => {
     expect(service.listActiveSessions()).toHaveLength(4);
     expect(spawnPty).toHaveBeenCalledTimes(4);
   });
+
+  it("keeps a session connected when termination rejects, then publishes one natural exit", async () => {
+    const service = createService();
+    const sender = { json: vi.fn(), data: vi.fn() };
+    service.setSender(sender);
+    const { ptyId } = service.create("thread-1");
+    service.resume(ptyId);
+    killProcessTree.mockRejectedValueOnce(new Error("verification failed"));
+
+    await expect(service.kill(ptyId)).rejects.toThrow("verification failed");
+    onData?.("still connected");
+
+    expect(sender.data).toHaveBeenCalledOnce();
+    expect(service.listActiveSessions()).toEqual([{ ptyId, threadId: "thread-1" }]);
+    expect(dataDispose).not.toHaveBeenCalled();
+    expect(exitDispose).not.toHaveBeenCalled();
+
+    onExit?.({ exitCode: 7, signal: 0 });
+    onExit?.({ exitCode: 7, signal: 0 });
+
+    expect(sender.json).toHaveBeenCalledOnce();
+    expect(sender.json).toHaveBeenCalledWith("terminal.exit", { ptyId, code: 7 });
+    expect(service.listActiveSessions()).toEqual([]);
+  });
+
+  it("commits a requested close once when exit races successful termination", async () => {
+    const service = createService();
+    const sender = { json: vi.fn(), data: vi.fn() };
+    service.setSender(sender);
+    const { ptyId } = service.create("thread-1");
+    killProcessTree.mockImplementationOnce(async () => {
+      onExit?.({ exitCode: 9, signal: 0 });
+    });
+
+    await service.kill(ptyId);
+
+    expect(sender.json).not.toHaveBeenCalled();
+    expect(service.listActiveSessions()).toEqual([]);
+    expect(dataDispose).toHaveBeenCalledOnce();
+    expect(exitDispose).toHaveBeenCalledOnce();
+  });
+
+  it("publishes a raced natural exit once when termination fails", async () => {
+    const service = createService();
+    const sender = { json: vi.fn(), data: vi.fn() };
+    service.setSender(sender);
+    const { ptyId } = service.create("thread-1");
+    killProcessTree.mockImplementationOnce(async () => {
+      onExit?.({ exitCode: 11, signal: 0 });
+      throw new Error("verification failed");
+    });
+
+    await expect(service.kill(ptyId)).rejects.toThrow("verification failed");
+
+    expect(sender.json).toHaveBeenCalledOnce();
+    expect(sender.json).toHaveBeenCalledWith("terminal.exit", { ptyId, code: 11 });
+    expect(service.listActiveSessions()).toEqual([]);
+    expect(dataDispose).toHaveBeenCalledOnce();
+    expect(exitDispose).toHaveBeenCalledOnce();
+  });
+
+  it("shares one termination attempt across concurrent close requests", async () => {
+    const service = createService();
+    const { ptyId } = service.create("thread-1");
+    let resolveTermination!: () => void;
+    killProcessTree.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveTermination = resolve;
+      }),
+    );
+
+    const first = service.kill(ptyId);
+    const second = service.kill(ptyId);
+
+    expect(killProcessTree).toHaveBeenCalledOnce();
+    resolveTermination();
+    await Promise.all([first, second]);
+    expect(service.listActiveSessions()).toEqual([]);
+  });
+
+  function createService(): TerminalService {
+    const cwd = process.cwd();
+    return new TerminalService(
+      { findById: () => ({ workspace_id: "workspace-1", mode: "direct", worktree_path: null }) } as never,
+      { findById: () => ({ path: cwd }) } as never,
+      { resolveWorkingDir: () => cwd } as never,
+      {
+        get: () => ({
+          terminal: {
+            scrollback: 1_000,
+            flowControl: { serverHighBytes: 1_024, serverLowBytes: 512 },
+          },
+        }),
+        on: () => vi.fn(),
+      } as never,
+      { getEnv: () => ({}) } as never,
+      { register: vi.fn(), deregister: vi.fn(), clear: vi.fn() } as never,
+      { assign: vi.fn(), setDescription: vi.fn() } as never,
+    );
+  }
 });

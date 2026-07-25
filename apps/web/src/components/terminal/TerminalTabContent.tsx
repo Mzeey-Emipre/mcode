@@ -136,13 +136,16 @@ export function TerminalTabContent({ threadId }: TerminalTabContentProps) {
 
   const confirmKill = useCallback(async () => {
     if (!pendingKill || isClosing) return;
+    const operation = pendingKill;
     setIsClosing(true);
-    const closed = pendingKill.kind === "one"
-      ? await doCloseTerminal(pendingKill.ptyId)
-      : await doCloseAllTerminals();
-    if (closed) {
-      setPendingKill(null);
-    } else {
+    try {
+      const closed = operation.kind === "one"
+        ? await doCloseTerminal(operation.ptyId)
+        : await doCloseAllTerminals();
+      if (closed) {
+        setPendingKill((current) => current === operation ? null : current);
+      }
+    } finally {
       setIsClosing(false);
     }
   }, [pendingKill, isClosing, doCloseTerminal, doCloseAllTerminals]);

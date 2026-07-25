@@ -65,6 +65,9 @@ interface PtySession {
   readonly pty: IPty;
   readonly dataDisposable: IDisposable;
   readonly exitDisposable: IDisposable;
+  status: "running" | "closing";
+  pendingExit: { readonly exitCode: number; readonly signal?: number } | null;
+  closePromise: Promise<void> | null;
 }
 
 /** Callbacks for streaming PTY output and exit events to connected clients. */
@@ -271,6 +274,12 @@ export class TerminalService {
     });
 
     const exitDisposable = pty.onExit(({ exitCode, signal }) => {
+      const current = this.sessions.get(id);
+      if (!current) return;
+      if (current.status === "closing") {
+        current.pendingExit = { exitCode, signal };
+        return;
+      }
       logger.info("PTY exited", {
         id,
         pid: pty.pid,
@@ -280,8 +289,7 @@ export class TerminalService {
         signal,
         reason: "natural-exit",
       });
-      this.sender?.json("terminal.exit", { ptyId: id, code: exitCode });
-      this.removePty(id);
+      this.finalizePty(current, exitCode);
     });
 
     const session: PtySession = {
@@ -292,6 +300,9 @@ export class TerminalService {
       pty,
       dataDisposable,
       exitDisposable,
+      status: "running",
+      pendingExit: null,
+      closePromise: null,
     };
     this.sessions = new Map([...this.sessions, [id, session]]);
 
@@ -388,6 +399,9 @@ export class TerminalService {
   ): Promise<void> {
     const session = this.sessions.get(ptyId);
     if (!session) return;
+    if (session.status === "closing" && session.closePromise) {
+      return session.closePromise;
+    }
     logger.info("PTY kill requested", {
       id: session.id,
       pid: session.pty.pid,
@@ -395,8 +409,10 @@ export class TerminalService {
       shell: session.shell,
       reason,
     });
-    await this.destroyPty(session);
-    this.removePty(ptyId);
+    session.status = "closing";
+    const closePromise = this.closePty(session);
+    session.closePromise = closePromise;
+    return closePromise;
   }
 
   /** Kill all PTY sessions for a given thread, concurrently. */
@@ -527,33 +543,22 @@ export class TerminalService {
     }
   }
 
-  private async destroyPty(session: PtySession): Promise<void> {
-    try {
-      session.dataDisposable.dispose();
-    } catch (err) {
-      logger.warn("Failed to dispose data listener", {
-        id: session.id,
-        pid: session.pty.pid,
-        threadId: session.threadId,
-        error: describeError(err),
-      });
-    }
-    try {
-      session.exitDisposable.dispose();
-    } catch (err) {
-      logger.warn("Failed to dispose exit listener", {
-        id: session.id,
-        pid: session.pty.pid,
-        threadId: session.threadId,
-        error: describeError(err),
-      });
-    }
+  private async closePty(session: PtySession): Promise<void> {
     // Terminate the operating-system process tree while the root PID still
     // identifies its descendants. Closing ConPTY first can orphan children.
     if (this.useGracefulKill) {
       await gracefulKillProcessTree(session.pty.pid);
     } else {
-      await killProcessTree(session.pty.pid);
+      try {
+        await killProcessTree(session.pty.pid);
+      } catch (err) {
+        session.status = "running";
+        session.closePromise = null;
+        if (session.pendingExit) {
+          this.finalizePty(session, session.pendingExit.exitCode);
+        }
+        throw err;
+      }
     }
 
     try {
@@ -567,6 +572,30 @@ export class TerminalService {
         error: describeError(err),
       });
     }
+    this.finalizePty(session);
+  }
+
+  private finalizePty(session: PtySession, exitCode?: number): void {
+    if (!this.sessions.has(session.id)) return;
+    for (const [label, disposable] of [
+      ["data", session.dataDisposable],
+      ["exit", session.exitDisposable],
+    ] as const) {
+      try {
+        disposable.dispose();
+      } catch (err) {
+        logger.warn(`Failed to dispose ${label} listener`, {
+          id: session.id,
+          pid: session.pty.pid,
+          threadId: session.threadId,
+          error: describeError(err),
+        });
+      }
+    }
+    if (exitCode !== undefined) {
+      this.sender?.json("terminal.exit", { ptyId: session.id, code: exitCode });
+    }
+    this.removePty(session.id);
   }
 
   private removePty(ptyId: string): void {

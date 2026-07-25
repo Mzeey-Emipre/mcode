@@ -81,14 +81,14 @@ describe("killProcessTree", () => {
         return true;
       });
 
-      await killProcessTree(5678);
+      await killProcessTree(5678, {
+        platform: "linux",
+        processKill: killSpy,
+        execFile: mockExecFile,
+        getProcessStartMarker: async () => null,
+      });
 
       expect(killSpy).toHaveBeenCalledWith(-5678, "SIGKILL");
-      expect(mockExecFile).toHaveBeenCalledWith(
-        "pgrep",
-        ["-P", "5678"],
-        expect.objectContaining({ timeout: expect.any(Number) }),
-      );
       killSpy.mockRestore();
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
@@ -121,15 +121,13 @@ describe("killProcessTree", () => {
 
   it("polls captured identities until every process is absent", async () => {
     let now = 0;
-    let probes = 0;
+    let markerReads = 0;
     const sleep = vi.fn(async (ms: number) => {
       now += ms;
     });
     const processKill = vi.fn((targetPid: number) => {
       if (targetPid < 0) return;
-      probes += 1;
-      if (probes < 3) return;
-      throw Object.assign(new Error("gone"), { code: "ESRCH" });
+      return;
     });
     mockExecFile.mockRejectedValue(
       Object.assign(new Error("no matches"), { code: 1 }),
@@ -141,10 +139,78 @@ describe("killProcessTree", () => {
       sleep,
       now: () => now,
       execFile: mockExecFile,
+      getProcessStartMarker: async () => {
+        markerReads += 1;
+        return markerReads < 5 ? "start-5678" : null;
+      },
     });
 
     expect(sleep).toHaveBeenCalledTimes(2);
     expect(processKill).toHaveBeenCalledWith(-5678, "SIGKILL");
+  });
+
+  it("explicitly kills an escaped descendant deepest-first after the root group signal", async () => {
+    mockExecFile.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.includes("5678")) return { stdout: "6789\n", stderr: "" };
+      if (args.includes("6789")) return { stdout: "7890\n", stderr: "" };
+      throw Object.assign(new Error("no matches"), { code: 1 });
+    });
+    const alive = new Set([5678, 6789, 7890]);
+    const calls: Array<[number, string | number]> = [];
+    const processKill = vi.fn((targetPid: number, signal: string | number) => {
+      calls.push([targetPid, signal]);
+      if (targetPid === -5678) {
+        alive.delete(5678);
+        return;
+      }
+      if (signal === "SIGKILL") {
+        alive.delete(targetPid);
+        return;
+      }
+      if (!alive.has(targetPid)) {
+        throw Object.assign(new Error("gone"), { code: "ESRCH" });
+      }
+    });
+
+    await killProcessTree(5678, {
+      platform: "linux",
+      processKill,
+      execFile: mockExecFile,
+      getProcessStartMarker: async (pid) => alive.has(pid) ? `start-${pid}` : null,
+    });
+
+    expect(calls).toContainEqual([-5678, "SIGKILL"]);
+    expect(calls).toContainEqual([6789, "SIGKILL"]);
+    expect(calls).toContainEqual([7890, "SIGKILL"]);
+    expect(calls.findIndex(([pid, signal]) => pid === 7890 && signal === "SIGKILL")).toBeLessThan(
+      calls.findIndex(([pid, signal]) => pid === 6789 && signal === "SIGKILL"),
+    );
+  });
+
+  it("never signals a captured PID after its start marker changes", async () => {
+    mockExecFile.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.includes("5678")) return { stdout: "6789\n", stderr: "" };
+      throw Object.assign(new Error("no matches"), { code: 1 });
+    });
+    const markerReads = new Map<number, number>();
+    const processKill = vi.fn((targetPid: number, signal: string | number) => {
+      if (targetPid === -5678) return;
+      if (signal === 0) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    });
+
+    await killProcessTree(5678, {
+      platform: "linux",
+      processKill,
+      execFile: mockExecFile,
+      getProcessStartMarker: async (pid) => {
+        const read = (markerReads.get(pid) ?? 0) + 1;
+        markerReads.set(pid, read);
+        if (pid === 5678 && read > 1) return null;
+        return pid === 6789 && read > 1 ? "replacement" : `start-${pid}`;
+      },
+    });
+
+    expect(processKill).not.toHaveBeenCalledWith(6789, "SIGKILL");
   });
 
   it("rejects when a captured process remains after the verification timeout", async () => {
@@ -194,6 +260,7 @@ describe("killProcessTree", () => {
   });
 
   it("runs taskkill then rejects honestly when CIM enumeration is unavailable", async () => {
+    let markerRead = 0;
     mockExecFile
       .mockRejectedValueOnce(new Error("powershell unavailable"))
       .mockResolvedValueOnce({ stdout: "", stderr: "" });
@@ -201,9 +268,8 @@ describe("killProcessTree", () => {
     await expect(
       killProcessTree(1234, {
         platform: "win32",
-        processKill: vi.fn(() => {
-          throw Object.assign(new Error("gone"), { code: "ESRCH" });
-        }),
+        processKill: vi.fn(),
+        getProcessStartMarker: async () => ++markerRead === 1 ? "start-1234" : null,
         execFile: mockExecFile,
       }),
     ).rejects.toThrow("descendant verification was unavailable");

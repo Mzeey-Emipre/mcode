@@ -23,6 +23,17 @@ const POWERSHELL_CHILD_PROCESS_SCRIPT =
   "& { param([int]$ParentPid) $ErrorActionPreference = 'Stop'; " +
   "Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $ParentPid) | " +
   "Select-Object Name,ProcessId | ConvertTo-Json -Compress }";
+const POWERSHELL_START_MARKER_SCRIPT =
+  "& { param([int]$ProcessId) $ErrorActionPreference = 'Stop'; " +
+  "Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $ProcessId) | " +
+  "Select-Object -ExpandProperty CreationDate }";
+
+interface ProcessIdentity {
+  readonly pid: number;
+  readonly parentPid: number | null;
+  readonly startMarker: string;
+  readonly depth: number;
+}
 
 /** Injectable process-tree termination dependencies for focused verification tests. */
 export interface KillProcessTreeDeps {
@@ -31,6 +42,7 @@ export interface KillProcessTreeDeps {
   readonly processKill?: (pid: number, signal: string | number) => void;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
+  readonly getProcessStartMarker?: (pid: number) => Promise<string | null>;
 }
 
 /**
@@ -67,7 +79,20 @@ export async function killProcessTree(
     deps?.sleep ??
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = deps?.now ?? Date.now;
-  const capture = await captureProcessTree(pid, platform, ef);
+  const getProcessStartMarker =
+    deps?.getProcessStartMarker ??
+    (deps?.processKill
+      ? async (targetPid: number) => {
+          try {
+            processKill(targetPid, 0);
+            return `probe:${targetPid}`;
+          } catch (err) {
+            if (isProcessGoneError(err)) return null;
+            throw err;
+          }
+        }
+      : (targetPid: number) => readProcessStartMarker(targetPid, platform, ef));
+  const capture = await captureProcessTree(pid, platform, ef, getProcessStartMarker);
   const identities = capture.identities;
 
   try {
@@ -94,13 +119,37 @@ export async function killProcessTree(
     }
   }
 
+  for (const identity of [...identities].sort((a, b) => b.depth - a.depth)) {
+    if (!(await identityStillMatches(identity, getProcessStartMarker))) continue;
+    try {
+      if (platform === "win32") {
+        await ef("taskkill", ["/F", "/PID", String(identity.pid)], {
+          timeout: TASKKILL_TIMEOUT_MS,
+        });
+      } else {
+        processKill(identity.pid, "SIGKILL");
+      }
+    } catch (err) {
+      if (!isProcessGoneError(err)) throw err;
+    }
+  }
+
   const deadline = now() + TERMINATION_VERIFY_TIMEOUT_MS;
-  let remaining: number[];
+  let remaining: ProcessIdentity[];
   try {
-    remaining = identities.filter((identity) => isProcessRunning(identity, processKill));
+    remaining = [];
+    for (const identity of identities) {
+      if (await identityStillMatches(identity, getProcessStartMarker)) remaining.push(identity);
+    }
     while (remaining.length > 0 && now() < deadline) {
       await sleep(TERMINATION_VERIFY_POLL_MS);
-      remaining = remaining.filter((identity) => isProcessRunning(identity, processKill));
+      const stillRunning: ProcessIdentity[] = [];
+      for (const identity of remaining) {
+        if (await identityStillMatches(identity, getProcessStartMarker)) {
+          stillRunning.push(identity);
+        }
+      }
+      remaining = stillRunning;
     }
   } catch (err) {
     logger.warn("killProcessTree: termination verification failed", {
@@ -114,7 +163,7 @@ export async function killProcessTree(
     logger.warn("killProcessTree: termination verification timed out", {
       pid,
       capturedProcessCount: identities.length,
-      remainingPids: remaining,
+      remainingPids: remaining.map((identity) => identity.pid),
       timeoutMs: TERMINATION_VERIFY_TIMEOUT_MS,
     });
     throw new Error(
@@ -142,23 +191,38 @@ async function captureProcessTree(
   rootPid: number,
   platform: NodeJS.Platform,
   ef: typeof execFile,
-): Promise<{ identities: number[]; error?: unknown }> {
+  getProcessStartMarker: (pid: number) => Promise<string | null>,
+): Promise<{ identities: ProcessIdentity[]; error?: unknown }> {
   if (rootPid <= 0) return { identities: [] };
-  const identities: number[] = [];
-  const pending = [rootPid];
+  const identities: ProcessIdentity[] = [];
+  const pending = [{ pid: rootPid, parentPid: null as number | null, depth: 0 }];
   const visited = new Set<number>();
   while (pending.length > 0 && identities.length < PROCESS_TREE_LIMIT) {
-    const currentPid = pending.shift()!;
+    const current = pending.shift()!;
+    const currentPid = current.pid;
     if (visited.has(currentPid)) continue;
     visited.add(currentPid);
-    identities.push(currentPid);
+    let startMarker: string | null;
+    try {
+      startMarker = await getProcessStartMarker(currentPid);
+    } catch (error) {
+      return { identities, error };
+    }
+    if (startMarker === null) continue;
+    identities.push({ ...current, startMarker });
     let children: Array<{ name: string; pid: number }>;
     try {
       children = await listDirectChildrenWith(currentPid, platform, ef);
     } catch (error) {
       return { identities, error };
     }
-    pending.push(...children.map((child) => child.pid));
+    pending.push(
+      ...children.map((child) => ({
+        pid: child.pid,
+        parentPid: currentPid,
+        depth: current.depth + 1,
+      })),
+    );
   }
   if (pending.length > 0) {
     throw new Error(
@@ -168,15 +232,44 @@ async function captureProcessTree(
   return { identities };
 }
 
-function isProcessRunning(
+async function identityStillMatches(
+  identity: ProcessIdentity,
+  getProcessStartMarker: (pid: number) => Promise<string | null>,
+): Promise<boolean> {
+  return (await getProcessStartMarker(identity.pid)) === identity.startMarker;
+}
+
+async function readProcessStartMarker(
   pid: number,
-  processKill: (pid: number, signal: string | number) => void,
-): boolean {
+  platform: NodeJS.Platform,
+  ef: typeof execFile,
+): Promise<string | null> {
   try {
-    processKill(pid, 0);
-    return true;
+    if (platform === "win32") {
+      const { stdout } = await ef(
+        "powershell.exe",
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          POWERSHELL_START_MARKER_SCRIPT,
+          String(pid),
+        ],
+        {
+          timeout: TASKKILL_TIMEOUT_MS,
+          maxBuffer: PROCESS_ENUMERATION_MAX_BUFFER,
+          windowsHide: true,
+        },
+      );
+      return stdout.trim() || null;
+    }
+    const { stdout } = await ef("ps", ["-o", "lstart=", "-p", String(pid)], {
+      timeout: TASKKILL_TIMEOUT_MS,
+    });
+    return stdout.trim() || null;
   } catch (err) {
-    if (isProcessGoneError(err)) return false;
+    if (isProcessGoneError(err) || (err as { code?: unknown }).code === 1) return null;
     throw err;
   }
 }
