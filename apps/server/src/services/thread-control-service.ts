@@ -4,8 +4,10 @@ import type {
   WorktreeListInput,
   WorktreeListResult,
 } from "@mcode/contracts";
+import { inject, injectable } from "tsyringe";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { WorktreeRepo } from "../repositories/worktree-repo.js";
+import { GitService } from "./git-service.js";
 
 /** Server-derived authority for one active internal provider turn. */
 export interface InternalThreadControlAuthority {
@@ -23,11 +25,12 @@ export interface ThreadControlGitDiscovery {
 }
 
 /** Sole server authority boundary for internal thread-control discovery. */
+@injectable()
 export class ThreadControlService {
   constructor(
-    private readonly workspaces: WorkspaceRepo,
-    private readonly worktrees: WorktreeRepo,
-    private readonly git: ThreadControlGitDiscovery,
+    @inject(WorkspaceRepo) private readonly workspaces: WorkspaceRepo,
+    @inject(WorktreeRepo) private readonly worktrees: WorktreeRepo,
+    @inject(GitService) private readonly git: ThreadControlGitDiscovery,
   ) {}
 
   /** Search only registered workspaces; authority is intentionally not tool input. */
@@ -37,7 +40,6 @@ export class ThreadControlService {
       workspaces: this.workspaces.search(query, input.limit).map((workspace) => ({
         workspaceId: workspace.id,
         name: workspace.name,
-        repositoryIdentity: workspace.path,
         ...(workspace.last_opened_at ? { lastUsedAt: new Date(workspace.last_opened_at).toISOString() } : {}),
       })),
     };

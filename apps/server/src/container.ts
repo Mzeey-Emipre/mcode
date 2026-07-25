@@ -10,6 +10,7 @@ import { openDatabase } from "./store/database";
 
 // Repositories
 import { WorkspaceRepo } from "./repositories/workspace-repo";
+import { WorktreeRepo } from "./repositories/worktree-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
 import { MessageRepo } from "./repositories/message-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
@@ -329,6 +330,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     AgentService,
     { useClass: AgentService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    WorktreeRepo,
+    { useClass: WorktreeRepo },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(ThreadControlService, { useClass: ThreadControlService }, { lifecycle: Lifecycle.Singleton });
