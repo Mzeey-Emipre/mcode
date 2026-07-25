@@ -89,6 +89,41 @@ function renderDuplicateSkillPopup() {
   );
 }
 
+function renderReservedNameCapabilities() {
+  const commands: Command[] = ["goal", "plan", "ultra", "compact"].flatMap(
+    (name): Command[] => [
+      {
+        id: `skill:reserved:${name}`,
+        name,
+        description: `${name} reserved-name skill`,
+        namespace: "skill",
+        capabilityKind: "skill",
+        nativeId: `C:/skills/${name}/SKILL.md`,
+      },
+      {
+        id: `plugin:reserved:${name}`,
+        name,
+        description: `${name} reserved-name plugin`,
+        namespace: "plugin",
+        capabilityKind: "plugin",
+        nativeId: `${name}@test`,
+        mentionPath: `plugin://${name}@test`,
+      },
+    ],
+  );
+
+  return render(
+    <SlashCommandPopup
+      state={{ kind: "ready", items: commands }}
+      selectedIndex={0}
+      anchorRect={makeAnchorRect()}
+      onSelect={() => {}}
+      onDismiss={() => {}}
+      onRetry={() => {}}
+    />,
+  );
+}
+
 describe("SlashCommandPopup row presentation", () => {
   it("renders duplicate skill rows directly and tags only the project copy", () => {
     renderDuplicateSkillPopup();
@@ -177,6 +212,22 @@ describe("SlashCommandPopup capability icons", () => {
     const pluginRow = screen.getByRole("option", { name: /A native plugin/ });
     expect(pluginRow.querySelector(".lucide-plug")).not.toBeNull();
   });
+
+  it.each(["goal", "plan", "ultra", "compact"])(
+    "keeps capability-kind icons for reserved name %s",
+    (name) => {
+      renderReservedNameCapabilities();
+
+      const skillRow = screen.getByRole("option", {
+        name: new RegExp(`${name} reserved-name skill`),
+      });
+      const pluginRow = screen.getByRole("option", {
+        name: new RegExp(`${name} reserved-name plugin`),
+      });
+      expect(skillRow.querySelector(".lucide-badge-check")).not.toBeNull();
+      expect(pluginRow.querySelector(".lucide-plug")).not.toBeNull();
+    },
+  );
 
   it("plugin-provided skills remain skill entries", () => {
     renderPopup();

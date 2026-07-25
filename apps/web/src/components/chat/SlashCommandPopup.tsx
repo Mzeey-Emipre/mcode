@@ -284,7 +284,7 @@ function CommandIdentityMark({
       : command.capabilityKind === "plugin"
         ? Plug
         : null;
-  const Icon = semanticIcon ?? CapabilityIcon;
+  const Icon = CapabilityIcon ?? semanticIcon;
 
   return (
     <span
