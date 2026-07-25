@@ -21,6 +21,7 @@ export class InternalThreadControlMcpRuntime {
   private httpServer: Server | undefined;
   private httpPort: number | undefined;
   private httpServerStartup: Promise<void> | undefined;
+  private lifecycleTail: Promise<void> = Promise.resolve();
 
   constructor(
     @inject(ThreadControlService) service: ThreadControlService,
@@ -42,19 +43,14 @@ export class InternalThreadControlMcpRuntime {
   /** Closes all MCP state owned by a provider session. */
   async close(sessionId: string): Promise<void> {
     this.authority.close(sessionId);
-    const entry = this.httpSessions.get(sessionId);
-    this.httpSessions.delete(sessionId);
-    if (entry) {
-      await entry.transport.close().catch(() => undefined);
-    }
-    const server = this.httpSessions.size === 0 ? this.httpServer : undefined;
-    if (server) {
-      this.httpServer = undefined;
-      this.httpPort = undefined;
-      await new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      });
-    }
+    await this.inLifecycle(async () => {
+      const entry = this.httpSessions.get(sessionId);
+      this.httpSessions.delete(sessionId);
+      if (entry) {
+        await entry.transport.close().catch(() => undefined);
+      }
+      await this.closeHttpServerWhenIdle();
+    });
   }
 
   /** Creates the Claude SDK in-process MCP server for an active provider session. */
@@ -67,22 +63,57 @@ export class InternalThreadControlMcpRuntime {
   async createCodexConfiguration(sessionId: string): Promise<{ configOverrides: string[]; env: Record<string, string> } | undefined> {
     const credential = this.authority.credential(sessionId);
     if (!credential) return undefined;
-    await this.ensureHttpServer();
-    if (!this.httpPort) return undefined;
-    if (!this.httpSessions.has(sessionId)) {
-      const server = this.transport.createServer(credential);
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      await server.connect(transport);
-      this.httpSessions.set(sessionId, { server, transport });
+    return this.inLifecycle(async () => {
+      await this.ensureHttpServer();
+      if (credential !== this.authority.credential(sessionId) || !this.httpPort) {
+        await this.closeHttpServerWhenIdle();
+        return undefined;
+      }
+      if (!this.httpSessions.has(sessionId)) {
+        const server = this.transport.createServer(credential);
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        await server.connect(transport);
+        if (credential !== this.authority.credential(sessionId)) {
+          await transport.close().catch(() => undefined);
+          await this.closeHttpServerWhenIdle();
+          return undefined;
+        }
+        this.httpSessions.set(sessionId, { server, transport });
+      }
+      const url = `http://127.0.0.1:${this.httpPort}/${encodeURIComponent(sessionId)}`;
+      return {
+        configOverrides: [
+          `mcp_servers.${CODEX_MCP_NAME}.url=\"${url}\"`,
+          `mcp_servers.${CODEX_MCP_NAME}.bearer_token_env_var=\"${CODEX_MCP_TOKEN_ENV}\"`,
+        ],
+        env: { [CODEX_MCP_TOKEN_ENV]: credential },
+      };
+    });
+  }
+
+  private async inLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const previous = this.lifecycleTail;
+    this.lifecycleTail = next;
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
     }
-    const url = `http://127.0.0.1:${this.httpPort}/${encodeURIComponent(sessionId)}`;
-    return {
-      configOverrides: [
-        `mcp_servers.${CODEX_MCP_NAME}.url=\"${url}\"`,
-        `mcp_servers.${CODEX_MCP_NAME}.bearer_token_env_var=\"${CODEX_MCP_TOKEN_ENV}\"`,
-      ],
-      env: { [CODEX_MCP_TOKEN_ENV]: credential },
-    };
+  }
+
+  private async closeHttpServerWhenIdle(): Promise<void> {
+    if (this.httpSessions.size > 0 || !this.httpServer) return;
+    const server = this.httpServer;
+    this.httpServer = undefined;
+    this.httpPort = undefined;
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
   }
 
   private async ensureHttpServer(): Promise<void> {
