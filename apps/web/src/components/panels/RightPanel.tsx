@@ -8,8 +8,8 @@ import {
   COMPOSER_MIN_WIDTH,
   PANEL_SPLIT_GAP_PX,
   maxPanelWidthInSplit,
+  createRightPanelState,
   createDefaultRightPanelState,
-  rightPanelTabInstances,
   getDefaultPanelWidthPx,
 } from "@/stores/diffStore";
 import { PlanPanel } from "./plan";
@@ -86,19 +86,19 @@ export function RightPanel() {
   );
   /** Avoid a Zustand selector that allocates a fresh default object every evaluation. */
   const panelState = useMemo(
-    () => storedPanel ?? createDefaultRightPanelState(),
+    () =>
+      storedPanel
+        ? createRightPanelState(storedPanel)
+        : createDefaultRightPanelState(),
     [storedPanel],
   );
-  const { width: panelWidth, activeTab } = panelState;
-  // Tabs are singletons opened on demand; an empty set means no tab is open and
-  // the panel shows the card-grid empty state. Defensive default for any stored
-  // row that predates the openTabs field. See ADR-0004 / issue #610.
-  const openTabs = panelState.openTabs ?? [];
-  const tabInstances = rightPanelTabInstances(panelState);
-  const activeTabId =
-    panelState.activeTabId ??
-    tabInstances.find((instance) => instance.type === activeTab)?.id ??
-    null;
+  const {
+    width: panelWidth,
+    activeTab,
+    openTabs,
+    tabInstances,
+    activeTabId,
+  } = panelState;
   // Plan is creatable only in a thread; threadless the panel runs
   // against the workspace root and offers just Browser/Terminal/Files.
   const panelScope: PanelScope = activeThreadId ? "thread" : "threadless";

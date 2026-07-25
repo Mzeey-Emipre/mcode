@@ -196,10 +196,9 @@ export function createRightPanelState(input: RightPanelStateInput): RightPanelSt
   const tabInstances =
     input.tabInstances ??
     (input.openTabs ?? []).map((type) => ({ id: rightPanelSingletonId(type), type }));
-  const activeTabId =
-    input.activeTabId ??
-    tabInstances.find((instance) => instance.type === input.activeTab)?.id ??
-    null;
+  const activeTabId = Object.prototype.hasOwnProperty.call(input, "activeTabId")
+    ? input.activeTabId ?? null
+    : tabInstances.find((instance) => instance.type === input.activeTab)?.id ?? null;
   const state = {
     ...input,
     tabInstances,

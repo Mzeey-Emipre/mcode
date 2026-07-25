@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
+import type { RightPanelState } from "../stores/diffStore";
 import {
   useDiffStore,
   PANEL_MIN_WIDTH,
@@ -8,6 +9,7 @@ import {
   maxPanelWidthInSplit,
   getDefaultPanelWidthPx,
   createDefaultRightPanelState,
+  createRightPanelState,
   DEFAULT_LINE_WRAP,
 } from "../stores/diffStore";
 
@@ -422,6 +424,57 @@ describe("diffStore", () => {
   });
 
   describe("setRightPanelTab", () => {
+    it("preserves an explicit canonical null over a stale compatibility active tab", () => {
+      const panel = createRightPanelState({
+        visible: true,
+        width: 500,
+        tabInstances: [{ id: "singleton:changes", type: "changes" }],
+        activeTabId: null,
+        activeTab: "changes",
+      });
+
+      expect(panel.activeTabId).toBeNull();
+      expect(panel.activeTab).toBe("tasks");
+      expect(panel.openTabs).toEqual(["changes"]);
+    });
+
+    it("normalizes conflicting fallback and thread records from canonical instance state", () => {
+      const conflictingFallback = {
+        ...createDefaultRightPanelState(),
+        visible: true,
+        tabInstances: [{ id: "singleton:changes", type: "changes" }] as const,
+        activeTabId: "singleton:changes",
+        openTabs: [] as const,
+        activeTab: "tasks" as const,
+      } satisfies RightPanelState;
+      const conflictingThread = {
+        ...createDefaultRightPanelState(),
+        visible: true,
+        tabInstances: [{ id: "singleton:terminal", type: "terminal" }] as const,
+        activeTabId: "singleton:terminal",
+        openTabs: ["preview"] as const,
+        activeTab: "preview" as const,
+      } satisfies RightPanelState;
+      useDiffStore.setState({
+        rightPanelFallbackByWorkspace: { "ws-1": conflictingFallback },
+        rightPanelByThread: { "thread-1": conflictingThread },
+      });
+
+      const { getRightPanel } = useDiffStore.getState();
+      expect(getRightPanel("ws-1", "thread-untouched")).toMatchObject({
+        tabInstances: [{ id: "singleton:changes", type: "changes" }],
+        activeTabId: "singleton:changes",
+        openTabs: ["changes"],
+        activeTab: "changes",
+      });
+      expect(getRightPanel("ws-1", "thread-1")).toMatchObject({
+        tabInstances: [{ id: "singleton:terminal", type: "terminal" }],
+        activeTabId: "singleton:terminal",
+        openTabs: ["terminal"],
+        activeTab: "terminal",
+      });
+    });
+
     it("should update active tab for one workspace only", () => {
       const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
       setRightPanelTab("ws-1", null, "changes");
