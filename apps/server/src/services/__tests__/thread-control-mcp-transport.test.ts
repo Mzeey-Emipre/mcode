@@ -104,4 +104,43 @@ describe("internal thread-control MCP transport", () => {
     await client.close();
     await server.close();
   });
+
+  it("serves worktree_list through the MCP protocol and fails closed after revocation", async () => {
+    const authority = new InternalThreadControlMcpAuthority();
+    const lease = authority.activate({
+      sessionId: "pooled-provider-session",
+      sourceThreadId: "source-thread",
+      sourceTurnId: "source-turn",
+      sourceProviderId: "codex",
+      permissionMode: "full",
+    });
+    const service = {
+      workspaceSearch: vi.fn().mockReturnValue({ workspaces: [] }),
+      worktreeList: vi.fn().mockResolvedValue({
+        status: "found",
+        workspaceId: "workspace-1",
+        worktrees: [{ worktreeId: "worktree-1", label: "main", branch: "main" }],
+      }),
+    } as unknown as ThreadControlService;
+    const session = createInternalThreadControlMcpSession({ authority, service });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = session.createServer(lease.credential);
+    const client = new Client({ name: "thread-control-test", version: "0.1.0" });
+
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    await expect(client.listTools()).resolves.toMatchObject({
+      tools: [{ name: "workspace_search" }, { name: "worktree_list" }],
+    });
+    await expect(client.callTool({ name: "worktree_list", arguments: { workspaceId: "workspace-1" } }))
+      .resolves.toMatchObject({
+        structuredContent: { status: "found", workspaceId: "workspace-1" },
+      });
+
+    authority.revoke(lease.sessionId);
+    await expect(client.callTool({ name: "worktree_list", arguments: { workspaceId: "workspace-1" } }))
+      .resolves.toMatchObject({ isError: true });
+    await client.close();
+    await server.close();
+  });
 });

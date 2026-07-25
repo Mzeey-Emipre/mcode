@@ -79,7 +79,6 @@ export function createInternalThreadControlMcpSession(
       server.registerTool("worktree_list", {
         description: "List tracked worktrees for one registered Mcode workspace.",
         inputSchema: WorktreeListInputSchema(),
-        outputSchema: WorktreeListResultSchema(),
       }, async (arguments_, extra) => createToolResult(await dispatch({
         bearerCredential,
         requestId: extra.requestId,
