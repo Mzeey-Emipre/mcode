@@ -35,9 +35,10 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: ".node-version"
+          package-manager-cache: false
 
       - id: check
         name: Compare HEAD to last nightly tag
@@ -170,19 +171,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: ".node-version"
+          package-manager-cache: false
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
+          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-node-${{ hashFiles('.node-version') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-node-${{ hashFiles('.node-version') }}-lock-
 
       - name: Install dependencies
         shell: bash

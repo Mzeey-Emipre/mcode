@@ -39,9 +39,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: ".node-version"
+          package-manager-cache: false
       - name: Configure node-gyp headers
         shell: bash
         run: |
@@ -54,9 +55,9 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
+          key: ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-
       - name: Cache Turbo outputs
         uses: actions/cache@v4
         continue-on-error: true
@@ -85,9 +86,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: ".node-version"
+          package-manager-cache: false
       - name: Configure node-gyp headers
         shell: bash
         run: |
@@ -100,9 +102,9 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
+          key: ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-
       - name: Cache Turbo outputs
         uses: actions/cache@v4
         continue-on-error: true
@@ -142,9 +144,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: ".node-version"
+          package-manager-cache: false
       - name: Configure node-gyp headers
         shell: bash
         run: |
@@ -157,9 +160,9 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
+          key: ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-
       - name: Cache Turbo outputs
         uses: actions/cache@v4
         continue-on-error: true
@@ -196,9 +199,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: ".node-version"
+          package-manager-cache: false
       - name: Configure node-gyp headers
         shell: bash
         run: |
@@ -211,9 +215,9 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
+          key: ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-
       - run: bun install --frozen-lockfile
 
       # Read the resolved version straight from the lockfile (the source of truth
@@ -270,9 +274,10 @@ jobs:
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: ".node-version"
+          package-manager-cache: false
       - name: Configure node-gyp headers
         shell: bash
         run: |
@@ -285,9 +290,9 @@ jobs:
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', '.node-version') }}
+          key: ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-bun-node-${{ hashFiles('.node-version') }}-lock-
       - name: Cache Turbo outputs
         uses: actions/cache@v4
         continue-on-error: true
