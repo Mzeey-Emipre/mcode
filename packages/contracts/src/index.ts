@@ -36,6 +36,25 @@ export { WorkspaceSchema, WorkspaceEnrichmentSchema } from "./models/workspace.j
 export type { Workspace, WorkspaceEnrichment } from "./models/workspace.js";
 
 export {
+  THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH,
+  WORKSPACE_SEARCH_QUERY_MAX_LENGTH,
+  WORKSPACE_SEARCH_LIMIT_MAX,
+  WORKSPACE_SEARCH_LIMIT_DEFAULT,
+  WorkspaceSearchInputSchema,
+  WorkspaceSearchResultSchema,
+  WorktreeListInputSchema,
+  WorktreeListResultSchema,
+  ThreadControlErrorSchema,
+} from "./thread-control.js";
+export type {
+  WorkspaceSearchInput,
+  WorkspaceSearchResult,
+  WorktreeListInput,
+  WorktreeListResult,
+  ThreadControlError,
+} from "./thread-control.js";
+
+export {
   MCODE_WORKSPACE_PREVIEW_PROTOCOL,
   isMcodeWorkspacePreviewUrl,
   mcodeWorkspacePreviewHref,

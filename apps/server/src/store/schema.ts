@@ -33,6 +33,26 @@ export const workspaces = sqliteTable(
   ],
 );
 
+/** Server-only stable identities for registered worktrees in each workspace. */
+export const workspaceWorktrees = sqliteTable(
+  "workspace_worktrees",
+  {
+    id: text("id").primaryKey().notNull(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    canonicalPath: text("canonical_path").notNull(),
+    label: text("label").notNull(),
+    branch: text("branch"),
+    baseRef: text("base_ref"),
+    managed: integer("managed").notNull().default(0),
+    lastSeenAt: text("last_seen_at").notNull().default(timestampDefault),
+    stale: integer("stale").notNull().default(0),
+  },
+  (table) => [
+    uniqueIndex("idx_workspace_worktrees_path").on(table.workspaceId, table.canonicalPath),
+    index("idx_workspace_worktrees_workspace").on(table.workspaceId, table.stale),
+  ],
+);
+
 export const threads = sqliteTable(
   "threads",
   {
@@ -65,6 +85,11 @@ export const threads = sqliteTable(
     permissionMode: text("permission_mode"),
     parentThreadId: text("parent_thread_id"),
     forkedFromMessageId: text("forked_from_message_id"),
+    delegationCoordinatorThreadId: text("delegation_coordinator_thread_id").references((): AnySQLiteColumn => threads.id, { onDelete: "set null" }),
+    delegationCreatorTurnId: text("delegation_creator_turn_id"),
+    delegationCreatorToolCallId: text("delegation_creator_tool_call_id"),
+    delegationCreationKind: text("delegation_creation_kind"),
+    createdByIntegrationId: text("created_by_integration_id"),
     lastCompactSummary: text("last_compact_summary"),
     copilotAgent: text("copilot_agent"),
     contextWindowMode: text("context_window_mode"),
@@ -85,6 +110,8 @@ export const threads = sqliteTable(
     index("idx_threads_status").on(table.status),
     index("idx_threads_parent_thread_id").on(table.parentThreadId),
     index("idx_threads_forked_from_message_id").on(table.forkedFromMessageId),
+    index("idx_threads_delegation_coordinator").on(table.delegationCoordinatorThreadId),
+    index("idx_threads_created_by_integration").on(table.createdByIntegrationId),
   ],
 );
 
@@ -158,6 +185,11 @@ export const messages = sqliteTable(
      * existed — the UI falls back gracefully when absent.
      */
     model: text("model"),
+    provider: text("provider"),
+    originType: text("origin_type").notNull().default("legacy"),
+    sourceThreadId: text("source_thread_id"),
+    sourceTurnId: text("source_turn_id"),
+    sourceProviderId: text("source_provider_id"),
     /**
      * When 1, this message is internal to mcode (e.g. a hidden handoff request
      * on a Cursor parent thread) and must not render in the chat UI. The
