@@ -627,7 +627,6 @@ export function ProjectTree() {
                   <SortableProjectShell
                     key={ws.id}
                     sortableId={ws.id}
-                    activeDragId={activeDragId}
                     workspace={ws}
                     isExpanded={expanded[ws.id] ?? false}
                     isActive={activeWorkspaceId === ws.id}
@@ -1805,14 +1804,12 @@ const ProjectNode = memo(function ProjectNode({
 });
 
 /**
- * Wraps {@link ProjectNode} with `@dnd-kit/sortable` transforms and collapses
- * thread children while the user is dragging this project.
+ * Wraps {@link ProjectNode} with `@dnd-kit/sortable` transforms.
  */
 const SortableProjectShell = memo(function SortableProjectShell(
-  props: ProjectNodeProps & { sortableId: string; activeDragId: string | null },
+  props: ProjectNodeProps & { sortableId: string },
 ) {
-  const { sortableId, activeDragId, ...nodeProps } = props;
-  const collapseForDrag = activeDragId !== null;
+  const { sortableId, ...nodeProps } = props;
   const {
     attributes,
     listeners,
@@ -1843,7 +1840,6 @@ const SortableProjectShell = memo(function SortableProjectShell(
     >
       <ProjectNode
         {...nodeProps}
-        isExpanded={nodeProps.isExpanded && !collapseForDrag}
         isProjectDragging={isDragging}
         sortableListeners={listeners}
       />
