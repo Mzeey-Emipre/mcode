@@ -291,6 +291,47 @@ created; the timeline must not show the sub-agent as done until the child
 actually reports back. The sub-agent's own narration is not streamed to
 the timeline; only its nested tool calls and its final result are shown.
 
+### Coordinator thread
+A thread that assigns work to one or more delegated threads and monitors their
+progress.
+_Avoid_: Parent agent, orchestrator session
+
+### Delegated thread
+A normal Mcode thread created by a coordinator thread to perform an explicit
+assignment. It remains visible and controllable as its own thread.
+_Avoid_: Sub-agent, hidden child session
+
+### Thread delegation
+The durable assignment and relationship between a coordinator thread and a
+delegated thread. It records which Thread and Turn created the assignment but
+does not make the delegated thread part of the coordinator's Turn. The
+delegated thread has its own lifecycle and survives the coordinator stopping or
+disconnecting.
+_Avoid_: Sub-agent call, conversation fork
+
+### Thread control
+The capability to discover Projects and Threads, create a delegated thread,
+read it, send it work, stop it, or wait for its state. Thread control always
+excludes the active source thread so a Thread cannot target itself.
+_Avoid_: Sub-agent control, conversation-fork control
+
+### Internal thread control
+Thread control exercised by a Provider running inside an authenticated Mcode
+Thread. It acts for the current user across registered Projects.
+_Avoid_: Provider subagent API
+
+### Paired external thread control
+Thread control exercised by an external integration paired with Mcode. It is
+limited to selected Projects, granted operations, and ownership rules.
+_Avoid_: Internal thread control, unrestricted MCP access
+
+### Message origin
+The durable source of an inbound user-role Message. A Message comes from the
+composer, another Thread, or a legacy row created before origin was recorded.
+A Thread origin identifies the source Thread, Turn, and Provider. It does not
+label the sender as human or agent.
+_Avoid_: Message author type
+
 ### Text delta
 A streaming text chunk emitted by the provider as the agent types its
 output. Many text deltas accumulate during a turn. At emission time the
