@@ -778,6 +778,14 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ ptyId: z.string() }),
     result: z.void(),
   },
+  "terminal.checkpoint": {
+    params: z.object({
+      ptyId: z.string(),
+      seq: z.number().int().min(-1),
+      data: z.string().max(8 * 1024 * 1024),
+    }),
+    result: z.object({ accepted: z.boolean() }),
+  },
   "terminal.killByThread": {
     params: z.object({ threadId: z.string() }),
     result: z.void(),
@@ -795,11 +803,20 @@ export const WS_METHODS = lazySchema(() => ({
        * Pass -1 when the client has seen no output (replay everything).
        */
       lastSeq: z.number().int().min(-1),
+      cold: z.boolean().optional(),
     }),
-    result: z.object({
-      /** True when eviction means the client may have missed output. */
-      gapped: z.boolean(),
-    }),
+    result: z.discriminatedUnion("mode", [
+      z.object({ mode: z.literal("delta") }),
+      z.object({
+        mode: z.literal("checkpoint"),
+        checkpoint: z.string(),
+        checkpointThrough: z.number().int().min(-1),
+      }),
+      z.object({
+        mode: z.literal("reset"),
+        discardThrough: z.number().int().min(-1),
+      }),
+    ]),
   },
   /** List all active PTY sessions on the server. Used during reconnect. */
   "terminal.listActive": {

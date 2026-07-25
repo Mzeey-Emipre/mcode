@@ -1,8 +1,16 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+
+const terminalPause = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("@/transport", () => ({
+  getTransport: () => ({ terminalPause }),
+}));
+
 import { useTerminalStore, TERMINAL_PANEL_DEFAULTS } from "@/stores/terminalStore";
 
 describe("TerminalStore", () => {
   beforeEach(() => {
+    terminalPause.mockClear();
     // setTerminalPanelHeight is batched via rAF/setTimeout; fake timers
     // let tests flush the queue synchronously with vi.runAllTimers().
     vi.useFakeTimers();

@@ -428,19 +428,49 @@ export class TerminalService {
    * @param ptyId - The PTY session to replay.
    * @param lastSeq - Last seq number the client received before the disconnect.
    */
-  reattach(ptyId: string, lastSeq: number): { gapped: boolean } {
+  reattach(
+    ptyId: string,
+    lastSeq: number,
+    cold = false,
+  ):
+    | { mode: "delta" }
+    | { mode: "reset"; discardThrough: number }
+    | { mode: "checkpoint"; checkpoint: string; checkpointThrough: number } {
     const replayBuffer = this.replayBuffers.get(ptyId);
     if (!replayBuffer) throw new Error(`PTY not found: ${ptyId}`);
 
-    const { chunks, gapped } = replayBuffer.replay(lastSeq);
+    const restore = cold ? replayBuffer.restoreCold() : null;
+    const { chunks, gapped } = restore
+      ? { chunks: restore.chunks, gapped: restore.mode === "reset" }
+      : replayBuffer.replay(lastSeq);
     // Capture sender once to avoid repeated null checks inside the loop.
     const sender = this.sender;
-    if (sender) {
+    if (sender && !gapped) {
       for (const { seq, bytes } of chunks) {
         sender.data(ptyId, seq, bytes);
       }
     }
-    return { gapped };
+    if (restore?.mode === "checkpoint") {
+      return {
+        mode: "checkpoint",
+        checkpoint: restore.checkpoint.data,
+        checkpointThrough: restore.checkpoint.seq,
+      };
+    }
+    if (restore?.mode === "reset") {
+      return { mode: "reset", discardThrough: restore.discardThrough };
+    }
+    if (gapped) {
+      return { mode: "reset", discardThrough: replayBuffer.latest };
+    }
+    return { mode: "delta" };
+  }
+
+  /** Saves a bounded serialized renderer state for a later cold mount. */
+  checkpoint(ptyId: string, seq: number, data: string): { accepted: boolean } {
+    const replayBuffer = this.replayBuffers.get(ptyId);
+    if (!replayBuffer) throw new Error(`PTY not found: ${ptyId}`);
+    return { accepted: replayBuffer.checkpointAt(seq, data) };
   }
 
   /**

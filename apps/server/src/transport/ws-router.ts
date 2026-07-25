@@ -1003,11 +1003,13 @@ async function dispatch(
       deps.terminalService.resume(ptyId);
       return;
     }
+    case "terminal.checkpoint":
+      return deps.terminalService.checkpoint(params.ptyId, params.seq, params.data);
     case "terminal.killByThread":
       await deps.terminalService.killByThread(params.threadId);
       return;
     case "terminal.reattach":
-      return deps.terminalService.reattach(params.ptyId, params.lastSeq);
+      return deps.terminalService.reattach(params.ptyId, params.lastSeq, params.cold);
     case "terminal.listActive":
       return deps.terminalService.listActiveSessions();
     case "terminal.hasChildren":

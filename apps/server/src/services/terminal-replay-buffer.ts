@@ -64,6 +64,19 @@ interface ReplayChunk {
   bytes: Uint8Array;
 }
 
+/** Serialized xterm state captured after the named output sequence. */
+export interface TerminalCheckpoint {
+  readonly seq: number;
+  readonly data: string;
+  readonly bytes: number;
+}
+
+/** Cold renderer restoration selected by the replay buffer. */
+export type ColdRestoreResult =
+  | { mode: "checkpoint"; checkpoint: TerminalCheckpoint; chunks: ReadonlyArray<ReplayChunk> }
+  | { mode: "replay"; chunks: ReadonlyArray<ReplayChunk> }
+  | { mode: "reset"; chunks: readonly []; discardThrough: number };
+
 /**
  * Return value of {@link TerminalReplayBuffer.replay}.
  *
@@ -92,6 +105,8 @@ export class TerminalReplayBuffer {
   /** Running total of bytes dropped via cap eviction. */
   public droppedBytes = 0;
   private capBytes: number;
+  private checkpoint: TerminalCheckpoint | null = null;
+  private latestSeq = -1;
 
   /**
    * Creates a new replay buffer.
@@ -116,6 +131,11 @@ export class TerminalReplayBuffer {
     return this.capBytes;
   }
 
+  /** Highest sequence recorded, including output no longer retained. */
+  get latest(): number {
+    return this.latestSeq;
+  }
+
   /**
    * Adjust the retention cap at runtime, e.g. when `terminal.scrollback`
    * changes for live sessions.
@@ -130,12 +150,7 @@ export class TerminalReplayBuffer {
    */
   setCap(capBytes: number): void {
     this.capBytes = capBytes;
-
-    while (this.bufferedBytes > this.capBytes && this.head < this.buffer.length) {
-      const evicted = this.buffer[this.head++]!;
-      this.bufferedBytes -= evicted.bytes.length;
-      this.droppedBytes += evicted.bytes.length;
-    }
+    this.enforceCap();
 
     // Compact the backing array if the ghost-head prefix is large, mirroring
     // the threshold used in record().
@@ -159,13 +174,9 @@ export class TerminalReplayBuffer {
   record(seq: number, chunk: Uint8Array): void {
     this.buffer.push({ seq, bytes: chunk });
     this.bufferedBytes += chunk.length;
+    this.latestSeq = Math.max(this.latestSeq, seq);
 
-    // Evict oldest chunks until within cap.
-    while (this.bufferedBytes > this.capBytes && this.head < this.buffer.length) {
-      const evicted = this.buffer[this.head++]!;
-      this.bufferedBytes -= evicted.bytes.length;
-      this.droppedBytes += evicted.bytes.length;
-    }
+    this.enforceCap();
 
     // Compact backing array when the ghost prefix is large enough to matter.
     // Mirrors the compaction threshold in TerminalFlowControl.
@@ -203,6 +214,47 @@ export class TerminalReplayBuffer {
   }
 
   /**
+   * Stores a bounded xterm serialization when it describes the latest output.
+   * Stale, future, and oversized checkpoints are rejected without replacing a
+   * usable checkpoint.
+   */
+  checkpointAt(seq: number, data: string): boolean {
+    const bytes = new TextEncoder().encode(data).length;
+    const active = this.buffer.slice(this.head);
+    const firstLaterSeq = active.find((chunk) => chunk.seq > seq)?.seq;
+    const contiguousWithRetainedOutput =
+      firstLaterSeq === undefined ? seq === this.latestSeq : firstLaterSeq === seq + 1;
+    if (
+      seq < (this.checkpoint?.seq ?? -1) ||
+      seq > this.latestSeq ||
+      bytes > this.capBytes ||
+      !contiguousWithRetainedOutput
+    ) {
+      return false;
+    }
+
+    this.checkpoint = { seq, data, bytes };
+    while (this.head < this.buffer.length && this.buffer[this.head]!.seq <= seq) {
+      const consumed = this.buffer[this.head++]!;
+      this.bufferedBytes -= consumed.bytes.length;
+    }
+    this.enforceCap();
+    return this.checkpoint !== null;
+  }
+
+  /** Selects a parser-safe cold restore without returning a discontinuous tail. */
+  restoreCold(): ColdRestoreResult {
+    const active = this.buffer.slice(this.head);
+    if (this.checkpoint) {
+      return { mode: "checkpoint", checkpoint: this.checkpoint, chunks: active };
+    }
+    if (this.droppedBytes > 0) {
+      return { mode: "reset", chunks: [], discardThrough: this.latestSeq };
+    }
+    return { mode: "replay", chunks: active };
+  }
+
+  /**
    * Clears all buffered chunks and resets all counters.
    *
    * After a clear, {@link replay} returns `gapped: false` — a fresh buffer is
@@ -213,5 +265,24 @@ export class TerminalReplayBuffer {
     this.head = 0;
     this.bufferedBytes = 0;
     this.droppedBytes = 0;
+    this.checkpoint = null;
+    this.latestSeq = -1;
+  }
+
+  private enforceCap(): void {
+    while (
+      (this.checkpoint?.bytes ?? 0) + this.bufferedBytes > this.capBytes &&
+      this.head < this.buffer.length
+    ) {
+      const evicted = this.buffer[this.head++]!;
+      this.bufferedBytes -= evicted.bytes.length;
+      this.droppedBytes += evicted.bytes.length;
+      if (this.checkpoint && evicted.seq > this.checkpoint.seq) {
+        this.checkpoint = null;
+      }
+    }
+    if ((this.checkpoint?.bytes ?? 0) + this.bufferedBytes > this.capBytes) {
+      this.checkpoint = null;
+    }
   }
 }

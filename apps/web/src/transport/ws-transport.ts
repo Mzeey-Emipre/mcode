@@ -312,12 +312,23 @@ export function createWsTransport(
               .map(async (p) => {
                 // -1 means "I have seen nothing" — server replays everything including seq=0.
                 const lastSeq = ptyLastSeqMap.get(p.ptyId) ?? -1;
-                const { gapped } = await rpc<{ gapped: boolean }>(
+                const result = await rpc<
+                  | { mode: "delta" }
+                  | {
+                      mode: "checkpoint";
+                      checkpoint: string;
+                      checkpointThrough: number;
+                    }
+                  | { mode: "reset"; discardThrough: number }
+                >(
                   "terminal.reattach",
                   { ptyId: p.ptyId, lastSeq },
                 );
-                if (gapped) {
+                if (result.mode === "reset") {
+                  ptyLastSeqMap.set(p.ptyId, result.discardThrough);
                   emitPtyReconnectGap({ ptyId: p.ptyId });
+                } else if (result.mode === "checkpoint") {
+                  ptyLastSeqMap.set(p.ptyId, result.checkpointThrough);
                 }
               }),
           );
@@ -701,8 +712,18 @@ export function createWsTransport(
     terminalResume: (ptyId) => rpc<void>("terminal.resume", { ptyId }),
     terminalKillByThread: (threadId) =>
       rpc<void>("terminal.killByThread", { threadId }),
-    terminalReattach: (ptyId, lastSeq) =>
-      rpc<{ gapped: boolean }>("terminal.reattach", { ptyId, lastSeq }),
+    terminalReattach: (ptyId, lastSeq, cold) =>
+      rpc<
+        | { mode: "delta" }
+        | {
+            mode: "checkpoint";
+            checkpoint: string;
+            checkpointThrough: number;
+          }
+        | { mode: "reset"; discardThrough: number }
+      >("terminal.reattach", { ptyId, lastSeq, cold }),
+    terminalCheckpoint: (ptyId, seq, data) =>
+      rpc<{ accepted: boolean }>("terminal.checkpoint", { ptyId, seq, data }),
     terminalListActive: () =>
       rpc<Array<{ ptyId: string; threadId: string }>>("terminal.listActive", {}),
     terminalHasChildren: (ptyId) =>
