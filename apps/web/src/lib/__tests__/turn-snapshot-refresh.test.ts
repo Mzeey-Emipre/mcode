@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useDiffStore } from "@/stores/diffStore";
+import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { refreshTurnSnapshotsAfterPersist } from "@/lib/turn-snapshot-refresh";
 import { mockTransport, createMockThread } from "@/__tests__/mocks/transport";
@@ -58,7 +58,12 @@ describe("refreshTurnSnapshotsAfterPersist", () => {
     useDiffStore.setState({
       snapshotsByThread: { [THREAD_ID]: [] },
       rightPanelByThread: {
-        [THREAD_ID]: { visible: true, activeTab: "changes", openTabs: ["changes"], width: 400 },
+        [THREAD_ID]: createRightPanelState({
+          visible: true,
+          width: 400,
+          tabInstances: [{ id: "singleton:changes", type: "changes" }],
+          activeTabId: "singleton:changes",
+        }),
       },
       viewMode: "cumulative",
     });

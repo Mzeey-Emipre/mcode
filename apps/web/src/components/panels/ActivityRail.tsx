@@ -1,4 +1,9 @@
-import type { FocusEvent as ReactFocusEvent, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  FocusEvent as ReactFocusEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+} from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Globe, Maximize2, Minimize2, PanelRight, Plus, X } from "lucide-react";
 import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
@@ -20,7 +25,7 @@ import {
   type PanelScope,
   type PanelTabType,
 } from "@/lib/panel-tabs";
-import type { RightPanelTab } from "@/stores/diffStore";
+import type { RightPanelTab, RightPanelTabInstance } from "@/stores/diffStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +46,92 @@ const RAIL_COLLAPSE_DELAY_MS = 250;
 
 /** Shared trailing anchor for expanded-rail actions. */
 const RAIL_TRAILING_CONTROL_CLASS = "absolute left-[7.75rem] top-0";
+/** Pointer and keyboard reorder boundary for one top-level rail instance. */
+function ReorderableRailItem({
+  instanceId,
+  children,
+  onReorder,
+}: {
+  instanceId: string;
+  children: ReactNode;
+  onReorder: (instanceId: string, direction: -1 | 1) => void;
+}) {
+  const draggingRef = useRef(false);
+  const dragStartYRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-rail-close]")) return;
+    suppressClickRef.current = false;
+    draggingRef.current = true;
+    dragStartYRef.current = event.clientY;
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return;
+    const dragStartY = dragStartYRef.current;
+    if (dragStartY === null || Math.abs(event.clientY - dragStartY) < 4) return;
+    if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
+    const item = event.currentTarget;
+    const siblings = Array.from(
+      item.parentElement?.querySelectorAll<HTMLElement>(":scope > [data-rail-instance]") ?? [],
+    );
+    const index = siblings.indexOf(item);
+    const previous = siblings[index - 1];
+    const next = siblings[index + 1];
+    const direction =
+      previous && event.clientY <= previous.getBoundingClientRect().bottom
+        ? -1
+        : next && event.clientY >= next.getBoundingClientRect().top
+          ? 1
+          : null;
+    if (direction === null) return;
+    onReorder(instanceId, direction);
+    suppressClickRef.current = true;
+  };
+
+  const onPointerUp = () => {
+    draggingRef.current = false;
+    dragStartYRef.current = null;
+  };
+
+  const onPointerCancel = () => {
+    draggingRef.current = false;
+    dragStartYRef.current = null;
+    suppressClickRef.current = false;
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!event.altKey || !event.shiftKey) return;
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    event.stopPropagation();
+    onReorder(instanceId, event.key === "ArrowUp" ? -1 : 1);
+  };
+
+  return (
+    <div
+      data-rail-instance={instanceId}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onKeyDown={onKeyDown}
+      onClickCapture={(event) => {
+        if (!suppressClickRef.current) return;
+        suppressClickRef.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 /** Catalog metadata (product label + icon) for an openable tab, by store id. */
 function metaForTab(id: RightPanelTab): PanelTabType | undefined {
@@ -204,6 +295,7 @@ function RailTab({
         variant="ghost"
         size="icon-xs"
         aria-label={`Close ${label}`}
+        data-rail-close
         title={expanded ? undefined : `Close ${label}`}
         onClick={() => onClose(id)}
         className={cn(
@@ -309,6 +401,7 @@ function BrowserPageRailTab({
         variant="ghost"
         size="icon-xs"
         aria-label={`Close page ${label}`}
+        data-rail-close
         title={expanded ? undefined : `Close ${label}`}
         onClick={(e) => {
           e.stopPropagation();
@@ -479,8 +572,8 @@ function RailAddControl({
  * list. The close action mirrors the chat-header toggle and right-panel shortcut.
  */
 export function ActivityRail({
-  openTabs,
-  activeTab,
+  tabInstances,
+  activeTabId,
   scope,
   scopeProgress,
   changesCount,
@@ -491,12 +584,13 @@ export function ActivityRail({
   onToggleMaximized,
   onSelect,
   onClose,
+  onReorder,
   onCreate,
   onSelectBrowserPage,
   onCloseBrowserPage,
 }: {
-  readonly openTabs: readonly RightPanelTab[];
-  readonly activeTab: RightPanelTab;
+  readonly tabInstances: readonly RightPanelTabInstance[];
+  readonly activeTabId: string | null;
   readonly scope: PanelScope;
   readonly scopeProgress: ScopeProgress;
   readonly changesCount: number;
@@ -507,12 +601,14 @@ export function ActivityRail({
   readonly maximized: boolean;
   onTogglePanel: () => void;
   onToggleMaximized: () => void;
-  onSelect: (id: RightPanelTab) => void;
-  onClose: (id: RightPanelTab) => void;
+  onSelect: (instanceId: string) => void;
+  onClose: (instanceId: string) => void;
+  onReorder: (instanceId: string, direction: -1 | 1) => void;
   onCreate: (id: RightPanelTab) => void;
-  onSelectBrowserPage: (pageId: string) => void;
+  onSelectBrowserPage: (instanceId: string, pageId: string) => void;
   onCloseBrowserPage: (pageId: string) => void;
 }) {
+  const openTabs = tabInstances.map((instance) => instance.type);
   const [expanded, setExpanded] = useState(false);
   const railRef = useRef<HTMLDivElement>(null);
   const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -652,35 +748,38 @@ export function ActivityRail({
         </Button>
       </div>
 
-      {openTabs.map((id) => {
+      {tabInstances.map((instance) => {
+        const { id: instanceId, type: id } = instance;
         // The Browser tab becomes its page switcher: when its pages are known,
         // render them as a favicon group instead of the single tab glyph. With
         // none known yet (or a web build with no bridge), fall back to the tab
         // glyph so Browser is still selectable.
         if (id === "preview" && browserTabSet && browserTabSet.tabs.length > 0) {
           return (
-            <BrowserPageGroup
-              key={id}
-              tabSet={browserTabSet}
-              browserActive={activeTab === "preview"}
-              expanded={expanded}
-              onSelectPage={onSelectBrowserPage}
-              onClosePage={onCloseBrowserPage}
-            />
+            <ReorderableRailItem key={instanceId} instanceId={instanceId} onReorder={onReorder}>
+              <BrowserPageGroup
+                tabSet={browserTabSet}
+                browserActive={activeTabId === instanceId}
+                expanded={expanded}
+                onSelectPage={(pageId) => onSelectBrowserPage(instanceId, pageId)}
+                onClosePage={onCloseBrowserPage}
+              />
+            </ReorderableRailItem>
           );
         }
         return (
-          <RailTab
-            key={id}
-            id={id}
-            active={id === activeTab}
-            expanded={expanded}
-            scope={scopeProgress}
-            changesCount={changesCount}
-            changesFresh={changesFresh}
-            onSelect={onSelect}
-            onClose={onClose}
-          />
+          <ReorderableRailItem key={instanceId} instanceId={instanceId} onReorder={onReorder}>
+            <RailTab
+              id={id}
+              active={instanceId === activeTabId}
+              expanded={expanded}
+              scope={scopeProgress}
+              changesCount={changesCount}
+              changesFresh={changesFresh}
+              onSelect={() => onSelect(instanceId)}
+              onClose={() => onClose(instanceId)}
+            />
+          </ReorderableRailItem>
         );
       })}
       {/* The add control only appears once a tab is open; with none open the

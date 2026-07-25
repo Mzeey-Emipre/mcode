@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
+import type { RightPanelState } from "../stores/diffStore";
 import {
   useDiffStore,
   PANEL_MIN_WIDTH,
@@ -8,6 +9,7 @@ import {
   maxPanelWidthInSplit,
   getDefaultPanelWidthPx,
   createDefaultRightPanelState,
+  createRightPanelState,
   DEFAULT_LINE_WRAP,
 } from "../stores/diffStore";
 
@@ -422,6 +424,57 @@ describe("diffStore", () => {
   });
 
   describe("setRightPanelTab", () => {
+    it("preserves an explicit canonical null over a stale compatibility active tab", () => {
+      const panel = createRightPanelState({
+        visible: true,
+        width: 500,
+        tabInstances: [{ id: "singleton:changes", type: "changes" }],
+        activeTabId: null,
+        activeTab: "changes",
+      });
+
+      expect(panel.activeTabId).toBeNull();
+      expect(panel.activeTab).toBe("tasks");
+      expect(panel.openTabs).toEqual(["changes"]);
+    });
+
+    it("normalizes conflicting fallback and thread records from canonical instance state", () => {
+      const conflictingFallback = {
+        ...createDefaultRightPanelState(),
+        visible: true,
+        tabInstances: [{ id: "singleton:changes", type: "changes" }] as const,
+        activeTabId: "singleton:changes",
+        openTabs: [] as const,
+        activeTab: "tasks" as const,
+      } satisfies RightPanelState;
+      const conflictingThread = {
+        ...createDefaultRightPanelState(),
+        visible: true,
+        tabInstances: [{ id: "singleton:terminal", type: "terminal" }] as const,
+        activeTabId: "singleton:terminal",
+        openTabs: ["preview"] as const,
+        activeTab: "preview" as const,
+      } satisfies RightPanelState;
+      useDiffStore.setState({
+        rightPanelFallbackByWorkspace: { "ws-1": conflictingFallback },
+        rightPanelByThread: { "thread-1": conflictingThread },
+      });
+
+      const { getRightPanel } = useDiffStore.getState();
+      expect(getRightPanel("ws-1", "thread-untouched")).toMatchObject({
+        tabInstances: [{ id: "singleton:changes", type: "changes" }],
+        activeTabId: "singleton:changes",
+        openTabs: ["changes"],
+        activeTab: "changes",
+      });
+      expect(getRightPanel("ws-1", "thread-1")).toMatchObject({
+        tabInstances: [{ id: "singleton:terminal", type: "terminal" }],
+        activeTabId: "singleton:terminal",
+        openTabs: ["terminal"],
+        activeTab: "terminal",
+      });
+    });
+
     it("should update active tab for one workspace only", () => {
       const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
       setRightPanelTab("ws-1", null, "changes");
@@ -455,6 +508,88 @@ describe("diffStore", () => {
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview", "terminal"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
+
+    it("creates deterministic singleton instances in insertion order", () => {
+      const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+
+      expect(getRightPanel("ws-1").tabInstances).toEqual([
+        { id: "singleton:terminal", type: "terminal" },
+        { id: "singleton:preview", type: "preview" },
+        { id: "singleton:changes", type: "changes" },
+      ]);
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:changes");
+    });
+
+    it("selects a repeatable tab by stable instance identity", () => {
+      useDiffStore.setState({
+        rightPanelFallbackByWorkspace: {
+          "ws-1": {
+            ...useDiffStore.getState().getRightPanel("ws-1"),
+            tabInstances: [
+              { id: "terminal:first", type: "terminal" },
+              { id: "terminal:second", type: "terminal" },
+            ],
+            activeTabId: "terminal:first",
+          },
+        },
+      });
+
+      const { setRightPanelTabInstance, getRightPanel } = useDiffStore.getState();
+      setRightPanelTabInstance("ws-1", null, "terminal:second");
+
+      expect(getRightPanel("ws-1").activeTabId).toBe("terminal:second");
+      expect(getRightPanel("ws-1").tabInstances).toEqual([
+        { id: "terminal:first", type: "terminal" },
+        { id: "terminal:second", type: "terminal" },
+      ]);
+    });
+  });
+
+  describe("reorderRightPanelTab", () => {
+    it("moves instances without regrouping types and stops at boundaries", () => {
+      const { setRightPanelTab, reorderRightPanelTab, getRightPanel } =
+        useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+
+      reorderRightPanelTab("ws-1", null, "singleton:changes", -1);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "changes",
+        "preview",
+      ]);
+
+      reorderRightPanelTab("ws-1", null, "singleton:terminal", -1);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "changes",
+        "preview",
+      ]);
+    });
+
+    it("keeps thread and workspace fallback order independent", () => {
+      const { setRightPanelTab, reorderRightPanelTab, getRightPanel } =
+        useDiffStore.getState();
+      for (const tab of ["terminal", "preview", "changes"] as const) {
+        setRightPanelTab("ws-1", null, tab);
+      }
+      reorderRightPanelTab("ws-1", "thread-1", "singleton:preview", -1);
+
+      expect(getRightPanel("ws-1", "thread-1").openTabs).toEqual([
+        "preview",
+        "terminal",
+        "changes",
+      ]);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "preview",
+        "changes",
+      ]);
+    });
   });
 
   describe("closeRightPanelTab", () => {
@@ -473,6 +608,24 @@ describe("diffStore", () => {
       closeRightPanelTab("ws-1", null, "terminal");
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
+    });
+
+    it("selects the item now at the removed index, then the previous item", () => {
+      const {
+        setRightPanelTab,
+        closeRightPanelTabInstance,
+        getRightPanel,
+      } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+      setRightPanelTab("ws-1", null, "preview");
+
+      closeRightPanelTabInstance("ws-1", null, "singleton:preview");
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:changes");
+
+      closeRightPanelTabInstance("ws-1", null, "singleton:changes");
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:terminal");
     });
 
     it("leaves the active tab unchanged when closing an inactive tab", () => {

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserTabSet } from "@mcode/contracts";
-import type { RightPanelTab } from "@/stores/diffStore";
+import { rightPanelSingletonId, type RightPanelTab } from "@/stores/diffStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { ActivityRail } from "./ActivityRail";
 
@@ -29,6 +29,7 @@ const handlers = {
   onToggleMaximized: vi.fn(),
   onSelect: vi.fn(),
   onClose: vi.fn(),
+  onReorder: vi.fn(),
   onCreate: vi.fn(),
   onSelectBrowserPage: vi.fn(),
   onCloseBrowserPage: vi.fn(),
@@ -37,8 +38,8 @@ const handlers = {
 function railElement(openTabs: readonly RightPanelTab[] = ["terminal", "changes"]) {
   return (
     <ActivityRail
-      openTabs={openTabs}
-      activeTab="terminal"
+      tabInstances={openTabs.map((type) => ({ id: rightPanelSingletonId(type), type }))}
+      activeTabId={rightPanelSingletonId("terminal")}
       scope="thread"
       scopeProgress={{ done: 0, total: 0 }}
       changesCount={3}
@@ -119,8 +120,8 @@ describe("ActivityRail expansion", () => {
 
     rerender(
       <ActivityRail
-        openTabs={["preview"]}
-        activeTab="preview"
+        tabInstances={[{ id: rightPanelSingletonId("preview"), type: "preview" }]}
+        activeTabId={rightPanelSingletonId("preview")}
         scope="thread"
         scopeProgress={{ done: 0, total: 0 }}
         changesCount={0}
@@ -171,8 +172,11 @@ describe("ActivityRail expansion", () => {
 
     rerender(
       <ActivityRail
-        openTabs={["terminal", "changes"]}
-        activeTab="terminal"
+        tabInstances={["terminal", "changes"].map((type) => ({
+          id: rightPanelSingletonId(type as RightPanelTab),
+          type: type as RightPanelTab,
+        }))}
+        activeTabId={rightPanelSingletonId("terminal")}
         scope="thread"
         scopeProgress={{ done: 0, total: 0 }}
         changesCount={3}
@@ -211,5 +215,169 @@ describe("ActivityRail expansion", () => {
     unmount();
 
     expect(usePreviewSuppressionStore.getState().count).toBe(0);
+  });
+
+  it("reorders only from a focused rail tab keyboard shortcut", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    act(() => terminal.focus());
+
+    fireEvent.keyDown(terminal, { key: "ArrowDown", altKey: true, shiftKey: true });
+
+    expect(handlers.onReorder).toHaveBeenCalledWith(
+      rightPanelSingletonId("terminal"),
+      1,
+    );
+    expect(terminal).toHaveFocus();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Close panel" }), {
+      key: "ArrowDown",
+      altKey: true,
+      shiftKey: true,
+    });
+    expect(handlers.onReorder).toHaveBeenCalledTimes(1);
+  });
+
+  it("reorders only after crossing the adjacent top-level item boundary", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    const terminalItem = terminal.closest("[data-rail-instance]") as HTMLElement;
+    const changesItem = screen
+      .getByRole("button", { name: "Review, 3 files changed" })
+      .closest("[data-rail-instance]") as HTMLElement;
+    vi.spyOn(terminalItem, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 40,
+    } as DOMRect);
+    vi.spyOn(changesItem, "getBoundingClientRect").mockReturnValue({
+      top: 48,
+      bottom: 88,
+    } as DOMRect);
+
+    terminal.focus();
+    fireEvent.pointerDown(terminal, { button: 0, pointerId: 1, clientY: 20 });
+    fireEvent.pointerMove(terminal, { pointerId: 1, clientY: 47 });
+    expect(handlers.onReorder).not.toHaveBeenCalled();
+
+    fireEvent.pointerMove(terminal, { pointerId: 1, clientY: 48 });
+    expect(handlers.onReorder).toHaveBeenCalledWith(
+      rightPanelSingletonId("terminal"),
+      1,
+    );
+    fireEvent.click(terminal);
+    expect(handlers.onSelect).not.toHaveBeenCalled();
+    expect(terminal).toHaveFocus();
+  });
+
+  it("selects a tab when pointer jitter does not become a drag", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    const terminalItem = terminal.closest("[data-rail-instance]") as HTMLElement;
+    const changesItem = screen
+      .getByRole("button", { name: "Review, 3 files changed" })
+      .closest("[data-rail-instance]") as HTMLElement;
+    vi.spyOn(terminalItem, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 40,
+    } as DOMRect);
+    vi.spyOn(changesItem, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 88,
+    } as DOMRect);
+
+    fireEvent.pointerDown(terminal, { button: 0, pointerId: 4, clientY: 20 });
+    fireEvent.pointerMove(terminal, { pointerId: 4, clientY: 21 });
+    fireEvent.pointerUp(terminal, { pointerId: 4, clientY: 21 });
+    fireEvent.click(terminal);
+
+    expect(handlers.onReorder).not.toHaveBeenCalled();
+    expect(handlers.onSelect).toHaveBeenCalledWith("singleton:terminal");
+  });
+
+  it("selects normally after a cancelled drag gesture", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    const terminalItem = terminal.closest("[data-rail-instance]") as HTMLElement;
+    const changesItem = screen
+      .getByRole("button", { name: "Review, 3 files changed" })
+      .closest("[data-rail-instance]") as HTMLElement;
+    vi.spyOn(terminalItem, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 40,
+    } as DOMRect);
+    vi.spyOn(changesItem, "getBoundingClientRect").mockReturnValue({
+      top: 48,
+      bottom: 88,
+    } as DOMRect);
+
+    fireEvent.pointerDown(terminal, { button: 0, pointerId: 5, clientY: 20 });
+    fireEvent.pointerMove(terminal, { pointerId: 5, clientY: 48 });
+    expect(handlers.onReorder).toHaveBeenCalledWith(
+      rightPanelSingletonId("terminal"),
+      1,
+    );
+    fireEvent.pointerCancel(terminal, { pointerId: 5, clientY: 48 });
+
+    fireEvent.pointerDown(terminal, { button: 0, pointerId: 6, clientY: 20 });
+    fireEvent.pointerUp(terminal, { pointerId: 6, clientY: 20 });
+    fireEvent.click(terminal);
+
+    expect(handlers.onSelect).toHaveBeenCalledWith("singleton:terminal");
+  });
+
+  it("excludes close presses from drag and click activation", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    fireEvent.pointerEnter(terminal);
+    const close = screen.getByRole("button", { name: "Close Terminal" });
+
+    fireEvent.pointerDown(close, { button: 0, pointerId: 2, clientY: 20 });
+    fireEvent.pointerMove(close, { pointerId: 2, clientY: 100 });
+    fireEvent.click(close);
+
+    expect(handlers.onReorder).not.toHaveBeenCalled();
+    expect(handlers.onSelect).not.toHaveBeenCalled();
+    expect(handlers.onClose).toHaveBeenCalledWith("singleton:terminal");
+  });
+
+  it("treats Browser pages as one top-level drag item", () => {
+    render(
+      <ActivityRail
+        {...railElement(["preview", "terminal"]).props}
+        browserTabSet={browserTabSet}
+      />,
+    );
+    const page = screen.getByRole("button", { name: "Browser page: Example" });
+    const browserItem = page.closest("[data-rail-instance]") as HTMLElement;
+    const terminalItem = screen
+      .getByRole("button", { name: "Terminal" })
+      .closest("[data-rail-instance]") as HTMLElement;
+    vi.spyOn(browserItem, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 80,
+    } as DOMRect);
+    vi.spyOn(terminalItem, "getBoundingClientRect").mockReturnValue({
+      top: 88,
+      bottom: 128,
+    } as DOMRect);
+
+    fireEvent.pointerDown(page, { button: 0, pointerId: 3, clientY: 20 });
+    fireEvent.pointerMove(page, { pointerId: 3, clientY: 70 });
+    expect(handlers.onReorder).not.toHaveBeenCalled();
+    fireEvent.pointerMove(page, { pointerId: 3, clientY: 88 });
+    expect(handlers.onReorder).toHaveBeenCalledWith("singleton:preview", 1);
+  });
+
+  it("leaves keyboard boundary handling to the store and does not intercept content", () => {
+    renderRail();
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    fireEvent.keyDown(terminal, { key: "ArrowUp", altKey: true, shiftKey: true });
+    expect(handlers.onReorder).toHaveBeenCalledWith("singleton:terminal", -1);
+
+    const content = document.createElement("textarea");
+    document.body.append(content);
+    fireEvent.keyDown(content, { key: "ArrowDown", altKey: true, shiftKey: true });
+    expect(handlers.onReorder).toHaveBeenCalledTimes(1);
+    content.remove();
   });
 });
