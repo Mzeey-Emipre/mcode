@@ -2,7 +2,8 @@
  * Platform-aware process tree termination.
  * On Windows, uses taskkill /T /F to kill the entire tree.
  * On Unix, sends SIGKILL to the process group.
- * Never throws - logs warnings on failure (process may already be dead).
+ * Expected already-gone errors are harmless. Other failures reject so callers
+ * cannot report a successful close while descendants may still be running.
  */
 
 import { execFile as execFileCb } from "child_process";
@@ -32,7 +33,7 @@ function isProcessGoneError(err: unknown): boolean {
 
 /**
  * Kill an entire process tree rooted at the given PID.
- * Best-effort: never throws. The process may already be dead.
+ * Rejects when termination fails for a reason other than an already-gone root.
  */
 export async function killProcessTree(pid: number): Promise<void> {
   try {
@@ -55,6 +56,7 @@ export async function killProcessTree(pid: number): Promise<void> {
         pid,
         error: err instanceof Error ? err.message : String(err),
       });
+      throw err;
     }
   }
 }
@@ -255,9 +257,16 @@ export async function listDirectChildren(
   }
 
   // Unix: pgrep -P returns child PIDs, one per line
-  const { stdout } = await execFile("pgrep", ["-P", String(pid)], {
-    timeout: TASKKILL_TIMEOUT_MS,
-  });
+  let stdout: string;
+  try {
+    ({ stdout } = await execFile("pgrep", ["-P", String(pid)], {
+      timeout: TASKKILL_TIMEOUT_MS,
+    }));
+  } catch (err) {
+    const code = (err as { code?: unknown }).code;
+    if (code === 1 || code === "1") return [];
+    throw err;
+  }
   return stdout
     .trim()
     .split("\n")

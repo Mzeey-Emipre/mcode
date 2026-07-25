@@ -276,9 +276,9 @@ export class TerminalService {
         pid: pty.pid,
         scopeId,
         shell,
-        cwd,
         exitCode,
         signal,
+        reason: "natural-exit",
       });
       this.sender?.json("terminal.exit", { ptyId: id, code: exitCode });
       this.removePty(id);
@@ -381,7 +381,11 @@ export class TerminalService {
   }
 
   /** Kill a single PTY session. No-op if the ID is unknown. */
-  async kill(ptyId: string): Promise<void> {
+  async kill(
+    ptyId: string,
+    reason: "user-requested-process-tree-close" | "app-shutdown" =
+      "user-requested-process-tree-close",
+  ): Promise<void> {
     const session = this.sessions.get(ptyId);
     if (!session) return;
     logger.info("PTY kill requested", {
@@ -389,7 +393,7 @@ export class TerminalService {
       pid: session.pty.pid,
       threadId: session.threadId,
       shell: session.shell,
-      cwd: session.cwd,
+      reason,
     });
     await this.destroyPty(session);
     this.removePty(ptyId);
@@ -407,7 +411,9 @@ export class TerminalService {
   /** Kill all PTY sessions across all threads. */
   async shutdown(): Promise<void> {
     this.unsubscribeSettings();
-    await Promise.all([...this.sessions.keys()].map((ptyId) => this.kill(ptyId)));
+    await Promise.all(
+      [...this.sessions.keys()].map((ptyId) => this.kill(ptyId, "app-shutdown")),
+    );
     this.pidRegistry.clear();
   }
 
@@ -494,19 +500,31 @@ export class TerminalService {
     const session = this.sessions.get(ptyId);
     if (!session) throw new Error(`PTY not found: ${ptyId}`);
 
-    let children: Array<{ name: string; pid: number }>;
+    const pending = [session.pty.pid];
+    const visited = new Set<number>();
     try {
-      children = await listDirectChildren(session.pty.pid);
-    } catch {
-      return { hasChildren: false };
+      while (pending.length > 0 && visited.size < 128) {
+        const parentPid = pending.shift()!;
+        if (visited.has(parentPid)) continue;
+        visited.add(parentPid);
+        const children = await listDirectChildren(parentPid);
+        for (const child of children) {
+          const basename =
+            child.name.toLowerCase().split(/[\\/]/).pop() ?? child.name.toLowerCase();
+          if (!SHELL_BASENAMES.has(basename)) return { hasChildren: true };
+          pending.push(child.pid);
+        }
+      }
+      return { hasChildren: pending.length > 0 };
+    } catch (err) {
+      logger.warn("Failed to inspect PTY process tree", {
+        id: session.id,
+        pid: session.pty.pid,
+        threadId: session.threadId,
+        error: describeError(err),
+      });
+      return { hasChildren: true };
     }
-
-    const nonShellChildren = children.filter((child) => {
-      const basename = child.name.toLowerCase().split(/[\\/]/).pop() ?? child.name.toLowerCase();
-      return !SHELL_BASENAMES.has(basename);
-    });
-
-    return { hasChildren: nonShellChildren.length > 0 };
   }
 
   private async destroyPty(session: PtySession): Promise<void> {
@@ -530,31 +548,24 @@ export class TerminalService {
         error: describeError(err),
       });
     }
-    // node-pty owns the ConPTY process-tree shutdown on Windows. Windows PTYs
-    // are spawned with useConptyDll so this call closes the pseudo console
-    // directly without launching node-pty's fragile console-list helper.
-    let ptyKillSucceeded = false;
+    // Terminate the operating-system process tree while the root PID still
+    // identifies its descendants. Closing ConPTY first can orphan children.
+    if (this.useGracefulKill) {
+      await gracefulKillProcessTree(session.pty.pid);
+    } else {
+      await killProcessTree(session.pty.pid);
+    }
+
     try {
       session.pty.kill();
-      ptyKillSucceeded = true;
     } catch (err) {
       logger.warn("Failed to kill PTY process", {
         id: session.id,
         pid: session.pty.pid,
         threadId: session.threadId,
         shell: session.shell,
-        cwd: session.cwd,
         error: describeError(err),
       });
-    }
-    if (process.platform === "win32" && ptyKillSucceeded) return;
-
-    // Unix uses the existing process-tree fallback. Windows reaches this path
-    // only when node-pty could not begin its own process-tree shutdown.
-    if (this.useGracefulKill) {
-      await gracefulKillProcessTree(session.pty.pid);
-    } else {
-      await killProcessTree(session.pty.pid);
     }
   }
 

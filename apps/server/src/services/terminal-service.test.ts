@@ -2,10 +2,19 @@ import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IPty } from "node-pty";
 
-const { killProcessTree, gracefulKillProcessTree } = vi.hoisted(() => ({
+const { killProcessTree, gracefulKillProcessTree, spawnPty } = vi.hoisted(() => ({
   killProcessTree: vi.fn().mockResolvedValue(undefined),
   gracefulKillProcessTree: vi.fn().mockResolvedValue(undefined),
+  spawnPty: vi.fn(),
 }));
+
+vi.mock("node:module", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:module")>();
+  return {
+    ...actual,
+    createRequire: () => () => ({ spawn: spawnPty }),
+  };
+});
 
 vi.mock("./process-kill.js", () => ({
   killProcessTree,
@@ -87,6 +96,12 @@ describe("TerminalService Windows teardown", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    spawnPty.mockImplementation(() => ({
+      pid: 10_000 + spawnPty.mock.calls.length,
+      onData: () => ({ dispose: vi.fn() }),
+      onExit: () => ({ dispose: vi.fn() }),
+      kill: vi.fn(),
+    }));
     Object.defineProperty(process, "platform", {
       value: "win32",
       configurable: true,
@@ -100,7 +115,7 @@ describe("TerminalService Windows teardown", () => {
     });
   });
 
-  it("uses the ConPTY DLL session as the single Windows process-tree owner", async () => {
+  it("terminates the process tree before closing the Windows PTY", async () => {
     const pty = {
       pid: 12_345,
       kill: vi.fn(),
@@ -142,8 +157,40 @@ describe("TerminalService Windows teardown", () => {
     await service.kill(session.id);
 
     expect(pty.kill).toHaveBeenCalledOnce();
-    expect(killProcessTree).not.toHaveBeenCalled();
+    expect(killProcessTree).toHaveBeenCalledOnce();
+    expect(killProcessTree).toHaveBeenCalledWith(session.pty.pid);
+    const ptyKill = vi.mocked(pty.kill);
+    expect(killProcessTree.mock.invocationCallOrder[0]).toBeLessThan(
+      ptyKill.mock.invocationCallOrder[0]!,
+    );
     expect(gracefulKillProcessTree).not.toHaveBeenCalled();
     expect(pidRegistry.deregister).toHaveBeenCalledWith(session.id);
+  });
+
+  it("rejects a fifth shell without evicting the existing four", () => {
+    const cwd = process.cwd();
+    const service = new TerminalService(
+      { findById: () => ({ workspace_id: "workspace-1", mode: "direct", worktree_path: null }) } as never,
+      { findById: () => ({ path: cwd }) } as never,
+      { resolveWorkingDir: () => cwd } as never,
+      {
+        get: () => ({
+          terminal: {
+            scrollback: 1_000,
+            flowControl: { serverHighBytes: 1_024, serverLowBytes: 512 },
+          },
+        }),
+        on: () => vi.fn(),
+      } as never,
+      { getEnv: () => ({}) } as never,
+      { register: vi.fn(), deregister: vi.fn(), clear: vi.fn() } as never,
+      { assign: vi.fn(), setDescription: vi.fn() } as never,
+    );
+
+    for (let index = 0; index < 4; index += 1) service.create("thread-1");
+
+    expect(() => service.create("thread-1")).toThrow("Maximum PTY limit (4)");
+    expect(service.listActiveSessions()).toHaveLength(4);
+    expect(spawnPty).toHaveBeenCalledTimes(4);
   });
 });

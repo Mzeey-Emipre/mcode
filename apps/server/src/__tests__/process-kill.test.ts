@@ -18,7 +18,12 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), debug: vi.fn(), info: vi.fn() },
 }));
 
-import { killProcessTree, findDescendantsByName, killDescendantsByName } from "../services/process-kill";
+import {
+  killProcessTree,
+  findDescendantsByName,
+  killDescendantsByName,
+  listDirectChildren,
+} from "../services/process-kill";
 import { logger } from "@mcode/shared";
 
 describe("killProcessTree", () => {
@@ -45,13 +50,13 @@ describe("killProcessTree", () => {
     }
   });
 
-  it("does not throw when taskkill fails (process already exited)", async () => {
+  it("rejects when taskkill fails unexpectedly", async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", { value: "win32" });
     try {
       mockExecFile.mockRejectedValue(new Error("process not found"));
 
-      await expect(killProcessTree(1234)).resolves.toBeUndefined();
+      await expect(killProcessTree(1234)).rejects.toThrow("process not found");
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ pid: 1234 }),
@@ -178,6 +183,20 @@ describe("findDescendantsByName", () => {
       const pids = await findDescendantsByName(1234, "claude.exe");
 
       expect(pids).toEqual([]);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+    }
+  });
+});
+
+describe("listDirectChildren", () => {
+  it("treats pgrep exit code 1 as an idle process with no children", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux" });
+    try {
+      mockExecFile.mockRejectedValue(Object.assign(new Error("no matches"), { code: 1 }));
+
+      await expect(listDirectChildren(1234)).resolves.toEqual([]);
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform });
     }
