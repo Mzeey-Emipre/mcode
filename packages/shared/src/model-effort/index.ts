@@ -11,7 +11,7 @@ import type { ReasoningLevel } from "@mcode/contracts";
 // Ordered lowest to highest. Walking DOWN from a disallowed tier finds the best
 // supported level without silently escalating effort.
 //
-// xhigh sits below max because xhigh is exclusive to Opus 4.8/4.7, while max is
+// xhigh sits below max because xhigh is exclusive to Opus 5/4.8/4.7, while max is
 // a broader "extended thinking" tier supported by Opus 4.6 and Sonnet 4.6 as well.
 // "none" and "minimal" align with OpenAI Codex app-server ReasoningEffort and are filtered
 // out or mapped before Claude SDK calls.
@@ -26,10 +26,15 @@ const TIER_LADDER: readonly ReasoningLevel[] = [
 ];
 
 /** Claude model IDs that support the "xhigh" effort tier. */
-const XHIGH_EFFORT_MODEL_IDS: readonly string[] = ["claude-opus-4-8", "claude-opus-4-7"];
+const XHIGH_EFFORT_MODEL_IDS: readonly string[] = [
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+];
 
 /** Claude model IDs that support the "max" effort tier. */
 const MAX_EFFORT_MODEL_IDS: readonly string[] = [
+  "claude-opus-5",
   "claude-fable-5",
   "claude-sonnet-5",
   "claude-opus-4-8",
@@ -43,6 +48,7 @@ const MAX_EFFORT_MODEL_IDS: readonly string[] = [
  * The same Opus 4.8/4.7/4.6 + Sonnet 4.6 cohort that supports the max effort tier.
  */
 const ONE_M_CONTEXT_MODEL_IDS: readonly string[] = [
+  "claude-opus-5",
   "claude-fable-5",
   "claude-sonnet-5",
   "claude-opus-4-8",
@@ -137,7 +143,7 @@ function normalizeCodexReasoningLevel(modelId: string, level: ReasoningLevel): R
 /**
  * Returns true when the model supports the "xhigh" effort tier.
  *
- * Only the `claude-opus-4-8` and `claude-opus-4-7` families (including
+ * Only the `claude-opus-5`, `claude-opus-4-8`, and `claude-opus-4-7` families (including
  * their dated variants) expose this tier.
  */
 export function isXhighEffortModel(modelId: string): boolean {
@@ -147,7 +153,7 @@ export function isXhighEffortModel(modelId: string): boolean {
 /**
  * Returns true when the model supports the "max" effort tier.
  *
- * Applies to the fable-5, sonnet-5, opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6 families.
+ * Applies to the opus-5, fable-5, sonnet-5, opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6 families.
  */
 export function isMaxEffortModel(modelId: string): boolean {
   return MAX_EFFORT_MODEL_IDS.includes(normalizeModelId(modelId));
@@ -155,7 +161,7 @@ export function isMaxEffortModel(modelId: string): boolean {
 
 /**
  * Returns true when the model supports the extended 1,000,000-token context
- * window. Applies to fable-5, sonnet-5, opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6.
+ * window. Applies to opus-5, fable-5, sonnet-5, opus-4-8, opus-4-7, opus-4-6, and sonnet-4-6.
  *
  * The window is opted into by appending `[1m]` to the model slug at send
  * time; the Claude Agent SDK handles the beta header internally.

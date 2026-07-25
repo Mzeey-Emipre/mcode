@@ -1,5 +1,5 @@
 import { useSettingsStore } from "@/stores/settingsStore";
-import { CODEX_STATIC_MODELS, CURSOR_STATIC_MODEL_FALLBACK } from "@mcode/contracts";
+import { CLAUDE_STATIC_MODELS, CODEX_STATIC_MODELS, CURSOR_STATIC_MODEL_FALLBACK } from "@mcode/contracts";
 import type { ContextWindowMode, ProviderId, ReasoningLevel } from "@mcode/contracts";
 import {
   MODEL_CONTEXT_WINDOWS_DEFAULT,
@@ -81,22 +81,12 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
     name: "Claude",
     comingSoon: false,
     supportsCompletion: true,
-    models: [
-      { id: "claude-fable-5", label: "Claude Fable 5", providerId: "claude",
-        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-fable-5"] },
-      { id: "claude-sonnet-5", label: "Claude Sonnet 5", providerId: "claude",
-        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-sonnet-5"] },
-      { id: "claude-opus-4-8", label: "Claude Opus 4.8", providerId: "claude",
-        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-opus-4-8"] },
-      { id: "claude-opus-4-7", label: "Claude Opus 4.7", providerId: "claude",
-        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-opus-4-7"] },
-      { id: "claude-opus-4-6", label: "Claude Opus 4.6", providerId: "claude",
-        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-opus-4-6"] },
-      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", providerId: "claude",
-        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-sonnet-4-6"] },
-      { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", providerId: "claude",
-        contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT["claude-haiku-4-5"] },
-    ],
+    models: CLAUDE_STATIC_MODELS.map((model) => ({
+      id: model.id,
+      label: model.name,
+      providerId: "claude",
+      contextWindow: MODEL_CONTEXT_WINDOWS_DEFAULT[model.id],
+    })),
   },
   {
     id: "codex",
@@ -153,15 +143,26 @@ export const MODEL_PROVIDERS: readonly ModelProvider[] = [
 ];
 
 /**
- * Chooses model definitions for Settings pickers: prefers a non-empty live list
- * from the server; otherwise keeps static catalog entries when discovery fails or returns nothing.
+ * Merges live model definitions into the static Settings catalog by model ID.
  */
 export function pickProviderModelsForSettings(
   staticModels: readonly ModelDefinition[],
   dynamicModels: readonly ModelDefinition[] | undefined,
 ): ModelDefinition[] {
   if (dynamicModels != null && dynamicModels.length > 0) {
-    return [...dynamicModels];
+    const dynamicById = new Map(dynamicModels.map((model) => [model.id, model]));
+    const merged = staticModels.map((model) => {
+      const dynamicModel = dynamicById.get(model.id);
+      return {
+        ...model,
+        ...dynamicModel,
+        contextWindow: model.providerId === "claude"
+          ? model.contextWindow ?? dynamicModel?.contextWindow
+          : dynamicModel?.contextWindow ?? model.contextWindow,
+      };
+    });
+    const staticIds = new Set(staticModels.map((model) => model.id));
+    return [...merged, ...dynamicModels.filter((model) => !staticIds.has(model.id))];
   }
   return [...staticModels];
 }

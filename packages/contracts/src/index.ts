@@ -634,6 +634,7 @@ export * from "./providers/availability.js";
 export { CURSOR_STATIC_MODEL_FALLBACK } from "./providers/cursor-static-fallback.js";
 export { CURSOR_CLI_MODEL_SNAPSHOT } from "./providers/cursor-cli-models-snapshot.js";
 export { CODEX_STATIC_MODELS, supportsCodexUltraOrchestration } from "./providers/codex-static-fallback.js";
+export { CLAUDE_STATIC_MODELS } from "./providers/claude-static-fallback.js";
 
 export {
   ProviderModelInfoSchema,

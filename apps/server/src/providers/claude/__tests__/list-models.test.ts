@@ -55,13 +55,21 @@ describe("listClaudeModels", () => {
 
   it("returns ProviderModelInfo[] filtered to claude models", async () => {
     const result = await listClaudeModels();
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(10);
     expect(result[0]).toEqual<ProviderModelInfo>({
+      id: "claude-opus-5",
+      name: "Claude Opus 5",
+      contextWindow: 1_000_000,
+      supportsReasoning: true,
+      supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultReasoningEffort: "high",
+    });
+    expect(result.find((model) => model.id === "claude-sonnet-4-6-20250514")).toEqual<ProviderModelInfo>({
       id: "claude-sonnet-4-6-20250514",
       name: "Claude Sonnet 4.6",
       contextWindow: 1_000_000,
     });
-    expect(result[1]).toEqual<ProviderModelInfo>({
+    expect(result.find((model) => model.id === "claude-haiku-4-5-20251001")).toEqual<ProviderModelInfo>({
       id: "claude-haiku-4-5-20251001",
       name: "Claude Haiku 4.5",
       contextWindow: 200_000,
@@ -81,20 +89,89 @@ describe("listClaudeModels", () => {
     );
   });
 
-  it("returns empty array when ANTHROPIC_API_KEY is missing", async () => {
+  it("returns the complete static catalog when ANTHROPIC_API_KEY is missing", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     const result = await listClaudeModels();
-    expect(result).toEqual([]);
+    expect(result).toHaveLength(8);
+    expect(result.map((model) => model.id)).toEqual([
+      "claude-opus-5",
+      "claude-fable-5",
+      "claude-sonnet-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5",
+    ]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("throws on non-OK response", async () => {
+  it("keeps fallback capabilities when the API omits Opus 5 fields", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        data: [{
+          id: "claude-opus-5",
+          display_name: "Claude Opus 5",
+          type: "model",
+          max_input_tokens: null,
+          max_tokens: null,
+        }],
+        has_more: false,
+      }),
+    });
+
+    const [opus5] = await listClaudeModels();
+    expect(opus5).toMatchObject({
+      id: "claude-opus-5",
+      contextWindow: 1_000_000,
+      supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultReasoningEffort: "high",
+    });
+  });
+
+  it("returns the static catalog when the request is rejected", async () => {
+    fetchSpy.mockRejectedValueOnce(new Error("network unavailable"));
+    const result = await listClaudeModels();
+    await listClaudeModels();
+    expect(result).toHaveLength(8);
+    expect(result[0]?.id).toBe("claude-opus-5");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the static catalog on a non-OK response", async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: false,
       status: 401,
       statusText: "Unauthorized",
     });
-    await expect(listClaudeModels()).rejects.toThrow("401");
+    const result = await listClaudeModels();
+    await listClaudeModels();
+    expect(result).toHaveLength(8);
+    expect(result[0]?.id).toBe("claude-opus-5");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns the static catalog when the response contains invalid JSON", async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.reject(new SyntaxError("invalid JSON")),
+    });
+    const result = await listClaudeModels();
+    expect(result).toHaveLength(8);
+    expect(result[0]?.id).toBe("claude-opus-5");
+  });
+
+  it("retries discovery after the cached failure fallback expires", async () => {
+    fetchSpy.mockRejectedValueOnce(new Error("network unavailable"));
+    await listClaudeModels();
+
+    const dateSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5 * 60 * 1001);
+    const result = await listClaudeModels();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(10);
+    dateSpy.mockRestore();
   });
 
   it("returns cached result on second call without re-fetching", async () => {
