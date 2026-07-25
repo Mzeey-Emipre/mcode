@@ -21,10 +21,13 @@ import { createRequire } from "module";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { tmpdir } from "os";
+import { validateNodeRuntime } from "./node-runtime.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 const desktopDir = resolve(rootDir, "apps", "desktop");
+
+if (!validateNodeRuntime({ rootDir }).ok) process.exit(1);
 
 // Allow explicit skip (useful for CI, worktrees, server-only dev).
 // This only skips the Electron download; the Node.js prebuild verification

@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -32,11 +32,14 @@ import {
   formatSafeReproduction,
   getChangedFiles,
   inspectVerificationReceipt,
+  isVerificationRelevant,
+  pathEntriesMatch,
   runPhase,
   runPhasesInParallel,
   runVerification,
   runVerificationPhases,
   selectTestPhases,
+  withValidatedNodePath,
 } from "../verify-tests.mjs";
 
 const NODE = process.execPath;
@@ -159,6 +162,33 @@ test("git inspection includes relevant untracked config but skips docs", () => {
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test(".node-version is verification-relevant", () => {
+  assert.equal(isVerificationRelevant(".node-version"), true);
+});
+
+test("verification phases prefer the validated Node executable directory", async () => {
+  const result = await runPhase(nodePhase(
+    "runtime path",
+    "console.log(process.env.PATH ?? process.env.Path)",
+    { env: { ...process.env, PATH: "ambient-path" } },
+  ));
+  assert.equal(result.code, 0);
+  assert.equal(result.output.trim().split(delimiter)[0], dirname(process.execPath));
+});
+
+test("runtime PATH comparison preserves POSIX case distinctions", () => {
+  const upper = resolve(tmpdir(), "Node");
+  const lower = resolve(tmpdir(), "node");
+  assert.equal(pathEntriesMatch(upper, lower, { platform: "linux" }), false);
+  assert.equal(pathEntriesMatch(upper, lower, { platform: "win32" }), true);
+
+  const env = { PATH: [upper, lower].join(delimiter) };
+  const posix = withValidatedNodePath(env, resolve(upper, "node"), { platform: "linux" });
+  const windows = withValidatedNodePath(env, resolve(upper, "node.exe"), { platform: "win32" });
+  assert.deepEqual(posix.PATH.split(delimiter), [upper, lower]);
+  assert.deepEqual(windows.PATH.split(delimiter), [upper]);
 });
 
 test("a phase streams a complete log while retaining bounded output", async () => {
@@ -389,6 +419,19 @@ test("verification configuration changes content identity without changing test 
   }
 });
 
+test(".node-version changes verification content identity", () => {
+  const { cwd } = initRepo();
+  try {
+    writeFileSync(resolve(cwd, ".node-version"), "20.20.0\n");
+    const first = calculateVerificationIdentities({ cwd, env: {} });
+    writeFileSync(resolve(cwd, ".node-version"), "20.20.1\n");
+    const second = calculateVerificationIdentities({ cwd, env: {} });
+    assert.notEqual(first.contentIdentity, second.contentIdentity);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("receipt identity calculation rejects paths outside the repository", () => {
   const { cwd } = initRepo();
   try {
@@ -478,6 +521,30 @@ test("verification fails closed when receipt identities cannot be calculated", a
     assert.equal(result.identityFailure, true);
     assert.match(lines.join("\n"), /could not calculate receipt identities/);
     assert.equal(existsSync(resolve(cwd, ".dev", "verification")), false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("imported verification rejects a runtime mismatch before creating artifacts", async () => {
+  const { cwd } = initRepo();
+  const lines = [];
+  try {
+    writeFileSync(resolve(cwd, "source.ts"), "export {};\n");
+    const result = await runVerification({
+      cwd,
+      env: { PATH: "" },
+      printer: (line) => lines.push(line),
+      runtime: {
+        actualVersion: "v99.0.0",
+        execPath: resolve(cwd, "wrong-node"),
+      },
+    });
+    assert.equal(result.code, 1);
+    assert.equal(result.runtimeMismatch, true);
+    assert.equal(existsSync(resolve(cwd, ".dev", "verification")), false);
+    assert.match(lines.join("\n"), /Expected: v20\.20\.0/);
+    assert.match(lines.join("\n"), /Actual: v99\.0\.0/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

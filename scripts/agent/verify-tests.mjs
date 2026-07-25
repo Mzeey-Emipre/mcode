@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import {
   basename,
+  delimiter,
   dirname,
   extname,
   isAbsolute,
@@ -29,6 +30,7 @@ import {
   sep,
 } from "node:path";
 import { pathToFileURL } from "node:url";
+import { validateNodeRuntime } from "../node-runtime.mjs";
 
 const isWindows = process.platform === "win32";
 /** Maximum child output retained in memory for one phase. */
@@ -60,6 +62,7 @@ const CODE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs",
 ]);
 const ROOT_VERIFICATION_FILES = new Set([
+  ".node-version",
   "package.json",
   "bun.lock",
   "bun.lockb",
@@ -71,6 +74,7 @@ const ROOT_VERIFICATION_FILES = new Set([
   "scripts/vitest-test-dir.ts",
 ]);
 const IDENTITY_CONFIG_FILES = [
+  ".node-version",
   "package.json",
   "bun.lock",
   "bun.lockb",
@@ -299,6 +303,36 @@ function resolveSafeExecutable(command, env) {
   }
 }
 
+/** Compares normalized PATH entries with platform-appropriate case sensitivity. */
+export function pathEntriesMatch(left, right, { platform = process.platform } = {}) {
+  const normalizedLeft = resolvePath(left);
+  const normalizedRight = resolvePath(right);
+  return platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+/** Places the validated Node.js executable directory first in PATH for child phases. */
+export function withValidatedNodePath(
+  env = process.env,
+  execPath = process.execPath,
+  options = {},
+) {
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const currentPath = env[pathKey] ?? "";
+  const nodeDirectory = dirname(execPath);
+  const entries = currentPath.split(delimiter).filter(Boolean);
+  const remaining = entries.filter(
+    (entry) => !pathEntriesMatch(entry, nodeDirectory, options),
+  );
+  const normalized = { ...env };
+  for (const key of Object.keys(normalized)) {
+    if (key !== pathKey && key.toLowerCase() === "path") delete normalized[key];
+  }
+  normalized[pathKey] = [nodeDirectory, ...remaining].join(delimiter);
+  return normalized;
+}
+
 /** Runs one phase while streaming its complete output and retaining a bounded tail. */
 export function runPhase({
   name,
@@ -311,6 +345,7 @@ export function runPhase({
   logPath,
 }) {
   return new Promise((resolve) => {
+    const phaseEnv = withValidatedNodePath(env);
     const startedAt = Date.now();
     let tail = Buffer.alloc(0);
     let settled = false;
@@ -319,10 +354,10 @@ export function runPhase({
     let spawnError;
     let logError;
     const output = logPath ? createWriteStream(logPath, { flags: "wx" }) : null;
-    const executable = resolveSafeExecutable(command, env);
+    const executable = resolveSafeExecutable(command, phaseEnv);
     const child = spawn(executable, args, {
       cwd,
-      env,
+      env: phaseEnv,
       shell: false,
       detached: !isWindows,
       windowsHide: true,
@@ -720,7 +755,16 @@ export function inspectVerificationReceipt({
   gate = "changed",
   env = process.env,
   printer = console.log,
+  runtime = {},
 } = {}) {
+  if (!validateNodeRuntime({ ...runtime, printer }).ok) {
+    return {
+      code: 1,
+      approved: false,
+      runtimeMismatch: true,
+      reason: "Verification blocked by the Node runtime check.",
+    };
+  }
   const changedFiles = getChangedFiles({ cwd });
   if (changedFiles !== null && changedFiles.length === 0) {
     const message = "Verification receipt not required: no relevant changes.";
@@ -752,7 +796,11 @@ export async function runVerification({
   printer = console.log,
   timeoutMs = DEFAULT_PHASE_TIMEOUT_MS,
   env = process.env,
+  runtime = {},
 } = {}) {
+  if (!validateNodeRuntime({ ...runtime, printer }).ok) {
+    return { code: 1, runtimeMismatch: true };
+  }
   const changedFiles = getChangedFiles({ cwd });
   const identities = calculateVerificationIdentities({ cwd, env, changedFiles });
   if (!identities) {
@@ -814,6 +862,7 @@ export async function runVerification({
 }
 
 async function main() {
+  if (!validateNodeRuntime().ok) process.exit(1);
   const gate = process.argv.includes("--full") ? "full" : "changed";
   if (process.argv.includes("--check-receipt")) {
     const result = inspectVerificationReceipt({ gate, printer: () => {} });
