@@ -150,22 +150,22 @@ export class ThreadControlService {
     }
 
     try {
-      this.approvals.setOperationPhase(requestId, "provisioning");
+      this.requirePhase(requestId, "provisioning");
       const provisioned = await this.threadService.provisionWorktree(
         pending.threadId,
         pending.workspaceId,
         pending.placement,
       );
       this.registerProvisionedWorktree(pending.workspaceId, provisioned, pending.placement);
-      this.approvals.setOperationPhase(requestId, "provisioned");
-      this.approvals.setOperationPhase(requestId, "dispatching");
+      this.requirePhase(requestId, "provisioned");
+      this.requirePhase(requestId, "dispatching");
       await this.startTurn(
         pending.threadId,
         pending.prompt,
         pending.execution,
         pending.turnId,
       );
-      this.approvals.setOperationPhase(requestId, "dispatched");
+      this.requirePhase(requestId, "dispatched");
       this.approvals.settle(requestId, "approved");
       this.audit.write({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "resumed-approved" });
       broadcast("permission.resolved", { requestId, decision });
@@ -189,10 +189,13 @@ export class ThreadControlService {
   recoverApprovals(): void {
     for (const approval of this.approvals.listProcessing()) {
       if (approval.operationPhase === "pre_provision") {
-        this.approvals.requeue(approval.approvalId);
+        if (this.approvals.requeue(approval.approvalId)) {
+          this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome: "recovery-requeued" });
+        }
         continue;
       }
       this.approvals.settle(approval.approvalId, "failed");
+      this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome: "recovery-failed" });
       this.threads.updateStatus(approval.threadId, "errored");
       broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
     }
@@ -546,6 +549,12 @@ export class ThreadControlService {
       interactionMode: execution.interactionMode,
       sourceTurnId,
     });
+  }
+
+  private requirePhase(approvalId: string, phase: "pre_provision" | "provisioning" | "provisioned" | "dispatching" | "dispatched"): void {
+    if (!this.approvals.setOperationPhase(approvalId, phase)) {
+      throw new Error(`Could not persist approval phase: ${phase}`);
+    }
   }
 
   private error(
