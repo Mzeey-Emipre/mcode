@@ -216,7 +216,6 @@ const workspaceService = container.resolve(WorkspaceService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
 const threadControlService = container.resolve(ThreadControlService);
-await threadControlService.recoverApprovals();
 const gitService = container.resolve(GitService);
 const githubService = container.resolve(GithubService);
 const pullRequestService = container.resolve(PullRequestService);
@@ -731,14 +730,27 @@ killOrphanedServer({ lockFilePath: LOCK_FILE_PATH, logger });
 const pidRegistry = container.resolve<PtyPidRegistry>("PtyPidRegistry");
 reapOrphanedPtys(pidRegistry, logger);
 
-ipcServer.listen(ipcPath).then(() => {
+async function bootstrapServer(): Promise<void> {
+  try {
+    await threadControlService.recoverApprovals();
+  } catch (err) {
+    logger.error("Thread-control approval recovery failed; refusing to accept work", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    process.exit(1);
+  }
+
+  try {
+    await ipcServer.listen(ipcPath);
+  } catch (err) {
+    logger.error("IPC server failed to start, fell back to WebSocket-only push", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   startServerAndSubscribe();
-}).catch((err) => {
-  logger.error("IPC server failed to start, fell back to WebSocket-only push", {
-    error: err instanceof Error ? err.message : String(err),
-  });
-  startServerAndSubscribe();
-});
+}
+
+void bootstrapServer();
 
 /**
  * Gracefully shut down all services, close WebSocket connections,
