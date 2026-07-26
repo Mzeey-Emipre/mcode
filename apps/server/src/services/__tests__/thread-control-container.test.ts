@@ -5,6 +5,7 @@ import { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import { WorktreeRepo } from "../../repositories/worktree-repo.js";
 import { ThreadRepo } from "../../repositories/thread-repo.js";
 import { ThreadControlApprovalRepo } from "../../repositories/thread-control-approval-repo.js";
+import { ThreadControlAuditRepo } from "../../repositories/thread-control-audit-repo.js";
 import { GitService } from "../git-service.js";
 import { ThreadControlService } from "../thread-control-service.js";
 import { ThreadService } from "../thread-service.js";
@@ -19,6 +20,7 @@ describe("thread-control DI", () => {
     child.registerInstance(ThreadService, {} as ThreadService);
     child.registerInstance(SettingsService, {} as SettingsService);
     child.registerInstance(ThreadControlApprovalRepo, {} as ThreadControlApprovalRepo);
+    child.registerInstance(ThreadControlAuditRepo, {} as ThreadControlAuditRepo);
     child.registerInstance(GitService, {} as GitService);
     child.register(ThreadControlService, { useClass: ThreadControlService });
 
