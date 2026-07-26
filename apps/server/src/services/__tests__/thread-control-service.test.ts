@@ -56,8 +56,12 @@ describe("ThreadControlService", () => {
     create: ReturnType<typeof vi.fn>;
     claim: ReturnType<typeof vi.fn>;
     settle: ReturnType<typeof vi.fn>;
+    setOperationPhase: ReturnType<typeof vi.fn>;
+    listProcessing: ReturnType<typeof vi.fn>;
+    requeue: ReturnType<typeof vi.fn>;
     listPendingByThread: ReturnType<typeof vi.fn>;
   };
+  let audit: { write: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     workspaces = {
@@ -95,8 +99,12 @@ describe("ThreadControlService", () => {
       create: vi.fn().mockReturnValue("approval-1"),
       claim: vi.fn(),
       settle: vi.fn().mockReturnValue(true),
+      setOperationPhase: vi.fn().mockReturnValue(true),
+      listProcessing: vi.fn().mockReturnValue([]),
+      requeue: vi.fn().mockReturnValue(true),
       listPendingByThread: vi.fn().mockReturnValue([]),
     };
+    audit = { write: vi.fn() };
   });
 
   function createService() {
@@ -127,6 +135,7 @@ describe("ThreadControlService", () => {
         )),
       } as never,
       approvals as never,
+      audit as never,
     );
   }
 
@@ -134,6 +143,7 @@ describe("ThreadControlService", () => {
     const workspacePath = "C:/private/workspace";
     const service = new ThreadControlService(
       { search: () => [{ id: "workspace-1", name: "Workspace", path: workspacePath, last_opened_at: null }] } as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -395,6 +405,8 @@ describe("ThreadControlService", () => {
         interactionMode: "build",
       },
       placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-approval-1",
+      operationPhase: "pre_provision",
     });
 
     await expect(service.respondToApproval("approval-1", "allow")).resolves.toBe(true);
@@ -409,6 +421,20 @@ describe("ThreadControlService", () => {
     approvals.claim.mockReturnValue(null);
     await expect(service.respondToApproval("approval-1", "allow")).resolves.toBe(false);
     expect(threadService.provisionWorktree).toHaveBeenCalledTimes(1);
+  });
+
+  it("rehydrates only pre-side-effect approvals and fails ambiguous processing rows", () => {
+    const service = createService();
+    approvals.listProcessing.mockReturnValue([
+      { approvalId: "safe", threadId: "thread-safe", operationPhase: "pre_provision" },
+      { approvalId: "ambiguous", threadId: "thread-ambiguous", operationPhase: "provisioning" },
+    ]);
+
+    service.recoverApprovals();
+
+    expect(approvals.requeue).toHaveBeenCalledWith("safe");
+    expect(approvals.settle).toHaveBeenCalledWith("ambiguous", "failed");
+    expect(threads.updateStatus).toHaveBeenCalledWith("thread-ambiguous", "errored");
   });
 
   it("reserves external capacity in input order and preserves earlier success", async () => {

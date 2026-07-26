@@ -43,6 +43,7 @@ describe("ThreadControlApprovalRepo", () => {
         interactionMode: "build",
       },
       placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-960",
     });
 
     expect(approvals.listPendingByThread(threadId)).toEqual([{
@@ -57,10 +58,28 @@ describe("ThreadControlApprovalRepo", () => {
         interactionMode: "build",
       },
       placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-960",
+      operationPhase: "pre_provision",
     }]);
     expect(approvals.claim(approvalId)?.approvalId).toBe(approvalId);
     expect(approvals.claim(approvalId)).toBeNull();
     expect(approvals.settle(approvalId, "approved")).toBe(true);
     expect(approvals.listPendingByThread(threadId)).toEqual([]);
+  });
+
+  it("returns only pre-side-effect processing approvals to pending after restart", () => {
+    const approvalId = approvals.create({
+      threadId,
+      workspaceId,
+      prompt: "Recover safely.",
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "full", interactionMode: "build" },
+      placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-recovery",
+    });
+
+    expect(approvals.claim(approvalId)?.operationPhase).toBe("pre_provision");
+    expect(approvals.listProcessing()).toHaveLength(1);
+    expect(approvals.requeue(approvalId)).toBe(true);
+    expect(approvals.listPendingByThread(threadId)).toHaveLength(1);
   });
 });

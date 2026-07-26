@@ -16,6 +16,8 @@ export interface PendingThreadCreateApproval {
   prompt: string;
   execution: ResolvedExecution;
   placement: Extract<ThreadPlacement, { type: "new_worktree" }>;
+  turnId: string;
+  operationPhase: "pre_provision" | "provisioning" | "provisioned" | "dispatching" | "dispatched";
 }
 
 interface ApprovalRow {
@@ -25,6 +27,8 @@ interface ApprovalRow {
   prompt: string;
   execution_json: string;
   placement_json: string;
+  turn_id: string;
+  operation_phase: PendingThreadCreateApproval["operationPhase"];
 }
 
 /** Durable repository for protected thread-control creation approvals. */
@@ -33,10 +37,10 @@ export class ThreadControlApprovalRepo {
   constructor(@inject("Database") private readonly db: Database.Database) {}
 
   /** Persist one pending approval and return its opaque identity. */
-  create(input: Omit<PendingThreadCreateApproval, "approvalId">): string {
+  create(input: Omit<PendingThreadCreateApproval, "approvalId" | "operationPhase">): string {
     const approvalId = randomUUID();
     this.db.prepare(
-      "INSERT INTO thread_control_approvals (id, thread_id, workspace_id, prompt, execution_json, placement_json, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+      "INSERT INTO thread_control_approvals (id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pre_provision', 'pending')",
     ).run(
       approvalId,
       input.threadId,
@@ -44,6 +48,7 @@ export class ThreadControlApprovalRepo {
       input.prompt,
       JSON.stringify(input.execution),
       JSON.stringify(input.placement),
+      input.turnId,
     );
     return approvalId;
   }
@@ -52,16 +57,32 @@ export class ThreadControlApprovalRepo {
   claim(approvalId: string): PendingThreadCreateApproval | null {
     const claim = this.db.transaction(() => {
       const row = this.db.prepare(
-        "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json FROM thread_control_approvals WHERE id = ? AND status = 'pending'",
+        "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase FROM thread_control_approvals WHERE id = ? AND status = 'pending'",
       ).get(approvalId) as ApprovalRow | undefined;
       if (!row) return null;
       const updated = this.db.prepare(
-        "UPDATE thread_control_approvals SET status = 'processing', resolved_at = ? WHERE id = ? AND status = 'pending'",
+        "UPDATE thread_control_approvals SET status = 'processing', processing_started_at = ? WHERE id = ? AND status = 'pending'",
       ).run(new Date().toISOString(), approvalId);
       return updated.changes === 1 ? row : null;
     });
     const row = claim();
     return row ? this.parse(row) : null;
+  }
+
+  /** Persist a completed side-effect boundary before the next operation begins. */
+  setOperationPhase(approvalId: string, phase: PendingThreadCreateApproval["operationPhase"]): boolean {
+    return this.db.prepare("UPDATE thread_control_approvals SET operation_phase = ? WHERE id = ? AND status = 'processing'").run(phase, approvalId).changes === 1;
+  }
+
+  /** Return approvals stranded by a process exit. */
+  listProcessing(): PendingThreadCreateApproval[] {
+    const rows = this.db.prepare("SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase FROM thread_control_approvals WHERE status = 'processing' ORDER BY processing_started_at, id").all() as ApprovalRow[];
+    return rows.map((row) => this.parse(row));
+  }
+
+  /** Return a pre-side-effect accepted operation to the visible pending state. */
+  requeue(approvalId: string): boolean {
+    return this.db.prepare("UPDATE thread_control_approvals SET status = 'pending', processing_started_at = NULL WHERE id = ? AND status = 'processing' AND operation_phase = 'pre_provision'").run(approvalId).changes === 1;
   }
 
   /** Mark a claimed approval with its terminal outcome. */
@@ -74,7 +95,7 @@ export class ThreadControlApprovalRepo {
   /** Return pending approval cards for one visible thread. */
   listPendingByThread(threadId: string): PendingThreadCreateApproval[] {
     const rows = this.db.prepare(
-      "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json FROM thread_control_approvals WHERE thread_id = ? AND status = 'pending' ORDER BY created_at, id",
+      "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase FROM thread_control_approvals WHERE thread_id = ? AND status = 'pending' ORDER BY created_at, id",
     ).all(threadId) as ApprovalRow[];
     return rows.map((row) => this.parse(row));
   }
@@ -91,6 +112,8 @@ export class ThreadControlApprovalRepo {
       prompt: row.prompt,
       execution: ResolvedExecutionSchema().parse(JSON.parse(row.execution_json)),
       placement,
+      turnId: row.turn_id,
+      operationPhase: row.operation_phase,
     };
   }
 }

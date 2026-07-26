@@ -77,6 +77,7 @@ import { ShellEnvResolver } from "./services/shell-env-resolver";
 import { EnvService } from "./services/env-service";
 import { ThreadControlService } from "./services/thread-control-service";
 import { ThreadControlApprovalRepo } from "./repositories/thread-control-approval-repo";
+import { ThreadControlAuditRepo } from "./repositories/thread-control-audit-repo";
 import { InternalThreadControlMcpAuthority } from "./services/thread-control-mcp-authority";
 import { InternalThreadControlMcpRuntime } from "./services/thread-control-mcp-runtime";
 import { UtilityCompletionService } from "./services/utility-completion-service";
@@ -343,6 +344,7 @@ export function setupContainer(mcodeDir: string): typeof container {
     { useClass: ThreadControlApprovalRepo },
     { lifecycle: Lifecycle.Singleton },
   );
+  container.register(ThreadControlAuditRepo, { useClass: ThreadControlAuditRepo }, { lifecycle: Lifecycle.Singleton });
   container.register(ThreadControlService, { useClass: ThreadControlService }, { lifecycle: Lifecycle.Singleton });
   container.register(InternalThreadControlMcpAuthority, { useClass: InternalThreadControlMcpAuthority }, { lifecycle: Lifecycle.Singleton });
   container.register(InternalThreadControlMcpRuntime, { useClass: InternalThreadControlMcpRuntime }, { lifecycle: Lifecycle.Singleton });

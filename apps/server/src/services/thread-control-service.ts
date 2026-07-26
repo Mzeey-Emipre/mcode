@@ -33,6 +33,7 @@ import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { WorktreeRepo, type InternalRegisteredWorktree } from "../repositories/worktree-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
 import { ThreadControlApprovalRepo } from "../repositories/thread-control-approval-repo.js";
+import { ThreadControlAuditRepo } from "../repositories/thread-control-audit-repo.js";
 import { ProviderRegistry } from "../providers/provider-registry.js";
 import { AgentService } from "./agent-service.js";
 import { GitService } from "./git-service.js";
@@ -64,6 +65,7 @@ export class ThreadControlService {
     @inject(delay(() => ProviderRegistry)) private readonly providers: IProviderRegistry,
     @inject(delay(() => ModelCacheService)) private readonly models: ModelCacheService,
     @inject(ThreadControlApprovalRepo) private readonly approvals: ThreadControlApprovalRepo,
+    @inject(ThreadControlAuditRepo) private readonly audit: ThreadControlAuditRepo,
   ) {}
 
   /** Search only registered workspaces; authority is intentionally not tool input. */
@@ -110,16 +112,20 @@ export class ThreadControlService {
         && this.externalItemCanCreate(authority, validatedInput.items[index]!)
         && !reservations[index]
       ) {
-        results.push({
+        const result: ThreadCreateItemResult = {
           index,
           status: "rejected",
           workspaceId: validatedInput.items[index]!.workspaceId,
           error: this.error("limit_exceeded", "External active-thread limit reached", true),
-        });
+        };
+        this.auditCreateResult(authority, result);
+        results.push(result);
         continue;
       }
       try {
-        results.push(await this.createOne(authority, validatedInput.items[index]!, index));
+        const result = await this.createOne(authority, validatedInput.items[index]!, index);
+        this.auditCreateResult(authority, result);
+        results.push(result);
       } finally {
         if (authority.type === "external" && reservations[index]) {
           await this.releaseExternalReservation(authority.integrationId);
@@ -143,18 +149,22 @@ export class ThreadControlService {
     }
 
     try {
+      this.approvals.setOperationPhase(requestId, "provisioning");
       const provisioned = await this.threadService.provisionWorktree(
         pending.threadId,
         pending.workspaceId,
         pending.placement,
       );
       this.registerProvisionedWorktree(pending.workspaceId, provisioned, pending.placement);
+      this.approvals.setOperationPhase(requestId, "provisioned");
+      this.approvals.setOperationPhase(requestId, "dispatching");
       await this.startTurn(
         pending.threadId,
         pending.prompt,
         pending.execution,
-        randomUUID(),
+        pending.turnId,
       );
+      this.approvals.setOperationPhase(requestId, "dispatched");
       this.approvals.settle(requestId, "approved");
       broadcast("permission.resolved", { requestId, decision });
       return true;
@@ -169,6 +179,19 @@ export class ThreadControlService {
       broadcast("permission.resolved", { requestId, decision });
       broadcast("thread.status", { threadId: pending.threadId, status: "errored" });
       return true;
+    }
+  }
+
+  /** Restore stranded approvals without replaying an ambiguous external side effect. */
+  recoverApprovals(): void {
+    for (const approval of this.approvals.listProcessing()) {
+      if (approval.operationPhase === "pre_provision") {
+        this.approvals.requeue(approval.approvalId);
+        continue;
+      }
+      this.approvals.settle(approval.approvalId, "failed");
+      this.threads.updateStatus(approval.threadId, "errored");
+      broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
     }
   }
 
@@ -288,6 +311,7 @@ export class ThreadControlService {
           prompt: input.prompt,
           execution: execution.value,
           placement: input.placement,
+          turnId: randomUUID(),
         });
         broadcast("permission.request", {
           requestId: approvalId,
@@ -363,6 +387,17 @@ export class ThreadControlService {
         state: { status: "failed" },
       };
     }
+  }
+
+  private auditCreateResult(authority: ThreadControlAuthority, result: ThreadCreateItemResult): void {
+    this.audit.write({
+      callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
+      ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
+      workspaceId: result.workspaceId,
+      ...("threadId" in result ? { threadId: result.threadId } : {}),
+      operation: "thread_create_batch",
+      outcome: result.status,
+    });
   }
 
   private async resolveExecution(
