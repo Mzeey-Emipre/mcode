@@ -225,6 +225,25 @@ describe("ThreadControlService", () => {
     }));
   });
 
+  it("returns a created result when audit storage fails", async () => {
+    const service = createService();
+    audit.write.mockImplementationOnce(() => { throw new Error("audit unavailable"); });
+
+    await expect(service.threadCreateBatch(authority, {
+      items: [{
+        workspaceId: workspace.id,
+        title: "Audit failure",
+        prompt: "Create once.",
+        placement: { type: "direct" },
+      }],
+    })).resolves.toMatchObject({
+      results: [{ status: "created", threadId: createdThread.id }],
+    });
+
+    expect(threads.create).toHaveBeenCalledTimes(1);
+    expect(agentService.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("honors exact provider and model overrides or rejects them without persistence", async () => {
     const service = createService();
 
@@ -437,6 +456,50 @@ describe("ThreadControlService", () => {
     approvals.claim.mockReturnValue(null);
     await expect(service.respondToApproval("approval-1", "allow")).resolves.toBe(false);
     expect(threadService.provisionWorktree).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an approved thread active when its post-settlement audit write fails", async () => {
+    const service = createService();
+    approvals.claim.mockReturnValue({
+      approvalId: "approval-audit-failure",
+      threadId: createdThread.id,
+      workspaceId: workspace.id,
+      prompt: "Resume once.",
+      execution: { providerId: "codex", modelId: "gpt-default", permissionMode: "full", interactionMode: "build" },
+      placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-audit-failure",
+      operationPhase: "pre_provision",
+      callerId: "local-user",
+    });
+    audit.write.mockImplementationOnce(() => { throw new Error("audit unavailable"); });
+
+    await expect(service.respondToApproval("approval-audit-failure", "allow")).resolves.toBe(true);
+
+    expect(approvals.settle).toHaveBeenCalledWith("approval-audit-failure", "approved");
+    expect(threads.updateStatus).not.toHaveBeenCalledWith(createdThread.id, "errored");
+    expect(mockBroadcast).toHaveBeenCalledWith("thread.status", {
+      threadId: createdThread.id,
+      status: "active",
+    });
+  });
+
+  it.each(["deny", "failure"])("does not throw when %s auditing fails", async (outcome) => {
+    const service = createService();
+    approvals.claim.mockReturnValue({
+      approvalId: `approval-${outcome}`,
+      threadId: createdThread.id,
+      workspaceId: workspace.id,
+      prompt: "Resume once.",
+      execution: { providerId: "codex", modelId: "gpt-default", permissionMode: "full", interactionMode: "build" },
+      placement: { type: "new_worktree", baseRef: "main" },
+      turnId: `turn-${outcome}`,
+      operationPhase: "pre_provision",
+      callerId: "local-user",
+    });
+    audit.write.mockImplementationOnce(() => { throw new Error("audit unavailable"); });
+    if (outcome === "failure") agentService.sendMessage.mockRejectedValueOnce(new Error("dispatch failed"));
+
+    await expect(service.respondToApproval(`approval-${outcome}`, outcome === "deny" ? "deny" : "allow")).resolves.toBe(true);
   });
 
   it("requeues a recovered provisioning approval only after cleanup clears its persisted checkout", async () => {

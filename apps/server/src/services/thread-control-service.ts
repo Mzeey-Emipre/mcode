@@ -146,7 +146,10 @@ export class ThreadControlService {
     if (decision === "deny" || decision === "cancelled") {
       this.approvals.settle(requestId, "rejected");
       this.threads.updateStatus(pending.threadId, "errored");
-      this.audit.write({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "denied" });
+      this.writeAudit(
+        { callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "denied" },
+        { approvalId: requestId, threadId: pending.threadId },
+      );
       broadcast("permission.resolved", { requestId, decision });
       broadcast("thread.status", { threadId: pending.threadId, status: "errored" });
       return true;
@@ -170,7 +173,10 @@ export class ThreadControlService {
       );
       this.requirePhase(requestId, "dispatched");
       this.approvals.settle(requestId, "approved");
-      this.audit.write({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "resumed-approved" });
+      this.writeAudit(
+        { callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "resumed-approved" },
+        { approvalId: requestId, threadId: pending.threadId },
+      );
       broadcast("permission.resolved", { requestId, decision });
       broadcast("thread.status", { threadId: pending.threadId, status: "active" });
       return true;
@@ -181,7 +187,10 @@ export class ThreadControlService {
         error: String(error),
       });
       this.approvals.settle(requestId, "failed");
-      this.audit.write({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "resumed-failed" });
+      this.writeAudit(
+        { callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "resumed-failed" },
+        { approvalId: requestId, threadId: pending.threadId },
+      );
       this.threads.updateStatus(pending.threadId, "errored");
       broadcast("permission.resolved", { requestId, decision });
       broadcast("thread.status", { threadId: pending.threadId, status: "errored" });
@@ -442,14 +451,18 @@ export class ThreadControlService {
   }
 
   private auditCreateResult(authority: ThreadControlAuthority, result: ThreadCreateItemResult): void {
-    this.audit.write({
-      callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
-      ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
-      workspaceId: result.workspaceId,
-      ...("threadId" in result ? { threadId: result.threadId } : {}),
-      operation: "thread_create_batch",
-      outcome: result.status,
-    });
+    const threadId = "threadId" in result ? result.threadId : undefined;
+    this.writeAudit(
+      {
+        callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
+        ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
+        workspaceId: result.workspaceId,
+        ...(threadId ? { threadId } : {}),
+        operation: "thread_create_batch",
+        outcome: result.status,
+      },
+      threadId ? { threadId } : {},
+    );
   }
 
   private async resolveExecution(
@@ -625,13 +638,20 @@ export class ThreadControlService {
     approval: Pick<RecoverableThreadCreateApproval, "approvalId" | "threadId" | "workspaceId" | "callerId" | "sourceThreadId">,
     outcome: "recovery-failed" | "recovery-requeued",
   ): void {
+    this.writeAudit(
+      { callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome },
+      { approvalId: approval.approvalId, threadId: approval.threadId },
+    );
+  }
+
+  private writeAudit(
+    input: { callerId: string; sourceThreadId?: string; workspaceId?: string; threadId?: string; operation: string; outcome: string },
+    identity: { approvalId?: string; threadId?: string },
+  ): void {
     try {
-      this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome });
+      this.audit.write(input);
     } catch {
-      logger.error("Could not audit recovered approval", {
-        approvalId: approval.approvalId,
-        threadId: approval.threadId,
-      });
+      logger.error("Thread-control audit write failed", identity);
     }
   }
 
