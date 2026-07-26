@@ -1,5 +1,10 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockBroadcast } = vi.hoisted(() => ({ mockBroadcast: vi.fn() }));
+
+vi.mock("../../transport/push.js", () => ({ broadcast: mockBroadcast }));
+
 import { ThreadControlService, type InternalThreadControlAuthority } from "../thread-control-service.js";
 
 const authority: InternalThreadControlAuthority = {
@@ -424,6 +429,10 @@ describe("ThreadControlService", () => {
       content: "Resume this prompt.",
     }));
     expect(approvals.settle).toHaveBeenCalledWith("approval-1", "approved");
+    expect(mockBroadcast).toHaveBeenCalledWith("thread.status", {
+      threadId: createdThread.id,
+      status: "active",
+    });
 
     approvals.claim.mockReturnValue(null);
     await expect(service.respondToApproval("approval-1", "allow")).resolves.toBe(false);
@@ -458,6 +467,59 @@ describe("ThreadControlService", () => {
     expect(approvals.requeueRecoveredProvisioning).toHaveBeenCalledWith("provisioning");
     expect(agentService.sendMessage).not.toHaveBeenCalled();
     expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ outcome: "recovery-requeued" }));
+  });
+
+  it("fails a malformed recovery item and continues with the next valid approval", async () => {
+    const service = createService();
+    approvals.listProcessing.mockReturnValue([
+      {
+        invalid: true,
+        approvalId: "malformed",
+        threadId: "thread-malformed",
+        workspaceId: workspace.id,
+        callerId: "local-user",
+      },
+      {
+        approvalId: "valid",
+        threadId: "thread-valid",
+        workspaceId: workspace.id,
+        callerId: "local-user",
+        operationPhase: "pre_provision",
+      },
+    ]);
+
+    await expect(service.recoverApprovals()).resolves.toBeUndefined();
+
+    expect(approvals.settle).toHaveBeenCalledWith("malformed", "failed");
+    expect(threads.updateStatus).toHaveBeenCalledWith("thread-malformed", "errored");
+    expect(approvals.requeue).toHaveBeenCalledWith("valid");
+  });
+
+  it("continues recovery when failure persistence or audit logging throws", async () => {
+    const service = createService();
+    approvals.settle.mockImplementationOnce(() => { throw new Error("database unavailable"); });
+    audit.write.mockImplementationOnce(() => { throw new Error("audit unavailable"); });
+    approvals.listProcessing.mockReturnValue([
+      {
+        invalid: true,
+        approvalId: "broken",
+        threadId: "thread-broken",
+        workspaceId: workspace.id,
+        callerId: "local-user",
+      },
+      {
+        approvalId: "valid",
+        threadId: "thread-valid",
+        workspaceId: workspace.id,
+        callerId: "local-user",
+        operationPhase: "pre_provision",
+      },
+    ]);
+
+    await expect(service.recoverApprovals()).resolves.toBeUndefined();
+
+    expect(threads.updateStatus).toHaveBeenCalledWith("thread-broken", "errored");
+    expect(approvals.requeue).toHaveBeenCalledWith("valid");
   });
 
   it.each([

@@ -14,6 +14,10 @@ import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { AttachmentService } from "./attachment-service";
 import { HandoffStorage } from "./handoff/handoff-storage.js";
 
+function managedWorktreeName(ref: string, threadId: string): string {
+  return `${sanitizeBranchForFolder(ref).slice(0, 91)}-${threadId.slice(0, 8)}`;
+}
+
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
 export class ThreadService {
@@ -67,11 +71,7 @@ export class ThreadService {
       }
 
       try {
-        const shortId = thread.id.slice(0, 8);
-        // Truncate to 91 chars so the full name (prefix + "-" + 8-char id) stays within
-        // the 100-character limit enforced by validateWorktreeName.
-        const sanitized = sanitizeBranchForFolder(branch).slice(0, 91);
-        const worktreeName = `${sanitized}-${shortId}`;
+        const worktreeName = managedWorktreeName(branch, thread.id);
         const info = await this.gitService.createWorktree(
           workspace.path,
           worktreeName,
@@ -149,9 +149,7 @@ export class ThreadService {
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
 
     const worktreeRef = placement.branchName ?? placement.baseRef;
-    const shortId = thread.id.slice(0, 8);
-    const sanitized = sanitizeBranchForFolder(worktreeRef).slice(0, 91);
-    const worktreeName = `${sanitized}-${shortId}`;
+    const worktreeName = managedWorktreeName(worktreeRef, thread.id);
     const info = await this.gitService.createWorktree(
       workspace.path,
       worktreeName,
@@ -185,7 +183,7 @@ export class ThreadService {
     const workspace = this.workspaceRepo.findById(workspaceId);
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
     const ref = placement.branchName ?? placement.baseRef;
-    const name = `${sanitizeBranchForFolder(ref).slice(0, 91)}-${threadId.slice(0, 8)}`;
+    const name = managedWorktreeName(ref, threadId);
     return this.gitService.removeWorktree(workspace.path, name, { deleteBranch: false });
   }
 

@@ -16,7 +16,7 @@ export const THREAD_CREATE_BATCH_MAX_ITEMS = 20;
 export const THREAD_CREATE_TITLE_MAX_LENGTH = 256;
 /** Maximum characters accepted for a delegated thread's initial prompt. */
 export const THREAD_CREATE_PROMPT_MAX_LENGTH = 100_000;
-/** Maximum characters accepted for provider, model, base-ref, and branch identifiers. */
+/** Maximum characters accepted for provider and model identifiers. */
 export const THREAD_CREATE_EXECUTION_ID_MAX_LENGTH = 128;
 /** Maximum characters accepted for a Git base ref or branch name. */
 export const THREAD_CREATE_GIT_REF_MAX_LENGTH = 250;

@@ -32,7 +32,10 @@ import { delay, inject, injectable } from "tsyringe";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { WorktreeRepo, type InternalRegisteredWorktree } from "../repositories/worktree-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
-import { ThreadControlApprovalRepo, type PendingThreadCreateApproval } from "../repositories/thread-control-approval-repo.js";
+import {
+  ThreadControlApprovalRepo,
+  type RecoverableThreadCreateApproval,
+} from "../repositories/thread-control-approval-repo.js";
 import { ThreadControlAuditRepo } from "../repositories/thread-control-audit-repo.js";
 import { ProviderRegistry } from "../providers/provider-registry.js";
 import { AgentService } from "./agent-service.js";
@@ -169,6 +172,7 @@ export class ThreadControlService {
       this.approvals.settle(requestId, "approved");
       this.audit.write({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "resumed-approved" });
       broadcast("permission.resolved", { requestId, decision });
+      broadcast("thread.status", { threadId: pending.threadId, status: "active" });
       return true;
     } catch (error) {
       logger.error("Delegated thread approval failed", {
@@ -188,40 +192,57 @@ export class ThreadControlService {
   /** Restore stranded approvals without replaying an ambiguous external side effect. */
   async recoverApprovals(): Promise<void> {
     for (const approval of this.approvals.listProcessing()) {
-      if (approval.operationPhase === "pre_provision") {
-        if (this.approvals.requeue(approval.approvalId)) {
-          this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome: "recovery-requeued" });
-        }
-        continue;
+      try {
+        await this.recoverApproval(approval);
+      } catch {
+        logger.error("Thread-control approval recovery item failed", {
+          approvalId: approval.approvalId,
+          threadId: approval.threadId,
+        });
+        this.failRecovery(approval);
       }
-      if (approval.operationPhase === "provisioning") {
-        try {
-          const cleaned = await this.threadService.cleanupInterruptedProvisioning(
-            approval.threadId,
-            approval.workspaceId,
-            approval.placement,
-          );
-          if (!cleaned) {
-            this.failRecovery(approval);
-            continue;
-          }
-        } catch {
-          this.failRecovery(approval);
-          continue;
-        }
-        if (
-          this.threads.clearWorktreePath(approval.threadId)
-          && this.threads.updateStatus(approval.threadId, "paused")
-          && this.approvals.requeueRecoveredProvisioning(approval.approvalId)
-        ) {
-          this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome: "recovery-requeued" });
-        } else {
-          this.failRecovery(approval);
-        }
-        continue;
-      }
-      this.failRecovery(approval);
     }
+  }
+
+  private async recoverApproval(approval: RecoverableThreadCreateApproval): Promise<void> {
+    if ("invalid" in approval) {
+      logger.error("Thread-control approval payload is invalid during recovery", {
+        approvalId: approval.approvalId,
+        threadId: approval.threadId,
+      });
+      this.failRecovery(approval);
+      return;
+    }
+    if (approval.operationPhase === "pre_provision") {
+      if (!this.approvals.requeue(approval.approvalId)) {
+        this.failRecovery(approval);
+        return;
+      }
+      this.writeRecoveryAudit(approval, "recovery-requeued");
+      return;
+    }
+    if (approval.operationPhase === "provisioning") {
+      const cleaned = await this.threadService.cleanupInterruptedProvisioning(
+        approval.threadId,
+        approval.workspaceId,
+        approval.placement,
+      );
+      if (!cleaned) {
+        this.failRecovery(approval);
+        return;
+      }
+      if (
+        this.threads.clearWorktreePath(approval.threadId)
+        && this.threads.updateStatus(approval.threadId, "paused")
+        && this.approvals.requeueRecoveredProvisioning(approval.approvalId)
+      ) {
+        this.writeRecoveryAudit(approval, "recovery-requeued");
+      } else {
+        this.failRecovery(approval);
+      }
+      return;
+    }
+    this.failRecovery(approval);
   }
 
   /** Return durable thread-control approvals for frontend rehydration. */
@@ -580,15 +601,38 @@ export class ThreadControlService {
     }
   }
 
-  private failRecovery(approval: PendingThreadCreateApproval): void {
-    if (!this.approvals.settle(approval.approvalId, "failed")) {
-      throw new Error(`Could not fail recovered approval: ${approval.approvalId}`);
+  private failRecovery(approval: Pick<RecoverableThreadCreateApproval, "approvalId" | "threadId" | "workspaceId" | "callerId" | "sourceThreadId">): void {
+    const identity = { approvalId: approval.approvalId, threadId: approval.threadId };
+    try {
+      if (!this.approvals.settle(approval.approvalId, "failed")) {
+        logger.error("Could not fail recovered approval", identity);
+      }
+    } catch {
+      logger.error("Could not fail recovered approval", identity);
     }
-    if (!this.threads.updateStatus(approval.threadId, "errored")) {
-      throw new Error(`Could not mark recovered thread errored: ${approval.threadId}`);
+    try {
+      if (!this.threads.updateStatus(approval.threadId, "errored")) {
+        logger.error("Could not mark recovered thread errored", identity);
+      }
+    } catch {
+      logger.error("Could not mark recovered thread errored", identity);
     }
-    this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome: "recovery-failed" });
+    this.writeRecoveryAudit(approval, "recovery-failed");
     broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
+  }
+
+  private writeRecoveryAudit(
+    approval: Pick<RecoverableThreadCreateApproval, "approvalId" | "threadId" | "workspaceId" | "callerId" | "sourceThreadId">,
+    outcome: "recovery-failed" | "recovery-requeued",
+  ): void {
+    try {
+      this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome });
+    } catch {
+      logger.error("Could not audit recovered approval", {
+        approvalId: approval.approvalId,
+        threadId: approval.threadId,
+      });
+    }
   }
 
   private error(

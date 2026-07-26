@@ -22,6 +22,19 @@ export interface PendingThreadCreateApproval {
   sourceThreadId?: string;
 }
 
+/** Safe persisted identity for a processing approval whose payload cannot be rehydrated. */
+export interface MalformedThreadCreateApproval {
+  invalid: true;
+  approvalId: string;
+  threadId: string;
+  workspaceId: string;
+  callerId: string;
+  sourceThreadId?: string;
+}
+
+/** Processing approval that can either resume safely or must fail closed. */
+export type RecoverableThreadCreateApproval = PendingThreadCreateApproval | MalformedThreadCreateApproval;
+
 interface ApprovalRow {
   id: string;
   thread_id: string;
@@ -80,10 +93,23 @@ export class ThreadControlApprovalRepo {
     return this.db.prepare("UPDATE thread_control_approvals SET operation_phase = ? WHERE id = ? AND status = 'processing'").run(phase, approvalId).changes === 1;
   }
 
-  /** Return approvals stranded by a process exit. */
-  listProcessing(): PendingThreadCreateApproval[] {
+  /** Return approvals stranded by a process exit without letting one malformed payload block recovery. */
+  listProcessing(): RecoverableThreadCreateApproval[] {
     const rows = this.db.prepare("SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, caller_id, source_thread_id FROM thread_control_approvals WHERE status = 'processing' ORDER BY processing_started_at, id").all() as ApprovalRow[];
-    return rows.map((row) => this.parse(row));
+    return rows.map((row) => {
+      try {
+        return this.parse(row);
+      } catch {
+        return {
+          invalid: true,
+          approvalId: row.id,
+          threadId: row.thread_id,
+          workspaceId: row.workspace_id,
+          callerId: row.caller_id ?? "unknown",
+          ...(row.source_thread_id ? { sourceThreadId: row.source_thread_id } : {}),
+        };
+      }
+    });
   }
 
   /** Return a pre-side-effect accepted operation to the visible pending state. */

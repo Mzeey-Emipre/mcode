@@ -87,4 +87,42 @@ describe("ThreadControlApprovalRepo", () => {
     expect(approvals.requeue(approvalId)).toBe(true);
     expect(approvals.listPendingByThread(threadId)).toHaveLength(1);
   });
+
+  it("does not requeue an approval after provisioning has started", () => {
+    const approvalId = approvals.create({
+      threadId,
+      workspaceId,
+      prompt: "Provision once.",
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "full", interactionMode: "build" },
+      placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-provisioning",
+      callerId: "local-user",
+    });
+
+    expect(approvals.claim(approvalId)).not.toBeNull();
+    expect(approvals.setOperationPhase(approvalId, "provisioning")).toBe(true);
+    expect(approvals.requeue(approvalId)).toBe(false);
+  });
+
+  it("returns a fail-closed recovery item for malformed persisted payloads", () => {
+    const approvalId = approvals.create({
+      threadId,
+      workspaceId,
+      prompt: "Never expose this prompt.",
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "full", interactionMode: "build" },
+      placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-malformed",
+      callerId: "local-user",
+    });
+    expect(approvals.claim(approvalId)).not.toBeNull();
+    db.prepare("UPDATE thread_control_approvals SET execution_json = ? WHERE id = ?").run("{", approvalId);
+
+    expect(approvals.listProcessing()).toEqual([{
+      invalid: true,
+      approvalId,
+      threadId,
+      workspaceId,
+      callerId: "local-user",
+    }]);
+  });
 });
