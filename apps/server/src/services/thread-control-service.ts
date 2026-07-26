@@ -143,6 +143,7 @@ export class ThreadControlService {
     if (decision === "deny" || decision === "cancelled") {
       this.approvals.settle(requestId, "rejected");
       this.threads.updateStatus(pending.threadId, "errored");
+      this.audit.write({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "denied" });
       broadcast("permission.resolved", { requestId, decision });
       broadcast("thread.status", { threadId: pending.threadId, status: "errored" });
       return true;
@@ -166,6 +167,7 @@ export class ThreadControlService {
       );
       this.approvals.setOperationPhase(requestId, "dispatched");
       this.approvals.settle(requestId, "approved");
+      this.audit.write({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "resumed-approved" });
       broadcast("permission.resolved", { requestId, decision });
       return true;
     } catch (error) {
@@ -175,6 +177,7 @@ export class ThreadControlService {
         error: String(error),
       });
       this.approvals.settle(requestId, "failed");
+      this.audit.write({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation: "thread_create_batch", outcome: "resumed-failed" });
       this.threads.updateStatus(pending.threadId, "errored");
       broadcast("permission.resolved", { requestId, decision });
       broadcast("thread.status", { threadId: pending.threadId, status: "errored" });
@@ -312,6 +315,8 @@ export class ThreadControlService {
           execution: execution.value,
           placement: input.placement,
           turnId: randomUUID(),
+          callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
+          ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
         });
         broadcast("permission.request", {
           requestId: approvalId,

@@ -126,6 +126,8 @@ export const threadControlApprovals = sqliteTable(
     executionJson: text("execution_json").notNull(),
     placementJson: text("placement_json").notNull(),
     turnId: text("turn_id").notNull(),
+    callerId: text("caller_id"),
+    sourceThreadId: text("source_thread_id"),
     operationPhase: text("operation_phase").notNull().default("pre_provision"),
     status: text("status").notNull().default("pending"),
     processingStartedAt: text("processing_started_at"),

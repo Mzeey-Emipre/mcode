@@ -44,6 +44,8 @@ describe("ThreadControlApprovalRepo", () => {
       },
       placement: { type: "new_worktree", baseRef: "main" },
       turnId: "turn-960",
+      callerId: "local-user",
+      sourceThreadId: "thread-source",
     });
 
     expect(approvals.listPendingByThread(threadId)).toEqual([{
@@ -60,6 +62,8 @@ describe("ThreadControlApprovalRepo", () => {
       placement: { type: "new_worktree", baseRef: "main" },
       turnId: "turn-960",
       operationPhase: "pre_provision",
+      callerId: "local-user",
+      sourceThreadId: "thread-source",
     }]);
     expect(approvals.claim(approvalId)?.approvalId).toBe(approvalId);
     expect(approvals.claim(approvalId)).toBeNull();
@@ -75,6 +79,7 @@ describe("ThreadControlApprovalRepo", () => {
       execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "full", interactionMode: "build" },
       placement: { type: "new_worktree", baseRef: "main" },
       turnId: "turn-recovery",
+      callerId: "local-user",
     });
 
     expect(approvals.claim(approvalId)?.operationPhase).toBe("pre_provision");

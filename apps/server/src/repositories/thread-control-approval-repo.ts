@@ -18,6 +18,8 @@ export interface PendingThreadCreateApproval {
   placement: Extract<ThreadPlacement, { type: "new_worktree" }>;
   turnId: string;
   operationPhase: "pre_provision" | "provisioning" | "provisioned" | "dispatching" | "dispatched";
+  callerId: string;
+  sourceThreadId?: string;
 }
 
 interface ApprovalRow {
@@ -29,6 +31,8 @@ interface ApprovalRow {
   placement_json: string;
   turn_id: string;
   operation_phase: PendingThreadCreateApproval["operationPhase"];
+  caller_id: string | null;
+  source_thread_id: string | null;
 }
 
 /** Durable repository for protected thread-control creation approvals. */
@@ -40,7 +44,7 @@ export class ThreadControlApprovalRepo {
   create(input: Omit<PendingThreadCreateApproval, "approvalId" | "operationPhase">): string {
     const approvalId = randomUUID();
     this.db.prepare(
-      "INSERT INTO thread_control_approvals (id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pre_provision', 'pending')",
+      "INSERT INTO thread_control_approvals (id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, caller_id, source_thread_id, operation_phase, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pre_provision', 'pending')",
     ).run(
       approvalId,
       input.threadId,
@@ -49,6 +53,8 @@ export class ThreadControlApprovalRepo {
       JSON.stringify(input.execution),
       JSON.stringify(input.placement),
       input.turnId,
+      input.callerId,
+      input.sourceThreadId ?? null,
     );
     return approvalId;
   }
@@ -57,7 +63,7 @@ export class ThreadControlApprovalRepo {
   claim(approvalId: string): PendingThreadCreateApproval | null {
     const claim = this.db.transaction(() => {
       const row = this.db.prepare(
-        "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase FROM thread_control_approvals WHERE id = ? AND status = 'pending'",
+        "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, caller_id, source_thread_id FROM thread_control_approvals WHERE id = ? AND status = 'pending'",
       ).get(approvalId) as ApprovalRow | undefined;
       if (!row) return null;
       const updated = this.db.prepare(
@@ -76,7 +82,7 @@ export class ThreadControlApprovalRepo {
 
   /** Return approvals stranded by a process exit. */
   listProcessing(): PendingThreadCreateApproval[] {
-    const rows = this.db.prepare("SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase FROM thread_control_approvals WHERE status = 'processing' ORDER BY processing_started_at, id").all() as ApprovalRow[];
+    const rows = this.db.prepare("SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, caller_id, source_thread_id FROM thread_control_approvals WHERE status = 'processing' ORDER BY processing_started_at, id").all() as ApprovalRow[];
     return rows.map((row) => this.parse(row));
   }
 
@@ -95,7 +101,7 @@ export class ThreadControlApprovalRepo {
   /** Return pending approval cards for one visible thread. */
   listPendingByThread(threadId: string): PendingThreadCreateApproval[] {
     const rows = this.db.prepare(
-      "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase FROM thread_control_approvals WHERE thread_id = ? AND status = 'pending' ORDER BY created_at, id",
+      "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, caller_id, source_thread_id FROM thread_control_approvals WHERE thread_id = ? AND status = 'pending' ORDER BY created_at, id",
     ).all(threadId) as ApprovalRow[];
     return rows.map((row) => this.parse(row));
   }
@@ -114,6 +120,8 @@ export class ThreadControlApprovalRepo {
       placement,
       turnId: row.turn_id,
       operationPhase: row.operation_phase,
+      callerId: row.caller_id ?? "unknown",
+      ...(row.source_thread_id ? { sourceThreadId: row.source_thread_id } : {}),
     };
   }
 }

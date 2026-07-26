@@ -407,6 +407,8 @@ describe("ThreadControlService", () => {
       placement: { type: "new_worktree", baseRef: "main" },
       turnId: "turn-approval-1",
       operationPhase: "pre_provision",
+      callerId: "local-user",
+      sourceThreadId: "thread-1",
     });
 
     await expect(service.respondToApproval("approval-1", "allow")).resolves.toBe(true);
