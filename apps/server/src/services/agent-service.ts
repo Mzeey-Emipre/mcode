@@ -99,6 +99,8 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   markPlanAnswerForMessageId?: string;
   /** Provider payload used instead of the persisted user-facing content. */
   providerWireOverride?: string;
+  /** Server-assigned turn identity used by thread-control creation results. */
+  sourceTurnId?: string;
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -380,7 +382,7 @@ export class AgentService {
     @inject(PlanQuestionService)
     private readonly planQuestionService: PlanQuestionService,
     @inject(FileService) private readonly fileService?: FileService,
-    @inject(InternalThreadControlMcpRuntime)
+    @inject(delay(() => InternalThreadControlMcpRuntime))
     private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
   ) {
     this.turnFileTracker = new TurnFileTracker(
@@ -504,6 +506,7 @@ export class AgentService {
     previewAnnotations,
     goalObjective,
     orchestrationMode,
+    sourceTurnId: requestedSourceTurnId,
   }: SendMessageCommand): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -802,7 +805,7 @@ export class AgentService {
     });
 
     const sessionName = `mcode-${threadId}`;
-    const sourceTurnId = randomUUID();
+    const sourceTurnId = requestedSourceTurnId ?? randomUUID();
     // A branched child has a system handoff at seq 1 but no sdk_session_id.
     // Only treat as resume if there is actually a session to resume.
     const isResume = nextSeq > 1 && !!thread.sdk_session_id;

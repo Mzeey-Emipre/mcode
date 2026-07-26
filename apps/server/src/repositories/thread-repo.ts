@@ -638,6 +638,21 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
+  /** Persist ownership for a thread created by a paired external integration. */
+  updateExternalCreator(id: string, integrationId: string): boolean {
+    return this.db.prepare(
+      "UPDATE threads SET created_by_integration_id = ?, updated_at = ? WHERE id = ?",
+    ).run(integrationId, new Date().toISOString(), id).changes > 0;
+  }
+
+  /** Count active capacity owned by one paired external integration. */
+  countActiveByIntegration(integrationId: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM threads WHERE created_by_integration_id = ? AND deleted_at IS NULL AND status IN ('active', 'paused')",
+    ).get(integrationId) as { count: number };
+    return row.count;
+  }
+
   /**
    * Find all threads in a workspace that have a worktree_path set (both active and deleted).
    * Used during workspace deletion to know which threads need filesystem cleanup.

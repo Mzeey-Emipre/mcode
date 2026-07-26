@@ -28,6 +28,7 @@ import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discov
 import type { WorkspaceService } from "../services/workspace-service";
 import type { ThreadService } from "../services/thread-service";
 import type { AgentService } from "../services/agent-service";
+import type { ThreadControlService } from "../services/thread-control-service";
 import type { GitService } from "../services/git-service";
 import type { GithubService } from "../services/github-service";
 import type { FileService } from "../services/file-service";
@@ -148,6 +149,8 @@ export interface RouterDeps {
   workspaceService: WorkspaceService;
   threadService: ThreadService;
   agentService: AgentService;
+  /** Owns durable approvals for protected delegated-thread mutations. */
+  threadControlService: ThreadControlService;
   gitService: GitService;
   githubService: GithubService;
   fileService: FileService;
@@ -1399,12 +1402,18 @@ async function dispatch(
 
     // Permission
     case "permission.respond": {
+      if (await deps.threadControlService.respondToApproval(params.requestId, params.decision)) {
+        return;
+      }
       deps.agentService.respondToPermission(params.requestId, params.decision);
       // broadcast is handled by the provider's "permission_resolved" event → index.ts listener
       return;
     }
     case "permission.listPending":
-      return deps.agentService.listPendingPermissions(params.threadId);
+      return [
+        ...deps.threadControlService.listPendingApprovals(params.threadId),
+        ...deps.agentService.listPendingPermissions(params.threadId),
+      ];
 
     case "handoff.regenerate":
       // v1 stub; live regeneration is deferred to a follow-on plan.

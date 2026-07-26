@@ -115,6 +115,25 @@ export const threads = sqliteTable(
   ],
 );
 
+/** Durable human approvals for protected delegated-thread creation mutations. */
+export const threadControlApprovals = sqliteTable(
+  "thread_control_approvals",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    prompt: text("prompt").notNull(),
+    executionJson: text("execution_json").notNull(),
+    placementJson: text("placement_json").notNull(),
+    status: text("status").notNull().default("pending"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    resolvedAt: text("resolved_at"),
+  },
+  (table) => [
+    index("idx_thread_control_approvals_thread").on(table.threadId, table.status),
+  ],
+);
+
 export const pullRequestReviewLinks = sqliteTable(
   "pull_request_review_links",
   {

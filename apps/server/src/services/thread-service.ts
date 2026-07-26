@@ -130,6 +130,52 @@ export class ThreadService {
     return thread;
   }
 
+  /** Provision a new worktree for an already-persisted delegated thread. */
+  async provisionWorktree(
+    threadId: string,
+    workspaceId: string,
+    placement: { baseRef: string; branchName?: string },
+  ): Promise<Thread & { warnings?: string[] }> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread || thread.workspace_id !== workspaceId || thread.mode !== "worktree") {
+      throw new Error("Delegated worktree thread is not available for provisioning");
+    }
+    if (thread.worktree_path) {
+      throw new Error("Delegated worktree thread is already provisioned");
+    }
+    validateBranchName(placement.baseRef);
+    if (placement.branchName) validateBranchName(placement.branchName);
+    const workspace = this.workspaceRepo.findById(workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+
+    const worktreeRef = placement.branchName ?? placement.baseRef;
+    const shortId = thread.id.slice(0, 8);
+    const sanitized = sanitizeBranchForFolder(worktreeRef).slice(0, 91);
+    const worktreeName = `${sanitized}-${shortId}`;
+    const info = await this.gitService.createWorktree(
+      workspace.path,
+      worktreeName,
+      worktreeRef,
+      {
+        branchless: placement.branchName === undefined,
+        ...(placement.branchName ? { baseRef: placement.baseRef } : {}),
+      },
+    );
+    const updated = this.threadRepo.updateWorktreePath(thread.id, info.path);
+    if (!updated) {
+      await this.gitService.removeWorktree(workspace.path, worktreeName, {
+        ...(info.createdBranch ? { branchName: worktreeRef } : { deleteBranch: false }),
+      });
+      throw new Error(`Failed to persist worktree path for thread ${thread.id}`);
+    }
+    this.threadRepo.updateStatus(thread.id, "active");
+    return {
+      ...thread,
+      worktree_path: info.path,
+      warnings: info.warnings.length > 0 ? info.warnings : undefined,
+    };
+  }
+
   /**
    * Create a named branch in a thread's resolved checkout and persist the named checkout state.
    */
