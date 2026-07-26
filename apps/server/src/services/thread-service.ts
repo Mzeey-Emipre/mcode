@@ -176,7 +176,7 @@ export class ThreadService {
     };
   }
 
-  /** Remove only the deterministic managed worktree for an interrupted provisioning approval. */
+  /** Idempotently remove only the deterministic managed worktree for interrupted provisioning. */
   async cleanupInterruptedProvisioning(
     threadId: string,
     workspaceId: string,

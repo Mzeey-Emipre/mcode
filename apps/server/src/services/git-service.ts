@@ -816,6 +816,7 @@ export class GitService {
 
   /**
    * Remove a git worktree by name.
+   * Returns true when the worktree is already absent so interrupted cleanup is idempotent.
    * When deleteBranch is true, deletes options.branchName or the default managed branch.
    * When worktreePath is set, removes that exact worktree path instead of deriving
    * one under the managed mcode worktree directory.
