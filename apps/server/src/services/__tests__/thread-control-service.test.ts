@@ -47,10 +47,11 @@ describe("ThreadControlService", () => {
     updateDelegationLineage: ReturnType<typeof vi.fn>;
     updateStatus: ReturnType<typeof vi.fn>;
     updateWorktreePath: ReturnType<typeof vi.fn>;
+    clearWorktreePath: ReturnType<typeof vi.fn>;
     updateExternalCreator: ReturnType<typeof vi.fn>;
     countActiveByIntegration: ReturnType<typeof vi.fn>;
   };
-  let threadService: { provisionWorktree: ReturnType<typeof vi.fn> };
+  let threadService: { provisionWorktree: ReturnType<typeof vi.fn>; cleanupInterruptedProvisioning: ReturnType<typeof vi.fn> };
   let agentService: { sendMessage: ReturnType<typeof vi.fn> };
   let approvals: {
     create: ReturnType<typeof vi.fn>;
@@ -59,6 +60,7 @@ describe("ThreadControlService", () => {
     setOperationPhase: ReturnType<typeof vi.fn>;
     listProcessing: ReturnType<typeof vi.fn>;
     requeue: ReturnType<typeof vi.fn>;
+    requeueRecoveredProvisioning: ReturnType<typeof vi.fn>;
     listPendingByThread: ReturnType<typeof vi.fn>;
   };
   let audit: { write: ReturnType<typeof vi.fn> };
@@ -84,6 +86,7 @@ describe("ThreadControlService", () => {
       updateDelegationLineage: vi.fn().mockReturnValue(true),
       updateStatus: vi.fn().mockReturnValue(true),
       updateWorktreePath: vi.fn().mockReturnValue(true),
+      clearWorktreePath: vi.fn().mockReturnValue(true),
       updateExternalCreator: vi.fn().mockReturnValue(true),
       countActiveByIntegration: vi.fn().mockReturnValue(0),
     };
@@ -93,6 +96,7 @@ describe("ThreadControlService", () => {
         mode: "worktree",
         worktree_path: "C:/private/workspace/.worktrees/created",
       }),
+      cleanupInterruptedProvisioning: vi.fn().mockResolvedValue(true),
     };
     agentService = { sendMessage: vi.fn().mockResolvedValue(undefined) };
     approvals = {
@@ -102,6 +106,7 @@ describe("ThreadControlService", () => {
       setOperationPhase: vi.fn().mockReturnValue(true),
       listProcessing: vi.fn().mockReturnValue([]),
       requeue: vi.fn().mockReturnValue(true),
+      requeueRecoveredProvisioning: vi.fn().mockReturnValue(true),
       listPendingByThread: vi.fn().mockReturnValue([]),
     };
     audit = { write: vi.fn() };
@@ -425,18 +430,60 @@ describe("ThreadControlService", () => {
     expect(threadService.provisionWorktree).toHaveBeenCalledTimes(1);
   });
 
-  it("rehydrates only pre-side-effect approvals and fails ambiguous processing rows", () => {
+  it("requeues a recovered provisioning approval only after cleanup clears its persisted checkout", async () => {
     const service = createService();
     approvals.listProcessing.mockReturnValue([
       { approvalId: "safe", threadId: "thread-safe", operationPhase: "pre_provision" },
-      { approvalId: "ambiguous", threadId: "thread-ambiguous", operationPhase: "provisioning" },
+      {
+        approvalId: "provisioning",
+        threadId: "thread-provisioning",
+        workspaceId: workspace.id,
+        placement: { type: "new_worktree", baseRef: "main" },
+        callerId: "local-user",
+        sourceThreadId: "thread-1",
+        operationPhase: "provisioning",
+      },
     ]);
 
-    service.recoverApprovals();
+    await service.recoverApprovals();
 
     expect(approvals.requeue).toHaveBeenCalledWith("safe");
-    expect(approvals.settle).toHaveBeenCalledWith("ambiguous", "failed");
-    expect(threads.updateStatus).toHaveBeenCalledWith("thread-ambiguous", "errored");
+    expect(threadService.cleanupInterruptedProvisioning).toHaveBeenCalledWith(
+      "thread-provisioning",
+      workspace.id,
+      { type: "new_worktree", baseRef: "main" },
+    );
+    expect(threads.clearWorktreePath).toHaveBeenCalledWith("thread-provisioning");
+    expect(threads.updateStatus).toHaveBeenCalledWith("thread-provisioning", "paused");
+    expect(approvals.requeueRecoveredProvisioning).toHaveBeenCalledWith("provisioning");
+    expect(agentService.sendMessage).not.toHaveBeenCalled();
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ outcome: "recovery-requeued" }));
+  });
+
+  it.each([
+    ["returns false", () => threadService.cleanupInterruptedProvisioning.mockResolvedValue(false)],
+    ["throws", () => threadService.cleanupInterruptedProvisioning.mockRejectedValue(new Error("locked"))],
+  ])("fails recovery when managed worktree cleanup %s", async (_case, arrange) => {
+    const service = createService();
+    arrange();
+    approvals.listProcessing.mockReturnValue([{
+      approvalId: "provisioning",
+      threadId: "thread-provisioning",
+      workspaceId: workspace.id,
+      placement: { type: "new_worktree", baseRef: "main" },
+      callerId: "local-user",
+      sourceThreadId: "thread-1",
+      operationPhase: "provisioning",
+    }]);
+
+    await service.recoverApprovals();
+
+    expect(approvals.settle).toHaveBeenCalledWith("provisioning", "failed");
+    expect(threads.updateStatus).toHaveBeenCalledWith("thread-provisioning", "errored");
+    expect(threads.clearWorktreePath).not.toHaveBeenCalled();
+    expect(approvals.requeueRecoveredProvisioning).not.toHaveBeenCalled();
+    expect(agentService.sendMessage).not.toHaveBeenCalled();
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ outcome: "recovery-failed" }));
   });
 
   it("reserves external capacity in input order and preserves earlier success", async () => {

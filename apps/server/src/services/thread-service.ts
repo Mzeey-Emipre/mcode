@@ -176,6 +176,19 @@ export class ThreadService {
     };
   }
 
+  /** Remove only the deterministic managed worktree for an interrupted provisioning approval. */
+  async cleanupInterruptedProvisioning(
+    threadId: string,
+    workspaceId: string,
+    placement: { baseRef: string; branchName?: string },
+  ): Promise<boolean> {
+    const workspace = this.workspaceRepo.findById(workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    const ref = placement.branchName ?? placement.baseRef;
+    const name = `${sanitizeBranchForFolder(ref).slice(0, 91)}-${threadId.slice(0, 8)}`;
+    return this.gitService.removeWorktree(workspace.path, name, { deleteBranch: false });
+  }
+
   /**
    * Create a named branch in a thread's resolved checkout and persist the named checkout state.
    */

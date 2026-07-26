@@ -336,6 +336,16 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
+  /** Clear a thread's persisted worktree path after its managed checkout is removed. */
+  clearWorktreePath(id: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare("UPDATE threads SET worktree_path = NULL, updated_at = ? WHERE id = ?")
+      .run(now, id);
+
+    return result.changes > 0;
+  }
+
   /** Mark a thread as a named-branch checkout after creating a branch in place. */
   updateCheckoutToNamedBranch(id: string, branch: string): Thread | null {
     const now = new Date().toISOString();

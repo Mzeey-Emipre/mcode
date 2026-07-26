@@ -32,7 +32,7 @@ import { delay, inject, injectable } from "tsyringe";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { WorktreeRepo, type InternalRegisteredWorktree } from "../repositories/worktree-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
-import { ThreadControlApprovalRepo } from "../repositories/thread-control-approval-repo.js";
+import { ThreadControlApprovalRepo, type PendingThreadCreateApproval } from "../repositories/thread-control-approval-repo.js";
 import { ThreadControlAuditRepo } from "../repositories/thread-control-audit-repo.js";
 import { ProviderRegistry } from "../providers/provider-registry.js";
 import { AgentService } from "./agent-service.js";
@@ -186,7 +186,7 @@ export class ThreadControlService {
   }
 
   /** Restore stranded approvals without replaying an ambiguous external side effect. */
-  recoverApprovals(): void {
+  async recoverApprovals(): Promise<void> {
     for (const approval of this.approvals.listProcessing()) {
       if (approval.operationPhase === "pre_provision") {
         if (this.approvals.requeue(approval.approvalId)) {
@@ -194,10 +194,33 @@ export class ThreadControlService {
         }
         continue;
       }
-      this.approvals.settle(approval.approvalId, "failed");
-      this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome: "recovery-failed" });
-      this.threads.updateStatus(approval.threadId, "errored");
-      broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
+      if (approval.operationPhase === "provisioning") {
+        try {
+          const cleaned = await this.threadService.cleanupInterruptedProvisioning(
+            approval.threadId,
+            approval.workspaceId,
+            approval.placement,
+          );
+          if (!cleaned) {
+            this.failRecovery(approval);
+            continue;
+          }
+        } catch {
+          this.failRecovery(approval);
+          continue;
+        }
+        if (
+          this.threads.clearWorktreePath(approval.threadId)
+          && this.threads.updateStatus(approval.threadId, "paused")
+          && this.approvals.requeueRecoveredProvisioning(approval.approvalId)
+        ) {
+          this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome: "recovery-requeued" });
+        } else {
+          this.failRecovery(approval);
+        }
+        continue;
+      }
+      this.failRecovery(approval);
     }
   }
 
@@ -555,6 +578,17 @@ export class ThreadControlService {
     if (!this.approvals.setOperationPhase(approvalId, phase)) {
       throw new Error(`Could not persist approval phase: ${phase}`);
     }
+  }
+
+  private failRecovery(approval: PendingThreadCreateApproval): void {
+    if (!this.approvals.settle(approval.approvalId, "failed")) {
+      throw new Error(`Could not fail recovered approval: ${approval.approvalId}`);
+    }
+    if (!this.threads.updateStatus(approval.threadId, "errored")) {
+      throw new Error(`Could not mark recovered thread errored: ${approval.threadId}`);
+    }
+    this.audit.write({ callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome: "recovery-failed" });
+    broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
   }
 
   private error(

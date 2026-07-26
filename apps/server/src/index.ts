@@ -216,7 +216,7 @@ const workspaceService = container.resolve(WorkspaceService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
 const threadControlService = container.resolve(ThreadControlService);
-threadControlService.recoverApprovals();
+await threadControlService.recoverApprovals();
 const gitService = container.resolve(GitService);
 const githubService = container.resolve(GithubService);
 const pullRequestService = container.resolve(PullRequestService);

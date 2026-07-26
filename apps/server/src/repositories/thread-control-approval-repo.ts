@@ -91,6 +91,11 @@ export class ThreadControlApprovalRepo {
     return this.db.prepare("UPDATE thread_control_approvals SET status = 'pending', processing_started_at = NULL WHERE id = ? AND status = 'processing' AND operation_phase = 'pre_provision'").run(approvalId).changes === 1;
   }
 
+  /** Return a recovered provisioning approval to the pre-provision pending state. */
+  requeueRecoveredProvisioning(approvalId: string): boolean {
+    return this.db.prepare("UPDATE thread_control_approvals SET status = 'pending', processing_started_at = NULL, operation_phase = 'pre_provision' WHERE id = ? AND status = 'processing' AND operation_phase = 'provisioning'").run(approvalId).changes === 1;
+  }
+
   /** Mark a claimed approval with its terminal outcome. */
   settle(approvalId: string, status: "approved" | "rejected" | "failed"): boolean {
     return this.db.prepare(
