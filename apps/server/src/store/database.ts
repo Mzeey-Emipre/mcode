@@ -3,9 +3,9 @@
  */
 
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, realpathSync } from "fs";
 import { createRequire } from "module";
-import { dirname, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getMcodeDir, resolveDbPath } from "@mcode/shared";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -76,7 +76,18 @@ function getDrizzleMigrationsDir(): string {
   return drizzleDirMemo;
 }
 
-/** Resolves and validates the Electron-native better-sqlite3 binding for this process. */
+/** Returns whether a canonical path is contained by a canonical directory. */
+function isPathInside(directory: string, candidate: string): boolean {
+  const pathFromDirectory = relative(directory, candidate);
+  return (
+    pathFromDirectory.length > 0 &&
+    pathFromDirectory !== ".." &&
+    !pathFromDirectory.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) &&
+    !isAbsolute(pathFromDirectory)
+  );
+}
+
+/** Resolves and validates the approved better-sqlite3 binding for this process. */
 export function resolveElectronNativeBinding(): string {
   if (!process.versions.electron) {
     throw new Error("SQLite requires Electron's Node.js runtime.");
@@ -97,18 +108,41 @@ export function resolveElectronNativeBinding(): string {
       `BETTER_SQLITE3_BINDING must be ${expectedBinding}. Run 'bun install' to install the Electron binding.`,
     );
   }
-  if (resolve(configuredBinding) !== resolve(expectedBinding)) {
-    throw new Error(
-      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding: ${expectedBinding}`,
-    );
+  if (resolve(configuredBinding) === resolve(expectedBinding)) {
+    if (!existsSync(expectedBinding)) {
+      throw new Error(
+        `Workspace Electron better-sqlite3 binding not found: ${expectedBinding}. Run 'bun install'.`,
+      );
+    }
+    return expectedBinding;
   }
-  if (!existsSync(expectedBinding)) {
+
+  const packagedReleaseDir = resolve(
+    process.resourcesPath,
+    "app.asar.unpacked",
+    "node_modules",
+    "better-sqlite3",
+    "build",
+    "Release",
+  );
+  if (!existsSync(configuredBinding) || !existsSync(packagedReleaseDir)) {
     throw new Error(
-      `Workspace Electron better-sqlite3 binding not found: ${expectedBinding}. Run 'bun install'.`,
+      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or a packaged binding under: ${packagedReleaseDir}`,
     );
   }
 
-  return expectedBinding;
+  const canonicalReleaseDir = realpathSync(packagedReleaseDir);
+  const canonicalBinding = realpathSync(configuredBinding);
+  if (
+    basename(canonicalBinding) !== "better_sqlite3.node" ||
+    !isPathInside(canonicalReleaseDir, canonicalBinding)
+  ) {
+    throw new Error(
+      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or a packaged binding under: ${packagedReleaseDir}`,
+    );
+  }
+
+  return canonicalBinding;
 }
 
 /**

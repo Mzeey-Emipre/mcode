@@ -17,7 +17,7 @@ const refs = vi.hoisted(() => {
   };
 
   // Shared existsSync spy used by "fs"/"node:fs" mocks.
-  const existsSyncSpy = vi.fn((path) => String(path).includes("better_sqlite3.electron.node"));
+  const existsSyncSpy = vi.fn((path) => String(path).includes("better_sqlite3"));
 
   // Spy for resolveServerBinary — lets tests override the resolved binary path
   // directly without depending on node:fs mock aliasing behaviour.
@@ -167,9 +167,7 @@ describe("ServerManager", () => {
     // Mock fetch: first call returns healthy (waitForReady); subsequent calls
     // also return ok so tryExistingServer health probes work too.
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
-    vi.mocked(existsSync).mockImplementation((path) =>
-      String(path).includes("better_sqlite3.electron.node"),
-    );
+    vi.mocked(existsSync).mockImplementation((path) => String(path).includes("better_sqlite3"));
 
     setupDefaultReadFileMock();
   });
@@ -180,9 +178,7 @@ describe("ServerManager", () => {
     delete process.env.MCODE_SERVER_HEAP_MB;
     refs.setIsPackaged(false);
     delete (process as Record<string, unknown>).resourcesPath;
-    vi.mocked(existsSync).mockImplementation((path) =>
-      String(path).includes("better_sqlite3.electron.node"),
-    );
+    vi.mocked(existsSync).mockImplementation((path) => String(path).includes("better_sqlite3"));
   });
 
   // -----------------------------------------------------------------------
@@ -525,16 +521,14 @@ describe("ServerManager", () => {
       configurable: true,
       writable: true,
     });
-    vi.mocked(existsSync).mockImplementation((p) =>
-      String(p).includes("better_sqlite3.electron.node"),
-    );
+    vi.mocked(existsSync).mockImplementation((p) => String(p).includes("better_sqlite3.node"));
 
     await manager.start();
 
     const spawnCall = vi.mocked(spawn).mock.calls[0];
     const opts = spawnCall[2] as Record<string, unknown>;
     const env = opts.env as Record<string, string>;
-    expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.electron.node");
+    expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.node");
   });
 
   it("fails before spawn when the packaged Electron binding is unavailable", async () => {
@@ -546,7 +540,7 @@ describe("ServerManager", () => {
     });
     vi.mocked(existsSync).mockReturnValue(false);
 
-    await expect(manager.start()).rejects.toThrow("Workspace Electron better-sqlite3 binding not found");
+    await expect(manager.start()).rejects.toThrow("Packaged better-sqlite3 binding not found");
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -687,7 +681,7 @@ describe("ServerManager", () => {
 
   it("rotates the previous stderr log before opening a new one", async () => {
     vi.mocked(existsSync).mockImplementation((path) =>
-      String(path).endsWith("server-stderr.log") || String(path).includes("better_sqlite3.electron.node"),
+      String(path).endsWith("server-stderr.log") || String(path).includes("better_sqlite3"),
     );
 
     await manager.start();

@@ -96,9 +96,10 @@ function findUnpackedServer() {
     const useRenamed = !isMac && existsSync(c.renamedBinary);
     const runtime = useRenamed ? c.renamedBinary : c.electron;
     if (existsSync(c.server) && existsSync(runtime)) {
-      const electronBinding = resolve(c.sqlite, "better_sqlite3.electron.node");
-      const nodeBinding = resolve(c.sqlite, "better_sqlite3.node");
-      const binding = existsSync(electronBinding) ? electronBinding : existsSync(nodeBinding) ? nodeBinding : undefined;
+      const binding = resolve(c.sqlite, "better_sqlite3.node");
+      if (!existsSync(binding)) {
+        throw new Error(`Packaged better-sqlite3 binding not found: ${binding}`);
+      }
       const electronDir = useRenamed ? dirname(c.electron) : undefined;
       return {
         server: c.server,

@@ -40,7 +40,7 @@ const SettingsSchema = globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? Bun
  * bundled CJS entry (`dist/server/server.cjs`); dev builds it via
  * `apps/desktop/scripts/dev-electron.mjs` (tsc → esbuild watch).
  *
- * Returns the Electron-native better-sqlite3 binding for every server child.
+ * Returns the approved better-sqlite3 binding for every server child.
  */
 function getServerPaths(): {
   entry: string;
@@ -59,10 +59,10 @@ function getServerPaths(): {
       "better-sqlite3",
       "build",
       "Release",
-      "better_sqlite3.electron.node",
+      "better_sqlite3.node",
     );
     if (!existsSync(nativeBindingPath)) {
-      throw new Error(`Workspace Electron better-sqlite3 binding not found: ${nativeBindingPath}`);
+      throw new Error(`Packaged better-sqlite3 binding not found: ${nativeBindingPath}`);
     }
     return { entry: serverBundle, cwd: dirname(serverBundle), nativeBindingPath };
   }
