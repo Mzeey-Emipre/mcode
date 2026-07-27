@@ -24,12 +24,18 @@ import {
 } from "@/stores/previewTabsStore";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
 import { createTerminalForScope } from "@/lib/ensure-terminal";
-import { MAX_TERMINALS_PER_SCOPE, useTerminalStore } from "@/stores/terminalStore";
+import {
+  MAX_TERMINALS_PER_SCOPE,
+  type TerminalInstance,
+  useTerminalStore,
+} from "@/stores/terminalStore";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
 import { SubagentsPanel } from "./SubagentsPanel";
+
+const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
 
 /**
  * Tracks whether the Changes tab has unreviewed new files for the active
@@ -116,9 +122,10 @@ export function RightPanel() {
   // workspace itself in the threadless new-thread view (where they run against
   // the local workspace root). Their stores treat this as an opaque scope key.
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
-  const scopeTerminals = useTerminalStore((s) =>
-    panelScopeId ? (s.terminals[panelScopeId] ?? []) : [],
-  );
+  const terminalsByScope = useTerminalStore((s) => s.terminals);
+  const scopeTerminals = panelScopeId
+    ? (terminalsByScope[panelScopeId] ?? EMPTY_SCOPE_TERMINALS)
+    : EMPTY_SCOPE_TERMINALS;
   const terminalLabels = useMemo(() => {
     const occurrences = new Map<string, number>();
     for (const terminal of scopeTerminals) {
