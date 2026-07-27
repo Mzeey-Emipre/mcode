@@ -63,18 +63,7 @@ check('bun in PATH',  () => hasCommand('bun'),  'Install from https://bun.sh');
 check('git in PATH',  () => hasCommand('git'),  'Install from https://git-scm.com');
 check('node in PATH', () => hasCommand('node'), 'Install from https://nodejs.org');
 
-// 4. Playwright
-check(
-  'Playwright available in apps/web',
-  () => {
-    const bin    = resolve(root, 'apps/web/node_modules/.bin/playwright');
-    const binWin = resolve(root, 'apps/web/node_modules/.bin/playwright.cmd');
-    if (!existsSync(bin) && !existsSync(binWin)) throw new Error();
-  },
-  'cd apps/web && bun x playwright install'
-);
-
-// 5. better-sqlite3 Node binding
+// 4. better-sqlite3 Node binding
 check(
   'better-sqlite3 Node binding loads',
   () => {
@@ -85,7 +74,7 @@ check(
   'bun install'
 );
 
-// 6. Electron binary (desktop dev)
+// 5. Electron binary (desktop dev)
 check(
   'Electron binary installed',
   () => {
@@ -94,7 +83,7 @@ check(
   'bun run install:electron'
 );
 
-// 7. Electron-ABI binding
+// 6. Electron-ABI binding
 check(
   'Electron-ABI better-sqlite3 binding exists',
   () => {
@@ -106,7 +95,7 @@ check(
   'bun run install:electron && node scripts/postinstall.mjs'
 );
 
-// 8. MCODE_DATA_DIR writable
+// 7. MCODE_DATA_DIR writable
 const dataDir = process.env.MCODE_DATA_DIR
   ?? join(homedir(), process.env.NODE_ENV === 'production' ? '.mcode' : '.mcode-dev');
 check(

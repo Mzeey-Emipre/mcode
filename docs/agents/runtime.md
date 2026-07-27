@@ -143,7 +143,7 @@ directory.
 | Fixture repo | `.dev/fixture-repo/` |
 | Logs | `.dev/logs/` |
 | PID files | `.dev/pids/` |
-| Scratch Playwright specs | `.dev/playwright-scratch/` |
+| External Playwright scratch area | `.dev/playwright-scratch/` |
 | Electron user data | `.dev/electron/` |
 
 `ports.json` contains `{ instanceToken, worktreeIdentity, serverPort, webPort,

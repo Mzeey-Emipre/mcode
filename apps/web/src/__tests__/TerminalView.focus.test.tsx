@@ -435,10 +435,12 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     await settle(); // mounted with listeners attached; reattach still pending
     expect(transport.terminalResume).not.toHaveBeenCalled();
 
-    // Two replayed frames arrive while the gate is open.
+    // Replay and live frames can arrive out of order while the gate is open;
+    // a repeated frame may also be redelivered when the paused stream resumes.
     await act(async () => {
-      emitPtyData({ ptyId: "pty-batch", seq: 0, payload: new Uint8Array([65]) });
+      emitPtyData({ ptyId: "pty-batch", seq: 2, payload: new Uint8Array([67]) });
       emitPtyData({ ptyId: "pty-batch", seq: 1, payload: new Uint8Array([66]) });
+      emitPtyData({ ptyId: "pty-batch", seq: 2, payload: new Uint8Array([67]) });
     });
 
     await act(async () => {
@@ -450,11 +452,24 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       ([data]) => data instanceof Uint8Array,
     );
     expect(dataWrites.length).toBe(1);
-    expect(Array.from(dataWrites[0][0] as Uint8Array)).toEqual([65, 66]);
+    expect(Array.from(dataWrites[0][0] as Uint8Array)).toEqual([66, 67]);
     expect(transport.terminalResume).toHaveBeenCalledWith("pty-batch");
     expect(
       transport.terminalReattach.mock.invocationCallOrder[0],
     ).toBeLessThan(transport.terminalResume.mock.invocationCallOrder[0]!);
+
+    term.write.mockClear();
+    act(() => {
+      emitPtyData({ ptyId: "pty-batch", seq: 1, payload: new Uint8Array([66]) });
+      emitPtyData({ ptyId: "pty-batch", seq: 2, payload: new Uint8Array([67]) });
+      emitPtyData({ ptyId: "pty-batch", seq: 3, payload: new Uint8Array([68]) });
+    });
+
+    const tailWrites = term.write.mock.calls.filter(
+      ([data]) => data instanceof Uint8Array,
+    );
+    expect(tailWrites).toHaveLength(1);
+    expect(Array.from(tailWrites[0][0] as Uint8Array)).toEqual([68]);
   });
 
   it("keeps a cold view hidden until replay has painted", async () => {
