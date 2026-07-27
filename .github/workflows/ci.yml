@@ -133,11 +133,7 @@ jobs:
     permissions:
       contents: read
     env:
-      # Unit tests run under Node/vitest with Electron fully mocked; skip the
-      # binary download and better-sqlite3 Electron prebuild so bun install does
-      # not flake on 504s.
-      SKIP_ELECTRON_REBUILD: "1"
-      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      # Server tests launch Electron to load its runtime and native SQLite binding.
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}
     steps:
