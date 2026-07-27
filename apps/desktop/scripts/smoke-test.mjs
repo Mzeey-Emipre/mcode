@@ -19,7 +19,7 @@
  */
 
 import { spawn, execFileSync } from "child_process";
-import { existsSync, mkdirSync, rmSync } from "fs";
+import { existsSync, mkdirSync, realpathSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
@@ -54,6 +54,7 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "win-unpacked/resources/bin/mcode-server.exe"),
       electron: resolve(releaseDir, "win-unpacked/Mcode.exe"),
+      resourcesRoot: resolve(releaseDir, "win-unpacked/resources"),
       sqlite: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
       nodePty: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
@@ -63,6 +64,7 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "linux-unpacked/resources/bin/mcode-server"),
       electron: resolve(releaseDir, "linux-unpacked/mcode-desktop"),
+      resourcesRoot: resolve(releaseDir, "linux-unpacked/resources"),
       sqlite: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
       nodePty: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
@@ -72,6 +74,7 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/bin/mcode-server"),
       electron: resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
+      resourcesRoot: resolve(releaseDir, "mac/Mcode.app/Contents/Resources"),
       sqlite: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
       nodePty: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
@@ -81,6 +84,7 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/bin/mcode-server"),
       electron: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
+      resourcesRoot: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources"),
       sqlite: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
       nodePty: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
@@ -105,6 +109,7 @@ function findUnpackedServer() {
         server: c.server,
         electron: runtime,
         binding,
+        resourcesRoot: realpathSync(c.resourcesRoot),
         electronDir,
         koffi: c.koffi,
         nodePty: c.nodePty,
@@ -268,6 +273,9 @@ const env = {
 
 if (found.binding) {
   env.BETTER_SQLITE3_BINDING = found.binding;
+}
+if (found.resourcesRoot) {
+  env.MCODE_PACKAGED_RESOURCES_ROOT = found.resourcesRoot;
 }
 
 // When using the renamed binary in a different directory, the dynamic linker
