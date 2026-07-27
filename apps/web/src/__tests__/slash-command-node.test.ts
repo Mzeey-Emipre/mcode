@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { render, screen } from "@testing-library/react";
 import { createEditor, $createParagraphNode, $createTextNode, $getRoot } from "lexical";
 import {
   SlashCommandNode,
@@ -41,6 +42,22 @@ describe("SlashCommandNode", () => {
       expect(node.isInline()).toBe(true);
       expect(node.isIsolated()).toBe(false);
     });
+  });
+
+  it("decorates a slash invocation as a slash-free inline token with its source icon", () => {
+    const editor = createTestEditor();
+    let decoration: ReturnType<SlashCommandNode["decorate"]>;
+    editor.update(() => {
+      const node = $createSlashCommandNode("impeccable", "skill");
+      decoration = node.decorate(editor, {} as never);
+    });
+    render(decoration!);
+
+    const label = screen.getByText("impeccable");
+    const token = label.closest("[data-entity-token]");
+    expect(screen.queryByText("/impeccable")).not.toBeInTheDocument();
+    expect(token).toHaveAttribute("data-entity-token", "skill");
+    expect(token?.querySelector(".lucide-badge-check")).not.toBeNull();
   });
 
   it("exports to JSON with type, name, and namespace", () => {

@@ -94,6 +94,7 @@ function MentionedUserText({
         filePath={mention.kind === "file" ? mention.path : undefined}
         title={rawMention}
         tone="user"
+        invocation={mention.kind === "command"}
       />,
     );
     cursor = mention.range.end;

@@ -1,5 +1,14 @@
 import type { ComponentProps } from "react";
-import { Blocks, Sparkles, SquareTerminal, Zap } from "lucide-react";
+import {
+  BadgeCheck,
+  Gauge,
+  ListTodo,
+  Minimize2,
+  Plug,
+  SquareTerminal,
+  Target,
+  Zap,
+} from "lucide-react";
 import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { cn } from "@/lib/utils";
 import { StackedLayersIcon } from "./narrative/StackedLayersIcon";
@@ -15,6 +24,8 @@ export interface EntityIconProps extends ComponentProps<"span"> {
   filePath?: string;
   /** Animate the sub-agent stack while its delegated work is running. */
   animated?: boolean;
+  /** Slash-command name used to resolve a command's semantic icon. */
+  commandName?: string;
   /** Pixel size of the glyph inside the icon frame. */
   size?: number;
 }
@@ -24,6 +35,7 @@ export function EntityIcon({
   kind,
   filePath,
   animated = false,
+  commandName,
   size = 13,
   className,
   ...props
@@ -49,13 +61,21 @@ export function EntityIcon({
     );
   }
 
+  const namedCommandIcon =
+    commandName === "goal"
+      ? Target
+      : commandName === "plan"
+        ? ListTodo
+        : commandName === "ultra"
+          ? Gauge
+          : commandName === "compact"
+            ? Minimize2
+            : null;
   const Icon = kind === "skill"
-    ? Sparkles
+    ? BadgeCheck
     : kind === "plugin"
-      ? Blocks
-      : kind === "mcode"
-        ? Zap
-        : SquareTerminal;
+      ? Plug
+      : namedCommandIcon ?? (kind === "mcode" ? Zap : SquareTerminal);
 
   return (
     <span data-entity-icon={kind} className={iconClassName} {...props}>
@@ -74,6 +94,8 @@ export interface EntityTokenProps extends ComponentProps<"span"> {
   filePath?: string;
   /** Surface-specific contrast treatment. */
   tone?: "assistant" | "composer" | "user";
+  /** Renders the entity as a slash-command invocation while retaining its source namespace. */
+  invocation?: boolean;
 }
 
 /** Renders a compact, baseline-aligned entity reference with a stable icon vocabulary. */
@@ -82,18 +104,24 @@ export function EntityToken({
   label,
   filePath,
   tone = "assistant",
+  invocation = false,
   className,
   ...props
 }: EntityTokenProps) {
+  const isCommandInvocation = kind === "command" || invocation;
+  const displayLabel = isCommandInvocation ? label.replace(/^\/+/, "") : label;
+
   return (
     <span
       data-entity-token={kind}
       className={cn(
-        "mx-px inline-flex h-5 max-w-full items-center gap-1 rounded-md px-1.5 align-[-0.2em] font-sans text-xs font-medium leading-none ring-1 ring-inset",
-        tone === "user"
-          ? "bg-background/45 text-accent-foreground ring-foreground/10"
-          : "bg-muted/70 text-foreground ring-border/70",
-        tone === "composer" && "bg-muted/80",
+        "mx-px inline-flex max-w-full items-center gap-1 align-[-0.2em] font-sans text-[length:inherit] font-medium leading-none",
+        isCommandInvocation
+          ? "text-primary"
+          : tone === "user"
+            ? "h-5 rounded-md bg-background/45 px-1.5 text-accent-foreground ring-1 ring-inset ring-foreground/10"
+            : "h-5 rounded-md bg-muted/70 px-1.5 text-foreground ring-1 ring-inset ring-border/70",
+        tone === "composer" && !isCommandInvocation && "bg-muted/80",
         className,
       )}
       {...props}
@@ -101,13 +129,15 @@ export function EntityToken({
       <EntityIcon
         kind={kind}
         filePath={filePath}
+        commandName={isCommandInvocation ? displayLabel : undefined}
         className={cn(
           "flex size-3.5 items-center justify-center text-muted-foreground",
-          tone === "user" && "text-accent-foreground/60",
+          isCommandInvocation && "text-current",
+          tone === "user" && !isCommandInvocation && "text-accent-foreground/60",
           kind === "mcode" && tone !== "user" && "text-primary/80",
         )}
       />
-      <span className="min-w-0 truncate">{label}</span>
+      <span className="min-w-0 truncate">{displayLabel}</span>
     </span>
   );
 }

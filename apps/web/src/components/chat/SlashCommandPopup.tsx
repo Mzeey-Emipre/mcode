@@ -1,12 +1,4 @@
 import { useEffect, useRef } from "react";
-import {
-  BadgeCheck,
-  Gauge,
-  ListTodo,
-  Minimize2,
-  Plug,
-  Target,
-} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -19,8 +11,6 @@ const VISIBLE_ITEMS = 8;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
 const LIST_SURFACE_PADDING = 8;
 const LIST_BOTTOM_FADE_HEIGHT = 20;
-const NAMED_MCODE_CAPABILITIES = new Set(["goal", "plan", "ultra", "compact"]);
-
 function commandDisplayLabel(command: Command): string {
   if (command.capabilityKind === "plugin") return `@${command.name}`;
   if (command.namespace === "skill") return command.name;
@@ -270,24 +260,6 @@ function CommandIdentityMark({
   command: Command;
   tone: "default" | "dark";
 }) {
-  const semanticIcon =
-    command.name === "goal"
-      ? Target
-      : command.name === "plan"
-        ? ListTodo
-        : command.name === "ultra"
-          ? Gauge
-          : command.name === "compact"
-            ? Minimize2
-            : null;
-  const CapabilityIcon =
-    command.capabilityKind === "skill"
-      ? BadgeCheck
-      : command.capabilityKind === "plugin"
-        ? Plug
-        : null;
-  const Icon = CapabilityIcon ?? semanticIcon;
-
   return (
     <span
       aria-hidden="true"
@@ -298,23 +270,21 @@ function CommandIdentityMark({
           : "bg-muted/65 text-muted-foreground ring-border/60",
       )}
     >
-      {Icon ? (
-        <Icon className="size-4" strokeWidth={2.2} />
-      ) : (
-        <EntityIcon
-          kind={
-            command.capabilityKind === "mcode" ||
-            NAMED_MCODE_CAPABILITIES.has(command.name)
-              ? "mcode"
-              : command.capabilityKind === "customPrompt" ||
-                  command.capabilityKind === "providerCommand"
-                ? "command"
-                : command.capabilityKind
-          }
-          size={14}
-          className="flex items-center justify-center"
-        />
-      )}
+      <EntityIcon
+        kind={
+          command.capabilityKind === "skill"
+            ? "skill"
+            : command.capabilityKind === "plugin"
+              ? "plugin"
+              : command.capabilityKind === "mcode" ||
+                  ["goal", "plan", "ultra", "compact"].includes(command.name)
+                ? "mcode"
+                : "command"
+        }
+        commandName={command.name}
+        size={14}
+        className="flex items-center justify-center"
+      />
     </span>
   );
 }

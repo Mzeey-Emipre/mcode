@@ -384,8 +384,18 @@ describe("MarkdownContent variant styling", () => {
 
       expect(container.querySelector('[data-entity-token="skill"]')).toHaveTextContent("$impeccable");
       expect(container.querySelector('[data-entity-token="plugin"]')).toHaveTextContent("plugin:figma");
-      expect(container.querySelector('[data-entity-token="command"]')).toHaveTextContent("/review");
+      expect(container.querySelector('[data-entity-token="command"]')).toHaveTextContent("review");
       expect(container.querySelector('[data-entity-token="agent"]')).toHaveTextContent("@reviewer_qa");
+    });
+
+    it("renders command references as inline invocations, not chips", () => {
+      const { container } = render(<MarkdownContent content="Run `/review` after the changes." />);
+      const command = container.querySelector('[data-entity-token="command"]');
+
+      expect(command).toHaveTextContent("review");
+      expect(command).toHaveClass("text-primary");
+      expect(command).not.toHaveClass("bg-muted", "ring-1", "rounded-md");
+      expect(command?.querySelector("[data-entity-icon='command']")).toHaveClass("text-current");
     });
 
     it("renders links with cool text-link", () => {

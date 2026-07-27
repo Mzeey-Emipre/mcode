@@ -177,7 +177,11 @@ describe("MessageBubble user messages", () => {
     };
 
     const { container } = render(<MessageBubble message={message} />);
-    expect(container.querySelector('[data-entity-token="skill"]')).toHaveTextContent("/impeccable");
+    const command = container.querySelector('[data-entity-token="skill"]');
+    expect(command).toHaveTextContent("impeccable");
+    expect(command).toHaveClass("text-primary");
+    expect(command).not.toHaveClass("bg-muted", "ring-1", "rounded-md");
+    expect(command?.querySelector("[data-entity-icon='skill']")).toHaveClass("text-current");
     expect(container.querySelector('[data-entity-token="agent"]')).toHaveTextContent("@reviewer_qa");
     expect(container.querySelector('[data-entity-token="file"]')).toHaveTextContent("@App.ts");
   });
