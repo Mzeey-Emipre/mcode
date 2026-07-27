@@ -34,6 +34,7 @@ function makeAnchorRect(): DOMRect {
 
 const COMMANDS: Command[] = [
   { id: "command:deploy", name: "deploy", description: "Deploy command", namespace: "command", capabilityKind: "providerCommand", nativeId: "deploy" },
+  { id: "mcode:custom", name: "custom", description: "Custom command", namespace: "mcode", capabilityKind: "mcode", nativeId: "custom" },
   { id: "skill:my-skill", name: "my-skill", description: "A skill", namespace: "skill", capabilityKind: "skill", nativeId: "my-skill" },
   { id: "skill:figma:use", name: "figma:use", description: "A plugin skill", namespace: "plugin", capabilityKind: "skill", nativeId: "figma:use" },
   { id: "plugin:browser", name: "Browser", description: "A native plugin", namespace: "plugin", capabilityKind: "plugin", nativeId: "browser@openai-bundled", mentionPath: "plugin://browser@openai-bundled" },
@@ -266,6 +267,15 @@ describe("SlashCommandPopup capability icons", () => {
     const commandRow = screen.getByRole("option", { name: /deploy/ });
     const terminalIcon = commandRow.querySelector(".lucide-square-terminal");
     expect(terminalIcon).not.toBeNull();
+  });
+
+  it("maps provider and custom commands through the popup icon caller", () => {
+    renderPopup();
+
+    const providerRow = screen.getByRole("option", { name: /Deploy command/ });
+    const customRow = screen.getByRole("option", { name: /Custom command/ });
+    expect(providerRow.querySelector(".lucide-square-terminal")).not.toBeNull();
+    expect(customRow.querySelector(".lucide-zap")).not.toBeNull();
   });
 
   it("native plugin entries render a Plug icon", () => {
