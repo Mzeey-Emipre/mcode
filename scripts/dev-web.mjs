@@ -188,6 +188,8 @@ try {
   }
 }
 
+let vite;
+
 if (serverOnly) {
   const cleanup = () => killProcessTree(server);
   process.on("SIGINT", cleanup);
@@ -214,7 +216,7 @@ console.log(
   `\x1b[36m[dev:web]\x1b[0m Starting Vite dev server${webPort ? ` on http://localhost:${webPort}` : ""}...`,
 );
 
-const vite = spawn("bun", viteArgs, {
+vite = spawn("bun", viteArgs, {
   cwd: resolve(rootDir, "apps", "web"),
   env: {
     ...process.env,
