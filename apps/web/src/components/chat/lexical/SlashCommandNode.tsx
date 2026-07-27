@@ -49,7 +49,7 @@ function SlashCommandChip({
   readonly namespace: SlashCommandNamespace;
 }): JSX.Element {
   return (
-    <EntityToken kind={namespace} label={`/${commandName}`} tone="composer" />
+    <EntityToken kind={namespace} label={`/${commandName}`} tone="composer" invocation />
   );
 }
 
