@@ -80,7 +80,7 @@ describe("Electron SQLite test runtime", () => {
     process.env.BETTER_SQLITE3_BINDING = outsideBinding;
 
     try {
-      expect(() => resolveElectronNativeBinding()).toThrow("packaged binding under");
+      expect(() => resolveElectronNativeBinding()).toThrow("packaged binding");
     } finally {
       rmSync(outsideBinding, { force: true });
     }
@@ -93,7 +93,28 @@ describe("Electron SQLite test runtime", () => {
     symlinkSync(binding, escapedBinding, "file");
     process.env.BETTER_SQLITE3_BINDING = escapedBinding;
 
-    expect(() => resolveElectronNativeBinding()).toThrow("packaged binding under");
+    expect(() => resolveElectronNativeBinding()).toThrow("packaged binding");
+  });
+
+  it("rejects a packaged release directory symlink that escapes resources", () => {
+    const placeholder = createPackagedBinding("placeholder.node");
+    const releaseDir = dirname(placeholder);
+    const escapedReleaseDir = mkdtempSync(join(tmpdir(), "mcode-sqlite-release-"));
+    if (!binding) throw new Error("BETTER_SQLITE3_BINDING is required for Electron SQLite tests");
+    copyFileSync(binding, join(escapedReleaseDir, "better_sqlite3.node"));
+    rmSync(releaseDir, { recursive: true, force: true });
+    symlinkSync(
+      escapedReleaseDir,
+      releaseDir,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    process.env.BETTER_SQLITE3_BINDING = join(releaseDir, "better_sqlite3.node");
+
+    try {
+      expect(() => resolveElectronNativeBinding()).toThrow("packaged binding");
+    } finally {
+      rmSync(escapedReleaseDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects an unexpected native binding path before loading SQLite", () => {

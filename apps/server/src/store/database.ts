@@ -5,7 +5,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync, realpathSync } from "fs";
 import { createRequire } from "module";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getMcodeDir, resolveDbPath } from "@mcode/shared";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -76,17 +76,6 @@ function getDrizzleMigrationsDir(): string {
   return drizzleDirMemo;
 }
 
-/** Returns whether a canonical path is contained by a canonical directory. */
-function isPathInside(directory: string, candidate: string): boolean {
-  const pathFromDirectory = relative(directory, candidate);
-  return (
-    pathFromDirectory.length > 0 &&
-    pathFromDirectory !== ".." &&
-    !pathFromDirectory.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) &&
-    !isAbsolute(pathFromDirectory)
-  );
-}
-
 /** Resolves and validates the approved better-sqlite3 binding for this process. */
 export function resolveElectronNativeBinding(): string {
   if (!process.versions.electron) {
@@ -117,28 +106,31 @@ export function resolveElectronNativeBinding(): string {
     return expectedBinding;
   }
 
-  const packagedReleaseDir = resolve(
-    process.resourcesPath,
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (!resourcesPath) {
+    throw new Error("Electron resources path is unavailable for packaged SQLite binding.");
+  }
+
+  const canonicalResourcesRoot = realpathSync(resourcesPath);
+  const expectedPackagedBinding = join(
+    canonicalResourcesRoot,
     "app.asar.unpacked",
     "node_modules",
     "better-sqlite3",
     "build",
     "Release",
+    "better_sqlite3.node",
   );
-  if (!existsSync(configuredBinding) || !existsSync(packagedReleaseDir)) {
+  if (!existsSync(configuredBinding) || !existsSync(expectedPackagedBinding)) {
     throw new Error(
-      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or a packaged binding under: ${packagedReleaseDir}`,
+      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or the packaged binding: ${expectedPackagedBinding}`,
     );
   }
 
-  const canonicalReleaseDir = realpathSync(packagedReleaseDir);
   const canonicalBinding = realpathSync(configuredBinding);
-  if (
-    basename(canonicalBinding) !== "better_sqlite3.node" ||
-    !isPathInside(canonicalReleaseDir, canonicalBinding)
-  ) {
+  if (canonicalBinding !== expectedPackagedBinding) {
     throw new Error(
-      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or a packaged binding under: ${packagedReleaseDir}`,
+      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding or the packaged binding: ${expectedPackagedBinding}`,
     );
   }
 
