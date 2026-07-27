@@ -45,7 +45,7 @@ const RAIL_EXPAND_DELAY_MS = 140;
 const RAIL_COLLAPSE_DELAY_MS = 250;
 
 /** Shared trailing anchor for expanded-rail actions. */
-const RAIL_TRAILING_CONTROL_CLASS = "absolute left-[7.75rem] top-0";
+const RAIL_TRAILING_CONTROL_CLASS = "absolute right-0 top-0";
 /** Pointer and keyboard reorder boundary for one top-level rail instance. */
 function ReorderableRailItem({
   instanceId,
