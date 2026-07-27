@@ -30,7 +30,24 @@ if (cliArgs.length === 0) {
   throw new Error("Expected a JavaScript CLI entry and its arguments.");
 }
 
-const result = spawnSync(electronRequire("electron"), cliArgs, {
+function resolveWorkspaceCli(args) {
+  if (args[0] !== "--workspace-cli") return args;
+
+  const [_, packageName, entryFile, ...entryArgs] = args;
+  if (!packageName || !entryFile) {
+    throw new Error("Expected a package name and CLI entry after --workspace-cli.");
+  }
+
+  const packageDir = dirname(serverRequire.resolve(`${packageName}/package.json`));
+  const cliEntry = join(packageDir, entryFile);
+  if (!existsSync(cliEntry)) {
+    throw new Error(`Workspace CLI entry not found: ${cliEntry}`);
+  }
+
+  return [cliEntry, ...entryArgs];
+}
+
+const result = spawnSync(electronRequire("electron"), resolveWorkspaceCli(cliArgs), {
   cwd: process.cwd(),
   env: {
     ...process.env,

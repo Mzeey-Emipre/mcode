@@ -21,6 +21,7 @@
 import { spawn, execFileSync } from "child_process";
 import { existsSync, mkdirSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
+import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
@@ -32,6 +33,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const releaseDir = resolve(desktopRoot, "release");
+const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
+const serverRequire = createRequire(resolve(desktopRoot, "..", "server", "package.json"));
 
 const SMOKE_PORT = 19899;
 const TIMEOUT_MS = 30_000;
@@ -134,15 +137,19 @@ function inferPackagedSdkTarget(serverPath) {
 }
 
 /**
- * --bundle mode: test the pre-packaging bundle with the system node/bun.
- * Skips native module verification but catches JS bundle errors.
+ * --bundle mode: test the pre-packaging bundle with the workspace Electron runtime.
  */
 function findBundleServer() {
   const server = resolve(desktopRoot, "dist/server/server.cjs");
   if (!existsSync(server)) {
     return null;
   }
-  return { server, electron: process.execPath, binding: undefined };
+  const betterSqliteDir = dirname(serverRequire.resolve("better-sqlite3/package.json"));
+  const binding = resolve(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
+  if (!existsSync(binding)) {
+    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${binding}`);
+  }
+  return { server, electron: desktopRequire("electron"), binding };
 }
 
 const bundleOnly = process.argv.includes("--bundle");
