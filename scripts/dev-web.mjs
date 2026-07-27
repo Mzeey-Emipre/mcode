@@ -32,6 +32,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 const desktopRoot = resolve(rootDir, "apps", "desktop");
 const serverCjs = resolve(desktopRoot, "dist", "server", "server.cjs");
+const serverOnly = process.argv.includes("--server-only");
 
 /**
  * Resolve the Electron binary path. The native module (better-sqlite3)
@@ -49,6 +50,17 @@ function getElectronBinary() {
     // fall through
   }
   return null;
+}
+
+/** Resolves the workspace Electron-native better-sqlite3 binding. */
+function getElectronBinding() {
+  const serverRequire = createRequire(resolve(rootDir, "apps", "server", "package.json"));
+  const packagePath = serverRequire.resolve("better-sqlite3/package.json");
+  const bindingPath = resolve(dirname(packagePath), "build", "Release", "better_sqlite3.electron.node");
+  if (!existsSync(bindingPath)) {
+    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${bindingPath}`);
+  }
+  return bindingPath;
 }
 
 /** Poll until the server's /health endpoint responds 200. */
@@ -95,12 +107,20 @@ const contract = buildPortsContract({
   },
 });
 const electronBin = getElectronBinary();
+let electronBinding;
 
 if (!electronBin) {
   console.error(
     "\x1b[31m[dev:web]\x1b[0m Electron binary not found. " +
     "Run 'bun install' in the project root to install dependencies.",
   );
+  process.exit(1);
+}
+
+try {
+  electronBinding = getElectronBinding();
+} catch (err) {
+  console.error(`[dev:web] ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
 
@@ -126,6 +146,7 @@ const server = spawn(
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
+      BETTER_SQLITE3_BINDING: electronBinding,
       NODE_ENV: "development",
       ...runtimeStateEnv,
       MCODE_PORT: String(serverPort),
@@ -165,6 +186,14 @@ try {
       "Starting Vite anyway — the web app will show a connection error.",
     );
   }
+}
+
+if (serverOnly) {
+  const cleanup = () => killProcessTree(server);
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
+  server.on("exit", (code) => process.exit(code ?? 0));
+  await new Promise(() => {});
 }
 
 // `MCODE_WEB_PORT` lets a caller (e.g. scripts/agent/demo.mjs) pin Vite to a

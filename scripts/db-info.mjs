@@ -1,18 +1,32 @@
-#!/usr/bin/env bun
 /**
  * Print SQLite database location, schema version, and basic table stats.
  * Opens the database read-only; safe to run while the server is running.
  */
-import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { resolveMainRoot } from './utils.mjs';
-import { resolveCliDbPath } from './resolve-cli-db-path.mjs';
 
-const require = createRequire(import.meta.url);
-const root    = resolveMainRoot();
+if (!process.versions.electron) {
+  const { resolveCliDbPath } = await import('./resolve-cli-db-path.mjs');
+  const result = spawnSync(
+    process.execPath,
+    ['scripts/run-electron-node.mjs', fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+    {
+      cwd: resolveMainRoot(),
+      env: { ...process.env, MCODE_DB_PATH: resolveCliDbPath() },
+      stdio: 'inherit',
+    },
+  );
+  if (result.error) throw result.error;
+  process.exit(result.status ?? 1);
+}
 
-const dbPath  = resolveCliDbPath();
+const dbPath = process.env.MCODE_DB_PATH;
+if (!dbPath) {
+  throw new Error('MCODE_DB_PATH is required when db-info runs under Electron Node.');
+}
+const root = resolveMainRoot();
 
 console.log(`Database : ${dbPath}`);
 
@@ -22,15 +36,13 @@ if (!existsSync(dbPath)) {
 }
 
 try {
-  // Bun workspaces may hoist better-sqlite3 to the root or keep it in apps/server.
-  const modulePaths = [
-    resolve(root, 'node_modules/better-sqlite3'),
-    resolve(root, 'apps/server/node_modules/better-sqlite3'),
-  ];
-  const modulePath = modulePaths.find(p => existsSync(p));
-  if (!modulePath) throw new Error('better-sqlite3 not found — run bun install first');
-  const Database = require(modulePath);
-  const db       = new Database(dbPath, { readonly: true });
+  const { createRequire } = await import('node:module');
+  const serverRequire = createRequire(`${root}/apps/server/package.json`);
+  const Database = serverRequire('better-sqlite3');
+  const db = new Database(dbPath, {
+    readonly: true,
+    nativeBinding: process.env.BETTER_SQLITE3_BINDING,
+  });
 
   const vRow = db.prepare('SELECT version FROM _migrations ORDER BY version DESC LIMIT 1').get();
   console.log(`Schema   : v${vRow ? vRow.version : 0}`);

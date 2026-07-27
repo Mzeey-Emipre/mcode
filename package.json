@@ -17,7 +17,7 @@
     "dev": "node scripts/dev-web.mjs",
     "dev:desktop": "cd apps/desktop && bun run dev",
     "dev:web": "node scripts/dev-web.mjs",
-    "dev:server": "cd apps/server && bun run start",
+    "dev:server": "node scripts/dev-web.mjs --server-only",
     "prod:desktop": "cd apps/desktop && bun run prod",
     "build": "turbo run build",
     "test": "node scripts/node-runtime.mjs && turbo run test",

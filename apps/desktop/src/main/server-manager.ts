@@ -9,6 +9,7 @@
 
 import { app } from "electron";
 import { execSync, spawn, type ChildProcess } from "child_process";
+import { createRequire } from "module";
 import {
   createWriteStream,
   existsSync,
@@ -39,13 +40,12 @@ const SettingsSchema = globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? Bun
  * bundled CJS entry (`dist/server/server.cjs`); dev builds it via
  * `apps/desktop/scripts/dev-electron.mjs` (tsc → esbuild watch).
  *
- * Also returns the native binding path for better-sqlite3 when packaged so
- * the server child process can find it outside the asar archive.
+ * Returns the Electron-native better-sqlite3 binding for every server child.
  */
 function getServerPaths(): {
   entry: string;
   cwd: string;
-  nativeBindingPath?: string;
+  nativeBindingPath: string;
 } {
   if (app.isPackaged) {
     // The server bundle and native deps are asarUnpack'd to real filesystem
@@ -53,16 +53,34 @@ function getServerPaths(): {
     // not go through Electron's asar virtual filesystem layer.
     const unpackedRoot = resolve(process.resourcesPath, "app.asar.unpacked");
     const serverBundle = resolve(unpackedRoot, "dist", "server", "server.cjs");
-    const nativeBindingPath = [
-      resolve(unpackedRoot, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.electron.node"),
-      resolve(unpackedRoot, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node"),
-    ].find((candidate) => existsSync(candidate));
+    const nativeBindingPath = resolve(
+      unpackedRoot,
+      "node_modules",
+      "better-sqlite3",
+      "build",
+      "Release",
+      "better_sqlite3.electron.node",
+    );
+    if (!existsSync(nativeBindingPath)) {
+      throw new Error(`Workspace Electron better-sqlite3 binding not found: ${nativeBindingPath}`);
+    }
     return { entry: serverBundle, cwd: dirname(serverBundle), nativeBindingPath };
   }
 
   /** Matches both `src/main/` (Vitest) and bundled `dist/main/` (`__dirname`). */
   const serverBundle = resolve(__dirname, "..", "..", "dist", "server", "server.cjs");
-  return { entry: serverBundle, cwd: dirname(serverBundle) };
+  const desktopRequire = createRequire(resolve(__dirname, "..", "..", "package.json"));
+  const betterSqliteDir = dirname(desktopRequire.resolve("better-sqlite3/package.json"));
+  const nativeBindingPath = resolve(
+    betterSqliteDir,
+    "build",
+    "Release",
+    "better_sqlite3.electron.node",
+  );
+  if (!existsSync(nativeBindingPath)) {
+    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${nativeBindingPath}`);
+  }
+  return { entry: serverBundle, cwd: dirname(serverBundle), nativeBindingPath };
 }
 
 /**
@@ -386,9 +404,7 @@ export class ServerManager {
         env.MCODE_GIT_TOPLEVEL = process.env.MCODE_GIT_TOPLEVEL;
       }
 
-      if (nativeBindingPath) {
-        env.BETTER_SQLITE3_BINDING = nativeBindingPath;
-      }
+      env.BETTER_SQLITE3_BINDING = nativeBindingPath;
 
       // The renamed server binary lives in resources/bin/ which lacks Electron's
       // shared libraries (libffmpeg.so). Point LD_LIBRARY_PATH at the original

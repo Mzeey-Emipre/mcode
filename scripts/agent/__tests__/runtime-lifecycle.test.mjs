@@ -105,9 +105,10 @@ test("agentUp removes stale PID files before launching server and web processes"
     computeAvailablePorts: async () => ({ serverPort: 41_223, webPort: 41_224 }),
     getElectronBinary: () => process.execPath,
     rebuildServerDevBundle: async () => {},
-    spawnLogged: () => {
+    spawnLogged: (_command, _args, options) => {
       spawnAttempted = true;
       assert.equal(existsSync(join(getRuntimePaths(repo).pidsDir, "server.pid")), false);
+      assert.match(options.env.BETTER_SQLITE3_BINDING, /better_sqlite3\.electron\.node$/);
       throw new Error("stop before real launch");
     },
   });

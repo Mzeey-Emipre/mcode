@@ -1,10 +1,7 @@
 import Database from "better-sqlite3";
+import { resolveElectronNativeBinding } from "../store/database.js";
 
 /** Opens an in-memory SQLite database with the Electron-native binding. */
 export function openElectronMemoryDatabase(): Database.Database {
-  const nativeBinding = process.env.BETTER_SQLITE3_BINDING;
-  if (!nativeBinding) {
-    throw new Error("BETTER_SQLITE3_BINDING is required for Electron SQLite tests.");
-  }
-  return new Database(":memory:", { nativeBinding });
+  return new Database(":memory:", { nativeBinding: resolveElectronNativeBinding() });
 }

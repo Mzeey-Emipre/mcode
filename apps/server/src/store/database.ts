@@ -76,41 +76,39 @@ function getDrizzleMigrationsDir(): string {
   return drizzleDirMemo;
 }
 
-/**
- * Resolve the correct native binding for better-sqlite3 based on runtime.
- *
- * Priority:
- * 1. `BETTER_SQLITE3_BINDING` env var — set by server-manager when the app is
- *    packaged, pointing to the asarUnpack'd `.node` file outside the asar archive.
- * 2. Electron runtime path resolution — used in dev mode when running under
- *    Electron with the source tree present.
- * 3. `undefined` — falls back to better-sqlite3's default binding resolution
- *    for plain Node.js (e.g. vitest).
- */
-function resolveNativeBinding(): string | undefined {
-  if (process.env.BETTER_SQLITE3_BINDING) {
-    return process.env.BETTER_SQLITE3_BINDING;
+/** Resolves and validates the Electron-native better-sqlite3 binding for this process. */
+export function resolveElectronNativeBinding(): string {
+  if (!process.versions.electron) {
+    throw new Error("SQLite requires Electron's Node.js runtime.");
   }
 
-  if (!process.versions.electron) return undefined;
-
   const localRequire = createRequire(import.meta.url);
-  const betterSqliteDir = dirname(
-    localRequire.resolve("better-sqlite3/package.json"),
+  const betterSqliteDir = dirname(localRequire.resolve("better-sqlite3/package.json"));
+  const expectedBinding = join(
+    betterSqliteDir,
+    "build",
+    "Release",
+    "better_sqlite3.electron.node",
   );
-  const bindingCandidates = [
-    join(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node"),
-    join(betterSqliteDir, "build", "Release", "better_sqlite3.node"),
-  ];
-  const bindingPath = bindingCandidates.find((candidate) => existsSync(candidate));
+  const configuredBinding = process.env.BETTER_SQLITE3_BINDING;
 
-  if (!bindingPath) {
+  if (!configuredBinding) {
     throw new Error(
-      `Electron prebuild not found. Checked: ${bindingCandidates.join(", ")}. Run 'bun install' to download it.`,
+      `BETTER_SQLITE3_BINDING must be ${expectedBinding}. Run 'bun install' to install the Electron binding.`,
+    );
+  }
+  if (resolve(configuredBinding) !== resolve(expectedBinding)) {
+    throw new Error(
+      `BETTER_SQLITE3_BINDING must reference the workspace Electron binding: ${expectedBinding}`,
+    );
+  }
+  if (!existsSync(expectedBinding)) {
+    throw new Error(
+      `Workspace Electron better-sqlite3 binding not found: ${expectedBinding}. Run 'bun install'.`,
     );
   }
 
-  return bindingPath;
+  return expectedBinding;
 }
 
 /**
@@ -324,7 +322,7 @@ export function openDatabase(opts?: {
     mkdirSync(dir, { recursive: true });
   }
 
-  const nativeBinding = resolveNativeBinding();
+  const nativeBinding = resolveElectronNativeBinding();
   const db = new Database(resolvedPath, { nativeBinding });
   applyPragmas(db, true);
   try {
@@ -345,7 +343,7 @@ export function openDatabase(opts?: {
  * and migrations as a file-backed database.
  */
 export function openMemoryDatabase(): Database.Database {
-  const nativeBinding = resolveNativeBinding();
+  const nativeBinding = resolveElectronNativeBinding();
   const db = new Database(":memory:", { nativeBinding });
   applyPragmas(db, false);
   try {
