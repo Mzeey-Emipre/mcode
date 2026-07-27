@@ -29,6 +29,9 @@ export const TERMINAL_PANEL_DEFAULTS: TerminalPanelState = {
   activeTerminalId: null,
 } as const;
 
+/** Maximum concurrent shell sessions in one thread or workspace scope. */
+export const MAX_TERMINALS_PER_SCOPE = 4;
+
 interface TerminalState {
   readonly terminals: Record<string, readonly TerminalInstance[]>;
   readonly terminalPanelByThread: Record<string, TerminalPanelState>;
@@ -150,6 +153,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   addTerminal: (threadId, ptyId, shell) =>
     set((state) => {
       const existing = state.terminals[threadId] ?? [];
+      if (existing.length >= MAX_TERMINALS_PER_SCOPE) return state;
       const label = shell ?? generateLabel(existing);
       const instance: TerminalInstance = { id: ptyId, threadId, label };
       const currentPanel = state.terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS;

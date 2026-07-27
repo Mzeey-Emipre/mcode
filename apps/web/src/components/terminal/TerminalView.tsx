@@ -4,6 +4,9 @@ import type { FitAddon } from "@xterm/addon-fit";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useDiffStore } from "@/stores/diffStore";
+import { useTerminalStore } from "@/stores/terminalStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
 import { onPtyData, onPtyExit, onPtyReconnectGap, type PtyDataPayload } from "./ptyDataRegistry";
@@ -555,6 +558,21 @@ export const TerminalView = memo(function TerminalView({
         );
         // The PTY is gone and cannot remount; drop any saved scroll anchor.
         dropRemountAnchor(ptyId);
+        const terminal = useTerminalStore.getState();
+        const scopeId = terminal.ptyToThread[ptyId];
+        if (!scopeId) return;
+        terminal.removeTerminal(ptyId);
+        const workspace = useWorkspaceStore.getState();
+        const thread = workspace.threads.find((candidate) => candidate.id === scopeId);
+        const workspaceId = thread?.workspace_id ??
+          (workspace.workspaces.some((candidate) => candidate.id === scopeId) ? scopeId : undefined);
+        if (workspaceId) {
+          useDiffStore.getState().closeRightPanelTabInstance(
+            workspaceId,
+            thread ? scopeId : undefined,
+            `terminal:${ptyId}`,
+          );
+        }
       });
 
       // Resize handling:

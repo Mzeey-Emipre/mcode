@@ -1,5 +1,5 @@
 import { useDiffStore } from "@/stores/diffStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { MAX_TERMINALS_PER_SCOPE, useTerminalStore } from "@/stores/terminalStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { getTransport } from "@/transport";
 
@@ -29,21 +29,16 @@ function resolveScopeWorkspace(scopeId: string): {
 }
 
 /**
- * Spawns a terminal for the scope when it has none, so opening the Terminal
- * tab lands the user in a ready shell instead of an empty pane (the "anticipate
- * the next step" product principle).
- *
- * No-op when a terminal already exists or a creation is already in flight. If
- * the Terminal tab is no longer the visible target by the time the PTY is ready
- * (the user closed the panel or switched tabs mid-creation), the orphaned PTY
- * is killed rather than added to the store.
+ * Creates one terminal and its matching right-panel rail tab. Creation is
+ * serialized per scope so concurrent UI and shortcut requests cannot exceed the
+ * session cap.
  *
  * @param scopeId - A thread id, or a workspace id for the threadless shell.
  */
-export function ensureTerminalForScope(scopeId: string): void {
+export function createTerminalForScope(scopeId: string): void {
   if (creationInFlight.has(scopeId)) return;
   const existing = useTerminalStore.getState().terminals[scopeId];
-  if (existing && existing.length > 0) return;
+  if ((existing?.length ?? 0) >= MAX_TERMINALS_PER_SCOPE) return;
 
   creationInFlight.add(scopeId);
   try {
@@ -64,23 +59,29 @@ export function ensureTerminalForScope(scopeId: string): void {
         const panelVisible = workspaceId
           ? diff.getRightPanelVisible(workspaceId, panelThreadId)
           : false;
-        // Panel closed or tab switched while creation was in flight — dispose
-        // the orphaned PTY instead of adding a terminal nobody asked to see.
-        if (!panel || !panelVisible || panel.activeTab !== "terminal") {
+        if (!panel || !panelVisible) {
           transport.terminalKill(ptyId).catch(() => {});
           return;
         }
         const current = useTerminalStore.getState().terminals[scopeId];
-        if (!current || current.length === 0) {
-          useTerminalStore.getState().addTerminal(scopeId, ptyId, shell);
-        } else {
+        if ((current?.length ?? 0) >= MAX_TERMINALS_PER_SCOPE) {
           transport.terminalKill(ptyId).catch(() => {});
+          return;
         }
+        useTerminalStore.getState().addTerminal(scopeId, ptyId, shell);
+        diff.addRightPanelTerminalTab(workspaceId!, panelThreadId, ptyId);
       })
       .catch(() => {
         creationInFlight.delete(scopeId);
       });
   } catch {
     creationInFlight.delete(scopeId);
+  }
+}
+
+/** Ensures a Terminal tab has its first PTY-backed rail instance. */
+export function ensureTerminalForScope(scopeId: string): void {
+  if ((useTerminalStore.getState().terminals[scopeId]?.length ?? 0) === 0) {
+    createTerminalForScope(scopeId);
   }
 }

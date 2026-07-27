@@ -103,7 +103,7 @@ export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
 /**
  * Tab types displayed in the current scope, in catalog order: scope-filtered
  * (thread-only types dropped when threadless) then cardinality-filtered
- * (singletons already open dropped). Coming-soon teasers (Files) are kept so the
+ * (singletons already open dropped). Terminal remains repeatable. Coming-soon teasers (Files) are kept so the
  * empty-state grid can render them disabled. Pure — does not read or mutate any
  * external state.
  */
@@ -113,7 +113,7 @@ export function shownTabTypes(
 ): readonly PanelTabType[] {
   return PANEL_TAB_TYPES.filter((type) => {
     const allowedInScope = scope === "thread" || !type.needsThread;
-    return allowedInScope && !openTabs.includes(type.id);
+    return allowedInScope && (type.id === "terminal" || !openTabs.includes(type.id));
   });
 }
 
