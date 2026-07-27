@@ -40,11 +40,23 @@ export {
   WORKSPACE_SEARCH_QUERY_MAX_LENGTH,
   WORKSPACE_SEARCH_LIMIT_MAX,
   WORKSPACE_SEARCH_LIMIT_DEFAULT,
+  THREAD_CREATE_BATCH_MAX_ITEMS,
+  THREAD_CREATE_TITLE_MAX_LENGTH,
+  THREAD_CREATE_PROMPT_MAX_LENGTH,
+  THREAD_CREATE_EXECUTION_ID_MAX_LENGTH,
+  THREAD_CREATE_GIT_REF_MAX_LENGTH,
   WorkspaceSearchInputSchema,
   WorkspaceSearchResultSchema,
   WorktreeListInputSchema,
   WorktreeListResultSchema,
   ThreadControlErrorSchema,
+  ThreadPlacementSchema,
+  ResolvedExecutionSchema,
+  ResolvedPlacementSchema,
+  ThreadCreateInputSchema,
+  ThreadCreateBatchInputSchema,
+  ThreadCreateItemResultSchema,
+  ThreadCreateBatchResultSchema,
 } from "./thread-control.js";
 export type {
   WorkspaceSearchInput,
@@ -52,6 +64,13 @@ export type {
   WorktreeListInput,
   WorktreeListResult,
   ThreadControlError,
+  ThreadPlacement,
+  ResolvedExecution,
+  ResolvedPlacement,
+  ThreadCreateInput,
+  ThreadCreateBatchInput,
+  ThreadCreateItemResult,
+  ThreadCreateBatchResult,
 } from "./thread-control.js";
 
 export {

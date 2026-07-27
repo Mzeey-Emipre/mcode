@@ -115,6 +115,46 @@ export const threads = sqliteTable(
   ],
 );
 
+/** Durable human approvals for protected delegated-thread creation mutations. */
+export const threadControlApprovals = sqliteTable(
+  "thread_control_approvals",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    prompt: text("prompt").notNull(),
+    executionJson: text("execution_json").notNull(),
+    placementJson: text("placement_json").notNull(),
+    turnId: text("turn_id").notNull(),
+    callerId: text("caller_id"),
+    sourceThreadId: text("source_thread_id"),
+    operationPhase: text("operation_phase").notNull().default("pre_provision"),
+    status: text("status").notNull().default("pending"),
+    processingStartedAt: text("processing_started_at"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    resolvedAt: text("resolved_at"),
+  },
+  (table) => [
+    index("idx_thread_control_approvals_thread").on(table.threadId, table.status),
+  ],
+);
+
+/** Bounded lifecycle records for thread-control operations. */
+export const threadControlAudit = sqliteTable(
+  "thread_control_audit",
+  {
+    id: text("id").primaryKey().notNull(),
+    callerId: text("caller_id").notNull(),
+    sourceThreadId: text("source_thread_id"),
+    workspaceId: text("workspace_id"),
+    threadId: text("thread_id"),
+    operation: text("operation").notNull(),
+    outcome: text("outcome").notNull(),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+  },
+  (table) => [index("idx_thread_control_audit_thread").on(table.threadId, table.createdAt)],
+);
+
 export const pullRequestReviewLinks = sqliteTable(
   "pull_request_review_links",
   {

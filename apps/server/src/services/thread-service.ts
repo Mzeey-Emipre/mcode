@@ -14,6 +14,10 @@ import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { AttachmentService } from "./attachment-service";
 import { HandoffStorage } from "./handoff/handoff-storage.js";
 
+function managedWorktreeName(ref: string, threadId: string): string {
+  return `${sanitizeBranchForFolder(ref).slice(0, 91)}-${threadId.slice(0, 8)}`;
+}
+
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
 export class ThreadService {
@@ -67,11 +71,7 @@ export class ThreadService {
       }
 
       try {
-        const shortId = thread.id.slice(0, 8);
-        // Truncate to 91 chars so the full name (prefix + "-" + 8-char id) stays within
-        // the 100-character limit enforced by validateWorktreeName.
-        const sanitized = sanitizeBranchForFolder(branch).slice(0, 91);
-        const worktreeName = `${sanitized}-${shortId}`;
+        const worktreeName = managedWorktreeName(branch, thread.id);
         const info = await this.gitService.createWorktree(
           workspace.path,
           worktreeName,
@@ -128,6 +128,63 @@ export class ThreadService {
     }
 
     return thread;
+  }
+
+  /** Provision a new worktree for an already-persisted delegated thread. */
+  async provisionWorktree(
+    threadId: string,
+    workspaceId: string,
+    placement: { baseRef: string; branchName?: string },
+  ): Promise<Thread & { warnings?: string[] }> {
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread || thread.workspace_id !== workspaceId || thread.mode !== "worktree") {
+      throw new Error("Delegated worktree thread is not available for provisioning");
+    }
+    if (thread.worktree_path) {
+      throw new Error("Delegated worktree thread is already provisioned");
+    }
+    validateBranchName(placement.baseRef);
+    if (placement.branchName) validateBranchName(placement.branchName);
+    const workspace = this.workspaceRepo.findById(workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+
+    const worktreeRef = placement.branchName ?? placement.baseRef;
+    const worktreeName = managedWorktreeName(worktreeRef, thread.id);
+    const info = await this.gitService.createWorktree(
+      workspace.path,
+      worktreeName,
+      worktreeRef,
+      {
+        branchless: placement.branchName === undefined,
+        ...(placement.branchName ? { baseRef: placement.baseRef } : {}),
+      },
+    );
+    const updated = this.threadRepo.updateWorktreePath(thread.id, info.path);
+    if (!updated) {
+      await this.gitService.removeWorktree(workspace.path, worktreeName, {
+        ...(info.createdBranch ? { branchName: worktreeRef } : { deleteBranch: false }),
+      });
+      throw new Error(`Failed to persist worktree path for thread ${thread.id}`);
+    }
+    this.threadRepo.updateStatus(thread.id, "active");
+    return {
+      ...thread,
+      worktree_path: info.path,
+      warnings: info.warnings.length > 0 ? info.warnings : undefined,
+    };
+  }
+
+  /** Idempotently remove only the deterministic managed worktree for interrupted provisioning. */
+  async cleanupInterruptedProvisioning(
+    threadId: string,
+    workspaceId: string,
+    placement: { baseRef: string; branchName?: string },
+  ): Promise<boolean> {
+    const workspace = this.workspaceRepo.findById(workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    const ref = placement.branchName ?? placement.baseRef;
+    const name = managedWorktreeName(ref, threadId);
+    return this.gitService.removeWorktree(workspace.path, name, { deleteBranch: false });
   }
 
   /**

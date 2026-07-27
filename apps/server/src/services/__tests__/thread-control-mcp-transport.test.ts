@@ -18,6 +18,7 @@ describe("internal thread-control MCP transport", () => {
     const service = {
       workspaceSearch: vi.fn().mockReturnValue({ workspaces: [] }),
       worktreeList: vi.fn(),
+      threadCreateBatch: vi.fn(),
     } as unknown as ThreadControlService;
     const session = createInternalThreadControlMcpSession({ authority, service });
 
@@ -45,6 +46,7 @@ describe("internal thread-control MCP transport", () => {
     const service = {
       workspaceSearch: vi.fn(),
       worktreeList: vi.fn(),
+      threadCreateBatch: vi.fn(),
     } as unknown as ThreadControlService;
     const session = createInternalThreadControlMcpSession({ authority, service });
 
@@ -72,7 +74,7 @@ describe("internal thread-control MCP transport", () => {
     expect(service.workspaceSearch).not.toHaveBeenCalled();
   });
 
-  it("registers only discovery tools and rejects forged tool authority", async () => {
+  it("registers the internal thread-control tools and rejects forged tool authority", async () => {
     const authority = new InternalThreadControlMcpAuthority();
     const lease = authority.activate({
       sessionId: "pooled-provider-session",
@@ -84,6 +86,7 @@ describe("internal thread-control MCP transport", () => {
     const service = {
       workspaceSearch: vi.fn().mockReturnValue({ workspaces: [] }),
       worktreeList: vi.fn(),
+      threadCreateBatch: vi.fn().mockResolvedValue({ results: [] }),
     } as unknown as ThreadControlService;
     const session = createInternalThreadControlMcpSession({ authority, service });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -93,7 +96,11 @@ describe("internal thread-control MCP transport", () => {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     await expect(client.listTools()).resolves.toMatchObject({
-      tools: [{ name: "workspace_search" }, { name: "worktree_list" }],
+      tools: [
+        { name: "workspace_search" },
+        { name: "worktree_list" },
+        { name: "thread_create_batch" },
+      ],
     });
     await expect(session.dispatch({
       bearerCredential: lease.credential,
@@ -121,6 +128,7 @@ describe("internal thread-control MCP transport", () => {
         workspaceId: "workspace-1",
         worktrees: [{ worktreeId: "worktree-1", label: "main", branch: "main" }],
       }),
+      threadCreateBatch: vi.fn(),
     } as unknown as ThreadControlService;
     const session = createInternalThreadControlMcpSession({ authority, service });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -130,7 +138,11 @@ describe("internal thread-control MCP transport", () => {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     await expect(client.listTools()).resolves.toMatchObject({
-      tools: [{ name: "workspace_search" }, { name: "worktree_list" }],
+      tools: [
+        { name: "workspace_search" },
+        { name: "worktree_list" },
+        { name: "thread_create_batch" },
+      ],
     });
     await expect(client.callTool({ name: "worktree_list", arguments: { workspaceId: "workspace-1" } }))
       .resolves.toMatchObject({
@@ -142,5 +154,58 @@ describe("internal thread-control MCP transport", () => {
       .resolves.toMatchObject({ isError: true });
     await client.close();
     await server.close();
+  });
+
+  it("dispatches thread_create_batch through the authenticated MCP protocol", async () => {
+    const authority = new InternalThreadControlMcpAuthority();
+    const lease = authority.activate({
+      sessionId: "pooled-provider-session",
+      sourceThreadId: "source-thread",
+      sourceTurnId: "source-turn",
+      sourceProviderId: "codex",
+      permissionMode: "full",
+    });
+    const service = {
+      workspaceSearch: vi.fn(),
+      worktreeList: vi.fn(),
+      threadCreateBatch: vi.fn().mockResolvedValue({
+        results: [{
+          index: 0,
+          status: "created",
+          workspaceId: "workspace-1",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          execution: {
+            providerId: "codex",
+            modelId: "gpt-5.6-sol",
+            permissionMode: "full",
+            interactionMode: "build",
+          },
+          placement: { type: "direct" },
+          state: { status: "starting" },
+        }],
+      }),
+    } as unknown as ThreadControlService;
+    const session = createInternalThreadControlMcpSession({ authority, service });
+
+    await expect(session.dispatch({
+      bearerCredential: lease.credential,
+      requestId: "create-call",
+      toolName: "thread_create_batch",
+      arguments: {
+        items: [{
+          workspaceId: "workspace-1",
+          title: "Delegated thread",
+          prompt: "Implement the task.",
+          placement: { type: "direct" },
+        }],
+      },
+    })).resolves.toMatchObject({
+      results: [{ status: "created", threadId: "thread-1" }],
+    });
+    expect(service.threadCreateBatch).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceToolCallId: "create-call" }),
+      expect.objectContaining({ items: [expect.objectContaining({ title: "Delegated thread" })] }),
+    );
   });
 });

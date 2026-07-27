@@ -23,6 +23,13 @@ export interface RegisteredWorktreeInput {
   managed: boolean;
 }
 
+/** Server-only worktree registration including its canonical path and ownership. */
+export interface InternalRegisteredWorktree extends RegisteredWorktree {
+  workspaceId: string;
+  canonicalPath: string;
+  managed: boolean;
+}
+
 /** Repository for stable workspace-scoped worktree identities. */
 @injectable()
 export class WorktreeRepo {
@@ -60,5 +67,61 @@ export class WorktreeRepo {
         ...(value.baseRef ? { baseRef: value.baseRef } : {}),
       };
     });
+  }
+
+  /** Resolve one current opaque worktree only within the supplied workspace. */
+  findCurrentById(workspaceId: string, worktreeId: string): InternalRegisteredWorktree | null {
+    const row = this.db.prepare(
+      "SELECT id AS worktreeId, workspace_id AS workspaceId, canonical_path AS canonicalPath, label, branch, base_ref AS baseRef, managed FROM workspace_worktrees WHERE workspace_id = ? AND id = ? AND stale = 0",
+    ).get(workspaceId, worktreeId) as {
+      worktreeId: string;
+      workspaceId: string;
+      canonicalPath: string;
+      label: string;
+      branch: string | null;
+      baseRef: string | null;
+      managed: number;
+    } | undefined;
+    if (!row) return null;
+    return {
+      worktreeId: row.worktreeId,
+      workspaceId: row.workspaceId,
+      canonicalPath: row.canonicalPath,
+      label: row.label,
+      managed: row.managed === 1,
+      ...(row.branch ? { branch: row.branch } : {}),
+      ...(row.baseRef ? { baseRef: row.baseRef } : {}),
+    };
+  }
+
+  /** Register one newly provisioned worktree without invalidating sibling registrations. */
+  register(workspaceId: string, worktree: RegisteredWorktreeInput): RegisteredWorktree {
+    const id = randomUUID();
+    this.db.prepare(
+      "INSERT INTO workspace_worktrees (id, workspace_id, canonical_path, label, branch, base_ref, managed, last_seen_at, stale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0) ON CONFLICT(workspace_id, canonical_path) DO UPDATE SET label = excluded.label, branch = excluded.branch, base_ref = excluded.base_ref, managed = excluded.managed, last_seen_at = excluded.last_seen_at, stale = 0",
+    ).run(
+      id,
+      workspaceId,
+      worktree.canonicalPath,
+      worktree.label,
+      worktree.branch ?? null,
+      worktree.baseRef ?? null,
+      worktree.managed ? 1 : 0,
+      new Date().toISOString(),
+    );
+    const row = this.db.prepare(
+      "SELECT id AS worktreeId, label, branch, base_ref AS baseRef FROM workspace_worktrees WHERE workspace_id = ? AND canonical_path = ?",
+    ).get(workspaceId, worktree.canonicalPath) as {
+      worktreeId: string;
+      label: string;
+      branch: string | null;
+      baseRef: string | null;
+    };
+    return {
+      worktreeId: row.worktreeId,
+      label: row.label,
+      ...(row.branch ? { branch: row.branch } : {}),
+      ...(row.baseRef ? { baseRef: row.baseRef } : {}),
+    };
   }
 }

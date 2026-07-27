@@ -9,6 +9,37 @@ export interface InternalThreadControlAuthority {
   permissionMode: "supervised" | "full";
 }
 
+/** Operation scopes granted to a paired external thread-control integration. */
+export type ExternalThreadControlScope =
+  | "projects:read"
+  | "worktrees:read"
+  | "threads:create"
+  | "threads:read-owned"
+  | "threads:read-project"
+  | "threads:send-owned"
+  | "threads:send-project"
+  | "threads:stop-owned"
+  | "threads:stop-project"
+  | "worktrees:create"
+  | "execution:full";
+
+/** Server-owned authority for a paired external thread-control integration. */
+export interface ExternalThreadControlAuthority {
+  type: "external";
+  integrationId: string;
+  allowedWorkspaceIds: readonly string[];
+  scopes: readonly ExternalThreadControlScope[];
+  limits: {
+    callsPerMinute: number;
+    maxActiveThreads: number;
+  };
+}
+
+/** Server-owned authority accepted by the shared thread-control service. */
+export type ThreadControlAuthority =
+  | InternalThreadControlAuthority
+  | ExternalThreadControlAuthority;
+
 /** Lineage written when a thread is created through delegation. */
 export interface ThreadDelegationLineage {
   coordinatorThreadId: string;

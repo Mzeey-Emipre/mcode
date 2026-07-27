@@ -337,4 +337,20 @@ describe("ThreadService.delete", () => {
       base_branch: "feat/base",
     });
   });
+
+  it("removes only the deterministic interrupted provisioning worktree without deleting its branch", async () => {
+    const ws = workspaceRepo.create("test", "/tmp/test");
+
+    await expect(threadService.cleanupInterruptedProvisioning(
+      "12345678-thread-id",
+      ws.id,
+      { baseRef: "main", branchName: "codex/issue-960" },
+    )).resolves.toBe(true);
+
+    expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+      "/tmp/test",
+      "codex-issue-960-12345678",
+      { deleteBranch: false },
+    );
+  });
 });

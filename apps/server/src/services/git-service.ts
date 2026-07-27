@@ -754,7 +754,7 @@ export class GitService {
     repoPath: string,
     name: string,
     branchName?: string,
-    options: { branchless?: boolean } = {},
+    options: { branchless?: boolean; baseRef?: string } = {},
   ): Promise<WorktreeInfo & { createdBranch: boolean; warnings: string[] }> {
     validateWorktreeName(name);
 
@@ -764,6 +764,7 @@ export class GitService {
 
     const branch = branchName ?? `mcode/${name}`;
     validateBranchName(branch);
+    if (options.baseRef) validateBranchName(options.baseRef);
     const wtPath = join(ensureWorktreeBaseDir(repoPath), name);
 
     if (existsSync(wtPath)) {
@@ -779,7 +780,16 @@ export class GitService {
       } else if (!createdBranch) {
         await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", wtPath, branch]);
       } else {
-        await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", wtPath, "-b", branch]);
+        await this.gitExecutor.exec([
+          "-C",
+          repoPath,
+          "worktree",
+          "add",
+          wtPath,
+          "-b",
+          branch,
+          ...(options.baseRef ? [options.baseRef] : []),
+        ]);
       }
     } catch (err) {
       // If the worktree's .git file exists, git initialized the worktree
@@ -806,6 +816,8 @@ export class GitService {
 
   /**
    * Remove a git worktree by name.
+   * Returns true only when the target worktree and managed parent directories are clean.
+   * Returns false when a transient lock leaves a managed parent directory for retry.
    * When deleteBranch is true, deletes options.branchName or the default managed branch.
    * When worktreePath is set, removes that exact worktree path instead of deriving
    * one under the managed mcode worktree directory.

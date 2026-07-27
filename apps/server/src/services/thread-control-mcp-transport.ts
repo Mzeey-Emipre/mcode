@@ -1,4 +1,6 @@
 import {
+  ThreadCreateBatchInputSchema,
+  ThreadCreateBatchResultSchema,
   WorkspaceSearchInputSchema,
   WorkspaceSearchResultSchema,
   WorktreeListInputSchema,
@@ -57,6 +59,12 @@ export function createInternalThreadControlMcpSession(
         const input = WorktreeListInputSchema().parse(request.arguments);
         return WorktreeListResultSchema().parse(await options.service.worktreeList(authority, input));
       }
+      case "thread_create_batch": {
+        const input = ThreadCreateBatchInputSchema().parse(request.arguments);
+        return ThreadCreateBatchResultSchema().parse(
+          await options.service.threadCreateBatch(authority, input),
+        );
+      }
       default:
         throw new InternalThreadControlMcpAuthorizationError();
     }
@@ -83,6 +91,16 @@ export function createInternalThreadControlMcpSession(
         bearerCredential,
         requestId: extra.requestId,
         toolName: "worktree_list",
+        arguments: arguments_,
+      })));
+      server.registerTool("thread_create_batch", {
+        description: "Create and start one to twenty normal Mcode threads in registered Projects.",
+        inputSchema: ThreadCreateBatchInputSchema(),
+        outputSchema: ThreadCreateBatchResultSchema(),
+      }, async (arguments_, extra) => createToolResult(await dispatch({
+        bearerCredential,
+        requestId: extra.requestId,
+        toolName: "thread_create_batch",
         arguments: arguments_,
       })));
       return server;

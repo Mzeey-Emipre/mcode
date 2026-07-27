@@ -258,6 +258,24 @@ describe("GitService.removeWorktree", () => {
     );
   });
 
+  it("treats an already-absent managed worktree as successful cleanup", async () => {
+    execFn
+      .mockRejectedValueOnce(new Error("not a working tree"))
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+    mockExistsSync.mockReturnValue(false);
+    mockRmdir.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+
+    await expect(
+      gitService.removeWorktree("/repo", "my-worktree", { deleteBranch: false }),
+    ).resolves.toBe(true);
+
+    expect(mockRm).not.toHaveBeenCalled();
+    expect(execFn).toHaveBeenCalledWith(
+      ["-C", "/repo", "worktree", "prune"],
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+  });
+
   it("leaves a worktree in place for retry when another application locks it", async () => {
     execFn.mockRejectedValueOnce(new Error("git failed")); // worktree remove
     mockRm.mockRejectedValueOnce(Object.assign(new Error("EBUSY"), { code: "EBUSY" }));

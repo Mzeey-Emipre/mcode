@@ -336,6 +336,16 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
+  /** Clear a thread's persisted worktree path after its managed checkout is removed. */
+  clearWorktreePath(id: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare("UPDATE threads SET worktree_path = NULL, updated_at = ? WHERE id = ?")
+      .run(now, id);
+
+    return result.changes > 0;
+  }
+
   /** Mark a thread as a named-branch checkout after creating a branch in place. */
   updateCheckoutToNamedBranch(id: string, branch: string): Thread | null {
     const now = new Date().toISOString();
@@ -636,6 +646,21 @@ export class ThreadRepo {
         id,
       );
     return result.changes > 0;
+  }
+
+  /** Persist ownership for a thread created by a paired external integration. */
+  updateExternalCreator(id: string, integrationId: string): boolean {
+    return this.db.prepare(
+      "UPDATE threads SET created_by_integration_id = ?, updated_at = ? WHERE id = ?",
+    ).run(integrationId, new Date().toISOString(), id).changes > 0;
+  }
+
+  /** Count active capacity owned by one paired external integration. */
+  countActiveByIntegration(integrationId: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM threads WHERE created_by_integration_id = ? AND deleted_at IS NULL AND status IN ('active', 'paused')",
+    ).get(integrationId) as { count: number };
+    return row.count;
   }
 
   /**

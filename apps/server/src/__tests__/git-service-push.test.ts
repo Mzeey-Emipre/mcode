@@ -120,6 +120,37 @@ describe("GitService.createBranch", () => {
     ]);
   });
 
+  it("creates a named worktree branch from the exact requested base ref", async () => {
+    execFn.mockImplementation(async (args) => {
+      if (args[2] === "rev-parse") throw new Error("missing branch");
+      return { stdout: "", stderr: "" };
+    });
+    vi.mocked(existsSync).mockImplementation((path) => path === "/repo");
+
+    await expect(
+      gitService.createWorktree(
+        "/repo",
+        "issue-960",
+        "codex/issue-960",
+        { baseRef: "origin/main" },
+      ),
+    ).resolves.toMatchObject({
+      branch: "codex/issue-960",
+      createdBranch: true,
+    });
+
+    expect(execFn).toHaveBeenLastCalledWith([
+      "-C",
+      "/repo",
+      "worktree",
+      "add",
+      path.join("/mock/mcode", "worktrees", "repo", "issue-960"),
+      "-b",
+      "codex/issue-960",
+      "origin/main",
+    ]);
+  });
+
   it.each([
     "",
     "--force",
