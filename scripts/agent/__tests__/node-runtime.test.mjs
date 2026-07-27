@@ -85,19 +85,11 @@ test("package engine must match .node-version", () => {
 
 test("direct package test entry points run the runtime guard first", () => {
   const packageJson = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8"));
-  for (const name of ["test", "test:scripts", "verify:e2e"]) {
+  for (const name of ["test", "test:scripts"]) {
     assert.match(
       packageJson.scripts[name],
       /^node scripts\/node-runtime\.mjs && /,
       `${name} must run the runtime guard first`,
     );
   }
-});
-
-test("direct E2E entry point validates before probing or launching Playwright", () => {
-  const source = readFileSync(resolve(repositoryRoot, "scripts/agent/verify-e2e.mjs"), "utf8");
-  const guard = source.indexOf("validateNodeRuntime()");
-  const probe = source.indexOf("probeBaseUrl(BASE_URL)");
-  assert.ok(guard >= 0, "verify:e2e must validate the runtime");
-  assert.ok(guard < probe, "verify:e2e must validate before probing the dev server");
 });

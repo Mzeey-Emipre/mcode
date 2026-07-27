@@ -7,14 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "perf:chunks": "vite build && bun scripts/check-web-chunks.ts",
-    "perf:pull-requests": "vite build && bun scripts/check-web-chunks.ts && vitest run src/stores/__tests__/pull-request-performance.test.ts src/lib/__tests__/pull-request-performance-metrics.test.ts && bun scripts/run-pull-request-performance.ts",
+    "perf:pull-requests": "vite build && bun scripts/check-web-chunks.ts && vitest run src/stores/__tests__/pull-request-performance.test.ts src/lib/__tests__/pull-request-performance-metrics.test.ts",
     "lint": "eslint . --cache --cache-location node_modules/.cache/.eslintcache",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "preview": "vite preview",
-    "e2e": "playwright test",
-    "e2e:headed": "playwright test --headed",
-    "e2e:screenshot": "playwright test --update-snapshots"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
@@ -59,7 +56,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.2.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

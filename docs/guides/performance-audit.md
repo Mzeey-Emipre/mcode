@@ -178,10 +178,10 @@ Run the production gate from `apps/web`:
 bun run perf:pull-requests
 ```
 
-The command builds the web app, checks the Vite manifest, runs the selector p95
-and layout-rule Vitest files, then runs the pull request Playwright workload
-against `vite preview`. The workload uses only fake GitHub transport responses.
-It must not send a real comment, review, readiness change, close, or merge.
+The command builds the web app, checks the Vite manifest, and runs the selector
+p95 and layout-rule Vitest files. The test fixtures use only fake GitHub
+transport responses and must not send a real comment, review, readiness change,
+close, or merge.
 
 The fixture stays within every wire bound:
 

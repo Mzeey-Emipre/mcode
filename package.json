@@ -33,8 +33,6 @@
     "sync:cursor-models": "bun apps/server/scripts/sync-cursor-models-snapshot.ts",
     "verify": "node scripts/agent/verify-tests.mjs --full",
     "verify:changed": "node scripts/agent/verify-tests.mjs",
-    "verify:e2e": "node scripts/node-runtime.mjs && node scripts/agent/verify-e2e.mjs",
-    "verify:all": "node scripts/agent/verify-all.mjs",
     "audit:baseline": "node scripts/security/check-bun-audit-baseline.mjs",
     "test:scripts": "node scripts/node-runtime.mjs && node --test scripts/agent/__tests__/*.test.mjs"
   },

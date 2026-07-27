@@ -32,8 +32,8 @@ Read `.dev/ports.json` instead of recomputing ports. It includes the paired
 live in `.dev/logs`. In single-instance dev mode, `/health` does not return a
 token or set an auth cookie.
 
-Write exploratory Playwright specs in `.dev/playwright-scratch`. Promote a spec
-to the committed e2e suite only when the behavior deserves permanent coverage.
+Use `.dev/playwright-scratch` for exploratory external Playwright setup when it
+helps; the repository does not install or configure Playwright.
 Stop the runtime with `bun run --shell system agent:down`; use
 `bun run --shell system agent:reset` to stop it, delete only `.dev/db`, and start
 a fresh seeded runtime.
@@ -181,13 +181,13 @@ UI behavior, IPC handlers, server endpoints, stores, and agent-service behavior.
    commit task-specific browser-driving or screenshot scripts.
 3. Run the regression floor with `bun run verify`.
 
-For local UI changes, use the repository's Playwright setup when a connected
+For local UI changes, use an external Playwright installation when a connected
 browser or computer-use session is unavailable. A missing connected browser
 does not block live verification. Write temporary deterministic specs in
 `.dev/playwright-scratch` and keep screenshots, logs, and other evidence under
 `.dev/verification/`. If existing data does not expose the changed state, create
 a bounded test fixture instead of skipping the UI check. Report live
-verification as blocked only when the runtime and repository-owned Playwright
+verification as blocked only when the runtime and available external tooling
 cannot launch or exercise the behavior.
 
 Report all three: the live action and observed outcome, the regular test that
