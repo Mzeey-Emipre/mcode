@@ -15,6 +15,7 @@ import { resolve, dirname } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { rebuildServerDevBundle } from "./build-server-dev-bundle.mjs";
+import { resolveServerOnlyExitCode } from "./dev-web-lifecycle.mjs";
 import { killProcessTree } from "./kill-process-tree.mjs";
 import {
   buildPortsContract,
@@ -191,10 +192,16 @@ try {
 let vite;
 
 if (serverOnly) {
-  const cleanup = () => killProcessTree(server);
+  let cleanupRequested = false;
+  const cleanup = () => {
+    cleanupRequested = true;
+    killProcessTree(server);
+  };
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
-  server.on("exit", (code) => process.exit(code ?? 0));
+  server.on("exit", (code, signal) => {
+    process.exit(resolveServerOnlyExitCode({ code, signal, cleanupRequested }));
+  });
   await new Promise(() => {});
 }
 

@@ -3,7 +3,8 @@
  * Opens the database read-only; safe to run while the server is running.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveMainRoot } from './utils.mjs';
 
@@ -27,6 +28,13 @@ if (!dbPath) {
   throw new Error('MCODE_DB_PATH is required when db-info runs under Electron Node.');
 }
 const root = resolveMainRoot();
+const bindingPath = process.env.BETTER_SQLITE3_BINDING;
+if (!bindingPath) {
+  throw new Error('BETTER_SQLITE3_BINDING is required when db-info runs under Electron Node.');
+}
+if (!isAbsolute(bindingPath) || !existsSync(bindingPath) || !statSync(bindingPath).isFile()) {
+  throw new Error(`BETTER_SQLITE3_BINDING must reference an existing absolute file: ${bindingPath}`);
+}
 
 console.log(`Database : ${dbPath}`);
 
@@ -41,7 +49,7 @@ try {
   const Database = serverRequire('better-sqlite3');
   const db = new Database(dbPath, {
     readonly: true,
-    nativeBinding: process.env.BETTER_SQLITE3_BINDING,
+    nativeBinding: bindingPath,
   });
 
   const vRow = db.prepare('SELECT version FROM _migrations ORDER BY version DESC LIMIT 1').get();

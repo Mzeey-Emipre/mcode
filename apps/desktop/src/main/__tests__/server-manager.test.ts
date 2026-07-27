@@ -420,14 +420,19 @@ describe("ServerManager", () => {
   });
 
   it("replaces an inherited Node binding with the workspace Electron binding in dev", async () => {
+    const previousBinding = process.env.BETTER_SQLITE3_BINDING;
     process.env.BETTER_SQLITE3_BINDING = "/inherited/better_sqlite3.node";
 
-    await manager.start();
+    try {
+      await manager.start();
 
-    const spawnCall = vi.mocked(spawn).mock.calls[0];
-    const options = spawnCall[2] as { env: Record<string, string> };
-    expect(options.env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.electron.node");
-    delete process.env.BETTER_SQLITE3_BINDING;
+      const spawnCall = vi.mocked(spawn).mock.calls[0];
+      const options = spawnCall[2] as { env: Record<string, string> };
+      expect(options.env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.electron.node");
+    } finally {
+      if (previousBinding === undefined) delete process.env.BETTER_SQLITE3_BINDING;
+      else process.env.BETTER_SQLITE3_BINDING = previousBinding;
+    }
   });
 
   it("spawns the bundled server.cjs when app.isPackaged is true", async () => {

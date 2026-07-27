@@ -3,7 +3,7 @@
 import { spawnSync } from "child_process";
 import { existsSync } from "fs";
 import { createRequire } from "module";
-import { dirname, join, resolve } from "path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +39,16 @@ function resolveWorkspaceCli(args) {
   }
 
   const packageDir = dirname(serverRequire.resolve(`${packageName}/package.json`));
-  const cliEntry = join(packageDir, entryFile);
+  const cliEntry = resolve(packageDir, entryFile);
+  const packageRelativeEntry = relative(packageDir, cliEntry);
+  if (
+    isAbsolute(entryFile)
+    || packageRelativeEntry === ".."
+    || packageRelativeEntry.startsWith(`..${sep}`)
+    || isAbsolute(packageRelativeEntry)
+  ) {
+    throw new Error("Workspace CLI entry must stay inside its package directory.");
+  }
   if (!existsSync(cliEntry)) {
     throw new Error(`Workspace CLI entry not found: ${cliEntry}`);
   }
