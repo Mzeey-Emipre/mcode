@@ -19,8 +19,9 @@
  */
 
 import { spawn, execFileSync } from "child_process";
-import { existsSync, mkdirSync, rmSync } from "fs";
+import { existsSync, mkdirSync, realpathSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
+import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
@@ -32,6 +33,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const releaseDir = resolve(desktopRoot, "release");
+const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
+const serverRequire = createRequire(resolve(desktopRoot, "..", "server", "package.json"));
 
 const SMOKE_PORT = 19899;
 const TIMEOUT_MS = 30_000;
@@ -51,6 +54,7 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "win-unpacked/resources/bin/mcode-server.exe"),
       electron: resolve(releaseDir, "win-unpacked/Mcode.exe"),
+      resourcesRoot: resolve(releaseDir, "win-unpacked/resources"),
       sqlite: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
       nodePty: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
@@ -60,6 +64,7 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "linux-unpacked/resources/bin/mcode-server"),
       electron: resolve(releaseDir, "linux-unpacked/mcode-desktop"),
+      resourcesRoot: resolve(releaseDir, "linux-unpacked/resources"),
       sqlite: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
       nodePty: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
@@ -69,6 +74,7 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/bin/mcode-server"),
       electron: resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
+      resourcesRoot: resolve(releaseDir, "mac/Mcode.app/Contents/Resources"),
       sqlite: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
       nodePty: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
@@ -78,6 +84,7 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/bin/mcode-server"),
       electron: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
+      resourcesRoot: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources"),
       sqlite: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
       nodePty: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
@@ -93,14 +100,16 @@ function findUnpackedServer() {
     const useRenamed = !isMac && existsSync(c.renamedBinary);
     const runtime = useRenamed ? c.renamedBinary : c.electron;
     if (existsSync(c.server) && existsSync(runtime)) {
-      const electronBinding = resolve(c.sqlite, "better_sqlite3.electron.node");
-      const nodeBinding = resolve(c.sqlite, "better_sqlite3.node");
-      const binding = existsSync(electronBinding) ? electronBinding : existsSync(nodeBinding) ? nodeBinding : undefined;
+      const binding = resolve(c.sqlite, "better_sqlite3.node");
+      if (!existsSync(binding)) {
+        throw new Error(`Packaged better-sqlite3 binding not found: ${binding}`);
+      }
       const electronDir = useRenamed ? dirname(c.electron) : undefined;
       return {
         server: c.server,
         electron: runtime,
         binding,
+        resourcesRoot: realpathSync(c.resourcesRoot),
         electronDir,
         koffi: c.koffi,
         nodePty: c.nodePty,
@@ -134,15 +143,19 @@ function inferPackagedSdkTarget(serverPath) {
 }
 
 /**
- * --bundle mode: test the pre-packaging bundle with the system node/bun.
- * Skips native module verification but catches JS bundle errors.
+ * --bundle mode: test the pre-packaging bundle with the workspace Electron runtime.
  */
 function findBundleServer() {
   const server = resolve(desktopRoot, "dist/server/server.cjs");
   if (!existsSync(server)) {
     return null;
   }
-  return { server, electron: process.execPath, binding: undefined };
+  const betterSqliteDir = dirname(serverRequire.resolve("better-sqlite3/package.json"));
+  const binding = resolve(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
+  if (!existsSync(binding)) {
+    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${binding}`);
+  }
+  return { server, electron: desktopRequire("electron"), binding };
 }
 
 const bundleOnly = process.argv.includes("--bundle");
@@ -260,6 +273,9 @@ const env = {
 
 if (found.binding) {
   env.BETTER_SQLITE3_BINDING = found.binding;
+}
+if (found.resourcesRoot) {
+  env.MCODE_PACKAGED_RESOURCES_ROOT = found.resourcesRoot;
 }
 
 // When using the renamed binary in a different directory, the dynamic linker

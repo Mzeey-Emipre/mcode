@@ -1,10 +1,11 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { MessageRepo } from "../repositories/message-repo.js";
+import { openElectronMemoryDatabase } from "./electron-sqlite.js";
 
 function createTestDb(): Database.Database {
-  const db = new Database(":memory:");
+  const db = openElectronMemoryDatabase();
   db.exec(`
     CREATE TABLE messages (
       id TEXT PRIMARY KEY,

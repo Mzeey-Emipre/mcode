@@ -3,12 +3,13 @@
  * databases created before sort_order was added to the workspaces table.
  */
 
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { applySchemaPatches } from "../store/database.js";
+import { openElectronMemoryDatabase } from "./electron-sqlite.js";
 
 function freshDb(): Database.Database {
-  const db = new Database(":memory:");
+  const db = openElectronMemoryDatabase();
   db.pragma("foreign_keys = ON");
   return db;
 }

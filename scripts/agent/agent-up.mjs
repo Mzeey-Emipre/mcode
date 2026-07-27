@@ -91,6 +91,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
   if (!electronBin) {
     throw new Error("Electron binary not found. Run 'bun install' in the project root.");
   }
+  const electronBinding = getElectronBinding();
 
   const rebuildRuntimeServerBundle = agentUpTestHooks.rebuildServerDevBundle ?? rebuildServerDevBundle;
   await rebuildRuntimeServerBundle();
@@ -106,6 +107,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: "1",
+          BETTER_SQLITE3_BINDING: electronBinding,
           NODE_ENV: "development",
           ...buildRuntimeStateEnv(repoRoot, {
             MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
@@ -168,6 +170,17 @@ function getElectronBinary() {
   } catch {
     return null;
   }
+}
+
+/** Resolve the workspace Electron-native better-sqlite3 binding. */
+function getElectronBinding() {
+  const serverRequire = createRequire(resolve(rootDir, "apps", "server", "package.json"));
+  const packagePath = serverRequire.resolve("better-sqlite3/package.json");
+  const bindingPath = resolve(dirname(packagePath), "build", "Release", "better_sqlite3.electron.node");
+  if (!existsSync(bindingPath)) {
+    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${bindingPath}`);
+  }
+  return bindingPath;
 }
 
 /**
