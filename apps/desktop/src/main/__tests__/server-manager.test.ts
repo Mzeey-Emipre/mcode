@@ -529,6 +529,7 @@ describe("ServerManager", () => {
     const opts = spawnCall[2] as Record<string, unknown>;
     const env = opts.env as Record<string, string>;
     expect(env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.node");
+    expect(env.MCODE_PACKAGED_RESOURCES_ROOT).toBe("/test/resources");
   });
 
   it("fails before spawn when the packaged Electron binding is unavailable", async () => {

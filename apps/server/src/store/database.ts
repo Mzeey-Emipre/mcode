@@ -5,7 +5,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync, realpathSync } from "fs";
 import { createRequire } from "module";
-import { dirname, join, resolve } from "path";
+import { dirname, isAbsolute, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getMcodeDir, resolveDbPath } from "@mcode/shared";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -106,12 +106,16 @@ export function resolveElectronNativeBinding(): string {
     return expectedBinding;
   }
 
-  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-  if (!resourcesPath) {
-    throw new Error("Electron resources path is unavailable for packaged SQLite binding.");
+  const packagedResourcesRoot = process.env.MCODE_PACKAGED_RESOURCES_ROOT;
+  if (!packagedResourcesRoot || !isAbsolute(packagedResourcesRoot)) {
+    throw new Error("MCODE_PACKAGED_RESOURCES_ROOT must be an absolute canonical packaged resources directory.");
   }
 
-  const canonicalResourcesRoot = realpathSync(resourcesPath);
+  const canonicalResourcesRoot = realpathSync(packagedResourcesRoot);
+  if (packagedResourcesRoot !== canonicalResourcesRoot) {
+    throw new Error("MCODE_PACKAGED_RESOURCES_ROOT must be a canonical packaged resources directory.");
+  }
+
   const expectedPackagedBinding = join(
     canonicalResourcesRoot,
     "app.asar.unpacked",

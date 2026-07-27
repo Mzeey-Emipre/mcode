@@ -405,6 +405,9 @@ export class ServerManager {
       }
 
       env.BETTER_SQLITE3_BINDING = nativeBindingPath;
+      if (app.isPackaged) {
+        env.MCODE_PACKAGED_RESOURCES_ROOT = process.resourcesPath;
+      }
 
       // The renamed server binary lives in resources/bin/ which lacks Electron's
       // shared libraries (libffmpeg.so). Point LD_LIBRARY_PATH at the original

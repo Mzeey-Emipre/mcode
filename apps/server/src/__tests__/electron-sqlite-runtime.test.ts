@@ -10,6 +10,7 @@ describe("Electron SQLite test runtime", () => {
   let db: Database.Database | undefined;
   let temporaryResourcesPath: string | undefined;
   const binding = process.env.BETTER_SQLITE3_BINDING;
+  const packagedResourcesRoot = process.env.MCODE_PACKAGED_RESOURCES_ROOT;
   const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, "resourcesPath");
 
   function createPackagedBinding(bindingName: string): string {
@@ -27,8 +28,9 @@ describe("Electron SQLite test runtime", () => {
     );
     mkdirSync(dirname(packagedBinding), { recursive: true });
     copyFileSync(binding, packagedBinding);
+    process.env.MCODE_PACKAGED_RESOURCES_ROOT = temporaryResourcesPath;
     Object.defineProperty(process, "resourcesPath", {
-      value: temporaryResourcesPath,
+      value: join(temporaryResourcesPath, "bin"),
       configurable: true,
     });
     return packagedBinding;
@@ -39,6 +41,8 @@ describe("Electron SQLite test runtime", () => {
     db = undefined;
     if (binding === undefined) delete process.env.BETTER_SQLITE3_BINDING;
     else process.env.BETTER_SQLITE3_BINDING = binding;
+    if (packagedResourcesRoot === undefined) delete process.env.MCODE_PACKAGED_RESOURCES_ROOT;
+    else process.env.MCODE_PACKAGED_RESOURCES_ROOT = packagedResourcesRoot;
     if (resourcesPathDescriptor) Object.defineProperty(process, "resourcesPath", resourcesPathDescriptor);
     else delete (process as Record<string, unknown>).resourcesPath;
     if (temporaryResourcesPath) rmSync(temporaryResourcesPath, { recursive: true, force: true });
@@ -70,6 +74,22 @@ describe("Electron SQLite test runtime", () => {
     process.env.BETTER_SQLITE3_BINDING = packagedBinding;
 
     expect(resolveElectronNativeBinding()).toBe(realpathSync(packagedBinding));
+  });
+
+  it("rejects a packaged binding without an authoritative resources root", () => {
+    const packagedBinding = createPackagedBinding("better_sqlite3.node");
+    process.env.BETTER_SQLITE3_BINDING = packagedBinding;
+    delete process.env.MCODE_PACKAGED_RESOURCES_ROOT;
+
+    expect(() => resolveElectronNativeBinding()).toThrow("MCODE_PACKAGED_RESOURCES_ROOT");
+  });
+
+  it("rejects a packaged binding with a non-canonical resources root", () => {
+    const packagedBinding = createPackagedBinding("better_sqlite3.node");
+    process.env.BETTER_SQLITE3_BINDING = packagedBinding;
+    process.env.MCODE_PACKAGED_RESOURCES_ROOT = `${temporaryResourcesPath}${process.platform === "win32" ? "\\\\." : "/."}`;
+
+    expect(() => resolveElectronNativeBinding()).toThrow("MCODE_PACKAGED_RESOURCES_ROOT");
   });
 
   it("rejects an existing generic binding outside packaged resources", () => {
@@ -119,7 +139,8 @@ describe("Electron SQLite test runtime", () => {
 
   it("rejects an unexpected native binding path before loading SQLite", () => {
     process.env.BETTER_SQLITE3_BINDING = "C:/unexpected/better_sqlite3.electron.node";
+    process.env.MCODE_PACKAGED_RESOURCES_ROOT = process.cwd();
 
-    expect(() => openMemoryDatabase()).toThrow("workspace Electron binding");
+    expect(() => openMemoryDatabase()).toThrow("packaged binding");
   });
 });
