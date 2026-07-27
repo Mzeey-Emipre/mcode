@@ -11,6 +11,10 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.test.ts"],
+    pool: "forks",
+    // Electron child processes are heavier than Node's. Two workers keep Windows
+    // process-integration tests within their timing bounds without serializing the suite.
+    maxWorkers: 2,
     env: {
       MCODE_DATA_DIR: testDataDir,
       MCODE_DRIZZLE_MIGRATIONS_DIR: resolve(serverPackageRoot, "drizzle"),
