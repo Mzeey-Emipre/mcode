@@ -70,6 +70,25 @@ describe("PlanQuestionWizard", () => {
     expect(screen.getByTestId("plan-accept-recommended")).toBeDisabled();
   });
 
+  it("enables final submit when the running thread settles", () => {
+    seed(true);
+    useThreadStore.getState().setActiveQuestionIndex(threadId, 1);
+    const { rerender } = render(<PlanQuestionWizard threadId={threadId} />);
+    expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
+
+    useThreadStore.setState({ runningThreadIds: new Set() });
+    rerender(<PlanQuestionWizard threadId={threadId} />);
+    expect(screen.getByRole("button", { name: /submit/i })).toBeEnabled();
+  });
+
+  it("toggles the keyboard shortcut legend", () => {
+    render(<PlanQuestionWizard threadId={threadId} />);
+    fireEvent.keyDown(window, { key: "?" });
+    expect(screen.getByRole("note", { name: "Keyboard shortcuts" })).toHaveTextContent("select");
+    fireEvent.keyDown(window, { key: "?" });
+    expect(screen.queryByRole("note", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+  });
+
   it("submits selected answers before a queued follow-up can be released", async () => {
     render(<PlanQuestionWizard threadId={threadId} />);
     fireEvent.click(screen.getByRole("radio", { name: /SQLite/ }));
