@@ -189,11 +189,14 @@ export class ThreadRepo {
     };
   }
 
-  /** Find a thread by its primary key. Returns null if not found. */
-  findById(id: string): Thread | null {
+  /** Find a thread by its primary key, optionally constrained to one external owner. */
+  findById(id: string, options: { createdByIntegrationId?: string } = {}): Thread | null {
+    const ownershipClause = options.createdByIntegrationId === undefined
+      ? ""
+      : " AND created_by_integration_id = ?";
     const row = this.db
-      .prepare(`SELECT ${THREAD_COLUMNS} FROM threads WHERE id = ?`)
-      .get(id) as ThreadRow | undefined;
+      .prepare(`SELECT ${THREAD_COLUMNS} FROM threads WHERE id = ?${ownershipClause}`)
+      .get(id, ...(options.createdByIntegrationId === undefined ? [] : [options.createdByIntegrationId])) as ThreadRow | undefined;
 
     return row ? rowToThread(row) : null;
   }
@@ -246,11 +249,14 @@ export class ThreadRepo {
   search(opts: {
     query: string;
     filters?: { status?: string[]; provider?: string[] };
+    workspaceIds?: string[];
+    excludeThreadId?: string;
+    createdByIntegrationId?: string;
     sort?: { field: "updated_at" | "created_at" | "title"; direction: "asc" | "desc" };
     limit?: number;
   }): { threads: Thread[]; workspaces: { id: string; name: string; path: string }[] } {
     const clampedLimit = Math.max(1, Math.min(200, opts.limit ?? 100));
-    const conditions: string[] = ["t.deleted_at IS NULL"];
+    const conditions: string[] = ["t.deleted_at IS NULL", "w.deleted_at IS NULL"];
     const params: unknown[] = [];
 
     if (opts.query) {
@@ -279,6 +285,22 @@ export class ThreadRepo {
       params.push(...opts.filters.provider);
     }
 
+    if (opts.workspaceIds?.length) {
+      const placeholders = opts.workspaceIds.map(() => "?").join(", ");
+      conditions.push(`t.workspace_id IN (${placeholders})`);
+      params.push(...opts.workspaceIds);
+    }
+
+    if (opts.excludeThreadId) {
+      conditions.push("t.id != ?");
+      params.push(opts.excludeThreadId);
+    }
+
+    if (opts.createdByIntegrationId !== undefined) {
+      conditions.push("t.created_by_integration_id = ?");
+      params.push(opts.createdByIntegrationId);
+    }
+
     const sortField = opts.sort?.field ?? "updated_at";
     const sortDir = opts.sort?.direction ?? "desc";
     const ALLOWED_SORT_FIELDS = new Set(["updated_at", "created_at", "title"]);
@@ -286,7 +308,9 @@ export class ThreadRepo {
     if (!ALLOWED_SORT_FIELDS.has(sortField) || !ALLOWED_SORT_DIRS.has(sortDir)) {
       throw new Error(`Invalid sort parameters: ${sortField} ${sortDir}`);
     }
-    const orderBy = `t.${sortField} ${sortDir.toUpperCase()}`;
+    const orderBy = sortField === "updated_at" && sortDir === "desc"
+      ? "t.updated_at DESC, t.id ASC"
+      : `t.${sortField} ${sortDir.toUpperCase()}`;
 
     const threadCols = THREAD_COLUMNS.split(", ").map((c) => `t.${c}`).join(", ");
     const sql = `

@@ -228,6 +228,21 @@ describe("ThreadRepo.search", () => {
       matching.id,
     ]);
   });
+
+  it("filters search results to the owning external integration", () => {
+    const workspace = workspaceRepo.create("owned", "/src/owned", true);
+    const owned = threadRepo.create(workspace.id, "Owned", "direct", "main");
+    const otherOwned = threadRepo.create(workspace.id, "Other", "direct", "main");
+    const unowned = threadRepo.create(workspace.id, "Unowned", "direct", "main");
+    threadRepo.updateExternalCreator(owned.id, "integration-a");
+    threadRepo.updateExternalCreator(otherOwned.id, "integration-b");
+
+    expect(threadRepo.search({ query: "", createdByIntegrationId: "integration-a" }).threads.map((item) => item.id)).toEqual([
+      owned.id,
+    ]);
+    expect(threadRepo.findById(owned.id, { createdByIntegrationId: "integration-b" })).toBeNull();
+    expect(threadRepo.findById(unowned.id, { createdByIntegrationId: "integration-a" })).toBeNull();
+  });
 });
 
 describe("Migration 019 backfill", () => {

@@ -4,6 +4,8 @@ import {
   THREAD_CREATE_PROMPT_MAX_LENGTH,
   ThreadCreateBatchInputSchema,
   ThreadCreateBatchResultSchema,
+  ThreadSearchInputSchema,
+  ThreadWaitInputSchema,
   WORKSPACE_SEARCH_LIMIT_DEFAULT,
   WorkspaceSearchInputSchema,
   WorktreeListInputSchema,
@@ -22,6 +24,13 @@ describe("thread control discovery schemas", () => {
     expect(WorktreeListResultSchema().safeParse({
       status: "found", workspaceId: "workspace", worktrees: [{ worktreeId: "worktree", label: "main", path: "C:/secret" }],
     }).success).toBe(false);
+  });
+});
+
+describe("thread search and wait schemas", () => {
+  it("rejects empty status filters and duplicate wait targets", () => {
+    expect(ThreadSearchInputSchema().safeParse({ statuses: [] }).success).toBe(false);
+    expect(ThreadWaitInputSchema().safeParse({ threadIds: ["thread-1", "thread-1"] }).success).toBe(false);
   });
 });
 
