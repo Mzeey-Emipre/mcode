@@ -138,6 +138,17 @@ describe('Sidebar "Edit settings.json" button', () => {
     );
   });
 
+  it("omits desktop branding and collapse controls from the project sidebar", () => {
+    renderProjectSidebar();
+
+    expect(
+      screen.queryByRole("img", { name: "Mcode" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Collapse sidebar" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("does not display a keyboard shortcut beside thread search", () => {
     renderProjectSidebar();
 

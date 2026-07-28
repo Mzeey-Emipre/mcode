@@ -1,10 +1,11 @@
 import { createHash } from "crypto";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { bootstrapDrizzle } from "../store/bootstrap-drizzle.js";
+import { openElectronMemoryDatabase } from "./electron-sqlite.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DRIZZLE_DIR = join(__dirname, "../../drizzle");
@@ -22,7 +23,7 @@ function baselineSqlHash(): string {
 }
 
 function freshDb(): Database.Database {
-  const db = new Database(":memory:");
+  const db = openElectronMemoryDatabase();
   db.pragma("foreign_keys = ON");
   return db;
 }

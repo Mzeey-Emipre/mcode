@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import { join } from "path";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 
@@ -9,14 +9,20 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../codex-version.js", () => ({
-  checkCodexVersion: () => ({ ok: true, version: "0.40.0" }),
-  meetsMinVersion: () => true,
+const { checkCodexVersionMock, meetsMinVersionMock } = vi.hoisted(() => ({
+  checkCodexVersionMock: vi.fn<() =>
+    | { ok: true; version: string }
+    | { ok: false; error: string }>(() => ({ ok: true, version: "0.40.0" })),
+  meetsMinVersionMock: vi.fn(() => true),
 }));
 
-const { sendTurnMock, listSkillsMock, appServers, startError } = vi.hoisted(() => ({
+vi.mock("../codex-version.js", () => ({
+  checkCodexVersion: checkCodexVersionMock,
+  meetsMinVersion: meetsMinVersionMock,
+}));
+
+const { sendTurnMock, appServers, startError } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue("turn-test-id"),
-  listSkillsMock: vi.fn().mockResolvedValue({ data: [] }),
   appServers: [] as Array<import("events").EventEmitter & {
     isAlive: boolean;
     options: Record<string, unknown>;
@@ -47,9 +53,6 @@ vi.mock("../codex-app-server.js", async () => {
     async sendTurn(input: unknown, turnOptions: unknown): Promise<string> {
       return sendTurnMock(input, turnOptions);
     }
-    async listSkills(cwds: string[] | undefined): Promise<unknown> {
-      return listSkillsMock(cwds);
-    }
     async interruptTurn(): Promise<void> {}
     async kill(): Promise<void> {
       this.isAlive = false;
@@ -65,15 +68,29 @@ import { stubEnvService } from "../../../__tests__/stub-env-service.js";
 import { BrowserAutomationAccessService } from "../../../services/browser-automation/access-service.js";
 
 function makeProvider(
-  skillList: (...args: unknown[]) => unknown[] = vi.fn(() => []),
+  catalogService: {
+    currentSkills: (cwd?: string) => unknown[];
+    currentPrompts: () => unknown[];
+    refreshCustomPrompts: () => Promise<{ prompts: unknown[] }>;
+    refresh: (cwd?: string) => Promise<{ skills: unknown[] }>;
+    onSkillsChanged: (handler: () => void) => () => void;
+    shutdown: () => Promise<void>;
+  } = {
+    currentSkills: vi.fn(() => []),
+    currentPrompts: vi.fn(() => []),
+    refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
+    refresh: vi.fn(async () => ({ skills: [] })),
+    onSkillsChanged: vi.fn(() => () => undefined),
+    shutdown: vi.fn(async () => undefined),
+  },
   browserAutomationAccess = new BrowserAutomationAccessService(),
 ): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
     { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
-    { list: skillList } as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
+    catalogService as never,
     browserAutomationAccess,
   );
 }
@@ -89,8 +106,8 @@ describe("CodexProvider first turn on new session", () => {
 
   beforeEach(() => {
     sendTurnMock.mockClear();
-    listSkillsMock.mockReset();
-    listSkillsMock.mockResolvedValue({ data: [] });
+    checkCodexVersionMock.mockClear();
+    meetsMinVersionMock.mockClear();
     appServers.length = 0;
     startError.current = null;
   });
@@ -190,6 +207,155 @@ describe("CodexProvider first turn on new session", () => {
     await ended;
   });
 
+  it("emits Error before Ended when CLI preflight fails before runtime acquire", async () => {
+    checkCodexVersionMock.mockReturnValueOnce({ ok: false, error: "Codex CLI unavailable" });
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+
+    await provider.sendTurn({
+      sessionId: "mcode-preflight-failure",
+      workspaceId: "workspace-test",
+      threadId: "preflight-failure",
+      message: "hello",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    expect(events).toEqual([
+      { type: AgentEventType.Error, threadId: "preflight-failure", error: "Codex CLI unavailable" },
+      { type: AgentEventType.Ended, threadId: "preflight-failure" },
+    ]);
+    expect(appServers).toHaveLength(0);
+  });
+
+  it("skips CLI preflight when reusing a live session", async () => {
+    const provider = makeProvider();
+    const sessionId = "mcode-reusable-session";
+    const threadId = "reusable-session";
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const request = {
+      sessionId,
+      workspaceId: "workspace-test",
+      threadId,
+      message: "first",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "auto" as const,
+    };
+
+    await provider.sendTurn(request);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(checkCodexVersionMock).toHaveBeenCalledTimes(1);
+    const runtime = (provider as unknown as {
+      runtime: { get: (id: string) => { server: { emit: (event: string, value: unknown) => void } } | undefined };
+    }).runtime;
+    const state = runtime.get(sessionId);
+    expect(state).toBeDefined();
+    state!.server.emit("notification", {
+      method: "turn/completed",
+      params: { turn: { id: "turn-test-id", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await provider.sendTurn({ ...request, message: "second" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(checkCodexVersionMock).toHaveBeenCalledTimes(1);
+    state!.server.emit("notification", {
+      method: "turn/completed",
+      params: { turn: { id: "turn-test-id", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(events.filter((event) => event.type === AgentEventType.Ended)).toHaveLength(2);
+  });
+
+  it("keeps caller-specific policy for unsupported CLI versions", async () => {
+    checkCodexVersionMock.mockReturnValueOnce({ ok: true, version: "0.36.0" });
+    meetsMinVersionMock.mockReturnValueOnce(false);
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+
+    await provider.sendTurn({
+      sessionId: "mcode-unsupported-version",
+      workspaceId: "workspace-test",
+      threadId: "unsupported-version",
+      message: "hello",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    expect(events).toEqual([
+      {
+        type: AgentEventType.Error,
+        threadId: "unsupported-version",
+        error: "Codex CLI version 0.36.0 is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex",
+      },
+      { type: AgentEventType.Ended, threadId: "unsupported-version" },
+    ]);
+
+    checkCodexVersionMock.mockReturnValueOnce({ ok: true, version: "0.36.0" });
+    meetsMinVersionMock.mockReturnValueOnce(false);
+    await expect(provider.runSideChannelQuery({
+      parentThreadId: "parent-thread",
+      parentSdkSessionId: "sdk-thread-1",
+      prompt: "Generate the handoff.",
+      cwd: process.cwd(),
+    })).rejects.toMatchObject({
+      code: "ETIMEDOUT",
+      message: "Codex CLI version 0.36.0 is too old for side-channel handoff",
+    });
+    expect(appServers).toHaveLength(0);
+  });
+
+  it("starts the first turn from cached Skills without waiting for catalog I/O", async () => {
+    const nativeSkill = {
+      name: "review",
+      description: "Review changes",
+      kind: "skill" as const,
+      source: "project" as const,
+      providers: ["codex"],
+      nativeName: "review",
+      path: "C:/repo/.codex/skills/review/SKILL.md",
+    };
+    const currentSkills = vi.fn(() => [nativeSkill]);
+    const refresh = vi.fn(() => new Promise<{ skills: unknown[] }>(() => undefined));
+    const provider = makeProvider({
+      currentSkills,
+      currentPrompts: vi.fn(() => []),
+      refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
+      refresh,
+      onSkillsChanged: vi.fn(() => () => undefined),
+      shutdown: vi.fn(async () => undefined),
+    });
+
+    await provider.sendTurn({
+      sessionId: "mcode-catalog-independent",
+      workspaceId: "workspace-test",
+      threadId: "catalog-independent",
+      message: "hello",
+      cwd: "C:/repo",
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(sendTurnMock).toHaveBeenCalledTimes(1);
+    expect(currentSkills).toHaveBeenCalledWith("C:/repo");
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("maps proactive orchestration to Ultra only on supported Codex models", async () => {
     const provider = makeProvider();
 
@@ -284,7 +450,7 @@ describe("CodexProvider first turn on new session", () => {
 
   it("sends Codex native skill input for slash skill invocations", async () => {
     const skillPath = "C:\\Users\\Test\\.codex\\plugins\\cache\\openai-bundled\\browser\\1.0.0\\skills\\control-in-app-browser\\SKILL.md";
-    const provider = makeProvider(vi.fn(() => [{
+    const nativeSkill = {
       name: "browser:control-in-app-browser",
       nativeName: "control-in-app-browser",
       description: "Control browser",
@@ -292,7 +458,15 @@ describe("CodexProvider first turn on new session", () => {
       source: "plugin",
       providers: ["codex"],
       path: skillPath,
-    }]));
+    };
+    const provider = makeProvider({
+      currentSkills: vi.fn(() => [nativeSkill]),
+      currentPrompts: vi.fn(() => []),
+      refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
+      refresh: vi.fn(async () => ({ skills: [nativeSkill] })),
+      onSkillsChanged: vi.fn(() => () => undefined),
+      shutdown: vi.fn(async () => undefined),
+    });
 
     await provider.sendTurn({
       sessionId: "mcode-skill-turn",
@@ -348,6 +522,39 @@ describe("CodexProvider first turn on new session", () => {
     ]);
   });
 
+  it("sends selected plugin mentions as native Codex mention input", async () => {
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      sessionId: "mcode-mentioned-plugin",
+      workspaceId: "workspace-test",
+      threadId: "mentioned-plugin",
+      message: "@Browser inspect the page",
+      mentions: [{
+        id: "mention-plugin-1",
+        kind: "plugin",
+        label: "Browser",
+        name: "Browser",
+        path: "plugin://browser@openai-bundled",
+        range: { start: 0, end: 8 },
+      }],
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      permissionMode: "auto",
+      providerOptions: {},
+    });
+
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    expect(sendTurnMock.mock.calls[0][0]).toEqual([
+      { type: "mention", name: "Browser", path: "plugin://browser@openai-bundled" },
+      { type: "text", text: "@Browser inspect the page" },
+    ]);
+  });
+
   it("sends selected agent mentions as Codex subagent URI input", async () => {
     const provider = makeProvider();
 
@@ -389,7 +596,7 @@ describe("CodexProvider first turn on new session", () => {
         promptPath,
         "---\ndescription: Draft a PR\n---\nDraft a PR for $FILES titled $PR_TITLE. Args: $ARGUMENTS",
       );
-      const provider = makeProvider(vi.fn(() => [{
+      const prompt = {
         name: "prompts:draftpr",
         nativeName: "draftpr",
         description: "Draft a PR",
@@ -397,7 +604,16 @@ describe("CodexProvider first turn on new session", () => {
         source: "user",
         providers: ["codex"],
         path: promptPath,
-      }]));
+      };
+      const refreshCustomPrompts = vi.fn(async () => ({ prompts: [prompt] }));
+      const provider = makeProvider({
+          currentSkills: vi.fn(() => []),
+          currentPrompts: vi.fn(() => []),
+          refreshCustomPrompts,
+          refresh: vi.fn(async () => ({ skills: [] })),
+          onSkillsChanged: vi.fn(() => () => undefined),
+          shutdown: vi.fn(async () => undefined),
+      });
 
       await provider.sendTurn({
         sessionId: "mcode-prompt-turn",
@@ -419,6 +635,103 @@ describe("CodexProvider first turn on new session", () => {
         type: "text",
         text: 'Draft a PR for src/a.ts src/b.ts titled Add files. Args: FILES="src/a.ts src/b.ts" PR_TITLE="Add files"',
       }]);
+      expect(refreshCustomPrompts).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(promptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses selected catalog identity when a Skill and custom prompt share a name", async () => {
+    const promptDir = mkdtempSync(join(tmpdir(), "codex-provider-collision-"));
+    try {
+      const promptPath = join(promptDir, "release.md");
+      const skillPath = join(promptDir, "release-skill", "SKILL.md");
+      writeFileSync(promptPath, "Prompt release $ARGUMENTS");
+      const prompt = {
+        name: "prompts:release",
+        nativeName: "release",
+        description: "Prompt release",
+        kind: "command",
+        source: "user",
+        providers: ["codex"],
+        path: promptPath,
+      };
+      const skill = {
+        name: "prompts:release",
+        nativeName: "prompts:release",
+        description: "Skill release",
+        kind: "skill",
+        source: "user",
+        providers: ["codex"],
+        path: skillPath,
+      };
+      const provider = makeProvider({
+          currentSkills: vi.fn(() => [skill]),
+          currentPrompts: vi.fn(() => [prompt]),
+          refreshCustomPrompts: vi.fn(async () => ({ prompts: [prompt] })),
+          refresh: vi.fn(async () => ({ skills: [skill] })),
+          onSkillsChanged: vi.fn(() => () => undefined),
+          shutdown: vi.fn(async () => undefined),
+      });
+
+      await provider.sendTurn({
+        sessionId: "mcode-prompt-collision",
+        workspaceId: "workspace-test",
+        threadId: "prompt-collision",
+        message: "/prompts:release alpha",
+        mentions: [{
+          id: "command:command:prompts:release",
+          kind: "command",
+          label: "prompts:release",
+          namespace: "command",
+          capabilityIdentity: {
+            providerId: "codex",
+            kind: "customPrompt",
+            nativeId: "release",
+          },
+          range: { start: 0, end: 16 },
+        }],
+        cwd: process.cwd(),
+        model: "gpt-5.4",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+      await provider.sendTurn({
+        sessionId: "mcode-skill-collision",
+        workspaceId: "workspace-test",
+        threadId: "skill-collision",
+        message: "/prompts:release beta",
+        mentions: [{
+          id: "command:skill:prompts:release",
+          kind: "command",
+          label: "prompts:release",
+          namespace: "skill",
+          capabilityIdentity: {
+            providerId: "codex",
+            kind: "skill",
+            nativeId: skillPath,
+          },
+          range: { start: 0, end: 16 },
+        }],
+        cwd: process.cwd(),
+        model: "gpt-5.4",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+
+      for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+
+      expect(sendTurnMock.mock.calls[0][0]).toEqual([
+        { type: "text", text: "Prompt release alpha" },
+      ]);
+      expect(sendTurnMock.mock.calls[1][0]).toEqual([
+        { type: "skill", name: "prompts:release", path: skillPath },
+        { type: "text", text: "$prompts:release beta" },
+      ]);
     } finally {
       rmSync(promptDir, { recursive: true, force: true });
     }
@@ -427,7 +740,7 @@ describe("CodexProvider first turn on new session", () => {
   it("emits a controlled error when a listed Codex prompt cannot be read", async () => {
     const promptDir = mkdtempSync(join(tmpdir(), "missing-codex-prompt-"));
     try {
-      const provider = makeProvider(vi.fn(() => [{
+      const prompt = {
         name: "prompts:draftpr",
         nativeName: "draftpr",
         description: "Draft a PR",
@@ -435,7 +748,15 @@ describe("CodexProvider first turn on new session", () => {
         source: "user",
         providers: ["codex"],
         path: join(promptDir, "draftpr.md"),
-      }]));
+      };
+      const provider = makeProvider({
+          currentSkills: vi.fn(() => []),
+          currentPrompts: vi.fn(() => []),
+          refreshCustomPrompts: vi.fn(async () => ({ prompts: [prompt] })),
+          refresh: vi.fn(async () => ({ skills: [] })),
+          onSkillsChanged: vi.fn(() => () => undefined),
+          shutdown: vi.fn(async () => undefined),
+      });
       const events: AgentEvent[] = [];
       provider.on("event", (event: AgentEvent) => events.push(event));
 
@@ -487,72 +808,6 @@ describe("CodexProvider first turn on new session", () => {
     expect(sendTurnMock.mock.calls[0][0]).toEqual([{ type: "text", text: "/goal clear" }]);
   });
 
-  it("lists enabled native Codex skills from a live app-server session", async () => {
-    const cwd = process.cwd();
-    const skillPath = join(
-      homedir(),
-      ".codex",
-      "plugins",
-      "cache",
-      "openai-bundled",
-      "browser",
-      "1.0.0",
-      "skills",
-      "control-in-app-browser",
-      "SKILL.md",
-    );
-    listSkillsMock.mockResolvedValueOnce({
-      data: [{
-        cwd,
-        errors: [],
-        skills: [
-          {
-            name: "control-in-app-browser",
-            description: "Long browser description",
-            shortDescription: "Short browser description",
-            enabled: true,
-            path: skillPath,
-            scope: "system",
-            interface: null,
-          },
-          {
-            name: "disabled",
-            description: "Hidden",
-            enabled: false,
-            path: join(cwd, ".codex", "skills", "disabled", "SKILL.md"),
-            scope: "repo",
-          },
-        ],
-      }],
-    });
-    const provider = makeProvider();
-
-    await provider.sendTurn({
-      sessionId: "mcode-native-skills",
-      workspaceId: "workspace-test",
-      threadId: "native-skills",
-      message: "hello",
-      cwd,
-      model: "gpt-5.4",
-      interactionMode: "build",
-      providerOptions: {},
-      permissionMode: "auto",
-    });
-
-    const skills = await provider.listSkills(cwd);
-
-    expect(listSkillsMock).toHaveBeenCalledWith([cwd]);
-    expect(skills).toEqual([{
-      name: "control-in-app-browser",
-      description: "Short browser description",
-      kind: "skill",
-      source: "plugin",
-      providers: ["codex"],
-      nativeName: "control-in-app-browser",
-      path: skillPath,
-    }]);
-  });
-
   it("runs side-channel handoff turns at low effort", async () => {
     const provider = makeProvider();
 
@@ -588,5 +843,21 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await expect(result).resolves.toBe("# Handoff");
+  });
+
+  it("maps side-channel CLI preflight failures to transient errors before creating a server", async () => {
+    checkCodexVersionMock.mockReturnValueOnce({ ok: false, error: "Codex CLI unavailable" });
+    const provider = makeProvider();
+
+    await expect(provider.runSideChannelQuery({
+      parentThreadId: "parent-thread",
+      parentSdkSessionId: "sdk-thread-1",
+      prompt: "Generate the handoff.",
+      cwd: process.cwd(),
+    })).rejects.toMatchObject({
+      code: "ETIMEDOUT",
+      message: "Codex CLI unavailable",
+    });
+    expect(appServers).toHaveLength(0);
   });
 });

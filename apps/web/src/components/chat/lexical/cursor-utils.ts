@@ -34,7 +34,19 @@ export function extractComposerMessage(editor: LexicalEditor): ExtractedComposer
           text += mentionText;
           mentions.push({ ...child.getMentionData(), range: { start, end: text.length } });
         } else if ($isSlashCommandNode(child)) {
-          text += `/${child.getCommandName()}`;
+          const start = text.length;
+          const label = child.getCommandName();
+          text += `/${label}`;
+          mentions.push({
+            id: `command:${child.getNamespace()}:${label}`,
+            kind: "command",
+            label,
+            namespace: child.getNamespace(),
+            ...(child.getCapabilityIdentity()
+              ? { capabilityIdentity: child.getCapabilityIdentity() }
+              : {}),
+            range: { start, end: text.length },
+          });
         } else {
           text += child.getTextContent();
         }

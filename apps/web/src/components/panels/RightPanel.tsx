@@ -8,6 +8,7 @@ import {
   COMPOSER_MIN_WIDTH,
   PANEL_SPLIT_GAP_PX,
   maxPanelWidthInSplit,
+  createRightPanelState,
   createDefaultRightPanelState,
   getDefaultPanelWidthPx,
 } from "@/stores/diffStore";
@@ -21,10 +22,15 @@ import {
   usePreviewDisplayTabSet,
   usePreviewTabsStore,
 } from "@/stores/previewTabsStore";
-import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
-import { ensureTerminalForScope } from "@/lib/ensure-terminal";
+import { createTerminalForScope } from "@/lib/ensure-terminal";
+import {
+  MAX_TERMINALS_PER_SCOPE,
+  type TerminalInstance,
+  useTerminalStore,
+} from "@/stores/terminalStore";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
+import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
 import {
@@ -61,6 +67,9 @@ export function reconcileWarmPreviewScopes(
   }
   return [...selected.values()];
 }
+import { SubagentsPanel } from "./SubagentsPanel";
+
+const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
 
 /**
  * Tracks whether the Changes tab has unreviewed new files for the active
@@ -105,6 +114,7 @@ export function RightPanel() {
   // chat/composer (App.tsx suppresses the chat pane). A transient view toggle,
   // not a stored width — the panel keeps its width so restoring drops back inline.
   const maximized = useUiStore((s) => s.rightPanelMaximized);
+  const toggleMaximized = useUiStore((s) => s.toggleRightPanelMaximized);
 
   // Read the scope's effective panel record: the active thread's own once it has
   // diverged, otherwise the workspace fallback (ADR-0012 copy-on-write). Both
@@ -117,14 +127,19 @@ export function RightPanel() {
   );
   /** Avoid a Zustand selector that allocates a fresh default object every evaluation. */
   const panelState = useMemo(
-    () => storedPanel ?? createDefaultRightPanelState(),
+    () =>
+      storedPanel
+        ? createRightPanelState(storedPanel)
+        : createDefaultRightPanelState(),
     [storedPanel],
   );
-  const { width: panelWidth, activeTab } = panelState;
-  // Tabs are singletons opened on demand; an empty set means no tab is open and
-  // the panel shows the card-grid empty state. Defensive default for any stored
-  // row that predates the openTabs field. See ADR-0004 / issue #610.
-  const openTabs = panelState.openTabs ?? [];
+  const {
+    width: panelWidth,
+    activeTab,
+    openTabs,
+    tabInstances,
+    activeTabId,
+  } = panelState;
   // Plan is creatable only in a thread; threadless the panel runs
   // against the workspace root and offers just Browser/Terminal/Files.
   const panelScope: PanelScope = activeThreadId ? "thread" : "threadless";
@@ -150,6 +165,25 @@ export function RightPanel() {
     [activeBrowserRequests],
   );
   const [warmPreviewScopes, setWarmPreviewScopes] = useState<readonly WarmPreviewScope[]>([]);
+  const terminalsByScope = useTerminalStore((s) => s.terminals);
+  const scopeTerminals = panelScopeId
+    ? (terminalsByScope[panelScopeId] ?? EMPTY_SCOPE_TERMINALS)
+    : EMPTY_SCOPE_TERMINALS;
+  const terminalLabels = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    for (const terminal of scopeTerminals) {
+      occurrences.set(terminal.label, (occurrences.get(terminal.label) ?? 0) + 1);
+    }
+    const seen = new Map<string, number>();
+    return Object.fromEntries(scopeTerminals.map((terminal) => {
+      const ordinal = (seen.get(terminal.label) ?? 0) + 1;
+      seen.set(terminal.label, ordinal);
+      const label = occurrences.get(terminal.label)! > 1
+        ? `${terminal.label} (${ordinal})`
+        : terminal.label;
+      return [`terminal:${terminal.id}`, label];
+    }));
+  }, [scopeTerminals]);
 
   // The Browser tab's open pages drive the rail's page switcher. The store is
   // seeded by the mounted PreviewPanel; reading it here lets the rail render
@@ -161,7 +195,14 @@ export function RightPanel() {
   // Zustand action refs are stable (same identity for the store's lifetime),
   // so destructuring from getState() at render time is safe and avoids
   // adding actions to useCallback/useEffect dependency arrays.
-  const { setRightPanelWidth, setRightPanelTab, closeRightPanelTab } =
+  const {
+    setRightPanelWidth,
+    setRightPanelTab,
+    setRightPanelTabInstance,
+    closeRightPanelTab,
+    closeRightPanelTabInstance,
+    reorderRightPanelTab,
+  } =
     useDiffStore.getState();
 
   // Tab-strip glance status. Changes counts
@@ -188,6 +229,8 @@ export function RightPanel() {
   const previewActive = activeTab === "preview" && openTabs.includes("preview");
   const terminalActive =
     activeTab === "terminal" && openTabs.includes("terminal");
+  const subagentsActive =
+    activeTab === "subagents" && openTabs.includes("subagents");
 
   useEffect(() => {
     const next = previewActive && panelScopeId && activeWorkspaceId
@@ -204,17 +247,6 @@ export function RightPanel() {
     changesCount,
     isChangesActive,
   );
-
-  // Anticipate the next step: opening the Terminal tab spawns a shell when the
-  // thread has none, so the user lands in a ready terminal instead of an empty
-  // pane. Gated on visibility so a hidden (persisted) terminal tab never spawns
-  // in the background, and intentionally not gated on the terminal count so
-  // killing the last terminal does not immediately respawn one.
-  useEffect(() => {
-    if (panelVisible && terminalActive && panelScopeId) {
-      ensureTerminalForScope(panelScopeId);
-    }
-  }, [panelVisible, terminalActive, panelScopeId]);
 
   // Exit maximize when the panel is hidden so the user never lands on a blank
   // full-screen shell with no panel chrome to restore from.
@@ -290,33 +322,66 @@ export function RightPanel() {
       aria-hidden={!panelVisible}
       inert={!panelVisible ? true : undefined}
     >
-      {/* Rail + content. The activity rail carries the maximize toggle and, once
-          tabs are open, tab navigation and the add control. With no tabs the rail
-          is just the maximize button beside the empty-state create list. */}
+      {/* Rail + content. The activity rail carries close and maximize actions and,
+          once tabs are open, tab navigation and the add control. With no tabs it
+          keeps those panel actions beside the empty-state create list. */}
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
         <ActivityRail
-          openTabs={openTabs}
-          activeTab={activeTab}
+          tabInstances={tabInstances}
+          activeTabId={activeTabId}
           scope={panelScope}
           scopeProgress={scope}
           changesCount={changesCount}
           changesFresh={changesFresh}
           browserTabSet={browserTabSet}
+          maximized={maximized}
           onTogglePanel={() =>
             toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId)
           }
-          onSelect={(id) =>
-            setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+          onToggleMaximized={toggleMaximized}
+          onSelect={(instanceId) => {
+            setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
+            const terminal = tabInstances.find((instance) => instance.id === instanceId);
+            if (terminal?.type === "terminal" && panelScopeId) {
+              useTerminalStore
+                .getState()
+                .setActiveTerminal(panelScopeId, instanceId.slice("terminal:".length));
+            }
+          }}
+          onClose={(instanceId) =>
+            {
+              const terminal = tabInstances.find((instance) => instance.id === instanceId);
+              if (terminal?.type === "terminal") {
+                const ptyId = instanceId.slice("terminal:".length);
+                void getTransport().terminalKill(ptyId).then(() => {
+                  useTerminalStore.getState().removeTerminal(ptyId);
+                  closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
+                });
+              } else {
+                closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
+              }
+            }
           }
-          onClose={(id) =>
-            closeRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+          onReorder={(instanceId, direction) =>
+            reorderRightPanelTab(
+              activeWorkspaceId!,
+              activeThreadId,
+              instanceId,
+              direction,
+            )
           }
-          onCreate={(id) =>
-            setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
-          }
-          onSelectBrowserPage={(pageId) => {
+          terminalCapReached={scopeTerminals.length >= MAX_TERMINALS_PER_SCOPE}
+          terminalLabels={terminalLabels}
+          onCreate={(id) => {
+            if (id === "terminal" && panelScopeId) {
+              createTerminalForScope(panelScopeId);
+              return;
+            }
+            setRightPanelTab(activeWorkspaceId!, activeThreadId, id);
+          }}
+          onSelectBrowserPage={(instanceId, pageId) => {
             // Focus the Browser tab and switch the guest to that page.
-            setRightPanelTab(activeWorkspaceId!, activeThreadId, "preview");
+            setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
             if (panelScopeId) {
               void usePreviewTabsStore
                 .getState()
@@ -350,13 +415,18 @@ export function RightPanel() {
               scope={panelScope}
               openTabs={openTabs}
               onOpen={(id) =>
-                setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+                id === "terminal" && panelScopeId
+                  ? createTerminalForScope(panelScopeId)
+                  : setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
               }
             />
           )}
           {activeTab === "tasks" &&
             openTabs.includes("tasks") &&
             activeThreadId && <PlanPanel threadId={activeThreadId} />}
+          {subagentsActive && activeThreadId && (
+            <SubagentsPanel key={activeThreadId} threadId={activeThreadId} />
+          )}
           <div
             className={
               changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"
@@ -391,16 +461,12 @@ export function RightPanel() {
           })}
           <div
             className={cn(
-              "absolute inset-0 flex min-h-0 flex-row overflow-hidden",
-              !terminalActive && "pointer-events-none z-0 opacity-0",
-              terminalActive && "z-10",
+              "absolute inset-0 z-0 flex min-h-0 flex-row overflow-hidden",
+              !terminalActive && "pointer-events-none opacity-0",
             )}
             aria-hidden={!terminalActive}
             inert={!terminalActive ? true : undefined}
           >
-            {terminalActive && panelScopeId && (
-              <TerminalTabContent threadId={panelScopeId} />
-            )}
             <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden p-2" />
           </div>
         </div>

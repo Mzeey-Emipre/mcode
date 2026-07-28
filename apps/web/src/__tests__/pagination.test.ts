@@ -1,4 +1,5 @@
 import {
+  activateTestConversation,
   resetThreadStoreForTests,
   getTestActiveMessages,
   getTestThreadOldestLoadedSequence,
@@ -11,7 +12,13 @@ import {
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
-import { cacheRecord, clearRecordCache, getCachedRecord } from "@/lib/thread-hydrator/record-cache";
+import {
+  cacheRecord as cacheConversationRecord,
+  cachePrefetchedHistoryPage,
+  clearRecordCache,
+  getCachedRecord,
+  projectConversationCacheState,
+} from "@/lib/thread-hydrator/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 import type { Message } from "@/transport";
@@ -20,6 +27,10 @@ vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
   getTransport: () => mockTransport,
 }));
+
+function cacheRecord(threadId: string, record: ThreadRecord): void {
+  cacheConversationRecord(threadId, projectConversationCacheState(record));
+}
 
 /** Verifies cursor-based pagination: loadOlderMessages behavior and guards. */
 describe("Chat Pagination", () => {
@@ -46,7 +57,7 @@ describe("Chat Pagination", () => {
       hasMore: true,
     });
 
-    await useThreadStore.getState().loadMessages(threadId);
+await activateTestConversation(threadId);
 
     expect(getTestActiveMessages()).toEqual(messages);
     expect(getTestThreadOldestLoadedSequence(threadId)).toBe(51);
@@ -255,6 +266,66 @@ describe("Chat Pagination", () => {
     expect(cached?.persistedFilesChanged.m3).toEqual(["kept.ts"]);
   });
 
+  it("does not merge delayed pagination snapshots into a replacement cache", async () => {
+    const olderMessage = createMockMessage({
+      id: "older-message",
+      thread_id: threadId,
+      sequence: 1,
+    });
+    const replacementMessage = createMockMessage({
+      id: "replacement-message",
+      thread_id: threadId,
+      sequence: 9,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([
+        [threadId, {
+          ...createEmptyThreadRecord(),
+          messages: [createMockMessage({ id: "current-message", thread_id: threadId, sequence: 2 })],
+          oldestLoadedSequence: 2,
+          hasMoreMessages: true,
+          loadEpoch: 1,
+        }],
+      ]),
+    });
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      messages: [olderMessage],
+      hasMore: false,
+    });
+    let resolveSnapshots!: (snapshots: TurnSnapshot[]) => void;
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      new Promise((resolve) => { resolveSnapshots = resolve; }),
+    );
+
+    await useThreadStore.getState().loadOlderMessages(threadId);
+    patchTestThreadLoadEpoch(threadId, 2);
+    cacheRecord(threadId, {
+      ...createEmptyThreadRecord(),
+      messages: [replacementMessage],
+      oldestLoadedSequence: replacementMessage.sequence,
+      persistedFilesChanged: { "replacement-message": ["replacement.ts"] },
+    });
+
+    resolveSnapshots([{
+      id: "delayed-snapshot",
+      message_id: olderMessage.id,
+      thread_id: threadId,
+      ref_before: "before",
+      ref_after: "after",
+      files_changed: ["stale.ts"],
+      worktree_path: null,
+      created_at: new Date().toISOString(),
+    }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getCachedRecord(threadId)?.persistedFilesChanged).toEqual({
+      "replacement-message": ["replacement.ts"],
+    });
+    expect(getTestThreadPersistedFilesChanged(threadId)[olderMessage.id]).toBeUndefined();
+  });
+
   it("loadOlderMessages resets isLoadingMore on network error", async () => {
     resetThreadStoreForTests({
       currentThreadId: threadId,
@@ -276,5 +347,91 @@ describe("Chat Pagination", () => {
 
     expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
     expect(getTestActiveMessages()).toHaveLength(1);
+  });
+
+  it("merges an RPC page with resident rows by id and sequence without duplicates", async () => {
+    const residentAtSharedSequence = createMockMessage({
+      id: "resident-at-shared-sequence",
+      thread_id: threadId,
+      content: "live owner",
+      sequence: 5,
+    });
+    const live = createMockMessage({
+      id: "live",
+      thread_id: threadId,
+      content: "latest live row",
+      sequence: 102,
+    });
+    const older = createMockMessage({ id: "older", thread_id: threadId, sequence: 2 });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: [residentAtSharedSequence, live],
+        oldestLoadedSequence: 5,
+        hasMoreMessages: true,
+      }]]),
+    });
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      messages: [
+        createMockMessage({ id: "live", thread_id: threadId, content: "stale persisted row", sequence: 1 }),
+        createMockMessage({ id: "page-at-shared-sequence", thread_id: threadId, sequence: 5 }),
+        older,
+      ],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+
+    await useThreadStore.getState().loadOlderMessages(threadId);
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(threadId, 50, 5);
+    expect(getTestActiveMessages()).toEqual([
+      older,
+      residentAtSharedSequence,
+      live,
+    ]);
+  });
+
+  it("keeps deterministic resident precedence when a warmed page overlaps pagination", async () => {
+    const resident = createMockMessage({
+      id: "resident",
+      thread_id: threadId,
+      content: "live owner",
+      sequence: 10,
+    });
+    const duplicateIdAtEarlierSequence = createMockMessage({
+      id: "same-id-older-sequence",
+      thread_id: threadId,
+      sequence: 2,
+    });
+    const oldest = createMockMessage({ id: "oldest", thread_id: threadId, sequence: 1 });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: [resident],
+        oldestLoadedSequence: 10,
+        hasMoreMessages: true,
+      }]]),
+    });
+    cachePrefetchedHistoryPage(threadId, 10, {
+      messages: [
+        createMockMessage({ id: "stale-resident", thread_id: threadId, sequence: 10 }),
+        createMockMessage({ id: "same-id-older-sequence", thread_id: threadId, sequence: 3 }),
+        duplicateIdAtEarlierSequence,
+        oldest,
+      ],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+
+    await useThreadStore.getState().loadOlderMessages(threadId);
+
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
+    expect(getTestActiveMessages()).toEqual([
+      oldest,
+      duplicateIdAtEarlierSequence,
+      resident,
+    ]);
   });
 });

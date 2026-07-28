@@ -63,9 +63,12 @@ import {
 import { SpellcheckContextMenu } from "./SpellcheckContextMenu";
 import {
   ComposerEditor,
+  $createSlashCommandNode,
   $createTypedMentionNode,
+  createMentionId,
   extractComposerMessage,
   insertMentionNode,
+  insertSelectedPluginMention,
   insertSlashCommandNode,
   removeSlashCommandTrigger,
   type MentionNodeData,
@@ -195,14 +198,24 @@ function writeComposerContent(
     };
 
     for (const mention of sortedMentions) {
+      const mentionText = mention.kind === "command" ? `/${mention.label}` : `@${mention.label}`;
       if (
         mention.range.start < cursor ||
         mention.range.end > text.length ||
-        text.slice(mention.range.start, mention.range.end) !== `@${mention.label}`
+        text.slice(mention.range.start, mention.range.end) !== mentionText
       ) {
         continue;
       }
       appendText(text.slice(cursor, mention.range.start));
+      if (mention.kind === "command") {
+        paragraph.append($createSlashCommandNode(
+          mention.label,
+          mention.namespace,
+          mention.capabilityIdentity,
+        ));
+        cursor = mention.range.end;
+        continue;
+      }
       const nodeMention =
         mention.kind === "file"
           ? {
@@ -217,7 +230,7 @@ function writeComposerContent(
               label: mention.label,
               name: mention.name,
               path: mention.path,
-              provider: mention.provider,
+              ...(mention.kind === "agent" ? { provider: mention.provider } : {}),
             };
       paragraph.append($createTypedMentionNode(nodeMention));
       cursor = mention.range.end;
@@ -842,6 +855,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const taskBubbleTasks = useTaskStore((s) =>
     threadId ? s.taskBubbleByThread[threadId] ?? EMPTY_TASK_BUBBLE_TASKS : EMPTY_TASK_BUBBLE_TASKS,
   );
+  const fileEffectSummary = useThreadStore((s) =>
+    threadId ? s.records.get(threadId)?.fileEffectSummary : undefined,
+  );
 
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<MessageMention[]>([]);
@@ -1286,9 +1302,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (isGoalOpen(activeGoal)) setGoalPending(false);
   }, [activeGoal]);
 
-  const workspaces = useWorkspaceStore((s) => s.workspaces);
-  const workspacePath = workspaces.find((w) => w.id === workspaceId)?.path;
-
   const activeThread = useWorkspaceThread(threadId, (t) => t);
   const isThreadScaffold = !!(
     activeThread?.clientPreparing || activeThread?.clientError
@@ -1326,25 +1339,28 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const providerReason: "disabled" | "cli_missing" | null = providerUnusable
     ? (!availability!.enabled ? "disabled" : "cli_missing")
     : null;
+  const selectedCatalogWorktreePath = useWorkspaceStore(
+    (state) => state.selectedWorktree?.path,
+  );
+  const catalogCwd = isNewThread && composerMode === "existing-worktree"
+    ? selectedCatalogWorktreePath
+    : activeThread?.worktree_path ?? undefined;
 
   const fileAutocomplete = useFileAutocomplete({
     workspaceId,
     threadId,
     providerId: effectiveProviderId,
+    cwd: catalogCwd,
   });
 
   const handleMentionSelect = useCallback((item: MentionSuggestion) => {
     fileAutocomplete.selectSuggestion(item);
     if (!editorRef.current) return;
 
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `mention-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const mention: MentionNodeData =
       item.kind === "agent"
         ? {
-            id,
+            id: createMentionId(),
             kind: "agent",
             label: item.label,
             name: item.name,
@@ -1352,7 +1368,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             provider: item.provider,
           }
         : {
-            id,
+            id: createMentionId(),
             kind: "file",
             label: item.label,
             path: item.path,
@@ -1502,7 +1518,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const slashCommand = useSlashCommand({
     anchorRef: composerContainerRef,
-    cwd: workspacePath,
+    workspaceId: workspaceId ?? undefined,
+    threadId: !isNewThread ? threadId : undefined,
     providerId: effectiveProviderId,
     modelId,
     onMcodeCommand: (action) => {
@@ -1515,7 +1532,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       }
     },
   });
-
   const worktrees = useWorkspaceStore((s) => s.worktrees);
   const worktreesLoading = useWorkspaceStore((s) => s.worktreesLoading);
   const selectedWorktree = useWorkspaceStore((s) => s.selectedWorktree);
@@ -2479,6 +2495,10 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       if (threadId) clearDraftFromStore(threadId);
       // Hide the reply bar with the composer reset; sendMessage still receives reply IDs from this render.
       if (threadId) clearReply(threadId);
+      if (annotationScopeId && outboundPreviewAnnotations) {
+        usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+        setPreviewDesignModeActive(annotationScopeId, false);
+      }
 
       if (isNewThread && workspaceId) {
         setNewThreadMode(submittedNewThreadMode);
@@ -2578,11 +2598,6 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       if (submittedGoalObjective) setGoalPending(false);
 
-      if (annotationScopeId && outboundPreviewAnnotations) {
-        usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
-        setPreviewDesignModeActive(annotationScopeId, false);
-      }
-
       // Auto-save last-used mode and access as defaults (model defaults are managed in Settings)
       const { settings, loaded, update: updateSettings } = useSettingsStore.getState();
       if (loaded && (mode !== settings.agent.defaults.mode || access !== settings.agent.defaults.permission)) {
@@ -2655,12 +2670,27 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const queued = queuedSendRef.current;
     if (!queued) return;
     setQueuedSend(null);
+    setInput("");
+    setMentions([]);
+    clearDraftFromStore(threadId);
+    const currentAttachments = collectAndClearAttachments();
+    if (annotationScopeId && queued.previewAnnotations) {
+      usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+      setPreviewDesignModeActive(annotationScopeId, false);
+    }
+    if (editorRef.current) {
+      editorRef.current.update(() => {
+        const root = $getRoot();
+        root.clear();
+        root.append($createParagraphNode());
+      });
+    }
     useThreadStore.getState().sendMessage(
       threadId,
       queued.content,
       modelId,
       access,
-      undefined,
+      currentAttachments.length > 0 ? currentAttachments : undefined,
       queued.displayContent,
       reasoning,
       provider,
@@ -2691,8 +2721,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (editorRef.current) {
       if (cmd.action) {
         removeSlashCommandTrigger(editorRef.current);
-      } else {
-        insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace);
+      } else if (!insertSelectedPluginMention(editorRef.current, cmd)) {
+        insertSlashCommandNode(editorRef.current, cmd.name, cmd.namespace, cmd.identity);
       }
     }
   }, [slashCommand]);
@@ -2821,7 +2851,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
       {threadId && taskBubbleTasks.length > 0 && !branchFromMessageId && !isNewThread && (
         <div className="mb-2 flex justify-center">
-          <TaskBubble tasks={taskBubbleTasks} />
+          <TaskBubble tasks={taskBubbleTasks} fileEffects={fileEffectSummary} />
         </div>
       )}
 
@@ -3710,6 +3740,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         state={slashCommand.state}
         selectedIndex={slashCommand.selectedIndex}
         anchorRect={slashCommand.anchorRect}
+        workspacePath={activeWorkspace?.path}
         onSelect={handleSlashSelect}
         onDismiss={slashCommand.onDismiss}
         onRetry={slashCommand.onRetry}

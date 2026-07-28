@@ -7,11 +7,10 @@ import type {
   BranchComparison,
   WorktreeInfo,
   AttachmentMeta,
-  SkillInfo,
-  SkillDiagnostics,
+  ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
   PrInfo,
   PrDetail,
-  PermissionMode,
   ToolCallRecord,
   ThoughtSegmentRecord,
   HookExecutionRecord,
@@ -19,7 +18,6 @@ import type {
   GitCommit,
   ProviderModelInfo,
   CopilotSubagent,
-  CodexAgentMentionInfo,
   GitRemoteUrl,
 } from "./types";
 import type {
@@ -55,10 +53,11 @@ import type {
   BrowserAutomationHostRegistration,
   BrowserAutomationHostDispatchTarget,
   BrowserAutomationResponse,
+  SendMessageInput,
+  CreateAndSendInput,
 } from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
 import type { PaginatedMessages, ConversationPage, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
-import type { ReasoningLevel } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
   decodeTerminalDataFrame,
@@ -281,12 +280,17 @@ export function createWsTransport(
       // Deferred import avoids a circular dependency at module evaluation time.
       const nowForThreads = Date.now();
       import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
-        const { activeWorkspaceId, loadThreads } = useWorkspaceStore.getState();
+        const { activeWorkspaceId, loadThreads, refreshActiveConversation } = useWorkspaceStore.getState();
         if (!activeWorkspaceId) return;
         const last = lastLoadThreadsAtByWorkspace.get(activeWorkspaceId) ?? 0;
-        if (nowForThreads - last <= LOAD_THREADS_RECONNECT_COOLDOWN_MS) return;
+        if (nowForThreads - last <= LOAD_THREADS_RECONNECT_COOLDOWN_MS) {
+          void refreshActiveConversation().catch(() => {});
+          return;
+        }
         lastLoadThreadsAtByWorkspace.set(activeWorkspaceId, nowForThreads);
-        loadThreads(activeWorkspaceId).catch(() => {});
+        loadThreads(activeWorkspaceId)
+          .then(() => refreshActiveConversation())
+          .catch(() => {});
       });
 
       // Reattach active terminals after reconnect.
@@ -311,12 +315,23 @@ export function createWsTransport(
               .map(async (p) => {
                 // -1 means "I have seen nothing" — server replays everything including seq=0.
                 const lastSeq = ptyLastSeqMap.get(p.ptyId) ?? -1;
-                const { gapped } = await rpc<{ gapped: boolean }>(
+                const result = await rpc<
+                  | { mode: "delta" }
+                  | {
+                      mode: "checkpoint";
+                      checkpoint: string;
+                      checkpointThrough: number;
+                    }
+                  | { mode: "reset"; discardThrough: number }
+                >(
                   "terminal.reattach",
                   { ptyId: p.ptyId, lastSeq },
                 );
-                if (gapped) {
+                if (result.mode === "reset") {
+                  ptyLastSeqMap.set(p.ptyId, result.discardThrough);
                   emitPtyReconnectGap({ ptyId: p.ptyId });
+                } else if (result.mode === "checkpoint") {
+                  ptyLastSeqMap.set(p.ptyId, result.checkpointThrough);
                 }
               }),
           );
@@ -618,111 +633,26 @@ export function createWsTransport(
     listWorktrees: (workspaceId) => rpc<WorktreeInfo[]>("git.listWorktrees", { workspaceId }),
 
     // Agent
-    sendMessage: (
-      threadId,
-      content,
-      model?,
-      permissionMode?: PermissionMode,
-      attachments?: AttachmentMeta[],
-      displayContent?: string,
-      reasoningLevel?: ReasoningLevel,
-      provider?: string,
-      interactionMode?,
-      copilotAgent?: string,
-      contextWindow?,
-      thinking?,
-      codexFastMode?,
-      replyToMessageId?,
-      quotedText?,
-      planAction?,
-      mentions?,
-      previewAnnotations?,
-      goalObjective?,
-      orchestrationMode?,
-    ) => {
+    sendMessage: (input: SendMessageInput) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
         ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
         : {};
+      const { replyToMessageId, quotedText, ...command } = input;
       return rpc<void>("agent.send", {
-        threadId,
-        content,
-        model,
-        permissionMode,
-        attachments,
-        reasoningLevel,
-        provider,
-        interactionMode,
-        copilotAgent,
-        contextWindow,
-        thinking,
-        ...(codexFastMode !== undefined && { codexFastMode }),
+        ...command,
         ...(replyToMessageId && { replyToMessageId }),
         ...(quotedText && { quotedText }),
-        ...(displayContent !== undefined && { displayContent }),
-        ...(planAction !== undefined && { planAction }),
-        ...(mentions !== undefined && { mentions }),
-        ...(previewAnnotations !== undefined && { previewAnnotations }),
-        ...(goalObjective !== undefined && { goalObjective }),
-        ...(orchestrationMode !== undefined && { orchestrationMode }),
         ...guardrails,
       });
     },
-    createAndSendMessage: (
-      workspaceId,
-      content,
-      model,
-      permissionMode?,
-      mode?,
-      branch?,
-      worktreeBranchMode?,
-      existingWorktreePath?,
-      existingWorktreeBaseBranch?,
-      attachments?,
-      reasoningLevel?,
-      provider?,
-      interactionMode?,
-      parentThreadId?,
-      forkedFromMessageId?,
-      copilotAgent?,
-      contextWindow?,
-      thinking?,
-      codexFastMode?,
-      displayContent?,
-      mentions?,
-      previewAnnotations?,
-      goalObjective?,
-      orchestrationMode?,
-    ) => {
+    createAndSendMessage: (input: CreateAndSendInput) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
         ? { maxBudgetUsd: state.settings.agent.guardrails.maxBudgetUsd, maxTurns: state.settings.agent.guardrails.maxTurns }
         : {};
       return rpc<CreateAndSendResult>("agent.createAndSend", {
-        workspaceId,
-        content,
-        model,
-        permissionMode,
-        mode,
-        branch,
-        worktreeBranchMode,
-        existingWorktreePath,
-        existingWorktreeBaseBranch,
-        attachments,
-        reasoningLevel,
-        provider,
-        interactionMode,
-        parentThreadId,
-        forkedFromMessageId,
-        copilotAgent,
-        contextWindow,
-        thinking,
-        ...(codexFastMode !== undefined && { codexFastMode }),
-        ...(displayContent !== undefined && { displayContent }),
-        ...(mentions !== undefined && { mentions }),
-        ...(previewAnnotations !== undefined && { previewAnnotations }),
-        ...(goalObjective !== undefined && { goalObjective }),
-        ...(orchestrationMode !== undefined && { orchestrationMode }),
+        ...input,
         ...guardrails,
       });
     },
@@ -811,8 +741,8 @@ export function createWsTransport(
       rpc<ChecksStatus>("github.checkStatus", { threadId, force }),
 
     // Skills
-    listSkills: (cwd?, providerId?) => rpc<SkillInfo[]>("skill.list", { cwd, providerId }),
-    diagnoseSkills: (cwd?) => rpc<SkillDiagnostics>("skill.diagnose", { cwd }),
+    getProviderCatalog: (request: ProviderCatalogRequest) =>
+      rpc<ProviderCatalogSnapshot>("provider.catalog", request),
 
     // Terminal (PTY)
     terminalCreate: (threadId) => rpc<{ ptyId: string; shell: string }>("terminal.create", { threadId }),
@@ -824,8 +754,18 @@ export function createWsTransport(
     terminalResume: (ptyId) => rpc<void>("terminal.resume", { ptyId }),
     terminalKillByThread: (threadId) =>
       rpc<void>("terminal.killByThread", { threadId }),
-    terminalReattach: (ptyId, lastSeq) =>
-      rpc<{ gapped: boolean }>("terminal.reattach", { ptyId, lastSeq }),
+    terminalReattach: (ptyId, lastSeq, cold) =>
+      rpc<
+        | { mode: "delta" }
+        | {
+            mode: "checkpoint";
+            checkpoint: string;
+            checkpointThrough: number;
+          }
+        | { mode: "reset"; discardThrough: number }
+      >("terminal.reattach", { ptyId, lastSeq, cold }),
+    terminalCheckpoint: (ptyId, seq, data) =>
+      rpc<{ accepted: boolean }>("terminal.checkpoint", { ptyId, seq, data }),
     terminalListActive: () =>
       rpc<Array<{ ptyId: string; threadId: string }>>("terminal.listActive", {}),
     terminalHasChildren: (ptyId) =>
@@ -870,6 +810,8 @@ export function createWsTransport(
       rpc<TurnSnapshot[]>("snapshot.listByThread", { threadId }),
     getCumulativeDiff: (threadId, filePath?, maxLines?) =>
       rpc<string>("snapshot.getCumulativeDiff", { threadId, filePath, maxLines }),
+    getCumulativeDiffStats: (threadId) =>
+      rpc("snapshot.getCumulativeDiffStats", { threadId }),
     getGitLog: (workspaceId, branch?, limit?, baseBranch?, threadId?, options?) =>
       rpc<GitCommit[]>("git.log", {
         workspaceId,
@@ -898,6 +840,8 @@ export function createWsTransport(
       rpc<GitRemoteUrl>("git.getRemoteUrl", { workspaceId, threadId }),
     getReviewDiffStats: (params) =>
       rpc<{ additions: number; deletions: number }>("git.reviewDiffStats", params),
+    getReviewComparison: (params) =>
+      rpc<import("@mcode/contracts").ReviewComparison>("git.reviewComparison", params),
 
     // GitHub PR (advanced)
     push: (workspaceId, branch, threadId?) =>
@@ -932,8 +876,6 @@ export function createWsTransport(
     /** Fetches all available Copilot sub-agents for the given workspace (built-in + user + project). */
     listCopilotAgents: (workspaceId) =>
       rpc<CopilotSubagent[]>("provider.copilotAgents", { workspaceId }),
-    listCodexAgents: (workspaceId, threadId?) =>
-      rpc<CodexAgentMentionInfo[]>("provider.codexAgents", { workspaceId, threadId }),
     listProviderAvailability: () =>
       rpc<ProviderAvailability[]>("providers.listAvailability", {}),
 

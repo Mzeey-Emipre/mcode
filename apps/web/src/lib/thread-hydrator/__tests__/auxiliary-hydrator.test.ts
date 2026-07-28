@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { HYDRATION_TTL_MS } from "@/lib/thread-hydrator";
 import { AuxiliaryHydrator } from "@/lib/thread-hydrator/auxiliary-hydrator";
 import {
-  cacheRecord,
+  cacheRecord as cacheConversationRecord,
   clearRecordCache,
   getCachedRecord,
+  projectConversationCacheState,
 } from "@/lib/thread-hydrator/record-cache";
 import {
   createEmptyThreadRecord,
@@ -25,6 +26,10 @@ function makeThinRecord(): ThreadRecord {
     messages: [createMockMessage({ id: "m1", thread_id: THREAD_ID, sequence: 1 })],
     oldestLoadedSequence: 1,
   };
+}
+
+function cacheRecord(threadId: string, record: ThreadRecord): void {
+  cacheConversationRecord(threadId, projectConversationCacheState(record));
 }
 
 describe("AuxiliaryHydrator", () => {
@@ -366,6 +371,54 @@ describe("AuxiliaryHydrator", () => {
     expect(getCachedRecord(THREAD_ID)?.persistedFilesChanged).toEqual({
       "turn-1": ["src/a.ts"],
     });
+  });
+
+  it("preserves live file facts while backfilling historical snapshots", async () => {
+    const liveSummary = {
+      revision: 3,
+      fileCount: 1,
+      additions: 2,
+      deletions: 0,
+      effects: [],
+    };
+    const liveRecord = {
+      ...makeThinRecord(),
+      fileEffectTurnId: "live-turn",
+      fileEffectSummary: liveSummary,
+    };
+    records = new Map([[THREAD_ID, liveRecord]]);
+    cacheRecord(THREAD_ID, liveRecord);
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        message_id: "persisted-turn",
+        files_changed: ["src/old.ts"],
+        file_effects: {
+          revision: 8,
+          fileCount: 8,
+          additions: 8,
+          deletions: 8,
+          effects: [],
+        },
+      },
+    ]);
+
+    const aux = createAux({
+      getWorkspaceThread: () => createMockThread({ id: THREAD_ID, has_file_changes: true }),
+      runningThreadIds: new Set([THREAD_ID]),
+    });
+    aux.hydrate(THREAD_ID, {
+      freshnessTtlMs: HYDRATION_TTL_MS,
+      force: true,
+      commitFileChangesToStore: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(getThreadRecord(records, THREAD_ID).persistedFilesChanged).toEqual({
+        "persisted-turn": ["src/old.ts"],
+      });
+    });
+    expect(getThreadRecord(records, THREAD_ID).fileEffectSummary).toEqual(liveSummary);
+    expect(getCachedRecord(THREAD_ID)?.settledFileEffectSummary).toBeNull();
   });
 
   it("discarded file-change snapshots after the expected load epoch changed", async () => {

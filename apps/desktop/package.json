@@ -18,8 +18,7 @@
     "dist": "bun run build && bun scripts/generate-snapshot.mjs && electron-builder --publish never",
     "dist:no-snapshot": "bun run build && electron-builder --publish never",
     "generate:icons": "bun scripts/generate-icons.mjs",
-    "test": "bunx vitest run",
-    "e2e": "playwright test"
+    "test": "bunx vitest run"
   },
   "dependencies": {
     "@electron/rebuild": "^3.7.1",
@@ -34,7 +33,6 @@
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.1",
-    "@playwright/test": "^1.58.2",
     "@resvg/resvg-js": "^2.6.2",
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",

@@ -23,20 +23,34 @@ describe("terminalStore pause/resume wiring", () => {
     });
   });
 
-  it("pauses all PTYs on hide and resumes on show", () => {
+  it("pauses only the selected PTY and leaves resume to the mounted view", () => {
     const store = useTerminalStore.getState();
     store.addTerminal("thread-1", "pty-a");
     store.addTerminal("thread-1", "pty-b");
-    // addTerminal makes the panel visible; no pause/resume should have fired yet.
-    expect(terminalPause).not.toHaveBeenCalled();
+    // Selecting the new shell pauses the renderer that is about to unmount.
+    expect(terminalPause).toHaveBeenCalledWith("pty-a");
     expect(terminalResume).not.toHaveBeenCalled();
+    terminalPause.mockClear();
 
     store.hideTerminalPanel("thread-1");
-    expect(terminalPause).toHaveBeenCalledTimes(2);
+    expect(terminalPause).toHaveBeenCalledOnce();
+    expect(terminalPause).toHaveBeenCalledWith("pty-b");
     expect(terminalResume).not.toHaveBeenCalled();
 
     store.showTerminalPanel("thread-1");
-    expect(terminalResume).toHaveBeenCalledTimes(2);
+    expect(terminalResume).not.toHaveBeenCalled();
+  });
+
+  it("pauses the prior selection without resuming before reattach", () => {
+    const store = useTerminalStore.getState();
+    store.addTerminal("thread-1", "pty-a");
+    store.addTerminal("thread-1", "pty-b");
+    terminalPause.mockClear();
+
+    store.setActiveTerminal("thread-1", "pty-a");
+
+    expect(terminalPause).toHaveBeenCalledWith("pty-b");
+    expect(terminalResume).not.toHaveBeenCalled();
   });
 
   it("no-ops when hiding an already-hidden panel", () => {
@@ -44,15 +58,15 @@ describe("terminalStore pause/resume wiring", () => {
     expect(terminalPause).not.toHaveBeenCalled();
   });
 
-  it("toggleTerminalPanel pauses when visible, resumes when hidden", () => {
+  it("toggleTerminalPanel pauses on hide without resuming from the store", () => {
     const store = useTerminalStore.getState();
     store.addTerminal("thread-2", "pty-c");
     // Panel is visible after addTerminal. Toggle → hide → pause.
     store.toggleTerminalPanel("thread-2");
     expect(terminalPause).toHaveBeenCalledOnce();
-    // Toggle again → show → resume.
+    // Toggle again → show; TerminalView reattaches before it resumes.
     store.toggleTerminalPanel("thread-2");
-    expect(terminalResume).toHaveBeenCalledOnce();
+    expect(terminalResume).not.toHaveBeenCalled();
   });
 
   it("reconciles stale client PTYs when the restarted server reports none", () => {

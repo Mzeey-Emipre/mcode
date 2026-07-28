@@ -43,6 +43,15 @@ interface MessageBudgetRow {
   metadata_bytes: number;
 }
 
+type MessageOriginInput =
+  | { type: "composer" }
+  | {
+      type: "thread";
+      sourceThreadId: string;
+      sourceTurnId: string;
+      sourceProviderId: string;
+    };
+
 export interface ThreadHistoryBudget {
   budgetBytes: number;
   retainedBytes: number;
@@ -202,6 +211,7 @@ export class MessageRepo {
     isInternal?: boolean,
     mentions?: MessageMention[],
     previewAnnotations?: PreviewAnnotationBundle,
+    origin: MessageOriginInput = { type: "composer" },
   ): Message {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -216,14 +226,17 @@ export class MessageRepo {
     const previewAnnotationsJson = serializePreviewAnnotations(previewAnnotations);
     const modelValue = model ?? null;
     const isInternalValue = isInternal ? 1 : 0;
+    const sourceThreadId = origin.type === "thread" ? origin.sourceThreadId : null;
+    const sourceTurnId = origin.type === "thread" ? origin.sourceTurnId : null;
+    const sourceProviderId = origin.type === "thread" ? origin.sourceProviderId : null;
 
     this.db
       .prepare(
-        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id, threadId, role, content, now, sequence,
-        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, isInternalValue,
+        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, origin.type, sourceThreadId, sourceTurnId, sourceProviderId, isInternalValue,
       );
 
     return {
@@ -269,11 +282,13 @@ export class MessageRepo {
     content: string;
     sequence: number;
     model?: string | null;
+    provider?: string | null;
     attachments?: StoredAttachment[];
     mentions?: MessageMention[];
   }): Message {
     const now = new Date().toISOString();
     const modelValue = input.model ?? null;
+    const providerValue = input.provider ?? null;
     const attachmentsJson =
       input.attachments && input.attachments.length > 0
         ? JSON.stringify(input.attachments)
@@ -285,9 +300,9 @@ export class MessageRepo {
 
     const result = this.db
       .prepare(
-        "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, mentions, model, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?, 0)",
+        "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, mentions, model, provider, origin_type, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?, ?, 'composer', 0)",
       )
-      .run(input.id, input.threadId, input.content, now, input.sequence, attachmentsJson, mentionsJson, modelValue);
+      .run(input.id, input.threadId, input.content, now, input.sequence, attachmentsJson, mentionsJson, modelValue, providerValue);
 
     const attachments =
       result.changes === 0 && input.attachments && input.attachments.length > 0

@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+const { createTerminalForScope } = vi.hoisted(() => ({
+  createTerminalForScope: vi.fn(),
+}));
+
+vi.mock("@/lib/ensure-terminal", () => ({ createTerminalForScope }));
+
 import { summonTab } from "@/lib/summon-tab";
 import { useDiffStore } from "@/stores/diffStore";
+import { useTerminalStore } from "@/stores/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 
@@ -20,13 +27,25 @@ function panel() {
 
 describe("summonTab", () => {
   beforeEach(() => {
+    createTerminalForScope.mockReset();
     useDiffStore.setState({
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
     });
+    useTerminalStore.setState({
+      terminals: {},
+      terminalPanelByThread: {},
+      ptyToThread: {},
+    });
     useUiStore.setState({ primarySurface: "chat" });
     useWorkspaceStore.setState({ activeWorkspaceId: WID, activeThreadId: TID });
   });
+
+  function seedTerminal(): void {
+    useTerminalStore.getState().addTerminal(TID, "pty-1", "pwsh");
+    useDiffStore.getState().addRightPanelTerminalTab(WID, TID, "pty-1");
+    useDiffStore.getState().showRightPanel(WID, TID);
+  }
 
   describe("create-or-focus", () => {
     it("opens the panel and focuses the tab when the panel is closed", () => {
@@ -39,17 +58,17 @@ describe("summonTab", () => {
       expect(panel().openTabs).toContain("preview");
     });
 
-    it("creates the tab if absent (adds it to the open set)", () => {
+    it("requests the first PTY when no terminal tab exists", () => {
       summonTab("preview");
       expect(panel().openTabs).toEqual(["preview"]);
 
       summonTab("terminal");
-      // preview stays open; terminal is created and focused.
-      expect(panel().openTabs).toEqual(["preview", "terminal"]);
-      expect(panel().activeTab).toBe("terminal");
+      expect(createTerminalForScope).toHaveBeenCalledWith(TID);
+      expect(panel().visible).toBe(true);
     });
 
     it("focuses an open-but-inactive tab without hiding the panel", () => {
+      seedTerminal();
       summonTab("preview");
       summonTab("terminal");
       expect(panel().activeTab).toBe("terminal");
@@ -59,25 +78,22 @@ describe("summonTab", () => {
       expect(panel().visible).toBe(true);
       expect(panel().activeTab).toBe("preview");
       // No tab was closed — both remain open.
-      expect(panel().openTabs).toEqual(["preview", "terminal"]);
+      expect(panel().openTabs).toEqual(["terminal", "preview"]);
     });
 
-    it("recreates a closed active tab instead of hiding the empty panel", () => {
-      summonTab("terminal");
-      useDiffStore.getState().closeRightPanelTab(WID, TID, "terminal");
+    it("requests a replacement PTY after the final terminal tab closes", () => {
+      seedTerminal();
+      useDiffStore.getState().closeRightPanelTabInstance(WID, TID, "terminal:pty-1");
+      useTerminalStore.getState().removeTerminal("pty-1");
       expect(panel()).toMatchObject({
         visible: true,
-        activeTab: "terminal",
+        activeTab: "tasks",
         openTabs: [],
       });
 
       summonTab("terminal");
 
-      expect(panel()).toMatchObject({
-        visible: true,
-        activeTab: "terminal",
-        openTabs: ["terminal"],
-      });
+      expect(createTerminalForScope).toHaveBeenCalledWith(TID);
     });
   });
 
@@ -151,7 +167,7 @@ describe("summonTab", () => {
       summonTab("preview", onFocus); // open
       expect(onFocus).toHaveBeenCalledTimes(1);
 
-      summonTab("terminal");
+      seedTerminal();
       summonTab("preview", onFocus); // refocus
       expect(onFocus).toHaveBeenCalledTimes(2);
 
@@ -160,7 +176,7 @@ describe("summonTab", () => {
     });
 
     it("returns to Chat and shows the requested tab from Pull requests", () => {
-      summonTab("terminal");
+      seedTerminal();
       useUiStore.getState().setPrimarySurface("pullRequests");
 
       summonTab("terminal");

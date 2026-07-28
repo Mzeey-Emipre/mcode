@@ -23,6 +23,11 @@ export interface InitializeParams { clientInfo: { name: string; version: string 
 /** Result returned by the `initialize` RPC method. */
 export interface InitializeResult { protocolVersion: string; serverInfo: { name: string; version: string }; capabilities: Record<string, unknown> }
 
+/** Parameters for resolving effective Codex configuration. */
+export interface ConfigReadParams { includeLayers?: boolean; cwd?: string | null }
+/** Effective Codex configuration returned by `config/read`. */
+export interface ConfigReadResult { config: Record<string, unknown> }
+
 // Thread RPCs
 // Source: codex-rs/app-server-protocol/schema/typescript/v2/ThreadStartParams.ts
 
@@ -80,6 +85,10 @@ export interface ThreadResumeResult {
   threadId?: string;
   /** Nested thread object (codex app-server >= 0.104.0). The session ID is at `thread.id`. */
   thread?: { id: string; [key: string]: unknown };
+  /** Effective model selected for the resumed thread. */
+  model?: string | null;
+  /** Effective reasoning effort selected for the resumed thread. */
+  reasoningEffort?: ReasoningEffort | null;
 }
 
 // Turn RPCs
@@ -206,6 +215,66 @@ export interface SkillsListResult {
   }>;
 }
 
+// Plugin RPCs
+
+/** Parameters for the `plugin/list` RPC method. */
+export interface PluginListParams {
+  cwds?: string[];
+}
+
+/** Composer metadata included in a Codex plugin summary. */
+export interface CodexPluginInterface {
+  displayName?: string | null;
+  shortDescription?: string | null;
+  longDescription?: string | null;
+  developerName?: string | null;
+  capabilities?: string[];
+  [key: string]: unknown;
+}
+
+/** Installed-state metadata returned for a Codex plugin. */
+export interface CodexPluginSummary {
+  id: string;
+  name: string;
+  installed: boolean;
+  enabled: boolean;
+  version?: string | null;
+  localVersion?: string | null;
+  interface?: CodexPluginInterface | null;
+  [key: string]: unknown;
+}
+
+/** One plugin marketplace and its summarized plugins. */
+export interface CodexPluginMarketplace {
+  name: string;
+  path: string | null;
+  plugins: CodexPluginSummary[];
+  [key: string]: unknown;
+}
+
+/** Result returned by the `plugin/list` RPC method. */
+export interface PluginListResult {
+  marketplaces: CodexPluginMarketplace[];
+  marketplaceLoadErrors: Array<{ marketplacePath: string; message: string }>;
+  featuredPluginIds: string[];
+}
+
+/** Parameters for the `plugin/read` RPC method. */
+export interface PluginReadParams {
+  marketplacePath?: string;
+  remoteMarketplaceName?: string;
+  pluginName: string;
+}
+
+/** Result returned by the `plugin/read` RPC method. */
+export interface PluginReadResult {
+  plugin: {
+    description?: string | null;
+    summary?: CodexPluginSummary;
+    [key: string]: unknown;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Notification payloads
 // Source: codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts
@@ -255,7 +324,7 @@ export interface TurnPlanUpdatedPayload {
  *
  * Known types (from codex-rs/app-server-protocol):
  *   userMessage, agentMessage, commandExecution, fileChange, mcpToolCall,
- *   dynamicToolCall, collabAgentToolCall, reasoning, webSearch, plan,
+ *   dynamicToolCall, collabAgentToolCall, subAgentActivity, reasoning, webSearch, plan,
  *   imageView, imageGeneration, contextCompaction, enteredReviewMode, exitedReviewMode
  */
 export interface CompletedItem {
@@ -283,6 +352,11 @@ export interface CompletedItem {
   result?: string | null;
   error?: string | null;
 
+  // subAgentActivity
+  agentThreadId?: string;
+  agentPath?: string;
+  kind?: string;
+
   /** `item/completed` with `type: "reasoning"` — human-readable summary lines */
   summary?: string[];
   /** `item/completed` with `type: "reasoning"` — raw reasoning text segments */
@@ -300,6 +374,16 @@ export interface CompletedItem {
 export interface ItemStartedPayload { threadId?: string; turnId?: string; item?: CompletedItem }
 /** Payload for the `item/completed` notification. */
 export interface ItemCompletedPayload { threadId?: string; turnId?: string; item?: CompletedItem }
+
+/** Authoritative effective model settings for a Codex thread. */
+export interface ThreadSettingsUpdatedPayload {
+  threadId: string;
+  threadSettings: {
+    model?: string | null;
+    effort?: ReasoningEffort | null;
+    [key: string]: unknown;
+  };
+}
 
 // turn/completed payload
 
@@ -393,6 +477,7 @@ export interface McpServerStartupStatusUpdatedPayload {
  */
 export type CodexNotification =
   | (JsonRpcNotification<LifecyclePayload> & { method: "turn/started" })
+  | (JsonRpcNotification<ThreadSettingsUpdatedPayload> & { method: "thread/settings/updated" })
   | (JsonRpcNotification<ItemStartedPayload> & { method: "item/started" })
   | (JsonRpcNotification<AgentMessageDeltaPayload> & { method: "item/agentMessage/delta" })
   | (JsonRpcNotification<CommandExecOutputDeltaPayload> & { method: "item/commandExecution/outputDelta" })

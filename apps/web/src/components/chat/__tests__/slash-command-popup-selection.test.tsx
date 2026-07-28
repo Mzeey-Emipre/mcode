@@ -4,10 +4,21 @@
  * The selected row should use bg-accent as its only selection indicator.
  * The previous border-l-2 left-stripe must not appear on any row.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import {
+  $createParagraphNode,
+  $createTextNode,
+  $getNodeByKey,
+  $getRoot,
+  $isTextNode,
+  createEditor,
+} from "lexical";
 import { SlashCommandPopup } from "../SlashCommandPopup";
 import type { Command } from "../useSlashCommand";
+import { MentionNode } from "../lexical/MentionNode";
+import { insertSelectedPluginMention } from "../lexical/SlashCommandPlugin";
+import { extractComposerMessage } from "../lexical/cursor-utils";
 
 // jsdom doesn't implement ResizeObserver or scrollIntoView. Capture originals
 // so the polyfills are reverted after the suite to avoid leaking into other
@@ -68,15 +79,18 @@ function makeAnchorRect(): DOMRect {
 }
 
 const COMMANDS: Command[] = [
-  { name: "foo", description: "First command", namespace: "command" },
-  { name: "bar", description: "Second command", namespace: "skill" },
-  { name: "baz", description: "Third command", namespace: "mcode" },
+  { id: "command:foo", name: "foo", description: "First command", namespace: "command", capabilityKind: "providerCommand", nativeId: "foo" },
+  { id: "skill:bar", name: "bar", description: "Second command", namespace: "skill", capabilityKind: "skill", nativeId: "bar" },
+  { id: "mcode:baz", name: "baz", description: "Third command", namespace: "mcode", capabilityKind: "mcode", nativeId: "baz" },
 ];
 
 const LONG_COMMANDS: Command[] = Array.from({ length: 25 }, (_, i) => ({
+  id: `skill:${i}`,
   name: `skill-${i.toString().padStart(2, "0")}`,
   description: `Skill ${i}`,
   namespace: "skill",
+  capabilityKind: "skill",
+  nativeId: `skill-${i}`,
 }));
 
 function renderPopup(selectedIndex: number) {
@@ -157,6 +171,57 @@ describe("SlashCommandPopup selection indicator", () => {
     renderLongPopup();
     expect(screen.getByRole("option", { name: /skill-00/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /skill-24/ })).toBeInTheDocument();
+  });
+
+  it("inserts a selected plugin as a rich mention", async () => {
+    const editor = createEditor({ nodes: [MentionNode], onError: (error) => { throw error; } });
+    let triggerKey = "";
+    editor.update(() => {
+      const paragraph = $createParagraphNode();
+      const trigger = $createTextNode("/browser");
+      triggerKey = trigger.getKey();
+      paragraph.append(trigger);
+      $getRoot().append(paragraph);
+    }, { discrete: true });
+    const plugin: Command = {
+      id: "plugin:browser@openai-bundled",
+      name: "Browser",
+      description: "Control the in-app browser",
+      namespace: "skill",
+      capabilityKind: "plugin",
+      nativeId: "browser@openai-bundled",
+      mentionPath: "plugin://browser@openai-bundled",
+    };
+    render(
+      <SlashCommandPopup
+        state={{ kind: "ready", items: [plugin] }}
+        selectedIndex={0}
+        anchorRect={makeAnchorRect()}
+        onSelect={(command) => {
+          editor.update(() => {
+            const trigger = $getNodeByKey(triggerKey);
+            if ($isTextNode(trigger)) trigger.selectEnd();
+          }, { discrete: true });
+          insertSelectedPluginMention(editor, command);
+        }}
+        onDismiss={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+
+    fireEvent.mouseDown(screen.getByRole("option", { name: /@Browser/ }));
+
+    await waitFor(() => expect(extractComposerMessage(editor)).toEqual({
+      text: "@Browser ",
+      mentions: [{
+        id: expect.any(String),
+        kind: "plugin",
+        label: "Browser",
+        name: "Browser",
+        path: "plugin://browser@openai-bundled",
+        range: { start: 0, end: 8 },
+      }],
+    }));
   });
 
   it.each([

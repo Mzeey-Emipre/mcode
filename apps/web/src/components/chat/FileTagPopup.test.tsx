@@ -97,7 +97,7 @@ describe("useFileTagPopup", () => {
     expect(result.current.selectedIndex).toBe(0);
   });
 
-  it("resets selectedIndex when items change", () => {
+  it("preserves the active item when suggestions reconcile", () => {
     const { result, rerender } = renderHook(
       (props) => useFileTagPopup(props),
       { initialProps: defaultProps },
@@ -109,7 +109,37 @@ describe("useFileTagPopup", () => {
       } as unknown as React.KeyboardEvent);
     });
     expect(result.current.selectedIndex).toBe(1);
-    rerender({ ...defaultProps, items: items.slice(0, 2) });
+    rerender({ ...defaultProps, items: [items[2], ...items] });
+    expect(result.current.selectedIndex).toBe(2);
+  });
+
+  it("resets selectedIndex when the active item is removed", () => {
+    const { result, rerender } = renderHook(
+      (props) => useFileTagPopup(props),
+      { initialProps: defaultProps },
+    );
+    act(() => {
+      result.current.handleKeyDown({
+        key: "ArrowDown",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent);
+    });
+    rerender({ ...defaultProps, items: [items[0], items[2]] });
+    expect(result.current.selectedIndex).toBe(0);
+  });
+
+  it("resets selectedIndex when the query changes", () => {
+    const { result, rerender } = renderHook(
+      (props) => useFileTagPopup(props),
+      { initialProps: defaultProps },
+    );
+    act(() => {
+      result.current.handleKeyDown({
+        key: "ArrowDown",
+        preventDefault: vi.fn(),
+      } as unknown as React.KeyboardEvent);
+    });
+    rerender({ ...defaultProps, query: "src" });
     expect(result.current.selectedIndex).toBe(0);
   });
 
@@ -228,10 +258,28 @@ describe("FileTagPopup", () => {
     );
 
     const agentOption = screen.getByRole("option", { name: /planner/i });
-    const icon = agentOption.querySelector("svg");
-    expect(icon?.className.baseVal).toContain("text-muted-foreground/55");
-    expect(icon?.className.baseVal).not.toContain("text-primary");
+    const icon = agentOption.querySelector('[data-entity-icon="agent"]');
+    expect(icon).not.toBeNull();
+    expect(icon?.parentElement).toHaveClass("text-muted-foreground");
+    expect(icon?.parentElement).not.toHaveClass("text-primary");
     expect(agentOption.querySelector(".lucide-bot")).toBeNull();
+  });
+
+  it("keeps an agent title close to its description", () => {
+    render(
+      <FileTagPopup
+        items={items}
+        isOpen={true}
+        onSelect={onSelect}
+        listRef={mockListRef}
+        selectedIndex={0}
+      />,
+    );
+
+    const title = screen.getByText("planner");
+    const description = screen.getByText("Plans implementation work.");
+    expect(title.parentElement).toBe(description.parentElement);
+    expect(title.parentElement).toHaveClass("gap-1");
   });
 
   it("accepts selectedIndex prop and marks the correct item", () => {

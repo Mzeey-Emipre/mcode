@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockThread } from "./mocks/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import type { AgentEvent } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -38,8 +39,8 @@ function setup(extra: Partial<ThreadRecord> = {}) {
   });
 }
 
-function dispatch(method: string, params: Record<string, unknown> = {}) {
-  useThreadStore.getState().handleAgentEvent(THREAD, { method, ...params });
+function dispatch(event: AgentEvent) {
+  useThreadStore.getState().handleAgentEvent(event);
 }
 
 describe("context tracker — Fix 2: output tokens included", () => {
@@ -48,9 +49,7 @@ describe("context tracker — Fix 2: output tokens included", () => {
   it("turnComplete stores tokensIn directly (server already adds output tokens)", () => {
     // The server (claude-provider) now includes output_tokens in tokensIn.
     // The frontend stores whatever value it receives.
-    dispatch("session.turnComplete", {
-      params: { reason: "end_turn", costUsd: null, tokensIn: 5000, tokensOut: 500, contextWindow: 200_000 },
-    });
+    dispatch({ type: "turnComplete", threadId: THREAD, reason: "end_turn", costUsd: null, tokensIn: 5000, tokensOut: 500, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     expect(ctx?.lastTokensIn).toBe(5000);
@@ -67,9 +66,7 @@ describe("context tracker — Fix 1: turnComplete skipped during compaction", ()
   );
 
   it("turnComplete during compaction does NOT update contextByThread", () => {
-    dispatch("session.turnComplete", {
-      params: { reason: "end_turn", costUsd: null, tokensIn: 195_000, tokensOut: 500, contextWindow: 200_000 },
-    });
+    dispatch({ type: "turnComplete", threadId: THREAD, reason: "end_turn", costUsd: null, tokensIn: 195_000, tokensOut: 500, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     // Must stay empty — no flash of pre-compaction tokens
@@ -77,9 +74,7 @@ describe("context tracker — Fix 1: turnComplete skipped during compaction", ()
   });
 
   it("turnComplete during compaction does NOT clear isCompactingByThread", () => {
-    dispatch("session.turnComplete", {
-      params: { reason: "end_turn", costUsd: null, tokensIn: 195_000, tokensOut: 500, contextWindow: 200_000 },
-    });
+    dispatch({ type: "turnComplete", threadId: THREAD, reason: "end_turn", costUsd: null, tokensIn: 195_000, tokensOut: 500, contextWindow: 200_000 });
 
     expect(getTestThreadIsCompacting(THREAD)).toBe(true);
   });
@@ -103,9 +98,7 @@ describe("context tracker — Fix 3: contextEstimate on compaction end", () => {
       ]),
     });
 
-    dispatch("session.contextEstimate", {
-      params: { tokensIn: 100_000, contextWindow: 200_000 },
-    });
+    dispatch({ type: "contextEstimate", threadId: THREAD, tokensIn: 100_000, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     expect(ctx?.lastTokensIn).toBe(100_000);
@@ -114,9 +107,7 @@ describe("context tracker — Fix 3: contextEstimate on compaction end", () => {
 
   it("contextEstimate is ignored while compaction is still active", () => {
     // isCompactingByThread still set — estimate must not overwrite zero sentinel
-    dispatch("session.contextEstimate", {
-      params: { tokensIn: 100_000, contextWindow: 200_000 },
-    });
+    dispatch({ type: "contextEstimate", threadId: THREAD, tokensIn: 100_000, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     expect(ctx?.lastTokensIn).toBe(0);
@@ -131,27 +122,23 @@ describe("context tracker — Fix 4: live estimation during turn", () => {
   );
 
   it("contextEstimate from toolResult accumulates into contextByThread", () => {
-    dispatch("session.contextEstimate", {
-      params: { tokensIn: 51_250, contextWindow: 200_000 },
-    });
+    dispatch({ type: "contextEstimate", threadId: THREAD, tokensIn: 51_250, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     expect(ctx?.lastTokensIn).toBe(51_250);
   });
 
   it("multiple contextEstimates accumulate sequentially", () => {
-    dispatch("session.contextEstimate", { params: { tokensIn: 51_000, contextWindow: 200_000 } });
-    dispatch("session.contextEstimate", { params: { tokensIn: 52_500, contextWindow: 200_000 } });
+    dispatch({ type: "contextEstimate", threadId: THREAD, tokensIn: 51_000, contextWindow: 200_000 });
+    dispatch({ type: "contextEstimate", threadId: THREAD, tokensIn: 52_500, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     expect(ctx?.lastTokensIn).toBe(52_500);
   });
 
   it("turnComplete after tool calls overwrites estimate with authoritative value", () => {
-    dispatch("session.contextEstimate", { params: { tokensIn: 52_500, contextWindow: 200_000 } });
-    dispatch("session.turnComplete", {
-      params: { reason: "end_turn", costUsd: null, tokensIn: 53_100, tokensOut: 600, contextWindow: 200_000 },
-    });
+    dispatch({ type: "contextEstimate", threadId: THREAD, tokensIn: 52_500, contextWindow: 200_000 });
+    dispatch({ type: "turnComplete", threadId: THREAD, reason: "end_turn", costUsd: null, tokensIn: 53_100, tokensOut: 600, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     expect(ctx?.lastTokensIn).toBe(53_100);

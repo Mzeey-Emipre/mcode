@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestThreadToolCalls,
@@ -46,16 +47,14 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "tc2", output: "done", isError: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc2", output: "done", isError: true, exitCode: 1 } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
     expect(calls[0].isComplete).toBe(false); // tc1 untouched
     expect(calls[1].isComplete).toBe(true);
     expect(calls[1].output).toBe("done");
+    expect(calls[1].exitCode).toBe(1);
   });
 
   it("tool result with non-matching ID falls back to first incomplete", () => {
@@ -74,10 +73,7 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "unknown-id", output: "result", isError: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "unknown-id", output: "result", isError: false } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -106,14 +102,8 @@ describe("Tool Call Matching", () => {
     });
 
     // Resolve out of order
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "tc3", output: "third", isError: false },
-    });
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "tc1", output: "first", isError: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc3", output: "third", isError: false } satisfies AgentEvent);
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc1", output: "first", isError: false } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -137,10 +127,7 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "unknown", output: "extra", isError: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "unknown", output: "extra", isError: false } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -164,10 +151,7 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: { toolCallId: "tc2", output: "second-result", isError: false },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "tc2", output: "second-result", isError: false } satisfies AgentEvent);
     vi.runAllTimers();
 
     const calls = getTestThreadToolCalls("thread-1");
@@ -200,18 +184,13 @@ describe("Tool Call Matching", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.toolResult",
-      params: {
-        toolCallId: "agent-1",
+    useThreadStore.getState().handleAgentEvent({ type: "toolResult", threadId: "thread-1", toolCallId: "agent-1",
         output: "done",
         isError: false,
         toolInput: {
           model: "gpt-5.5",
           reasoningEffort: "high",
-        },
-      },
-    });
+        }, } satisfies AgentEvent);
     vi.runAllTimers();
 
     const [call] = getTestThreadToolCalls("thread-1");

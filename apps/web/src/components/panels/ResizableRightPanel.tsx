@@ -152,7 +152,7 @@ export function ResizableRightPanel({
           aria-valuemax={getMaxWidth(panelRef.current)}
           aria-valuenow={width}
           tabIndex={0}
-          className="group absolute inset-y-0 left-0 z-20 flex w-2 cursor-col-resize items-stretch justify-start focus:outline-none"
+          className="group absolute inset-y-0 left-0 z-40 flex w-2 cursor-col-resize items-stretch justify-start focus:outline-none"
           onMouseDown={handleDragStart}
           onDoubleClick={toggleSnapWidth}
           onKeyDown={(event) => {

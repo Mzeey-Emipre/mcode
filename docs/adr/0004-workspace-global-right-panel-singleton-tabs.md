@@ -7,7 +7,8 @@ status: accepted
 > **Proposed revision:** ADR-0012 moves *all* panel container state (including
 > width and active tab) to per-thread, with a workspace-level fallback. If
 > accepted, it supersedes the state-split decision below; the singleton-tabs and
-> per-tab-scope decisions here still stand.
+> per-tab-scope decisions here still stand. ADR-0020 separately supersedes the
+> Terminal singleton and internal-multiplicity decision.
 
 ## Context
 

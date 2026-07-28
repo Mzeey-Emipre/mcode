@@ -36,7 +36,14 @@
 import { injectable, inject } from "tsyringe";
 import { randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
-import type { Message, NarrativeEntry, TurnRange } from "@mcode/contracts";
+import {
+  resolveProviderAgentKey,
+  resolveSubagentDisplayName,
+  resolveSubagentMetadata,
+  type Message,
+  type NarrativeEntry,
+  type TurnRange,
+} from "@mcode/contracts";
 import { MessageRepo } from "../repositories/message-repo";
 import {
   ToolCallRecordRepo,
@@ -334,20 +341,20 @@ export class NarrativeStore {
 
   /**
    * Buffer a tool call event for later persistence and return the parent tool
-   * call ID attributed to it. The SDK `parent_tool_use_id` wins; the stack
-   * fallback fills in only when exactly one Agent is still running (Trap 1).
-   * Agent calls are pushed onto the `agentCallStack` (Trap 2 push site).
+   * call ID attributed to it. An explicit provider parent always wins. The
+   * stack fallback applies only to non-Agent calls when exactly one Agent is
+   * still running (Trap 1). Agent calls never inherit a stack-derived parent
+   * and are pushed onto the `agentCallStack` (Trap 2 push site).
    */
   bufferToolCall(threadId: string, event: BufferToolCallEvent): string | undefined {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
 
     const stack = this.agentCallStack.get(threadId) ?? [];
-    // Prefer the SDK-provided parent_tool_use_id on the event (set by the
-    // provider). Parallel subagents require it; stack fallback aligns with
-    // `getCurrentParentToolCallId` / index.ts enrichment.
+    // Preserve provider attribution for every call. Only non-Agent calls may
+    // use the stack fallback because it cannot identify a nested Agent source.
     const parentToolCallId =
       event.toolName === "Agent"
-        ? undefined
+        ? event.parentToolCallId
         : event.parentToolCallId ?? this.getStackDerivedParentFallback(threadId);
     // Diagnostic: trace parent attribution when a mismatch is suspected.
     if (event.toolName !== "Agent" && parentToolCallId) {
@@ -377,9 +384,11 @@ export class NarrativeStore {
           ...(existing._rawToolInput ?? {}),
           ...event.toolInput,
         };
-        if (parentToolCallId && !existing.parentToolCallId) {
-          existing.parentToolCallId = parentToolCallId;
-        }
+      }
+      if (event.parentToolCallId) {
+        existing.parentToolCallId = event.parentToolCallId;
+      } else if (shouldMergeDuplicate && parentToolCallId && !existing.parentToolCallId) {
+        existing.parentToolCallId = parentToolCallId;
       }
       return existing.parentToolCallId;
     }
@@ -394,9 +403,22 @@ export class NarrativeStore {
       toolCallId: event.toolCallId,
       messageId: "",
       toolName: event.toolName,
+      displayName: event.toolName === "Agent"
+        ? resolveSubagentDisplayName(event.toolInput)
+        : undefined,
+      providerAgentKey: event.toolName === "Agent"
+        ? resolveProviderAgentKey(event.toolInput)
+        : undefined,
+      model: event.toolName === "Agent"
+        ? resolveSubagentMetadata(event.toolInput.model)
+        : undefined,
+      reasoningEffort: event.toolName === "Agent"
+        ? resolveSubagentMetadata(event.toolInput.reasoningEffort)
+        : undefined,
       inputSummary: "", // Deferred to persistNarrative
       outputSummary: "",
       status: "running",
+      startedAt: new Date().toISOString(),
       sortOrder,
       parentToolCallId,
       _rawToolInput: event.toolInput,
@@ -420,6 +442,7 @@ export class NarrativeStore {
       outputTruncated?: boolean;
       outputTotalBytes?: number;
       outputArtifactPath?: string;
+      exitCode?: number;
     },
   ): void {
     const stack = this.agentCallStack.get(threadId) ?? [];
@@ -441,13 +464,18 @@ export class NarrativeStore {
         buffer[i].outputTruncated = outputMeta?.outputTruncated === true;
         delete buffer[i].outputTotalBytes;
         delete buffer[i].outputArtifactPath;
+        delete buffer[i].exitCode;
         if (outputMeta?.outputTotalBytes != null) {
           buffer[i].outputTotalBytes = outputMeta.outputTotalBytes;
         }
         if (outputMeta?.outputArtifactPath) {
           buffer[i].outputArtifactPath = outputMeta.outputArtifactPath;
         }
+        if (outputMeta?.exitCode !== undefined) {
+          buffer[i].exitCode = outputMeta.exitCode;
+        }
         buffer[i].status = isError ? "failed" : "completed";
+        buffer[i].completedAt = new Date().toISOString();
         if (toolInput && Object.keys(toolInput).length > 0) {
           buffer[i]._rawToolInput = {
             ...(buffer[i]._rawToolInput ?? {}),
@@ -550,6 +578,7 @@ export class NarrativeStore {
     outcome: TurnOutcome,
   ): PersistNarrativeResult {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
+    const settledAt = new Date().toISOString();
 
     for (const tc of buffer) {
       if (tc.status === "running") {
@@ -559,11 +588,18 @@ export class NarrativeStore {
         // updateBufferedToolCallOutput.
         tc.status =
           outcome === "errored" ? "failed" : outcome === "cancelled" ? "cancelled" : "completed";
+        tc.completedAt = settledAt;
       }
       tc.messageId = messageId;
 
       // Deferred summarization: compute inputSummary from raw tool input.
       if (!tc.inputSummary && tc._rawToolInput) {
+        if (tc.toolName === "Agent") {
+          tc.displayName = resolveSubagentDisplayName(tc._rawToolInput);
+          tc.providerAgentKey = resolveProviderAgentKey(tc._rawToolInput);
+          tc.model = resolveSubagentMetadata(tc._rawToolInput.model);
+          tc.reasoningEffort = resolveSubagentMetadata(tc._rawToolInput.reasoningEffort);
+        }
         tc.inputSummary = this.summarizeInput(tc.toolName, tc._rawToolInput);
         delete tc._rawToolInput;
       }
@@ -683,20 +719,32 @@ export class NarrativeStore {
 
   /** Generate a human-readable summary of tool input. */
   private summarizeInput(toolName: string, input: Record<string, unknown>): string {
-    switch (toolName) {
-      case "Read":
-      case "Edit":
-      case "Write":
+    switch (toolName.toLowerCase()) {
+      case "read":
+      case "edit":
+      case "write":
         return String(input.file_path ?? input.filePath ?? "");
-      case "Bash":
-      case "Shell":
-      case "Terminal":
+      case "move":
+      case "rename": {
+        const source = input.oldPath ?? input.old_path ?? input.oldFilePath
+          ?? input.sourcePath ?? input.source_path ?? input.source ?? input.from;
+        const destination = input.newPath ?? input.new_path ?? input.destinationPath
+          ?? input.destination_path ?? input.destination ?? input.to ?? input.path
+          ?? input.file_path ?? input.filePath ?? input.target_file ?? input.targetFile;
+        return [source, destination]
+          .filter((value): value is string => typeof value === "string")
+          .join(" -> ")
+          .slice(0, 200);
+      }
+      case "bash":
+      case "shell":
+      case "terminal":
       case "command_execution":
         return String(input.command ?? "").slice(0, MAX_PERSISTED_COMMAND_CHARS);
-      case "Grep":
-      case "Glob":
+      case "grep":
+      case "glob":
         return String(input.pattern ?? "");
-      case "Agent":
+      case "agent":
         return String(input.description ?? "").slice(0, 100);
       default:
         return JSON.stringify(input).slice(0, 200);

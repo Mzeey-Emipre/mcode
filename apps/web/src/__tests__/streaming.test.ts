@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestActiveMessages,
@@ -39,10 +40,7 @@ describe("Agent Message Flow", () => {
     useThreadStore.setState({ currentThreadId: threadId });
     const { handleAgentEvent } = useThreadStore.getState();
 
-    handleAgentEvent(threadId, {
-      method: "session.message",
-      params: { content: "Hello world", tokens: 42 },
-    });
+    handleAgentEvent({ type: "message", threadId: threadId, content: "Hello world", tokens: 42 } satisfies AgentEvent);
     vi.runAllTimers();
 
     expect(getTestActiveMessages()).toHaveLength(1);
@@ -58,14 +56,8 @@ describe("Agent Message Flow", () => {
 
     // Codex narration turn: an assistant message lands mid-turn, then the
     // final response lands as a second message with different content.
-    handleAgentEvent(threadId, {
-      method: "session.message",
-      params: { content: "Narration before tool batch", messageId: "msg-1" },
-    });
-    handleAgentEvent(threadId, {
-      method: "session.message",
-      params: { content: "Final response", messageId: "msg-2" },
-    });
+    handleAgentEvent({ type: "message", threadId: threadId, content: "Narration before tool batch", messageId: "msg-1", tokens: null } satisfies AgentEvent);
+    handleAgentEvent({ type: "message", threadId: threadId, content: "Final response", messageId: "msg-2", tokens: null } satisfies AgentEvent);
     vi.runAllTimers();
 
     const keys = readThreadField(threadId, (r) => r.assistantResponseKeys)!;
@@ -80,26 +72,22 @@ describe("Agent Message Flow", () => {
     expect(liveKey).not.toBe(keys["msg-2"]);
   });
 
-  it("session.message only appends when threadId matches currentThreadId", () => {
+  it("session.message retains the target thread message without changing the active transcript", () => {
     useThreadStore.setState({ currentThreadId: "thread-a" });
     const { handleAgentEvent } = useThreadStore.getState();
 
     // Message for current thread is added
-    handleAgentEvent("thread-a", {
-      method: "session.message",
-      params: { content: "Alpha" },
-    });
+    handleAgentEvent({ type: "message", threadId: "thread-a", content: "Alpha", tokens: null } satisfies AgentEvent);
     vi.runAllTimers();
     expect(getTestActiveMessages()).toHaveLength(1);
 
-    // Message for a different thread is NOT added to the visible list
-    handleAgentEvent("thread-b", {
-      method: "session.message",
-      params: { content: "Beta" },
-    });
+    // The background message belongs to its target record, not the visible transcript.
+    handleAgentEvent({ type: "message", threadId: "thread-b", content: "Beta", tokens: null } satisfies AgentEvent);
     vi.runAllTimers();
     expect(getTestActiveMessages()).toHaveLength(1);
     expect(getTestActiveMessages()[0].content).toBe("Alpha");
+    expect(readThreadField("thread-b", (record) => record.messages.map((message) => message.content)))
+      .toEqual(["Beta"]);
   });
 
   it("when session.ended fires, running state and streaming are cleared", () => {
@@ -111,9 +99,7 @@ describe("Agent Message Flow", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent(threadId, {
-      method: "session.ended",
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: threadId } satisfies AgentEvent);
     vi.runAllTimers();
 
     const state = useThreadStore.getState();
@@ -128,17 +114,14 @@ describe("Agent Message Flow", () => {
       currentThreadId: threadId,
     });
 
-    useThreadStore.getState().handleAgentEvent(threadId, {
-      method: "session.turnComplete",
-      params: { costUsd: 0.01, tokensIn: 50, tokensOut: 50 },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: threadId, reason: "end_turn", costUsd: 0.01, tokensIn: 50, tokensOut: 50 } satisfies AgentEvent);
     vi.runAllTimers();
 
     const state = useThreadStore.getState();
     expect(state.runningThreadIds.has(threadId)).toBe(false);
   });
 
-  it("when turnComplete fires for a non-current thread, message is not added to the list", () => {
+  it("turnComplete retains streaming fallback in the target record without changing the active transcript", () => {
     resetThreadStoreForTests({
       currentThreadId: "thread-other",
       records: new Map<string, ThreadRecord>([
@@ -146,18 +129,45 @@ describe("Agent Message Flow", () => {
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent("thread-1", {
-      method: "session.turnComplete",
-      costUsd: 0.005,
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: "thread-1", reason: "end_turn", costUsd: 0.005,
       tokensIn: 25,
-      tokensOut: 25,
+      tokensOut: 25 } satisfies AgentEvent);
+    vi.runAllTimers();
+
+    expect(getTestThreadStreaming("thread-1")).toBeUndefined();
+    expect(getTestActiveMessages()).toHaveLength(0);
+    expect(readThreadField("thread-1", (record) => record.messages.map((message) => message.content)))
+      .toEqual(["background response"]);
+  });
+
+  it("keeps a background response through completion and persistence after reopening the thread", () => {
+    resetThreadStoreForTests({
+      currentThreadId: "thread-b",
+      records: new Map<string, ThreadRecord>([
+        ["thread-a", createEmptyThreadRecord()],
+        ["thread-b", createEmptyThreadRecord()],
+      ]),
+      runningThreadIds: new Set(["thread-a"]),
+    });
+
+    const { handleAgentEvent, handleTurnPersisted } = useThreadStore.getState();
+    handleAgentEvent({ type: "message", threadId: "thread-a", content: "Alpha completed while inactive",
+        messageId: "thread-a-completed", tokens: null } satisfies AgentEvent);
+    handleAgentEvent({ type: "turnComplete", threadId: "thread-a", reason: "end_turn", costUsd: 0.005, tokensIn: 25, tokensOut: 25 } satisfies AgentEvent);
+
+    useThreadStore.setState({ currentThreadId: "thread-a" });
+    handleTurnPersisted({
+      threadId: "thread-a",
+      messageId: "thread-a-completed",
+      toolCallCount: 0,
+      filesChanged: [],
     });
     vi.runAllTimers();
 
-    // Streaming content is cleared even for non-current thread
-    expect(getTestThreadStreaming("thread-1")).toBeUndefined();
-    // But message is NOT added since it's not the current thread
-    expect(getTestActiveMessages()).toHaveLength(0);
+    expect(getTestActiveMessages().map((message) => message.content)).toEqual([
+      "Alpha completed while inactive",
+    ]);
+    expect(readThreadField("thread-b", (record) => record.messages)).toEqual([]);
   });
 });
 
@@ -185,10 +195,7 @@ describe("duplicate message prevention", () => {
     const { handleAgentEvent } = useThreadStore.getState();
 
     // session.message arrives with the final content
-    handleAgentEvent("thread-1", {
-      method: "session.message",
-      params: { content: "Hello world", tokens: 10 },
-    });
+    handleAgentEvent({ type: "message", threadId: "thread-1", content: "Hello world", tokens: 10 } satisfies AgentEvent);
     vi.runAllTimers();
 
     // Both streaming fields must be cleared
@@ -196,10 +203,7 @@ describe("duplicate message prevention", () => {
     expect(getTestThreadStreamingPreview("thread-1")).toBeUndefined();
 
     // Now turnComplete fires — should NOT create a second message
-    handleAgentEvent("thread-1", {
-      method: "session.turnComplete",
-      params: { costUsd: 0.01, tokensIn: 50, tokensOut: 50 },
-    });
+    handleAgentEvent({ type: "turnComplete", threadId: "thread-1", reason: "end_turn", costUsd: 0.01, tokensIn: 50, tokensOut: 50 } satisfies AgentEvent);
     vi.runAllTimers();
 
     const messages = getTestActiveMessages();
@@ -213,6 +217,7 @@ describe("duplicate message prevention", () => {
       records: new Map<string, ThreadRecord>([
         ["thread-1", {
           ...createEmptyThreadRecord(),
+          currentTurnMessageId: "client-provisional-id",
           messages: [
             {
               id: "client-provisional-id",
@@ -232,14 +237,9 @@ describe("duplicate message prevention", () => {
       ]),
     });
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent("thread-1", {
-      method: "session.message",
-      params: {
-        content: "Hello world",
+    handleAgentEvent({ type: "message", threadId: "thread-1", content: "Hello world",
         messageId: "persisted-msg-id",
-        tokens: 10,
-      },
-    });
+        tokens: 10, } satisfies AgentEvent);
     vi.runAllTimers();
 
     const messages = getTestActiveMessages();
@@ -283,8 +283,8 @@ describe("session.textDelta", () => {
 
   it("appends delta to streamingByThread", async () => {
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "Hello" } });
-    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: " world" } });
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "Hello" } satisfies AgentEvent);
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: " world" } satisfies AgentEvent);
 
     await flushRafChain();
     expect(getTestThreadStreaming("thread-1")).toBe("Hello world");
@@ -299,7 +299,7 @@ describe("session.textDelta", () => {
     });
     const { handleAgentEvent } = useThreadStore.getState();
 
-    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "end" } });
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "end" } satisfies AgentEvent);
 
     await flushRafChain();
     // Full buffer is preserved
@@ -324,7 +324,7 @@ describe("session.textDelta", () => {
       ]),
     });
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "Hi" } });
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "Hi" } satisfies AgentEvent);
 
     await flushRafChain();
     const calls = getTestThreadToolCalls("thread-1");
@@ -333,7 +333,7 @@ describe("session.textDelta", () => {
 
   it("does not affect other threads", async () => {
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent("thread-1", { method: "session.textDelta", params: { delta: "ping" } });
+    handleAgentEvent({ type: "textDelta", threadId: "thread-1", delta: "ping" } satisfies AgentEvent);
 
     await flushRafChain();
     expect(getTestThreadStreaming("thread-2")).toBeUndefined();
@@ -362,10 +362,7 @@ describe("session.toolProgress", () => {
 
   it("updates elapsedSeconds on the matching tool call", () => {
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent("thread-1", {
-      method: "session.toolProgress",
-      params: { toolCallId: "tc1", toolName: "Bash", elapsedSeconds: 5 },
-    });
+    handleAgentEvent({ type: "toolProgress", threadId: "thread-1", toolCallId: "tc1", toolName: "Bash", elapsedSeconds: 5 } satisfies AgentEvent);
 
     const calls = getTestThreadToolCalls("thread-1");
     expect(calls[0].elapsedSeconds).toBe(5);
@@ -373,10 +370,7 @@ describe("session.toolProgress", () => {
 
   it("ignores toolProgress for unknown toolCallId", () => {
     const { handleAgentEvent } = useThreadStore.getState();
-    handleAgentEvent("thread-1", {
-      method: "session.toolProgress",
-      params: { toolCallId: "unknown", toolName: "Bash", elapsedSeconds: 3 },
-    });
+    handleAgentEvent({ type: "toolProgress", threadId: "thread-1", toolCallId: "unknown", toolName: "Bash", elapsedSeconds: 3 } satisfies AgentEvent);
 
     const calls = getTestThreadToolCalls("thread-1");
     expect(calls[0].elapsedSeconds).toBeUndefined();

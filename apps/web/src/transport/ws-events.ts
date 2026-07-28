@@ -1,4 +1,10 @@
-import type { Settings, ProviderAvailability } from "@mcode/contracts";
+import {
+  ProviderCatalogChangeSchema,
+  WS_CHANNELS,
+  type ProviderAvailability,
+  type Settings,
+  type TurnFileEffectSummary,
+} from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { pushEmitter } from "./ws-transport";
 import { getTransport } from "@/transport";
@@ -10,7 +16,7 @@ import { getThreadRecord, patchThreadRecord } from "@/stores/thread-record";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { useSkillsStore } from "@/stores/skillsStore";
+import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePlanStore } from "@/stores/planStore";
 import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
 import { emitPtyData, emitPtyExit } from "@/components/terminal/ptyDataRegistry";
@@ -49,7 +55,8 @@ function approxBase64DecodedBytes(encoded: string): number {
  * - `thread.checksUpdated` -- CI check status polled for a thread's PR, updates checksById
  * - `thread.modelUpdated` -- thread model and provider synced after a message send (multi-client)
  * - `files.changed` -- invalidates the file autocomplete cache
- * - `skills.changed` -- invalidates the skill cache; popup re-fetches on next open
+ * - `skills.changed` -- invalidates provider catalogs; popup re-fetches on next open
+ * - `provider.catalogChanged` -- reconciles a refreshed catalog by stable identity
  * - `turn.persisted` -- tool call persistence confirmation forwarded to threadStore
  * - `settings.changed` -- server-pushed settings updates forwarded to settingsStore
  * - `branch.changed` -- refreshes branch list and updates current branch if not manually overridden
@@ -74,15 +81,9 @@ export function startPushListeners(): void {
   // agent.event: the server wraps each sidecar event with { threadId, type, ... }
   unsubs.push(
     pushEmitter.on("agent.event", (data) => {
-      const event = data as Record<string, unknown>;
-      const threadId = event.threadId as string;
-      if (!threadId) return;
-
-      // Map the flat contract AgentEvent into the method-keyed shape
-      // that handleAgentEvent expects (method = "session.<type>").
-      const type = event.type as string;
-      const method = `session.${type}`;
-      handleAgentEvent(threadId, { method, ...event });
+      const parsed = WS_CHANNELS["agent.event"].safeParse(data);
+      if (!parsed.success) return;
+      handleAgentEvent(parsed.data);
     }),
   );
 
@@ -325,17 +326,39 @@ export function startPushListeners(): void {
     }),
   );
 
-  // skills.changed: invalidate the cache. An open picker retains its snapshot
-  // until the user closes it, avoiding a mid-navigation list replacement.
+  // skills.changed only covers providers backed by the shared filesystem scanner.
+  // Codex invalidations arrive as provider.catalogChanged from app-server.
   unsubs.push(
-    pushEmitter.on("skills.changed", () => {
+    pushEmitter.on("skills.changed", (data) => {
+      const parsed = WS_CHANNELS["skills.changed"].safeParse(data);
+      if (!parsed.success) return;
       if (skillsInvalidationTimer !== null) {
         clearTimeout(skillsInvalidationTimer);
       }
       skillsInvalidationTimer = setTimeout(() => {
         skillsInvalidationTimer = null;
-        useSkillsStore.getState().invalidate();
+        useProviderCatalogStore.getState().invalidate(parsed.data.providerIds);
       }, SKILLS_INVALIDATION_DEBOUNCE_MS);
+    }),
+  );
+
+  unsubs.push(
+    pushEmitter.on("provider.catalogChanged", (change) => {
+      const parsed = ProviderCatalogChangeSchema().safeParse(change);
+      if (!parsed.success) return;
+      useProviderCatalogStore.getState().reconcile(parsed.data);
+    }),
+  );
+
+  // turn.persisted: server has persisted tool calls for a completed turn
+  unsubs.push(
+    pushEmitter.on("turn.fileEffectsUpdated", (data) => {
+      const payload = data as { threadId: string; turnId: string; summary: TurnFileEffectSummary };
+      useThreadStore.getState().handleFileEffectsUpdated(
+        payload.threadId,
+        payload.turnId,
+        payload.summary,
+      );
     }),
   );
 
@@ -344,9 +367,11 @@ export function startPushListeners(): void {
     pushEmitter.on("turn.persisted", (data) => {
       const payload = data as {
         threadId: string;
+        turnId?: string | null;
         messageId: string;
         toolCallCount: number;
         filesChanged: string[];
+        fileEffects?: TurnFileEffectSummary;
       };
       useThreadStore.getState().handleTurnPersisted(payload);
 
@@ -354,6 +379,11 @@ export function startPushListeners(): void {
 
       const hasFileChanges = payload.filesChanged.length > 0;
       if (!hasFileChanges) return;
+
+      const thread = useWorkspaceStore
+        .getState()
+        .threads.find((candidate) => candidate.id === payload.threadId);
+      if (thread) clearFileListCache(thread.workspace_id, payload.threadId);
 
       try {
         const transport = getTransport();

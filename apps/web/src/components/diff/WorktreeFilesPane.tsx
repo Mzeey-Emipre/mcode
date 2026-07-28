@@ -1,18 +1,23 @@
-import { Search } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import type { ReviewFileChange } from "@mcode/contracts";
 import { FilesPanel, type FilesPanelProps } from "@/components/files/FilesPanel";
 import { PullRequestFileTree } from "@/components/pull-requests/PullRequestFileTree";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
-/** Props for the full-worktree file navigator shown beside a Dev diff. */
+/** Props for the active-comparison Files navigator shown beside a Review diff. */
 export interface WorktreeFilesPaneProps {
-  readonly files: readonly string[];
+  readonly files: readonly ReviewFileChange[];
   readonly activePath: string | null;
   readonly loading: boolean;
   readonly error: string | null;
   readonly className?: string;
   readonly onActivate: (path: string) => void;
   readonly onClose: () => void;
+  readonly refreshable: boolean;
+  readonly refreshing: boolean;
+  readonly onRefresh: () => void;
   readonly width: number;
   readonly minWidth: number;
   readonly maxWidth: number | string;
@@ -22,7 +27,7 @@ export interface WorktreeFilesPaneProps {
   readonly onWidthChange: NonNullable<FilesPanelProps["onWidthChange"]>;
 }
 
-/** Renders the active thread's complete tracked and untracked worktree file tree. */
+/** Renders the active Review comparison's changed-file tree. */
 export function WorktreeFilesPane({
   files,
   activePath,
@@ -31,6 +36,9 @@ export function WorktreeFilesPane({
   className,
   onActivate,
   onClose,
+  refreshable,
+  refreshing,
+  onRefresh,
   width,
   minWidth,
   maxWidth,
@@ -44,16 +52,18 @@ export function WorktreeFilesPane({
   const filteredFiles = useMemo(
     () =>
       normalizedSearch
-        ? files.filter((file) => file.toLocaleLowerCase().includes(normalizedSearch))
+        ? files.filter((file) =>
+            `${file.previousPath ?? ""} ${file.path}`.toLocaleLowerCase().includes(normalizedSearch),
+          )
         : files,
     [files, normalizedSearch],
   );
 
   return (
     <FilesPanel
-      title="Worktree files"
+      title="Files"
       count={files.length}
-      ariaLabel="Worktree files"
+      ariaLabel="Files"
       testId="dev-worktree-files-pane"
       className={className}
       onClose={onClose}
@@ -76,12 +86,25 @@ export function WorktreeFilesPane({
               size="sm"
               value={search}
               maxLength={200}
-              aria-label="Search worktree files"
+              aria-label="Search files"
               placeholder="Filter files"
               className="h-8 rounded-md bg-background/70 pl-7 font-mono text-xs"
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
+          {refreshable ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Refresh comparison"
+              disabled={refreshing}
+              onClick={onRefresh}
+              className="ml-1 h-7 w-7 shrink-0 text-muted-foreground"
+            >
+              <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} aria-hidden="true" />
+            </Button>
+          ) : null}
         </div>
       }
     >
@@ -101,16 +124,16 @@ export function WorktreeFilesPane({
             ⊘
           </span>
           <p className="font-mono text-[1.05rem] uppercase tracking-[0.18em] text-muted-foreground/40">
-            {files.length === 0 ? "No worktree files" : "No matching files"}
+            {files.length === 0 ? "No changed files" : "No matching files"}
           </p>
         </div>
       ) : (
         <PullRequestFileTree
-          filePaths={filteredFiles}
+          reviewFiles={filteredFiles}
           activePath={activePath}
           searchActive={normalizedSearch.length > 0}
           className="min-h-0 flex-1"
-          ariaLabel="Worktree files"
+          ariaLabel="Files"
           onActivate={onActivate}
         />
       )}

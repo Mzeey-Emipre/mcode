@@ -55,6 +55,8 @@ export const AgentEventSchema = lazySchema(() =>
        *  Used by the client to populate `runningThreadIds` for live-session UI indicators. */
       type: z.literal(AgentEventType.TurnStarted),
       threadId: z.string(),
+      /** Server tracker generation that owns live file effects for this turn. */
+      fileEffectTurnId: z.string().optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.Message),
@@ -93,6 +95,8 @@ export const AgentEventSchema = lazySchema(() =>
       toolCallId: z.string(),
       output: z.string(),
       isError: z.boolean(),
+      /** Process exit code when the provider reports one for a shell command. */
+      exitCode: z.number().int().optional(),
       /** True when the output preview omits middle bytes from the full output. */
       outputTruncated: z.boolean().optional(),
       /** UTF-8 byte count for the full tool output before preview bounding. */

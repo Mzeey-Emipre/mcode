@@ -4,6 +4,10 @@ status: proposed
 
 # Right-panel container state is per-thread, with a workspace-level fallback for the threadless and not-yet-customized cases
 
+> **Terminal revision:** ADR-0020 supersedes the Terminal singleton and
+> internal-multiplicity decision retained below. Other tool types remain
+> singletons.
+
 ## Context
 
 ADR-0004 split the panel container state: open/closed per-thread, but **width

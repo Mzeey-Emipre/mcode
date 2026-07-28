@@ -238,11 +238,7 @@ Findings:
 - `apps/web/src/index.css:626`, `645`, `651`, `681`, `709`: scrollbar and range control radii use `2px` or `3px`. Kept as optical sub-pixel controls.
 - Manual polish check from `polish.md` and `product.md`: screenshots show the shell remains dense and calm, amber remains limited to project state and the primary landing action, and the 390px view no longer clips the landing content after scoping the composer minimum width to non-landing surfaces.
 
-Screenshot evidence:
-
-- `apps/web/e2e/screenshots/design-scale-live-1440x900.png`
-- `apps/web/e2e/screenshots/design-scale-live-900x700.png`
-- `apps/web/e2e/screenshots/design-scale-live-390x844.png`
+Screenshot evidence was disposable verification material and is no longer tracked.
 
 ## Next Phases
 

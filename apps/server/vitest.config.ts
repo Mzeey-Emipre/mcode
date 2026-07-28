@@ -11,14 +11,13 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.test.ts"],
+    pool: "forks",
+    // Electron child processes are heavier than Node's. Two workers keep Windows
+    // process-integration tests within their timing bounds without serializing the suite.
+    maxWorkers: 2,
     env: {
       MCODE_DATA_DIR: testDataDir,
       MCODE_DRIZZLE_MIGRATIONS_DIR: resolve(serverPackageRoot, "drizzle"),
-      // A globally-set BETTER_SQLITE3_BINDING (e.g. dev shell pointing at the
-      // installed app's Electron-ABI binary) crashes tests under host Node.
-      // Empty string short-circuits the truthy check in store/database.ts so
-      // better-sqlite3 falls back to its default Node binding lookup.
-      BETTER_SQLITE3_BINDING: "",
     },
     globalSetup: ["../../scripts/vitest-global-setup.ts"],
   },

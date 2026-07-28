@@ -36,8 +36,15 @@ import type {
   AccountRateLimitsReadResult,
   SkillsListParams,
   SkillsListResult,
+  PluginListParams,
+  PluginListResult,
+  PluginReadParams,
+  PluginReadResult,
+  ConfigReadParams,
+  ConfigReadResult,
   SandboxMode,
   AskForApproval,
+  ReasoningEffort,
 } from "./codex-types.js";
 
 /** Incoming approval request from the codex app-server, passed to approvalHandler. */
@@ -91,6 +98,8 @@ export interface CodexAppServerOptions {
   getSpawnEnv?: () => Record<string, string>;
   /** Config overrides passed to `codex app-server` as repeated `-c key=value`. */
   configOverrides?: readonly string[];
+  /** Completes the handshake after initialization without creating a thread. */
+  catalogOnly?: boolean;
 }
 
 /**
@@ -367,6 +376,14 @@ const RECOVERABLE_RESUME_ERROR_PHRASES = [
   "unknown thread",
   "thread does not exist",
 ] as const;
+
+const CHILD_THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** Authoritative model configuration returned for a native sub-agent thread. */
+export interface CodexChildThreadMetadata {
+  model: string;
+  reasoningEffort: ReasoningEffort;
+}
 
 /**
  * Returns true when `thread/resume` failed because the stored Codex thread or
@@ -817,12 +834,14 @@ export class CodexAppServer extends EventEmitter {
 
   /** Runs interrupt, RPC dispose, and process termination once per server instance. */
   private async performKill(): Promise<void> {
-    if (this.rpc) {
+    if (this.rpc && this.threadId) {
       try {
         await this.rpc.sendRequest("turn/interrupt", { threadId: this.threadId }, 3000);
       } catch {
         // best effort - ignore
       }
+    }
+    if (this.rpc) {
       this.rpc.dispose();
     }
 
@@ -894,6 +913,21 @@ export class CodexAppServer extends EventEmitter {
       logger.debug("Codex turn/start acknowledged", { threadId: this.threadId, turnId });
     }
     return turnId;
+  }
+
+  /** Reads a child thread's effective model settings without changing this server's active thread. */
+  async getChildThreadMetadata(childThreadId: string): Promise<CodexChildThreadMetadata | null> {
+    if (!CHILD_THREAD_ID_PATTERN.test(childThreadId)) return null;
+
+    const result = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
+      "thread/resume",
+      { threadId: childThreadId },
+      10_000,
+    );
+    const model = typeof result.model === "string" ? result.model.trim() : "";
+    const reasoningEffort = result.reasoningEffort;
+    if (!model || !reasoningEffort) return null;
+    return { model, reasoningEffort };
   }
 
   /** Set or update the native Codex thread goal. */
@@ -988,6 +1022,37 @@ export class CodexAppServer extends EventEmitter {
       ...(forceReload ? { forceReload } : {}),
     };
     return this.rpc.sendRequest<SkillsListParams, SkillsListResult>("skills/list", params, 10000);
+  }
+
+  /** Reads installed plugin summaries for the effective working-directory context. */
+  async listPlugins(cwds?: string[]): Promise<PluginListResult> {
+    if (!this._isAlive || !this.rpc) {
+      throw new Error("listPlugins called before codex app-server was ready");
+    }
+    const params: PluginListParams = {
+      ...(cwds && cwds.length > 0 ? { cwds } : {}),
+    };
+    return this.rpc.sendRequest<PluginListParams, PluginListResult>("plugin/list", params, 10000);
+  }
+
+  /** Reads plugin detail only when its list summary omits composer metadata. */
+  async readPlugin(params: PluginReadParams): Promise<PluginReadResult> {
+    if (!this._isAlive || !this.rpc) {
+      throw new Error("readPlugin called before codex app-server was ready");
+    }
+    return this.rpc.sendRequest<PluginReadParams, PluginReadResult>("plugin/read", params, 2_000);
+  }
+
+  /** Reads effective Codex configuration for one working directory. */
+  async readConfig(cwd?: string): Promise<ConfigReadResult> {
+    if (!this._isAlive || !this.rpc) {
+      throw new Error("readConfig called before codex app-server was ready");
+    }
+    return this.rpc.sendRequest<ConfigReadParams, ConfigReadResult>(
+      "config/read",
+      { includeLayers: false, ...(cwd ? { cwd } : {}) },
+      10000,
+    );
   }
 
   /**
@@ -1085,6 +1150,8 @@ export class CodexAppServer extends EventEmitter {
 
     // Step 2: initialized notification (no response expected)
     this.rpc.sendNotification("initialized", {});
+
+    if (this.options.catalogOnly) return;
 
     // Step 3: model/list (best-effort)
     try {

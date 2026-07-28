@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../store/database";
 import { MessageRepo } from "../../repositories/message-repo";
@@ -32,6 +32,170 @@ function insertMessage(
     "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(id, "thread-1", role, content, now, sequence);
 }
+
+describe("NarrativeStore Move/Rename persistence sanitization", () => {
+  it.each(["Move", "rEnAmE"])(
+    "passes only bounded source and destination paths to persistence for %s",
+    (toolName) => {
+      let persistedInputSummary: string | undefined;
+      const store = new NarrativeStore(
+        {} as MessageRepo,
+        {
+          bulkCreate: (records: Array<{ inputSummary?: string }>) => {
+            persistedInputSummary = records[0]?.inputSummary;
+          },
+        } as unknown as ToolCallRecordRepo,
+        { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+        { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+      );
+      store.beginTurn("thread-1");
+      store.resetTurnCounters("thread-1");
+      store.bufferToolCall("thread-1", {
+        toolCallId: `file-${toolName}`,
+        toolName,
+        toolInput: {
+          oldPath: "src/old.ts",
+          path: "src/new.ts",
+          beforeText: "SECRET_BEFORE",
+          afterText: "SECRET_AFTER",
+        },
+      });
+
+      store.persistNarrative("thread-1", "m1", "done", "completed");
+
+      expect(persistedInputSummary).toBe("src/old.ts -> src/new.ts");
+      expect(persistedInputSummary?.length).toBeLessThanOrEqual(200);
+      expect(persistedInputSummary).not.toContain("SECRET_BEFORE");
+      expect(persistedInputSummary).not.toContain("SECRET_AFTER");
+    },
+  );
+});
+
+describe("NarrativeStore sub-agent identity persistence", () => {
+  it("captures bounded model and reasoning metadata only from Agent input", () => {
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      { bulkCreate: () => undefined } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent",
+      toolName: "Agent",
+      toolInput: { model: "gpt-5.3-codex", reasoningEffort: "high" },
+    });
+    store.bufferToolCall("thread-1", {
+      toolCallId: "read",
+      toolName: "Read",
+      toolInput: { model: "must-not-inherit", reasoningEffort: "low" },
+    });
+    store.bufferToolCall("thread-1", {
+      toolCallId: "oversized",
+      toolName: "Agent",
+      toolInput: { model: "x".repeat(129), reasoningEffort: "y".repeat(129) },
+    });
+
+    expect(store.getBufferedToolCalls("thread-1").map(({ model, reasoningEffort }) => ({
+      model,
+      reasoningEffort,
+    }))).toEqual([
+      { model: "gpt-5.3-codex", reasoningEffort: "high" },
+      { model: undefined, reasoningEffort: undefined },
+      { model: undefined, reasoningEffort: undefined },
+    ]);
+  });
+
+  it("persists a bounded logical-agent key only for Codex spawnAgent input", () => {
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      { bulkCreate: () => undefined } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+
+    store.bufferToolCall("thread-1", {
+      toolCallId: "codex",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentPath: "/root/explorer",
+      },
+    });
+    store.bufferToolCall("thread-1", {
+      toolCallId: "other-provider",
+      toolName: "Agent",
+      toolInput: { agentPath: "/root/explorer" },
+    });
+    store.bufferToolCall("thread-1", {
+      toolCallId: "oversized",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentPath: `/${"x".repeat(300)}`,
+      },
+    });
+
+    expect(store.getBufferedToolCalls("thread-1").map((item) => item.providerAgentKey)).toEqual([
+      "/root/explorer",
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("persists bounded explicit identity separately from delegated task text", () => {
+    let persisted: Array<{ displayName?: string; inputSummary?: string }> = [];
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      {
+        bulkCreate: (records: Array<{ displayName?: string; inputSummary?: string }>) => {
+          persisted = records;
+        },
+      } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: {
+        agentPath: `/root/${"x".repeat(120)}`,
+        description: "Inspect private task details",
+      },
+    });
+
+    store.persistNarrative("thread-1", "m1", "done", "completed");
+
+    expect(persisted[0]?.displayName).toHaveLength(96);
+    expect(persisted[0]?.displayName?.endsWith("…")).toBe(true);
+    expect(persisted[0]?.displayName).not.toContain("Inspect private task details");
+    expect(persisted[0]?.inputSummary).toContain("Inspect private task details");
+  });
+
+  it("does not promote prompt or description to display identity", () => {
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      { bulkCreate: () => undefined } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: { prompt: "Private prompt", description: "Private task" },
+    });
+
+    expect(store.getBufferedToolCalls("thread-1")[0]?.displayName).toBeUndefined();
+  });
+});
 
 describe("NarrativeStore.load (read seam)", () => {
   let db: Database.Database;
@@ -171,8 +335,45 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(byId.get("c2")).toBe("a2");
       expect(byId.get("c3")).toBe("a3");
       expect(byId.get("c4")).toBe("a4");
-      // Agent rows themselves never get a parent.
+      // Agent rows without an explicit provider parent remain top-level.
       expect(byId.get("a1")).toBeUndefined();
+    });
+
+    it("persists explicit nested Agent parents without stack-parenting other Agents", () => {
+      seedAssistantMessage("m1", "", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, {
+        ...toolUse("agent-source", "Agent"),
+        toolInput: { agentName: "Explorer" },
+      });
+      store.bufferToolCall(THREAD, {
+        ...toolUse("agent-unparented", "Agent"),
+        toolInput: { agentName: "Reviewer" },
+      });
+      store.bufferToolCall(THREAD, {
+        ...toolUse("agent-target", "Agent", "agent-source"),
+        toolInput: { agentName: "Implementer" },
+      });
+      store.bufferToolCall(THREAD, {
+        ...toolUse("marker-target", "__McodeSubagentLifecycle", "agent-target"),
+        toolInput: {
+          lifecycle: "updated",
+          sourceAgentName: "Explorer",
+          sourceAgentToolCallId: "agent-source",
+        },
+      });
+
+      store.persistNarrative(THREAD, "m1", "", "completed");
+
+      const persistedTools = store.load(THREAD)
+        .filter((entry) => entry.kind === "toolCall")
+        .map((entry) => entry.record);
+      const byId = new Map(persistedTools.map((record) => [record.id, record]));
+      expect(byId.get("agent-source")?.parent_tool_call_id).toBeNull();
+      expect(byId.get("agent-unparented")?.parent_tool_call_id).toBeNull();
+      expect(byId.get("agent-target")?.parent_tool_call_id).toBe("agent-source");
+      expect(byId.get("marker-target")?.parent_tool_call_id).toBe("agent-target");
     });
 
     it("falls back to the only running Agent when the SDK omits the parent", () => {
@@ -184,6 +385,29 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(store.getCurrentParentToolCallId(THREAD)).toBe("solo");
       const childParent = store.bufferToolCall(THREAD, toolUse("child", "Read"));
       expect(childParent).toBe("solo");
+    });
+
+    it("replaces an inferred duplicate parent with explicit provider attribution and retains it", () => {
+      seedAssistantMessage("m1", "", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, toolUse("agent-a", "Agent"));
+      expect(store.bufferToolCall(THREAD, toolUse("child-x", "Read"))).toBe("agent-a");
+
+      store.bufferToolCall(THREAD, toolUse("agent-b", "Agent"));
+      expect(store.bufferToolCall(THREAD, toolUse("child-x", "Read", "agent-b"))).toBe("agent-b");
+
+      store.updateBufferedToolCallOutput(THREAD, "agent-b", "done", false);
+      expect(store.bufferToolCall(THREAD, toolUse("child-x", "Read"))).toBe("agent-b");
+      store.updateBufferedToolCallOutput(THREAD, "child-x", "read", false);
+      store.persistNarrative(THREAD, "m1", "", "completed");
+
+      const persistedChild = store.load(THREAD)
+        .find((entry) => entry.kind === "toolCall" && entry.record.id === "child-x");
+      expect(persistedChild?.kind).toBe("toolCall");
+      if (persistedChild?.kind === "toolCall") {
+        expect(persistedChild.record.parent_tool_call_id).toBe("agent-b");
+      }
     });
 
     it("returns undefined when two Agents are running (ambiguous fallback)", () => {
@@ -231,6 +455,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
         outputTruncated: true,
         outputTotalBytes: 300_000,
         outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
+        exitCode: 1,
       });
       store.persistNarrative(THREAD, "m1", "", "completed");
 
@@ -238,6 +463,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(tools[0].output_truncated).toBe(1);
       expect(tools[0].output_total_bytes).toBe(300_000);
       expect(tools[0].output_artifact_path).toBe("C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt");
+      expect(tools[0].exit_code).toBe(1);
     });
 
     it("clears the whole stack on the final Message event", () => {
@@ -314,6 +540,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(command.length).toBeGreaterThan(200);
       expect(record.input_summary).toBe(command);
     });
+
   });
 
   describe("Classification precedence + is_final_response safety net", () => {
@@ -398,6 +625,56 @@ describe("NarrativeStore write seam (server-side traps)", () => {
   });
 
   describe("Trap 6: counting data preserved (semantics unchanged)", () => {
+    it("persists each Agent's captured lifecycle timestamps through the real repository", () => {
+      seedAssistantMessage("m1", "", 1);
+      vi.useFakeTimers();
+      try {
+        store.beginTurn(THREAD);
+        store.resetTurnCounters(THREAD);
+        vi.setSystemTime(new Date("2026-07-22T10:00:00.000Z"));
+        store.bufferToolCall(THREAD, toolUse("agent-first", "Agent"));
+        vi.setSystemTime(new Date("2026-07-22T10:00:05.000Z"));
+        store.bufferToolCall(THREAD, toolUse("agent-second", "Agent"));
+        vi.setSystemTime(new Date("2026-07-22T10:00:10.000Z"));
+        store.bufferToolCall(THREAD, toolUse("agent-settled", "Agent"));
+        vi.setSystemTime(new Date("2026-07-22T10:00:20.000Z"));
+        store.updateBufferedToolCallOutput(THREAD, "agent-first", "First result", false);
+        vi.setSystemTime(new Date("2026-07-22T10:00:50.000Z"));
+        store.updateBufferedToolCallOutput(THREAD, "agent-second", "Second result", false);
+        vi.setSystemTime(new Date("2026-07-22T10:01:00.000Z"));
+        store.persistNarrative(THREAD, "m1", "", "completed");
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const records = new ToolCallRecordRepo(db).listByMessage("m1");
+      expect(records.map((record) => ({
+        id: record.id,
+        startedAt: record.started_at,
+        completedAt: record.completed_at,
+        durationMs: Date.parse(record.completed_at!) - Date.parse(record.started_at),
+      }))).toEqual([
+        {
+          id: "agent-first",
+          startedAt: "2026-07-22T10:00:00.000Z",
+          completedAt: "2026-07-22T10:00:20.000Z",
+          durationMs: 20_000,
+        },
+        {
+          id: "agent-second",
+          startedAt: "2026-07-22T10:00:05.000Z",
+          completedAt: "2026-07-22T10:00:50.000Z",
+          durationMs: 45_000,
+        },
+        {
+          id: "agent-settled",
+          startedAt: "2026-07-22T10:00:10.000Z",
+          completedAt: "2026-07-22T10:01:00.000Z",
+          durationMs: 50_000,
+        },
+      ]);
+    });
+
     it("persists every top-level tool call including Agent rows, so step counts are derivable", () => {
       seedAssistantMessage("m1", "", 1);
       store.beginTurn(THREAD);

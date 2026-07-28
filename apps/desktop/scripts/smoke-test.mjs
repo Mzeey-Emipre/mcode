@@ -19,8 +19,9 @@
  */
 
 import { spawn, execFileSync } from "child_process";
-import { existsSync, mkdirSync, rmSync } from "fs";
+import { existsSync, mkdirSync, realpathSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
+import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
@@ -32,6 +33,8 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const releaseDir = resolve(desktopRoot, "release");
+const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
+const serverRequire = createRequire(resolve(desktopRoot, "..", "server", "package.json"));
 
 const SMOKE_PORT = 19899;
 const TIMEOUT_MS = 30_000;
@@ -51,32 +54,40 @@ function findUnpackedServer() {
       server: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "win-unpacked/resources/bin/mcode-server.exe"),
       electron: resolve(releaseDir, "win-unpacked/Mcode.exe"),
+      resourcesRoot: resolve(releaseDir, "win-unpacked/resources"),
       sqlite: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: resolve(releaseDir, "win-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // Linux (electron-builder uses package name as binary name)
     {
       server: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "linux-unpacked/resources/bin/mcode-server"),
       electron: resolve(releaseDir, "linux-unpacked/mcode-desktop"),
+      resourcesRoot: resolve(releaseDir, "linux-unpacked/resources"),
       sqlite: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: resolve(releaseDir, "linux-unpacked/resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // macOS Intel
     {
       server: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/bin/mcode-server"),
       electron: resolve(releaseDir, "mac/Mcode.app/Contents/MacOS/Mcode"),
+      resourcesRoot: resolve(releaseDir, "mac/Mcode.app/Contents/Resources"),
       sqlite: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: resolve(releaseDir, "mac/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
     },
     // macOS ARM
     {
       server: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/dist/server/server.cjs"),
       renamedBinary: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/bin/mcode-server"),
       electron: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/MacOS/Mcode"),
+      resourcesRoot: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources"),
       sqlite: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/build/Release"),
       koffi: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/koffi"),
+      nodePty: resolve(releaseDir, "mac-arm64/Mcode.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty"),
     },
   ];
 
@@ -89,11 +100,20 @@ function findUnpackedServer() {
     const useRenamed = !isMac && existsSync(c.renamedBinary);
     const runtime = useRenamed ? c.renamedBinary : c.electron;
     if (existsSync(c.server) && existsSync(runtime)) {
-      const electronBinding = resolve(c.sqlite, "better_sqlite3.electron.node");
-      const nodeBinding = resolve(c.sqlite, "better_sqlite3.node");
-      const binding = existsSync(electronBinding) ? electronBinding : existsSync(nodeBinding) ? nodeBinding : undefined;
+      const binding = resolve(c.sqlite, "better_sqlite3.node");
+      if (!existsSync(binding)) {
+        throw new Error(`Packaged better-sqlite3 binding not found: ${binding}`);
+      }
       const electronDir = useRenamed ? dirname(c.electron) : undefined;
-      return { server: c.server, electron: runtime, binding, electronDir, koffi: c.koffi };
+      return {
+        server: c.server,
+        electron: runtime,
+        binding,
+        resourcesRoot: realpathSync(c.resourcesRoot),
+        electronDir,
+        koffi: c.koffi,
+        nodePty: c.nodePty,
+      };
     }
   }
   return null;
@@ -123,15 +143,19 @@ function inferPackagedSdkTarget(serverPath) {
 }
 
 /**
- * --bundle mode: test the pre-packaging bundle with the system node/bun.
- * Skips native module verification but catches JS bundle errors.
+ * --bundle mode: test the pre-packaging bundle with the workspace Electron runtime.
  */
 function findBundleServer() {
   const server = resolve(desktopRoot, "dist/server/server.cjs");
   if (!existsSync(server)) {
     return null;
   }
-  return { server, electron: process.execPath, binding: undefined };
+  const betterSqliteDir = dirname(serverRequire.resolve("better-sqlite3/package.json"));
+  const binding = resolve(betterSqliteDir, "build", "Release", "better_sqlite3.electron.node");
+  if (!existsSync(binding)) {
+    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${binding}`);
+  }
+  return { server, electron: desktopRequire("electron"), binding };
 }
 
 const bundleOnly = process.argv.includes("--bundle");
@@ -169,6 +193,61 @@ if (!bundleOnly) {
     process.exit(1);
   }
   console.log(`[smoke-test] Claude SDK CLI: ${claudeCli}`);
+
+  if (sdkTarget.platform === "win32") {
+    const marker = "MCODE_PACKAGED_PTY_OK";
+    const ptyScript = `
+      const { spawn } = require(process.env.MCODE_PACKAGED_NODE_PTY);
+      const marker = ${JSON.stringify(marker)};
+      let output = "";
+      const terminal = spawn(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", "Write-Output " + marker],
+        {
+          name: "xterm-256color",
+          cols: 80,
+          rows: 24,
+          cwd: process.cwd(),
+          env: process.env,
+          useConptyDll: true,
+        },
+      );
+      const timeout = setTimeout(() => {
+        console.error("Packaged PTY timed out: " + JSON.stringify(output));
+        process.exit(1);
+      }, 8000);
+      terminal.onData((data) => { output += data; });
+      terminal.onExit(({ exitCode }) => {
+        clearTimeout(timeout);
+        if (exitCode !== 0 || !output.includes(marker)) {
+          console.error("Packaged PTY failed: " + JSON.stringify({ exitCode, output }));
+          process.exit(1);
+        }
+        process.stdout.write(marker, () => process.exit(0));
+      });
+    `;
+
+    try {
+      const output = execFileSync(found.electron, ["-e", ptyScript], {
+        cwd: dirname(found.server),
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+          MCODE_PACKAGED_NODE_PTY: found.nodePty,
+        },
+      });
+      if (!output.includes(marker)) {
+        throw new Error(`Packaged PTY marker missing from output: ${output}`);
+      }
+      console.log("[smoke-test] Packaged PTY: PASS");
+    } catch (error) {
+      const details = error.stderr?.toString() || error.stdout?.toString() || error.message;
+      console.error(`[smoke-test] ERROR: Packaged PTY failed to start: ${details}`);
+      process.exit(1);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +273,9 @@ const env = {
 
 if (found.binding) {
   env.BETTER_SQLITE3_BINDING = found.binding;
+}
+if (found.resourcesRoot) {
+  env.MCODE_PACKAGED_RESOURCES_ROOT = found.resourcesRoot;
 }
 
 // When using the renamed binary in a different directory, the dynamic linker

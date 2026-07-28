@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { once } from "node:events";
 
 import { agentDown } from "../agent-down.mjs";
 import { agentUp, setAgentUpTestHooks } from "../agent-up.mjs";
@@ -105,9 +106,10 @@ test("agentUp removes stale PID files before launching server and web processes"
     computeAvailablePorts: async () => ({ serverPort: 41_223, webPort: 41_224 }),
     getElectronBinary: () => process.execPath,
     rebuildServerDevBundle: async () => {},
-    spawnLogged: () => {
+    spawnLogged: (_command, _args, options) => {
       spawnAttempted = true;
       assert.equal(existsSync(join(getRuntimePaths(repo).pidsDir, "server.pid")), false);
+      assert.match(options.env.BETTER_SQLITE3_BINDING, /better_sqlite3\.electron\.node$/);
       throw new Error("stop before real launch");
     },
   });
@@ -162,6 +164,60 @@ test("dev web single-instance flag preserves explicit false legacy mode", () => 
   assert.equal(resolveDevSingleInstanceFlag("no"), false);
   assert.equal(resolveDevSingleInstanceFlag("off"), false);
 });
+
+test("dev:server SIGTERM stops the Electron server without a Vite reference error", async () => {
+  const child = spawn(process.execPath, ["scripts/dev-web.mjs", "--server-only"], {
+    cwd: resolve(process.cwd()),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  let errors = "";
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    errors += chunk;
+  });
+
+  try {
+    const port = await waitForServerPort(() => output);
+    const health = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(health.ok, true);
+
+    child.kill("SIGTERM");
+    await once(child, "exit");
+
+    await waitForServerStop(port);
+    assert.doesNotMatch(errors, /ReferenceError.*vite/i);
+  } finally {
+    if (child.exitCode === null) child.kill("SIGTERM");
+  }
+});
+
+/** Waits for dev-web to report the server-only health port. */
+async function waitForServerPort(readOutput) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const match = /Server ready on port (\d+)/.exec(readOutput());
+    if (match) return Number(match[1]);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  throw new Error(`dev:server did not become ready: ${readOutput()}`);
+}
+
+/** Waits for the server-only child to release its health endpoint. */
+async function waitForServerStop(port) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(`http://127.0.0.1:${port}/health`);
+    } catch {
+      return;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  throw new Error(`dev:server still responds on port ${port} after SIGTERM`);
+}
 
 /**
  * Creates a minimal git repository for runtime lifecycle tests.

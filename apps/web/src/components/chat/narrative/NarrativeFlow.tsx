@@ -45,7 +45,7 @@ function marginClassForItem(item: NarrativeItem, index: number): string {
       return "mt-3";
     case "tool-group":
     case "hook":
-      return "mt-0";
+      return "mt-1";
     case "subagent":
       return "mt-1";
     case "active-tool":
@@ -70,7 +70,7 @@ function keyForItem(item: NarrativeItem, index: number): string {
     case "hook":
       return `hook-${item.hook.hookName}-${item.hook.startedAt}-${index}`;
     case "subagent":
-      return `subagent-${item.toolCall.id}`;
+      return `subagent-${item.toolCall.id}-${item.lifecycle}-${index}`;
     case "active-tool":
       return `active-tool-${item.toolCall.id}`;
     case "delta":
@@ -103,6 +103,8 @@ function renderItem(item: NarrativeItem, _mostActiveSubagentId: string | null, a
       return (
         <SubagentRow
           toolCall={item.toolCall}
+          participants={item.participants}
+          lifecycle={item.lifecycle}
           children={item.children}
           hooks={item.hooks}
           allToolCalls={allToolCalls}

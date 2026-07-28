@@ -168,19 +168,17 @@ describe("SkillService", () => {
       expect(skill!.providers).toEqual(["claude"]);
     });
 
-    it("tags skills from ~/.codex/skills with providers=['codex']", () => {
+    it("does not expose Codex Skills from the filesystem fallback", () => {
       const skillDir = join(fakeHome, ".codex", "skills", "codex-skill");
       mkdirSync(skillDir, { recursive: true });
       writeMd(join(skillDir, "SKILL.md"), { description: "Codex skill" });
 
       const items = new SkillService().list(undefined, "codex");
 
-      const skill = items.find((i) => i.name === "codex-skill");
-      expect(skill).toBeDefined();
-      expect(skill!.providers).toEqual(["codex"]);
+      expect(items.find((i) => i.name === "codex-skill")).toBeUndefined();
     });
 
-    it("scans Codex plugin cache skills with plugin prefixes", () => {
+    it("does not scan Codex plugin cache Skills", () => {
       const skillDir = join(
         fakeHome,
         ".codex",
@@ -197,16 +195,10 @@ describe("SkillService", () => {
       writeMd(skillPath, { name: "audit", description: "Run audit checks" });
 
       const items = new SkillService().list(undefined, "codex");
-      expect(items.find((i) => i.name === "impeccable:audit")).toMatchObject({
-        kind: "skill",
-        source: "plugin",
-        nativeName: "audit",
-        path: skillPath,
-        providers: ["codex"],
-      });
+      expect(items.find((i) => i.name === "impeccable:audit")).toBeUndefined();
     });
 
-    it("scans bundled Codex runtime plugin skills", () => {
+    it("does not scan bundled Codex runtime plugin Skills", () => {
       const skillDir = join(
         fakeHome,
         ".cache",
@@ -223,46 +215,7 @@ describe("SkillService", () => {
       writeMd(join(skillDir, "SKILL.md"), { name: "documents", description: "Edit documents" });
 
       const items = new SkillService().list(undefined, "codex");
-      expect(items.find((i) => i.name === "documents:documents")).toMatchObject({
-        kind: "skill",
-        source: "plugin",
-        nativeName: "documents",
-        providers: ["codex"],
-      });
-    });
-
-    it("lets native Codex catalog entries override disk fallback duplicates", () => {
-      const skillDir = join(
-        fakeHome,
-        ".codex",
-        "plugins",
-        "cache",
-        "openai-bundled",
-        "browser",
-        "1.0.0",
-        "skills",
-        "control-in-app-browser",
-      );
-      mkdirSync(skillDir, { recursive: true });
-      const skillPath = join(skillDir, "SKILL.md");
-      writeMd(skillPath, { name: "control-in-app-browser", description: "Fallback browser skill" });
-
-      const native = {
-        name: "control-in-app-browser",
-        description: "Native browser skill",
-        kind: "skill" as const,
-        source: "plugin" as const,
-        providers: ["codex"],
-        nativeName: "control-in-app-browser",
-        path: skillPath,
-      };
-
-      const items = new SkillService().list(undefined, "codex", [native]);
-      expect(items.find((i) => i.name === "browser:control-in-app-browser")).toBeUndefined();
-      expect(items.find((i) => i.name === "control-in-app-browser")).toMatchObject({
-        description: "Native browser skill",
-        source: "plugin",
-      });
+      expect(items.find((i) => i.name === "documents:documents")).toBeUndefined();
     });
 
     it("extracts Codex plugin names from cache and runtime skill paths", () => {
@@ -296,7 +249,7 @@ describe("SkillService", () => {
       expect(codexPluginNameFromSkillPath(runtimeSkillPath, fakeHome)).toBe("documents");
     });
 
-    it("tags skills from ~/.agents/skills with providers=['codex'] only", () => {
+    it("leaves ~/.agents/skills discovery to the native Codex catalog", () => {
       const skillDir = join(fakeHome, ".agents", "skills", "shared-skill");
       mkdirSync(skillDir, { recursive: true });
       writeMd(join(skillDir, "SKILL.md"), { description: "Shared skill" });
@@ -304,7 +257,7 @@ describe("SkillService", () => {
       const svc = new SkillService();
 
       const codexItems = svc.list(undefined, "codex");
-      expect(codexItems.find((i) => i.name === "shared-skill")).toBeDefined();
+      expect(codexItems.find((i) => i.name === "shared-skill")).toBeUndefined();
 
       svc.invalidate();
       const copilotItems = svc.list(undefined, "copilot");
@@ -332,7 +285,7 @@ describe("SkillService", () => {
 
       svc.invalidate();
       const codexItems = svc.list(undefined, "codex");
-      expect(codexItems.find((i) => i.name === "codex-only")).toBeDefined();
+      expect(codexItems.find((i) => i.name === "codex-only")).toBeUndefined();
       expect(codexItems.find((i) => i.name === "claude-only")).toBeUndefined();
     });
 
@@ -348,7 +301,7 @@ describe("SkillService", () => {
       const items = new SkillService().list();
 
       expect(items.find((i) => i.name === "claude-skill")).toBeDefined();
-      expect(items.find((i) => i.name === "codex-skill")).toBeDefined();
+      expect(items.find((i) => i.name === "codex-skill")).toBeUndefined();
       expect(items.every((i) => Array.isArray(i.providers))).toBe(true);
     });
 
@@ -372,28 +325,7 @@ describe("SkillService", () => {
       }
     });
 
-    it("allows same name across different providers", () => {
-      const claudeSkillDir = join(fakeHome, ".claude", "skills", "deploy");
-      mkdirSync(claudeSkillDir, { recursive: true });
-      writeMd(join(claudeSkillDir, "SKILL.md"), { description: "Claude deploy" });
-
-      const codexSkillDir = join(fakeHome, ".codex", "skills", "deploy");
-      mkdirSync(codexSkillDir, { recursive: true });
-      writeMd(join(codexSkillDir, "SKILL.md"), { description: "Codex deploy" });
-
-      const svc = new SkillService();
-
-      const claudeItems = svc.list(undefined, "claude");
-      const claudeDeploy = claudeItems.find((i) => i.name === "deploy");
-      expect(claudeDeploy!.description).toBe("Claude deploy");
-
-      svc.invalidate();
-      const codexItems = svc.list(undefined, "codex");
-      const codexDeploy = codexItems.find((i) => i.name === "deploy");
-      expect(codexDeploy!.description).toBe("Codex deploy");
-    });
-
-    it("tags prompts from ~/.codex/prompts as Codex prompt commands", () => {
+    it("leaves Codex custom prompts to the bounded catalog adapter", () => {
       const cmdDir = join(fakeHome, ".codex", "prompts");
       mkdirSync(cmdDir, { recursive: true });
       const promptPath = join(cmdDir, "deploy.md");
@@ -401,13 +333,27 @@ describe("SkillService", () => {
 
       const items = new SkillService().list(undefined, "codex");
 
-      const cmd = items.find((i) => i.name === "prompts:deploy");
-      expect(cmd).toBeDefined();
-      expect(cmd!.kind).toBe("command");
-      expect(cmd!.description).toBe("Codex deploy prompt");
-      expect(cmd!.nativeName).toBe("deploy");
-      expect(cmd!.path).toBe(promptPath);
-      expect(cmd!.providers).toEqual(["codex"]);
+      expect(items.find((i) => i.name === "prompts:deploy")).toBeUndefined();
+    });
+
+    it("leaves Codex commands outside the two documented compatibility adapters", () => {
+      const userCommands = join(fakeHome, ".agents", "commands");
+      const cwd = tmp();
+      const projectCommands = join(cwd, ".agents", "commands");
+      mkdirSync(userCommands, { recursive: true });
+      mkdirSync(projectCommands, { recursive: true });
+      writeMd(join(userCommands, "user-command.md"), { description: "Legacy user command" });
+      writeMd(join(projectCommands, "project-command.md"), {
+        description: "Legacy project command",
+      });
+
+      try {
+        const items = new SkillService().list(cwd, "codex");
+
+        expect(items).toEqual([]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
     });
 
     it("tags skills from ~/.cursor/skills with providers=['cursor']", () => {

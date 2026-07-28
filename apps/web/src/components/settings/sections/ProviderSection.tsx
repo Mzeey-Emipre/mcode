@@ -2,8 +2,8 @@ import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
-import { SettingRow } from "../SettingRow";
-import { SectionHeading } from "../SectionHeading";
+import { SettingRow, SETTING_ROW_GRID_CLASS } from "../SettingRow";
+import { SettingsGroup } from "../SettingsGroup";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -33,6 +33,8 @@ export function ProviderSection() {
   const settings = useSettingsStore((s) => s.settings);
   const update = useSettingsStore((s) => s.update);
   const [pendingDisable, setPendingDisable] = useState<ProviderId | null>(null);
+  const availableProviders = providers.filter((provider) => !provider.comingSoon);
+  const comingSoonProviders = providers.filter((provider) => provider.comingSoon);
 
   // Count how many adapter-backed providers are currently enabled, so we can
   // prevent the user from disabling the last one.
@@ -57,9 +59,11 @@ export function ProviderSection() {
 
   return (
     <div>
-      <SectionHeading>Provider</SectionHeading>
-      <div>
-        {providers.map((p) => (
+      <SettingsGroup
+        title="Providers"
+        description="Enable providers and configure their CLI paths."
+      >
+        {availableProviders.map((p) => (
           <ProviderRow
             key={p.id}
             row={p}
@@ -73,7 +77,19 @@ export function ProviderSection() {
             }
           />
         ))}
-      </div>
+        {comingSoonProviders.length > 0 && (
+          <div data-testid="coming-soon-providers" className="py-4">
+            <h3 className="px-1 text-xs font-semibold text-muted-foreground">
+              Coming soon
+            </h3>
+            <div className="mt-2 space-y-0.5">
+              {comingSoonProviders.map((provider) => (
+                <ComingSoonProviderRow key={provider.id} row={provider} />
+              ))}
+            </div>
+          </div>
+        )}
+      </SettingsGroup>
       {pendingDisable && (
         <ConfirmDisableDialog
           providerId={pendingDisable}
@@ -104,16 +120,16 @@ interface ProviderRowProps {
  * Single provider row with a disclosure for editable CLI path configuration.
  */
 function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }: ProviderRowProps) {
-  // Coming-soon and adapter-less providers cannot be toggled; the last enabled
-  // provider also blocks toggling to prevent an unusable state.
-  const switchDisabled = row.comingSoon || !row.hasAdapter || isLastEnabled;
-  const canConfigure = !row.comingSoon && onCliPathChange != null;
+  // Adapter-less providers cannot be toggled; the last enabled provider also
+  // blocks toggling to prevent an unusable state.
+  const switchDisabled = !row.hasAdapter || isLastEnabled;
+  const canConfigure = onCliPathChange != null;
   const [isConfigOpen, setIsConfigOpen] = useState(row.beta);
   const label = labelFor(row.id);
   const hint = hintFor(row, isLastEnabled);
 
   const controls = (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 min-[80rem]:min-w-[9.2rem] min-[80rem]:justify-end">
       {row.beta && (
         <Tooltip>
           <TooltipTrigger>
@@ -125,11 +141,6 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
             This provider is in early phase. Expect bugs or incomplete features.
           </TooltipContent>
         </Tooltip>
-      )}
-      {row.comingSoon && (
-        <Badge variant="outline" data-testid={`provider-badge-${row.id}-comingsoon`}>
-          Coming soon
-        </Badge>
       )}
       {row.enabled && row.cli.status === "not_found" && (
         <Tooltip>
@@ -163,9 +174,13 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
   }
 
   return (
-    <Collapsible open={isConfigOpen} onOpenChange={setIsConfigOpen}>
-      <div className="border-b border-border/50 px-1 py-4 last:border-b-0">
-        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+    <Collapsible
+      open={isConfigOpen}
+      onOpenChange={setIsConfigOpen}
+      className="border-b border-border/50 last:border-b-0"
+    >
+      <div className="px-1 py-4">
+        <div className={SETTING_ROW_GRID_CLASS}>
           <CollapsibleTrigger asChild>
             <Button
               type="button"
@@ -173,7 +188,7 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
               size="sm"
               data-testid={`provider-config-trigger-${row.id}`}
               aria-label={`${isConfigOpen ? "Hide" : "Show"} ${label} configuration`}
-              className="-ml-2 h-auto min-w-[10rem] flex-1 items-start justify-between gap-4 rounded-md px-2 py-1 text-left hover:bg-accent/60"
+              className="-ml-2 h-auto w-full min-w-0 items-start justify-between gap-4 rounded-md px-2 py-1 text-left hover:bg-accent/60 aria-expanded:bg-transparent dark:aria-expanded:bg-transparent"
             >
               <span className="flex min-w-0 flex-col items-start">
                 <span className="text-sm font-semibold text-foreground">{label}</span>
@@ -191,7 +206,12 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
           {controls}
         </div>
         <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down motion-reduce:animate-none">
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-border/40 pt-3 pl-2">
+          <div
+            className={cn(
+              SETTING_ROW_GRID_CLASS,
+              "mt-3 border-t border-border/40 pt-3 pl-2",
+            )}
+          >
             <label htmlFor={`provider-cli-path-${row.id}`} className="text-sm font-medium text-foreground">
               {label} CLI path
             </label>
@@ -210,6 +230,23 @@ function ProviderRow({ row, isLastEnabled, onToggle, cliPath, onCliPathChange }:
   );
 }
 
+/** Displays a non-interactive provider that is not available yet. */
+function ComingSoonProviderRow({ row }: { row: ProviderAvailability }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-1 py-2.5">
+      <span className="text-sm font-medium text-foreground/75">
+        {labelFor(row.id)}
+      </span>
+      <Badge
+        variant="secondary"
+        data-testid={`provider-badge-${row.id}-comingsoon`}
+      >
+        Coming soon
+      </Badge>
+    </div>
+  );
+}
+
 /** Returns the human-readable display name for a provider ID. */
 function labelFor(id: ProviderId): string {
   if (id === "copilot") return "GitHub Copilot";
@@ -219,7 +256,6 @@ function labelFor(id: ProviderId): string {
 /** Returns the hint text shown below the provider label. */
 function hintFor(row: ProviderAvailability, isLastEnabled: boolean): string {
   if (isLastEnabled) return "At least one provider must be enabled.";
-  if (row.comingSoon) return "Adapter not available yet.";
   if (row.enabled && row.cli.status === "not_found") {
     return `CLI not found${row.cli.configuredPath ? ` at ${row.cli.configuredPath}` : ""}.`;
   }

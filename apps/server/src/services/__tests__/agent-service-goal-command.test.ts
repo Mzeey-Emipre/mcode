@@ -177,15 +177,14 @@ describe("AgentService.sendMessage — /goal command", () => {
   it("/goal <condition> installs the goal AND invokes the provider with a directive payload", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "/goal analyse this branch",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "/goal analyse this branch",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // Goal installed on the matching session id used by ClaudeProvider.
     expect(providerStub.setGoal).toHaveBeenCalledWith(
@@ -210,31 +209,16 @@ describe("AgentService.sendMessage — /goal command", () => {
   it("installs a typed composer goal without persisting slash-command text", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "Analyse this branch",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      [],
-      undefined,
-      "Analyse this branch",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "Analyse this branch",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      mentions: [],
+      goalObjective: "Analyse this branch",
+    });
 
     expect(providerStub.setGoal).toHaveBeenCalledWith(
       `mcode-${thread.id}`,
@@ -251,15 +235,14 @@ describe("AgentService.sendMessage — /goal command", () => {
     const { svc, providerStub } = buildService(db);
     providerStub.hasNativeGoalCommand.mockReturnValue(true);
 
-    await svc.sendMessage(
-      thread.id,
-      "/goal analyse this branch",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "/goal analyse this branch",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(providerStub.setGoal).not.toHaveBeenCalled();
     expect(providerStub.setNativeGoalMirror).toHaveBeenCalledWith(
@@ -402,15 +385,14 @@ describe("AgentService.sendMessage — /goal command", () => {
 
     // sendMessage swallows the send failure (emits an error event, marks the
     // thread errored) rather than rejecting, so this resolves normally.
-    await svc.sendMessage(
-      thread.id,
-      "/goal analyse this branch",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "/goal analyse this branch",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // onDispatch installed the goal just before the failing send...
     expect(providerStub.setGoal).toHaveBeenCalledWith(
@@ -426,15 +408,14 @@ describe("AgentService.sendMessage — /goal command", () => {
     providerStub.hasNativeGoalCommand.mockReturnValue(true);
     providerStub.sendTurn.mockRejectedValueOnce(new Error("provider boom"));
 
-    await svc.sendMessage(
-      thread.id,
-      "/goal clear",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "/goal clear",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(providerStub.sendTurn.mock.calls[0][0].message).toBe("/goal off");
     expect(providerStub.clearNativeGoalMirror).not.toHaveBeenCalled();
@@ -443,15 +424,14 @@ describe("AgentService.sendMessage — /goal command", () => {
   it("/goal clear short-circuits — clears the goal, does NOT invoke the provider, broadcasts a Message pill without Ended", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "/goal clear",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "/goal clear",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
     expect(providerStub.sendTurn).not.toHaveBeenCalled();
@@ -494,15 +474,14 @@ describe("AgentService.sendMessage — /goal command", () => {
       controls: { canInspect: true, canClear: true },
     } satisfies GoalState);
 
-    await svc.sendMessage(
-      thread.id,
-      "/goal",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "/goal",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(providerStub.sendTurn).not.toHaveBeenCalled();
     expect(providerStub.setGoal).not.toHaveBeenCalled();
@@ -515,16 +494,14 @@ describe("AgentService.sendMessage — /goal command", () => {
   it("providers without the goal capability pass /goal through as plain text", async () => {
     const { svc, providerStub, nonGoalStub } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "/goal something",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      // A non-goal-capable provider so the capability probe returns passthrough.
-      "gemini",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "/goal something",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "gemini",
+    });
 
     // No goal install on the capable provider, and the non-capable provider
     // received the raw text (no rewrite).
@@ -565,28 +542,26 @@ describe("AgentService.sendMessage — /goal command", () => {
   it("rejects a normal send while the thread already has an active turn", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "first turn",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "first turn",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     const beforeMessages = messageRepo.listByThread(thread.id, 100).messages;
     providerStub.sendTurn.mockClear();
 
     await expect(
-      svc.sendMessage(
-        thread.id,
-        "duplicate turn",
-        "default",
-        "claude-sonnet-4-6",
-        [],
-        undefined,
-        "claude",
-      ),
+      svc.sendMessage({
+        threadId: thread.id,
+        content: "duplicate turn",
+        permissionMode: "default",
+        model: "claude-sonnet-4-6",
+        attachments: [],
+        provider: "claude",
+      }),
     ).rejects.toThrow("already has an active agent session");
 
     expect(providerStub.sendTurn).not.toHaveBeenCalled();
@@ -596,24 +571,22 @@ describe("AgentService.sendMessage — /goal command", () => {
   it("rejects concurrent normal sends before either can persist a duplicate row", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 
-    const first = svc.sendMessage(
-      thread.id,
-      "first turn",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
-    const second = svc.sendMessage(
-      thread.id,
-      "duplicate turn",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    const first = svc.sendMessage({
+      threadId: thread.id,
+      content: "first turn",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const second = svc.sendMessage({
+      threadId: thread.id,
+      content: "duplicate turn",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     await expect(second).rejects.toThrow("already has an active agent session");
     await first;
@@ -626,26 +599,24 @@ describe("AgentService.sendMessage — /goal command", () => {
   it("still handles /goal clear while the thread already has an active turn", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "first turn",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "first turn",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     providerStub.sendTurn.mockClear();
 
-    await svc.sendMessage(
-      thread.id,
-      "/goal clear",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "/goal clear",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(providerStub.clearGoal).toHaveBeenCalledWith(`mcode-${thread.id}`);
     expect(providerStub.sendTurn).not.toHaveBeenCalled();
@@ -676,7 +647,14 @@ describe("AgentService.sendMessage — /goal command", () => {
       source: "claude-cache",
     });
 
-    await svc.sendMessage(thread.id, "first turn", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "first turn",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     await expect(svc.clearThreadGoal(thread.id)).resolves.toEqual({
       goal: activeGoal,

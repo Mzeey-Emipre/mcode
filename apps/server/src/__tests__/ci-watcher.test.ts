@@ -18,24 +18,38 @@ describe("CiWatcherService", () => {
   let watcher: CiWatcherService;
   let mockGithubService: {
     getCheckRuns: ReturnType<typeof vi.fn>;
+    getPullRequestWatchSnapshots: ReturnType<typeof vi.fn>;
     cancelCheckRuns: ReturnType<typeof vi.fn>;
     cancelAllInFlight: ReturnType<typeof vi.fn>;
   };
   let mockBroadcast: ReturnType<typeof vi.fn>;
+  let mockPullRequestStateChange: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     mockGithubService = {
       getCheckRuns: vi.fn(),
+      getPullRequestWatchSnapshots: vi.fn(),
       cancelCheckRuns: vi.fn().mockResolvedValue(undefined),
       cancelAllInFlight: vi.fn().mockResolvedValue(undefined),
     };
     // Default: return no_checks so watch() immediate fetch resolves without side effects.
     mockGithubService.getCheckRuns.mockResolvedValue(makeChecks("no_checks"));
+    mockGithubService.getPullRequestWatchSnapshots.mockImplementation(
+      async (targets: Array<{ threadId: string; prNumber: number }>) => Promise.all(
+        targets.map(async (target) => ({
+          ...target,
+          state: "OPEN",
+          checks: await mockGithubService.getCheckRuns(),
+        })),
+      ),
+    );
     mockBroadcast = vi.fn();
+    mockPullRequestStateChange = vi.fn();
     watcher = new CiWatcherService(
       mockGithubService as unknown as GithubService,
       mockBroadcast,
+      mockPullRequestStateChange,
     );
   });
 
@@ -104,6 +118,70 @@ describe("CiWatcherService", () => {
       threadId: "t1",
       checks: pending,
     });
+  });
+
+  it("polls two watched pull requests through one batch call", async () => {
+    watcher.watch("t1", 41, "feature-1", "/repo", { skipInitialFetch: true });
+    watcher.watch("t2", 42, "feature-2", "/repo", { skipInitialFetch: true });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(mockGithubService.getPullRequestWatchSnapshots).toHaveBeenCalledTimes(1);
+    expect(mockGithubService.getPullRequestWatchSnapshots).toHaveBeenCalledWith([
+      { threadId: "t1", prNumber: 41, repoPath: "/repo" },
+      { threadId: "t2", prNumber: 42, repoPath: "/repo" },
+    ]);
+  });
+
+  it("stops polling and publishes a merged pull request state", async () => {
+    mockGithubService.getPullRequestWatchSnapshots.mockResolvedValue([{
+      threadId: "t1",
+      prNumber: 41,
+      state: "MERGED",
+      checks: makeChecks("passing"),
+    }]);
+    watcher.watch("t1", 41, "feature-1", "/repo", { skipInitialFetch: true });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(watcher.isWatching("t1")).toBe(false);
+    expect(mockPullRequestStateChange).toHaveBeenCalledWith({
+      threadId: "t1",
+      prNumber: 41,
+      state: "MERGED",
+    });
+  });
+
+  it("ignores a stale snapshot after the thread is relinked", async () => {
+    mockGithubService.getPullRequestWatchSnapshots.mockResolvedValue([{
+      threadId: "t1",
+      prNumber: 41,
+      state: "MERGED",
+      checks: makeChecks("passing"),
+    }]);
+    watcher.watch("t1", 42, "feature-2", "/repo", { skipInitialFetch: true });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(watcher.isWatching("t1")).toBe(true);
+    expect(mockPullRequestStateChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps polling a terminal pull request when persisting its state fails", async () => {
+    mockGithubService.getPullRequestWatchSnapshots.mockResolvedValue([{
+      threadId: "t1",
+      prNumber: 41,
+      state: "CLOSED",
+      checks: makeChecks("no_checks"),
+    }]);
+    mockPullRequestStateChange.mockImplementation(() => {
+      throw new Error("database unavailable");
+    });
+    watcher.watch("t1", 41, "feature-1", "/repo", { skipInitialFetch: true });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(watcher.isWatching("t1")).toBe(true);
   });
 
   it("does NOT broadcast when state is unchanged", async () => {

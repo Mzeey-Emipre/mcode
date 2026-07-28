@@ -59,6 +59,8 @@ describe("V7 migration", () => {
       "output_truncated",
       "output_total_bytes",
       "output_artifact_path",
+      "exit_code",
+      "provider_agent_key",
     ]));
 
     db.close();
@@ -81,11 +83,16 @@ describe("ToolCallRecordRepo", () => {
     const input: CreateToolCallRecordInput = {
       messageId,
       toolName: "Read",
+      displayName: "Explorer",
+      providerAgentKey: "/root/explorer",
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
       inputSummary: "file.ts",
       outputSummary: "200 lines",
       outputTruncated: true,
       outputTotalBytes: 300_000,
       outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
+      exitCode: 1,
       status: "completed",
       sortOrder: 0,
     };
@@ -95,11 +102,16 @@ describe("ToolCallRecordRepo", () => {
     expect(record.id).toBeDefined();
     expect(record.message_id).toBe(messageId);
     expect(record.tool_name).toBe("Read");
+    expect(record.display_name).toBe("Explorer");
+    expect(record.provider_agent_key).toBe("/root/explorer");
+    expect(record.model).toBe("gpt-5.3-codex");
+    expect(record.reasoning_effort).toBe("high");
     expect(record.input_summary).toBe("file.ts");
     expect(record.output_summary).toBe("200 lines");
     expect(record.output_truncated).toBe(1);
     expect(record.output_total_bytes).toBe(300_000);
     expect(record.output_artifact_path).toBe("C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt");
+    expect(record.exit_code).toBe(1);
     expect(record.status).toBe("completed");
     expect(record.sort_order).toBe(0);
     expect(record.parent_tool_call_id).toBeNull();
@@ -108,7 +120,27 @@ describe("ToolCallRecordRepo", () => {
     const records = repo.listByMessage(messageId);
     expect(records).toHaveLength(1);
     expect(records[0]!.id).toBe(record.id);
+    expect(records[0]!.display_name).toBe("Explorer");
+    expect(records[0]!.provider_agent_key).toBe("/root/explorer");
+    expect(records[0]!.model).toBe("gpt-5.3-codex");
+    expect(records[0]!.reasoning_effort).toBe("high");
     expect(records[0]!.output_truncated).toBe(1);
+    expect(records[0]!.exit_code).toBe(1);
+  });
+
+  it("preserves a successful exit code of zero", () => {
+    const record = repo.create({
+      messageId,
+      toolName: "Bash",
+      inputSummary: "git status",
+      outputSummary: "",
+      exitCode: 0,
+      status: "completed",
+      sortOrder: 0,
+    });
+
+    expect(record.exit_code).toBe(0);
+    expect(repo.listByMessage(messageId)[0]!.exit_code).toBe(0);
   });
 
   it("bulkCreate inserts multiple records in a transaction", () => {
@@ -144,6 +176,50 @@ describe("ToolCallRecordRepo", () => {
     const records = repo.listByMessage(messageId);
     expect(records).toHaveLength(3);
     expect(records.map((r) => r.tool_name)).toEqual(["Read", "Edit", "Bash"]);
+  });
+
+  it("preserves explicit lifecycle timestamps for each bulk-created record", () => {
+    repo.bulkCreate([
+      {
+        toolCallId: "agent-first",
+        messageId,
+        toolName: "Agent",
+        inputSummary: "First delegated task",
+        outputSummary: "First result",
+        status: "completed",
+        startedAt: "2026-07-22T10:00:00.000Z",
+        completedAt: "2026-07-22T10:00:20.000Z",
+        sortOrder: 0,
+      },
+      {
+        toolCallId: "agent-second",
+        messageId,
+        toolName: "Agent",
+        inputSummary: "Second delegated task",
+        outputSummary: "Second result",
+        status: "completed",
+        startedAt: "2026-07-22T10:00:05.000Z",
+        completedAt: "2026-07-22T10:00:50.000Z",
+        sortOrder: 1,
+      },
+    ]);
+
+    expect(repo.listByMessage(messageId).map((record) => ({
+      id: record.id,
+      startedAt: record.started_at,
+      completedAt: record.completed_at,
+    }))).toEqual([
+      {
+        id: "agent-first",
+        startedAt: "2026-07-22T10:00:00.000Z",
+        completedAt: "2026-07-22T10:00:20.000Z",
+      },
+      {
+        id: "agent-second",
+        startedAt: "2026-07-22T10:00:05.000Z",
+        completedAt: "2026-07-22T10:00:50.000Z",
+      },
+    ]);
   });
 
   it("supports parent nesting via listByParent", () => {

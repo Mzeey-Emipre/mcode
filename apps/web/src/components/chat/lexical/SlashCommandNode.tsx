@@ -1,7 +1,7 @@
 /**
  * Lexical DecoratorNode for /command slash-command chips.
  *
- * Renders an inline chip with a namespace-colored icon and the command name.
+ * Renders an inline entity token with a namespace-specific icon and the command name.
  * Serializes as `/<commandName>` for plain-text extraction.
  */
 import type { JSX } from "react";
@@ -13,9 +13,11 @@ import {
   type NodeKey,
   type SerializedLexicalNode,
 } from "lexical";
-import { Terminal, Zap, Puzzle } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { NAMESPACE_CHIP_STYLES } from "@/lib/slash-command-styles";
+import {
+  ProviderCapabilityIdentitySchema,
+  type ProviderCapabilityIdentity,
+} from "@mcode/contracts";
+import { EntityToken } from "../EntityToken";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,29 +31,15 @@ export interface SerializedSlashCommandNode extends SerializedLexicalNode {
   readonly type: "slash-command";
   readonly commandName: string;
   readonly namespace: SlashCommandNamespace;
+  readonly capabilityIdentity?: ProviderCapabilityIdentity;
 }
-
-// ---------------------------------------------------------------------------
-// Namespace styling
-// ---------------------------------------------------------------------------
-
 
 /** Valid namespace values for deserialisation fallback. */
 const VALID_NAMESPACES = new Set<SlashCommandNamespace>(["skill", "mcode", "plugin", "command"]);
 
-const NAMESPACE_ICONS: Record<SlashCommandNamespace, typeof Terminal> = {
-  skill: Terminal,
-  mcode: Zap,
-  plugin: Puzzle,
-  command: Terminal,
-};
-
 // ---------------------------------------------------------------------------
 // SlashCommandChip (React component rendered by decorate())
 // ---------------------------------------------------------------------------
-
-const CHIP_BASE =
-  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs align-baseline";
 
 function SlashCommandChip({
   commandName,
@@ -60,12 +48,8 @@ function SlashCommandChip({
   readonly commandName: string;
   readonly namespace: SlashCommandNamespace;
 }): JSX.Element {
-  const Icon = NAMESPACE_ICONS[namespace];
   return (
-    <span className={cn(CHIP_BASE, NAMESPACE_CHIP_STYLES[namespace])}>
-      <Icon className="size-3.5" />
-      /{commandName}
-    </span>
+    <EntityToken kind={namespace} label={`/${commandName}`} tone="composer" invocation />
   );
 }
 
@@ -76,6 +60,7 @@ function SlashCommandChip({
 export class SlashCommandNode extends DecoratorNode<JSX.Element> {
   __commandName: string;
   __namespace: SlashCommandNamespace;
+  __capabilityIdentity?: ProviderCapabilityIdentity;
 
   static getType(): string {
     return "slash-command";
@@ -85,6 +70,7 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
     return new SlashCommandNode(
       node.__commandName,
       node.__namespace,
+      node.__capabilityIdentity,
       node.__key,
     );
   }
@@ -92,11 +78,13 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
   constructor(
     commandName: string,
     namespace: SlashCommandNamespace,
+    capabilityIdentity?: ProviderCapabilityIdentity,
     key?: NodeKey,
   ) {
     super(key);
     this.__commandName = commandName;
     this.__namespace = namespace;
+    this.__capabilityIdentity = capabilityIdentity;
   }
 
   // -- Accessors ------------------------------------------------------------
@@ -107,6 +95,10 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
 
   getNamespace(): SlashCommandNamespace {
     return this.getLatest().__namespace;
+  }
+
+  getCapabilityIdentity(): ProviderCapabilityIdentity | undefined {
+    return this.getLatest().__capabilityIdentity;
   }
 
   // -- Behavior -------------------------------------------------------------
@@ -138,6 +130,7 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
       type: "slash-command",
       commandName: this.__commandName,
       namespace: this.__namespace,
+      ...(this.__capabilityIdentity ? { capabilityIdentity: this.__capabilityIdentity } : {}),
       version: 1,
     };
   }
@@ -148,7 +141,14 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
     const ns = VALID_NAMESPACES.has(serializedNode.namespace)
       ? serializedNode.namespace
       : "mcode";
-    return $createSlashCommandNode(serializedNode.commandName, ns);
+    const identity = ProviderCapabilityIdentitySchema().safeParse(
+      serializedNode.capabilityIdentity,
+    );
+    return $createSlashCommandNode(
+      serializedNode.commandName,
+      ns,
+      identity.success ? identity.data : undefined,
+    );
   }
 
   // -- Decoration -----------------------------------------------------------
@@ -171,8 +171,9 @@ export class SlashCommandNode extends DecoratorNode<JSX.Element> {
 export function $createSlashCommandNode(
   commandName: string,
   namespace: SlashCommandNamespace,
+  capabilityIdentity?: ProviderCapabilityIdentity,
 ): SlashCommandNode {
-  return new SlashCommandNode(commandName, namespace);
+  return new SlashCommandNode(commandName, namespace, capabilityIdentity);
 }
 
 /** Type guard: returns true when the node is a SlashCommandNode. */

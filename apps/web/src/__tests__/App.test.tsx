@@ -1,5 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { App } from "../app/App";
 import { useUiStore } from "@/stores/uiStore";
 
@@ -20,7 +27,9 @@ vi.mock("@/transport", async () => ({
     listThreads: vi.fn().mockResolvedValue([]),
     getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
     sendMessage: vi.fn().mockResolvedValue(undefined),
-    createAndSendMessage: vi.fn().mockResolvedValue({ id: "t1", title: "test", model: null }),
+    createAndSendMessage: vi
+      .fn()
+      .mockResolvedValue({ id: "t1", title: "test", model: null }),
     updateThreadTitle: vi.fn().mockResolvedValue(true),
     createWorkspace: vi.fn().mockResolvedValue({}),
     deleteWorkspace: vi.fn().mockResolvedValue(true),
@@ -34,11 +43,19 @@ vi.mock("@/transport", async () => ({
     pinWorkspace: vi.fn().mockResolvedValue(undefined),
     removeRecent: vi.fn().mockResolvedValue(undefined),
     enrichWorkspaces: vi.fn().mockResolvedValue({ items: [] }),
-    filesystemBrowse: vi.fn().mockResolvedValue({ path: "/", parent: null, entries: [], isExactDirectory: true }),
+    filesystemBrowse: vi.fn().mockResolvedValue({
+      path: "/",
+      parent: null,
+      entries: [],
+      isExactDirectory: true,
+    }),
     getSettings: vi.fn().mockResolvedValue({}),
     getPullRequestCapabilities: vi.fn().mockResolvedValue({
       ok: false,
-      error: { code: "unauthenticated", message: "GitHub authentication required" },
+      error: {
+        code: "unauthenticated",
+        message: "GitHub authentication required",
+      },
     }),
     listPullRequests: vi.fn().mockResolvedValue({
       ok: true,
@@ -49,14 +66,24 @@ vi.mock("@/transport", async () => ({
       staleAt: "2026-07-11T12:00:30.000Z",
       limitations: [],
     }),
-    cancelPullRequestOperation: vi.fn().mockResolvedValue({ ok: true, cancelled: false }),
+    cancelPullRequestOperation: vi
+      .fn()
+      .mockResolvedValue({ ok: true, cancelled: false }),
   }),
 }));
 
 // Mock ScrollArea since @base-ui/react may not work in jsdom
 vi.mock("@/components/ui/scroll-area", () => ({
-  ScrollArea: ({ children, className }: { children: React.ReactNode; className?: string }) => (
-    <div data-testid="scroll-area" className={className}>{children}</div>
+  ScrollArea: ({
+    children,
+    className,
+  }: {
+    children: React.ReactNode;
+    className?: string;
+  }) => (
+    <div data-testid="scroll-area" className={className}>
+      {children}
+    </div>
   ),
   ScrollBar: () => null,
 }));
@@ -65,6 +92,12 @@ vi.mock("@/components/ui/scroll-area", () => ({
 await import("@/components/pull-requests/PullRequestSurface");
 
 describe("App", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
+  });
+
   beforeEach(() => {
     useUiStore.setState({
       primarySurface: "chat",
@@ -80,7 +113,9 @@ describe("App", () => {
       const sidebar =
         screen.queryByTestId("sidebar-docked") ??
         screen.getByTestId("sidebar-floating");
-      expect(within(sidebar).getByRole("img", { name: "Mcode" })).toBeInTheDocument();
+      expect(
+        within(sidebar).getByRole("img", { name: "Mcode" }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -88,7 +123,9 @@ describe("App", () => {
     render(<App />);
     await waitFor(() => {
       const main = screen.getByRole("main");
-      expect(within(main).getByRole("img", { name: "Mcode" })).toBeInTheDocument();
+      expect(
+        within(main).getByRole("img", { name: "Mcode" }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -103,7 +140,106 @@ describe("App", () => {
 
     const floatingSidebar = screen.getByTestId("sidebar-floating");
     expect(floatingSidebar).toHaveClass("bg-page");
-    expect(floatingSidebar.firstElementChild).toHaveClass("w-full", "max-w-none");
+    expect(floatingSidebar.firstElementChild).toHaveClass(
+      "w-full",
+      "max-w-none",
+    );
+    expect(floatingSidebar).toHaveClass(
+      "animate-in",
+      "slide-in-from-left-4",
+      "motion-reduce:animate-none",
+    );
+    expect(screen.getByRole("button", { name: "Close project tree" })).toHaveClass(
+      "animate-in",
+      "fade-in-0",
+      "motion-reduce:animate-none",
+    );
+  });
+
+  it("retains the floating sidebar during its pointer-inert exit", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          matches: false,
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }) as MediaQueryList,
+    );
+    useUiStore.setState({
+      sidebarCollapsed: false,
+      sidebarCollapsedByLayout: false,
+      sidebarFloating: true,
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Close project tree" }));
+
+    const backdrop = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close project tree"]',
+    );
+    const floatingSidebar = screen.getByTestId("sidebar-floating");
+    if (!backdrop) throw new Error("Floating sidebar backdrop was not retained");
+    expect(backdrop).toHaveAttribute("aria-hidden", "true");
+    expect(backdrop).toHaveAttribute("inert");
+    expect(backdrop).toHaveClass("pointer-events-none", "animate-out", "fade-out-0");
+    expect(floatingSidebar).toHaveAttribute("aria-hidden", "true");
+    expect(floatingSidebar).toHaveAttribute("inert");
+    expect(floatingSidebar).toHaveClass(
+      "pointer-events-none",
+      "animate-out",
+      "slide-out-to-left-4",
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(screen.queryByTestId("sidebar-floating")).not.toBeInTheDocument();
+  });
+
+  it("removes the floating sidebar immediately with reduced motion", () => {
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          matches: query === "(prefers-reduced-motion: reduce)",
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        }) as MediaQueryList,
+    );
+    useUiStore.setState({
+      sidebarCollapsed: false,
+      sidebarCollapsedByLayout: false,
+      sidebarFloating: true,
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Close project tree" }));
+
+    expect(screen.queryByTestId("sidebar-floating")).not.toBeInTheDocument();
+  });
+
+  it("retains the collapsed docked sidebar without allowing interaction", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+    const dockedSidebar = screen.getByTestId("sidebar-docked");
+    expect(dockedSidebar).toBeInTheDocument();
+    expect(dockedSidebar).toHaveAttribute("aria-hidden", "true");
+    expect(dockedSidebar).toHaveAttribute("inert");
+    expect(dockedSidebar).toHaveClass(
+      "pointer-events-none",
+      "grid-cols-[0fr]",
+      "motion-reduce:transition-none",
+    );
   });
 
   it("opens the lazy Pull requests surface from primary navigation", async () => {
@@ -118,5 +254,38 @@ describe("App", () => {
         }),
       ).toBeInTheDocument();
     });
+  });
+
+  it("renders the persistent navigation title bar only for Electron", () => {
+    (window as unknown as Record<string, unknown>).desktopBridge = {
+      window: {
+        platform: "win32",
+        isDevelopment: false,
+        perform: vi.fn(),
+      },
+    };
+
+    const { unmount } = render(<App />);
+    const titleBar = screen.getByTestId("desktop-title-bar");
+    expect(titleBar).toHaveClass("h-10", "bg-page");
+    expect(
+      within(titleBar).getByRole("button", { name: "Back" }),
+    ).toBeDisabled();
+    expect(
+      within(titleBar).getByRole("button", { name: "Forward" }),
+    ).toBeDisabled();
+
+    unmount();
+  });
+
+  it("does not render the desktop title bar for a partial feature bridge", () => {
+    (window as unknown as Record<string, unknown>).desktopBridge = {
+      preview: {},
+    };
+
+    const { unmount } = render(<App />);
+    expect(screen.queryByTestId("desktop-title-bar")).not.toBeInTheDocument();
+
+    unmount();
   });
 });

@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getTestThreadMessages,
@@ -25,13 +26,10 @@ describe("threadStore assistant attachments", () => {
       sizeBytes: 128,
     };
 
-    useThreadStore.getState().handleAgentEvent("thread-images", {
-      method: "session.message",
-      messageId: "msg-1",
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "thread-images", messageId: "msg-1",
       content: "",
       tokens: null,
-      attachments: [attachment],
-    });
+      attachments: [attachment] } satisfies AgentEvent);
 
     expect(getTestThreadMessages("thread-images")).toEqual([
       expect.objectContaining({

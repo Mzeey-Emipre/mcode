@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { NAV_GROUPS, type SettingsSection } from "./settings-nav";
 
 interface SettingsNavProps {
@@ -12,23 +13,25 @@ export function SettingsNav({ section, onSection }: SettingsNavProps) {
     <div className="py-4">
       {NAV_GROUPS.map((group) => (
         <div key={group.label} className="mb-5 px-2">
-          <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
+          <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {group.label}
           </p>
           {group.items.map((item) => (
-            <button
+            <Button
               key={item.id}
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => onSection(item.id)}
               className={cn(
-                "flex w-full rounded px-3 py-1.5 text-left text-sm font-medium transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring/50",
+                "w-full justify-start rounded-md px-3 text-left font-medium",
                 section === item.id
-                  ? "bg-primary/10 text-foreground font-semibold"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/40",
+                  ? "bg-primary/10 font-semibold text-foreground hover:bg-primary/10"
+                  : "text-muted-foreground hover:bg-muted/40 hover:text-foreground",
               )}
             >
               {item.label}
-            </button>
+            </Button>
           ))}
         </div>
       ))}

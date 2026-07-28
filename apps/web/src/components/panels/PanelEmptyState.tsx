@@ -1,6 +1,8 @@
 import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
 import { isMac } from "@/lib/platform";
 import { Kbd } from "@/components/palette/Kbd";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   shownTabTypes,
   type PanelScope,
@@ -20,9 +22,9 @@ function tabKeycap(type: PanelTabType): string | null {
 /** "Soon" tag for tab types that are not openable yet (deferred features). */
 function SoonBadge() {
   return (
-    <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+    <Badge variant="secondary" size="sm" className="uppercase tracking-wide">
       Soon
-    </span>
+    </Badge>
   );
 }
 
@@ -73,17 +75,19 @@ export function PanelEmptyState({
             const Icon = type.icon;
             const keycap = tabKeycap(type);
             return (
-              <button
+              <Button
                 key={type.id}
                 type="button"
+                variant="outline"
+                size="sm"
                 data-testid={`panel-card-${type.id}`}
                 disabled={type.comingSoon}
                 aria-label={type.comingSoon ? `${type.label} (coming soon)` : `Open ${type.label}`}
                 onClick={type.comingSoon ? undefined : () => onOpen(type.id as RightPanelTab)}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-3 text-left transition-colors",
+                  "h-auto w-full justify-start gap-3 whitespace-normal bg-card px-3 py-3 text-left transition-colors",
                   type.comingSoon
-                    ? "cursor-default opacity-50"
+                    ? "cursor-default"
                     : "hover:border-primary/50 hover:bg-card/80",
                 )}
               >
@@ -95,7 +99,7 @@ export function PanelEmptyState({
                   <span className="block truncate text-xs text-muted-foreground">{type.blurb}</span>
                 </span>
                 {type.comingSoon ? <SoonBadge /> : keycap && <Kbd>{keycap}</Kbd>}
-              </button>
+              </Button>
             );
           })}
         </div>

@@ -8,7 +8,7 @@
 
 /** Constrains a horizontal tool/meta row inside the virtualized chat column. */
 export const NARRATIVE_TOOL_ROW =
-  "flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden";
+  "flex min-w-0 max-w-full items-center gap-2 overflow-hidden";
 
 /**
  * Monospace detail text (path, command, pattern) with ellipsis when truncated.
@@ -19,6 +19,6 @@ export function narrativeToolDetailClass(size: "sm" | "md"): string {
   const tone =
     size === "md"
       ? "text-sm text-muted-foreground/80"
-      : "text-sm text-muted-foreground/50";
+      : "text-xs text-muted-foreground/65";
   return `font-mono ${tone} truncate flex-1 min-w-0 [overflow-wrap:anywhere]`;
 }

@@ -36,6 +36,44 @@ export { WorkspaceSchema, WorkspaceEnrichmentSchema } from "./models/workspace.j
 export type { Workspace, WorkspaceEnrichment } from "./models/workspace.js";
 
 export {
+  THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH,
+  WORKSPACE_SEARCH_QUERY_MAX_LENGTH,
+  WORKSPACE_SEARCH_LIMIT_MAX,
+  WORKSPACE_SEARCH_LIMIT_DEFAULT,
+  THREAD_CREATE_BATCH_MAX_ITEMS,
+  THREAD_CREATE_TITLE_MAX_LENGTH,
+  THREAD_CREATE_PROMPT_MAX_LENGTH,
+  THREAD_CREATE_EXECUTION_ID_MAX_LENGTH,
+  THREAD_CREATE_GIT_REF_MAX_LENGTH,
+  WorkspaceSearchInputSchema,
+  WorkspaceSearchResultSchema,
+  WorktreeListInputSchema,
+  WorktreeListResultSchema,
+  ThreadControlErrorSchema,
+  ThreadPlacementSchema,
+  ResolvedExecutionSchema,
+  ResolvedPlacementSchema,
+  ThreadCreateInputSchema,
+  ThreadCreateBatchInputSchema,
+  ThreadCreateItemResultSchema,
+  ThreadCreateBatchResultSchema,
+} from "./thread-control.js";
+export type {
+  WorkspaceSearchInput,
+  WorkspaceSearchResult,
+  WorktreeListInput,
+  WorktreeListResult,
+  ThreadControlError,
+  ThreadPlacement,
+  ResolvedExecution,
+  ResolvedPlacement,
+  ThreadCreateInput,
+  ThreadCreateBatchInput,
+  ThreadCreateItemResult,
+  ThreadCreateBatchResult,
+} from "./thread-control.js";
+
+export {
   MCODE_WORKSPACE_PREVIEW_PROTOCOL,
   isMcodeWorkspacePreviewUrl,
   mcodeWorkspacePreviewHref,
@@ -89,6 +127,12 @@ export type {
 export {
   ToolCallRecordSchema,
   ToolCallStatusSchema,
+  PROVIDER_AGENT_KEY_MAX_LENGTH,
+  SUBAGENT_DISPLAY_NAME_MAX_LENGTH,
+  SUBAGENT_METADATA_MAX_LENGTH,
+  resolveProviderAgentKey,
+  resolveSubagentDisplayName,
+  resolveSubagentMetadata,
 } from "./models/tool-call-record.js";
 export type {
   ToolCallRecord,
@@ -106,6 +150,24 @@ export type { NarrativeEntry, TurnRange } from "./models/narrative-entry.js";
 
 export { TurnSnapshotSchema } from "./models/turn-snapshot.js";
 export type { TurnSnapshot } from "./models/turn-snapshot.js";
+
+export {
+  FileEffectKindSchema,
+  FileEffectSchema,
+  TurnFileEffectSummarySchema,
+  MAX_TURN_FILE_EFFECTS,
+} from "./models/file-effect.js";
+export type { FileEffect, TurnFileEffectSummary } from "./models/file-effect.js";
+
+export {
+  ReviewFileChangeTypeSchema,
+  ReviewFileChangeSchema,
+  ReviewComparisonSchema,
+} from "./models/review-comparison.js";
+export type {
+  ReviewFileChange,
+  ReviewComparison,
+} from "./models/review-comparison.js";
 
 export {
   SettingsSchema,
@@ -560,6 +622,49 @@ export type {
   SkillDiagnostics,
 } from "./skills.js";
 
+// Provider capability catalogs
+export {
+  PROVIDER_CATALOG_PATH_MAX_CHARS,
+  PROVIDER_CATALOG_MAX_ENTRIES,
+  PROVIDER_CATALOG_MAX_SELECTABLE_AGENTS,
+  PROVIDER_CATALOG_MAX_DIAGNOSTICS,
+  PROVIDER_CATALOG_MAX_CODEX_AGENT_FILES,
+  PROVIDER_CATALOG_MAX_CODEX_AGENT_FILE_BYTES,
+  ProviderCapabilityKindSchema,
+  ProviderSkillCapabilitySchema,
+  ProviderPluginCapabilitySchema,
+  ProviderCustomPromptCapabilitySchema,
+  ProviderCommandCapabilitySchema,
+  ProviderCapabilityEntrySchema,
+  SelectableProviderAgentSchema,
+  ProviderCatalogDiagnosticSourceKindSchema,
+  ProviderCatalogSourceDiagnosticSchema,
+  ProviderCatalogDiagnosticSchema,
+  ProviderCatalogFreshnessSchema,
+  ProviderCatalogContextSchema,
+  ProviderCatalogRequestSchema,
+  ProviderCatalogSnapshotSchema,
+  ProviderCapabilityIdentitySchema,
+  SelectableProviderAgentChangesSchema,
+  ProviderCatalogChangeSchema,
+} from "./providers/capability-catalog.js";
+export type {
+  ProviderCapabilityKind,
+  ProviderPluginCapability,
+  ProviderCapabilityEntry,
+  SelectableProviderAgent,
+  ProviderCatalogDiagnosticSourceKind,
+  ProviderCatalogSourceDiagnostic,
+  ProviderCatalogDiagnostic,
+  ProviderCatalogFreshness,
+  ProviderCatalogContext,
+  ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
+  ProviderCapabilityIdentity,
+  SelectableProviderAgentChanges,
+  ProviderCatalogChange,
+} from "./providers/capability-catalog.js";
+
 // WebSocket protocol
 export {
   WebSocketRequestSchema,
@@ -584,7 +689,12 @@ export {
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
   RECAP_MAX_PREVIOUS_RECAP_CHARS,
 } from "./ws/methods.js";
-export type { WsMethodName, CreateAndSendResult } from "./ws/methods.js";
+export type {
+  WsMethodName,
+  SendMessageInput,
+  CreateAndSendInput,
+  CreateAndSendResult,
+} from "./ws/methods.js";
 
 export { WS_CHANNELS } from "./ws/channels.js";
 export type { WsChannelName } from "./ws/channels.js";
@@ -610,12 +720,12 @@ export type {
   IAgentProvider,
   ICompletionCapable,
   IGoalCapable,
-  ISkillCatalogCapable,
   ISessionEvictable,
   IProviderRegistry,
   TurnRequest,
   ProviderOptionsByProvider,
   CompletionOptions,
+  ProviderFileMutationStart,
 } from "./providers/interfaces.js";
 
 export * from "./providers/catalog.js";
@@ -623,13 +733,14 @@ export * from "./providers/availability.js";
 export { CURSOR_STATIC_MODEL_FALLBACK } from "./providers/cursor-static-fallback.js";
 export { CURSOR_CLI_MODEL_SNAPSHOT } from "./providers/cursor-cli-models-snapshot.js";
 export { CODEX_STATIC_MODELS, supportsCodexUltraOrchestration } from "./providers/codex-static-fallback.js";
+export { CLAUDE_STATIC_MODELS } from "./providers/claude-static-fallback.js";
 
 export {
   ProviderModelInfoSchema,
   ModelPolicyStateSchema,
 } from "./providers/models.js";
 export type { ProviderModelInfo } from "./providers/models.js";
-export { isCompletionCapable, isGoalCapable, isSessionEvictable, isSkillCatalogCapable } from "./providers/interfaces.js";
+export { isCompletionCapable, isGoalCapable, isSessionEvictable } from "./providers/interfaces.js";
 
 export type {
   SessionForker,

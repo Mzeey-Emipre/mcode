@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentEvent } from "@mcode/contracts";
 import type { Thread } from "@/transport";
 
 vi.mock("@/transport", () => ({
@@ -8,7 +9,11 @@ vi.mock("@/transport", () => ({
 import { pushEmitter } from "./ws-transport";
 import { startPushListeners, stopPushListeners } from "./ws-events";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useSkillsStore } from "@/stores/skillsStore";
+import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
+import { useDiffStore } from "@/stores/diffStore";
+import { useThreadStore } from "@/stores/threadStore";
+import { useTerminalStore } from "@/stores/terminalStore";
+import { onPtyExit } from "@/components/terminal/ptyDataRegistry";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -100,14 +105,123 @@ describe("ws-events skills.changed", () => {
 
   it("coalesces a burst of provider invalidations into one cache refresh", () => {
     vi.useFakeTimers();
-    const invalidate = vi.spyOn(useSkillsStore.getState(), "invalidate");
+    const invalidate = vi.spyOn(useProviderCatalogStore.getState(), "invalidate");
     startPushListeners();
 
-    pushEmitter.emit("skills.changed", {});
-    pushEmitter.emit("skills.changed", {});
-    pushEmitter.emit("skills.changed", {});
+    const change = { providerIds: ["claude", "copilot", "cursor"] as const };
+    pushEmitter.emit("skills.changed", change);
+    pushEmitter.emit("skills.changed", change);
+    pushEmitter.emit("skills.changed", change);
     vi.advanceTimersByTime(100);
 
     expect(invalidate).toHaveBeenCalledOnce();
+    expect(invalidate).toHaveBeenCalledWith(change.providerIds);
+  });
+});
+
+describe("ws-events provider.catalogChanged", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.restoreAllMocks();
+  });
+
+  it("drops malformed catalog changes before store reconciliation", () => {
+    const reconcile = vi.spyOn(useProviderCatalogStore.getState(), "reconcile");
+    startPushListeners();
+
+    pushEmitter.emit("provider.catalogChanged", { request: { providerId: "codex" } });
+
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe("ws-events agent.event", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.restoreAllMocks();
+  });
+
+  it("drops malformed data before it reaches the thread store", () => {
+    const handleAgentEvent = vi.spyOn(useThreadStore.getState(), "handleAgentEvent");
+    startPushListeners();
+
+    pushEmitter.emit("agent.event", { type: "message", threadId: 42, content: "invalid" });
+
+    expect(handleAgentEvent).not.toHaveBeenCalled();
+  });
+
+  it("forwards a valid parsed event exactly once", () => {
+    const event = {
+      type: "message",
+      threadId: "thread-1",
+      content: "valid",
+      tokens: null,
+    } satisfies AgentEvent;
+    const handleAgentEvent = vi.spyOn(useThreadStore.getState(), "handleAgentEvent");
+    startPushListeners();
+
+    pushEmitter.emit("agent.event", event);
+
+    expect(handleAgentEvent).toHaveBeenCalledOnce();
+    expect(handleAgentEvent).toHaveBeenCalledWith(event);
+  });
+});
+
+describe("ws-events turn.persisted Review invalidation", () => {
+  beforeEach(() => {
+    stopPushListeners();
+    useWorkspaceStore.setState({ threads: [makeThread()] });
+    useDiffStore.setState({ diffRevisionByScope: {} });
+    startPushListeners();
+  });
+
+  afterEach(() => stopPushListeners());
+
+  it("invalidates Review only when the persisted turn changed files", () => {
+    pushEmitter.emit("turn.persisted", {
+      threadId: "thread-1",
+      messageId: "message-1",
+      toolCallCount: 0,
+      filesChanged: [],
+    });
+    expect(useDiffStore.getState().diffRevisionByScope["thread-1"]).toBeUndefined();
+
+    pushEmitter.emit("turn.persisted", {
+      threadId: "thread-1",
+      messageId: "message-2",
+      toolCallCount: 0,
+      filesChanged: ["src/changed.ts"],
+    });
+    expect(useDiffStore.getState().diffRevisionByScope["thread-1"]).toBe(1);
+  });
+});
+
+describe("ws-events terminal.exit", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.useRealTimers();
+  });
+
+  it("reports a natural exit before removing its terminal after two seconds", () => {
+    vi.useFakeTimers();
+    useTerminalStore.setState({
+      terminals: {
+        "thread-1": [{ id: "pty-1", threadId: "thread-1", label: "PowerShell" }],
+      },
+      ptyToThread: { "pty-1": "thread-1" },
+    });
+    const onExit = vi.fn();
+    const unsubscribe = onPtyExit("pty-1", onExit);
+    startPushListeners();
+
+    pushEmitter.emit("terminal.exit", { ptyId: "pty-1", code: 7 });
+
+    expect(onExit).toHaveBeenCalledWith({ ptyId: "pty-1", code: 7 });
+    expect(useTerminalStore.getState().terminals["thread-1"]).toHaveLength(1);
+    vi.advanceTimersByTime(1_999);
+    expect(useTerminalStore.getState().terminals["thread-1"]).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(useTerminalStore.getState().terminals["thread-1"]).toBeUndefined();
+    unsubscribe();
   });
 });

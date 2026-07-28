@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestThreadAgentStartTime,
@@ -5,6 +6,7 @@ import {
 } from "@/stores/thread-store-test-utils";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
+import { useTaskStore } from "@/stores/taskStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { createMockThread } from "./mocks/transport";
 import type { GoalState } from "@mcode/contracts";
@@ -15,14 +17,15 @@ describe("running-session signal", () => {
       runningThreadIds: new Set(),
       currentThreadId: null,
     });
+    useTaskStore.setState({
+      tasksByThread: {},
+      taskBubbleByThread: {},
+      pendingTaskBubbleReplacementByThread: {},
+    });
   });
 
   it("adds threadId to runningThreadIds on session.turnStarted", () => {
-    useThreadStore.getState().handleAgentEvent("t-1", {
-      method: "session.turnStarted",
-      type: "turnStarted",
-      threadId: "t-1",
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "turnStarted", threadId: "t-1" } as AgentEvent);
     expect(useThreadStore.getState().runningThreadIds.has("t-1")).toBe(true);
     expect(typeof getTestThreadAgentStartTime("t-1")).toBe("number");
   });
@@ -31,27 +34,30 @@ describe("running-session signal", () => {
     let now = 1000;
     vi.spyOn(Date, "now").mockImplementation(() => now++);
     const store = useThreadStore.getState();
-    store.handleAgentEvent("t-1", { method: "session.turnStarted", type: "turnStarted", threadId: "t-1" });
+    store.handleAgentEvent({ type: "turnStarted", threadId: "t-1", fileEffectTurnId: "turn-1" } as AgentEvent);
     const firstStart = getTestThreadAgentStartTime("t-1");
     expect(firstStart).toBeDefined();
-    store.handleAgentEvent("t-1", { method: "session.turnStarted", type: "turnStarted", threadId: "t-1" });
+    useTaskStore.getState().setTasks("t-1", [{
+      id: "task-1",
+      content: "Keep this task",
+      status: "pending",
+      group: "Tasks",
+    }]);
+    store.handleAgentEvent({ type: "turnStarted", threadId: "t-1", fileEffectTurnId: "turn-1" } as AgentEvent);
     expect(useThreadStore.getState().runningThreadIds.size).toBe(1);
     expect(getTestThreadAgentStartTime("t-1")).toBe(firstStart);
+    expect(useTaskStore.getState().taskBubbleByThread["t-1"]).toHaveLength(1);
+    expect(useTaskStore.getState().pendingTaskBubbleReplacementByThread["t-1"]).toBeUndefined();
     vi.restoreAllMocks();
   });
 
   it("turnStarted then turnComplete leaves the Set empty", () => {
     const store = useThreadStore.getState();
-    store.handleAgentEvent("t-1", { method: "session.turnStarted", type: "turnStarted", threadId: "t-1" });
-    store.handleAgentEvent("t-1", {
-      method: "session.turnComplete",
-      type: "turnComplete",
-      threadId: "t-1",
-      reason: "stop",
+    store.handleAgentEvent({ type: "turnStarted", threadId: "t-1" } as AgentEvent);
+    store.handleAgentEvent({ type: "turnComplete", threadId: "t-1", reason: "stop",
       costUsd: null,
       tokensIn: 0,
-      tokensOut: 0,
-    });
+      tokensOut: 0 } as AgentEvent);
     expect(useThreadStore.getState().runningThreadIds.has("t-1")).toBe(false);
   });
 
@@ -80,20 +86,11 @@ describe("running-session signal", () => {
     };
 
     const store = useThreadStore.getState();
-    store.handleAgentEvent("t-1", {
-      method: "session.goalUpdated",
-      type: "goalUpdated",
-      threadId: "t-1",
-      goal,
-    });
+    store.handleAgentEvent({ type: "goalUpdated", threadId: "t-1", goal } as AgentEvent);
 
     expect(readThreadField("t-1", (r) => r.goal?.objective)).toBe("ship the feature");
 
-    store.handleAgentEvent("t-1", {
-      method: "session.goalCleared",
-      type: "goalCleared",
-      threadId: "t-1",
-    });
+    store.handleAgentEvent({ type: "goalCleared", threadId: "t-1" } as AgentEvent);
 
     expect(readThreadField("t-1", (r) => r.goal)).toBeNull();
   });
@@ -109,11 +106,7 @@ describe("session.turnStarted clears interrupted status", () => {
   });
 
   it("updates workspace store thread status from interrupted to active on turnStarted", () => {
-    useThreadStore.getState().handleAgentEvent("t-1", {
-      method: "session.turnStarted",
-      type: "turnStarted",
-      threadId: "t-1",
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "turnStarted", threadId: "t-1" } as AgentEvent);
 
     const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "t-1");
     expect(thread?.status).toBe("active");
@@ -125,11 +118,7 @@ describe("session.turnStarted clears interrupted status", () => {
       activeThreadId: "t-1",
     });
 
-    useThreadStore.getState().handleAgentEvent("t-1", {
-      method: "session.turnStarted",
-      type: "turnStarted",
-      threadId: "t-1",
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "turnStarted", threadId: "t-1" } as AgentEvent);
 
     const thread = useWorkspaceStore.getState().threads.find((t) => t.id === "t-1");
     expect(thread?.status).toBe("active");

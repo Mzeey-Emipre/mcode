@@ -17,7 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PROJECT_DIR}/scripts/agent/verify-fast.mjs"
+            "command": "node ${CLAUDE_PROJECT_DIR}/scripts/agent/verify-tests.mjs --check-receipt",
+            "timeout": 15
           }
         ]
       }

@@ -61,7 +61,8 @@ const PullRequestCode = lazy(() =>
 );
 
 const DETAIL_TABS = ["summary", "timeline", "code"] as const;
-type PullRequestDetailTab = (typeof DETAIL_TABS)[number];
+/** Stable tabs represented in pull request navigation history. */
+export type PullRequestDetailTab = (typeof DETAIL_TABS)[number];
 
 /** Props for the selected pull request Summary, Timeline, and Code pane. */
 export interface PullRequestDetailPaneProps {
@@ -78,6 +79,10 @@ export interface PullRequestDetailPaneProps {
   reviewTaskTransport?: PullRequestReviewTaskTransport;
   /** Independent transport for explicit, non-cancellable remote effects. */
   mutationTransport?: PullRequestMutationTransport;
+  /** Optional history-controlled active tab. */
+  activeTab?: PullRequestDetailTab;
+  /** Called when the user changes the active detail tab. */
+  onActiveTabChange?: (tab: PullRequestDetailTab) => void;
 }
 
 function tabId(tab: PullRequestDetailTab): string {
@@ -342,12 +347,16 @@ export function PullRequestDetailPane({
   transport,
   reviewTaskTransport,
   mutationTransport,
+  activeTab: controlledActiveTab,
+  onActiveTabChange,
 }: PullRequestDetailPaneProps) {
   const core = usePullRequestDetailStore(
     useShallow(selectPullRequestDetailCore(identityKey)),
   );
   const activeHeadOid = core.detail?.head.oid ?? null;
-  const [activeTab, setActiveTab] = useState<PullRequestDetailTab>("summary");
+  const [localActiveTab, setLocalActiveTab] =
+    useState<PullRequestDetailTab>("summary");
+  const activeTab = controlledActiveTab ?? localActiveTab;
   const [submitReviewOpen, setSubmitReviewOpen] = useState(false);
   const [forkMode, setForkMode] = useState<PullRequestForkMode | null>(null);
   const [forkPrompt, setForkPrompt] = useState<string | null>(null);
@@ -378,10 +387,10 @@ export function PullRequestDetailPane({
     const lane = entry?.lanes.comments;
     return Boolean(
       lane &&
-        lane.fetchedAt !== null &&
-        entry?.commentsNextCursor === null &&
-        lane.boundedData === null &&
-        lane.error === null,
+      lane.fetchedAt !== null &&
+      entry?.commentsNextCursor === null &&
+      lane.boundedData === null &&
+      lane.error === null,
     );
   });
   const reviewWorktreeCapability = capabilities?.reviewWorktree ?? null;
@@ -400,10 +409,7 @@ export function PullRequestDetailPane({
   const selectedPullRequestTitle = core.detail?.title ?? null;
   const openPromptFix = useCallback(
     (
-      comment: Extract<
-        PullRequestConversationItem,
-        { kind: "issue_comment" }
-      >,
+      comment: Extract<PullRequestConversationItem, { kind: "issue_comment" }>,
     ): void => {
       if (selectedPullRequestNumber === null || !selectedPullRequestTitle) {
         return;
@@ -529,9 +535,13 @@ export function PullRequestDetailPane({
     };
   }, [identityKey, transport]);
 
-  const changeTab = useCallback((tab: PullRequestDetailTab) => {
-    setActiveTab(tab);
-  }, []);
+  const changeTab = useCallback(
+    (tab: PullRequestDetailTab) => {
+      setLocalActiveTab(tab);
+      onActiveTabChange?.(tab);
+    },
+    [onActiveTabChange],
+  );
 
   const handleTabKeyDown = (
     event: KeyboardEvent<HTMLButtonElement>,

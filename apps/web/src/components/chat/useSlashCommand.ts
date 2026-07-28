@@ -1,10 +1,16 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
-  EMPTY_SKILLS_CACHE_ENTRY,
-  skillsCacheKey,
-  useSkillsStore,
-} from "@/stores/skillsStore";
-import type { SkillInfo } from "@/transport";
+  EMPTY_PROVIDER_CATALOG_CACHE_ENTRY,
+  providerCatalogCacheKey,
+  useProviderCatalogStore,
+} from "@/stores/providerCatalogStore";
+import {
+  ProviderIdSchema,
+  type ProviderCapabilityEntry,
+  type ProviderCapabilityKind,
+  type ProviderCapabilityIdentity,
+} from "@mcode/contracts";
+import type { ProviderCatalogRequest } from "@/transport";
 import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 import {
   resolveComposerCapabilities,
@@ -16,9 +22,14 @@ export type ComposerCommandAction = ComposerCapabilityAction;
 
 /** A slash command entry shown in the popup. */
 export interface Command {
+  id: string;
   name: string;
   description: string;
   namespace: SlashCommandNamespace;
+  capabilityKind: ProviderCapabilityKind | "mcode";
+  nativeId: string;
+  mentionPath?: string;
+  identity?: ProviderCapabilityIdentity;
   /** For mcode-namespace commands, the action string dispatched on selection. */
   action?: ComposerCommandAction;
 }
@@ -42,26 +53,71 @@ const MAX_SLASH_COMMAND_ITEMS = 100;
 
 const BUILTIN_COMMANDS: Command[] = [
   {
+    id: "builtin:command:compact",
     name: "compact",
     description: "Summarise conversation history to free up context window",
     namespace: "command",
+    capabilityKind: "providerCommand",
+    nativeId: "compact",
   },
 ];
 
 /** Regex: matches `/` at start of line or after whitespace, followed by non-space chars. */
 export const SLASH_TRIGGER_RE = /(^|\s)(\/\S*)$/;
 
-/** Map a SkillInfo into a Command. */
-function toCommand(s: SkillInfo): Command {
-  // `kind === "command"` overrides any namespace inference.
-  if (s.kind === "command") {
-    return { name: s.name, description: s.description || `Run /${s.name}`, namespace: "command" };
+/** Map an invocable provider capability into the existing command presentation. */
+function toCommand(entry: ProviderCapabilityEntry): Command | null {
+  const base = {
+    id: `${entry.identity.providerId}:${entry.identity.kind}:${entry.identity.nativeId}`,
+    name: entry.name,
+    description: entry.description || `Run /${entry.name}`,
+    capabilityKind: entry.kind,
+    nativeId: entry.identity.nativeId,
+    identity: entry.identity,
+  };
+  if (entry.kind === "plugin") {
+    return {
+      ...base,
+      description: entry.description || `Use @${entry.name}`,
+      namespace: "plugin",
+      mentionPath: entry.mentionPath,
+    };
+  }
+  if (entry.kind === "customPrompt" || entry.kind === "providerCommand") {
+    return {
+      ...base,
+      namespace: "command",
+    };
   }
   return {
-    name: s.name,
-    description: s.description || `Run /${s.name}`,
-    namespace: s.source === "plugin" || s.name.includes(":") ? "plugin" : "skill",
+    ...base,
+    namespace: entry.source === "plugin" || entry.name.includes(":") ? "plugin" : "skill",
   };
+}
+
+function commandIdentity(command: Command): string {
+  const identity = command.identity;
+  return identity
+    ? JSON.stringify([identity.providerId, identity.kind, identity.nativeId])
+    : JSON.stringify(["mcode", command.namespace, command.name, command.action ?? null]);
+}
+
+function reconcileOpenCommands(current: Command[], refreshed: Command[]): Command[] {
+  const refreshedByIdentity = new Map(
+    refreshed.map((command) => [commandIdentity(command), command]),
+  );
+  const retained = current.flatMap((command) => {
+    const updated = refreshedByIdentity.get(commandIdentity(command));
+    return updated ? [updated] : [];
+  });
+  const retainedIdentities = new Set(retained.map(commandIdentity));
+  const additions = refreshed.filter(
+    (command) => !retainedIdentities.has(commandIdentity(command)),
+  );
+  return (["mcode", "command", "skill", "plugin"] as const).flatMap((namespace) => [
+    ...retained.filter((command) => command.namespace === namespace),
+    ...additions.filter((command) => command.namespace === namespace),
+  ]);
 }
 
 /** Sort commands: source group order, then alphabetical within group. */
@@ -75,7 +131,9 @@ const NAMESPACE_ORDER: Record<SlashCommandNamespace, number> = {
 function sortCommands(cmds: Command[]): Command[] {
   return [...cmds].sort((a, b) => {
     const order = NAMESPACE_ORDER[a.namespace] - NAMESPACE_ORDER[b.namespace];
-    return order !== 0 ? order : a.name.localeCompare(b.name);
+    if (order !== 0) return order;
+    const nameOrder = a.name.localeCompare(b.name);
+    return nameOrder !== 0 ? nameOrder : a.id.localeCompare(b.id);
   });
 }
 
@@ -84,6 +142,10 @@ interface UseSlashCommandOptions {
   anchorRef: React.RefObject<HTMLElement | null>;
   onMcodeCommand?: (action: ComposerCommandAction) => void;
   cwd?: string;
+  /** Workspace whose validated server-side path scopes provider discovery. */
+  workspaceId?: string;
+  /** Thread whose worktree path scopes provider discovery. */
+  threadId?: string;
   /** Provider ID used to scope skill loading and filter built-in commands (e.g., hides /plan for "copilot"). */
   providerId?: string;
   /** Model ID used to resolve model-specific composer capabilities. */
@@ -94,6 +156,8 @@ interface UseSlashCommandOptions {
    * bubble where mcode actions are meaningless and must not be selectable.
    */
   includeBuiltins?: boolean;
+  /** Whether this surface can persist native plugin mentions. */
+  includePlugins?: boolean;
 }
 
 /** Return value of the useSlashCommand hook. */
@@ -122,14 +186,17 @@ export interface UseSlashCommandReturn {
   onRetry: () => void;
 }
 
-/** Manages slash command detection, skill loading via skillsStore, and popup state. */
+/** Manages slash command detection, provider catalog loading, and popup state. */
 export function useSlashCommand({
   anchorRef,
   onMcodeCommand,
   cwd,
+  workspaceId,
+  threadId,
   providerId,
   modelId,
   includeBuiltins = true,
+  includePlugins = true,
 }: UseSlashCommandOptions): UseSlashCommandReturn {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -138,18 +205,34 @@ export function useSlashCommand({
   // The visible list is an interaction snapshot. Cache invalidations must not
   // reorder a picker while the user is navigating it with the keyboard.
   const [openCommands, setOpenCommands] = useState<Command[] | null>(null);
+  const selectedCommandIdentityRef = useRef<string | null>(null);
   const lastInputRef = useRef("");
   // Tracks the cursor position supplied by the most recent onInputChange call
   // so onSelect can splice the replacement at the correct offset rather than
   // always appending to the end (which breaks mid-text trigger detection).
   const lastCursorRef = useRef<number | undefined>(undefined);
 
-  const cacheKey = skillsCacheKey(cwd, providerId);
-  const cacheEntry = useSkillsStore(
-    (state) => state.entries[cacheKey] ?? EMPTY_SKILLS_CACHE_ENTRY,
+  const catalogRequest = useMemo<ProviderCatalogRequest | null>(() => {
+    const parsedProvider = ProviderIdSchema.safeParse(providerId ?? "claude");
+    if (!parsedProvider.success) return null;
+    if (workspaceId) {
+      return {
+        providerId: parsedProvider.data,
+        workspaceId,
+        ...(threadId ? { threadId } : {}),
+      };
+    }
+    return {
+      providerId: parsedProvider.data,
+      ...(cwd ? { cwd } : {}),
+    };
+  }, [cwd, providerId, threadId, workspaceId]);
+  const cacheKey = catalogRequest ? providerCatalogCacheKey(catalogRequest) : "invalid-provider";
+  const cacheEntry = useProviderCatalogStore(
+    (state) => state.entries[cacheKey] ?? EMPTY_PROVIDER_CATALOG_CACHE_ENTRY,
   );
-  const { skills, isLoading, isStale, error } = cacheEntry;
-  const load = useSkillsStore((s) => s.load);
+  const { snapshot, isLoading, needsRefresh, error } = cacheEntry;
+  const load = useProviderCatalogStore((state) => state.load);
 
   // Build the full command list only when its inputs change. Filtering stays
   // separate so keyboard selection does not rebuild every command row.
@@ -158,21 +241,28 @@ export function useSlashCommand({
       ? [
           ...resolveComposerCapabilities({ providerId, modelId }).map(
             (capability): Command => ({
+              id: `builtin:mcode:${capability.id}`,
               name: capability.slashCommand,
               description: `Attach ${capability.label} to the composer`,
               namespace: "mcode",
+              capabilityKind: "mcode",
+              nativeId: capability.id,
               action: capability.action,
             }),
           ),
           ...BUILTIN_COMMANDS,
         ]
       : [];
+    const providerCommands = (snapshot?.entries ?? [])
+      .filter((entry) => includePlugins || entry.kind !== "plugin")
+      .map(toCommand)
+      .filter((command): command is Command => command !== null);
     const commands: Command[] = [
       ...builtins,
-      ...((skills ?? []).map(toCommand)),
+      ...providerCommands,
     ];
     return sortCommands(commands);
-  }, [skills, providerId, modelId, includeBuiltins]);
+  }, [snapshot, providerId, modelId, includeBuiltins, includePlugins]);
 
   const filtered = useMemo(() => {
     const f = filter.toLowerCase();
@@ -181,6 +271,31 @@ export function useSlashCommand({
       : (openCommands ?? allCommands);
     return matches.slice(0, MAX_SLASH_COMMAND_ITEMS);
   }, [allCommands, filter, openCommands]);
+
+  useEffect(() => {
+    if (!isOpen || openCommands === null) return;
+    setOpenCommands((current) => (
+      current === null ? null : reconcileOpenCommands(current, allCommands)
+    ));
+  }, [allCommands, isOpen, openCommands === null]);
+
+  useEffect(() => {
+    setSelectedIndex((current) => {
+      const selectedIdentity = selectedCommandIdentityRef.current;
+      const retainedIndex = selectedIdentity
+        ? filtered.findIndex((command) => commandIdentity(command) === selectedIdentity)
+        : -1;
+      const next = retainedIndex >= 0
+        ? retainedIndex
+        : filtered.length === 0
+          ? 0
+          : Math.min(current, filtered.length - 1);
+      selectedCommandIdentityRef.current = filtered[next]
+        ? commandIdentity(filtered[next])
+        : null;
+      return next;
+    });
+  }, [filtered]);
 
   // Derive the typed popup state. Order encodes the stale-while-revalidate
   // priority that previously lived in a comment in SlashCommandPopup:
@@ -203,19 +318,19 @@ export function useSlashCommand({
   // Eager prefetch runs while the picker is closed. This warms the cache for
   // the next open without replacing commands while the user is navigating.
   //
-  // Each cwd and provider pair has its own cache entry. Load when that entry
+  // Each provider discovery context has its own cache entry. Load when that entry
   // is cold or stale, while retaining old rows during background refresh.
   //
   // The error gate prevents an infinite retry loop on persistent failures.
-  // A different cwd or provider selects a different entry with its own error.
+  // A different context selects a different entry with its own error.
   useEffect(() => {
     if (isOpen) return;
     if (isLoading) return;
-    const noSkills = skills === null;
-    if (!error && (isStale || noSkills)) {
-      load(cwd, providerId).catch(() => { /* surfaced via `error` */ });
+    const noSnapshot = snapshot === null;
+    if (catalogRequest && !error && (needsRefresh || noSnapshot)) {
+      load(catalogRequest).catch(() => { /* surfaced via `error` */ });
     }
-  }, [skills, cwd, providerId, isLoading, isStale, error, load, isOpen]);
+  }, [catalogRequest, snapshot, isLoading, needsRefresh, error, load, isOpen]);
 
   const onInputChange = useCallback(
     (value: string, cursorPos?: number) => {
@@ -230,18 +345,25 @@ export function useSlashCommand({
       if (!match) {
         setIsOpen(false);
         setOpenCommands(null);
+        selectedCommandIdentityRef.current = null;
         return;
       }
 
       const anchor = anchorRef.current;
       if (anchor) setAnchorRect(anchor.getBoundingClientRect());
 
-      if (!isOpen && skills !== null) setOpenCommands(allCommands);
+      if (!isOpen) {
+        if (snapshot !== null) setOpenCommands(allCommands);
+        if (providerId === "codex" && catalogRequest) {
+          load(catalogRequest, true).catch(() => { /* surfaced via `error` */ });
+        }
+      }
       setFilter(match[2].slice(1));
       setIsOpen(true);
       setSelectedIndex(0);
+      selectedCommandIdentityRef.current = null;
     },
-    [anchorRef, allCommands, isOpen, skills],
+    [anchorRef, allCommands, catalogRequest, isOpen, load, providerId, snapshot],
   );
 
   const onKeyDown = useCallback(
@@ -253,20 +375,31 @@ export function useSlashCommand({
           e.stopPropagation();
           // Clamp to 0 when filtered is empty; otherwise `length - 1` would
           // be `-1`, leaking an invalid index into ARIA / keyboard handling.
-          setSelectedIndex((i) =>
-            filtered.length === 0 ? 0 : Math.min(i + 1, filtered.length - 1),
-          );
+          setSelectedIndex((i) => {
+            const next = filtered.length === 0 ? 0 : Math.min(i + 1, filtered.length - 1);
+            selectedCommandIdentityRef.current = filtered[next]
+              ? commandIdentity(filtered[next])
+              : null;
+            return next;
+          });
           break;
         case "ArrowUp":
           e.preventDefault();
           e.stopPropagation();
-          setSelectedIndex((i) => Math.max(i - 1, 0));
+          setSelectedIndex((i) => {
+            const next = Math.max(i - 1, 0);
+            selectedCommandIdentityRef.current = filtered[next]
+              ? commandIdentity(filtered[next])
+              : null;
+            return next;
+          });
           break;
         case "Escape":
           e.preventDefault();
           e.stopPropagation();
           setIsOpen(false);
           setOpenCommands(null);
+          selectedCommandIdentityRef.current = null;
           break;
       }
     },
@@ -291,12 +424,15 @@ export function useSlashCommand({
         replaceText(
           cmd.action
             ? value.slice(0, triggerStart) + value.slice(cursor)
-            : value.slice(0, triggerStart) + `/${cmd.name} ` + value.slice(cursor),
+            : value.slice(0, triggerStart) + (
+                cmd.capabilityKind === "plugin" ? `@${cmd.name} ` : `/${cmd.name} `
+              ) + value.slice(cursor),
         );
       }
       if (cmd.action && onMcodeCommand) onMcodeCommand(cmd.action);
       setIsOpen(false);
       setOpenCommands(null);
+      selectedCommandIdentityRef.current = null;
     },
     [onMcodeCommand],
   );
@@ -304,10 +440,12 @@ export function useSlashCommand({
   const onDismiss = useCallback(() => {
     setIsOpen(false);
     setOpenCommands(null);
+    selectedCommandIdentityRef.current = null;
   }, []);
   const onRetry = useCallback(() => {
-    load(cwd, providerId, true).catch(() => { /* surfaced via `error` */ });
-  }, [load, cwd, providerId]);
+    if (!catalogRequest) return;
+    load(catalogRequest, true).catch(() => { /* surfaced via `error` */ });
+  }, [catalogRequest, load]);
 
   return {
     isOpen,

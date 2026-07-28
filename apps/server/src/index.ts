@@ -15,17 +15,21 @@ import { randomUUID } from "crypto";
 import { execFileSync } from "child_process";
 import { killOrphanedServer, reapOrphanedPtys } from "./services/orphan-cleanup";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
+import { sanitizePublicToolInput } from "./services/public-tool-input";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
 import { AgentService } from "./services/agent-service";
+import { ThreadControlService } from "./services/thread-control-service";
 import { NarrativeStore } from "./services/narrative-store";
 import { GitService } from "./services/git-service";
 import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
 import { ConfigService } from "./services/config-service";
 import { SkillService } from "./services/skill-service";
+import { CodexCatalogService } from "./services/codex-catalog-service";
+import { ProviderCatalogService } from "./services/provider-catalog-service";
 import { TerminalService } from "./services/terminal-service";
 import { MessageRepo } from "./repositories/message-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
@@ -64,7 +68,7 @@ import { seedAgentRuntimeWorkspace } from "./dev-agent-seed";
 import { WebSocket } from "ws";
 import { resolveGracePeriodMs, shouldShutdownOnIdle } from "./grace-period-ms";
 import { createGraceController } from "./grace-controller";
-import { AgentEventType, isSkillCatalogCapable } from "@mcode/contracts";
+import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
 import type Database from "better-sqlite3";
@@ -230,6 +234,7 @@ browserAutomationAccess.onCredentialRevoked((revocation) => {
 const workspaceService = container.resolve(WorkspaceService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
+const threadControlService = container.resolve(ThreadControlService);
 const gitService = container.resolve(GitService);
 const githubService = container.resolve(GithubService);
 const pullRequestService = container.resolve(PullRequestService);
@@ -238,6 +243,8 @@ const reviewWorktreeService = container.resolve(ReviewWorktreeService);
 const fileService = container.resolve(FileService);
 const configService = container.resolve(ConfigService);
 const skillService = container.resolve(SkillService);
+const codexCatalogService = container.resolve(CodexCatalogService);
+const providerCatalogService = container.resolve(ProviderCatalogService);
 const terminalService = container.resolve(TerminalService);
 const messageRepo = container.resolve(MessageRepo);
 const threadRepo = container.resolve(ThreadRepo);
@@ -334,6 +341,13 @@ ipcServer.onConnection((port) => {
 const ciWatcherService = new CiWatcherService(githubService, (channel, data) => {
   broadcast(channel as Parameters<typeof broadcast>[0], data as Parameters<typeof broadcast>[1]);
   portPush.send(channel as Parameters<typeof portPush.send>[0], data as Parameters<typeof portPush.send>[1]);
+}, ({ threadId, prNumber, state }) => {
+  const thread = threadRepo.findById(threadId);
+  if (thread?.pr_number !== prNumber) return;
+  threadService.linkPr(threadId, prNumber, state);
+  const payload = { threadId, prNumber, prStatus: state };
+  broadcast("thread.prLinked", payload);
+  portPush.send("thread.prLinked", payload);
 });
 gitWatcherService.setThreadCheckoutChangedListener((threadId) => {
   ciWatcherService.unwatch(threadId);
@@ -457,14 +471,6 @@ skillWatcherService.registerDebouncedInvalidateListener(() => {
 // listener fires. We read the stack via getCurrentParentToolCallId to enrich
 // non-Agent tool calls with their parent ID.
 for (const provider of providerRegistry.resolveAll()) {
-  if (isSkillCatalogCapable(provider)) {
-    provider.onSkillsChanged(() => {
-      skillService.invalidate();
-      broadcast("skills.changed", {});
-      portPush.send("skills.changed", {});
-    });
-  }
-
   provider.on("permission_request", (request) => {
     broadcast("permission.request", request);
     portPush.send("permission.request", request);
@@ -481,6 +487,11 @@ for (const provider of providerRegistry.resolveAll()) {
     }
 
     let enrichedEvent = event;
+
+    if (event.type === AgentEventType.TurnStarted) {
+      const fileEffectTurnId = agentService.getCurrentFileEffectTurnId(event.threadId);
+      if (fileEffectTurnId) enrichedEvent = { ...event, fileEffectTurnId };
+    }
 
     // Enrich non-Agent tool calls with their parent Agent ID.
     // Prefer the SDK-provided parent_tool_use_id on the event (set by the
@@ -528,6 +539,21 @@ for (const provider of providerRegistry.resolveAll()) {
       };
     }
 
+    // Provider mutation evidence may contain full before/after text for server-side
+    // verification. Keep that content inside AgentService and send only bounded,
+    // content-free tool metadata to clients.
+    if (enrichedEvent.type === AgentEventType.ToolUse) {
+      enrichedEvent = {
+        ...enrichedEvent,
+        toolInput: sanitizePublicToolInput(enrichedEvent.toolInput, enrichedEvent.toolName),
+      };
+    } else if (enrichedEvent.type === AgentEventType.ToolResult && enrichedEvent.toolInput) {
+      enrichedEvent = {
+        ...enrichedEvent,
+        toolInput: sanitizePublicToolInput(enrichedEvent.toolInput),
+      };
+    }
+
     broadcast("agent.event", enrichedEvent);
     portPush.send("agent.event", enrichedEvent);
 
@@ -538,10 +564,6 @@ for (const provider of providerRegistry.resolveAll()) {
       portPush.send("thread.status", completedStatus);
       const thread = threadRepo.findById(event.threadId);
       if (thread) {
-        const filesPayload = { workspaceId: thread.workspace_id, threadId: thread.id };
-        broadcast("files.changed", filesPayload);
-        portPush.send("files.changed", filesPayload);
-
         // Detect or refresh PR state for feature branches only
         const isFeatureBranch = thread.branch !== "main" && thread.branch !== "master";
         const workspace = isFeatureBranch ? workspaceRepo.findById(thread.workspace_id) : null;
@@ -589,11 +611,20 @@ for (const provider of providerRegistry.resolveAll()) {
   });
 }
 
+providerCatalogService.onChanged((change) => {
+  broadcast("provider.catalogChanged", change);
+  portPush.send("provider.catalogChanged", change);
+});
+codexCatalogService.onSkillsChanged((cwd) => {
+  providerCatalogService.refreshKnownContexts("codex", cwd);
+});
+
 // Create and start HTTP + WS server
 const { httpServer, wss } = createWsServer({
   workspaceService,
   threadService,
   agentService,
+  threadControlService,
   gitService,
   githubService,
   pullRequestService,
@@ -602,6 +633,8 @@ const { httpServer, wss } = createWsServer({
   fileService,
   configService,
   skillService,
+  codexCatalogService,
+  providerCatalogService,
   terminalService,
   messageRepo,
   toolCallRecordRepo,
@@ -729,14 +762,27 @@ killOrphanedServer({ lockFilePath: LOCK_FILE_PATH, logger });
 const pidRegistry = container.resolve<PtyPidRegistry>("PtyPidRegistry");
 reapOrphanedPtys(pidRegistry, logger);
 
-ipcServer.listen(ipcPath).then(() => {
+async function bootstrapServer(): Promise<void> {
+  try {
+    await threadControlService.recoverApprovals();
+  } catch (err) {
+    logger.error("Thread-control approval recovery failed; refusing to accept work", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    process.exit(1);
+  }
+
+  try {
+    await ipcServer.listen(ipcPath);
+  } catch (err) {
+    logger.error("IPC server failed to start, fell back to WebSocket-only push", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   startServerAndSubscribe();
-}).catch((err) => {
-  logger.error("IPC server failed to start, fell back to WebSocket-only push", {
-    error: err instanceof Error ? err.message : String(err),
-  });
-  startServerAndSubscribe();
-});
+}
+
+void bootstrapServer();
 
 /**
  * Gracefully shut down all services, close WebSocket connections,

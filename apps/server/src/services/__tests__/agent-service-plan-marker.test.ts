@@ -147,23 +147,15 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   it("marks the plan-questions message answered when markPlanAnswerForMessageId is set", async () => {
     const { svc, planQuestionAnswersRepo } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "my answers",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-      undefined, // interactionMode
-      undefined, // maxBudgetUsd
-      undefined, // maxTurns
-      undefined, // copilotAgent
-      undefined, // contextWindowMode
-      undefined, // thinking
-      undefined, // codexFastMode
-      assistantMessageId, // markPlanAnswerForMessageId
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "my answers",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      markPlanAnswerForMessageId: assistantMessageId,
+    });
 
     expect(planQuestionAnswersRepo.isAnswered(assistantMessageId)).toBe(true);
   });
@@ -171,15 +163,14 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   it("does not mark anything when markPlanAnswerForMessageId is unset (regression guard)", async () => {
     const { svc, planQuestionAnswersRepo } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "regular message",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "regular message",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(planQuestionAnswersRepo.listAnsweredForThread(thread.id)).toEqual([]);
   });
@@ -213,23 +204,15 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   it("broadcasts plan.answered after the marker tx commits", async () => {
     const { svc } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "my answers",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      assistantMessageId,
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "my answers",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      markPlanAnswerForMessageId: assistantMessageId,
+    });
 
     expect(broadcast).toHaveBeenCalledWith("plan.answered", {
       threadId: thread.id,
@@ -240,15 +223,14 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   it("does not broadcast plan.answered when no marker was set", async () => {
     const { svc } = buildService(db);
 
-    await svc.sendMessage(
-      thread.id,
-      "regular message",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-    );
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "regular message",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     const calls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => c[0] === "plan.answered",
@@ -260,23 +242,15 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
     const { svc } = buildService(db);
 
     await expect(
-      svc.sendMessage(
-        thread.id,
-        "answers that should NOT persist",
-        "default",
-        "claude-sonnet-4-6",
-        [],
-        undefined,
-        "claude",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        "non-existent-message-id",
-      ),
+      svc.sendMessage({
+        threadId: thread.id,
+        content: "answers that should NOT persist",
+        permissionMode: "default",
+        model: "claude-sonnet-4-6",
+        attachments: [],
+        provider: "claude",
+        markPlanAnswerForMessageId: "non-existent-message-id",
+      }),
     ).rejects.toThrow();
 
     const calls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -339,23 +313,15 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
     // Pass an unknown message id so the FK rejects the marker insert.
     // The user-message INSERT must roll back as part of the same transaction.
     await expect(
-      svc.sendMessage(
-        thread.id,
-        "answers that should NOT persist",
-        "default",
-        "claude-sonnet-4-6",
-        [],
-        undefined,
-        "claude",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        "non-existent-message-id",
-      ),
+      svc.sendMessage({
+        threadId: thread.id,
+        content: "answers that should NOT persist",
+        permissionMode: "default",
+        model: "claude-sonnet-4-6",
+        attachments: [],
+        provider: "claude",
+        markPlanAnswerForMessageId: "non-existent-message-id",
+      }),
     ).rejects.toThrow();
 
     const afterCount =

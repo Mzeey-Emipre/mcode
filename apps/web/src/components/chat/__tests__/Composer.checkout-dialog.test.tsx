@@ -133,7 +133,11 @@ vi.mock("../CopilotAgentSelector", () => ({
 }));
 
 vi.mock("../AttachmentPreview", () => ({
-  AttachmentPreview: () => <div />,
+  AttachmentPreview: ({ attachments }: { attachments: Array<{ name: string }> }) => (
+    <div data-testid="attachment-preview">
+      {attachments.map((attachment) => attachment.name).join(",")}
+    </div>
+  ),
 }));
 
 vi.mock("../FileTagPopup", () => ({
@@ -425,14 +429,14 @@ describe("Composer checkout confirmation", () => {
     await user.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.createAndSendMessage).toHaveBeenCalled());
-    const createCall = (
+    const createCommand = (
       mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>
-    ).mock.calls.at(-1);
-    expect(createCall?.slice(4, 7)).toEqual([
-      "worktree",
-      "contributor/pr-branch",
-      "named",
-    ]);
+    ).mock.calls.at(-1)?.[0];
+    expect(createCommand).toMatchObject({
+      mode: "worktree",
+      branch: "contributor/pr-branch",
+      worktreeBranchMode: "named",
+    });
   });
 
   it("reports the created thread to an embedding new-thread workflow", async () => {
@@ -492,8 +496,8 @@ describe("Composer checkout confirmation", () => {
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
-    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
-    expect(sendCall?.[17]).toMatchObject({
+    const sendCommand = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(sendCommand?.previewAnnotations).toMatchObject({
       schemaVersion: 1,
       annotations: [
         { id: "550e8400-e29b-41d4-a716-446655440001" },
@@ -506,6 +510,44 @@ describe("Composer checkout confirmation", () => {
         },
       ],
     });
+    expect(usePreviewAnnotationStore.getState().byThread[thread.id] ?? []).toEqual([]);
+    expect(usePreviewAnnotationStore.getState().diffByThread[thread.id] ?? []).toEqual([]);
+    expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(false);
+  });
+
+  it("clears annotations and comments as soon as feedback dispatch starts", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    usePreviewDesignModeStore.getState().setActive(thread.id, true);
+    usePreviewAnnotationStore.setState({
+      drafts: {},
+      byThread: {
+        [thread.id]: [makeSavedAnnotation()],
+      },
+      diffByThread: {
+        [thread.id]: [makeSavedDiffAnnotation()],
+      },
+    });
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise<void>(() => {}),
+    );
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    await userEvent.click(screen.getByLabelText("Send message"));
+    await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
+
+    expect(screen.queryByTestId("composer-annotation-bundle")).not.toBeInTheDocument();
     expect(usePreviewAnnotationStore.getState().byThread[thread.id] ?? []).toEqual([]);
     expect(usePreviewAnnotationStore.getState().diffByThread[thread.id] ?? []).toEqual([]);
     expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(false);
@@ -533,10 +575,10 @@ describe("Composer checkout confirmation", () => {
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.createAndSendMessage).toHaveBeenCalled());
-    const createCall = (
+    const createCommand = (
       mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>
-    ).mock.calls.at(-1);
-    expect(createCall?.[21]).toMatchObject({
+    ).mock.calls.at(-1)?.[0];
+    expect(createCommand?.previewAnnotations).toMatchObject({
       schemaVersion: 1,
       annotations: [
         {
@@ -573,6 +615,7 @@ describe("Composer checkout confirmation", () => {
         [thread.id]: [makeSavedAnnotation()],
       },
     });
+    usePreviewDesignModeStore.getState().setActive(thread.id, true);
     (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     render(<Composer threadId={thread.id} workspaceId="ws-1" />);
@@ -591,6 +634,15 @@ describe("Composer checkout confirmation", () => {
     });
 
     const user = userEvent.setup();
+    window.desktopBridge = {
+      getPathForFile: () => "C:\\tmp\\handoff.txt",
+    } as unknown as typeof window.desktopBridge;
+    await user.upload(
+      screen.getByTestId("composer-attachment-input"),
+      new File(["handoff context"], "handoff.txt", { type: "text/plain" }),
+    );
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
+    expect(screen.getByTestId("attachment-preview")).toHaveTextContent("handoff.txt");
     await user.type(screen.getByLabelText("Message Mcode"), "Queued follow-up");
     await user.click(screen.getByLabelText("Send message"));
     expect(mockTransport.sendMessage).not.toHaveBeenCalled();
@@ -604,8 +656,19 @@ describe("Composer checkout confirmation", () => {
     });
 
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
-    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
-    expect(sendCall?.[17]).toMatchObject({
+    expect(screen.queryByTestId("composer-annotation-bundle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("attachment-preview")).toBeEmptyDOMElement();
+    expect(usePreviewAnnotationStore.getState().byThread[thread.id] ?? []).toEqual([]);
+    expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(false);
+    const sendCommand = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(sendCommand?.attachments).toEqual([
+      expect.objectContaining({
+        name: "handoff.txt",
+        mimeType: "text/plain",
+        sourcePath: "C:\\tmp\\handoff.txt",
+      }),
+    ]);
+    expect(sendCommand?.previewAnnotations).toMatchObject({
       schemaVersion: 1,
       annotations: [
         {
@@ -740,8 +803,8 @@ describe("Composer checkout confirmation", () => {
     await user.click(screen.getByLabelText("Send message"));
 
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
-    const sendCall = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1);
-    expect(sendCall?.[17]).toBeUndefined();
+    const sendCommand = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(sendCommand?.previewAnnotations).toBeUndefined();
   });
 
   it("does not resurrect restored annotations when swapping after chip removal", async () => {

@@ -1,3 +1,4 @@
+import type { AgentEvent } from "@mcode/contracts";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import {
@@ -13,6 +14,10 @@ vi.mock("@/transport", async () => ({
 }));
 
 const THREAD_ID = "thread-turn-persist";
+
+function startTrackedTurn(turnId: string): void {
+  useThreadStore.getState().handleAgentEvent({ type: "turnStarted", threadId: THREAD_ID, fileEffectTurnId: turnId } as AgentEvent);
+}
 
 describe("handleTurnPersisted", () => {
   beforeEach(() => {
@@ -51,7 +56,7 @@ describe("handleTurnPersisted", () => {
             content: "second answer",
           }),
         ],
-        pendingTurnPersistLocalMessageId: turnOneId,
+        pendingTurnPersistMessageIds: [turnOneId],
         currentTurnMessageId: turnTwoId,
       }),
     });
@@ -68,7 +73,7 @@ describe("handleTurnPersisted", () => {
     ]);
     expect(readThreadField(THREAD_ID, (r) => r.persistedFilesChanged[turnTwoId])).toBeUndefined();
     expect(readThreadField(THREAD_ID, (r) => r.serverMessageIds[turnOneId])).toBe("server-turn-1");
-    expect(readThreadField(THREAD_ID, (r) => r.pendingTurnPersistLocalMessageId)).toBe("");
+    expect(readThreadField(THREAD_ID, (r) => r.pendingTurnPersistMessageIds)).toEqual([]);
   });
 
   it("materializes an empty assistant row for tools-only turns", () => {
@@ -99,5 +104,162 @@ describe("handleTurnPersisted", () => {
     expect(readThreadField(THREAD_ID, (r) => r.persistedFilesChanged["server-tools-only"])).toEqual(
       ["README.md"],
     );
+  });
+
+  it("keeps live file revisions monotonic and isolated by thread", () => {
+    const other = "thread-other";
+    startTrackedTurn("turn-1");
+    useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-1", {
+      revision: 2,
+      fileCount: 2,
+      additions: 3,
+      deletions: 1,
+      effects: [],
+    });
+    useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-1", {
+      revision: 1,
+      fileCount: 1,
+      additions: 1,
+      deletions: 0,
+      effects: [],
+    });
+    expect(readThreadField(THREAD_ID, (r) => r.fileEffectSummary.revision)).toBe(2);
+    expect(readThreadField(other, (r) => r.fileEffectSummary.fileCount)).toBe(0);
+  });
+
+  it("resets file revisions before dispatching the next turn", async () => {
+    startTrackedTurn("turn-1");
+    useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-1", {
+      revision: 7,
+      fileCount: 2,
+      additions: 5,
+      deletions: 1,
+      effects: [],
+    });
+    useThreadStore.setState({ runningThreadIds: new Set() });
+
+    await useThreadStore.getState().sendMessage(THREAD_ID, "next turn");
+    useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-1", {
+      revision: 8,
+      fileCount: 8,
+      additions: 8,
+      deletions: 8,
+      effects: [],
+    });
+    expect(readThreadField(THREAD_ID, (r) => r.fileEffectSummary.revision)).toBe(0);
+
+    startTrackedTurn("turn-2");
+    useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-2", {
+      revision: 1,
+      fileCount: 1,
+      additions: 1,
+      deletions: 0,
+      effects: [],
+    });
+
+    expect(readThreadField(THREAD_ID, (r) => r.fileEffectSummary)).toMatchObject({
+      revision: 1,
+      fileCount: 1,
+      additions: 1,
+      deletions: 0,
+    });
+  });
+
+  it("hands finalized effects to the persisted turn without rolling live state backward", () => {
+    startTrackedTurn("turn-1");
+    useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-1", {
+      revision: 3,
+      fileCount: 2,
+      additions: 5,
+      deletions: 1,
+      effects: [],
+    });
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: THREAD_ID,
+      messageId: "server-turn",
+      turnId: "turn-1",
+      toolCallCount: 1,
+      filesChanged: ["a.ts", "b.ts"],
+      fileEffects: { revision: 2, fileCount: 1, additions: 1, deletions: 0, effects: [] },
+    });
+    expect(readThreadField(THREAD_ID, (r) => r.fileEffectSummary)).toMatchObject({
+      revision: 3,
+      fileCount: 2,
+    });
+  });
+
+  it("rejects delayed live and persisted effects from a previous turn", () => {
+    useThreadStore.setState({
+      records: seedThreadRecord(THREAD_ID, {
+        currentTurnMessageId: "assistant-turn-2",
+        pendingTurnPersistMessageIds: ["assistant-turn-1"],
+        fileEffectTurnId: "turn-2",
+        fileEffectSummary: {
+          revision: 1,
+          fileCount: 1,
+          additions: 1,
+          deletions: 0,
+          effects: [],
+        },
+      }),
+    });
+
+    useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-1", {
+      revision: 9,
+      fileCount: 9,
+      additions: 9,
+      deletions: 9,
+      effects: [],
+    });
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: THREAD_ID,
+      turnId: "turn-1",
+      messageId: "server-turn-1",
+      toolCallCount: 1,
+      filesChanged: ["old.ts"],
+      fileEffects: {
+        revision: 10,
+        fileCount: 10,
+        additions: 10,
+        deletions: 10,
+        effects: [],
+      },
+    });
+
+    expect(readThreadField(THREAD_ID, (r) => r.fileEffectSummary)).toMatchObject({
+      revision: 1,
+      fileCount: 1,
+    });
+  });
+
+  it("replaces file-effect ownership when an already-running thread auto-resumes", () => {
+    useThreadStore.setState({
+      runningThreadIds: new Set([THREAD_ID]),
+      records: seedThreadRecord(THREAD_ID, {
+        fileEffectTurnId: "turn-1",
+        fileEffectSummary: {
+          revision: 4,
+          fileCount: 4,
+          additions: 4,
+          deletions: 0,
+          effects: [],
+        },
+      }),
+    });
+
+    startTrackedTurn("turn-2");
+    useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-2", {
+      revision: 1,
+      fileCount: 1,
+      additions: 2,
+      deletions: 0,
+      effects: [],
+    });
+
+    expect(readThreadField(THREAD_ID, (r) => r.fileEffectTurnId)).toBe("turn-2");
+    expect(readThreadField(THREAD_ID, (r) => r.fileEffectSummary)).toMatchObject({
+      revision: 1,
+      fileCount: 1,
+    });
   });
 });

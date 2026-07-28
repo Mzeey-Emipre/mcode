@@ -15,7 +15,10 @@ If you are about to touch any of these files, **read this first**:
   write seam to NarrativeStore and retains turn-level concerns — turn snapshots,
   `turn.persisted` broadcast, late-hook flushing)
 - `apps/server/src/index.ts` (broadcast layer)
-- `apps/web/src/stores/threadStore.ts` (client volatile state lifecycle)
+- `apps/web/src/stores/threadStore.ts` (validated AgentEvent projection and
+  client volatile state lifecycle)
+- `apps/web/src/stores/conversation-residency.ts` (selected conversation
+  residency, bounded retention, refresh, pagination, and prefetch routing)
 - `apps/web/src/components/chat/narrative/*` (renderers)
 - `apps/web/src/components/chat/virtual-items.ts` (timeline insertion point)
 
@@ -41,10 +44,10 @@ index.ts on("event") enriches missing parentToolCallId via
 broadcast("agent.event", enrichedEvent)
     │
     ▼
-ws-events.ts forwards to handleAgentEvent({ method: "session.toolUse", ... })
+ws-events.ts validates and forwards AgentEvent directly to threadStore.handleAgentEvent
     │
     ▼
-threadStore.ts appends to toolCallsByThread[threadId]
+threadStore.ts projects the validated event into the resident Thread record
     │
     ▼
 buildNarrativeItems groups by parentToolCallId → SubagentRow children
@@ -62,6 +65,19 @@ PersistedTurnFooter appears after narrative.list RPC resolves
 ```
 
 Every step has at least one trap. Read on.
+
+### Renderer ownership
+
+`ConversationResidency`, registered by `threadStore`, is the renderer's only
+conversation authority. It selects and restores a Thread's persisted
+conversation, retains inactive records within the bounded cache, and routes
+refresh, pagination, and prefetch work to `ThreadHydrator`. `workspaceStore`
+owns rows and selection, not a second conversation cache or restore path.
+
+The server owns durable messages and persisted narrative metadata. The renderer
+projects validated `AgentEvent` values into each resident Thread record. This
+split preserves the volatile Turn layer through `turn.persisted`; persistence
+confirms durable narrative data but does not end the live timeline.
 
 ---
 

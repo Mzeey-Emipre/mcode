@@ -209,6 +209,14 @@ A single chat conversation between a user and an AI agent. Threads belong to
 workspaces and run against a provider. Distinct from a git branch even though
 threads can be associated with a worktree.
 
+### Thread conversation residency
+The renderer's single client authority for a selected Thread's conversation.
+It activates and revalidates the selected transcript, retains inactive
+transcripts within a bounded cache, routes pagination and prefetch work, and
+routes refresh work. `threadStore` projects validated AgentEvents into resident
+Thread records. Server messages and narrative metadata remain durable data;
+live Turn state remains client memory.
+
 ### Fork (verb), forked thread (noun)
 The act of branching a conversation from a specific message in a parent
 thread, creating a new child thread that picks up from that anchor point.
@@ -282,6 +290,47 @@ report the dispatch call itself as complete the moment the child is
 created; the timeline must not show the sub-agent as done until the child
 actually reports back. The sub-agent's own narration is not streamed to
 the timeline; only its nested tool calls and its final result are shown.
+
+### Coordinator thread
+A thread that assigns work to one or more delegated threads and monitors their
+progress.
+_Avoid_: Parent agent, orchestrator session
+
+### Delegated thread
+A normal Mcode thread created by a coordinator thread to perform an explicit
+assignment. It remains visible and controllable as its own thread.
+_Avoid_: Sub-agent, hidden child session
+
+### Thread delegation
+The durable assignment and relationship between a coordinator thread and a
+delegated thread. It records which Thread and Turn created the assignment but
+does not make the delegated thread part of the coordinator's Turn. The
+delegated thread has its own lifecycle and survives the coordinator stopping or
+disconnecting.
+_Avoid_: Sub-agent call, conversation fork
+
+### Thread control
+The capability to discover Projects and Threads, create a delegated thread,
+read it, send it work, stop it, or wait for its state. Thread control always
+excludes the active source thread so a Thread cannot target itself.
+_Avoid_: Sub-agent control, conversation-fork control
+
+### Internal thread control
+Thread control exercised by a Provider running inside an authenticated Mcode
+Thread. It acts for the current user across registered Projects.
+_Avoid_: Provider subagent API
+
+### Paired external thread control
+Thread control exercised by an external integration paired with Mcode. It is
+limited to selected Projects, granted operations, and ownership rules.
+_Avoid_: Internal thread control, unrestricted MCP access
+
+### Message origin
+The durable source of an inbound user-role Message. A Message comes from the
+composer, another Thread, or a legacy row created before origin was recorded.
+A Thread origin identifies the source Thread, Turn, and Provider. It does not
+label the sender as human or agent.
+_Avoid_: Message author type
 
 ### Text delta
 A streaming text chunk emitted by the provider as the agent types its
@@ -728,15 +777,20 @@ Browser tabs — is defined on each tab type below, not here.)
 
 ### Tab availability
 The rule set governing which tab types a user can create at a given moment.
-Every top-level tab is a **singleton** — at most one Browser, one Terminal,
-one Review, one Plan, one Files. Multiplicity lives *inside* a tab (the
-Browser holds many pages, the Terminal many shells), never as duplicate
-top-level tabs. The set of **creatable** types is filtered twice: by
-**scope** (types needing a thread are dropped when no thread is active) and
-by **cardinality** (singletons already open are dropped). When exactly one
-type is creatable, the add affordance opens it directly instead of showing
-a menu; when none are, the add affordance is hidden. The empty panel and
-the add menu present this same creatable-types set.
+Browser, Review, Plan, and Files are **singletons** at the top level.
+Terminal is repeatable: each open Terminal tab represents one **shell
+session**. The set of **creatable** types is filtered by **scope** (types
+needing a thread are dropped when no thread is active) and by
+**cardinality** (open singleton types are dropped, while Terminal remains
+creatable until its limit of four shell sessions per terminal scope is
+reached). When exactly one type is creatable, the add affordance opens it
+directly instead of showing a menu; when none are, the add affordance is
+hidden. The empty panel and the add menu present this same creatable-types
+set. Tabs share one creation-ordered sequence regardless of type. A newly
+created tab appends to that sequence. The user can reorder any tab by pointer
+drag or keyboard movement without changing its content or the panel's size.
+Each thread preserves its own tab order. The workspace-level panel used with
+no active thread preserves a separate order.
 
 ### Plan tab
 The right-panel tab that shows a thread's saved plan documents. It is
@@ -769,10 +823,14 @@ attributed. It is separate from the Plan tab.
 _Avoid_: Scope task list
 
 ### Terminal tab
-The right-panel tab that hosts one or more **shell sessions** against the
-active **terminal scope** (a thread when one is active, otherwise the
-workspace root). Singleton at the panel level; multiplicity is internal
-(one tab, many shells).
+A repeatable right-panel tab that represents one **shell session** against
+the active **terminal scope** (a thread when one is active, otherwise the
+workspace root). Creating another shell session creates another Terminal
+tab. Selecting a Terminal tab shows only that tab's shell session. Closing
+a Terminal tab closes its shell session and terminates the entire process
+tree rooted at that shell. If closing it leaves no right-panel tabs, the
+right panel closes. When a shell exits on its own, its Terminal tab may show
+the exit status briefly, then closes automatically.
 
 ### Terminal scope
 The thread or workspace a shell session runs against. When a thread is
@@ -784,14 +842,15 @@ _Avoid_: Using "thread id" alone when the scope may be a workspace.
 ### Shell session
 A running shell process (e.g. PowerShell, bash) tied to one terminal scope.
 Survives thread switches and terminal-tab hides; the process keeps running
-until the user kills it or closes the shell. Output keeps draining into
-server-side scrollback even when no terminal view is mounted.
+until the user kills it or closes its Terminal tab. Closing it terminates the
+shell and every descendant process that it started. Output keeps draining
+into server-side scrollback even when no terminal view is mounted.
 _Avoid_: PTY (implementation term), terminal instance (ambiguous with the view).
 
 ### Active shell
-The one shell session whose terminal view is mounted. At most one terminal
-view exists in the app. Its view may stay warm while the Terminal tab or right
-panel is hidden; all other shells run without a view.
+The shell session represented by the selected Terminal tab. At most one
+terminal view exists in the app. Its view may stay warm while its Terminal tab
+or the right panel is hidden; all other shells run without a view.
 _Avoid_: Mounting a view for every open shell (background shells stay
 server-side only).
 
@@ -801,7 +860,8 @@ Only the **active shell** has a view; others keep running without one. Hiding
 the terminal surface preserves that view for a fast return. Switching shells
 replaces it. A returning view follows the latest output when the user was at
 the tail, or restores the same retained content when the user was reading
-history.
+history. Restoration preserves terminal text and ANSI styling without exposing
+control-sequence fragments as visible characters.
 _Avoid_: xterm (implementation term), conflating with shell session.
 
 ### Scrollback
@@ -817,6 +877,14 @@ git-working-tree views (Unstaged, Staged, Commit, Branch) read the
 **workspace root** and need no thread; its turn views need a thread. Each
 view renders exactly one diff; there is no eager render of every turn's
 diff.
+
+### Files navigator
+The collapsible file-tree surface within Review, labelled **Files** in the UI.
+When sourced from a [[Comparison]], it lists only that comparison's changed
+files and navigates within the same diff. The Files navigator is distinct from
+the Comparison and its diff; its stable name leaves room for other sources,
+such as project files, without renaming the surface.
+_Avoid_: Worktree files, Changed files (names for a source, not the surface)
 
 ### Comparison
 What a Review view *is*: a **base** (before) and a **target** (after) that
@@ -1062,6 +1130,37 @@ file mention references a workspace file, while a sub-agent mention requests a
 provider agent for part of the turn.
 _Avoid_: treating every `@...` string as a file path.
 
+### Selectable provider agent
+A provider-defined agent offered through the `@` mention picker. The list may
+combine provider-returned registrations with standalone agent definitions,
+but Mcode does not invent provider-internal built-ins that the provider did not
+return. Suggestion metadata helps the user choose an agent; the provider remains
+authoritative when resolving the selected agent name.
+_Avoid_: Sub-agent run, built-in agent
+
+### Provider catalog entry
+An invocable provider-owned item offered through the composer. Each entry is
+exactly one Skill, provider plugin, Codex custom prompt, or provider command.
+Mcode-level commands are not provider catalog entries. Entries of different
+kinds may share a native name and remain distinct.
+
+### Provider plugin
+A provider-distributed bundle of reusable instructions and integrations. Mcode
+exposes an installed and enabled plugin as one provider catalog entry while
+keeping its constituent Skills distinct.
+_Avoid_: Skill, plugin marketplace entry
+
+### Provider catalog snapshot
+The last provider-confirmed set of catalog entries for a workspace context. A
+snapshot remains available across app restarts and is marked stale whenever
+Mcode cannot confirm it against the provider. Age alone does not expire a
+snapshot.
+
+### Catalog refresh
+A background reconciliation between a visible catalog snapshot and its
+sources. Cached entries remain usable during refresh, and additions, changes,
+removals, and diagnostics are applied by stable entry identity.
+
 ### Skill
 A reusable agent capability the end user can attach to their threads
 inside the Mcode app — domain knowledge or a multi-step workflow the
@@ -1071,12 +1170,13 @@ the skills store. Distinct from the dev-tooling skill concept under
 
 A provider may be the **authoritative source of its own skill catalog**
 (Codex exposes one natively, including skills bundled inside provider
-plugins); the app's own filesystem scan is the fallback when the
-provider's catalog is unreachable. Skills the user disabled in the
-provider's own config do not appear in Mcode. A **provider plugin** is a
-distribution format, not a separate invocable thing: what the user
-invokes is always a skill, and plugin-bundled skills appear in the menu
-badged as plugin entries.
+plugins). When the Codex catalog is temporarily unavailable, Mcode serves
+the last confirmed catalog snapshot and marks it stale. Without a snapshot,
+the catalog is unavailable. Mcode does not reconstruct the Codex skill
+catalog with a filesystem scan. Skills the user disabled in the provider's
+own config do not appear in Mcode. An installed and enabled **provider
+plugin** is a distinct provider catalog entry. Skills contributed by that
+plugin remain separate Skill entries.
 
 ### Slash command
 A short command the user types in the composer (e.g. `/something`) that
@@ -1085,6 +1185,19 @@ lives in the composer's Lexical plugin (`SlashCommandPlugin`,
 `SlashCommandNode`, `SlashCommandPopup`). Distinct from the dev-tooling
 slash commands under `.claude/commands/` etc. (which are for
 contributors).
+
+### Codex custom prompt
+A deprecated Codex prompt template that the user invokes explicitly through
+the slash-command gesture. Mcode continues to support custom prompts as a
+compatibility surface, while Skills remain the preferred Codex surface for
+reusable instructions.
+_Avoid_: Skill, Mcode-level command
+
+### Provider command
+A reusable command defined by an agent provider, such as a Claude command.
+Provider commands are distinct from Codex custom prompts, even when both use
+the slash-command gesture in the composer.
+_Avoid_: Codex custom prompt, Skill
 
 Slash commands use `/` as their composer gesture. Providers with their own
 native invocation syntax (Codex's `$` mentions) get a translation at the
@@ -1132,3 +1245,19 @@ A background preview tab whose renderer has been killed to reclaim memory,
 keeping only a cold placeholder (title, URL, favicon). Reopening reloads the
 page; scroll position and form state are not preserved. Governed by
 `preview.memorySaver.*` settings and ADR 0002.
+
+## Release channels
+
+### Stable release
+A supported Mcode version published for general use.
+_Avoid_: Major release, production release
+
+### Nightly release
+A prerelease build published from ongoing development for early use and
+testing.
+_Avoid_: Stable release
+
+### Superseded nightly
+A nightly release whose intended version has since shipped as a stable release.
+It has no continuing rollback or support role.
+_Avoid_: Supported release, archived nightly

@@ -6,12 +6,19 @@ import {
   $createTextNode,
   TextNode,
   type LexicalEditor,
+  type LexicalNode,
 } from "lexical";
 import {
   $createSlashCommandNode,
   type SlashCommandNamespace,
 } from "./SlashCommandNode";
-import { SLASH_TRIGGER_RE } from "../useSlashCommand";
+import {
+  $createTypedMentionNode,
+  createMentionId,
+  type MentionNodeData,
+} from "./MentionNode";
+import type { ProviderCapabilityIdentity } from "@mcode/contracts";
+import { SLASH_TRIGGER_RE, type Command } from "../useSlashCommand";
 
 /** Props for the SlashCommandPlugin that detects /-triggers in the editor. */
 interface SlashCommandPluginProps {
@@ -83,13 +90,9 @@ export function SlashCommandPlugin({
   return null;
 }
 
-/**
- * Insert a slash command node at the current / trigger position.
- */
-export function insertSlashCommandNode(
+function replaceActiveSlashTrigger(
   editor: LexicalEditor,
-  commandName: string,
-  namespace: SlashCommandNamespace,
+  createNode: () => LexicalNode,
 ): void {
   editor.update(() => {
     const selection = $getSelection();
@@ -103,32 +106,68 @@ export function insertSlashCommandNode(
 
     const textContent = node.getTextContent();
     const cursorOffset = anchor.offset;
-    const textBeforeCursor = textContent.slice(0, cursorOffset);
-
-    const match = SLASH_TRIGGER_RE.exec(textBeforeCursor);
+    const match = SLASH_TRIGGER_RE.exec(textContent.slice(0, cursorOffset));
     if (!match) return;
 
     const triggerStart = match.index + match[1].length;
+    const beforeText = textContent.slice(0, triggerStart);
     const afterCursor = textContent.slice(cursorOffset);
-
-    const commandNode = $createSlashCommandNode(commandName, namespace);
+    const insertedNode = createNode();
     const trailingText = afterCursor.length > 0 ? afterCursor : " ";
     const afterNode = $createTextNode(trailingText);
 
-    const beforeText = textContent.slice(0, triggerStart);
     if (beforeText) {
       const beforeNode = $createTextNode(beforeText);
       node.replace(beforeNode);
-      beforeNode.insertAfter(commandNode);
-      commandNode.insertAfter(afterNode);
+      beforeNode.insertAfter(insertedNode);
+      insertedNode.insertAfter(afterNode);
     } else {
-      node.replace(commandNode);
-      commandNode.insertAfter(afterNode);
+      node.replace(insertedNode);
+      insertedNode.insertAfter(afterNode);
     }
 
     const offset = trailingText.startsWith(" ") ? 1 : 0;
     afterNode.select(offset, offset);
   });
+}
+
+/** Replaces the active slash trigger with a native Codex plugin mention. */
+export function insertPluginMentionNode(
+  editor: LexicalEditor,
+  mention: Extract<MentionNodeData, { kind: "plugin" }>,
+): void {
+  replaceActiveSlashTrigger(editor, () => $createTypedMentionNode(mention));
+}
+
+/**
+ * Insert a slash command node at the current / trigger position.
+ */
+export function insertSlashCommandNode(
+  editor: LexicalEditor,
+  commandName: string,
+  namespace: SlashCommandNamespace,
+  capabilityIdentity?: ProviderCapabilityIdentity,
+): void {
+  replaceActiveSlashTrigger(
+    editor,
+    () => $createSlashCommandNode(commandName, namespace, capabilityIdentity),
+  );
+}
+
+/** Inserts a selected plugin command as a native Codex mention. */
+export function insertSelectedPluginMention(
+  editor: LexicalEditor,
+  command: Pick<Command, "capabilityKind" | "mentionPath" | "name">,
+): boolean {
+  if (command.capabilityKind !== "plugin" || !command.mentionPath) return false;
+  insertPluginMentionNode(editor, {
+    id: createMentionId(),
+    kind: "plugin",
+    label: command.name,
+    name: command.name,
+    path: command.mentionPath,
+  });
+  return true;
 }
 
 /** Removes the slash trigger at the current selection without inserting a command node. */

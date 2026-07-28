@@ -157,7 +157,19 @@ export function ensureTabView(
     if (hasAlt) parts.push("alt");
     parts.push(key);
     const combo = parts.join("+");
+    const reservedNavigationChord =
+      process.platform === "darwin"
+        ? input.meta &&
+          !input.control &&
+          !hasShift &&
+          !hasAlt &&
+          (key === "[" || key === "]")
+        : !hasMod &&
+          !hasShift &&
+          hasAlt &&
+          (key === "arrowleft" || key === "arrowright");
     const reservedHostChord =
+      reservedNavigationChord ||
       combo === "mod+shift+b" ||
       combo === "mod+shift+d" ||
       combo === "mod+shift+y" ||

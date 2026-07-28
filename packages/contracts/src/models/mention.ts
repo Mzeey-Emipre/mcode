@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProviderCapabilityIdentitySchema } from "../providers/capability-catalog.js";
 
 export const MAX_MESSAGE_MENTIONS = 50;
 export const MENTION_ID_MAX_LENGTH = 128;
@@ -46,6 +47,18 @@ export const MessageMentionSchema = z.discriminatedUnion("kind", [
     name: MentionTextSchema,
     path: MentionPathSchema,
     provider: z.string().min(1).max(64).optional(),
+  }),
+  MentionBaseSchema.extend({
+    kind: z.literal("plugin"),
+    name: MentionTextSchema,
+    path: MentionPathSchema.refine((value) => value.startsWith("plugin://"), {
+      message: "Plugin mention path must use the plugin:// scheme",
+    }),
+  }),
+  MentionBaseSchema.extend({
+    kind: z.literal("command"),
+    namespace: z.enum(["skill", "mcode", "plugin", "command"]),
+    capabilityIdentity: ProviderCapabilityIdentitySchema().optional(),
   }),
 ]);
 

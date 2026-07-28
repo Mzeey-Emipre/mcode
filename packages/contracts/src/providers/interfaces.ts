@@ -5,7 +5,6 @@ import type { MessageMention } from "../models/mention.js";
 import type { GoalLookupResult, GoalState } from "../models/goal.js";
 import type { PermissionDecision, PermissionRequest } from "../models/permission.js";
 import type { ContextWindowMode, ReasoningLevel } from "../models/settings.js";
-import type { SkillInfo } from "../skills.js";
 import type { ProviderModelInfo } from "./models.js";
 import type { ProviderUsageInfo } from "./usage.js";
 import type { SessionForker } from "./session-forker.js";
@@ -23,6 +22,14 @@ export type SessionForkBehavior = "clean" | "unsupported";
 export interface CompletionOptions {
   /** Provider-specific reasoning effort for short utility tasks. */
   reasoningLevel?: ReasoningLevel;
+}
+
+/** Explicit provider file-tool start used to capture a mutation baseline without publishing narrative UI. */
+export interface ProviderFileMutationStart {
+  threadId: string;
+  toolCallId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
 }
 
 /**
@@ -157,6 +164,8 @@ export interface IAgentProvider {
 
   /** Subscribe to agent events. */
   on(event: "event", handler: (event: AgentEvent) => void): void;
+  /** Subscribe to private file-tool starts that must be observed before public attribution is known. */
+  on(event: "file_mutation_start", handler: (event: ProviderFileMutationStart) => void): void;
   /** Subscribe to provider-level errors. */
   on(event: "error", handler: (error: Error) => void): void;
   /** Subscribe to permission request events (emitted when canUseTool fires). */
@@ -240,23 +249,6 @@ export interface ISessionEvictable extends IAgentProvider {
  */
 export function isSessionEvictable(provider: IAgentProvider): provider is ISessionEvictable {
   return typeof (provider as Partial<ISessionEvictable>).discardSession === "function";
-}
-
-/** Provider with a native skill catalog that can be queried without spawning a new session. */
-export interface ISkillCatalogCapable extends IAgentProvider {
-  /** Return native skills for an already-running provider session, or an empty list. */
-  listSkills(cwd?: string): Promise<SkillInfo[]>;
-  /** Subscribe to native skill invalidation notifications. */
-  onSkillsChanged(handler: () => void): void;
-}
-
-/** Type guard for providers that expose a native skill catalog. */
-export function isSkillCatalogCapable(provider: IAgentProvider): provider is ISkillCatalogCapable {
-  const candidate = provider as Partial<ISkillCatalogCapable>;
-  return (
-    typeof candidate.listSkills === "function" &&
-    typeof candidate.onSkillsChanged === "function"
-  );
 }
 
 /** Registry that resolves provider instances by ID. */

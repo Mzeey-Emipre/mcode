@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildPersistedNarrativeItems,
   recordToHookExecution,
+  recordToToolCall,
 } from "./build-persisted-narrative";
 import type {
   ToolCallRecord,
@@ -55,6 +56,18 @@ function makeHook(over: Partial<HookExecutionRecord> = {}): HookExecutionRecord 
 }
 
 describe("buildPersistedNarrativeItems", () => {
+  it("hydrates persisted Agent identity separately from its task summary", () => {
+    const call = recordToToolCall(makeTool({
+      tool_name: "Agent",
+      display_name: "Explorer",
+      input_summary: "Inspect the private task",
+    }));
+
+    expect(call.toolInput).toEqual({
+      _summary: "Inspect the private task",
+      agentName: "Explorer",
+    });
+  });
   it("empty input returns no items", () => {
     expect(buildPersistedNarrativeItems({ tools: [], thoughts: [], hooks: [] })).toEqual([]);
   });
@@ -107,6 +120,67 @@ describe("buildPersistedNarrativeItems", () => {
         outputTotalBytes: 300_000,
         outputArtifactPath: "C:\\mcode\\artifacts\\tool-output\\thread\\tool.txt",
       });
+    }
+  });
+
+  it("hydrates a persisted shell exit code onto the rendered tool call", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [makeTool({ tool_name: "Bash", status: "failed", exit_code: 1 })],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].group.calls[0].exitCode).toBe(1);
+    }
+  });
+
+  it("preserves an explicit persisted cancellation status", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [makeTool({ tool_name: "Bash", status: "cancelled" })],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].hasCancelled).toBe(true);
+      expect(items[0].group.calls[0].isCancelled).toBe(true);
+    }
+  });
+
+  it.each([
+    ["a positive interval", "2026-05-15T10:00:00Z", "2026-05-15T10:00:15Z", 15_000],
+    ["a zero interval", "2026-05-15T10:00:00Z", "2026-05-15T10:00:00Z", 0],
+  ])("hydrates %s as a completed tool duration", (_label, startedAt, completedAt, expected) => {
+    const items = buildPersistedNarrativeItems({
+      tools: [makeTool({ started_at: startedAt, completed_at: completedAt })],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].group.calls[0].durationMs).toBe(expected);
+    }
+  });
+
+  it.each([
+    ["missing completion", "2026-05-15T10:00:00Z", null],
+    ["invalid start", "not-a-date", "2026-05-15T10:00:15Z"],
+    ["invalid completion", "2026-05-15T10:00:00Z", "not-a-date"],
+    ["reversed timestamps", "2026-05-15T10:00:15Z", "2026-05-15T10:00:00Z"],
+  ])("omits duration for %s", (_label, startedAt, completedAt) => {
+    const items = buildPersistedNarrativeItems({
+      tools: [makeTool({ started_at: startedAt, completed_at: completedAt })],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type === "tool-group") {
+      expect(items[0].group.calls[0].durationMs).toBeUndefined();
     }
   });
 
@@ -167,9 +241,12 @@ describe("buildPersistedNarrativeItems", () => {
       thoughts: [],
       hooks: [],
     });
-    expect(items).toHaveLength(1);
-    expect(items[0].type).toBe("subagent");
-    if (items[0].type === "subagent") {
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
+      "started",
+      "finished",
+    ]);
+    if (items[0]?.type === "subagent") {
       expect(items[0].children).toHaveLength(1);
       expect(items[0].toolCall.id).toBe("agent-1");
     }
@@ -186,7 +263,114 @@ describe("buildPersistedNarrativeItems", () => {
       thoughts: [],
       hooks: [],
     });
-    expect(items.filter((i) => i.type === "subagent")).toHaveLength(2);
+    expect(items.filter((i) => i.type === "subagent")).toHaveLength(4);
+  });
+
+  it("hydrates every persisted lifecycle update without exposing child activity", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [
+        makeTool({
+          id: "agent-1",
+          tool_name: "Agent",
+          display_name: "Explorer",
+          input_summary: "Private delegated prompt",
+          started_at: "2026-05-15T10:00:00Z",
+          completed_at: "2026-05-15T10:00:04Z",
+          sort_order: 1,
+        }),
+        makeTool({
+          id: "update-1",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: '{"lifecycle":"updated","agentName":"Explorer"}',
+          parent_tool_call_id: "agent-1",
+          sort_order: 2,
+        }),
+        makeTool({
+          id: "child-command",
+          tool_name: "Bash",
+          input_summary: "private child command",
+          parent_tool_call_id: "agent-1",
+          sort_order: 3,
+        }),
+        makeTool({
+          id: "update-2",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: '{"lifecycle":"updated","agentName":"Explorer"}',
+          parent_tool_call_id: "agent-1",
+          sort_order: 4,
+        }),
+      ],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
+      "started",
+      "updated",
+      "updated",
+      "finished",
+    ]);
+  });
+
+  it("matches live source-then-target participants and tolerates legacy markers", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [
+        makeTool({
+          id: "agent-source",
+          tool_name: "Agent",
+          display_name: "Explorer",
+          sort_order: 1,
+        }),
+        makeTool({
+          id: "agent-target",
+          tool_name: "Agent",
+          display_name: "Implementer",
+          parent_tool_call_id: "agent-source",
+          sort_order: 2,
+        }),
+        makeTool({
+          id: "update-target",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: JSON.stringify({
+            lifecycle: "updated",
+            sourceAgentName: "Explorer",
+            sourceAgentToolCallId: "agent-source",
+          }),
+          parent_tool_call_id: "agent-target",
+          sort_order: 3,
+        }),
+        makeTool({
+          id: "legacy-update",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: "",
+          parent_tool_call_id: "agent-source",
+          sort_order: 4,
+        }),
+      ],
+      thoughts: [],
+      hooks: [],
+    });
+    const targetRows = items.filter(
+      (item) => item.type === "subagent" && item.toolCall.id === "agent-target",
+    );
+    const legacyRow = items.find(
+      (item) => item.type === "subagent"
+        && item.toolCall.id === "agent-source"
+        && item.lifecycle === "updated",
+    );
+
+    expect(targetRows.map((item) => item.type === "subagent" ? item.lifecycle : "")).toEqual([
+      "started",
+      "updated",
+      "finished",
+    ]);
+    expect(targetRows.every(
+      (item) => item.type === "subagent"
+        && item.participants.map((participant) => participant.id).join(",") === "agent-source,agent-target",
+    )).toBe(true);
+    expect(legacyRow?.type === "subagent"
+      ? legacyRow.participants.map((participant) => participant.id)
+      : []).toEqual(["agent-source"]);
   });
 
   it("interleaves all streams by sort_order", () => {

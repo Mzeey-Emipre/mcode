@@ -13,6 +13,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  Menu,
   Notification,
   powerMonitor,
   powerSaveBlocker,
@@ -26,10 +27,14 @@ import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import { getLogPath, getMcodeDir, getRecentLogs } from "@mcode/shared";
-import { getExtension as bundledGetExtension, isMcodeWorkspacePreviewUrl } from "@mcode/contracts";
+import {
+  getExtension as bundledGetExtension,
+  isMcodeWorkspacePreviewUrl,
+} from "@mcode/contracts";
 
 /** Use snapshot-provided module when available (V8 snapshot skips re-init). */
-const getExtension = globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
+const getExtension =
+  globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
 import { openInRegistry } from "./open-in/index.js";
 import { ServerManager } from "./server-manager.js";
@@ -46,7 +51,10 @@ import {
   setBeforeInstallHook,
 } from "./auto-updater.js";
 import { setupSpellcheck } from "./spellcheck.js";
-import { registerPreviewBrowserHandlers, disposePreviewForWindow } from "./preview/index.js";
+import {
+  registerPreviewBrowserHandlers,
+  disposePreviewForWindow,
+} from "./preview/index.js";
 import { disposeBrowserAutomationForWindow } from "./browser-automation/index.js";
 import {
   startBrowserUseBridge,
@@ -113,7 +121,10 @@ function openIfAllowed(url: string): void {
     const parsed = new URL(url);
     if (EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
       shell.openExternal(parsed.href).catch((err: unknown) => {
-        console.error(`[openIfAllowed] Failed to open ${parsed.protocol} URL: ${parsed.href}`, err);
+        console.error(
+          `[openIfAllowed] Failed to open ${parsed.protocol} URL: ${parsed.href}`,
+          err,
+        );
       });
     }
   } catch {
@@ -265,6 +276,19 @@ function createWindow(): void {
     show: false,
     backgroundColor: "#0a0a0f",
     autoHideMenuBar: true,
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 14, y: 12 },
+        }
+      : {
+          titleBarStyle: "hidden" as const,
+          titleBarOverlay: {
+            color: "#00000000",
+            symbolColor: "#8a8a92",
+            height: 40,
+          },
+        }),
     webPreferences: {
       preload: join(__dirname, "../preload/preload.cjs"),
       contextIsolation: true,
@@ -419,7 +443,10 @@ function registerIpcHandlers(): void {
         const resolved = await resolveMcodeWorkspacePreviewUrl(trimmed, ws);
         if (!resolved.ok) return;
         void shell.openExternal(resolved.url).catch((err: unknown) => {
-          console.error(`[open-external-url] Failed to open file URL: ${resolved.url}`, err);
+          console.error(
+            `[open-external-url] Failed to open file URL: ${resolved.url}`,
+            err,
+          );
         });
         return;
       }
@@ -551,6 +578,18 @@ function registerIpcHandlers(): void {
     updatePowerSaveBlocker();
   });
 
+  ipcMain.handle("window:perform", (event, action: unknown) => {
+    if (
+      typeof action !== "string" ||
+      !DESKTOP_WINDOW_ACTIONS.has(action as DesktopWindowAction)
+    ) {
+      throw new Error("Invalid desktop window action");
+    }
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || window.isDestroyed()) return;
+    performDesktopWindowAction(window, action as DesktopWindowAction);
+  });
+
   // App version + auto-update controls
   ipcMain.handle("app:get-version", () => app.getVersion());
   ipcMain.handle("app:get-update-status", () => getUpdateStatus());
@@ -559,8 +598,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle("app:download-update", () => downloadUpdate());
   ipcMain.handle(
     "app:apply-release-line",
-    async (_e, payload: { releaseLine: "stable" | "nightly"; allowDowngrade?: boolean }) => {
-      if (payload?.releaseLine !== "stable" && payload?.releaseLine !== "nightly") {
+    async (
+      _e,
+      payload: { releaseLine: "stable" | "nightly"; allowDowngrade?: boolean },
+    ) => {
+      if (
+        payload?.releaseLine !== "stable" &&
+        payload?.releaseLine !== "nightly"
+      ) {
         throw new Error(`Invalid releaseLine: ${String(payload?.releaseLine)}`);
       }
       return applyReleaseLineSwitch(payload.releaseLine, {
@@ -590,12 +635,7 @@ function registerAttachmentProtocol(): void {
       return new Response("Invalid attachment ID", { status: 400 });
     }
 
-    const filePath = join(
-      getMcodeDir(),
-      "attachments",
-      threadId,
-      filename,
-    );
+    const filePath = join(getMcodeDir(), "attachments", threadId, filename);
     if (!existsSync(filePath)) {
       return new Response("Not found", { status: 404 });
     }
@@ -626,9 +666,7 @@ function setupCloseHandler(): void {
     // Check active agent count via the server's HTTP API
     let count = 0;
     try {
-      const res = await fetch(
-        `http://localhost:${serverManager.port}/health`,
-      );
+      const res = await fetch(`http://localhost:${serverManager.port}/health`);
       if (res.ok) {
         const data = (await res.json()) as { activeAgents?: number };
         count = data.activeAgents ?? 0;
@@ -692,6 +730,172 @@ if (process.platform === "win32") {
   app.setAppUserModelId(APP_ID);
 }
 
+/** Native window and edit commands accepted from the context-isolated renderer. */
+export type DesktopWindowAction =
+  | "closeWindow"
+  | "quit"
+  | "undo"
+  | "redo"
+  | "cut"
+  | "copy"
+  | "paste"
+  | "selectAll"
+  | "zoomIn"
+  | "zoomOut"
+  | "zoomReset"
+  | "toggleFullScreen"
+  | "reload"
+  | "toggleDevTools";
+
+/** Explicit allowlist for native actions exposed through IPC. */
+export const DESKTOP_WINDOW_ACTIONS = new Set<DesktopWindowAction>([
+  "closeWindow",
+  "quit",
+  "undo",
+  "redo",
+  "cut",
+  "copy",
+  "paste",
+  "selectAll",
+  "zoomIn",
+  "zoomOut",
+  "zoomReset",
+  "toggleFullScreen",
+  "reload",
+  "toggleDevTools",
+]);
+
+function performDesktopWindowAction(
+  window: BrowserWindow,
+  action: DesktopWindowAction,
+): void {
+  switch (action) {
+    case "closeWindow":
+      window.close();
+      return;
+    case "quit":
+      app.quit();
+      return;
+    case "undo":
+      window.webContents.undo();
+      return;
+    case "redo":
+      window.webContents.redo();
+      return;
+    case "cut":
+      window.webContents.cut();
+      return;
+    case "copy":
+      window.webContents.copy();
+      return;
+    case "paste":
+      window.webContents.paste();
+      return;
+    case "selectAll":
+      window.webContents.selectAll();
+      return;
+    case "zoomIn":
+      window.webContents.setZoomLevel(window.webContents.getZoomLevel() + 0.5);
+      return;
+    case "zoomOut":
+      window.webContents.setZoomLevel(window.webContents.getZoomLevel() - 0.5);
+      return;
+    case "zoomReset":
+      window.webContents.setZoomLevel(0);
+      return;
+    case "toggleFullScreen":
+      window.setFullScreen(!window.isFullScreen());
+      return;
+    case "reload":
+      if (isDesktopDev()) window.webContents.reloadIgnoringCache();
+      return;
+    case "toggleDevTools":
+      if (!isDesktopDev()) return;
+      if (window.webContents.isDevToolsOpened())
+        window.webContents.closeDevTools();
+      else window.webContents.openDevTools({ mode: "right" });
+  }
+}
+
+type DesktopRendererCommand =
+  | "workspace.new"
+  | "thread.new"
+  | "sidebar.toggle"
+  | "rightPanel.toggle"
+  | "settings.keyboard"
+  | "settings.about";
+
+function sendDesktopRendererCommand(command: DesktopRendererCommand): void {
+  const target = BrowserWindow.getFocusedWindow() ?? mainWindow;
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send("desktop:command", command);
+}
+
+function configureApplicationMenu(): void {
+  if (process.platform !== "darwin") {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { role: "appMenu" },
+      {
+        label: "File",
+        submenu: [
+          {
+            label: "New Project",
+            accelerator: "CmdOrCtrl+Shift+N",
+            click: () => sendDesktopRendererCommand("workspace.new"),
+          },
+          {
+            label: "New Thread",
+            accelerator: "CmdOrCtrl+N",
+            click: () => sendDesktopRendererCommand("thread.new"),
+          },
+          { type: "separator" },
+          { role: "close" },
+        ],
+      },
+      { role: "editMenu" },
+      {
+        label: "View",
+        submenu: [
+          {
+            label: "Toggle Sidebar",
+            accelerator: "CmdOrCtrl+\\",
+            click: () => sendDesktopRendererCommand("sidebar.toggle"),
+          },
+          {
+            label: "Toggle Right Panel",
+            accelerator: "CmdOrCtrl+Alt+B",
+            click: () => sendDesktopRendererCommand("rightPanel.toggle"),
+          },
+          { type: "separator" },
+          { role: "resetZoom" },
+          { role: "zoomIn" },
+          { role: "zoomOut" },
+          { type: "separator" },
+          { role: "togglefullscreen" },
+        ],
+      },
+      { role: "windowMenu" },
+      {
+        role: "help",
+        submenu: [
+          {
+            label: "Keyboard Shortcuts",
+            click: () => sendDesktopRendererCommand("settings.keyboard"),
+          },
+          {
+            label: "About Mcode",
+            click: () => sendDesktopRendererCommand("settings.about"),
+          },
+        ],
+      },
+    ]),
+  );
+}
+
 // Tag the dev main process so `ps`/console output distinguishes it from a
 // packaged instance. process.title does not change app.getName() or the
 // userData path, so dev and prod still share data-dir resolution. On packaged
@@ -700,12 +904,17 @@ process.title = isDesktopDev() ? "Mcode Desktop (dev)" : "Mcode Desktop";
 
 app.whenReady().then(async () => {
   try {
-    console.log(`[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
-    console.log(`[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`);
+    console.log(
+      `[perf] App ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`,
+    );
+    console.log(
+      `[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`,
+    );
     console.log(`Mcode v${app.getVersion()} starting`);
     if (process.platform === "darwin") {
       app.dock?.setIcon(getWindowIconPath());
     }
+    configureApplicationMenu();
 
     // The typed browser MCP gateway is the default. Keep the raw pipe only as
     // an explicit rollback path while providers migrate to the scoped contract.
@@ -719,7 +928,9 @@ app.whenReady().then(async () => {
 
     // Start the server child process
     const { port } = await serverManager.start();
-    console.log(`[perf] Server ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(
+      `[perf] Server ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`,
+    );
     console.log(`Server started on port ${port}`);
 
     // Stop the detached server before any quitAndInstall so the NSIS
@@ -755,7 +966,9 @@ app.whenReady().then(async () => {
 
     // Create window
     createWindow();
-    console.log(`[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(
+      `[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`,
+    );
 
     // Enable spellchecker and attach per-window context-menu handler.
     setupSpellcheck(mainWindow!);
@@ -786,9 +999,14 @@ app.whenReady().then(async () => {
     // Initialize auto-updater (checks still run in dev; install hooks are packaged-only paths)
     initAutoUpdater();
 
-    console.log(`[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`);
+    console.log(
+      `[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`,
+    );
   } catch (error) {
-    const detail = error instanceof Error ? `${error.message}\n\n${error.stack ?? ""}` : String(error);
+    const detail =
+      error instanceof Error
+        ? `${error.message}\n\n${error.stack ?? ""}`
+        : String(error);
     console.error("Failed to start desktop app", error);
     dialog.showErrorBox("Mcode failed to start", detail);
     app.quit();

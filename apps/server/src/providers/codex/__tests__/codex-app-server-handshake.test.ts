@@ -421,6 +421,36 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     }
   }, 10_000);
 
+  it("reads child metadata through thread/resume without replacing the active thread", async () => {
+    const resumeRequests: Array<Record<string, unknown>> = [];
+    harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method === "thread/start") return { result: { thread: { id: "parent-thread" } } };
+      if (req.method === "thread/resume") {
+        resumeRequests.push(req as Record<string, unknown>);
+        return {
+          result: {
+            thread: { id: "child-thread" },
+            model: "gpt-5.6-sol",
+            reasoningEffort: "medium",
+          },
+        };
+      }
+      return { result: {} };
+    });
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+
+    await server.start();
+    await expect(server.getChildThreadMetadata("child-thread")).resolves.toEqual({
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    });
+    await expect(server.getChildThreadMetadata("../invalid")).resolves.toBeNull();
+
+    expect(server.threadId).toBe("parent-thread");
+    expect(resumeRequests).toHaveLength(1);
+    await server.kill();
+  }, 10_000);
+
   it("emits decoded unexpected-exit diagnostics with the latest non-benign stderr", async () => {
     const { child, stderr } = harnessFakeServer((req): Record<string, unknown> => {
       switch (req.method) {
@@ -599,5 +629,26 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     child.emit("exit", 1, null);
 
     expect(fatal).not.toHaveBeenCalledWith(expect.stringContaining("Codex app-server exited unexpectedly"));
+  }, 10_000);
+
+  it("initializes a catalog-only connection without creating a thread", async () => {
+    const methods: string[] = [];
+    harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method) methods.push(req.method);
+      return { result: {} };
+    });
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      catalogOnly: true,
+      getSpawnEnv: () => ({}),
+    });
+
+    await server.start();
+
+    expect(methods).toContain("initialize");
+    expect(methods).not.toContain("model/list");
+    expect(methods).not.toContain("thread/start");
+    await server.kill();
   }, 10_000);
 });

@@ -7,7 +7,10 @@ import { usePullRequestDetailStore } from "@/stores/pullRequestDetailStore";
 import { usePullRequestStore } from "@/stores/pullRequestStore";
 import { useUiStore } from "@/stores/uiStore";
 import type { PullRequestTransport } from "@/transport/pull-requests";
-import { PullRequestDetailPane } from "./PullRequestDetailPane";
+import {
+  PullRequestDetailPane,
+  type PullRequestDetailTab,
+} from "./PullRequestDetailPane";
 import { PullRequestInbox } from "./PullRequestInbox";
 
 const MASTER_DETAIL_MIN_WIDTH = 880;
@@ -18,11 +21,23 @@ const DETAIL_MIN_WIDTH = 520;
 /** Props for the pull request master-detail surface. */
 export interface PullRequestSurfaceProps {
   transport?: PullRequestTransport;
+  /** History-controlled detail tab in the desktop shell. */
+  activeTab?: PullRequestDetailTab;
+  /** Reports direct detail-tab navigation to the desktop shell. */
+  onActiveTabChange?: (tab: PullRequestDetailTab) => void;
+  /** Uses desktop history for a contextual detail Back action. */
+  onHistoryBack?: () => void;
 }
 
 /** Lazy-loaded top-level pull request inbox surface. */
-export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
+export function PullRequestSurface({
+  transport,
+  activeTab,
+  onActiveTabChange,
+  onHistoryBack,
+}: PullRequestSurfaceProps) {
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
+  const showSidebarReveal = sidebarCollapsed && !window.desktopBridge;
   const activeKey = usePullRequestDetailStore((state) => state.activeKey);
   const activeSummary = usePullRequestStore((state) =>
     activeKey ? (state.entities[activeKey] ?? null) : null,
@@ -85,10 +100,12 @@ export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
       identityKey={activeKey}
       summaryFallback={activeSummary}
       isNarrow={isNarrow}
-      reserveSidebarReveal={sidebarCollapsed && isNarrow}
-      onClose={closeDetail}
+      reserveSidebarReveal={showSidebarReveal && isNarrow}
+      onClose={onHistoryBack ?? closeDetail}
       backButtonRef={detailBackButtonRef}
       transport={transport}
+      activeTab={activeTab}
+      onActiveTabChange={onActiveTabChange}
     />
   ) : null;
 
@@ -99,7 +116,7 @@ export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
       data-layout={isWide ? "master-detail" : "narrow"}
       className="relative flex h-full min-h-0 flex-col bg-page"
     >
-      {sidebarCollapsed && (
+      {showSidebarReveal && (
         <div className="absolute left-3 top-3 z-10">
           <SidebarRevealButton />
         </div>
@@ -122,7 +139,7 @@ export function PullRequestSurface({ transport }: PullRequestSurfaceProps) {
             onActivate={activateDetail}
             listboxRef={listboxRef}
             spacious={!activeKey}
-            reserveSidebarReveal={sidebarCollapsed}
+            reserveSidebarReveal={showSidebarReveal}
           />
         </div>
 

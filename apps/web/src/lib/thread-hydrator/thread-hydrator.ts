@@ -1,11 +1,17 @@
 import {
+  cachePrefetchedHistoryPage,
   cacheRecord,
   evictCachedRecord,
   getCachedRecord,
   hasCachedRecord,
+  hasPrefetchedHistoryPage,
+  projectConversationCacheState,
+  takePrefetchedHistoryPage,
 } from "./record-cache";
+import type { ConversationCacheState } from "./record-cache";
 import {
   createEmptyThreadRecord,
+  deleteThreadRecord,
   getThreadRecord,
   patchThreadRecord,
 } from "@/stores/thread-record";
@@ -21,23 +27,183 @@ import type {
 } from "./types";
 import { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
+import type { ConversationPage } from "@mcode/contracts";
+import { hasRememberedHistoryPosition } from "@/components/chat/scrollPositionMemory";
 
-interface HistoryHydrate {
+interface PendingHistoryPrefetch {
   expectedEpoch: number;
   promise: Promise<void>;
 }
 
-/** Latest messages fetched before the selected thread first paints. */
-export const MESSAGE_FETCH_SIZE = 12;
+function hasResidentLayer(record: ThreadRecord): boolean {
+  return record.messages.length > 0
+    || record.streaming.length > 0
+    || record.toolCalls.length > 0
+    || record.thoughtSegments.length > 0
+    || record.hooks.length > 0;
+}
 
-/** Earlier messages filled in after the latest tail has painted. */
-export const HISTORY_PREFETCH_SIZE = 88;
+/** Snapshot the transcript and volatile layers that an active page fetch must not replace. */
+function conversationRevision(record: ThreadRecord): string {
+  return JSON.stringify({
+    messages: record.messages,
+    persistedToolCallCounts: record.persistedToolCallCounts,
+    persistedFilesChanged: record.persistedFilesChanged,
+    latestTurnWithChanges: record.latestTurnWithChanges,
+    serverMessageIds: record.serverMessageIds,
+    narrativeByMessage: record.narrativeByMessage,
+    answeredPlanMessageIds: [...record.answeredPlanMessageIds],
+    streaming: record.streaming,
+    streamingPreview: record.streamingPreview,
+    toolCalls: record.toolCalls,
+    thoughtSegments: record.thoughtSegments,
+    hooks: record.hooks,
+    currentTurnMessageId: record.currentTurnMessageId,
+    pendingTurnPersistMessageIds: record.pendingTurnPersistMessageIds,
+    currentTurnResponseKey: record.currentTurnResponseKey,
+    assistantResponseKeys: record.assistantResponseKeys,
+  });
+}
+
+function mergeMessageMetadata<T>(
+  cached: Record<string, T>,
+  resident: Record<string, T>,
+  retainedMessageIds: Set<string>,
+): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries({ ...cached, ...resident }).filter(([messageId]) => retainedMessageIds.has(messageId)),
+  );
+}
+
+function findLatestTurnWithChanges(
+  messages: ConversationCacheState["messages"],
+  persistedFilesChanged: ConversationCacheState["persistedFilesChanged"],
+): string | null {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message && (persistedFilesChanged[message.id]?.length ?? 0) > 0) {
+      return message.id;
+    }
+  }
+  return null;
+}
+
+function chooseSettledFileEffectSummary(
+  resident: ConversationCacheState["settledFileEffectSummary"],
+  cached: ConversationCacheState["settledFileEffectSummary"],
+): ConversationCacheState["settledFileEffectSummary"] {
+  if (!resident) return cached;
+  if (!cached) return resident;
+  return resident.revision >= cached.revision ? resident : cached;
+}
+
+/** Prefer an equally recent resident update while retaining disjoint cached history. */
+function mergeResidentConversationCacheState(
+  resident: ThreadRecord,
+  cached: ConversationCacheState,
+  preferResidentAtEqualSequence = true,
+): ConversationCacheState {
+  const residentCacheState = projectConversationCacheState(resident);
+  const residentSequence = residentCacheState.messages.at(-1)?.sequence;
+  const cachedSequence = cached.messages.at(-1)?.sequence;
+  if (
+    residentSequence == null
+    || (cachedSequence != null
+      && (cachedSequence > residentSequence
+        || (!preferResidentAtEqualSequence && cachedSequence === residentSequence)))
+  ) {
+    return cached;
+  }
+  const cachedMessageIds = new Set(cached.messages.map((message) => message.id));
+  const messagesBySequence = new Map(cached.messages.map((message) => [message.sequence, message]));
+  for (const message of residentCacheState.messages) {
+    if (!preferResidentAtEqualSequence && cachedMessageIds.has(message.id)) continue;
+    if (preferResidentAtEqualSequence) {
+      for (const [sequence, existing] of messagesBySequence) {
+        if (existing.id === message.id) messagesBySequence.delete(sequence);
+      }
+    }
+    if (preferResidentAtEqualSequence || !messagesBySequence.has(message.sequence)) {
+      messagesBySequence.set(message.sequence, message);
+    }
+  }
+  const messages = [...messagesBySequence.values()].sort((left, right) =>
+    left.sequence - right.sequence || left.id.localeCompare(right.id),
+  );
+  const retainedMessageIds = new Set(messages.map((message) => message.id));
+  const persistedFilesChanged = mergeMessageMetadata(
+    cached.persistedFilesChanged,
+    residentCacheState.persistedFilesChanged,
+    retainedMessageIds,
+  );
+
+  return {
+    ...cached,
+    ...residentCacheState,
+    messages,
+    oldestLoadedSequence: messages[0]?.sequence ?? residentCacheState.oldestLoadedSequence,
+    hasMoreMessages: cached.hasMoreMessages || residentCacheState.hasMoreMessages,
+    persistedToolCallCounts: mergeMessageMetadata(
+      cached.persistedToolCallCounts,
+      residentCacheState.persistedToolCallCounts,
+      retainedMessageIds,
+    ),
+    persistedFilesChanged,
+    latestTurnWithChanges: findLatestTurnWithChanges(messages, persistedFilesChanged),
+    serverMessageIds: mergeMessageMetadata(
+      cached.serverMessageIds,
+      residentCacheState.serverMessageIds,
+      retainedMessageIds,
+    ),
+    narrativeByMessage: mergeMessageMetadata(
+      cached.narrativeByMessage,
+      residentCacheState.narrativeByMessage,
+      retainedMessageIds,
+    ),
+    answeredPlanMessageIds: new Set(
+      [...cached.answeredPlanMessageIds, ...residentCacheState.answeredPlanMessageIds]
+        .filter((messageId) => retainedMessageIds.has(messageId)),
+    ),
+    assistantResponseKeys: mergeMessageMetadata(
+      cached.assistantResponseKeys,
+      residentCacheState.assistantResponseKeys,
+      retainedMessageIds,
+    ),
+    settledFileEffectSummary: chooseSettledFileEffectSummary(
+      residentCacheState.settledFileEffectSummary,
+      cached.settledFileEffectSummary,
+    ),
+  };
+}
+
+/** Build a conversation page containing only the supplied messages and their metadata. */
+function buildConversationPageSubset(
+  page: ConversationPage,
+  messages: ConversationPage["messages"],
+  hasMore: boolean,
+): ConversationPage {
+  const messageIds = new Set(messages.map((message) => message.id));
+  return {
+    messages,
+    hasMore,
+    answeredPlanMessageIds: page.answeredPlanMessageIds?.filter((id) => messageIds.has(id)),
+    narrativeByMessage: Object.fromEntries(
+      Object.entries(page.narrativeByMessage).filter(([messageId]) => messageIds.has(messageId)),
+    ),
+  };
+}
+
+/** Latest messages fetched before the selected thread first paints. */
+export const MESSAGE_FETCH_SIZE = 2;
+
+/** Maximum messages fetched by a sidebar hover prefetch. */
+export const BACKGROUND_PREFETCH_LIMIT = 100;
+
+/** Older messages warmed after first paint and held outside live React state. */
+export const HISTORY_PREFETCH_SIZE = BACKGROUND_PREFETCH_LIMIT - MESSAGE_FETCH_SIZE;
 
 /** Auxiliary side-effect refresh TTL (permissions, tasks, plans). */
 export const HYDRATION_TTL_MS = 2000;
-
-/** Background hover prefetch limit (matches legacy prefetch.ts). */
-export const BACKGROUND_PREFETCH_LIMIT = 100;
 
 /**
  * Owns the full "load this thread" flow: cache lookup, RPC fetch, record
@@ -47,7 +213,7 @@ export class ThreadHydrator {
   private readonly auxiliaryHydrator: AuxiliaryHydrator;
   private readonly activeHydrates = new Map<string, Promise<void>>();
   private readonly backgroundHydrates = new Map<string, Promise<void>>();
-  private readonly historyHydrates = new Map<string, HistoryHydrate>();
+  private readonly pendingHistoryPrefetches = new Map<string, PendingHistoryPrefetch>();
 
   constructor(private readonly deps: ThreadHydratorDeps) {
     this.auxiliaryHydrator = new AuxiliaryHydrator({
@@ -81,6 +247,65 @@ export class ThreadHydrator {
       return;
     }
     await this.hydrateActive(threadId, opts);
+  }
+
+  /** Retain an inactive resident transcript through the bounded conversation cache. */
+  retainInactiveConversation(threadId: string): void {
+    const state = this.deps.getState();
+    if (state.currentThreadId === threadId) return;
+    cacheRecord(threadId, projectConversationCacheState(getThreadRecord(state.records, threadId)));
+  }
+
+  /** Discard a stale cached conversation before an authoritative mutation. */
+  invalidateConversation(threadId: string): void {
+    evictCachedRecord(threadId);
+  }
+
+  /** Synchronize the current resident conversation into its bounded cache entry. */
+  synchronizeConversation(threadId: string): void {
+    const record = this.deps.getState().records.get(threadId);
+    if (record) cacheRecord(threadId, projectConversationCacheState(record));
+  }
+
+  /** Merge delayed file metadata only when the current cache still retains those messages. */
+  mergeCachedFileChanges(threadId: string, filesChanged: Record<string, string[]>): void {
+    const cached = getCachedRecord(threadId);
+    if (!cached) return;
+    const retainedMessageIds = new Set(cached.messages.map((message) => message.id));
+    const retainedChanges = Object.fromEntries(
+      Object.entries(filesChanged).filter(([messageId]) => retainedMessageIds.has(messageId)),
+    );
+    if (Object.keys(retainedChanges).length === 0) return;
+    cacheRecord(threadId, {
+      ...cached,
+      persistedFilesChanged: { ...cached.persistedFilesChanged, ...retainedChanges },
+    });
+  }
+
+  /** Consume a warmed older-history page through the conversation cache. */
+  takePrefetchedHistoryPage(threadId: string, before: number): ConversationPage | undefined {
+    return takePrefetchedHistoryPage(threadId, before);
+  }
+
+  /** Retire the selected conversation when no thread remains active. */
+  deactivate(): void {
+    const threadId = this.deps.getState().currentThreadId;
+    if (!threadId) return;
+
+    this.deps.flushPendingTextDeltas();
+    const hadActiveHydrate = this.activeHydrates.has(threadId);
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      if (state.currentThreadId !== threadId) return {};
+      return {
+        records: patchThreadRecord(state.records, threadId, (record) => ({
+          loading: false,
+          isLoadingMore: false,
+          loadEpoch: record.loadEpoch + 1,
+        })),
+        currentThreadId: null,
+      };
+    });
+    this.retireInactiveRecord(threadId, hadActiveHydrate);
   }
 
   /** Speculative cache warm on sidebar hover — no live-store mutation. */
@@ -121,22 +346,42 @@ export class ThreadHydrator {
           : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>),
       ]);
 
-      if (hasCachedRecord(threadId)) return;
-
+      const tailStart = Math.max(0, pageResult.messages.length - MESSAGE_FETCH_SIZE);
+      const earlierMessages = pageResult.messages.slice(0, tailStart);
+      const tailPage = buildConversationPageSubset(
+        pageResult,
+        pageResult.messages.slice(tailStart),
+        pageResult.hasMore || earlierMessages.length > 0,
+      );
       const patch = snapshotBuilder.build({
-        messages: pageResult.messages,
-        hasMore: pageResult.hasMore,
-        answeredPlanMessageIds: pageResult.answeredPlanMessageIds,
+        messages: tailPage.messages,
+        hasMore: tailPage.hasMore,
+        answeredPlanMessageIds: tailPage.answeredPlanMessageIds,
         snapshots,
       });
 
       const record: ThreadRecord = {
         ...createEmptyThreadRecord(),
         ...patch,
-        narrativeByMessage: pageResult.narrativeByMessage,
+        narrativeByMessage: tailPage.narrativeByMessage,
         settings: this.deps.getWorkspaceThreadSettings(threadId),
       };
-      cacheRecord(threadId, record);
+      const cachedRecord = projectConversationCacheState(record);
+      const resident = this.deps.getState().records.get(threadId);
+      if (resident && hasResidentLayer(resident)) {
+        cacheRecord(threadId, mergeResidentConversationCacheState(resident, cachedRecord));
+        return;
+      }
+      if (hasCachedRecord(threadId)) return;
+
+      cacheRecord(threadId, cachedRecord);
+      if (earlierMessages.length > 0 && tailPage.messages.length > 0) {
+        cachePrefetchedHistoryPage(
+          threadId,
+          tailPage.messages[0].sequence,
+          buildConversationPageSubset(pageResult, earlierMessages, pageResult.hasMore),
+        );
+      }
     } catch {
       // Background prefetch is speculative; swallow errors silently.
     }
@@ -144,29 +389,32 @@ export class ThreadHydrator {
 
   /** Active-thread load invoked from ChatView and workspaceStore. */
   private async hydrateActive(threadId: string, opts?: ThreadHydratorOptions): Promise<void> {
-    // Defer until after the cache-restore set() so outgoing-thread streaming
-    // previews do not trigger a mid-switch MessageList re-render.
-    queueMicrotask(this.deps.flushPendingTextDeltas);
-
-    const cached = getCachedRecord(threadId);
-    if (cached) {
-      this.restoreCachedActive(threadId, cached, opts);
-      return;
+    const outgoingThreadId = this.deps.getState().currentThreadId;
+    const outgoingHydrate = outgoingThreadId
+      ? this.activeHydrates.get(outgoingThreadId)
+      : undefined;
+    queueMicrotask(() => {
+      this.deps.flushPendingTextDeltas();
+    });
+    // React records the outgoing viewport in a layout effect. Retiring on the
+    // next frame lets that posture choose full-history or compact-tail caching.
+    const retireOutgoingRecord = () => {
+      if (outgoingThreadId && outgoingThreadId !== threadId) {
+        this.retireInactiveRecord(outgoingThreadId, outgoingHydrate != null);
+      }
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(retireOutgoingRecord);
+    } else {
+      setTimeout(retireOutgoingRecord, 0);
     }
 
     const resident = this.deps.getState().records.get(threadId);
-    const hasResidentLayer = resident != null && (
-      resident.messages.length > 0
-      || resident.streaming.length > 0
-      || resident.toolCalls.length > 0
-      || resident.thoughtSegments.length > 0
-      || resident.hooks.length > 0
-      || this.deps.getState().runningThreadIds.has(threadId)
-    );
+    const hasResidentContent = resident != null && hasResidentLayer(resident);
 
     const inFlight = this.activeHydrates.get(threadId);
     if (inFlight) {
-      this.selectInFlightLayer(threadId, hasResidentLayer);
+      this.selectInFlightLayer(threadId, hasResidentContent);
       await inFlight;
       const state = this.deps.getState();
       const current = getThreadRecord(state.records, threadId);
@@ -176,17 +424,84 @@ export class ThreadHydrator {
       return;
     }
 
-    if (hasResidentLayer) {
+    const cached = getCachedRecord(threadId);
+    if (cached && !opts?.force) {
+      this.restoreCachedActive(
+        threadId,
+        resident ? mergeResidentConversationCacheState(resident, cached) : cached,
+        opts,
+      );
+      return;
+    }
+
+    if (hasResidentContent) {
       this.activateResidentLayer(threadId);
     }
 
-    const hydrate = this.fetchActiveReusingBackground(threadId, opts, hasResidentLayer).finally(() => {
+    const hydrate = this.fetchActiveReusingBackground(threadId, opts, hasResidentContent).finally(() => {
       if (this.activeHydrates.get(threadId) === hydrate) {
         this.activeHydrates.delete(threadId);
+        this.discardInactiveLoadingRecord(threadId);
       }
     });
     this.activeHydrates.set(threadId, hydrate);
     await hydrate;
+  }
+
+  /** Move an inactive transcript under the bounded LRU and compact tail readers. */
+  private retireInactiveRecord(threadId: string, hadActiveHydrate: boolean): void {
+    const state = this.deps.getState();
+    if (state.currentThreadId === threadId) return;
+    const resident = state.records.get(threadId);
+    if (!resident) return;
+    if (
+      !hasResidentLayer(resident)
+      && (hadActiveHydrate || this.activeHydrates.has(threadId))
+    ) return;
+
+    const cached = this.compactCachedRecordForRestore(
+      threadId,
+      projectConversationCacheState(resident),
+    );
+    cacheRecord(threadId, cached);
+    this.deps.setState((latest: ThreadHydratorWriteState) => {
+      if (latest.currentThreadId === threadId) return {};
+      if (latest.runningThreadIds.has(threadId)) {
+        return {
+          records: patchThreadRecord(latest.records, threadId, cached),
+        };
+      }
+      return {
+        records: deleteThreadRecord(latest.records, threadId),
+      };
+    });
+  }
+
+  /** Remove an inactive empty loading shell after its hydrate result was discarded. */
+  private discardInactiveLoadingRecord(threadId: string): void {
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      if (state.currentThreadId === threadId) return {};
+      const resident = state.records.get(threadId);
+      if (!resident || hasResidentLayer(resident)) return {};
+      return { records: deleteThreadRecord(state.records, threadId) };
+    });
+  }
+
+  /** Makes a retained thread record visible while an existing background fetch settles. */
+  private activateResidentLayer(threadId: string): void {
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      const current = getThreadRecord(state.records, threadId);
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          loading: false,
+          error: null,
+          isLoadingMore: false,
+          loadEpoch: current.loadEpoch + 1,
+          settings: this.deps.getWorkspaceThreadSettings(threadId),
+        }),
+        currentThreadId: threadId,
+      };
+    });
   }
 
   /** Active-thread cache miss path, reusing hover prefetches when available. */
@@ -206,7 +521,13 @@ export class ThreadHydrator {
 
       const cached = getCachedRecord(threadId);
       if (cached) {
-        this.restoreCachedActive(threadId, cached, opts, { bumpLoadEpoch: false });
+        const resident = this.deps.getState().records.get(threadId);
+        this.restoreCachedActive(
+          threadId,
+          resident ? mergeResidentConversationCacheState(resident, cached) : cached,
+          opts,
+          { bumpLoadEpoch: false },
+        );
         return;
       }
 
@@ -221,23 +542,6 @@ export class ThreadHydrator {
           prefetchEarlierHistory: false,
         }
       : undefined);
-  }
-
-  /** Makes a retained thread record visible while its persisted history refreshes. */
-  private activateResidentLayer(threadId: string): void {
-    this.deps.setState((state: ThreadHydratorWriteState) => {
-      const current = getThreadRecord(state.records, threadId);
-      return {
-        records: patchThreadRecord(state.records, threadId, {
-          loading: false,
-          error: null,
-          isLoadingMore: false,
-          loadEpoch: current.loadEpoch + 1,
-          settings: this.deps.getWorkspaceThreadSettings(threadId),
-        }),
-        currentThreadId: threadId,
-      };
-    });
   }
 
   /** Makes an already-loading thread current without invalidating its request epoch. */
@@ -255,11 +559,12 @@ export class ThreadHydrator {
   /** Restore cached data to the active store and refresh auxiliary data. */
   private restoreCachedActive(
     threadId: string,
-    cached: ThreadRecord,
+    cached: ConversationCacheState,
     opts?: ThreadHydratorOptions,
     restoreOpts?: { bumpLoadEpoch?: boolean },
   ): void {
-    this.restoreFromCache(threadId, cached, restoreOpts);
+    const renderableCachedRecord = this.compactCachedRecordForRestore(threadId, cached);
+    this.restoreFromCache(threadId, renderableCachedRecord, restoreOpts);
     const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
     void this.refreshThreadGoal(threadId, expectedEpoch);
     this.auxiliaryHydrator.hydrate(threadId, {
@@ -268,66 +573,98 @@ export class ThreadHydrator {
       commitFileChangesToStore: true,
       expectedLoadEpoch: expectedEpoch,
     });
-    if (cached.hasMoreMessages && cached.messages.length < BACKGROUND_PREFETCH_LIMIT) {
-      this.scheduleEarlierHistoryHydration(threadId, cached);
+    if (
+      renderableCachedRecord.hasMoreMessages &&
+      renderableCachedRecord.messages.length < BACKGROUND_PREFETCH_LIMIT
+    ) {
+      this.scheduleEarlierHistoryPrefetch(threadId, renderableCachedRecord);
     }
   }
 
-  /**
-   * Synchronously restore from a cached {@link ThreadRecord}.
-   *
-   * Auxiliary-owned fields (`permissions`, `lastHydratedAt`) are preserved from
-   * the live record because the cache snapshot is taken synchronously after
-   * `auxiliaryHydrator.hydrate()` fires its async RPCs, so the cached values
-   * are typically stale relative to whatever the auxiliary writes settle to.
-   * The auxiliary fanout that runs after restoration will refresh them anyway.
-   */
+  /** Keep cache-hit reconciliation bounded while retaining loaded history for upward pagination. */
+  private compactCachedRecordForRestore(
+    threadId: string,
+    cached: ConversationCacheState,
+  ): ConversationCacheState {
+    cacheRecord(threadId, cached);
+    const bounded = getCachedRecord(threadId) ?? cached;
+    if (
+      bounded.messages.length <= MESSAGE_FETCH_SIZE
+      || hasRememberedHistoryPosition(threadId)
+    ) {
+      return bounded;
+    }
+
+    const tailStart = bounded.messages.length - MESSAGE_FETCH_SIZE;
+    const earlierMessages = bounded.messages.slice(0, tailStart);
+    const retainedEarlierMessages = earlierMessages.slice(-HISTORY_PREFETCH_SIZE);
+    const tailMessages = bounded.messages.slice(tailStart);
+    const narrativeByMessage: ConversationPage["narrativeByMessage"] = {};
+    for (const [messageId, narrative] of Object.entries(bounded.narrativeByMessage)) {
+      if (narrative) narrativeByMessage[messageId] = narrative;
+    }
+    const page: ConversationPage = {
+      messages: bounded.messages,
+      hasMore: bounded.hasMoreMessages,
+      answeredPlanMessageIds: [...bounded.answeredPlanMessageIds],
+      narrativeByMessage,
+    };
+    const tailPage = buildConversationPageSubset(page, tailMessages, true);
+    const compacted = {
+      ...bounded,
+      messages: tailMessages,
+      oldestLoadedSequence: tailMessages[0].sequence,
+      hasMoreMessages: true,
+      narrativeByMessage: tailPage.narrativeByMessage,
+      answeredPlanMessageIds: new Set(tailPage.answeredPlanMessageIds ?? []),
+    };
+    cacheRecord(threadId, compacted);
+    cachePrefetchedHistoryPage(
+      threadId,
+      tailMessages[0].sequence,
+      buildConversationPageSubset(
+        page,
+        retainedEarlierMessages,
+        bounded.hasMoreMessages || retainedEarlierMessages.length < earlierMessages.length,
+      ),
+    );
+    return compacted;
+  }
+
+  /** Restore cached conversation data without replacing resident live or auxiliary state. */
   private restoreFromCache(
     threadId: string,
-    cached: ThreadRecord,
+    cached: ConversationCacheState,
     opts?: { bumpLoadEpoch?: boolean },
   ): void {
     this.deps.setState((state: ThreadHydratorWriteState) => {
       const current = getThreadRecord(state.records, threadId);
-      // The cache snapshot predates in-flight narration, so for a running
-      // thread the live record wins (mirrors fetchAndCommit's isRunning guard).
       const isRunning = state.runningThreadIds.has(threadId);
-      const liveVolatile: Partial<ThreadRecord> = isRunning
-        ? {
-            toolCalls: current.toolCalls,
-            thoughtSegments: current.thoughtSegments,
-            hooks: current.hooks,
-            streaming: current.streaming,
-            streamingPreview: current.streamingPreview,
-            agentStartTime: current.agentStartTime,
-            currentTurnMessageId: current.currentTurnMessageId,
-            isCompacting: current.isCompacting,
-          }
-        : {};
+      const ownsLiveFileEffects = isRunning || current.fileEffectTurnId.length > 0;
+      const { settledFileEffectSummary, ...conversation } = cached;
       return {
         records: patchThreadRecord(state.records, threadId, {
-          ...cached,
+          ...conversation,
+          ...(!ownsLiveFileEffects && settledFileEffectSummary
+            ? { fileEffectSummary: settledFileEffectSummary }
+            : {}),
           error: null,
           loading: false,
           loadEpoch: opts?.bumpLoadEpoch === false ? current.loadEpoch : current.loadEpoch + 1,
           isLoadingMore: false,
-          lastHydratedAt: current.lastHydratedAt,
-          permissions: current.permissions,
           settings: this.deps.getWorkspaceThreadSettings(threadId),
-          ...liveVolatile,
         }),
         currentThreadId: threadId,
       };
     });
   }
 
-  /** Apply lookup result semantics to the live record and record cache. */
+  /** Apply lookup result semantics to the resident auxiliary record. */
   private applyGoalLookup(
     threadId: string,
     lookup: GoalLookupResult,
     expectedEpoch?: number,
   ): void {
-    let applied = false;
     this.deps.setState((state: ThreadHydratorWriteState) => {
       const current = getThreadRecord(state.records, threadId);
       if (expectedEpoch != null && (
@@ -336,17 +673,11 @@ export class ThreadHydrator {
       )) {
         return {};
       }
-      applied = true;
       const goal = resolveGoalLookupGoal(lookup, current.goal);
       return {
         records: patchThreadRecord(state.records, threadId, { goal }),
       };
     });
-
-    const cached = getCachedRecord(threadId);
-    if (!cached || !applied) return;
-    const goal = resolveGoalLookupGoal(lookup, cached.goal);
-    cacheRecord(threadId, { ...cached, goal });
   }
 
   /** Merges file-change snapshots only into the load that requested them. */
@@ -363,14 +694,30 @@ export class ThreadHydrator {
         return {};
       }
       applied = true;
+      const ownsLiveFileEffects = current.fileEffectTurnId.length > 0
+        || state.runningThreadIds.has(threadId);
       return {
-        records: patchThreadRecord(state.records, threadId, fileChanges),
+        records: patchThreadRecord(state.records, threadId, {
+          persistedFilesChanged: fileChanges.persistedFilesChanged,
+          latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+          ...(!ownsLiveFileEffects ? { fileEffectSummary: fileChanges.fileEffectSummary } : {}),
+        }),
       };
     });
 
     const cached = getCachedRecord(threadId);
     if (!cached || !applied) return;
-    cacheRecord(threadId, { ...cached, ...fileChanges });
+    const liveRecord = getThreadRecord(this.deps.getState().records, threadId);
+    const ownsLiveFileEffects = liveRecord.fileEffectTurnId.length > 0
+      || this.deps.getState().runningThreadIds.has(threadId);
+    cacheRecord(threadId, {
+      ...cached,
+      persistedFilesChanged: fileChanges.persistedFilesChanged,
+      latestTurnWithChanges: fileChanges.latestTurnWithChanges,
+      ...(!ownsLiveFileEffects
+        ? { settledFileEffectSummary: fileChanges.fileEffectSummary }
+        : {}),
+    });
   }
 
   /** Refresh one thread's active goal without blocking main hydration. */
@@ -453,6 +800,9 @@ export class ThreadHydrator {
       this.prepareActiveLoad(threadId);
     }
     const expectedEpoch = getThreadRecord(getState().records, threadId).loadEpoch;
+    const expectedConversationRevision = conversationRevision(
+      getThreadRecord(getState().records, threadId),
+    );
 
     try {
       const workspaceThread = this.deps.getWorkspaceThread(threadId);
@@ -468,10 +818,23 @@ export class ThreadHydrator {
       );
 
       const stateAtCommit = getState();
-      if (
-        stateAtCommit.currentThreadId !== threadId
-        || getThreadRecord(stateAtCommit.records, threadId).loadEpoch !== expectedEpoch
-      ) return;
+      const recordAtCommit = getThreadRecord(stateAtCommit.records, threadId);
+      if (stateAtCommit.currentThreadId !== threadId || recordAtCommit.loadEpoch !== expectedEpoch) {
+        return;
+      }
+      if (conversationRevision(recordAtCommit) !== expectedConversationRevision) {
+        setState((state: ThreadHydratorWriteState) => {
+          const current = getThreadRecord(state.records, threadId);
+          if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return {};
+          return {
+            records: patchThreadRecord(state.records, threadId, {
+              loading: false,
+              isLoadingMore: false,
+            }),
+          };
+        });
+        return;
+      }
 
       const patch = snapshotBuilder.build({
         messages: pageResult.messages,
@@ -479,15 +842,33 @@ export class ThreadHydrator {
         answeredPlanMessageIds: pageResult.answeredPlanMessageIds,
       });
 
-      setState((state: ThreadHydratorWriteState) => ({
-        records: patchThreadRecord(state.records, threadId, {
+      setState((state: ThreadHydratorWriteState) => {
+        const current = getThreadRecord(state.records, threadId);
+        const fetchedConversation = projectConversationCacheState({
+          ...createEmptyThreadRecord(),
           ...patch,
           narrativeByMessage: pageResult.narrativeByMessage,
-          loading: false,
-          isLoadingMore: false,
-          settings: this.deps.getWorkspaceThreadSettings(threadId),
-        }),
-      }));
+        });
+        const conversation = hasResidentLayer(current)
+          ? mergeResidentConversationCacheState(current, fetchedConversation, false)
+          : fetchedConversation;
+        const ownsLiveFileEffects = current.fileEffectTurnId.length > 0
+          || state.runningThreadIds.has(threadId);
+        const { settledFileEffectSummary, ...conversationFields } = conversation;
+        return {
+          records: patchThreadRecord(state.records, threadId, {
+            ...conversationFields,
+            ...(!ownsLiveFileEffects && settledFileEffectSummary
+              ? { fileEffectSummary: settledFileEffectSummary }
+              : ownsLiveFileEffects
+                ? { fileEffectSummary: current.fileEffectSummary }
+                : {}),
+            loading: false,
+            isLoadingMore: false,
+            settings: this.deps.getWorkspaceThreadSettings(threadId),
+          }),
+        };
+      });
 
       this.auxiliaryHydrator.hydrate(threadId, {
         freshnessTtlMs: HYDRATION_TTL_MS,
@@ -508,7 +889,10 @@ export class ThreadHydrator {
         }
       }
 
-      cacheRecord(threadId, getThreadRecord(getState().records, threadId));
+      cacheRecord(
+        threadId,
+        projectConversationCacheState(getThreadRecord(getState().records, threadId)),
+      );
       void snapshotsPromise.then((snapshots) => {
         this.applySnapshots(threadId, snapshots, expectedEpoch);
       });
@@ -516,7 +900,7 @@ export class ThreadHydrator {
         if (goalLookup) this.applyGoalLookup(threadId, goalLookup, expectedEpoch);
       });
       if (commitOpts?.prefetchEarlierHistory !== false) {
-        this.scheduleEarlierHistoryHydration(threadId, pageResult);
+        this.scheduleEarlierHistoryPrefetch(threadId, pageResult);
       }
     } catch (e) {
       if (getState().currentThreadId === threadId) {
@@ -532,42 +916,43 @@ export class ThreadHydrator {
   }
 
   /** Defers older history until the browser has had a chance to paint the tail. */
-  private scheduleEarlierHistoryHydration(
+  private scheduleEarlierHistoryPrefetch(
     threadId: string,
     page: Pick<ThreadRecord, "messages"> & { hasMore?: boolean; hasMoreMessages?: boolean },
   ): void {
     if (!(page.hasMore ?? page.hasMoreMessages) || page.messages.length === 0) return;
     const before = page.messages[0].sequence;
+    if (hasPrefetchedHistoryPage(threadId, before)) return;
     const epoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
-    const hydrateKey = `${threadId}:${before}`;
+    const prefetchKey = `${threadId}:${before}`;
     setTimeout(() => {
       const state = this.deps.getState();
       if (state.currentThreadId !== threadId) return;
       if (getThreadRecord(state.records, threadId).loadEpoch !== epoch) return;
-      const existing = this.historyHydrates.get(hydrateKey);
+      const existing = this.pendingHistoryPrefetches.get(prefetchKey);
       if (existing) {
         existing.expectedEpoch = epoch;
         return;
       }
-      const hydrate: HistoryHydrate = {
+      const prefetch: PendingHistoryPrefetch = {
         expectedEpoch: epoch,
         promise: Promise.resolve(),
       };
-      hydrate.promise = this.hydrateEarlierHistory(
+      prefetch.promise = this.prefetchEarlierHistory(
         threadId,
         before,
-        () => hydrate.expectedEpoch,
+        () => prefetch.expectedEpoch,
       ).finally(() => {
-        if (this.historyHydrates.get(hydrateKey) === hydrate) {
-          this.historyHydrates.delete(hydrateKey);
+        if (this.pendingHistoryPrefetches.get(prefetchKey) === prefetch) {
+          this.pendingHistoryPrefetches.delete(prefetchKey);
         }
       });
-      this.historyHydrates.set(hydrateKey, hydrate);
+      this.pendingHistoryPrefetches.set(prefetchKey, prefetch);
     }, 0);
   }
 
-  /** Prepends the rest of the warm history window without blocking the tail. */
-  private async hydrateEarlierHistory(
+  /** Cache the older history window without attaching it to live React state. */
+  private async prefetchEarlierHistory(
     threadId: string,
     before: number,
     getExpectedEpoch: () => number,
@@ -583,43 +968,7 @@ export class ThreadHydrator {
       const expectedEpoch = getExpectedEpoch();
       if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return;
 
-      const currentIds = new Set(current.messages.map((message) => message.id));
-      const earlierMessages = page.messages.filter((message) => !currentIds.has(message.id));
-      const persistedToolCallCounts = { ...current.persistedToolCallCounts };
-      for (const message of earlierMessages) {
-        if (message.tool_call_count && message.tool_call_count > 0) {
-          persistedToolCallCounts[message.id] = message.tool_call_count;
-        }
-      }
-      const messages = [...earlierMessages, ...current.messages];
-
-      this.deps.setState((latest: ThreadHydratorWriteState) => {
-        const record = getThreadRecord(latest.records, threadId);
-        if (latest.currentThreadId !== threadId || record.loadEpoch !== expectedEpoch) {
-          return {};
-        }
-        return {
-          records: patchThreadRecord(latest.records, threadId, {
-            messages,
-            oldestLoadedSequence: messages[0]?.sequence ?? record.oldestLoadedSequence,
-            hasMoreMessages: page.hasMore,
-            persistedToolCallCounts,
-            narrativeByMessage: {
-              ...page.narrativeByMessage,
-              ...record.narrativeByMessage,
-            },
-            answeredPlanMessageIds: new Set([
-              ...record.answeredPlanMessageIds,
-              ...(page.answeredPlanMessageIds ?? []),
-            ]),
-          }),
-        };
-      });
-      const latest = this.deps.getState();
-      const latestRecord = getThreadRecord(latest.records, threadId);
-      if (latest.currentThreadId === threadId && latestRecord.loadEpoch === getExpectedEpoch()) {
-        cacheRecord(threadId, latestRecord);
-      }
+      cachePrefetchedHistoryPage(threadId, before, page);
     } catch {
       // The visible tail is complete; older history remains available on scroll.
     }

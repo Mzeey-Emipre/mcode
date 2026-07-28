@@ -1,7 +1,5 @@
 import { useEffect } from "react";
-import type { TurnSnapshot } from "@mcode/contracts";
-import { getTransport } from "@/transport";
-import { useDiffStore } from "@/stores/diffStore";
+import type { ReviewComparison } from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
 import { getThreadRecord } from "@/stores/thread-record";
 import { refreshTurnSnapshotsAfterPersist } from "@/lib/turn-snapshot-refresh";
@@ -9,8 +7,12 @@ import { FileList } from "./FileList";
 
 /** Props for LastTurnView. */
 interface LastTurnViewProps {
-  snapshots: TurnSnapshot[];
   threadId: string;
+  comparison?: ReviewComparison | null;
+  snapshotId?: string | null;
+  cacheVersion?: string | number;
+  refreshing?: boolean;
+  onRefresh?: () => void;
 }
 
 /**
@@ -19,7 +21,7 @@ interface LastTurnViewProps {
  * one turn's diff — never the whole timeline — so the panel stays fast on long
  * threads. See CONTEXT.md → "Review tab".
  */
-export function LastTurnView({ snapshots, threadId }: LastTurnViewProps) {
+export function LastTurnView({ threadId, comparison = null, snapshotId = null, cacheVersion = "", refreshing = false, onRefresh = () => {} }: LastTurnViewProps) {
   /** Files the chat banner already knows about for the latest turn with edits. */
   const pendingReviewFiles = useThreadStore((s) => {
     const rec = getThreadRecord(s.records, threadId);
@@ -29,57 +31,16 @@ export function LastTurnView({ snapshots, threadId }: LastTurnViewProps) {
     return files && files.length > 0 ? files : null;
   });
 
-  // Walk from the newest snapshot back to the first one that actually changed
-  // files; earlier no-op turns (e.g. plan-only) are skipped so the view always
-  // lands on a meaningful diff.
-  const latest = [...snapshots].reverse().find((s) => s.files_changed.length > 0);
-
   // Chat (`threadStore`) learns about file changes on `turn.persisted` immediately;
   // Review reads `diffStore` snapshots, which can lag or stay empty if the panel
   // loaded before the turn finished. Self-heal when the two stores disagree.
   useEffect(() => {
     if (!pendingReviewFiles) return;
-    if (latest) return;
+    if (snapshotId) return;
     refreshTurnSnapshotsAfterPersist(threadId, pendingReviewFiles);
-  }, [threadId, pendingReviewFiles, latest]);
+  }, [threadId, pendingReviewFiles, snapshotId]);
 
-  // Report this turn's total +/- to the toolbar (summed from per-file stats).
-  const setReviewDiffStat = useDiffStore((s) => s.setReviewDiffStat);
-  const latestId = latest?.id;
-  useEffect(() => {
-    let cancelled = false;
-    setReviewDiffStat(null);
-    if (!latestId) {
-      setReviewDiffStat({ additions: 0, deletions: 0 });
-      return () => {
-        cancelled = true;
-        setReviewDiffStat(null);
-      };
-    }
-    void getTransport()
-      .getSnapshotDiffStats(latestId)
-      .then((stats) => {
-        if (cancelled) return;
-        setReviewDiffStat(
-          stats.reduce(
-            (acc, s) => ({
-              additions: acc.additions + s.additions,
-              deletions: acc.deletions + s.deletions,
-            }),
-            { additions: 0, deletions: 0 },
-          ),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setReviewDiffStat({ additions: 0, deletions: 0 });
-      });
-    return () => {
-      cancelled = true;
-      setReviewDiffStat(null);
-    };
-  }, [latestId, setReviewDiffStat]);
-
-  if (!latest) {
+  if (!snapshotId || !comparison) {
     if (pendingReviewFiles) {
       return (
         <div className="flex items-center justify-center gap-1.5 py-10">
@@ -109,18 +70,22 @@ export function LastTurnView({ snapshots, threadId }: LastTurnViewProps) {
     <div className="flex flex-col">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border/15">
         <span className="font-mono text-[11px] tabular-nums text-foreground/70">
-          {latest.files_changed.length}
+          {comparison.files.length}
         </span>
         <span className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground">
-          file{latest.files_changed.length !== 1 ? "s" : ""} · last turn
+          file{comparison.files.length !== 1 ? "s" : ""} · last turn
         </span>
       </div>
       <FileList
-        files={latest.files_changed}
+        files={comparison.files.map((file) => file.path)}
         source="snapshot"
-        id={latest.id}
+        id={snapshotId}
         threadId={threadId}
+        cacheVersion={cacheVersion}
         defaultFilesExpanded
+        refreshable
+        refreshing={refreshing}
+        onRefresh={onRefresh}
       />
     </div>
   );

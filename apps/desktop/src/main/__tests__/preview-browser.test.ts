@@ -250,6 +250,31 @@ function createWindow() {
   return win;
 }
 
+type PreviewInput = {
+  type: string;
+  key: string;
+  control: boolean;
+  meta: boolean;
+  shift: boolean;
+  alt: boolean;
+};
+
+function firePreviewInput(
+  view: ReturnType<typeof makeWebContentsView>,
+  input: PreviewInput,
+): { preventDefault: ReturnType<typeof vi.fn> } {
+  const registration = view.webContents.on.mock.calls.find(
+    ([eventName]) => eventName === "before-input-event",
+  );
+  const handler = registration?.[1] as
+    | ((event: { preventDefault: () => void }, input: PreviewInput) => void)
+    | undefined;
+  expect(handler).toBeTypeOf("function");
+  const event = { preventDefault: vi.fn() };
+  handler?.(event, input);
+  return event;
+}
+
 it("denies clipboard permissions and downloads in the preview partition", () => {
   const handler = previewPartition.setPermissionRequestHandler.mock.calls.at(-1)?.[0];
   expect(handler).toBeTypeOf("function");
@@ -272,6 +297,65 @@ it("denies clipboard permissions and downloads in the preview partition", () => 
 // ---------------------------------------------------------------------------
 
 describe("preview-browser", () => {
+  describe("host shortcut forwarding", () => {
+    it("reserves only the platform navigation chords from the preview guest", async () => {
+      const cases = [
+        {
+          platform: "win32",
+          input: { key: "ArrowLeft", alt: true },
+          combo: "alt+arrowleft",
+          reserved: true,
+        },
+        {
+          platform: "linux",
+          input: { key: "ArrowRight", alt: true },
+          combo: "alt+arrowright",
+          reserved: true,
+        },
+        {
+          platform: "darwin",
+          input: { key: "[", meta: true },
+          combo: "mod+[",
+          reserved: true,
+        },
+        {
+          platform: "darwin",
+          input: { key: "]", meta: true },
+          combo: "mod+]",
+          reserved: true,
+        },
+        {
+          platform: "win32",
+          input: { key: "f", alt: true },
+          combo: "alt+f",
+          reserved: false,
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const platform = vi.spyOn(process, "platform", "get").mockReturnValue(testCase.platform);
+        const win = createWindow();
+        await showPreview(win);
+        win.webContents.send.mockClear();
+        const event = firePreviewInput(createdViews.at(-1)!, {
+          type: "keyDown",
+          key: testCase.input.key,
+          control: false,
+          meta: "meta" in testCase.input ? testCase.input.meta : false,
+          shift: false,
+          alt: "alt" in testCase.input ? testCase.input.alt : false,
+        });
+
+        expect(event.preventDefault).toHaveBeenCalledTimes(testCase.reserved ? 1 : 0);
+        expect(win.webContents.send).toHaveBeenCalledWith(
+          "preview:shortcut-fired",
+          testCase.combo,
+        );
+        platform.mockRestore();
+      }
+    });
+  });
+
   describe("hidePreview (tab switch)", () => {
     it("detaches the WebContentsView from the window without destroying webContents", async () => {
       const win = createWindow();

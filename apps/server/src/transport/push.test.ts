@@ -99,6 +99,26 @@ describe("broadcast", () => {
     expect(JSON.parse(a[0].buf.toString("utf-8")).data.threadId).toBe("thread-a");
   });
 
+  it("routes live file effects only to clients subscribed to that thread", () => {
+    const a: Array<{ buf: Buffer; binary: boolean }> = [];
+    const b: Array<{ buf: Buffer; binary: boolean }> = [];
+    const wsA = fakeOpenSocket(a);
+    const wsB = fakeOpenSocket(b);
+    addClient(wsA);
+    addClient(wsB);
+    subscribeClientToThread(wsA, "thread-a");
+    subscribeClientToThread(wsB, "thread-b");
+
+    broadcast("turn.fileEffectsUpdated", {
+      threadId: "thread-a",
+      turnId: "turn-1",
+      summary: { revision: 1, fileCount: 0, additions: 0, deletions: 0, effects: [] },
+    });
+
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(0);
+  });
+
   it("stops routing after a client unsubscribes from a thread", () => {
     const received: Array<{ buf: Buffer; binary: boolean }> = [];
     const ws = fakeOpenSocket(received);
@@ -121,7 +141,7 @@ describe("broadcast", () => {
     addClient(fakeOpenSocket(a));
     addClient(fakeOpenSocket(b));
 
-    broadcast("skills.changed", {});
+    broadcast("skills.changed", { providerIds: ["claude", "copilot", "cursor"] });
 
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);

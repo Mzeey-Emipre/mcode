@@ -5,8 +5,9 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { ActiveToolRow } from "../ActiveToolRow";
 import { ToolSummaryLine } from "../ToolSummaryLine";
+import { buildPersistedNarrativeItems } from "../build-persisted-narrative";
 import { buildToolSummaryText, isShellTool, resolveToolName } from "../../tool-renderers/constants";
-import type { ToolCall } from "@/transport/types";
+import type { ToolCall, ToolCallRecord } from "@/transport/types";
 import type { ToolGroup } from "../types";
 
 /** Long unbroken path + git add, matching real overflow reports. */
@@ -69,13 +70,14 @@ describe("narrative tool row layout classes", () => {
     expect(command?.className).toContain("overflow-wrap");
   });
 
-  it("ToolSummaryLine gives a completed shell command its own disclosure", () => {
+  it("ToolSummaryLine keeps shell calls nested and reveals a shell transcript", () => {
     const group: ToolGroup = {
       calls: [
         makeBashCall({
           id: "tc-1",
           isComplete: true,
           output: "command output",
+          durationMs: 15_000,
         }),
       ],
     };
@@ -86,15 +88,58 @@ describe("narrative tool row layout classes", () => {
       </div>,
     );
 
-    const button = screen.getByRole("button", { name: /Ran command/ });
+    const summary = screen.getByRole("button", { name: /Ran 1 command/ });
     expect(screen.getAllByRole("button")).toHaveLength(1);
-    fireEvent.click(button);
+    fireEvent.click(summary);
 
+    const child = screen.getByRole("button", { name: /Ran command/ });
+    expect(child).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("in 15s")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Shell output" })).toBeNull();
+
+    fireEvent.click(child);
+
+    const detail = screen.getByTitle(LONG_SHELL_COMMAND);
+    expect(detail.className).toContain("truncate");
+    expect(detail.closest("li")?.className).toContain("min-w-0");
+    expect(screen.getByRole("region", { name: "Shell output" })).toBeTruthy();
+    expect(screen.getByText("Shell")).toBeTruthy();
     expect(container.querySelector("code")?.textContent).toBe(LONG_SHELL_COMMAND);
-    expect(screen.queryByText("Output")).toBeNull();
     expect(screen.getByText("command output")).toBeTruthy();
-    expect(container.querySelector("code")?.className).toContain("text-xs");
-    expect(container.querySelector("pre")?.className).toContain("text-xs");
+  });
+
+  it("ToolSummaryLine renders duration hydrated from a persisted shell call", () => {
+    const persisted: ToolCallRecord = {
+      id: "tc-persisted",
+      message_id: "message-1",
+      parent_tool_call_id: null,
+      tool_name: "Shell",
+      input_summary: JSON.stringify({ command: LONG_SHELL_COMMAND }),
+      output_summary: "command output",
+      status: "completed",
+      started_at: "2026-05-15T10:00:00Z",
+      completed_at: "2026-05-15T10:00:15Z",
+      sort_order: 1,
+    };
+    const items = buildPersistedNarrativeItems({
+      tools: [persisted],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items[0].type).toBe("tool-group");
+    if (items[0].type !== "tool-group") return;
+
+    render(
+      <ToolSummaryLine group={items[0].group} hasError={false} hasCancelled={false} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
+    expect(screen.getByRole("button", { name: /Ran command/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByText("in 15s")).toBeTruthy();
   });
 
   it("ToolSummaryLine maps command_execution to terminal icon via Bash alias", () => {
@@ -114,6 +159,7 @@ describe("narrative tool row layout classes", () => {
       </div>,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
     expect(container.querySelector(".lucide-terminal")).toBeTruthy();
     expect(screen.getByText("Ran command")).toBeTruthy();
@@ -135,6 +181,29 @@ describe("narrative tool row layout classes", () => {
     }
   });
 
+  it("does not round a sub-second shell duration up to one second", () => {
+    const group: ToolGroup = {
+      calls: [makeBashCall({ isComplete: true, durationMs: 500 })],
+    };
+
+    render(<ToolSummaryLine group={group} hasError={false} hasCancelled={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
+    expect(screen.getByRole("button", { name: /Ran command/ })).not.toHaveTextContent("in 1s");
+  });
+
+  it("shows cancelled for a persisted cancelled shell call", () => {
+    const group: ToolGroup = {
+      calls: [makeBashCall({ isComplete: true, isCancelled: true })],
+    };
+
+    render(<ToolSummaryLine group={group} hasError={false} hasCancelled />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
+    expect(screen.getAllByText("cancelled")).toHaveLength(2);
+  });
+
   it("normalizes older persisted Codex command summaries before display", () => {
     const group: ToolGroup = {
       calls: [
@@ -151,6 +220,7 @@ describe("narrative tool row layout classes", () => {
       <ToolSummaryLine group={group} hasError={false} hasCancelled={false} />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
     expect(container.querySelector("code")?.textContent).toBe(LONG_SHELL_COMMAND);
     expect(container.textContent).not.toContain('{"command"');
@@ -173,6 +243,7 @@ describe("narrative tool row layout classes", () => {
       <ToolSummaryLine group={group} hasError={false} hasCancelled={false} />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
     const command = container.querySelector("code")?.textContent ?? "";
     expect(command).toMatch(/^cd "C:\\Users\\cjnwo/);
@@ -200,11 +271,41 @@ describe("narrative tool row layout classes", () => {
       </div>,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
     fireEvent.click(screen.getByRole("button", { name: /Ran command/ }));
 
     const notice = screen.getByText(/Output truncated/);
     expect(notice.textContent).toContain("300 KB total");
     expect(notice.textContent).toContain("full output saved");
     expect(notice.className).toContain("text-xs");
+  });
+
+  it("shows a plain shell exit code at the bottom right of the expanded panel", () => {
+    const group: ToolGroup = {
+      calls: [
+        makeBashCall({
+          id: "tc-failed",
+          output: "fatal: remote failed",
+          isComplete: true,
+          isError: true,
+          exitCode: 1,
+        }),
+      ],
+    };
+
+    render(
+      <ToolSummaryLine group={group} hasError={true} hasCancelled={false} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Ran 1 command/ }));
+    const child = screen.getByRole("button", { name: /Ran command/ });
+    expect(child).not.toHaveTextContent("errored");
+    fireEvent.click(child);
+
+    const panel = screen.getByRole("region", { name: "Shell output" });
+    const exitCode = screen.getByText("exit code 1");
+    expect(panel).toContainElement(exitCode);
+    expect(exitCode).toHaveClass("text-muted-foreground/70");
+    expect(exitCode.closest("footer")).toHaveClass("justify-end");
   });
 });

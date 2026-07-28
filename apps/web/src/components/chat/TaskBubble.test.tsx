@@ -62,7 +62,7 @@ describe("getTaskAggregateStatus", () => {
     expect(screen.getByRole("button", { name: "1 of 3 tasks settled" })).toHaveTextContent("1/3 steps");
   });
 
-  it("expands upward from the centered bubble anchor", () => {
+  it("opens on pointer hover using the shared collision-aware popover", () => {
     render(
       <TaskBubble
         tasks={[
@@ -72,9 +72,12 @@ describe("getTaskAggregateStatus", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId("task-bubble"));
+    fireEvent.pointerEnter(screen.getByTestId("task-bubble"));
 
-    expect(screen.getByTestId("task-bubble-expanded")).toHaveClass("bottom-full", "left-1/2", "-translate-x-1/2");
+    const panel = screen.getByTestId("task-bubble-expanded");
+    expect(panel).toHaveClass("w-[min(40rem,calc(100vw-2rem))]");
+    expect(panel).toHaveClass("max-h-(--available-height)");
+    expect(panel.parentElement).toHaveAttribute("data-side", "top");
   });
 
   it("bounds the expanded list with a scrollable padded viewport", () => {
@@ -93,5 +96,120 @@ describe("getTaskAggregateStatus", () => {
       .querySelector('[data-slot="scroll-area-viewport"]');
 
     expect(viewport).toHaveClass("overflow-x-hidden", "overflow-y-auto", "scroll-py-2");
+    expect(viewport).toHaveAttribute("aria-label", "Task list");
+    expect(viewport).toHaveAttribute("tabindex", "0");
+  });
+
+  it("opens on keyboard focus and Escape closes it", () => {
+    render(
+      <TaskBubble tasks={[item("one", "in_progress", "Finish one")]} />,
+    );
+
+    const bubble = screen.getByTestId("task-bubble");
+    fireEvent.focus(bubble);
+    expect(screen.getByTestId("task-bubble-expanded")).toBeInTheDocument();
+
+    fireEvent.keyDown(bubble, { key: "Escape" });
+    expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
+  });
+
+  it("keeps click as a touch-compatible open and close fallback", () => {
+    render(
+      <TaskBubble tasks={[item("one", "pending", "Finish one")]} />,
+    );
+
+    const bubble = screen.getByTestId("task-bubble");
+    fireEvent.pointerEnter(bubble, { pointerType: "touch" });
+    fireEvent.click(bubble);
+    expect(screen.getByTestId("task-bubble-expanded")).toBeInTheDocument();
+
+    fireEvent.pointerEnter(bubble, { pointerType: "touch" });
+    fireEvent.click(bubble);
+    expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
+  });
+
+  it("keeps the preview open when a mouse click follows pointer hover", () => {
+    render(
+      <TaskBubble tasks={[item("one", "pending", "Finish one")]} />,
+    );
+
+    const bubble = screen.getByTestId("task-bubble");
+    fireEvent.pointerEnter(bubble, { pointerType: "mouse" });
+    fireEvent.click(bubble);
+
+    expect(screen.getByTestId("task-bubble-expanded")).toBeInTheDocument();
+
+    fireEvent.click(bubble);
+    expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
+  });
+
+  it("closes a hover-open preview on Escape", () => {
+    render(
+      <TaskBubble tasks={[item("one", "pending", "Finish one")]} />,
+    );
+
+    fireEvent.pointerEnter(screen.getByTestId("task-bubble"), { pointerType: "mouse" });
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
+  });
+
+  it("closes a hover-open preview on outside press", () => {
+    render(
+      <TaskBubble tasks={[item("one", "pending", "Finish one")]} />,
+    );
+
+    fireEvent.pointerEnter(screen.getByTestId("task-bubble"), { pointerType: "mouse" });
+    fireEvent.pointerDown(document.body);
+    fireEvent.click(document.body);
+
+    expect(screen.queryByTestId("task-bubble-expanded")).not.toBeInTheDocument();
+  });
+
+  it("renders semantic task rows with accessible statuses", () => {
+    render(
+      <TaskBubble tasks={[
+        item("one", "completed", "Finish one"),
+        item("two", "pending", "Finish two"),
+      ]} />,
+    );
+
+    fireEvent.click(screen.getByTestId("task-bubble"));
+    const list = screen.getByRole("list", { name: "Tasks" });
+    expect(list).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText(/Completed:/)).toHaveClass("sr-only");
+    expect(screen.getByText(/Pending:/)).toHaveClass("sr-only");
+  });
+
+  it("renders live file, addition, and deletion facts beside step progress", () => {
+    render(
+      <TaskBubble
+        tasks={[item("one", "completed", "Finish one")]}
+        fileEffects={{
+          revision: 3,
+          fileCount: 20,
+          additions: 1211,
+          deletions: 195,
+          effects: [],
+        }}
+      />,
+    );
+    const bubble = screen.getByTestId("task-bubble");
+    expect(bubble).toHaveTextContent("1/1 steps");
+    expect(bubble).toHaveTextContent("20 files changed");
+    expect(bubble).toHaveTextContent("+1211");
+    expect(bubble).toHaveTextContent("−195");
+  });
+
+  it("uses singular file copy and omits zero line facts", () => {
+    render(
+      <TaskBubble
+        tasks={[item("one", "in_progress", "Finish one")]}
+        fileEffects={{ revision: 1, fileCount: 1, additions: 0, deletions: 0, effects: [] }}
+      />,
+    );
+    expect(screen.getByTestId("task-bubble")).toHaveTextContent("1 file changed");
+    expect(screen.getByTestId("task-bubble")).not.toHaveTextContent("+0");
   });
 });

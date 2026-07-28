@@ -7,6 +7,12 @@
 import type { GitExecutor } from "./git-executor/index.js";
 import { RealGitExecutor } from "./git-executor/real-git-executor.js";
 import type { SnapshotService } from "./snapshot-service.js";
+import type { TurnFileEffectSummary } from "@mcode/contracts";
+import {
+  attributedWorkspacePaths,
+  collectAttributedWorkspacePathGroups,
+  collectAttributedWorkspacePaths,
+} from "./snapshot-attribution.js";
 
 /** Per-file diff statistics. */
 export interface FileDiffStat {
@@ -48,6 +54,7 @@ export interface TurnSnapshotRow {
   ref_before: string;
   ref_after: string;
   files_changed: string;
+  file_effects?: TurnFileEffectSummary | string;
   worktree_path: string | null;
   created_at: string;
 }
@@ -68,10 +75,11 @@ export class ThreadDiffSource implements DiffSummarySource {
 
   /** Build the aggregate diff payload from the thread's turn snapshots. */
   async getDiff(): Promise<DiffPayload> {
-    const withChanges = this.snapshots.filter((s) => {
-      const files = JSON.parse(s.files_changed) as string[];
-      return files.length > 0;
-    });
+    const withChanges = this.snapshots.filter((snapshot) => (
+      snapshot.ref_before.length > 0
+      && snapshot.ref_after.length > 0
+      && attributedWorkspacePaths(snapshot).length > 0
+    ));
 
     if (withChanges.length === 0) {
       return { stats: [], diff: "", commits: "", turnCount: 0, lastTurnId: null };
@@ -79,11 +87,15 @@ export class ThreadDiffSource implements DiffSummarySource {
 
     const first = withChanges[0]!;
     const last = withChanges[withChanges.length - 1]!;
+    const attributedPaths = collectAttributedWorkspacePaths(withChanges);
+    const attributedPathGroups = collectAttributedWorkspacePathGroups(withChanges);
 
     const stats = await this.snapshotService.getDiffStats(
       this.cwd,
       first.ref_before,
       last.ref_after,
+      attributedPaths,
+      attributedPathGroups,
     );
 
     const commits = await this.getCommitLog(first.ref_before, last.ref_after);
@@ -92,6 +104,10 @@ export class ThreadDiffSource implements DiffSummarySource {
       this.cwd,
       first.ref_before,
       last.ref_after,
+      undefined,
+      undefined,
+      attributedPaths,
+      attributedPathGroups,
     );
 
     let diff: string;

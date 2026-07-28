@@ -20,7 +20,6 @@ vi.mock("@/stores/threadStore", () => ({
     selector({
       messages: [],
       runningThreadIds: new Set(),
-      loadMessages: vi.fn(),
       clearMessages: vi.fn(),
       errorByThread: {},
     })

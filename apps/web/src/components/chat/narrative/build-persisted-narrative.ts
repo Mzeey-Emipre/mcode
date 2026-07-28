@@ -6,6 +6,12 @@ import type {
   HookExecution,
 } from "@/transport/types";
 import type { ThoughtSegment, NarrativeItem } from "./types";
+import {
+  isSubagentLifecycleRecord,
+  parseSubagentLifecycleInput,
+  subagentLifecycleParticipants,
+  type SubagentLifecycle,
+} from "./subagent-lifecycle";
 
 /** Inputs for `buildPersistedNarrativeItems`. */
 export interface PersistedNarrativeInputs {
@@ -28,20 +34,47 @@ function isoToMs(s: string | null | undefined): number {
   return Number.isFinite(t) ? t : 0;
 }
 
+/** Derive a valid elapsed duration from persisted lifecycle timestamps. */
+function persistedDurationMs(
+  startedAt: string | null | undefined,
+  completedAt: string | null | undefined,
+): number | undefined {
+  if (!startedAt || !completedAt) return undefined;
+
+  const start = Date.parse(startedAt);
+  const end = Date.parse(completedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined;
+
+  return end - start;
+}
+
 /** Map a persisted tool record to the live `ToolCall` shape used by row components. */
-function recordToToolCall(r: ToolCallRecord): ToolCall {
+export function recordToToolCall(r: ToolCallRecord): ToolCall {
+  const durationMs = persistedDurationMs(r.started_at, r.completed_at);
+  const lifecycleInput = isSubagentLifecycleRecord(r)
+    ? parseSubagentLifecycleInput(r.input_summary)
+    : undefined;
+
   return {
     id: r.id,
     toolName: r.tool_name,
     // Live components only inspect a few fields; the input summary suffices
     // for label derivation in the persisted view.
-    toolInput: { _summary: r.input_summary },
+    toolInput: lifecycleInput ?? {
+      _summary: r.input_summary,
+      ...(r.tool_name === AGENT_TOOL_NAME && r.display_name
+        ? { agentName: r.display_name }
+        : {}),
+    },
     output: r.output_summary || null,
     isError: r.status === "failed",
     isComplete: r.status === "completed" || r.status === "failed" || r.status === "cancelled",
+    ...(r.status === "cancelled" ? { isCancelled: true } : {}),
     ...(r.output_truncated === 1 ? { outputTruncated: true } : {}),
     ...(typeof r.output_total_bytes === "number" ? { outputTotalBytes: r.output_total_bytes } : {}),
     ...(r.output_artifact_path ? { outputArtifactPath: r.output_artifact_path } : {}),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(typeof r.exit_code === "number" ? { exitCode: r.exit_code } : {}),
     parentToolCallId: r.parent_tool_call_id ?? undefined,
     startedAt: isoToMs(r.started_at),
   };
@@ -93,6 +126,7 @@ export function persistedHookDetailLines(r: HookExecutionRecord): string[] {
 type TimelineEvent =
   | { kind: "thought"; segment: ThoughtSegment; sortOrder: number }
   | { kind: "tool"; call: ToolCall; sortOrder: number }
+  | { kind: "subagent"; call: ToolCall; marker?: ToolCall; lifecycle: SubagentLifecycle; sortOrder: number }
   | { kind: "hook"; hook: HookExecution; sortOrder: number };
 
 /**
@@ -182,11 +216,39 @@ export function buildPersistedNarrativeItems(
     });
   }
   for (const t of topLevel) {
-    timeline.push({
-      kind: "tool",
-      call: recordToToolCall(t),
-      sortOrder: t.sort_order,
-    });
+    const call = recordToToolCall(t);
+    if (t.tool_name !== AGENT_TOOL_NAME) {
+      timeline.push({ kind: "tool", call, sortOrder: t.sort_order });
+    }
+  }
+  const agentRecords = tools.filter((tool) => tool.tool_name === AGENT_TOOL_NAME);
+  for (const t of agentRecords) {
+    const call = recordToToolCall(t);
+
+    const lifecycleMarkers = (childrenByParent.get(t.id) ?? [])
+      .filter(isSubagentLifecycleRecord);
+    timeline.push({ kind: "subagent", call, lifecycle: "started", sortOrder: t.sort_order });
+    for (const marker of lifecycleMarkers) {
+      timeline.push({
+        kind: "subagent",
+        call,
+        marker: recordToToolCall(marker),
+        lifecycle: "updated",
+        sortOrder: marker.sort_order,
+      });
+    }
+    if (t.status !== "running") {
+      const terminalSortOrder = lifecycleMarkers.reduce(
+        (latest, marker) => Math.max(latest, marker.sort_order),
+        t.sort_order,
+      ) + 0.5;
+      timeline.push({
+        kind: "subagent",
+        call,
+        lifecycle: "finished",
+        sortOrder: terminalSortOrder,
+      });
+    }
   }
   for (const h of hooks) {
     if (h.phase === "stop") continue;
@@ -199,6 +261,7 @@ export function buildPersistedNarrativeItems(
   timeline.sort((a, b) => a.sortOrder - b.sortOrder);
 
   const items: NarrativeItem[] = [];
+  const allToolCalls = tools.map(recordToToolCall);
   const pendingGroup: ToolCall[] = [];
 
   const flushGroup = () => {
@@ -208,7 +271,8 @@ export function buildPersistedNarrativeItems(
       group: { calls: pendingGroup.slice() },
       hasError: pendingGroup.some((c) => c.isError),
       hasCancelled: pendingGroup.some(
-        (c) => typeof c.output === "string" && c.output.toLowerCase().includes("cancelled"),
+        (c) => c.isCancelled === true
+          || (typeof c.output === "string" && c.output.toLowerCase().includes("cancelled")),
       ),
     });
     pendingGroup.length = 0;
@@ -228,25 +292,26 @@ export function buildPersistedNarrativeItems(
       continue;
     }
 
-    const tc = evt.call;
-    if (tc.toolName === AGENT_TOOL_NAME) {
+    if (evt.kind === "subagent") {
       flushGroup();
-      const childRecords = childrenByParent.get(tc.id) ?? [];
+      const childRecords = (childrenByParent.get(evt.call.id) ?? [])
+        .filter((child) => !isSubagentLifecycleRecord(child));
       const children = childRecords
         .slice()
         .sort((a, b) => a.sort_order - b.sort_order)
         .map(recordToToolCall);
       items.push({
         type: "subagent",
-        toolCall: tc,
+        lifecycle: evt.lifecycle,
+        toolCall: evt.call,
+        participants: subagentLifecycleParticipants(evt.call, evt.marker, allToolCalls),
         children,
-        // Persisted hooks aren't currently attributed to a sub-agent boundary,
-        // so we pass an empty array - matching how older history loads behave.
         hooks: liveHooks.filter((h) => h.toolName === AGENT_TOOL_NAME),
       });
       continue;
     }
 
+    const tc = evt.call;
     // Non-Agent tool: coalesce into the current tool-group.
     pendingGroup.push(tc);
   }

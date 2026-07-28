@@ -1,40 +1,21 @@
 import { useEffect, useRef } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Terminal, Zap, Puzzle, Sparkles } from "lucide-react";
 import type { Command, PopupState } from "./useSlashCommand";
 import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
+import { EntityIcon } from "./EntityToken";
 
-const ITEM_HEIGHT = 44; // px per row
+const ITEM_HEIGHT = 40;
 const VISIBLE_ITEMS = 8;
-const GROUP_HEADER_HEIGHT = 28;
 const STATUS_ROW_HEIGHT = ITEM_HEIGHT;
 const LIST_SURFACE_PADDING = 8;
 const LIST_BOTTOM_FADE_HEIGHT = 20;
-
-const NAMESPACE_LABELS: Record<Command["namespace"], string> = {
-  mcode: "Mcode",
-  command: "Commands",
-  skill: "Skills",
-  plugin: "Plugins",
-};
-
-/** Preserve command ordering while exposing the source context of each command. */
-function groupCommands(
-  items: Command[],
-): Array<{ namespace: Command["namespace"]; items: Array<{ command: Command; index: number }> }> {
-  const groups: Array<{
-    namespace: Command["namespace"];
-    items: Array<{ command: Command; index: number }>;
-  }> = [];
-  for (const [index, command] of items.entries()) {
-    const current = groups.at(-1);
-    if (current?.namespace === command.namespace) {
-      current.items.push({ command, index });
-      continue;
-    }
-    groups.push({ namespace: command.namespace, items: [{ command, index }] });
-  }
-  return groups;
+function commandDisplayLabel(command: Command): string {
+  if (command.capabilityKind === "plugin") return `@${command.name}`;
+  if (command.namespace === "skill") return command.name;
+  if (command.namespace === "plugin") return command.name.split(":").at(-1) ?? command.name;
+  return `/${command.name}`;
 }
 
 /** Props for the {@link SlashCommandPopup} component. */
@@ -57,6 +38,8 @@ interface SlashCommandPopupProps {
   tone?: "default" | "dark";
   /** Extra class names for border/positioning overrides that don't belong in tone. */
   className?: string;
+  /** Active workspace root used to identify local workspace skills. */
+  workspacePath?: string;
 }
 
 /**
@@ -76,13 +59,13 @@ export function SlashCommandPopup({
   onRetry,
   tone = "default",
   className,
+  workspacePath,
 }: SlashCommandPopupProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // The list-bearing states carry the items; all others render no list.
   const items: Command[] =
     state.kind === "ready" || state.kind === "staleRevalidating" ? state.items : [];
-  const commandGroups = groupCommands(items);
   const isOpen = state.kind !== "closed";
 
   // Scroll selected item into view
@@ -106,16 +89,13 @@ export function SlashCommandPopup({
 
   if (state.kind === "closed" || !anchorRect) return null;
 
-  const listMaxHeight =
-    VISIBLE_ITEMS * ITEM_HEIGHT +
-    Math.min(commandGroups.length, VISIBLE_ITEMS) * GROUP_HEADER_HEIGHT +
-    LIST_BOTTOM_FADE_HEIGHT;
+  const listMaxHeight = VISIBLE_ITEMS * ITEM_HEIGHT + LIST_BOTTOM_FADE_HEIGHT;
 
   // Estimate the rendered popup height before positioning. The scrollport is
   // inset from the surface so its native scrollbar clears the rounded corner.
   const willRenderList = state.kind === "ready" || state.kind === "staleRevalidating";
   const renderedListHeight = Math.min(
-    items.length * ITEM_HEIGHT + commandGroups.length * GROUP_HEADER_HEIGHT + LIST_BOTTOM_FADE_HEIGHT,
+    items.length * ITEM_HEIGHT + LIST_BOTTOM_FADE_HEIGHT,
     listMaxHeight,
   );
   const estimatedHeight =
@@ -158,41 +138,21 @@ export function SlashCommandPopup({
                     ref={scrollRef}
                     role="listbox"
                     aria-label="Slash commands"
-                    aria-activedescendant={items[selectedIndex] ? `slash-cmd-${items[selectedIndex].name}` : undefined}
+                    aria-activedescendant={items[selectedIndex] ? `slash-cmd-${selectedIndex}` : undefined}
                     className="overflow-y-auto"
                     style={{ maxHeight: listMaxHeight, scrollbarGutter: "stable" }}
                   >
                     <div className="pb-5">
-                      {commandGroups.map(({ namespace, items: groupItems }) => (
-                        <div
-                          key={namespace}
-                          role="group"
-                          aria-label={NAMESPACE_LABELS[namespace]}
-                          data-testid={`slash-command-group-${namespace}`}
-                        >
-                          <div
-                            data-slash-group-heading
-                            role="presentation"
-                            className={cn(
-                              "bg-popover px-2 py-1.5 text-xs font-medium text-foreground",
-                              tone === "dark" && "bg-[#1e1e1e] text-neutral-100",
-                            )}
-                          >
-                            {NAMESPACE_LABELS[namespace]}
-                          </div>
-                          {groupItems.map(({ command: cmd, index }) => {
-                            return (
-                              <div key={cmd.name} role="presentation" data-index={index}>
-                                <CommandRow
-                                  cmd={cmd}
-                                  selected={index === selectedIndex}
-                                  onSelect={onSelect}
-                                  tone={tone}
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
+                      {items.map((cmd, index) => (
+                        <CommandRow
+                          key={cmd.id}
+                          cmd={cmd}
+                          index={index}
+                          selected={index === selectedIndex}
+                          onSelect={onSelect}
+                          tone={tone}
+                          origin={duplicateSkillOriginTag(cmd, items, workspacePath)}
+                        />
                       ))}
                     </div>
                   </div>
@@ -219,27 +179,40 @@ export function SlashCommandPopup({
 
 function CommandRow({
   cmd,
+  index,
   selected,
   onSelect,
   tone = "default",
+  origin,
 }: {
   cmd: Command;
+  index: number;
   selected: boolean;
   onSelect: (cmd: Command) => void;
   tone?: "default" | "dark";
+  origin?: "Local";
 }) {
   return (
-    <button
+    <Button
       type="button"
-      id={`slash-cmd-${cmd.name}`}
+      variant="ghost"
+      size="sm"
+      id={`slash-cmd-${index}`}
       role="option"
       aria-selected={selected}
+      data-index={index}
+      aria-label={[
+        commandDisplayLabel(cmd),
+        cmd.capabilityKind === "plugin" ? "Plugin" : undefined,
+        cmd.description,
+        origin,
+      ].filter(Boolean).join(" ")}
       onMouseDown={(e) => {
         e.preventDefault(); // prevent textarea blur
         onSelect(cmd);
       }}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+        "h-10 min-w-0 w-full justify-start gap-2 overflow-hidden rounded-md px-2 py-1.5 text-left transition-colors",
         tone === "dark"
           ? selected
             ? "bg-white/[0.12]"
@@ -249,39 +222,105 @@ function CommandRow({
             : "hover:bg-accent/50",
       )}
     >
-      {/* Icon column */}
-      <span className={cn(
-        "flex size-4 shrink-0 items-center justify-center",
-        tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
-      )}>
-        {cmd.namespace === "mcode" ? (
-          <Zap size={13} />
-        ) : cmd.namespace === "plugin" ? (
-          <Puzzle size={13} />
-        ) : cmd.namespace === "skill" ? (
-          <Sparkles size={13} />
-        ) : (
-          <Terminal size={13} />
-        )}
-      </span>
-
-      {/* Name + description */}
-      <span className="flex min-w-0 flex-1 flex-col">
+      <CommandIdentityMark command={cmd} tone={tone} />
+      <span className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
         <span className={cn(
-          "truncate text-sm font-medium leading-4",
+          "min-w-0 shrink truncate text-sm font-medium",
           tone === "dark" ? "text-neutral-50" : "text-foreground",
         )}>
-          /{cmd.name}
+          {commandDisplayLabel(cmd)}
         </span>
         <span className={cn(
-          "truncate text-xs leading-4",
+          "min-w-12 flex-1 overflow-hidden whitespace-nowrap text-xs font-normal",
           tone === "dark" ? "text-neutral-400" : "text-muted-foreground",
-        )}>
+        )} style={{
+          maskImage: "linear-gradient(to right, black calc(100% - 2.5rem), transparent)",
+          WebkitMaskImage: "linear-gradient(to right, black calc(100% - 2.5rem), transparent)",
+        }}>
           {cmd.description}
         </span>
       </span>
-    </button>
+      {origin && (
+        <Badge
+          variant="outline"
+          size="sm"
+          className={cn(tone === "dark" && "border-white/10 text-neutral-300")}
+        >
+          {origin}
+        </Badge>
+      )}
+    </Button>
   );
+}
+
+function CommandIdentityMark({
+  command,
+  tone,
+}: {
+  command: Command;
+  tone: "default" | "dark";
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "flex size-8 shrink-0 items-center justify-center rounded-md ring-1 ring-inset",
+        tone === "dark"
+          ? "bg-white/[0.06] text-neutral-400 ring-white/10"
+          : "bg-muted/65 text-muted-foreground ring-border/60",
+      )}
+    >
+      <EntityIcon
+        kind={
+          command.capabilityKind === "skill"
+            ? "skill"
+            : command.capabilityKind === "plugin"
+              ? "plugin"
+              : command.capabilityKind === "mcode" ||
+                  ["goal", "plan", "ultra", "compact"].includes(command.name)
+                ? "mcode"
+                : "command"
+        }
+        commandName={command.name}
+        size={14}
+        className="flex items-center justify-center"
+      />
+    </span>
+  );
+}
+
+function duplicateSkillOriginTag(
+  command: Command,
+  commands: Command[],
+  workspacePath?: string,
+): "Local" | undefined {
+  if (
+    command.capabilityKind !== "skill" ||
+    !commands.some(
+      (candidate) =>
+        candidate.capabilityKind === "skill" &&
+        candidate.name === command.name &&
+        candidate.id !== command.id,
+    )
+  ) {
+    return undefined;
+  }
+
+  const nativePath = normalizePath(command.identity?.nativeId ?? command.nativeId);
+  const localSkillPath = workspacePath
+    ? `${normalizePath(workspacePath).replace(/\/+$/, "")}/.codex/skills/`
+    : undefined;
+  const isCodexSkillPath =
+    nativePath.startsWith(".codex/skills/") ||
+    nativePath.includes("/.codex/skills/");
+  return (localSkillPath !== undefined && nativePath.startsWith(localSkillPath)) ||
+    isCodexSkillPath
+    ? "Local"
+    : undefined;
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").toLowerCase();
 }
 
 /**
@@ -334,21 +373,23 @@ function ErrorRow({
   return (
     <div role="alert" className="flex items-center gap-2 px-3 py-2 text-xs text-destructive">
       <span className="flex-1 truncate">Couldn't load commands: {message}</span>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         // Same pattern as the footer Refresh button: preventDefault on
         // mousedown to retain editor focus, action on click for keyboard a11y.
         onMouseDown={(e) => e.preventDefault()}
         onClick={onRetry}
         className={cn(
-          "rounded px-2 py-0.5",
+          "h-6 rounded-md px-2 text-xs",
           tone === "dark"
             ? "text-neutral-100 hover:bg-white/10"
             : "text-foreground hover:bg-accent",
         )}
       >
         Retry
-      </button>
+      </Button>
     </div>
   );
 }

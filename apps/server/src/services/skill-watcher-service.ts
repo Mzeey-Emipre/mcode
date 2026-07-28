@@ -1,7 +1,6 @@
 /**
- * Watches Claude, Cursor, Codex, Copilot-adjacent, and cross-provider skill
- * directories for changes and triggers `SkillService` cache invalidation plus
- * a `skills.changed` broadcast.
+ * Watches the shared non-Codex filesystem catalog used by Claude, Cursor, and
+ * Copilot, then invalidates `SkillService` and broadcasts the affected providers.
  *
  * Mirrors the debounce + fs.watch pattern of `GitWatcherService`.
  */
@@ -50,11 +49,11 @@ export class SkillWatcherService {
   }
 
   /**
-   * Begin watching skill and plugin roots across all supported providers.
+   * Begin watching roots used by the shared non-Codex filesystem catalog.
    * Idempotent: subsequent calls are no-ops until `stopAll()` resets state.
    *
-   * Also watches each provider's parent dir (e.g. `~/.claude`, `~/.codex`,
-   * `~/.agents`) so roots that don't exist at startup get registered
+   * Also watches provider parent directories so roots that do not exist at
+   * startup get registered
    * automatically when the directory is created later.
    *
    * @param overrides Optional path overrides for testing. Production callers
@@ -70,27 +69,16 @@ export class SkillWatcherService {
     this.started = true;
     const home = homedir();
     const claudeDir = join(home, ".claude");
-    const codexDir = join(home, ".codex");
-    const agentsDir = join(home, ".agents");
     const cursorDir = join(home, ".cursor");
-    const codexRuntimeDir = join(home, ".cache", "codex-runtimes", "codex-primary-runtime");
 
     const parentDirs =
-      overrides?.parentDirs ?? [claudeDir, codexDir, agentsDir, cursorDir, codexRuntimeDir];
+      overrides?.parentDirs ?? [claudeDir, cursorDir];
     const roots = overrides?.roots ?? [
       // Claude roots
       join(claudeDir, "skills"),
       join(claudeDir, "commands"),
       join(claudeDir, "plugins"),
       join(claudeDir, ".agents", "skills"),
-      // Codex roots
-      join(codexDir, "skills"),
-      join(codexDir, "prompts"),
-      join(codexDir, "plugins"),
-      join(codexRuntimeDir, "plugins"),
-      // Cross-provider roots
-      join(agentsDir, "skills"),
-      join(agentsDir, "commands"),
       // Copilot user-level agents
       copilotUserAgentsDir(),
       // Cursor CLI roots (skills/commands/plugins mirror Claude-style layout)
@@ -234,7 +222,7 @@ export class SkillWatcherService {
         return;
       }
       try {
-        broadcast("skills.changed", {});
+        broadcast("skills.changed", { providerIds: ["claude", "copilot", "cursor"] });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.debug("SkillWatcherService: broadcast failed", { dir, message });

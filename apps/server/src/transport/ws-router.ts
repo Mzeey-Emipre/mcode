@@ -5,9 +5,9 @@
  */
 
 import { randomUUID } from "crypto";
-import { mkdir, readdir, readFile, writeFile } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
-import { homedir, tmpdir } from "os";
+import { tmpdir } from "os";
 import type { WebSocket } from "ws";
 import type { IncomingMessage } from "http";
 
@@ -19,20 +19,27 @@ import {
   type WsMethodName,
   type IProviderRegistry,
   type ProviderUsageInfo,
+  type ProviderCatalogContext,
+  type ProviderCapabilityKind,
   type PreviewAnnotationBundle,
   getExtension,
-  isSkillCatalogCapable,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
 import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discovery.js";
 import type { WorkspaceService } from "../services/workspace-service";
 import type { ThreadService } from "../services/thread-service";
 import type { AgentService } from "../services/agent-service";
+import type { ThreadControlService } from "../services/thread-control-service";
 import type { GitService } from "../services/git-service";
 import type { GithubService } from "../services/github-service";
 import type { FileService } from "../services/file-service";
 import type { ConfigService } from "../services/config-service";
 import type { SkillService } from "../services/skill-service";
+import type {
+  CodexCatalogRefreshResult,
+  CodexCatalogService,
+} from "../services/codex-catalog-service";
+import type { ProviderCatalogService } from "../services/provider-catalog-service";
 import type { TerminalService } from "../services/terminal-service";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
@@ -60,6 +67,15 @@ import {
   isProviderAvailabilityError,
 } from "../services/provider-availability-errors.js";
 import type { ProviderAvailabilityService } from "../services/provider-availability-service.js";
+import {
+  attributedWorkspacePathGroups,
+  attributedWorkspacePaths,
+  collectAttributedWorkspacePathGroups,
+  collectAttributedWorkspacePaths,
+} from "../services/snapshot-attribution.js";
+import {
+  buildProviderCatalogSnapshot,
+} from "./provider-catalog.js";
 
 const PREVIEW_ANNOTATION_FENCE_START = "<!-- mcode-preview-annotations:v1";
 const PREVIEW_ANNOTATION_FENCE_END = "mcode-preview-annotations:end -->";
@@ -111,65 +127,24 @@ function teardownFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
 }
 
-interface CodexAgentMentionInfo {
-  name: string;
-  path: string;
-  description?: string;
-}
-
-function tomlStringValue(body: string, key: string): string | undefined {
-  const match = new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m").exec(body);
-  return match?.[1]?.trim() || undefined;
-}
-
-async function scanCodexAgentDir(dir: string): Promise<CodexAgentMentionInfo[]> {
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch {
-    return [];
+function resolveProviderCatalogContext(
+  deps: RouterDeps,
+  params: { workspaceId?: string; threadId?: string; cwd?: string },
+): { cwd: string | undefined; context: ProviderCatalogContext } {
+  if (params.workspaceId) {
+    return {
+      cwd: resolveWorkspaceRepoPath(deps, params.workspaceId, params.threadId),
+      context: {
+        scope: "workspace",
+        workspaceId: params.workspaceId,
+        ...(params.threadId ? { threadId: params.threadId } : {}),
+      },
+    };
   }
-
-  const agents: CodexAgentMentionInfo[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".toml")) continue;
-    const path = join(dir, entry);
-    try {
-      const body = await readFile(path, "utf8");
-      const fallbackName = entry.slice(0, -".toml".length);
-      const name = tomlStringValue(body, "name") ?? fallbackName;
-      const description = tomlStringValue(body, "description");
-      agents.push({ name, path, ...(description ? { description } : {}) });
-    } catch {
-      // Ignore malformed or unreadable agent files; diagnostics belong in the agent editor.
-    }
+  if (params.cwd) {
+    return { cwd: params.cwd, context: { scope: "path", cwd: params.cwd } };
   }
-  return agents;
-}
-
-async function discoverCodexAgents(deps: RouterDeps, workspaceId?: string, threadId?: string): Promise<CodexAgentMentionInfo[]> {
-  const dirs = [join(homedir(), ".codex", "agents")];
-  if (workspaceId) {
-    const workspace = deps.workspaceService.findById(workspaceId);
-    if (workspace) {
-      let cwd = workspace.path;
-      if (threadId) {
-        const thread = deps.threadRepo.findById(threadId);
-        if (thread && thread.workspace_id === workspaceId) {
-          cwd = deps.gitService.resolveWorkingDir(workspace.path, thread.mode, thread.worktree_path);
-        }
-      }
-      dirs.push(join(cwd, ".codex", "agents"));
-    }
-  }
-
-  const byName = new Map<string, CodexAgentMentionInfo>();
-  for (const dir of dirs) {
-    for (const agent of await scanCodexAgentDir(dir)) {
-      byName.set(agent.name, agent);
-    }
-  }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return { cwd: undefined, context: { scope: "user" } };
 }
 
 /** Service dependencies for the router. */
@@ -183,11 +158,17 @@ export interface RouterDeps {
   workspaceService: WorkspaceService;
   threadService: ThreadService;
   agentService: AgentService;
+  /** Owns durable approvals for protected delegated-thread mutations. */
+  threadControlService: ThreadControlService;
   gitService: GitService;
   githubService: GithubService;
   fileService: FileService;
   configService: ConfigService;
   skillService: SkillService;
+  /** Owns the thread-independent Codex app-server catalog connection. */
+  codexCatalogService: CodexCatalogService;
+  /** Serves persisted snapshots and coordinates background catalog reconciliation. */
+  providerCatalogService: ProviderCatalogService;
   terminalService: TerminalService;
   messageRepo: MessageRepo;
   toolCallRecordRepo: ToolCallRecordRepo;
@@ -619,8 +600,52 @@ async function dispatch(
       const workspace = deps.workspaceService.findById(params.workspaceId);
       if (!workspace) return [];
       const results: Array<{ threadId: string; prNumber: number; prStatus: string }> = [];
+
+      const linkedThreads = needsCheck.filter(
+        (thread): thread is typeof thread & { pr_number: number } => thread.pr_number != null,
+      );
+      const linkedThreadsById = new Map(linkedThreads.map((thread) => [thread.id, thread]));
+      const linkedSnapshots = linkedThreads.length === 0
+        ? []
+        : await deps.githubService.getPullRequestWatchSnapshots(
+            linkedThreads.map((thread) => ({
+              threadId: thread.id,
+              prNumber: thread.pr_number,
+              repoPath: workspace.path,
+            })),
+          );
+      for (const snapshot of linkedSnapshots) {
+        const requestedThread = linkedThreadsById.get(snapshot.threadId);
+        if (!requestedThread) continue;
+        const thread = deps.threadService.findById(snapshot.threadId);
+        if (!thread || thread.pr_number !== snapshot.prNumber) continue;
+        const statusChanged = thread.pr_status?.toLowerCase() !== snapshot.state.toLowerCase();
+        if (statusChanged) {
+          deps.threadService.linkPr(thread.id, snapshot.prNumber, snapshot.state);
+          results.push({
+            threadId: thread.id,
+            prNumber: snapshot.prNumber,
+            prStatus: snapshot.state,
+          });
+        }
+
+        if (snapshot.state === "OPEN") {
+          deps.ciWatcherService.watch(
+            thread.id,
+            snapshot.prNumber,
+            thread.branch,
+            workspace.path,
+            { skipInitialFetch: true },
+          );
+          deps.ciWatcherService.refresh(thread.id, snapshot.checks);
+        } else {
+          deps.ciWatcherService.unwatch(thread.id);
+        }
+      }
+
+      const unlinkedThreads = needsCheck.filter((thread) => thread.pr_number == null);
       await Promise.allSettled(
-        needsCheck.map(async (t) => {
+        unlinkedThreads.map(async (t) => {
           const pr = await deps.githubService.getBranchPr(t.branch, workspace.path);
           if (pr) {
             const numberChanged = t.pr_number !== pr.number;
@@ -775,65 +800,31 @@ async function dispatch(
         resolveThreadRepoPath(deps, params.threadId),
       );
     }
+    case "git.reviewComparison": {
+      const ws = deps.workspaceService.findById(params.workspaceId);
+      if (!ws?.is_git_repo) return { files: [], additions: 0, deletions: 0 };
+      return deps.gitService.reviewComparison(
+        params.workspaceId,
+        params.view,
+        { base: params.base, target: params.target, sha: params.sha },
+        resolveThreadRepoPath(deps, params.threadId),
+      );
+    }
 
     // Agent
     case "agent.send":
-      await deps.agentService.sendMessage(
-        params.threadId,
-        appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
-        params.permissionMode ?? "default",
-        params.model,
-        params.attachments,
-        params.reasoningLevel,
-        params.provider,
-        params.interactionMode,
-        params.maxBudgetUsd,
-        params.maxTurns,
-        params.copilotAgent,
-        params.contextWindow,
-        params.thinking,
-        params.codexFastMode,
-        undefined,
-        undefined,
-        params.replyToMessageId,
-        params.quotedText,
-        params.displayContent ?? params.content,
-        params.planAction,
-        params.mentions,
-        params.previewAnnotations,
-        params.goalObjective,
-        params.orchestrationMode,
-      );
+      await deps.agentService.sendMessage({
+        ...params,
+        content: appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
+        displayContent: params.displayContent ?? params.content,
+      });
       return;
     case "agent.createAndSend": {
-      const thread = await deps.agentService.createAndSend(
-        params.workspaceId,
-        appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
-        params.model,
-        params.permissionMode,
-        params.mode,
-        params.branch,
-        params.worktreeBranchMode,
-        params.existingWorktreePath,
-        params.existingWorktreeBaseBranch,
-        params.attachments,
-        params.reasoningLevel,
-        params.provider,
-        params.interactionMode,
-        params.parentThreadId,
-        params.forkedFromMessageId,
-        params.maxBudgetUsd,
-        params.maxTurns,
-        params.copilotAgent,
-        params.contextWindow,
-        params.thinking,
-        params.codexFastMode,
-        params.displayContent ?? params.content,
-        params.mentions,
-        params.previewAnnotations,
-        params.goalObjective,
-        params.orchestrationMode,
-      );
+      const thread = await deps.agentService.createAndSend({
+        ...params,
+        content: appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
+        displayContent: params.displayContent ?? params.content,
+      });
       watchReturnedThreadWorktree(deps, thread);
       return thread;
     }
@@ -1001,20 +992,55 @@ async function dispatch(
     case "config.discover":
       return deps.configService.discover(params.workspacePath);
 
-    // Skills
-    case "skill.list": {
-      let nativeSkills;
-      if (params.providerId === "codex") {
-        const provider = deps.providerRegistry.resolve("codex");
-        nativeSkills = isSkillCatalogCapable(provider)
-          ? await provider.listSkills(params.cwd)
-          : undefined;
-      }
-      return deps.skillService.list(params.cwd, params.providerId, nativeSkills);
+    case "provider.catalog": {
+      const { cwd, context: catalogContext } = resolveProviderCatalogContext(deps, params);
+      const workspaceRoot = params.workspaceId
+        ? deps.workspaceService.findById(params.workspaceId)?.path
+        : undefined;
+      const buildSnapshot = async (
+        catalog?: CodexCatalogRefreshResult,
+      ) => {
+        const skills = catalog
+          ? [...catalog.skills, ...catalog.prompts]
+          : deps.skillService.list(cwd, params.providerId);
+        return buildProviderCatalogSnapshot({
+          providerId: params.providerId,
+          context: catalogContext,
+          skills,
+          ...(catalog?.plugins ? { entries: catalog.plugins } : {}),
+          ...(catalog?.agents ? { agents: catalog.agents } : {}),
+          ...(catalog?.diagnostics ? { diagnostics: catalog.diagnostics } : {}),
+          ...(catalog?.freshness ? { freshness: catalog.freshness } : {}),
+        });
+      };
+      const confirmedCodexEntryKinds = (
+        catalog: CodexCatalogRefreshResult,
+      ): ProviderCapabilityKind[] => [
+        ...(catalog.skillsAvailable
+          ? ["skill", "plugin", "providerCommand"] as const
+          : []),
+        ...(catalog.promptsAvailable ? ["customPrompt"] as const : []),
+      ];
+      return deps.providerCatalogService.request({
+        request: params,
+        context: catalogContext,
+        cwd,
+        ...(params.threadId && workspaceRoot ? { fallbackCwd: workspaceRoot } : {}),
+        refresh: async () => {
+          if (params.providerId !== "codex") return buildSnapshot();
+          const catalog = await deps.codexCatalogService.refresh(cwd);
+          return {
+            snapshot: await buildSnapshot(catalog),
+            confirmedEntryKinds: confirmedCodexEntryKinds(catalog),
+          };
+        },
+        ...(params.providerId === "codex" ? {
+          refreshFromCache: async () => buildSnapshot(
+            deps.codexCatalogService.currentSnapshot(cwd),
+          ),
+        } : {}),
+      });
     }
-    case "skill.diagnose":
-      return deps.skillService.diagnose(params.cwd);
-
     // Terminal
     case "terminal.create":
       return deps.terminalService.create(params.threadId);
@@ -1041,11 +1067,13 @@ async function dispatch(
       deps.terminalService.resume(ptyId);
       return;
     }
+    case "terminal.checkpoint":
+      return deps.terminalService.checkpoint(params.ptyId, params.seq, params.data);
     case "terminal.killByThread":
       await deps.terminalService.killByThread(params.threadId);
       return;
     case "terminal.reattach":
-      return deps.terminalService.reattach(params.ptyId, params.lastSeq);
+      return deps.terminalService.reattach(params.ptyId, params.lastSeq, params.cold);
     case "terminal.listActive":
       return deps.terminalService.listActiveSessions();
     case "terminal.hasChildren":
@@ -1083,7 +1111,20 @@ async function dispatch(
         if (!ws) throw new Error(`Workspace not found: ${snapshotThread.workspace_id}`);
         snapshotCwd = deps.gitService.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
       }
-      return await deps.snapshotService.getDiff(snapshotCwd, snapshot.ref_before, snapshot.ref_after, params.filePath, params.maxLines);
+      const attributedPaths = attributedWorkspacePaths(snapshot);
+      const attributedPathGroups = attributedWorkspacePathGroups(snapshot);
+      if (params.filePath && !attributedPaths.some(
+        (path) => path.replaceAll("\\", "/") === params.filePath!.replaceAll("\\", "/"),
+      )) return "";
+      return await deps.snapshotService.getDiff(
+        snapshotCwd,
+        snapshot.ref_before,
+        snapshot.ref_after,
+        params.filePath,
+        params.maxLines,
+        attributedPaths,
+        attributedPathGroups,
+      );
     }
     case "snapshot.getDiffStats": {
       const snapshot = deps.turnSnapshotRepo.getById(params.snapshotId);
@@ -1098,7 +1139,13 @@ async function dispatch(
         if (!ws) throw new Error(`Workspace not found: ${snapshotThread.workspace_id}`);
         snapshotCwd = deps.gitService.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
       }
-      return await deps.snapshotService.getDiffStats(snapshotCwd, snapshot.ref_before, snapshot.ref_after);
+      return await deps.snapshotService.getDiffStats(
+        snapshotCwd,
+        snapshot.ref_before,
+        snapshot.ref_after,
+        attributedWorkspacePaths(snapshot),
+        attributedWorkspacePathGroups(snapshot),
+      );
     }
     case "snapshot.cleanup":
       return { removed: deps.turnSnapshotRepo.deleteExpired(
@@ -1109,8 +1156,15 @@ async function dispatch(
     case "snapshot.getCumulativeDiff": {
       const snapshots = deps.turnSnapshotRepo.listByThread(params.threadId);
       if (snapshots.length === 0) return "";
-      const first = snapshots[0];
-      const last = snapshots[snapshots.length - 1];
+      const withGitRefs = snapshots.filter((snapshot) => snapshot.ref_before && snapshot.ref_after);
+      if (withGitRefs.length === 0) return "";
+      const first = withGitRefs[0];
+      const last = withGitRefs[withGitRefs.length - 1];
+      const attributedPaths = collectAttributedWorkspacePaths(withGitRefs);
+      const attributedPathGroups = collectAttributedWorkspacePathGroups(withGitRefs);
+      if (params.filePath && !attributedPaths.some(
+        (path) => path.replaceAll("\\", "/") === params.filePath!.replaceAll("\\", "/"),
+      )) return "";
       let cwd: string;
       if (first.worktree_path) {
         cwd = first.worktree_path;
@@ -1127,7 +1181,39 @@ async function dispatch(
         last.ref_after,
         params.filePath,
         params.maxLines,
+        attributedPaths,
+        attributedPathGroups,
       );
+    }
+    case "snapshot.getCumulativeDiffStats": {
+      const snapshots = deps.turnSnapshotRepo.listByThread(params.threadId);
+      const withGitRefs = snapshots.filter((snapshot) => snapshot.ref_before && snapshot.ref_after);
+      if (withGitRefs.length === 0) return [];
+      const first = withGitRefs[0];
+      const last = withGitRefs[withGitRefs.length - 1];
+      const attributedPaths = collectAttributedWorkspacePaths(withGitRefs);
+      const attributedPathGroups = collectAttributedWorkspacePathGroups(withGitRefs);
+      let cwd: string;
+      if (first.worktree_path) {
+        cwd = first.worktree_path;
+      } else {
+        const thread = deps.threadService.findById(params.threadId);
+        if (!thread) throw new Error(`Thread not found: ${params.threadId}`);
+        const ws = deps.workspaceService.findById(thread.workspace_id);
+        if (!ws) throw new Error(`Workspace not found: ${thread.workspace_id}`);
+        cwd = deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
+      }
+      const stats = await deps.snapshotService.getDiffStats(
+        cwd,
+        first.ref_before,
+        last.ref_after,
+        attributedPaths,
+        attributedPathGroups,
+      );
+      if (stats.length > 10_000) {
+        throw new Error("Cumulative Review comparison is limited to 10000 files");
+      }
+      return stats;
     }
 
     // Clipboard (legacy JSON-RPC path -- binary upload preferred)
@@ -1198,9 +1284,6 @@ async function dispatch(
     }
     case "providers.listAvailability": {
       return deps.providerAvailability.listAvailability();
-    }
-    case "provider.codexAgents": {
-      return discoverCodexAgents(deps, params.workspaceId, params.threadId);
     }
     case "provider.copilotAgents": {
       const workspace = deps.workspaceService.findById(params.workspaceId);
@@ -1380,12 +1463,18 @@ async function dispatch(
 
     // Permission
     case "permission.respond": {
+      if (await deps.threadControlService.respondToApproval(params.requestId, params.decision)) {
+        return;
+      }
       deps.agentService.respondToPermission(params.requestId, params.decision);
       // broadcast is handled by the provider's "permission_resolved" event → index.ts listener
       return;
     }
     case "permission.listPending":
-      return deps.agentService.listPendingPermissions(params.threadId);
+      return [
+        ...deps.threadControlService.listPendingApprovals(params.threadId),
+        ...deps.agentService.listPendingPermissions(params.threadId),
+      ];
 
     case "handoff.regenerate":
       // v1 stub; live regeneration is deferred to a follow-on plan.

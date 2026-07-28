@@ -176,6 +176,20 @@ export class WorkspaceRepo {
     return rows.map(rowToWorkspace);
   }
 
+  /** Search registered non-deleted workspaces by name or repository path. */
+  search(query: string, limit: number): Workspace[] {
+    const normalized = query.trim();
+    if (!normalized) {
+      return this.db.prepare(
+        "SELECT id, name, path, provider_config, is_git_repo, created_at, updated_at, pinned, last_opened_at, sort_order, deleted_at FROM workspaces WHERE deleted_at IS NULL ORDER BY last_opened_at DESC NULLS LAST, updated_at DESC, id ASC LIMIT ?",
+      ).all(limit).map((row) => rowToWorkspace(row as WorkspaceRow));
+    }
+    const pattern = `%${normalized.replace(/[\\%_]/g, "\\$&")}%`;
+    return this.db.prepare(
+      "SELECT id, name, path, provider_config, is_git_repo, created_at, updated_at, pinned, last_opened_at, sort_order, deleted_at FROM workspaces WHERE deleted_at IS NULL AND (name LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\') ORDER BY last_opened_at DESC NULLS LAST, updated_at DESC, id ASC LIMIT ?",
+    ).all(pattern, pattern, limit).map((row) => rowToWorkspace(row as WorkspaceRow));
+  }
+
   /** Rename a non-deleted workspace and return its updated record. */
   rename(id: string, name: string): Workspace | null {
     const result = this.db

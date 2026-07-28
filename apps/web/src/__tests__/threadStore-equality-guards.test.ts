@@ -1,4 +1,5 @@
 import {
+  activateTestConversation,
   resetThreadStoreForTests,
   getTestThreadPermissions,
 } from "@/stores/thread-store-test-utils";
@@ -12,7 +13,6 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
  * (post-getMessages hydration) are exercised.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { clearRecordCache, getCachedRecord } from "@/lib/thread-hydrator/record-cache";
@@ -123,7 +123,7 @@ describe("loadMessages (cache-miss) - listPendingPermissions equality guard", ()
     // Capture reference before load.
     const refBefore = getTestThreadPermissions(THREAD_ID);
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+await activateTestConversation(THREAD_ID);
 
     // Wait for async permission hydration to complete.
     await vi.waitFor(() => {
@@ -154,7 +154,7 @@ describe("loadMessages (cache-miss) - listPendingPermissions equality guard", ()
       fakePermission,
     ]);
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.listPendingPermissions).toHaveBeenCalledWith(THREAD_ID);
@@ -184,7 +184,7 @@ describe("loadMessages (cache-miss) - getThreadTasks equality guard", () => {
 
     const tasksBefore = useTaskStore.getState().tasksByThread[THREAD_ID];
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.getThreadTasks).toHaveBeenCalledWith(THREAD_ID);
@@ -210,7 +210,7 @@ describe("loadMessages (cache-miss) - getThreadTasks equality guard", () => {
 
     const tasksBefore = useTaskStore.getState().tasksByThread[THREAD_ID];
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.getThreadTasks).toHaveBeenCalledWith(THREAD_ID);
@@ -247,7 +247,7 @@ describe("loadMessages (cache-hit) - listPendingPermissions equality guard", () 
    */
   async function warmCache() {
     // First load populates cache for THREAD_ID.
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
     // Wait until the cache entry is actually written.
     await vi.waitFor(() => {
       expect(getCachedRecord(THREAD_ID)).toBeDefined();
@@ -280,7 +280,7 @@ describe("loadMessages (cache-hit) - listPendingPermissions equality guard", () 
     const refBefore = getTestThreadPermissions(THREAD_ID);
 
     // This load should be a cache-hit (getMessages NOT called).
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.listPendingPermissions).toHaveBeenCalledWith(THREAD_ID);
@@ -310,7 +310,7 @@ describe("loadMessages (cache-hit) - listPendingPermissions equality guard", () 
       fakePermission,
     ]);
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.listPendingPermissions).toHaveBeenCalledWith(THREAD_ID);
@@ -331,7 +331,7 @@ describe("loadMessages (cache-hit) - getThreadTasks equality guard", () => {
 
   /** @see warmCache in the listPendingPermissions describe block for rationale. */
   async function warmCache() {
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
     await vi.waitFor(() => {
       expect(getCachedRecord(THREAD_ID)).toBeDefined();
     });
@@ -353,7 +353,7 @@ describe("loadMessages (cache-hit) - getThreadTasks equality guard", () => {
 
     const tasksBefore = useTaskStore.getState().tasksByThread[THREAD_ID];
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.getThreadTasks).toHaveBeenCalledWith(THREAD_ID);
@@ -381,7 +381,7 @@ describe("loadMessages (cache-hit) - getThreadTasks equality guard", () => {
 
     const tasksBefore = useTaskStore.getState().tasksByThread[THREAD_ID];
 
-    await useThreadStore.getState().loadMessages(THREAD_ID);
+    await activateTestConversation(THREAD_ID);
 
     await vi.waitFor(() => {
       expect(mockTransport.getThreadTasks).toHaveBeenCalledWith(THREAD_ID);

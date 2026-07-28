@@ -47,10 +47,7 @@ Thumbs.db
 # Worktrees
 .worktrees/
 
-# Playwright
-playwright-report/
-test-results/
-apps/web/e2e/screenshots/
+# External Playwright
 .playwright-mcp/
 
 # Plans and superpowers (local working docs)

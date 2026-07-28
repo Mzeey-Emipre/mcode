@@ -44,4 +44,22 @@ describe("SnapshotBuilder", () => {
     });
     expect(result.latestTurnWithChanges).toBe("new");
   });
+
+  it("hydrates the newest empty authored summary after an earlier changed turn", () => {
+    const changed = {
+      revision: 2,
+      fileCount: 1,
+      additions: 3,
+      deletions: 0,
+      effects: [],
+    };
+    const empty = { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] };
+    const result = SnapshotBuilder.deriveFileChanges([
+      { message_id: "changed", files_changed: ["a.ts"], file_effects: changed } as unknown as TurnSnapshot,
+      { message_id: "unchanged", files_changed: [], file_effects: empty } as unknown as TurnSnapshot,
+    ]);
+
+    expect(result.persistedFilesChanged).toEqual({ changed: ["a.ts"] });
+    expect(result.fileEffectSummary).toEqual(empty);
+  });
 });

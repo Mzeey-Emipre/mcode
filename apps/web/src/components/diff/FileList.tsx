@@ -13,7 +13,6 @@ import { FileEntry } from "./FileEntry";
 import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,6 +49,12 @@ interface FileListProps {
   defaultFilesExpanded?: boolean;
   /** Extra identity for mutable comparisons whose ref names can stay stable while content changes. */
   cacheVersion?: string | number;
+  /** Whether this comparison can change and exposes manual refresh. */
+  refreshable?: boolean;
+  /** Whether the parent is retaining settled content while a replacement loads. */
+  refreshing?: boolean;
+  /** Refresh the complete comparison through the owning Review lifecycle. */
+  onRefresh?: () => void;
 }
 
 /**
@@ -65,6 +70,9 @@ export function FileList({
   threadId,
   defaultFilesExpanded = false,
   cacheVersion = 0,
+  refreshable = false,
+  refreshing = false,
+  onRefresh,
 }: FileListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
@@ -97,8 +105,6 @@ export function FileList({
   const setRenderMode = useDiffStore((s) => s.setRenderMode);
   const toggleLineWrap = useDiffStore((s) => s.toggleLineWrap);
   const lineWrap = useDiffStore((s) => (activeThreadId ? s.getLineWrap(activeThreadId) : true));
-  const bumpDiffRevision = useDiffStore((s) => s.bumpDiffRevision);
-  const setSnapshots = useDiffStore((s) => s.setSnapshots);
   const setBulkDiffExpand = useDiffStore((s) => s.setBulkDiffExpand);
   const bulkDiffExpand = useDiffStore((s) => s.bulkDiffExpand);
   const reviewFileJumpRequest = useDiffStore((s) => s.reviewFileJumpRequest);
@@ -150,20 +156,8 @@ export function FileList({
     });
   }, [fallbackAnchorIndex, scrollElement?.clientHeight, shouldVirtualize, sortedFiles, virtualItems]);
 
-  // Refresh re-fetches the view: bump the scope revision (clears the inline diff
-  // cache + reloads git-view file lists); thread views also need a snapshot
-  // refetch. `threadId` here is the diff scope (real thread, else workspace id).
-  const handleRefresh = useCallback(() => {
-    bumpDiffRevision(threadId);
-    if (activeThreadId) {
-      void getTransport()
-        .listSnapshots(activeThreadId)
-        .then((snaps) => setSnapshots(activeThreadId, snaps))
-        .catch(() => {
-          /* non-critical: auto-refresh on file events still applies */
-        });
-    }
-  }, [threadId, activeThreadId, bumpDiffRevision, setSnapshots]);
+  // The parent lifecycle owns refresh so the diff and Files publish together.
+  const refreshInProgress = refreshing;
 
   useEffect(() => {
     return () => {
@@ -222,14 +216,17 @@ export function FileList({
             <MoreHorizontal size={13} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={6} className="min-w-[190px]">
-            <DropdownMenuItem
-              onClick={handleRefresh}
-              data-testid="review-option-refresh"
-              className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs"
-            >
-              <RefreshCw size={13} className="text-muted-foreground" />
-              Refresh
-            </DropdownMenuItem>
+            {refreshable ? (
+              <DropdownMenuItem
+                onClick={onRefresh}
+                disabled={refreshInProgress}
+                data-testid="review-option-refresh"
+                className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs"
+              >
+                <RefreshCw size={13} className={cn("text-muted-foreground", refreshInProgress && "animate-spin")} />
+                {refreshInProgress ? "Refreshing" : "Refresh"}
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem
               disabled={!activeThreadId}
               onClick={() => {
@@ -256,6 +253,17 @@ export function FileList({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {refreshInProgress ? (
+          <span
+            role="status"
+            aria-label="Refreshing comparison"
+            data-testid="review-refresh-progress"
+            className="inline-flex h-6 w-6 items-center justify-center text-muted-foreground/55"
+          >
+            <RefreshCw size={12} className="animate-spin" aria-hidden="true" />
+          </span>
+        ) : null}
 
         <Popover open={jumpOpen} onOpenChange={setJumpOpen}>
           {/* Icon-only trigger; the tooltip carries the description on hover. */}

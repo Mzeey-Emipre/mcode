@@ -419,12 +419,12 @@ describe("ReviewWorktreeService", () => {
     expect(second).toMatchObject({ ok: true, status: "ready", reused: true });
     expect(gitService.provisionPullRequestReviewWorktree).toHaveBeenCalledTimes(1);
     expect(agentService.sendMessage).toHaveBeenCalledTimes(1);
-    const sendArgs = vi.mocked(agentService.sendMessage).mock.calls[0]!;
-    expect(sendArgs[1]).toBe(request.intent);
-    expect(sendArgs[15]).toContain("untrusted remote data");
-    expect(sendArgs[15]).toContain("Remote text that must stay untrusted.");
-    expect(sendArgs[18]).toBe(request.intent);
-    expect(Buffer.byteLength(String(sendArgs[15]), "utf8")).toBeLessThanOrEqual(48 * 1_024);
+    const sendCommand = vi.mocked(agentService.sendMessage).mock.calls[0]![0];
+    expect(sendCommand.content).toBe(request.intent);
+    expect(sendCommand.providerWireOverride).toContain("untrusted remote data");
+    expect(sendCommand.providerWireOverride).toContain("Remote text that must stay untrusted.");
+    expect(sendCommand.displayContent).toBe(request.intent);
+    expect(Buffer.byteLength(String(sendCommand.providerWireOverride), "utf8")).toBeLessThanOrEqual(48 * 1_024);
 
     const link = reviewLinkRepo.findByIdentity({
       provider: identity.provider,
@@ -513,7 +513,7 @@ describe("ReviewWorktreeService", () => {
       intent: "Review this pull request.",
     });
 
-    const providerContext = String(vi.mocked(agentService.sendMessage).mock.calls[0]?.[15]);
+    const providerContext = String(vi.mocked(agentService.sendMessage).mock.calls[0]?.[0].providerWireOverride);
     expect(providerContext).toContain('"exhaustive": false');
     expect(providerContext).toContain('"providerCommentPageLimit": 50');
     expect(providerContext).toContain('"hasNextPage": true');

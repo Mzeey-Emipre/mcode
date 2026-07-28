@@ -1,5 +1,13 @@
-import { Globe, PanelRight, Plus, X } from "lucide-react";
+import type {
+  FocusEvent as ReactFocusEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Globe, Maximize2, Minimize2, PanelRight, Plus, X } from "lucide-react";
 import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,7 +25,8 @@ import {
   type PanelScope,
   type PanelTabType,
 } from "@/lib/panel-tabs";
-import type { RightPanelTab } from "@/stores/diffStore";
+import type { RightPanelTab, RightPanelTabInstance } from "@/stores/diffStore";
+import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { cn } from "@/lib/utils";
 
 /** Legacy task completion payload kept for tab API compatibility. */
@@ -28,6 +37,101 @@ export interface ScopeProgress {
 
 /** Past this many changed files the Review badge renders "{cap}+" instead of the exact count. */
 const CHANGES_COUNT_CAP = 99;
+
+/** Hover-intent delay before the rail reveals labels. */
+const RAIL_EXPAND_DELAY_MS = 140;
+
+/** Grace period that keeps the rail open while the pointer moves between rows. */
+const RAIL_COLLAPSE_DELAY_MS = 250;
+
+/** Shared trailing anchor for expanded-rail actions. */
+const RAIL_TRAILING_CONTROL_CLASS = "absolute right-0 top-0";
+/** Pointer and keyboard reorder boundary for one top-level rail instance. */
+function ReorderableRailItem({
+  instanceId,
+  children,
+  onReorder,
+}: {
+  instanceId: string;
+  children: ReactNode;
+  onReorder: (instanceId: string, direction: -1 | 1) => void;
+}) {
+  const draggingRef = useRef(false);
+  const dragStartYRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-rail-close]")) return;
+    suppressClickRef.current = false;
+    draggingRef.current = true;
+    dragStartYRef.current = event.clientY;
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return;
+    const dragStartY = dragStartYRef.current;
+    if (dragStartY === null || Math.abs(event.clientY - dragStartY) < 4) return;
+    if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
+    const item = event.currentTarget;
+    const siblings = Array.from(
+      item.parentElement?.querySelectorAll<HTMLElement>(":scope > [data-rail-instance]") ?? [],
+    );
+    const index = siblings.indexOf(item);
+    const previous = siblings[index - 1];
+    const next = siblings[index + 1];
+    const direction =
+      previous && event.clientY <= previous.getBoundingClientRect().bottom
+        ? -1
+        : next && event.clientY >= next.getBoundingClientRect().top
+          ? 1
+          : null;
+    if (direction === null) return;
+    onReorder(instanceId, direction);
+    suppressClickRef.current = true;
+  };
+
+  const onPointerUp = () => {
+    draggingRef.current = false;
+    dragStartYRef.current = null;
+  };
+
+  const onPointerCancel = () => {
+    draggingRef.current = false;
+    dragStartYRef.current = null;
+    suppressClickRef.current = false;
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!event.altKey || !event.shiftKey) return;
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    event.stopPropagation();
+    onReorder(instanceId, event.key === "ArrowUp" ? -1 : 1);
+  };
+
+  return (
+    <div
+      data-rail-instance={instanceId}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onKeyDown={onKeyDown}
+      onClickCapture={(event) => {
+        if (!suppressClickRef.current) return;
+        suppressClickRef.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
 /** Catalog metadata (product label + icon) for an openable tab, by store id. */
 function metaForTab(id: RightPanelTab): PanelTabType | undefined {
@@ -77,11 +181,13 @@ function railAccessibleLabel(
 function RailStatus({
   id,
   active,
+  expanded,
   changesCount,
   changesFresh,
 }: {
   id: RightPanelTab;
   active: boolean;
+  expanded: boolean;
   changesCount: number;
   changesFresh: boolean;
 }) {
@@ -94,7 +200,10 @@ function RailStatus({
     return (
       <span
         className={cn(
-          "font-mono text-[9px] font-medium leading-none tabular-nums",
+          "font-mono text-xs font-medium leading-none tabular-nums transition-[opacity,transform] motion-reduce:duration-0 motion-reduce:transition-none",
+          expanded
+            ? "absolute right-2 top-1/2 -translate-y-1/2 group-hover:opacity-0"
+            : "mt-0.5",
           changesFresh
             ? "changes-fresh-ring text-primary"
             : active
@@ -112,7 +221,9 @@ function RailStatus({
 /** One rail entry: a select glyph with an active lamp, plus a hover-revealed × to close. */
 function RailTab({
   id,
+  label: labelOverride,
   active,
+  expanded,
   scope,
   changesCount,
   changesFresh,
@@ -120,7 +231,9 @@ function RailTab({
   onClose,
 }: {
   id: RightPanelTab;
+  label?: string;
   active: boolean;
+  expanded: boolean;
   scope: ScopeProgress;
   changesCount: number;
   changesFresh: boolean;
@@ -130,32 +243,45 @@ function RailTab({
   const meta = metaForTab(id);
   if (!meta) return null;
   const Icon = meta.icon;
-  const label = meta.label;
+  const label = labelOverride ?? meta.label;
   return (
-    <div className="group relative">
-      <button
+    <div className="group relative w-full">
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         data-rail-tab={railDomId(id)}
         data-active={active ? "true" : undefined}
         aria-pressed={active}
         aria-label={railAccessibleLabel(id, label, scope, changesCount, changesFresh)}
-        title={label}
+        title={expanded ? undefined : label}
         onClick={() => onSelect(id)}
         className={cn(
-          "flex min-h-9 w-9 flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 transition-colors",
+          "relative h-8 w-full overflow-hidden px-2 text-xs transition-colors",
+          expanded ? "flex-row justify-start gap-2" : "flex-col gap-0",
           active
             ? "bg-card text-primary"
             : "text-foreground/70 hover:bg-card/60 hover:text-foreground",
         )}
       >
         <Icon size={17} />
+        <span
+          aria-hidden
+          className={cn(
+            "absolute left-8 right-8 truncate text-left font-medium text-foreground transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+            expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+          )}
+        >
+          {label}
+        </span>
         <RailStatus
           id={id}
           active={active}
+          expanded={expanded}
           changesCount={changesCount}
           changesFresh={changesFresh}
         />
-      </button>
+      </Button>
       {/* Active lamp: a short amber bar on the rail's inner edge. */}
       {active && (
         <span
@@ -166,18 +292,24 @@ function RailTab({
       )}
       {/* Hover/focus-revealed close. A sibling button (not nested) so the markup
           stays valid and the × is its own focusable, announced control. */}
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-xs"
         aria-label={`Close ${label}`}
-        title={`Close ${label}`}
+        data-rail-close
+        title={expanded ? undefined : `Close ${label}`}
         onClick={() => onClose(id)}
         className={cn(
-          "absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-background text-muted-foreground opacity-0 ring-1 ring-border transition",
-          "hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+          RAIL_TRAILING_CONTROL_CLASS,
+          "text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+          expanded
+            ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+            : "pointer-events-none",
         )}
       >
-        <X size={10} />
-      </button>
+        <X size={12} />
+      </Button>
     </div>
   );
 }
@@ -206,20 +338,24 @@ function BrowserPageRailTab({
   page,
   active,
   browserActive,
+  expanded,
   onSelect,
   onClose,
 }: {
   page: BrowserTabInfo;
   active: boolean;
   browserActive: boolean;
+  expanded: boolean;
   onSelect: (pageId: string) => void;
   onClose: (pageId: string) => void;
 }) {
   const label = pageLabel(page);
   return (
-    <div className="group relative">
-      <button
+    <div className="group relative w-full">
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         data-rail-browser-page={page.id}
         data-active={active ? "true" : undefined}
         aria-pressed={active}
@@ -227,10 +363,10 @@ function BrowserPageRailTab({
         // page in the switcher; expose that beyond the visual lamp.
         aria-current={active && browserActive ? "page" : undefined}
         aria-label={`Browser page: ${label}`}
-        title={label}
+        title={expanded ? undefined : label}
         onClick={() => onSelect(page.id)}
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
+          "relative h-8 w-full justify-start overflow-hidden px-2 text-xs transition-colors",
           active && browserActive
             ? "bg-card text-primary"
             : active
@@ -243,7 +379,16 @@ function BrowserPageRailTab({
         ) : (
           <Globe size={17} />
         )}
-      </button>
+        <span
+          aria-hidden
+          className={cn(
+            "absolute left-8 right-8 truncate text-left font-medium text-foreground transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+            expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+          )}
+        >
+          {label}
+        </span>
+      </Button>
       {/* Active lamp mirrors the singleton tabs: a short amber bar on the inner
           edge, shown only when this page is active and Browser owns the panel. */}
       {active && browserActive && (
@@ -253,21 +398,27 @@ function BrowserPageRailTab({
           className="pointer-events-none absolute -left-1.5 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
         />
       )}
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="icon-xs"
         aria-label={`Close page ${label}`}
-        title={`Close ${label}`}
+        data-rail-close
+        title={expanded ? undefined : `Close ${label}`}
         onClick={(e) => {
           e.stopPropagation();
           onClose(page.id);
         }}
         className={cn(
-          "absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-background text-muted-foreground opacity-0 ring-1 ring-border transition",
-          "hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
+          RAIL_TRAILING_CONTROL_CLASS,
+          "text-muted-foreground opacity-0 transition-opacity motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+          expanded
+            ? "focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+            : "pointer-events-none",
         )}
       >
-        <X size={10} />
-      </button>
+        <X size={12} />
+      </Button>
     </div>
   );
 }
@@ -281,11 +432,13 @@ function BrowserPageRailTab({
 function BrowserPageGroup({
   tabSet,
   browserActive,
+  expanded,
   onSelectPage,
   onClosePage,
 }: {
   tabSet: BrowserTabSet;
   browserActive: boolean;
+  expanded: boolean;
   onSelectPage: (pageId: string) => void;
   onClosePage: (pageId: string) => void;
 }) {
@@ -294,7 +447,7 @@ function BrowserPageGroup({
       data-testid="rail-browser-pages"
       role="group"
       aria-label="Browser pages"
-      className="flex flex-col items-center gap-1 rounded-lg bg-foreground/[0.03] py-1"
+      className="flex w-full flex-col items-stretch gap-0.5 rounded-lg bg-foreground/[0.03] py-0.5"
     >
       {tabSet.tabs.map((page) => (
         <BrowserPageRailTab
@@ -302,6 +455,7 @@ function BrowserPageGroup({
           page={page}
           active={page.id === tabSet.activeTabId}
           browserActive={browserActive}
+          expanded={expanded}
           onSelect={onSelectPage}
           onClose={onClosePage}
         />
@@ -320,14 +474,20 @@ function BrowserPageGroup({
 function RailAddControl({
   scope,
   openTabs,
+  expanded,
   onCreate,
+  terminalCapReached,
 }: {
   scope: PanelScope;
   openTabs: readonly RightPanelTab[];
+  expanded: boolean;
   onCreate: (id: RightPanelTab) => void;
+  readonly terminalCapReached?: boolean;
 }) {
   const shown = shownTabTypes(scope, openTabs);
-  const creatable = creatableTypes(scope, openTabs);
+  const creatable = creatableTypes(scope, openTabs).filter(
+    (type) => !(terminalCapReached && type.id === "terminal"),
+  );
 
   // Nothing openable hides the control entirely, even if a coming-soon teaser remains.
   if (creatable.length === 0) return null;
@@ -338,13 +498,22 @@ function RailAddControl({
     return (
       <Button
         variant="ghost"
-        size="icon-xs"
-        className="text-muted-foreground hover:text-foreground"
-        title={`New ${only.label}`}
+        size="sm"
+        className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground hover:text-foreground"
+        title={expanded ? undefined : `New ${only.label}`}
         aria-label={`New ${only.label}`}
         onClick={() => onCreate(only.id as RightPanelTab)}
       >
         <Plus />
+        <span
+          aria-hidden
+          className={cn(
+            "absolute left-8 right-2 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+            expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+          )}
+        >
+          New {only.label}
+        </span>
       </Button>
     );
   }
@@ -355,12 +524,21 @@ function RailAddControl({
         render={
           <Button
             variant="ghost"
-            size="icon-xs"
-            className="text-muted-foreground hover:text-foreground"
-            title="New tab"
+            size="sm"
+            className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground hover:text-foreground"
+            title={expanded ? undefined : "New tab"}
             aria-label="New tab"
           >
             <Plus />
+            <span
+              aria-hidden
+              className={cn(
+                "absolute left-8 right-2 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+                expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+              )}
+            >
+              New tab
+            </span>
           </Button>
         }
       />
@@ -370,8 +548,10 @@ function RailAddControl({
           return (
             <DropdownMenuItem
               key={type.id}
-              disabled={type.comingSoon}
-              onClick={type.comingSoon ? undefined : () => onCreate(type.id as RightPanelTab)}
+            disabled={type.comingSoon || (terminalCapReached && type.id === "terminal")}
+            onClick={type.comingSoon || (terminalCapReached && type.id === "terminal")
+              ? undefined
+              : () => onCreate(type.id as RightPanelTab)}
               className="flex items-center justify-between gap-3 px-2.5 py-1.5 text-xs"
             >
               <span className="flex items-center gap-2">
@@ -379,9 +559,9 @@ function RailAddControl({
                 {type.label}
               </span>
               {type.comingSoon ? (
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                <Badge variant="secondary" size="sm" className="uppercase tracking-wide">
                   Soon
-                </span>
+                </Badge>
               ) : (
                 keycap && <Kbd>{keycap}</Kbd>
               )}
@@ -394,96 +574,246 @@ function RailAddControl({
 }
 
 /**
- * Vertical activity rail for the right panel: panel toggle at the head, then
+ * Vertical activity rail for the right panel: close and maximize controls at the head, then
  * open singleton tabs (active lamp, hover-× close, add control when tabs exist).
- * With no tabs open the rail is only the panel toggle beside the empty-state
- * list. The rail toggle mirrors the chat-header toggle and right-panel shortcut.
+ * With no tabs open the rail keeps only the panel actions beside the empty-state
+ * list. The close action mirrors the chat-header toggle and right-panel shortcut.
  */
 export function ActivityRail({
-  openTabs,
-  activeTab,
+  tabInstances,
+  activeTabId,
   scope,
   scopeProgress,
   changesCount,
   changesFresh,
   browserTabSet,
+  maximized,
   onTogglePanel,
+  onToggleMaximized,
   onSelect,
   onClose,
+  onReorder,
   onCreate,
+  terminalCapReached,
+  terminalLabels,
   onSelectBrowserPage,
   onCloseBrowserPage,
 }: {
-  readonly openTabs: readonly RightPanelTab[];
-  readonly activeTab: RightPanelTab;
+  readonly tabInstances: readonly RightPanelTabInstance[];
+  readonly activeTabId: string | null;
   readonly scope: PanelScope;
   readonly scopeProgress: ScopeProgress;
   readonly changesCount: number;
   readonly changesFresh: boolean;
   /** The Browser tab's open pages, or null when none are known (web build / not yet loaded). */
   readonly browserTabSet: BrowserTabSet | null;
+  /** Whether the panel fills the content area beside the project tree. */
+  readonly maximized: boolean;
   onTogglePanel: () => void;
-  onSelect: (id: RightPanelTab) => void;
-  onClose: (id: RightPanelTab) => void;
+  onToggleMaximized: () => void;
+  onSelect: (instanceId: string) => void;
+  onClose: (instanceId: string) => void;
+  onReorder: (instanceId: string, direction: -1 | 1) => void;
   onCreate: (id: RightPanelTab) => void;
-  onSelectBrowserPage: (pageId: string) => void;
+  /** Whether this scope already owns its four allowed shell sessions. */
+  readonly terminalCapReached?: boolean;
+  /** PTY-backed rail labels keyed by terminal tab identity. */
+  readonly terminalLabels?: Readonly<Record<string, string>>;
+  onSelectBrowserPage: (instanceId: string, pageId: string) => void;
   onCloseBrowserPage: (pageId: string) => void;
 }) {
+  const openTabs = tabInstances.map((instance) => instance.type);
+  const [expanded, setExpanded] = useState(false);
+  const railRef = useRef<HTMLDivElement>(null);
+  const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerWithinRef = useRef(false);
+  const focusWithinRef = useRef(false);
+
+  const clearExpandTimer = useCallback(() => {
+    if (expandTimerRef.current === null) return;
+    clearTimeout(expandTimerRef.current);
+    expandTimerRef.current = null;
+  }, []);
+
+  const clearCollapseTimer = useCallback(() => {
+    if (collapseTimerRef.current === null) return;
+    clearTimeout(collapseTimerRef.current);
+    collapseTimerRef.current = null;
+  }, []);
+
+  const scheduleExpand = useCallback(() => {
+    clearCollapseTimer();
+    if (expanded || expandTimerRef.current !== null) return;
+    expandTimerRef.current = setTimeout(() => {
+      expandTimerRef.current = null;
+      if (pointerWithinRef.current) setExpanded(true);
+    }, RAIL_EXPAND_DELAY_MS);
+  }, [clearCollapseTimer, expanded]);
+
+  const scheduleCollapse = useCallback(() => {
+    clearExpandTimer();
+    clearCollapseTimer();
+    collapseTimerRef.current = setTimeout(() => {
+      collapseTimerRef.current = null;
+      const focusWithin = railRef.current?.contains(document.activeElement) ?? false;
+      focusWithinRef.current = focusWithin;
+      if (!pointerWithinRef.current && !focusWithin) setExpanded(false);
+    }, RAIL_COLLAPSE_DELAY_MS);
+  }, [clearCollapseTimer, clearExpandTimer]);
+
+  const incrementPreviewSuppression = usePreviewSuppressionStore((s) => s.increment);
+  const decrementPreviewSuppression = usePreviewSuppressionStore((s) => s.decrement);
+  useEffect(() => {
+    if (!expanded) return;
+    incrementPreviewSuppression();
+    return () => decrementPreviewSuppression();
+  }, [decrementPreviewSuppression, expanded, incrementPreviewSuppression]);
+
+  useEffect(
+    () => () => {
+      clearExpandTimer();
+      clearCollapseTimer();
+    },
+    [clearCollapseTimer, clearExpandTimer],
+  );
+
+  const onPointerEnter = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") return;
+    pointerWithinRef.current = true;
+    scheduleExpand();
+  };
+
+  const onPointerLeave = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") return;
+    pointerWithinRef.current = false;
+    scheduleCollapse();
+  };
+
+  const onFocusCapture = () => {
+    focusWithinRef.current = true;
+    clearExpandTimer();
+    clearCollapseTimer();
+    setExpanded(true);
+  };
+
+  const onBlurCapture = (event: ReactFocusEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    focusWithinRef.current = false;
+    scheduleCollapse();
+  };
+
   return (
     <div
+      ref={railRef}
       data-testid="activity-rail"
-      className="flex w-12 flex-none flex-col items-center gap-1 bg-background py-2"
+      data-expanded={expanded ? "true" : "false"}
+      className="relative z-30 w-12 flex-none bg-background"
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onFocusCapture={onFocusCapture}
+      onBlurCapture={onBlurCapture}
     >
-      {/* The panel toggle sits at the rail head (not the foot) so it stays in
-          the first tab stop and never scrolls off-screen on short viewports. */}
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onClick={onTogglePanel}
-        className="shrink-0 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
-        aria-label="Toggle panel"
-        aria-pressed={true}
-        title="Toggle panel"
-        data-testid="rail-panel-toggle"
-        data-preview-design-keep-open="true"
+      <div
+        className={cn(
+          "absolute inset-y-0 left-0 flex w-12 flex-col items-stretch gap-0.5 overflow-hidden bg-background px-1.5 py-2 transition-[width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+          expanded && "w-40 border-r border-border/50",
+        )}
       >
-        <PanelRight />
-      </Button>
+      {/* Panel-level actions stay at the rail head so they remain the first tab
+          stops and never scroll off-screen on short viewports. */}
+      <div className="relative h-8 w-full shrink-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onTogglePanel}
+          className="relative h-8 w-full justify-start overflow-hidden px-2 text-muted-foreground/70 transition-colors hover:bg-transparent hover:text-foreground"
+          aria-label="Close panel"
+          title={expanded ? undefined : "Close panel"}
+          data-testid="rail-panel-toggle"
+          data-preview-design-keep-open="true"
+        >
+          <PanelRight />
+          <span
+            aria-hidden
+            className={cn(
+              "absolute left-8 right-8 truncate text-left text-xs font-medium transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+              expanded ? "translate-x-0 opacity-100" : "translate-x-1 opacity-0",
+            )}
+          >
+            Close panel
+          </span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onToggleMaximized}
+          className={cn(
+            RAIL_TRAILING_CONTROL_CLASS,
+            "text-muted-foreground/70 transition-[color,opacity] motion-reduce:duration-0 motion-reduce:transition-none hover:bg-card hover:text-foreground",
+            expanded ? "opacity-100" : "pointer-events-none opacity-0",
+          )}
+          aria-label={maximized ? "Restore panel" : "Maximize panel"}
+          title={maximized ? "Restore panel" : "Maximize panel"}
+          data-testid="rail-maximize-toggle"
+          data-preview-design-keep-open="true"
+        >
+          {maximized ? <Minimize2 /> : <Maximize2 />}
+        </Button>
+      </div>
 
-      {openTabs.map((id) => {
+      {tabInstances.map((instance) => {
+        const { id: instanceId, type: id } = instance;
         // The Browser tab becomes its page switcher: when its pages are known,
         // render them as a favicon group instead of the single tab glyph. With
         // none known yet (or a web build with no bridge), fall back to the tab
         // glyph so Browser is still selectable.
         if (id === "preview" && browserTabSet && browserTabSet.tabs.length > 0) {
           return (
-            <BrowserPageGroup
-              key={id}
-              tabSet={browserTabSet}
-              browserActive={activeTab === "preview"}
-              onSelectPage={onSelectBrowserPage}
-              onClosePage={onCloseBrowserPage}
-            />
+            <ReorderableRailItem key={instanceId} instanceId={instanceId} onReorder={onReorder}>
+              <BrowserPageGroup
+                tabSet={browserTabSet}
+                browserActive={activeTabId === instanceId}
+                expanded={expanded}
+                onSelectPage={(pageId) => onSelectBrowserPage(instanceId, pageId)}
+                onClosePage={onCloseBrowserPage}
+              />
+            </ReorderableRailItem>
           );
         }
         return (
-          <RailTab
-            key={id}
-            id={id}
-            active={id === activeTab}
-            scope={scopeProgress}
-            changesCount={changesCount}
-            changesFresh={changesFresh}
-            onSelect={onSelect}
-            onClose={onClose}
-          />
+          <ReorderableRailItem key={instanceId} instanceId={instanceId} onReorder={onReorder}>
+            <RailTab
+              id={id}
+              label={id === "terminal" ? terminalLabels?.[instanceId] ?? "Terminal" : undefined}
+              active={instanceId === activeTabId}
+              expanded={expanded}
+              scope={scopeProgress}
+              changesCount={changesCount}
+              changesFresh={changesFresh}
+              onSelect={() => onSelect(instanceId)}
+              onClose={() => onClose(instanceId)}
+            />
+          </ReorderableRailItem>
         );
       })}
       {/* The add control only appears once a tab is open; with none open the
           empty-state card grid is the create surface. */}
       {openTabs.length > 0 && (
-        <RailAddControl scope={scope} openTabs={openTabs} onCreate={onCreate} />
+        <RailAddControl
+          scope={scope}
+          openTabs={openTabs}
+          expanded={expanded}
+          onCreate={onCreate}
+          terminalCapReached={terminalCapReached}
+        />
       )}
+      {terminalCapReached && (
+        <span className="sr-only" role="status">
+          Maximum of 4 terminals reached for this scope.
+        </span>
+      )}
+      </div>
     </div>
   );
 }

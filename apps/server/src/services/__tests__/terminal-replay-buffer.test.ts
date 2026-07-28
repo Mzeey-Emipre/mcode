@@ -185,6 +185,71 @@ describe("TerminalReplayBuffer", () => {
   });
 
   describe("reattach replay within the scrollback budget", () => {
+    it("restores a checkpoint followed by only contiguous later output", () => {
+      const buf = new TerminalReplayBuffer(1024);
+      buf.record(1, new TextEncoder().encode("\u001b[31"));
+      buf.record(2, new TextEncoder().encode("mred"));
+
+      expect(buf.checkpointAt(2, "\u001b[31mred")).toBe(true);
+      buf.record(3, new TextEncoder().encode(" later"));
+
+      expect(buf.restoreCold()).toMatchObject({
+        mode: "checkpoint",
+        checkpoint: { seq: 2, data: "\u001b[31mred" },
+        chunks: [{ seq: 3 }],
+      });
+    });
+
+    it("keeps a newer checkpoint when a stale or oversized checkpoint arrives", () => {
+      const buf = new TerminalReplayBuffer(16);
+      buf.record(3, new Uint8Array([1]));
+      expect(buf.checkpointAt(3, "screen")).toBe(true);
+      expect(buf.checkpointAt(2, "stale")).toBe(false);
+      expect(buf.checkpointAt(3, "x".repeat(17))).toBe(false);
+      expect(buf.restoreCold()).toMatchObject({
+        mode: "checkpoint",
+        checkpoint: { data: "screen" },
+      });
+    });
+
+    it("rejects a delayed checkpoint when an intermediate delta was evicted", () => {
+      const buf = new TerminalReplayBuffer(4);
+      buf.record(1, new Uint8Array(4));
+      buf.record(2, new Uint8Array(4));
+      buf.record(3, new Uint8Array(4));
+
+      expect(buf.checkpointAt(1, "one")).toBe(false);
+      expect(buf.restoreCold()).toEqual({
+        mode: "reset",
+        chunks: [],
+        discardThrough: 3,
+      });
+    });
+
+    it("recomputes the byte total after checkpoint invalidation", () => {
+      const buf = new TerminalReplayBuffer(10);
+      buf.record(1, new Uint8Array([1]));
+      expect(buf.checkpointAt(1, "123456789")).toBe(true);
+      buf.record(2, new Uint8Array(1));
+      buf.record(3, new Uint8Array(2));
+
+      expect(buf.replay(2).chunks.map((chunk) => chunk.seq)).toEqual([3]);
+      expect(buf.bufferedBytes).toBe(2);
+    });
+
+    it("returns no retained tail when checkpoint continuity is lost", () => {
+      const buf = new TerminalReplayBuffer(12);
+      buf.record(1, new Uint8Array([1]));
+      expect(buf.checkpointAt(1, "checkpoint")).toBe(true);
+      buf.record(2, new Uint8Array(8));
+
+      expect(buf.restoreCold()).toEqual({
+        mode: "reset",
+        chunks: [],
+        discardThrough: 2,
+      });
+    });
+
     it("retains roughly the scrollback window and replays its tail", () => {
       // A 200-line scrollback → a byte cap; record well beyond it.
       const cap = replayCapBytesForScrollback(200);

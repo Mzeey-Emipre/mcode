@@ -68,6 +68,7 @@ function buildService(): {
   sendTurn: ReturnType<typeof vi.fn>;
   discardSession: ReturnType<typeof vi.fn>;
   waitForSessionExit: ReturnType<typeof vi.fn>;
+  threadControlMcp: { activate: ReturnType<typeof vi.fn> };
   providerEmitter: EventEmitter;
   threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
 } {
@@ -157,6 +158,7 @@ function buildService(): {
     isAnswered: vi.fn(() => false),
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as PlanQuestionAnswersRepo;
+  const threadControlMcp = { activate: vi.fn(), revoke: vi.fn(), close: vi.fn() };
   const db = {
     transaction: vi.fn((fn: (...args: unknown[]) => unknown) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
@@ -189,9 +191,11 @@ function buildService(): {
       { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
     ),
     new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+    undefined,
+    threadControlMcp as never,
   );
 
-  return { service, sendTurn, discardSession, waitForSessionExit, providerEmitter, threadRepo };
+  return { service, sendTurn, discardSession, waitForSessionExit, providerEmitter, threadRepo, threadControlMcp };
 }
 
 describe("AgentService transient-failure auto-retry", () => {
@@ -206,7 +210,14 @@ describe("AgentService transient-failure auto-retry", () => {
       .mockRejectedValueOnce(new Error("read ECONNRESET"))
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(sendTurn).toHaveBeenCalledTimes(2);
     // First attempt resumes the live session; the retry must drop it for a fresh spawn.
@@ -219,12 +230,42 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "errored");
   });
 
+  it("reactivates the same turn authority after retry discards its provider session", async () => {
+    const { service, sendTurn, threadControlMcp } = buildService();
+    service.init();
+    sendTurn.mockRejectedValueOnce(new Error("read ECONNRESET")).mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "full",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    expect(threadControlMcp.activate).toHaveBeenCalledTimes(2);
+    expect(threadControlMcp.activate.mock.calls[1][0]).toMatchObject({
+      sourceThreadId: THREAD_ID,
+      sourceTurnId: threadControlMcp.activate.mock.calls[0][0].sourceTurnId,
+      sourceProviderId: "claude",
+      permissionMode: "full",
+    });
+  });
+
   it("does not retry a fatal send failure", async () => {
     const { service, sendTurn, discardSession, threadRepo } = buildService();
     service.init();
     sendTurn.mockRejectedValue(new Error("permission denied"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(sendTurn).toHaveBeenCalledTimes(1);
     expect(discardSession).not.toHaveBeenCalled();
@@ -248,7 +289,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // During the retried attempt: a transient error is swallowed, a fatal one is not.
     expect(transientSuppressedDuringAttempt).toBe(true);
@@ -280,7 +328,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // The trailing Ended was armed for suppression during the failed attempt...
     expect(endedSuppressedDuringAttempt).toBe(true);
@@ -303,7 +358,14 @@ describe("AgentService transient-failure auto-retry", () => {
       return Promise.reject(new Error("permission denied"));
     });
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // A fatal error is not part of a retry window, so its Ended must reach the UI.
     expect(endedSuppressedDuringAttempt).toBe(false);
@@ -315,7 +377,14 @@ describe("AgentService transient-failure auto-retry", () => {
     service.init();
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // Give-up disarms the retry window so the terminal error is visible.
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
@@ -341,7 +410,14 @@ describe("AgentService transient-failure auto-retry", () => {
       .mockRejectedValueOnce(new Error("spawn claude EAGAIN"))
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(discardSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
     expect(waitForSessionExit).toHaveBeenCalledWith(`mcode-${THREAD_ID}`, 5000);
@@ -356,20 +432,15 @@ describe("AgentService transient-failure auto-retry", () => {
 
     sendTurn.mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(
-      THREAD_ID,
-      "hello",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "1m",
-    );
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      contextWindow: "1m",
+    });
 
     // A bare `Ended` with no in-flight transient retry means the stream
     // genuinely ended; it must reach the cleanup path even though the
@@ -385,7 +456,14 @@ describe("AgentService transient-failure auto-retry", () => {
     sendTurn.mockResolvedValueOnce(undefined);
 
     // Fire-and-forget send leaves the retry window armed until TurnComplete.
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(true);
 
     // A user stop ends the turn via finalize; it must tear down the armed
@@ -406,7 +484,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    const sendPromise = service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    const sendPromise = service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     await sendPromise;
 
     providerEmitter.emit("event", {
@@ -445,7 +530,14 @@ describe("AgentService transient-failure auto-retry", () => {
       })
       .mockResolvedValueOnce(undefined);
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(turnCompleteSuppressedDuringAttempt).toBe(true);
     providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
@@ -457,7 +549,14 @@ describe("AgentService transient-failure auto-retry", () => {
     service.init();
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     // Cap is 2: one original attempt plus one retry, then it gives up.
     expect(sendTurn).toHaveBeenCalledTimes(2);

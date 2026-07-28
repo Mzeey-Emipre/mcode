@@ -1,4 +1,6 @@
+import type { AgentEvent } from "@mcode/contracts";
 import {
+  activateTestConversation,
   resetThreadStoreForTests,
   getTestActiveMessages,
 } from "@/stores/thread-store-test-utils";
@@ -52,7 +54,7 @@ describe("loadMessages cache integration", () => {
   });
 
   it("calls conversation.page on first load (cache miss) and populates cache", async () => {
-    await useThreadStore.getState().loadMessages("t1");
+await activateTestConversation("t1");
 
     expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", MESSAGE_FETCH_SIZE);
     expect(mockTransport.getMessages).not.toHaveBeenCalled();
@@ -63,7 +65,7 @@ describe("loadMessages cache integration", () => {
 
   it("on cache hit, does not call conversation.page and renders from cache", async () => {
     // First load primes the cache
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
 
     // Switch away
@@ -73,14 +75,50 @@ describe("loadMessages cache integration", () => {
     }));
 
     // Switch back -- should hit cache
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1); // unchanged
     expect(getTestActiveMessages()).toEqual(fakeMessages);
     expect(useThreadStore.getState().currentThreadId).toBe("t1");
   });
 
+  it("appends an optimistic user message after a restored high-sequence cache tail", async () => {
+    const cachedTail = [
+      createMockMessage({ id: "m99", thread_id: "t1", sequence: 99 }),
+      createMockMessage({ id: "m100", thread_id: "t1", sequence: 100 }),
+    ];
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: cachedTail,
+      hasMore: true,
+      narrativeByMessage: {},
+    });
+
+    await activateTestConversation("t1");
+    useThreadStore.setState((s) => ({
+      currentThreadId: "t2",
+      records: patchThreadRecord(s.records, "t2", { messages: [] }),
+    }));
+    await activateTestConversation("t1");
+
+    await useThreadStore.getState().sendMessage("t1", "new user message");
+
+    const messages = getTestActiveMessages();
+    expect(messages.map((message) => message.sequence)).toEqual([99, 100, 101]);
+    expect(messages.at(-1)?.content).toBe("new user message");
+  });
+
+  it("starts optimistic messages at sequence one for an empty record", async () => {
+    useThreadStore.setState((s) => ({
+      currentThreadId: "t1",
+      records: patchThreadRecord(s.records, "t1", { messages: [] }),
+    }));
+
+    await useThreadStore.getState().sendMessage("t1", "first user message");
+
+    expect(getTestActiveMessages().at(-1)?.sequence).toBe(1);
+  });
+
   it("does NOT clear toolCallRecordCache on cache hit", async () => {
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     useThreadStore.getState().cacheToolCallRecords("t1:m1", [
       { id: "tc1", name: "Read", args: {}, result: "ok", at_ms: 0 } as never,
     ]);
@@ -89,12 +127,12 @@ describe("loadMessages cache integration", () => {
       records: patchThreadRecord(s.records, "t2", { messages: [] }),
     }));
 
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     expect(useThreadStore.getState().getCachedToolCallRecords("t1:m1")).not.toBeNull();
   });
 
   it("never sets messages to [] when serving from cache (no blank flash)", async () => {
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     useThreadStore.setState((s) => ({
       currentThreadId: "t2",
       records: patchThreadRecord(s.records, "t2", { messages: [] }),
@@ -106,7 +144,7 @@ describe("loadMessages cache integration", () => {
       snapshots.push(id ? getThreadRecord(s.records, id).messages : []);
     });
 
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     unsub();
 
     // Verify state updates were observed (not just an empty array)
@@ -122,15 +160,15 @@ describe("loadMessages cache eviction", () => {
   });
 
   it("evicts when handleAgentEvent fires for the thread", async () => {
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     expect(getCachedRecord("t1")).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent("t1", { method: "session.message", content: "x" });
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "t1", content: "x", tokens: null } satisfies AgentEvent);
     expect(getCachedRecord("t1")).toBeUndefined();
   });
 
   it("evicts when handleTurnPersisted fires", async () => {
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     expect(getCachedRecord("t1")).toBeDefined();
 
     useThreadStore.getState().handleTurnPersisted({
@@ -143,7 +181,7 @@ describe("loadMessages cache eviction", () => {
   });
 
   it("evicts on clearThreadState", async () => {
-    await useThreadStore.getState().loadMessages("t1");
+    await activateTestConversation("t1");
     expect(getCachedRecord("t1")).toBeDefined();
 
     useThreadStore.getState().clearThreadState("t1");
@@ -151,8 +189,8 @@ describe("loadMessages cache eviction", () => {
   });
 
   it("evicts all listed threads on clearThreadStateMany", async () => {
-    await useThreadStore.getState().loadMessages("t1");
-    await useThreadStore.getState().loadMessages("t2");
+    await activateTestConversation("t1");
+    await activateTestConversation("t2");
     expect(getCachedRecord("t1")).toBeDefined();
     expect(getCachedRecord("t2")).toBeDefined();
 

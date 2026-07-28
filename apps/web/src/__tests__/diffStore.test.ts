@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { BranchComparison, GitBranch } from "@mcode/contracts";
+import type { RightPanelState } from "../stores/diffStore";
 import {
   useDiffStore,
   PANEL_MIN_WIDTH,
@@ -8,6 +9,7 @@ import {
   maxPanelWidthInSplit,
   getDefaultPanelWidthPx,
   createDefaultRightPanelState,
+  createRightPanelState,
   DEFAULT_LINE_WRAP,
 } from "../stores/diffStore";
 
@@ -17,6 +19,10 @@ describe("diffStore", () => {
       previewUrlByThread: {},
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
+      subagentRosterTabByThread: {},
+      subagentDetailByThread: {},
+      subagentReviewScopeByThread: {},
+      reviewFilesVisibleByScope: {},
       snapshotsByThread: {},
       snapshotsLoadingByThread: {},
       snapshotsPendingByThread: {},
@@ -37,6 +43,82 @@ describe("diffStore", () => {
       branchComparisonKey: null,
       branchManuallySelectedByScope: {},
       branchResolvedRevisionByScope: {},
+    });
+  });
+
+  describe("Review Files visibility", () => {
+    it("starts closed per scope and persists only explicit choices", () => {
+      const store = useDiffStore.getState();
+
+      expect(store.getReviewFilesVisible("thread-1")).toBe(false);
+      store.setReviewFilesVisible("thread-1", true);
+
+      expect(useDiffStore.getState().getReviewFilesVisible("thread-1")).toBe(true);
+      expect(useDiffStore.getState().getReviewFilesVisible("thread-2")).toBe(false);
+      expect(localStorage.getItem("mcode.review-files-visible.v1")).toContain('"thread-1":true');
+    });
+  });
+
+  describe("subagent Review scope", () => {
+    const scope = {
+      label: "Explorer",
+      paths: ["src/a.ts", "src/a.ts", "src/b.ts"],
+      additions: 4,
+      deletions: 1,
+    } as const;
+
+    it("bounds and deduplicates paths per thread without leaking to siblings", () => {
+      useDiffStore.getState().setSubagentReviewScope("thread-1", scope);
+
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toEqual({
+        ...scope,
+        paths: ["src/a.ts", "src/b.ts"],
+      });
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-2"]).toBeUndefined();
+    });
+
+    it("replaces a valid scope immediately and clears it when replacement paths normalize empty", () => {
+      const store = useDiffStore.getState();
+      store.setSubagentReviewScope("thread-1", scope);
+      store.setSubagentReviewScope("thread-1", {
+        label: "Reviewer",
+        paths: ["src/review.ts"],
+        additions: 2,
+        deletions: 0,
+      });
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toMatchObject({
+        label: "Reviewer",
+        paths: ["src/review.ts"],
+      });
+
+      useDiffStore.getState().setSubagentReviewScope("thread-1", {
+        label: "Empty",
+        paths: ["", "   "],
+        additions: 0,
+        deletions: 0,
+      });
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
+    });
+
+    it("preserves scope while focusing or refocusing Changes", () => {
+      const store = useDiffStore.getState();
+      store.setSubagentReviewScope("thread-1", scope);
+      store.setRightPanelTab("workspace-1", "thread-1", "changes");
+      store.setRightPanelTab("workspace-1", "thread-1", "changes");
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toEqual({
+        ...scope,
+        paths: ["src/a.ts", "src/b.ts"],
+      });
+    });
+
+    it("clears on ordinary Review navigation and thread deletion", () => {
+      useDiffStore.getState().setSubagentReviewScope("thread-1", scope);
+      useDiffStore.getState().setReviewViewForThread("thread-1", "cumulative");
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
+
+      useDiffStore.getState().setSubagentReviewScope("thread-1", scope);
+      useDiffStore.getState().clearThread("thread-1");
+      expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toBeUndefined();
     });
   });
 
@@ -342,6 +424,73 @@ describe("diffStore", () => {
   });
 
   describe("setRightPanelTab", () => {
+    it("interleaves PTY-backed terminal instances with singleton tabs", () => {
+      const { addRightPanelTerminalTab, setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "thread-1", "preview");
+      addRightPanelTerminalTab("ws-1", "thread-1", "pty-1");
+      setRightPanelTab("ws-1", "thread-1", "changes");
+      addRightPanelTerminalTab("ws-1", "thread-1", "pty-2");
+
+      const panel = getRightPanel("ws-1", "thread-1");
+      expect(panel.tabInstances.map((instance) => instance.id)).toEqual([
+        "singleton:preview",
+        "terminal:pty-1",
+        "singleton:changes",
+        "terminal:pty-2",
+      ]);
+      expect(panel.activeTabId).toBe("terminal:pty-2");
+    });
+    it("preserves an explicit canonical null over a stale compatibility active tab", () => {
+      const panel = createRightPanelState({
+        visible: true,
+        width: 500,
+        tabInstances: [{ id: "singleton:changes", type: "changes" }],
+        activeTabId: null,
+        activeTab: "changes",
+      });
+
+      expect(panel.activeTabId).toBeNull();
+      expect(panel.activeTab).toBe("tasks");
+      expect(panel.openTabs).toEqual(["changes"]);
+    });
+
+    it("normalizes conflicting fallback and thread records from canonical instance state", () => {
+      const conflictingFallback = {
+        ...createDefaultRightPanelState(),
+        visible: true,
+        tabInstances: [{ id: "singleton:changes", type: "changes" }] as const,
+        activeTabId: "singleton:changes",
+        openTabs: [] as const,
+        activeTab: "tasks" as const,
+      } satisfies RightPanelState;
+      const conflictingThread = {
+        ...createDefaultRightPanelState(),
+        visible: true,
+        tabInstances: [{ id: "singleton:terminal", type: "terminal" }] as const,
+        activeTabId: "singleton:terminal",
+        openTabs: ["preview"] as const,
+        activeTab: "preview" as const,
+      } satisfies RightPanelState;
+      useDiffStore.setState({
+        rightPanelFallbackByWorkspace: { "ws-1": conflictingFallback },
+        rightPanelByThread: { "thread-1": conflictingThread },
+      });
+
+      const { getRightPanel } = useDiffStore.getState();
+      expect(getRightPanel("ws-1", "thread-untouched")).toMatchObject({
+        tabInstances: [{ id: "singleton:changes", type: "changes" }],
+        activeTabId: "singleton:changes",
+        openTabs: ["changes"],
+        activeTab: "changes",
+      });
+      expect(getRightPanel("ws-1", "thread-1")).toMatchObject({
+        tabInstances: [{ id: "singleton:terminal", type: "terminal" }],
+        activeTabId: "singleton:terminal",
+        openTabs: ["terminal"],
+        activeTab: "terminal",
+      });
+    });
+
     it("should update active tab for one workspace only", () => {
       const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
       setRightPanelTab("ws-1", null, "changes");
@@ -375,6 +524,88 @@ describe("diffStore", () => {
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview", "terminal"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
     });
+
+    it("creates deterministic singleton instances in insertion order", () => {
+      const { setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+
+      expect(getRightPanel("ws-1").tabInstances).toEqual([
+        { id: "singleton:terminal", type: "terminal" },
+        { id: "singleton:preview", type: "preview" },
+        { id: "singleton:changes", type: "changes" },
+      ]);
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:changes");
+    });
+
+    it("selects a repeatable tab by stable instance identity", () => {
+      useDiffStore.setState({
+        rightPanelFallbackByWorkspace: {
+          "ws-1": {
+            ...useDiffStore.getState().getRightPanel("ws-1"),
+            tabInstances: [
+              { id: "terminal:first", type: "terminal" },
+              { id: "terminal:second", type: "terminal" },
+            ],
+            activeTabId: "terminal:first",
+          },
+        },
+      });
+
+      const { setRightPanelTabInstance, getRightPanel } = useDiffStore.getState();
+      setRightPanelTabInstance("ws-1", null, "terminal:second");
+
+      expect(getRightPanel("ws-1").activeTabId).toBe("terminal:second");
+      expect(getRightPanel("ws-1").tabInstances).toEqual([
+        { id: "terminal:first", type: "terminal" },
+        { id: "terminal:second", type: "terminal" },
+      ]);
+    });
+  });
+
+  describe("reorderRightPanelTab", () => {
+    it("moves instances without regrouping types and stops at boundaries", () => {
+      const { setRightPanelTab, reorderRightPanelTab, getRightPanel } =
+        useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+
+      reorderRightPanelTab("ws-1", null, "singleton:changes", -1);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "changes",
+        "preview",
+      ]);
+
+      reorderRightPanelTab("ws-1", null, "singleton:terminal", -1);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "changes",
+        "preview",
+      ]);
+    });
+
+    it("keeps thread and workspace fallback order independent", () => {
+      const { setRightPanelTab, reorderRightPanelTab, getRightPanel } =
+        useDiffStore.getState();
+      for (const tab of ["terminal", "preview", "changes"] as const) {
+        setRightPanelTab("ws-1", null, tab);
+      }
+      reorderRightPanelTab("ws-1", "thread-1", "singleton:preview", -1);
+
+      expect(getRightPanel("ws-1", "thread-1").openTabs).toEqual([
+        "preview",
+        "terminal",
+        "changes",
+      ]);
+      expect(getRightPanel("ws-1").openTabs).toEqual([
+        "terminal",
+        "preview",
+        "changes",
+      ]);
+    });
   });
 
   describe("closeRightPanelTab", () => {
@@ -393,6 +624,24 @@ describe("diffStore", () => {
       closeRightPanelTab("ws-1", null, "terminal");
       expect(getRightPanel("ws-1").openTabs).toEqual(["preview"]);
       expect(getRightPanel("ws-1").activeTab).toBe("preview");
+    });
+
+    it("selects the item now at the removed index, then the previous item", () => {
+      const {
+        setRightPanelTab,
+        closeRightPanelTabInstance,
+        getRightPanel,
+      } = useDiffStore.getState();
+      setRightPanelTab("ws-1", null, "terminal");
+      setRightPanelTab("ws-1", null, "preview");
+      setRightPanelTab("ws-1", null, "changes");
+      setRightPanelTab("ws-1", null, "preview");
+
+      closeRightPanelTabInstance("ws-1", null, "singleton:preview");
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:changes");
+
+      closeRightPanelTabInstance("ws-1", null, "singleton:changes");
+      expect(getRightPanel("ws-1").activeTabId).toBe("singleton:terminal");
     });
 
     it("leaves the active tab unchanged when closing an inactive tab", () => {
@@ -681,6 +930,28 @@ describe("diffStore", () => {
   });
 
   describe("clearThread", () => {
+    it("stores detail navigation per thread and clears it with the thread", () => {
+      const { selectSubagentDetail, clearSubagentDetail, clearThread } = useDiffStore.getState();
+      selectSubagentDetail("thread-1", { id: "agent-1", originTab: "active", scrollTop: 48 });
+      selectSubagentDetail("thread-2", { id: "agent-2", originTab: "finished", scrollTop: 0 });
+
+      clearSubagentDetail("thread-1");
+      expect(useDiffStore.getState().subagentDetailByThread["thread-1"]).toBeUndefined();
+      clearThread("thread-2");
+      expect(useDiffStore.getState().subagentDetailByThread["thread-2"]).toBeUndefined();
+    });
+
+    it("keeps roster tabs isolated by thread and drops the deleted thread's choice", () => {
+      const { setSubagentRosterTab, getSubagentRosterTab, clearThread } = useDiffStore.getState();
+      setSubagentRosterTab("thread-1", "active");
+      setSubagentRosterTab("thread-2", "finished");
+
+      clearThread("thread-1");
+
+      expect(getSubagentRosterTab("thread-1")).toBeUndefined();
+      expect(getSubagentRosterTab("thread-2")).toBe("finished");
+    });
+
     it("should remove all per-thread entries", () => {
       const {
         setSnapshots,

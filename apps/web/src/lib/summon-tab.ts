@@ -3,6 +3,8 @@ import { useDiffStore, type RightPanelTab } from "@/stores/diffStore";
 import { useUiStore } from "@/stores/uiStore";
 import { PANEL_TAB_TYPES } from "@/lib/panel-tabs";
 import { hideRightPanelAdaptive, showRightPanelAdaptive } from "@/lib/right-panel-layout";
+import { createTerminalForScope } from "@/lib/ensure-terminal";
+import { useTerminalStore } from "@/stores/terminalStore";
 
 /** Whether a tab type only makes sense once a thread exists. */
 function tabNeedsThread(tab: RightPanelTab): boolean {
@@ -30,24 +32,35 @@ export function summonTab(tab: RightPanelTab, onFocus?: () => void): void {
   if (!wid) return;
   if (tabNeedsThread(tab) && !tid) return;
 
-  const { getRightPanel, getRightPanelVisible, setRightPanelTab } = useDiffStore.getState();
+  const { getRightPanel, getRightPanelVisible, setRightPanelTab, setRightPanelTabInstance } = useDiffStore.getState();
   const ui = useUiStore.getState();
   const panel = getRightPanel(wid, tid);
+
+  const scopeId = tid ?? wid;
+  const latestTerminal = useTerminalStore.getState().terminals[scopeId]?.at(-1);
+  const focusTerminal = () => {
+    if (latestTerminal) {
+      setRightPanelTabInstance(wid, tid, `terminal:${latestTerminal.id}`);
+      useTerminalStore.getState().setActiveTerminal(scopeId, latestTerminal.id);
+      return;
+    }
+    createTerminalForScope(scopeId);
+  };
 
   if (ui.primarySurface !== "chat") {
     ui.setPrimarySurface("chat");
     showRightPanelAdaptive(wid, tid);
-    setRightPanelTab(wid, tid, tab);
+    if (tab === "terminal") focusTerminal(); else setRightPanelTab(wid, tid, tab);
     onFocus?.();
     return;
   }
 
   if (!getRightPanelVisible(wid, tid)) {
     showRightPanelAdaptive(wid, tid);
-    setRightPanelTab(wid, tid, tab);
+    if (tab === "terminal") focusTerminal(); else setRightPanelTab(wid, tid, tab);
     onFocus?.();
   } else if (!panel.openTabs.includes(tab) || panel.activeTab !== tab) {
-    setRightPanelTab(wid, tid, tab);
+    if (tab === "terminal") focusTerminal(); else setRightPanelTab(wid, tid, tab);
     onFocus?.();
   } else {
     hideRightPanelAdaptive(wid, tid);

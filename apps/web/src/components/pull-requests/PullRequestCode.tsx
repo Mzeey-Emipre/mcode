@@ -541,7 +541,14 @@ export function PullRequestCode({
               </p>
             )}
             {filesLane?.nextCursor && (
-              <div className="flex min-h-8 shrink-0 items-center gap-2 bg-background px-3 text-xs text-muted-foreground">
+              <div
+                className="flex min-h-8 shrink-0 items-center gap-2 bg-background px-3 text-xs text-muted-foreground"
+                style={
+                  !filesDocked && view.fileTreeVisible
+                    ? { marginRight: Math.min(filesPanelWidth, floatingFilesPanelMaxWidth) }
+                    : undefined
+                }
+              >
                 <span className="min-w-0 flex-1 truncate">
                   {filtersActive
                     ? `${code.files.length} matching files loaded. More results remain.`

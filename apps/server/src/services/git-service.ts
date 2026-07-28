@@ -13,7 +13,9 @@ import { rm, rmdir, realpath } from "fs/promises";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
-import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl } from "@mcode/contracts";
+import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl, ReviewComparison, ReviewFileChange } from "@mcode/contracts";
+
+const MAX_REVIEW_COMPARISON_FILES = 10_000;
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index.js";
 
@@ -752,7 +754,7 @@ export class GitService {
     repoPath: string,
     name: string,
     branchName?: string,
-    options: { branchless?: boolean } = {},
+    options: { branchless?: boolean; baseRef?: string } = {},
   ): Promise<WorktreeInfo & { createdBranch: boolean; warnings: string[] }> {
     validateWorktreeName(name);
 
@@ -762,6 +764,7 @@ export class GitService {
 
     const branch = branchName ?? `mcode/${name}`;
     validateBranchName(branch);
+    if (options.baseRef) validateBranchName(options.baseRef);
     const wtPath = join(ensureWorktreeBaseDir(repoPath), name);
 
     if (existsSync(wtPath)) {
@@ -777,7 +780,16 @@ export class GitService {
       } else if (!createdBranch) {
         await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", wtPath, branch]);
       } else {
-        await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", wtPath, "-b", branch]);
+        await this.gitExecutor.exec([
+          "-C",
+          repoPath,
+          "worktree",
+          "add",
+          wtPath,
+          "-b",
+          branch,
+          ...(options.baseRef ? [options.baseRef] : []),
+        ]);
       }
     } catch (err) {
       // If the worktree's .git file exists, git initialized the worktree
@@ -804,6 +816,8 @@ export class GitService {
 
   /**
    * Remove a git worktree by name.
+   * Returns true only when the target worktree and managed parent directories are clean.
+   * Returns false when a transient lock leaves a managed parent directory for retry.
    * When deleteBranch is true, deletes options.branchName or the default managed branch.
    * When worktreePath is set, removes that exact worktree path instead of deriving
    * one under the managed mcode worktree directory.
@@ -1189,10 +1203,131 @@ export class GitService {
     for (const line of stdout.trim().split("\n")) {
       if (!line.includes("\t")) continue;
       const [addStr, delStr] = line.split("\t");
-      additions += addStr === "-" ? 0 : parseInt(addStr ?? "0", 10);
-      deletions += delStr === "-" ? 0 : parseInt(delStr ?? "0", 10);
+      const parsedAdditions = addStr === "-" ? 0 : Number.parseInt(addStr ?? "", 10);
+      const parsedDeletions = delStr === "-" ? 0 : Number.parseInt(delStr ?? "", 10);
+      if (Number.isFinite(parsedAdditions)) additions += parsedAdditions;
+      if (Number.isFinite(parsedDeletions)) deletions += parsedDeletions;
     }
     return { additions, deletions };
+  }
+
+  /** Parse one NUL-delimited git name-status batch into Review file metadata. */
+  private parseReviewFileChanges(stdout: string, binaryPaths: ReadonlySet<string>): ReviewFileChange[] {
+    const fields = stdout.split("\0");
+    const files: ReviewFileChange[] = [];
+    for (let index = 0; index < fields.length;) {
+      const status = fields[index++];
+      if (!status) continue;
+      const code = status[0];
+      if (code === "R" || code === "C") {
+        const previousPath = fields[index++] ?? "";
+        const path = fields[index++] ?? "";
+        if (!previousPath || !path) continue;
+        files.push({
+          path,
+          previousPath,
+          changeType: code === "R" ? "renamed" : "copied",
+          binary: binaryPaths.has(path),
+        });
+        if (files.length > MAX_REVIEW_COMPARISON_FILES) {
+          throw new Error(`Review comparison is limited to ${MAX_REVIEW_COMPARISON_FILES} files`);
+        }
+        continue;
+      }
+      const path = fields[index++] ?? "";
+      if (!path) continue;
+      const changeType: ReviewFileChange["changeType"] =
+        code === "A" ? "added" : code === "D" ? "deleted" : "modified";
+      files.push({ path, previousPath: null, changeType, binary: binaryPaths.has(path) });
+      if (files.length > MAX_REVIEW_COMPARISON_FILES) {
+        throw new Error(`Review comparison is limited to ${MAX_REVIEW_COMPARISON_FILES} files`);
+      }
+    }
+    return files.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  /** Parse binary paths from one NUL-delimited git numstat batch. */
+  private parseBinaryPaths(stdout: string): Set<string> {
+    const fields = stdout.split("\0");
+    const paths = new Set<string>();
+    for (let index = 0; index < fields.length;) {
+      const record = fields[index++];
+      if (!record) continue;
+      const firstSeparator = record.indexOf("\t");
+      const secondSeparator = firstSeparator < 0 ? -1 : record.indexOf("\t", firstSeparator + 1);
+      if (firstSeparator < 0 || secondSeparator < 0) continue;
+      const additions = record.slice(0, firstSeparator);
+      const deletions = record.slice(firstSeparator + 1, secondSeparator);
+      const path = record.slice(secondSeparator + 1);
+      const binary = additions === "-" || deletions === "-";
+      if (path) {
+        if (binary) paths.add(path);
+        continue;
+      }
+      const previousPath = fields[index++] ?? "";
+      const nextPath = fields[index++] ?? "";
+      if (binary) {
+        if (previousPath) paths.add(previousPath);
+        if (nextPath) paths.add(nextPath);
+      }
+    }
+    return paths;
+  }
+
+  /** Return one settled file/status/stat batch for a Review git comparison. */
+  async reviewComparison(
+    workspaceId: string,
+    view: "unstaged" | "staged" | "branch" | "commit",
+    opts: { base?: string; target?: string; sha?: string },
+    repoPath?: string,
+  ): Promise<ReviewComparison> {
+    const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
+    let suffix: string[] = [];
+    if (view === "staged") suffix = ["--cached"];
+    if (view === "branch") {
+      const base = opts.base ?? (await this.detectDefaultBranch(cwd));
+      if (!base) return { files: [], additions: 0, deletions: 0 };
+      const target = opts.target ?? "HEAD";
+      assertSafeRef(base);
+      assertSafeRef(target);
+      suffix = [`${base}...${target}`];
+    }
+    if (view === "commit") {
+      const sha = opts.sha;
+      if (!sha || !/^[0-9a-fA-F]{4,40}$/.test(sha)) {
+        throw new Error(`Invalid or missing git SHA for commit view: ${sha}`);
+      }
+      suffix = [`${sha}~1`, sha];
+    }
+
+    const run = async (range: readonly string[]): Promise<ReviewComparison> => {
+      const [names, numstat] = await Promise.all([
+        this.gitExecutor.exec(
+          ["-C", cwd, "diff", "--name-status", "-z", "--find-renames", "--find-copies", ...range],
+          { timeout: 10_000 },
+        ),
+        this.gitExecutor.exec(
+          ["-C", cwd, "diff", "--numstat", "-z", "--find-renames", "--find-copies", ...range],
+          { timeout: 10_000 },
+        ),
+      ]);
+      const totals = this.parseNumstatTotal(numstat.stdout.replaceAll("\0", "\n"));
+      return {
+        files: this.parseReviewFileChanges(names.stdout, this.parseBinaryPaths(numstat.stdout)),
+        ...totals,
+      };
+    };
+
+    try {
+      return await run(suffix);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Review comparison is limited")) {
+        throw error;
+      }
+      if (view !== "commit") throw error;
+      const emptyTree = "4b825dc642cb6eb9a060e54bf899d69f82049264";
+      return run([emptyTree, opts.sha!]);
+    }
   }
 
   /**

@@ -1,16 +1,22 @@
+import type { AgentEvent } from "@mcode/contracts";
 import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   getCachedRecord,
-  cacheRecord,
+  cacheRecord as cacheConversationRecord,
+  cachePrefetchedHistoryPage,
+  takePrefetchedHistoryPage,
   evictCachedRecord,
   clearRecordCache,
   resizeRecordCache,
   RECORD_CACHE_SIZE,
+  RECORD_MESSAGE_CACHE_SIZE,
+  projectConversationCacheState,
 } from "@/lib/thread-hydrator/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
   rememberScrollTop,
+  recallScrollPosition,
   recallScrollTop,
   clearScrollMemory,
 } from "@/components/chat/scrollPositionMemory";
@@ -45,6 +51,10 @@ function makeRecord(id: string): ThreadRecord {
   };
 }
 
+function cacheRecord(threadId: string, record: ThreadRecord): void {
+  cacheConversationRecord(threadId, projectConversationCacheState(record));
+}
+
 describe("recordCache", () => {
   beforeEach(() => {
     clearRecordCache();
@@ -58,7 +68,24 @@ describe("recordCache", () => {
   it("caches and retrieves a record by threadId", () => {
     const rec = makeRecord("t1");
     cacheRecord("t1", rec);
-    expect(getCachedRecord("t1")).toEqual(rec);
+    expect(getCachedRecord("t1")).toEqual(projectConversationCacheState(rec));
+  });
+
+  it("stores only explicitly projected conversation fields", () => {
+    const rec = {
+      ...makeRecord("t1"),
+      loading: true,
+      streaming: "live response",
+      currentTurnMessageId: "turn-1",
+    };
+
+    cacheRecord("t1", rec);
+
+    const cached = getCachedRecord("t1");
+    expect(cached).not.toHaveProperty("loading");
+    expect(cached).not.toHaveProperty("streaming");
+    expect(cached).not.toHaveProperty("currentTurnMessageId");
+    expect(cached).not.toHaveProperty("goal");
   });
 
   it("evicts a single thread without affecting others", () => {
@@ -93,6 +120,114 @@ describe("recordCache", () => {
     cacheRecord("t1", makeRecord("t1"));
     clearRecordCache();
     expect(getCachedRecord("t1")).toBeUndefined();
+  });
+
+  it("caps cached messages and prunes message-keyed metadata", () => {
+    const messages = Array.from({ length: RECORD_MESSAGE_CACHE_SIZE + 20 }, (_, index) => ({
+      ...makeRecord("bounded").messages[0],
+      id: `message-${index + 1}`,
+      sequence: index + 1,
+    }));
+    const metadata = Object.fromEntries(messages.map((message) => [message.id, 1]));
+    const files = Object.fromEntries(messages.map((message) => [message.id, [`${message.id}.ts`]]));
+    const responses = Object.fromEntries(messages.map((message) => [message.id, `response-${message.id}`]));
+
+    cacheRecord("bounded", {
+      ...createEmptyThreadRecord(),
+      messages,
+      oldestLoadedSequence: 1,
+      hasMoreMessages: false,
+      persistedToolCallCounts: metadata,
+      persistedFilesChanged: files,
+      serverMessageIds: responses,
+      assistantResponseKeys: responses,
+      narrativeByMessage: Object.fromEntries(messages.map((message) => [message.id, {
+        tools: [], thoughts: [], hooks: [],
+      }])),
+      answeredPlanMessageIds: new Set(messages.map((message) => message.id)),
+      latestTurnWithChanges: "message-1",
+    });
+
+    const cached = getCachedRecord("bounded");
+    expect(cached?.messages).toHaveLength(RECORD_MESSAGE_CACHE_SIZE);
+    expect(cached?.messages[0].id).toBe("message-21");
+    expect(cached?.oldestLoadedSequence).toBe(21);
+    expect(cached?.hasMoreMessages).toBe(true);
+    expect(cached?.persistedToolCallCounts["message-1"]).toBeUndefined();
+    expect(cached?.persistedToolCallCounts["message-21"]).toBe(1);
+    expect(cached?.persistedFilesChanged["message-1"]).toBeUndefined();
+    expect(cached?.serverMessageIds["message-1"]).toBeUndefined();
+    expect(cached?.assistantResponseKeys["message-1"]).toBeUndefined();
+    expect(cached?.narrativeByMessage["message-1"]).toBeUndefined();
+    expect(cached?.answeredPlanMessageIds.has("message-1")).toBe(false);
+    expect(cached?.latestTurnWithChanges).toBeNull();
+  });
+
+  it("forgets a remembered anchor when the message cap evicts it", () => {
+    const messages = Array.from({ length: RECORD_MESSAGE_CACHE_SIZE + 1 }, (_, index) => ({
+      ...makeRecord("anchor").messages[0],
+      id: `anchor-${index + 1}`,
+      sequence: index + 1,
+    }));
+    rememberScrollTop("anchor", 200, false, { messageId: "anchor-1", top: 30 });
+
+    cacheRecord("anchor", {
+      ...createEmptyThreadRecord(),
+      messages,
+      oldestLoadedSequence: 1,
+    });
+
+    expect(recallScrollPosition("anchor")).toBeUndefined();
+  });
+
+  it("keeps a remembered anchor that remains inside the message cap", () => {
+    const messages = Array.from({ length: RECORD_MESSAGE_CACHE_SIZE + 1 }, (_, index) => ({
+      ...makeRecord("anchor").messages[0],
+      id: `anchor-${index + 1}`,
+      sequence: index + 1,
+    }));
+    rememberScrollTop("anchor", 200, false, { messageId: "anchor-2", top: 30 });
+
+    cacheRecord("anchor", {
+      ...createEmptyThreadRecord(),
+      messages,
+      oldestLoadedSequence: 1,
+    });
+
+    expect(recallScrollPosition("anchor")?.anchorMessageId).toBe("anchor-2");
+  });
+
+  it("bounds a record and its prefetched history to one message budget", () => {
+    const cachedMessages = Array.from({ length: 40 }, (_, index) => ({
+      ...makeRecord("warm").messages[0],
+      id: `cached-${index + 61}`,
+      sequence: index + 61,
+    }));
+    const historyMessages = Array.from({ length: 100 }, (_, index) => ({
+      ...makeRecord("warm").messages[0],
+      id: `history-${index + 1}`,
+      sequence: index + 1,
+    }));
+    cacheRecord("warm", {
+      ...createEmptyThreadRecord(),
+      messages: cachedMessages,
+      oldestLoadedSequence: 61,
+    });
+    cachePrefetchedHistoryPage("warm", 61, {
+      messages: historyMessages,
+      hasMore: false,
+      answeredPlanMessageIds: historyMessages.map((message) => message.id),
+      narrativeByMessage: Object.fromEntries(historyMessages.map((message) => [message.id, {
+        tools: [], thoughts: [], hooks: [],
+      }])),
+    });
+
+    const prefetched = takePrefetchedHistoryPage("warm", 61);
+    expect(prefetched?.messages).toHaveLength(RECORD_MESSAGE_CACHE_SIZE - cachedMessages.length);
+    expect(prefetched?.messages[0].id).toBe("history-41");
+    expect(prefetched?.hasMore).toBe(true);
+    expect(prefetched?.answeredPlanMessageIds?.[0]).toBe("history-41");
+    expect(prefetched?.narrativeByMessage["history-1"]).toBeUndefined();
   });
 
   it("cleans up scroll memory when evicting via LRU capacity", () => {
@@ -171,10 +306,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.textDelta",
-      params: { delta: "hello " },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: THREAD_ID, delta: "hello " } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
   });
@@ -183,10 +315,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.toolUse",
-      params: { id: "tool-1", name: "Read", input: "{}" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: THREAD_ID, toolCallId: "tool-1", toolName: "Read", toolInput: {} } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
   });
@@ -195,10 +324,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.turnComplete",
-      params: {},
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -207,10 +333,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.message",
-      params: { role: "assistant", content: "done" },
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "message", threadId: THREAD_ID, content: "done", tokens: null } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -219,10 +342,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.error",
-      error: "Something broke",
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "error", threadId: THREAD_ID, error: "Something broke" } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -231,10 +351,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent(THREAD_ID, {
-      method: "session.ended",
-      params: {},
-    });
+    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: THREAD_ID } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
@@ -244,10 +361,7 @@ describe("selective cache eviction in handleAgentEvent", () => {
 
     const { handleAgentEvent } = useThreadStore.getState();
     for (let i = 0; i < 100; i++) {
-      handleAgentEvent(THREAD_ID, {
-        method: "session.textDelta",
-        params: { delta: `token-${i} ` },
-      });
+      handleAgentEvent({ type: "textDelta", threadId: THREAD_ID, delta: `token-${i} ` } satisfies AgentEvent);
     }
 
     expect(getCachedRecord(THREAD_ID)).toBeDefined();

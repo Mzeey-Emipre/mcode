@@ -8,6 +8,7 @@ import type {
   PlanAnswer,
   ProviderUsageInfo,
   GoalState,
+  TurnFileEffectSummary,
 } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
@@ -87,6 +88,10 @@ export interface ThreadRecord {
   persistedToolCallCounts: Record<string, number>;
   persistedFilesChanged: Record<string, string[]>;
   latestTurnWithChanges: string | null;
+  /** Live or just-finalized agent-attributed file-effect aggregate for the current turn. */
+  fileEffectSummary: TurnFileEffectSummary;
+  /** Server tracker generation that owns the live file-effect aggregate. */
+  fileEffectTurnId: string;
   serverMessageIds: Record<string, string>;
   narrativeByMessage: ThreadNarrativeByMessage;
   answeredPlanMessageIds: Set<string>;
@@ -97,12 +102,8 @@ export interface ThreadRecord {
   toolCalls: ToolCall[];
   agentStartTime?: number;
   currentTurnMessageId: string;
-  /**
-   * Local assistant message id for a turn whose `turn.persisted` event has not
-   * arrived yet. Survives `resetTurnEphemeral` so auto-dequeue cannot steal
-   * file-change attribution from the prior turn.
-   */
-  pendingTurnPersistLocalMessageId: string;
+  /** Ordered local response rows awaiting their `turn.persisted` signals. */
+  pendingTurnPersistMessageIds: string[];
   currentTurnResponseKey: string;
   assistantResponseKeys: Record<string, string>;
   thoughtSegments: ThoughtSegment[];
@@ -149,6 +150,8 @@ export function createEmptyThreadRecord(): ThreadRecord {
     persistedToolCallCounts: {},
     persistedFilesChanged: {},
     latestTurnWithChanges: null,
+    fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
+    fileEffectTurnId: "",
     serverMessageIds: {},
     narrativeByMessage: {},
     answeredPlanMessageIds: new Set(),
@@ -158,7 +161,7 @@ export function createEmptyThreadRecord(): ThreadRecord {
     streamingPreview: "",
     toolCalls: [],
     currentTurnMessageId: "",
-    pendingTurnPersistLocalMessageId: "",
+    pendingTurnPersistMessageIds: [],
     currentTurnResponseKey: "",
     assistantResponseKeys: {},
     thoughtSegments: [],
@@ -184,7 +187,11 @@ export function getThreadRecord(
   records: Map<string, ThreadRecord>,
   threadId: string,
 ): ThreadRecord {
-  return records.get(threadId) ?? createEmptyThreadRecord();
+  const record = records.get(threadId);
+  if (!record) return createEmptyThreadRecord();
+  return record.pendingTurnPersistMessageIds === undefined
+    ? { ...record, pendingTurnPersistMessageIds: [] }
+    : record;
 }
 
 /** Immutable Map update with a partial or functional patch for one thread. */
@@ -198,8 +205,32 @@ export function patchThreadRecord(
   const next = new Map(records);
   const current = getThreadRecord(records, threadId);
   const delta = typeof patch === "function" ? patch(current) : patch;
-  next.set(threadId, { ...current, ...delta });
+  const updated = { ...current, ...delta };
+  if (!("messages" in delta || "serverMessageIds" in delta || "pendingTurnPersistMessageIds" in delta)) {
+    next.set(threadId, updated);
+    return next;
+  }
+  const retainedMessageIds = new Set(updated.messages.map((message) => message.id));
+  next.set(threadId, {
+    ...updated,
+    serverMessageIds: Object.fromEntries(
+      Object.entries(updated.serverMessageIds).filter(([messageId]) => retainedMessageIds.has(messageId)),
+    ),
+    pendingTurnPersistMessageIds: prunePendingTurnPersistMessageIds(
+      updated.pendingTurnPersistMessageIds,
+      updated.messages,
+    ),
+  });
   return next;
+}
+
+/** Retain pending persistence attribution only while its transcript row is resident. */
+export function prunePendingTurnPersistMessageIds(
+  pendingMessageIds: readonly string[],
+  messages: readonly Message[],
+): string[] {
+  const retainedMessageIds = new Set(messages.map((message) => message.id));
+  return pendingMessageIds.filter((messageId) => retainedMessageIds.has(messageId));
 }
 
 /** Remove one thread from the records Map. */

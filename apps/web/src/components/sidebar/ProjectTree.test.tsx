@@ -273,6 +273,27 @@ describe("ProjectTree thread interactions", () => {
     expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
   });
 
+  it("keeps expanded threads mounted when a project drag starts", () => {
+    localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": true }),
+    );
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+    expect(screen.getByRole("button", { name: /My Thread/i })).toBeVisible();
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    projectRow.focus();
+    fireEvent.keyDown(projectRow, { key: " " });
+
+    expect(screen.getByRole("button", { name: /My Thread/i })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Toggle threads for Test Project" }),
+    ).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.keyDown(projectRow, { key: " " });
+  });
+
   it("reveals project actions when the project row is hovered or focused", () => {
     setupStoreMocks();
 
@@ -301,11 +322,13 @@ describe("ProjectTree thread interactions", () => {
 
     const row = screen.getByRole("button", { name: /My Thread/i });
     const provider = screen.getByLabelText("Provider, Claude");
-    const providerLeft = Number.parseFloat(provider.style.left);
+    const leadingIcons = provider.parentElement;
+    const leadingIconsWidth = Number.parseFloat(leadingIcons?.style.width ?? "");
     const titleLeft = Number.parseFloat(row.style.paddingLeft);
 
     expect(provider).toHaveClass("-mt-px");
-    expect(titleLeft - (providerLeft + 16)).toBe(4);
+    expect(leadingIcons).toHaveClass("left-0.5");
+    expect(titleLeft - (2 + leadingIconsWidth)).toBe(4);
   });
 
   it("offers Explorer and rename actions from the project menu", () => {
@@ -704,6 +727,9 @@ describe("ProjectTree PR-ability gating by mode", () => {
     const indicator = screen.getByTestId("thread-pr-indicator-thread-1");
     expect(indicator).toHaveAttribute("aria-label", "PR #42, open");
     expect(indicator).toHaveClass("-mt-px");
+    const leadingIcons = indicator.parentElement;
+    expect(leadingIcons).toHaveClass("gap-1");
+    expect(within(leadingIcons!).getByLabelText(/^Provider,/)).toBeInTheDocument();
     expect(screen.queryByText("#42")).toBeNull();
   });
 

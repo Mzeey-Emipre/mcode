@@ -1,8 +1,16 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { useTerminalStore, TERMINAL_PANEL_DEFAULTS } from "@/stores/terminalStore";
+
+const terminalPause = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("@/transport", () => ({
+  getTransport: () => ({ terminalPause }),
+}));
+
+import { MAX_TERMINALS_PER_SCOPE, useTerminalStore, TERMINAL_PANEL_DEFAULTS } from "@/stores/terminalStore";
 
 describe("TerminalStore", () => {
   beforeEach(() => {
+    terminalPause.mockClear();
     // setTerminalPanelHeight is batched via rAF/setTimeout; fake timers
     // let tests flush the queue synchronously with vi.runAllTimers().
     vi.useFakeTimers();
@@ -55,6 +63,16 @@ describe("TerminalStore", () => {
 
       expect(useTerminalStore.getState().terminals["thread-1"]).toHaveLength(1);
       expect(useTerminalStore.getState().terminals["thread-2"]).toHaveLength(1);
+    });
+
+    it("caps one scope at four terminal sessions", () => {
+      for (let index = 1; index <= MAX_TERMINALS_PER_SCOPE + 1; index += 1) {
+        useTerminalStore.getState().addTerminal("thread-1", `pty-${index}`);
+      }
+
+      expect(useTerminalStore.getState().terminals["thread-1"]).toHaveLength(
+        MAX_TERMINALS_PER_SCOPE,
+      );
     });
   });
 

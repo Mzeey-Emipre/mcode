@@ -16,6 +16,7 @@ import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import { JobObject } from "../../services/job-object.js";
 import { EnvService } from "../../services/env-service.js";
+import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import { AttachmentService } from "../../services/attachment-service.js";
 import {
@@ -27,11 +28,10 @@ import {
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import type { MemoryPressureLevel } from "../../services/memory-pressure-service.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
-import { SkillService, codexPluginNameFromSkillPath } from "../../services/skill-service.js";
+import { CodexCatalogService } from "../../services/codex-catalog-service.js";
 import type {
   IAgentProvider,
   IGoalCapable,
-  ISkillCatalogCapable,
   ISessionEvictable,
   SessionForker,
   TurnRequest,
@@ -45,6 +45,7 @@ import type {
   PermissionRequest,
   ProviderModelInfo,
   ProviderUsageInfo,
+  ProviderCapabilityIdentity,
   QuotaCategory,
   SkillInfo,
 } from "@mcode/contracts";
@@ -60,7 +61,6 @@ import type {
   CodexRateLimitWindow,
   CodexRateLimitsPayload,
   CodexTurnOptions,
-  CodexSkillMetadata,
   CompletedItem,
   ThreadGoal,
 } from "./codex-types.js";
@@ -90,8 +90,14 @@ const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
 const USAGE_WARMUP_TIMEOUT_MS = 10_000;
 const USAGE_WARMUP_RETRY_MS = 60_000;
+const CODEX_MIN_VERSION = "0.37.0";
 
 type CodexEndedOutcome = "completed" | "errored" | "cancelled";
+
+type CodexCliPreflightResult =
+  | { ok: true; version: string }
+  | { ok: false; reason: "unavailable"; error: string }
+  | { ok: false; reason: "unsupported"; version: string };
 
 function codexRateLimitLabel(windowDurationMins: number | undefined, fallback: string): string {
   if (windowDurationMins === 300) return "5-hour limit";
@@ -250,6 +256,8 @@ interface CodexSessionState {
   runTurnSeq: number;
   /** Codex `turn.id` from the latest `turn/started` for this session. */
   pendingTurnId: string | null;
+  /** Child threads already queried for authoritative model metadata this session. */
+  childMetadataFetches: Set<string>;
   /** Clears the in-flight `runTurn` listener when a new turn preempts it. */
   abortPendingTurnWait?: () => void;
   /** Non-secret browser credential lifecycle metadata for this main session. */
@@ -299,7 +307,7 @@ async function buildCodexInput(
   }
 
   for (const mention of mentions) {
-    if (mention.kind !== "file") continue;
+    if (mention.kind !== "file" && mention.kind !== "plugin") continue;
     inputs.push({
       type: "mention",
       name: mention.label,
@@ -308,7 +316,7 @@ async function buildCodexInput(
   }
 
   const wireMessage = rewriteAgentMentionsAsSubagentUris(message, mentions);
-  const invocation = await resolveCodexSlashInvocation(wireMessage, skills);
+  const invocation = await resolveCodexSlashInvocation(wireMessage, skills, mentions);
   if (invocation.skillItem) inputs.push(invocation.skillItem);
   inputs.push({ type: "text", text: invocation.text });
   return inputs;
@@ -345,60 +353,75 @@ function rewriteAgentMentionsAsSubagentUris(
 async function resolveCodexSlashInvocation(
   message: string,
   skills: readonly SkillInfo[],
+  mentions: readonly MessageMention[],
 ): Promise<{ text: string; skillItem?: TurnInputPart }> {
   const slash = parseCodexSlashInvocation(message);
   if (!slash) return { text: message };
 
-  let promptCommand: (SkillInfo & { path: string }) | undefined;
-  for (const item of skills) {
-    if (item.name !== slash.requestedName && item.nativeName !== slash.requestedName) continue;
-
-    if (item.kind === "skill") {
-      const nativeName = item.nativeName ?? item.name.split(":").pop() ?? item.name;
-      const args = slash.args.trimStart();
-      const text = `$${nativeName}${args ? ` ${args}` : ""}`;
-      return {
-        text,
-        ...(item.path ? { skillItem: { type: "skill" as const, name: nativeName, path: item.path } } : {}),
-      };
-    }
-
-    if (!promptCommand && isCodexPromptCommand(item, slash.requestedName)) {
-      promptCommand = item;
-    }
-  }
+  const leadingSpace = message.length - message.trimStart().length;
+  const commandEnd = leadingSpace + slash.requestedName.length + 1;
+  const selectedMention = mentions.find((mention): mention is Extract<
+    MessageMention,
+    { kind: "command" }
+  > => (
+    mention.kind === "command"
+    && mention.label === slash.requestedName
+    && mention.range.start === leadingSpace
+    && mention.range.end === commandEnd
+    && mention.capabilityIdentity?.providerId === "codex"
+  ));
+  const selectedIdentity = selectedMention?.capabilityIdentity;
+  const candidates = skills.filter((item) => (
+    item.name === slash.requestedName || item.nativeName === slash.requestedName
+  ));
+  const selected = selectedIdentity
+    ? candidates.find((item) => matchesCodexCapabilityIdentity(item, selectedIdentity))
+    : undefined;
+  const promptCommand = selectedIdentity?.kind === "customPrompt"
+    ? selected && isCodexPromptCommand(selected, slash.requestedName) ? selected : undefined
+    : selectedIdentity
+      ? undefined
+      : candidates.find((item) => isCodexPromptCommand(item, slash.requestedName));
 
   if (promptCommand) {
     return { text: await expandCodexPromptCommand(promptCommand, slash.args) };
   }
 
+  const skill = selectedIdentity?.kind === "skill"
+    ? selected?.kind === "skill" ? selected : undefined
+    : selectedIdentity
+      ? undefined
+      : candidates.find((item) => item.kind === "skill");
+  if (skill) {
+    const nativeName = skill.nativeName ?? skill.name.split(":").pop() ?? skill.name;
+    const args = slash.args.trimStart();
+    const text = `$${nativeName}${args ? ` ${args}` : ""}`;
+    return {
+      text,
+      ...(skill.path
+        ? { skillItem: { type: "skill" as const, name: nativeName, path: skill.path } }
+        : {}),
+    };
+  }
+
   return { text: message };
 }
 
-/** Maps Codex native skill scope into Mcode's source labels. */
-function codexSkillSource(skill: CodexSkillMetadata): SkillInfo["source"] {
-  if (codexPluginNameFromSkillPath(skill.path)) return "plugin";
-  if (skill.scope === "user") return "user";
-  if (skill.scope === "repo") return "project";
-  return "agent";
-}
-
-/** Picks the concise display description from Codex native metadata. */
-function codexSkillDescription(skill: CodexSkillMetadata): string {
-  return skill.interface?.shortDescription ?? skill.shortDescription ?? skill.description ?? "";
-}
-
-/** Converts native Codex skill metadata into the shared slash-menu shape. */
-function mapNativeCodexSkill(skill: CodexSkillMetadata): SkillInfo {
-  return {
-    name: skill.name,
-    description: codexSkillDescription(skill),
-    kind: "skill",
-    source: codexSkillSource(skill),
-    providers: ["codex"],
-    nativeName: skill.name,
-    path: skill.path,
-  };
+function matchesCodexCapabilityIdentity(
+  item: SkillInfo,
+  identity: ProviderCapabilityIdentity,
+): boolean {
+  if (identity.kind === "skill") {
+    return item.kind === "skill"
+      && (item.path ?? item.nativeName ?? item.name) === identity.nativeId;
+  }
+  if (identity.kind === "customPrompt") {
+    return isCodexPromptCommand(item, item.name)
+      && (item.nativeName ?? item.name) === identity.nativeId;
+  }
+  return item.kind === "command"
+    && !isCodexPromptCommand(item, item.name)
+    && (item.nativeName ?? item.name) === identity.nativeId;
 }
 
 /** Return the generated image path from an app-server imageGeneration item. */
@@ -431,6 +454,15 @@ function isMainThreadNotification(
   return !notifThreadId || !server.threadId || notifThreadId === server.threadId;
 }
 
+/** Returns the child thread id when a native sub-agent activity starts. */
+function nativeSubAgentThreadId(notification: { method?: string; params?: Record<string, unknown> }): string | undefined {
+  if (notification.method !== "item/started" && notification.method !== "item/completed") return undefined;
+  const item = notification.params?.item;
+  if (!isRecord(item) || item.type !== "subAgentActivity" || item.kind !== "started") return undefined;
+  const childThreadId = item.agentThreadId;
+  return typeof childThreadId === "string" && childThreadId.length > 0 ? childThreadId : undefined;
+}
+
 function completedAssistantText(item: CompletedItem | undefined): string {
   if (!item || (item.type !== "agentMessage" && item.type !== "message")) return "";
   const parts = Array.isArray(item.content) ? item.content : [];
@@ -442,7 +474,7 @@ function completedAssistantText(item: CompletedItem | undefined): string {
 
 /** Codex provider adapter implementing IAgentProvider with a persistent app-server process per session. */
 @injectable()
-export class CodexProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ISkillCatalogCapable, ProtocolAdapter<CodexSessionState> {
+export class CodexProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<CodexSessionState> {
   readonly id: ProviderId = "codex";
   /** Codex CLI is an agentic tool with no one-shot text completion mode. */
   readonly supportsCompletion = false;
@@ -499,10 +531,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(EnvService) private readonly envService: EnvService,
-    @inject(SkillService) private readonly skillService: SkillService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
+    @inject(CodexCatalogService) private readonly codexCatalogService: CodexCatalogService,
     @inject(BrowserAutomationAccessService)
     private readonly browserAutomationAccess: BrowserAutomationAccessService = new BrowserAutomationAccessService(),
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
     super();
     this.runtime = new SessionRuntime<CodexSessionState>(this, {
@@ -596,6 +630,35 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   /** Convert an Mcode session id into the owning thread id. */
   private threadIdFromSession(sessionId: string): string {
     return sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+  }
+
+  /** Check Codex CLI availability and minimum version without applying caller policy. */
+  private checkCodexCliPreflight(cliPath: string): CodexCliPreflightResult {
+    const versionResult = checkCodexVersion(cliPath);
+    if (!versionResult.ok) {
+      return { ok: false, reason: "unavailable", error: versionResult.error };
+    }
+    if (!meetsMinVersion(versionResult.version, CODEX_MIN_VERSION)) {
+      return { ok: false, reason: "unsupported", version: versionResult.version };
+    }
+    return { ok: true, version: versionResult.version };
+  }
+
+  /** Emit a failed turn's error and terminal events, optionally deferring Ended. */
+  private emitTurnFailure(
+    threadId: string,
+    error: string,
+    outcome?: CodexEndedOutcome,
+    emitEnded = true,
+  ): AgentEvent {
+    this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
+    const ended = {
+      type: AgentEventType.Ended,
+      threadId,
+      ...(outcome ? { outcome } : {}),
+    } satisfies AgentEvent;
+    if (emitEnded) this.emit("event", ended);
+    return ended;
   }
 
   /** Convert a native Codex goal into Mcode's provider-neutral goal state. */
@@ -815,8 +878,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     } = req;
     const codexFastMode = req.providerOptions.fastMode;
 
-    const nativeSkills = await this.listSkills(cwd);
-    const skillCatalog = this.skillService.list(cwd, "codex", nativeSkills);
+    const nativeSkills = this.codexCatalogService.currentSkills(cwd);
+    const slashInvocation = parseCodexSlashInvocation(message);
+    const customPrompts = slashInvocation?.requestedName.startsWith("prompts:")
+      ? (await this.codexCatalogService.refreshCustomPrompts()).prompts
+      : this.codexCatalogService.currentPrompts();
+    const skillCatalog = [...nativeSkills, ...customPrompts];
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
     let input: TurnInputPart[];
     try {
@@ -827,8 +894,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         promptName: err.promptName,
         cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
       });
-      this.emit("event", { type: AgentEventType.Error, threadId, error: err.message } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      this.emitTurnFailure(threadId, err.message);
       return;
     }
 
@@ -903,17 +969,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // never spawns a child.
     const reusable = existing && existing.server.isAlive && existing.sandboxMode === sandbox;
     if (!reusable) {
-      const versionResult = checkCodexVersion(cliPath);
-      if (!versionResult.ok) {
-        this.emit("event", { type: AgentEventType.Error, threadId, error: versionResult.error } satisfies AgentEvent);
-        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
-        return;
-      }
-
-      if (!meetsMinVersion(versionResult.version, "0.37.0")) {
-        const errorMsg = `Codex CLI version ${versionResult.version} is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex`;
-        this.emit("event", { type: AgentEventType.Error, threadId, error: errorMsg } satisfies AgentEvent);
-        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      const preflight = this.checkCodexCliPreflight(cliPath);
+      if (!preflight.ok) {
+        const errorMessage = preflight.reason === "unavailable"
+          ? preflight.error
+          : `Codex CLI version ${preflight.version} is not supported. Minimum required: ${CODEX_MIN_VERSION}. Update with: npm install -g @openai/codex`;
+        this.emitTurnFailure(threadId, errorMessage);
         return;
       }
     }
@@ -945,8 +1006,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       this.pendingBrowserAccess.delete(sessionId);
       const errorMessage = e instanceof Error ? e.message : String(e);
       logger.error("CodexAppServer start failed", { sessionId, error: errorMessage });
-      this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      this.emitTurnFailure(threadId, errorMessage);
       return;
     }
     this.runtime.recordUsage(sessionId);
@@ -998,6 +1058,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const spawnEnv = { ...args.env };
     const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
     if (browserGrant) spawnEnv[browserTokenEnvName] = browserGrant.token;
+    const internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
 
     const server = new CodexAppServer({
       cliPath,
@@ -1012,23 +1073,25 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         ? (req) => this.handleApprovalRequest(sessionId, threadId, req)
         : undefined,
       jobObject: this.jobObject,
-      getSpawnEnv: () => spawnEnv,
-      configOverrides: browserGrant
-        ? [
-            `mcp_servers.mcode-browser.url=${JSON.stringify(browserGrant.mcpUrl)}`,
-            `mcp_servers.mcode-browser.bearer_token_env_var=${JSON.stringify(browserTokenEnvName)}`,
-          ]
-        : undefined,
+      getSpawnEnv: () => ({ ...spawnEnv, ...internalMcp?.env }),
+      configOverrides: [
+        ...(internalMcp?.configOverrides ?? []),
+        ...(browserGrant
+          ? [
+              `mcp_servers.mcode-browser.url=${JSON.stringify(browserGrant.mcpUrl)}`,
+              `mcp_servers.mcode-browser.bearer_token_env_var=${JSON.stringify(browserTokenEnvName)}`,
+            ]
+          : []),
+      ],
     });
 
-    const mapper = new CodexEventMapper(threadId);
+    const mapper = new CodexEventMapper(threadId, undefined, (event) => {
+      this.emit("file_mutation_start", event);
+    });
     mapper.setOutputTruncationMode(this.outputTruncationMode);
 
     server.on("notification", (notification) => {
       const n = notification as { method?: string; params?: Record<string, unknown> };
-      if (n.method === "skills/changed") {
-        this.emit("skills_changed");
-      }
       if (n.method === "account/rateLimits/updated") {
         this.applyUsageSnapshot(n.params, threadId);
       }
@@ -1042,7 +1105,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           typeof n.params?.turnId === "string" ? n.params.turnId : undefined;
         const turnId = turn?.id ?? flatTurnId;
         const entry = this.runtime.get(sessionId);
-        if (entry && turnId) entry.pendingTurnId = turnId;
+        if (entry && turnId) {
+          entry.pendingTurnId = turnId;
+          entry.childMetadataFetches.clear();
+        }
       }
       if (server.threadId) {
         mapper.setMainCodexThreadId(server.threadId);
@@ -1057,6 +1123,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         this.recordGoalEvent(sessionId, event);
         this.emit("event", event);
       }
+      const childThreadId = nativeSubAgentThreadId(n);
+      if (childThreadId) this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId);
     });
 
     server.on("fatal", (error: string) => {
@@ -1064,8 +1132,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       for (const event of mapper.drainPendingAssistantBoundary(false)) {
         this.emit("event", event);
       }
-      this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      this.emitTurnFailure(threadId, error);
       void this.runtime.stop(sessionId);
     });
 
@@ -1139,6 +1206,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           expiresAt: browserGrant.expiresAt,
         },
       }),
+      childMetadataFetches: new Set(),
     };
     this.liveSessionIds.add(sessionId);
 
@@ -1162,6 +1230,39 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     return { state, pids: [] };
   }
 
+  /** Fetches one native child thread's authoritative model settings without affecting the parent turn. */
+  private fetchChildThreadMetadata(
+    sessionId: string,
+    threadId: string,
+    server: CodexAppServer,
+    mapper: CodexEventMapper,
+    childThreadId: string,
+  ): void {
+    const state = this.runtime.get(sessionId);
+    if (!state || state.mapper !== mapper || state.childMetadataFetches.has(childThreadId)) return;
+    state.childMetadataFetches.add(childThreadId);
+    const runTurnSeq = state.runTurnSeq;
+
+    void server.getChildThreadMetadata(childThreadId)
+      .then((metadata) => {
+        const activeState = this.runtime.get(sessionId);
+        if (!metadata || !activeState || activeState.mapper !== mapper || activeState.runTurnSeq !== runTurnSeq) return;
+        const events = mapper.applyChildThreadMetadata(childThreadId, metadata);
+        traceCodexIngest(threadId, "child/thread-resume", { childThreadId }, events);
+        for (const event of events) {
+          this.recordGoalEvent(sessionId, event);
+          this.emit("event", event);
+        }
+      })
+      .catch((error: unknown) => {
+        logger.debug("Codex child metadata lookup failed", {
+          sessionId,
+          childThreadId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
   /** Eviction guard: a turn is in flight while sendTurn is awaiting completion. */
   isBusy(state: CodexSessionState): boolean {
     return state.pendingTurnId != null || state.abortPendingTurnWait !== undefined;
@@ -1181,6 +1282,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    * Drives every teardown path (stop, shutdown, eviction, stale-discard).
    */
   async close(state: CodexSessionState): Promise<void> {
+    await this.threadControlMcp?.close(state.sessionId);
     for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
       this.emit("event", event);
     }
@@ -1216,10 +1318,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.codex || "codex";
-    const versionResult = checkCodexVersion(cliPath);
-    if (!versionResult.ok) throw transientHandoffError(versionResult.error);
-    if (!meetsMinVersion(versionResult.version, "0.37.0")) {
-      throw transientHandoffError(`Codex CLI version ${versionResult.version} is too old for side-channel handoff`);
+    const preflight = this.checkCodexCliPreflight(cliPath);
+    if (!preflight.ok) {
+      const errorMessage = preflight.reason === "unavailable"
+        ? preflight.error
+        : `Codex CLI version ${preflight.version} is too old for side-channel handoff`;
+      throw transientHandoffError(errorMessage);
     }
 
     const server = new CodexAppServer({
@@ -1333,36 +1437,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     }
   }
 
-  /** Lists native Codex skills from an already-running app-server session. */
-  async listSkills(cwd?: string): Promise<SkillInfo[]> {
-    for (const sessionId of this.liveSessionIds) {
-      const state = this.runtime.get(sessionId);
-      if (!state?.server.isAlive) continue;
-      if (cwd && state.cwd !== cwd) continue;
-
-      try {
-        const result = await state.server.listSkills(cwd ? [cwd] : undefined);
-        const entry = cwd
-          ? result.data.find((item) => item.cwd === cwd) ?? result.data[0]
-          : result.data[0];
-        return (entry?.skills ?? [])
-          .filter((skill) => skill.enabled)
-          .map(mapNativeCodexSkill);
-      } catch (err) {
-        logger.warn("Codex native skills/list failed; falling back to disk scan", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-    return [];
-  }
-
-  /** Subscribes to native Codex skill catalog invalidations. */
-  onSkillsChanged(handler: () => void): void {
-    this.on("skills_changed", handler);
-  }
-
   /** Apply a queued native goal to the app-server before dispatching a turn. */
   private async applyPendingGoal(sessionId: string, server: CodexAppServer): Promise<void> {
     const objective = this.pendingGoalObjectives.get(sessionId);
@@ -1387,8 +1461,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       const error = err instanceof Error ? err.message : String(err);
       logger.error("Codex goal install failed", { sessionId, error });
       this.emitGoalCleared(sessionId, "rollback");
-      this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId, outcome: "errored" } satisfies AgentEvent);
+      this.emitTurnFailure(threadId, error, "errored");
       return;
     }
     await this.runTurn(sessionId, threadId, server, input, turnOptions);
@@ -1434,6 +1507,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     let serverDied = false;
     let endedEmitted = false;
     let endedOutcome: CodexEndedOutcome | undefined;
+    let deferredEnded: AgentEvent | undefined;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -1562,7 +1636,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
           this.emit("event", event);
         }
-        this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
+        deferredEnded = this.emitTurnFailure(threadId, errorMessage, endedOutcome, false);
       }
     } finally {
       if (seq === entry.runTurnSeq) {
@@ -1573,7 +1647,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       }
       if (!serverDied && seq === entry.runTurnSeq && !endedEmitted) {
         endedEmitted = true;
-        this.emit("event", {
+        this.emit("event", deferredEnded ?? {
           type: AgentEventType.Ended,
           threadId,
           ...(endedOutcome ? { outcome: endedOutcome } : {}),
@@ -1758,6 +1832,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     this.drainPending(() => true);
     void this.runtime.shutdown().catch((err: unknown) => {
       logger.warn("Codex runtime shutdown failed", { error: String(err) });
+    });
+    void this.codexCatalogService.shutdown().catch((err: unknown) => {
+      logger.warn("Codex catalog shutdown failed", { error: String(err) });
     });
     this.sdkSessionIds.clear();
     this.pendingSpawnTurns.clear();

@@ -26,7 +26,7 @@ export const SkillInfoSchema = lazySchema(() =>
 /** Metadata for a discovered skill or command. */
 export type SkillInfo = z.infer<ReturnType<typeof SkillInfoSchema>>;
 
-/** Per-path diagnostics returned by `skill.diagnose`. */
+/** Per-path diagnostics produced by the shared non-Codex filesystem scanner. */
 export const SkillDiagnosticsSchema = lazySchema(() =>
   z.object({
     scanned: z.array(
@@ -41,5 +41,5 @@ export const SkillDiagnosticsSchema = lazySchema(() =>
     totalCommands: z.number(),
   }),
 );
-/** Per-path diagnostics returned by `skill.diagnose`. */
+/** Per-path diagnostics produced by the shared non-Codex filesystem scanner. */
 export type SkillDiagnostics = z.infer<ReturnType<typeof SkillDiagnosticsSchema>>;

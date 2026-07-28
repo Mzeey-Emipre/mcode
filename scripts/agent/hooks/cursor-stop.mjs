@@ -1,22 +1,19 @@
 #!/usr/bin/env node
-/**
- * Cursor Stop hook wrapper.
- * Runs verify-fast.mjs (typecheck + lint only, the fast gate) and translates
- * the result for Cursor: exit 0 = allow, exit 2 = block. The full gate
- * (typecheck + lint + tests) runs at `bun run verify` time, not on every
- * stop. See docs/guides/agent-workflow.md for the two-tier model.
- */
-import { execSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
+/** Inspects the changed-file receipt and maps a block to Cursor exit code 2. */
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const verifyScript = resolve(__dirname, "..", "verify-fast.mjs");
+const script = resolve(dirname(fileURLToPath(import.meta.url)), "..", "verify-tests.mjs");
+const result = spawnSync(process.execPath, [script, "--check-receipt"], {
+  cwd: process.cwd(),
+  stdio: "inherit",
+  timeout: 10_000,
+  windowsHide: true,
+});
 
-try {
-  execSync(`node "${verifyScript}"`, { stdio: "inherit" });
-  process.exit(0);
-} catch (err) {
-  console.error("BLOCK: verify-fast failed. Fix the errors before finishing.");
-  process.exit(2);
-}
+if (result.status === 0) process.exit(0);
+console.error(result.error?.code === "ETIMEDOUT"
+  ? "BLOCK: verification receipt check timed out."
+  : "BLOCK: verification receipt missing, stale, or failed. See the evidence above.");
+process.exit(2);

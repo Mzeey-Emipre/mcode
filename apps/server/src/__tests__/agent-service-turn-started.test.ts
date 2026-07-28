@@ -160,7 +160,11 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     const thread = threadRepo.create(workspace.id, "Test Thread", "direct", "main", true, "claude");
 
     // Kick off sendMessage without awaiting (provider.sendMessage never resolves).
-    void svc.sendMessage(thread.id, "hello", "default");
+    void svc.sendMessage({
+      threadId: thread.id,
+      content: "hello",
+      permissionMode: "default",
+    });
 
     // Let the async prelude (attachment persist + ref capture + settings.get) settle.
     await new Promise((r) => setTimeout(r, 10));
@@ -186,6 +190,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       (e) => e.type === AgentEventType.TurnStarted,
     ).length;
     expect(turnStartedCount, "turnStarted must be emitted exactly once").toBe(1);
+    expect(svc.getCurrentFileEffectTurnId(thread.id)).toMatch(/^\d+$/);
 
     expect(svc.activeThreadIds()).toContain(thread.id);
 

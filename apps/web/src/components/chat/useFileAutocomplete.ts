@@ -1,10 +1,16 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { getTransport } from "@/transport";
+import {
+  providerCatalogCacheKey,
+  useProviderCatalogStore,
+} from "@/stores/providerCatalogStore";
+import type { ProviderCatalogRequest, SelectableProviderAgent } from "@mcode/contracts";
 
 interface UseFileAutocompleteOptions {
   workspaceId?: string;
   threadId?: string;
   providerId?: string;
+  cwd?: string;
 }
 
 export type MentionSuggestion =
@@ -47,12 +53,6 @@ const fileListCache = new Map<string, string[]>();
 /** In-flight fetch promises keyed by scope, so concurrent callers reuse the same request. */
 const inFlightFetches = new Map<string, Promise<string[]>>();
 
-/** Cache Codex agent suggestions per scope. */
-const codexAgentCache = new Map<string, MentionSuggestion[]>();
-
-/** In-flight Codex agent fetches keyed by scope. */
-const inFlightAgentFetches = new Map<string, Promise<MentionSuggestion[]>>();
-
 /** Mounted hooks that must discard local data after a cache invalidation. */
 const cacheInvalidationListeners = new Set<(key?: string) => void>();
 
@@ -65,11 +65,9 @@ export function clearFileListCache(workspaceId?: string, threadId?: string): voi
   if (workspaceId) {
     const key = scopeKey(workspaceId, threadId);
     fileListCache.delete(key);
-    codexAgentCache.delete(key);
     for (const listener of cacheInvalidationListeners) listener(key);
   } else {
     fileListCache.clear();
-    codexAgentCache.clear();
     for (const listener of cacheInvalidationListeners) listener();
   }
 }
@@ -77,22 +75,45 @@ export function clearFileListCache(workspaceId?: string, threadId?: string): voi
 /**
  * Hook for @ file autocomplete in the Composer.
  *
- * Detects `@` triggers by scanning backward from the cursor, lazy-loads
- * the workspace file list via IPC on first trigger, and filters results
- * by substring match. Caches file lists per scope at module scope.
+ * Detects `@` triggers by scanning backward from the cursor, shows cached
+ * selectable agents, lazy-loads workspace files, and reconciles the bounded
+ * provider catalog while the picker stays open. Caches file lists per scope.
  */
 export function useFileAutocomplete({
   workspaceId,
   threadId,
   providerId,
+  cwd,
 }: UseFileAutocompleteOptions): UseFileAutocompleteResult {
   const [isOpen, setIsOpen] = useState(false);
   const [allFiles, setAllFiles] = useState<string[]>([]);
-  const [allAgents, setAllAgents] = useState<MentionSuggestion[]>([]);
   const [suggestions, setSuggestions] = useState<MentionSuggestion[]>([]);
   const [query, setQuery] = useState("");
   const [triggerStart, setTriggerStart] = useState(-1);
   const requestEpochRef = useRef(0);
+  const refreshedAgentScopeRef = useRef<string | null>(null);
+  const catalogRequest = useMemo<ProviderCatalogRequest | null>(() => (
+    workspaceId && providerId === "codex"
+      ? cwd
+        ? { providerId: "codex", cwd }
+        : { providerId: "codex", workspaceId, ...(threadId ? { threadId } : {}) }
+      : null
+  ), [cwd, workspaceId, threadId, providerId]);
+  const catalogKey = catalogRequest ? providerCatalogCacheKey(catalogRequest) : "";
+  const catalogSnapshot = useProviderCatalogStore((state) => (
+    catalogKey ? state.entries[catalogKey]?.snapshot ?? null : null
+  ));
+  const catalogAgents = useMemo(
+    () => (catalogSnapshot?.selectableAgents ?? []).map(toAgentSuggestion),
+    [catalogSnapshot],
+  );
+
+  useEffect(() => {
+    requestEpochRef.current += 1;
+    refreshedAgentScopeRef.current = null;
+    setSuggestions([]);
+    setIsOpen(false);
+  }, [catalogKey]);
 
   // Reset local state when scope changes so stale data isn't used.
   const prevScopeRef = useRef<string>("");
@@ -100,9 +121,9 @@ export function useFileAutocomplete({
     const key = workspaceId ? scopeKey(workspaceId, threadId) : "";
     if (key !== prevScopeRef.current) {
       requestEpochRef.current += 1;
+      refreshedAgentScopeRef.current = null;
       prevScopeRef.current = key;
       setAllFiles([]);
-      setAllAgents([]);
       setSuggestions([]);
       setIsOpen(false);
     }
@@ -112,8 +133,8 @@ export function useFileAutocomplete({
     const listener = (invalidatedKey?: string) => {
       if (invalidatedKey && invalidatedKey !== prevScopeRef.current) return;
       requestEpochRef.current += 1;
+      refreshedAgentScopeRef.current = null;
       setAllFiles([]);
-      setAllAgents([]);
       setSuggestions([]);
       setIsOpen(false);
     };
@@ -169,58 +190,6 @@ export function useFileAutocomplete({
     return files;
   }, [workspaceId, threadId]);
 
-  const loadAgents = useCallback(async (): Promise<MentionSuggestion[]> => {
-    if (!workspaceId || providerId !== "codex") return [];
-
-    const key = scopeKey(workspaceId, threadId);
-    const cached = codexAgentCache.get(key);
-    if (cached) {
-      setAllAgents(cached);
-      return cached;
-    }
-
-    const existing = inFlightAgentFetches.get(key);
-    if (existing) {
-      const agents = await existing;
-      setAllAgents(agents);
-      return agents;
-    }
-
-    const fetchPromise = getTransport()
-      .listCodexAgents(workspaceId, threadId)
-      .then((agents) =>
-        agents.map((agent) => ({
-          id: `agent:${agent.path}`,
-          kind: "agent" as const,
-          group: "Agents" as const,
-          label: agent.name,
-          name: agent.name,
-          path: agent.path,
-          provider: "codex" as const,
-          ...(agent.description ? { description: agent.description } : {}),
-        })),
-      )
-      .then((agents) => {
-        codexAgentCache.set(key, agents);
-        return agents;
-      })
-      .catch((err) => {
-        console.error("[useFileAutocomplete] Failed to load Codex agents:", err);
-        return [] as MentionSuggestion[];
-      })
-      .finally(() => {
-        inFlightAgentFetches.delete(key);
-      });
-
-    inFlightAgentFetches.set(key, fetchPromise);
-
-    const agents = await fetchPromise;
-    if (prevScopeRef.current === key) {
-      setAllAgents(agents);
-    }
-    return agents;
-  }, [workspaceId, threadId, providerId]);
-
   const handleInputChange = useCallback(
     async (text: string, cursorPos: number) => {
       const requestEpoch = ++requestEpochRef.current;
@@ -241,6 +210,7 @@ export function useFileAutocomplete({
       }
 
       if (atPos === -1) {
+        refreshedAgentScopeRef.current = null;
         setIsOpen(false);
         setSuggestions([]);
         setQuery("");
@@ -252,16 +222,26 @@ export function useFileAutocomplete({
       setQuery(q);
       setTriggerStart(atPos);
 
-      // Lazy load file list on first @ trigger.
-      // Always prefer the direct return from loadFiles() over the
-      // closure-captured allFiles, which may be stale after an async gap.
-      const [loadedFiles, loadedAgents] = await Promise.all([
+      const cachedFiles = fileListCache.get(requestScope) ?? allFiles;
+      setSuggestions(filterMentionSuggestions(cachedFiles, catalogAgents, q));
+      setIsOpen(true);
+
+      const shouldRefreshAgents = catalogRequest !== null
+        && refreshedAgentScopeRef.current !== catalogKey;
+      if (shouldRefreshAgents) refreshedAgentScopeRef.current = catalogKey;
+      const [loadedFiles, loadedCatalog] = await Promise.all([
         allFiles.length === 0 ? loadFiles() : Promise.resolve(undefined),
-        providerId === "codex" && allAgents.length === 0 ? loadAgents() : Promise.resolve(undefined),
+        shouldRefreshAgents
+          ? useProviderCatalogStore.getState().load(catalogRequest, true).catch((err) => {
+              console.error("[useFileAutocomplete] Failed to load Codex agents:", err);
+              return undefined;
+            })
+          : Promise.resolve(undefined),
       ]);
-      const loaded = loadedFiles;
-      const files = loaded ?? allFiles;
-      const agents = providerId === "codex" ? (loadedAgents ?? allAgents) : [];
+      const files = loadedFiles ?? cachedFiles;
+      const agents = loadedCatalog
+        ? loadedCatalog.selectableAgents.map(toAgentSuggestion)
+        : catalogAgents;
 
       if (
         requestEpochRef.current !== requestEpoch ||
@@ -270,33 +250,16 @@ export function useFileAutocomplete({
         return;
       }
 
-      const fileSuggestions: MentionSuggestion[] = files.map((filePath) => ({
-        id: `file:${filePath}`,
-        kind: "file",
-        group: "Files",
-        label: filePath,
-        path: filePath,
-      }));
-
-      const allSuggestions = [...agents, ...fileSuggestions];
-      const matches = (suggestion: MentionSuggestion) => {
-        if (q.length === 0) return true;
-        const haystack =
-          suggestion.kind === "agent"
-            ? `${suggestion.label} ${suggestion.description ?? ""}`.toLowerCase()
-            : suggestion.path.toLowerCase();
-        return haystack.includes(q);
-      };
-      const filtered =
-        q.length === 0
-          ? [...agents.slice(0, 20), ...fileSuggestions.slice(0, 80)]
-          : allSuggestions.filter(matches).slice(0, 100);
-
-      setSuggestions(filtered);
+      setSuggestions(filterMentionSuggestions(files, agents, q));
       setIsOpen(true);
     },
-    [workspaceId, threadId, allFiles, allAgents, loadFiles, loadAgents, providerId],
+    [allFiles, catalogAgents, catalogKey, catalogRequest, loadFiles, threadId, workspaceId],
   );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSuggestions(filterMentionSuggestions(allFiles, catalogAgents, query));
+  }, [allFiles, catalogAgents, isOpen, query]);
 
   const selectSuggestion = useCallback((suggestion: MentionSuggestion): MentionSuggestion => {
     requestEpochRef.current += 1;
@@ -309,6 +272,7 @@ export function useFileAutocomplete({
 
   const dismiss = useCallback(() => {
     requestEpochRef.current += 1;
+    refreshedAgentScopeRef.current = null;
     setIsOpen(false);
     setSuggestions([]);
     setQuery("");
@@ -324,4 +288,40 @@ export function useFileAutocomplete({
     selectSuggestion,
     dismiss,
   };
+}
+
+function toAgentSuggestion(agent: SelectableProviderAgent): MentionSuggestion {
+  return {
+    id: `agent:${agent.providerId}:${agent.nativeId}`,
+    kind: "agent",
+    group: "Agents",
+    label: agent.name,
+    name: agent.name,
+    path: agent.path,
+    provider: "codex",
+    ...(agent.description ? { description: agent.description } : {}),
+  };
+}
+
+function filterMentionSuggestions(
+  files: readonly string[],
+  agents: readonly MentionSuggestion[],
+  query: string,
+): MentionSuggestion[] {
+  const fileSuggestions: MentionSuggestion[] = files.map((filePath) => ({
+    id: `file:${filePath}`,
+    kind: "file",
+    group: "Files",
+    label: filePath,
+    path: filePath,
+  }));
+  if (query.length === 0) {
+    return [...agents.slice(0, 20), ...fileSuggestions.slice(0, 80)];
+  }
+  return [...agents, ...fileSuggestions].filter((suggestion) => {
+    const haystack = suggestion.kind === "agent"
+      ? `${suggestion.label} ${suggestion.description ?? ""}`.toLowerCase()
+      : suggestion.path.toLowerCase();
+    return haystack.includes(query);
+  }).slice(0, 100);
 }

@@ -1,4 +1,5 @@
 import {
+  activateTestConversation,
   resetThreadStoreForTests,
   getTestActiveMessages,
   getTestActiveLoading,
@@ -60,7 +61,7 @@ describe("Thread Switching", () => {
     );
 
     // Act: switch to Thread B (don't await yet)
-    const loadPromise = useThreadStore.getState().loadMessages("thread-b");
+const loadPromise = activateTestConversation("thread-b");
 
     // Assert: messages cleared synchronously BEFORE fetch resolves
     const midState = useThreadStore.getState();
@@ -113,7 +114,7 @@ describe("Thread Switching", () => {
     );
 
     // Act: switch to running Thread B
-    const loadPromise = useThreadStore.getState().loadMessages("thread-b");
+    const loadPromise = activateTestConversation("thread-b");
 
     // Assert: messages cleared even for a running thread
     const midState = useThreadStore.getState();
@@ -152,7 +153,7 @@ describe("Thread Switching", () => {
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messages: [], hasMore: false });
 
     // Act: switch to Thread B
-    await useThreadStore.getState().loadMessages("thread-b");
+    await activateTestConversation("thread-b");
 
     // Assert: Thread A's per-thread data is intact
     const state = useThreadStore.getState();
@@ -190,12 +191,12 @@ describe("Thread Switching", () => {
       createMockMessage({ id: "a-1", thread_id: "thread-a", content: "first" }),
     ];
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messages: threadAMsgs, hasMore: false });
-    await useThreadStore.getState().loadMessages("thread-a");
+    await activateTestConversation("thread-a");
     expect(getTestActiveMessages()).toEqual(threadAMsgs);
 
     // Act: switch to Thread B
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messages: [], hasMore: false });
-    await useThreadStore.getState().loadMessages("thread-b");
+    await activateTestConversation("thread-b");
     expect(getTestActiveMessages()).toEqual([]);
 
     // Simulate: background agent adds a message to Thread A (push event would evict cache)
@@ -207,7 +208,7 @@ describe("Thread Switching", () => {
       createMockMessage({ id: "a-2", thread_id: "thread-a", content: "agent replied while away" }),
     ];
     (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messages: updatedThreadAMsgs, hasMore: false });
-    await useThreadStore.getState().loadMessages("thread-a");
+    await activateTestConversation("thread-a");
 
     // Assert: all messages shown, including those that arrived while viewing Thread B
     const state = useThreadStore.getState();

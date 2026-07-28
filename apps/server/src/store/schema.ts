@@ -33,6 +33,26 @@ export const workspaces = sqliteTable(
   ],
 );
 
+/** Server-only stable identities for registered worktrees in each workspace. */
+export const workspaceWorktrees = sqliteTable(
+  "workspace_worktrees",
+  {
+    id: text("id").primaryKey().notNull(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    canonicalPath: text("canonical_path").notNull(),
+    label: text("label").notNull(),
+    branch: text("branch"),
+    baseRef: text("base_ref"),
+    managed: integer("managed").notNull().default(0),
+    lastSeenAt: text("last_seen_at").notNull().default(timestampDefault),
+    stale: integer("stale").notNull().default(0),
+  },
+  (table) => [
+    uniqueIndex("idx_workspace_worktrees_path").on(table.workspaceId, table.canonicalPath),
+    index("idx_workspace_worktrees_workspace").on(table.workspaceId, table.stale),
+  ],
+);
+
 export const threads = sqliteTable(
   "threads",
   {
@@ -65,6 +85,11 @@ export const threads = sqliteTable(
     permissionMode: text("permission_mode"),
     parentThreadId: text("parent_thread_id"),
     forkedFromMessageId: text("forked_from_message_id"),
+    delegationCoordinatorThreadId: text("delegation_coordinator_thread_id").references((): AnySQLiteColumn => threads.id, { onDelete: "set null" }),
+    delegationCreatorTurnId: text("delegation_creator_turn_id"),
+    delegationCreatorToolCallId: text("delegation_creator_tool_call_id"),
+    delegationCreationKind: text("delegation_creation_kind"),
+    createdByIntegrationId: text("created_by_integration_id"),
     lastCompactSummary: text("last_compact_summary"),
     copilotAgent: text("copilot_agent"),
     contextWindowMode: text("context_window_mode"),
@@ -85,7 +110,49 @@ export const threads = sqliteTable(
     index("idx_threads_status").on(table.status),
     index("idx_threads_parent_thread_id").on(table.parentThreadId),
     index("idx_threads_forked_from_message_id").on(table.forkedFromMessageId),
+    index("idx_threads_delegation_coordinator").on(table.delegationCoordinatorThreadId),
+    index("idx_threads_created_by_integration").on(table.createdByIntegrationId),
   ],
+);
+
+/** Durable human approvals for protected delegated-thread creation mutations. */
+export const threadControlApprovals = sqliteTable(
+  "thread_control_approvals",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    prompt: text("prompt").notNull(),
+    executionJson: text("execution_json").notNull(),
+    placementJson: text("placement_json").notNull(),
+    turnId: text("turn_id").notNull(),
+    callerId: text("caller_id"),
+    sourceThreadId: text("source_thread_id"),
+    operationPhase: text("operation_phase").notNull().default("pre_provision"),
+    status: text("status").notNull().default("pending"),
+    processingStartedAt: text("processing_started_at"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    resolvedAt: text("resolved_at"),
+  },
+  (table) => [
+    index("idx_thread_control_approvals_thread").on(table.threadId, table.status),
+  ],
+);
+
+/** Bounded lifecycle records for thread-control operations. */
+export const threadControlAudit = sqliteTable(
+  "thread_control_audit",
+  {
+    id: text("id").primaryKey().notNull(),
+    callerId: text("caller_id").notNull(),
+    sourceThreadId: text("source_thread_id"),
+    workspaceId: text("workspace_id"),
+    threadId: text("thread_id"),
+    operation: text("operation").notNull(),
+    outcome: text("outcome").notNull(),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+  },
+  (table) => [index("idx_thread_control_audit_thread").on(table.threadId, table.createdAt)],
 );
 
 export const pullRequestReviewLinks = sqliteTable(
@@ -158,6 +225,11 @@ export const messages = sqliteTable(
      * existed — the UI falls back gracefully when absent.
      */
     model: text("model"),
+    provider: text("provider"),
+    originType: text("origin_type").notNull().default("legacy"),
+    sourceThreadId: text("source_thread_id"),
+    sourceTurnId: text("source_turn_id"),
+    sourceProviderId: text("source_provider_id"),
     /**
      * When 1, this message is internal to mcode (e.g. a hidden handoff request
      * on a Cursor parent thread) and must not render in the chat UI. The
@@ -181,11 +253,16 @@ export const toolCallRecords = sqliteTable(
       .references(() => messages.id, { onDelete: "cascade" }),
     parentToolCallId: text("parent_tool_call_id"),
     toolName: text("tool_name").notNull(),
+    displayName: text("display_name"),
+    providerAgentKey: text("provider_agent_key"),
+    model: text("model"),
+    reasoningEffort: text("reasoning_effort"),
     inputSummary: text("input_summary").notNull().default(""),
     outputSummary: text("output_summary").notNull().default(""),
     outputTruncated: integer("output_truncated").notNull().default(0),
     outputTotalBytes: integer("output_total_bytes"),
     outputArtifactPath: text("output_artifact_path"),
+    exitCode: integer("exit_code"),
     status: text("status").notNull().default("running"),
     startedAt: text("started_at").notNull().default(timestampDefault),
     completedAt: text("completed_at"),
@@ -256,6 +333,7 @@ export const turnSnapshots = sqliteTable(
     refBefore: text("ref_before").notNull(),
     refAfter: text("ref_after").notNull(),
     filesChanged: text("files_changed").notNull().default("[]"),
+    fileEffects: text("file_effects").notNull().default('{"revision":0,"fileCount":0,"additions":0,"deletions":0,"effects":[]}'),
     worktreePath: text("worktree_path"),
     createdAt: text("created_at").notNull().default(timestampDefault),
   },
@@ -319,6 +397,24 @@ export const providerModelCache = sqliteTable("provider_model_cache", {
   fetchedAt: text("fetched_at").notNull().default(timestampDefault),
   modelCount: integer("model_count").notNull().default(0),
 });
+
+/** Last known provider catalog snapshots, isolated by provider and realized context. */
+export const providerCatalogSnapshots = sqliteTable(
+  "provider_catalog_snapshots",
+  {
+    contextKey: text("context_key").primaryKey().notNull(),
+    providerId: text("provider_id").notNull(),
+    workspaceId: text("workspace_id")
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    cwd: text("cwd"),
+    snapshotJson: text("snapshot_json").notNull(),
+    updatedAt: text("updated_at").notNull().default(timestampDefault),
+  },
+  (table) => [
+    index("idx_provider_catalog_snapshots_workspace").on(table.workspaceId),
+    index("idx_provider_catalog_snapshots_provider").on(table.providerId),
+  ],
+);
 
 export const planQuestionAnswers = sqliteTable(
   "plan_question_answers",

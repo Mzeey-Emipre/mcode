@@ -167,6 +167,43 @@ describe("PullRequestFileTree", () => {
     ).toHaveTextContent("M");
   });
 
+  it("shows Review rename and binary metadata without line counts", () => {
+    render(
+      <PullRequestFileTree
+        reviewFiles={[{
+          path: "src/new.ts",
+          previousPath: "src/old.ts",
+          changeType: "renamed",
+          binary: true,
+        }]}
+        activePath={null}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByRole("treeitem", {
+      name: "Renamed src/old.ts → src/new.ts, Binary",
+    });
+    expect(row).toHaveTextContent("src/old.ts → src/new.ts");
+    expect(row).toHaveTextContent("Binary");
+    expect(row.querySelector('[data-change-type="renamed"]')).toHaveTextContent("R");
+    expect(row.querySelector('[aria-label$="additions"]')).not.toBeInTheDocument();
+  });
+
+  it("does not apply a persistent background to expanded folders", async () => {
+    render(
+      <PullRequestFileTree
+        files={[file("apps/web/App.tsx", 1)]}
+        activePath={null}
+        onActivate={vi.fn()}
+      />,
+    );
+
+    const folder = await screen.findByRole("treeitem", { name: "apps/web" });
+    expect(folder).toHaveAttribute("aria-expanded", "true");
+    expect(folder).toHaveClass("aria-expanded:bg-transparent");
+  });
+
   it("reserves green and red for added and deleted file semantics", () => {
     render(
       <PullRequestFileTree

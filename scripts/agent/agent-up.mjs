@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { rebuildServerDevBundle } from "../build-server-dev-bundle.mjs";
@@ -65,7 +65,6 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
   mkdirSync(paths.electronDir, { recursive: true });
   const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
   stopRuntimePids(repoRoot);
-  writeScratchPlaywrightConfig(paths);
 
   const seedRuntimeFixtureRepo = agentUpTestHooks.seedFixtureRepo ?? seedFixtureRepo;
   const computeRuntimePorts = agentUpTestHooks.computeAvailablePorts ?? computeAvailablePorts;
@@ -92,6 +91,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
   if (!electronBin) {
     throw new Error("Electron binary not found. Run 'bun install' in the project root.");
   }
+  const electronBinding = getElectronBinding();
 
   const rebuildRuntimeServerBundle = agentUpTestHooks.rebuildServerDevBundle ?? rebuildServerDevBundle;
   await rebuildRuntimeServerBundle();
@@ -107,6 +107,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: "1",
+          BETTER_SQLITE3_BINDING: electronBinding,
           NODE_ENV: "development",
           ...buildRuntimeStateEnv(repoRoot, {
             MCODE_AGENT_FIXTURE_REPO: fixtureRepo,
@@ -171,6 +172,17 @@ function getElectronBinary() {
   }
 }
 
+/** Resolve the workspace Electron-native better-sqlite3 binding. */
+function getElectronBinding() {
+  const serverRequire = createRequire(resolve(rootDir, "apps", "server", "package.json"));
+  const packagePath = serverRequire.resolve("better-sqlite3/package.json");
+  const bindingPath = resolve(dirname(packagePath), "build", "Release", "better_sqlite3.electron.node");
+  if (!existsSync(bindingPath)) {
+    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${bindingPath}`);
+  }
+  return bindingPath;
+}
+
 /**
  * Spawn a long-running process with stdout and stderr redirected to one log file.
  *
@@ -222,45 +234,6 @@ function writePid(paths, name, pid) {
   const pidFile = resolve(paths.pidsDir, `${name}.pid`);
   writeFileSync(pidFile, `${pid}\n`, { encoding: "utf8" });
   return pidFile;
-}
-
-/**
- * Writes the per-runtime Playwright config used for scratch verification specs.
- *
- * @param {ReturnType<typeof getRuntimePaths>} paths
- */
-function writeScratchPlaywrightConfig(paths) {
-  const configPath = join(paths.playwrightScratchDir, "playwright.config.mjs");
-  const playwrightTestPath = "../../apps/web/node_modules/@playwright/test/index.js";
-  writeFileSync(
-    configPath,
-    `import { readFileSync } from "node:fs";
-import playwrightTest from ${JSON.stringify(playwrightTestPath)};
-
-const { defineConfig } = playwrightTest;
-
-const ports = JSON.parse(readFileSync(new URL("../ports.json", import.meta.url), "utf8"));
-
-export default defineConfig({
-  testDir: ".",
-  testMatch: /.*\\.spec\\.(js|ts)/,
-  outputDir: "./test-results",
-  reporter: [["list"]],
-  use: {
-    baseURL: ports.appUrl,
-  },
-});
-`,
-    { encoding: "utf8" },
-  );
-  writeFileSync(
-    join(paths.playwrightScratchDir, "test.mjs"),
-    `import playwrightTest from ${JSON.stringify(playwrightTestPath)};
-
-export const { test, expect } = playwrightTest;
-`,
-    { encoding: "utf8" },
-  );
 }
 
 /**

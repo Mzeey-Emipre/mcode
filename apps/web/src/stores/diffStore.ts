@@ -5,7 +5,25 @@ import { defaultReviewView, type ReviewChangeState } from "@/lib/review-views";
 export type { GitCommit, BranchComparison };
 
 /** Active tab in the right panel. */
-export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal";
+export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal" | "subagents";
+
+/** Selected roster view within a thread's Subagents panel. */
+export type SubagentRosterTab = "active" | "finished";
+
+/** Navigation state for one thread's Subagents detail view. */
+export interface SubagentDetailSelection {
+  readonly id: string;
+  readonly originTab: SubagentRosterTab;
+  readonly scrollTop: number;
+}
+
+/** Transient file-path filter opened from one subagent detail. */
+export interface SubagentReviewScope {
+  readonly label: string;
+  readonly paths: readonly string[];
+  readonly additions: number;
+  readonly deletions: number;
+}
 
 /**
  * View mode within the Review (Changes) tab. The tab is dual-scope: the first
@@ -44,6 +62,33 @@ export const PANEL_SPLIT_GAP_PX = 0;
 export const PANEL_DEFAULT_WIDTH = 440;
 /** Wide snap target for the right panel (double-click drag handle). */
 export const PANEL_WIDE_WIDTH = 680;
+const REVIEW_FILES_VISIBILITY_STORAGE_KEY = "mcode.review-files-visible.v1";
+
+function readReviewFilesVisibility(): Record<string, boolean> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(REVIEW_FILES_VISIBILITY_STORAGE_KEY);
+    if (!raw || raw.length > 100_000) return {};
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 1_000)
+        .filter(([key, visible]) => key.length > 0 && key.length <= 4_096 && typeof visible === "boolean"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeReviewFilesVisibility(value: Record<string, boolean>): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(REVIEW_FILES_VISIBILITY_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Visibility still updates for this session when browser persistence is unavailable.
+  }
+}
 
 function clampWidth(w: number): number {
   return Math.max(PANEL_MIN_WIDTH, w);
@@ -101,7 +146,81 @@ export type RightPanelState = {
    */
   readonly openTabs: readonly RightPanelTab[];
   readonly activeTab: RightPanelTab;
+  /** Ordered tab instances. Singleton tools use deterministic IDs. */
+  readonly tabInstances: readonly RightPanelTabInstance[];
+  /** Stable identity of the active tab instance. */
+  readonly activeTabId: string | null;
 };
+
+/** One open right-panel tab, identified independently from its tool type. */
+export type RightPanelTabInstance = {
+  readonly id: string;
+  readonly type: RightPanelTab;
+};
+
+/** Stable identity for an open singleton tool. */
+export function rightPanelSingletonId(type: RightPanelTab): string {
+  return `singleton:${type}`;
+}
+
+/** Stable rail identity for one PTY-backed Terminal tab. */
+export function rightPanelTerminalId(ptyId: string): string {
+  return `terminal:${ptyId}`;
+}
+
+/** Resolve ordered instances from current or legacy in-memory panel state. */
+export function rightPanelTabInstances(
+  state: Pick<RightPanelState, "openTabs"> & Partial<Pick<RightPanelState, "tabInstances">>,
+): readonly RightPanelTabInstance[] {
+  return state.tabInstances ?? state.openTabs.map((type) => ({
+    id: rightPanelSingletonId(type),
+    type,
+  }));
+}
+
+/** Resolve the active tool type from canonical instance state. */
+export function rightPanelActiveTab(state: RightPanelState): RightPanelTab {
+  return (
+    state.tabInstances.find((instance) => instance.id === state.activeTabId)?.type ??
+    "tasks"
+  );
+}
+
+type RightPanelStateInput = Omit<
+  RightPanelState,
+  "openTabs" | "activeTab" | "tabInstances" | "activeTabId"
+> & {
+  readonly openTabs?: readonly RightPanelTab[];
+  readonly activeTab?: RightPanelTab;
+  readonly tabInstances?: readonly RightPanelTabInstance[];
+  readonly activeTabId?: string | null;
+};
+
+/** Build panel state whose compatibility fields are derived from canonical instances. */
+export function createRightPanelState(input: RightPanelStateInput): RightPanelState {
+  const tabInstances =
+    input.tabInstances ??
+    (input.openTabs ?? []).map((type) => ({ id: rightPanelSingletonId(type), type }));
+  const activeTabId = Object.prototype.hasOwnProperty.call(input, "activeTabId")
+    ? input.activeTabId ?? null
+    : tabInstances.find((instance) => instance.type === input.activeTab)?.id ?? null;
+  const state = {
+    ...input,
+    tabInstances,
+    activeTabId,
+  } as RightPanelState;
+  Object.defineProperties(state, {
+    openTabs: {
+      enumerable: true,
+      get: () => state.tabInstances.map((instance) => instance.type),
+    },
+    activeTab: {
+      enumerable: true,
+      get: () => rightPanelActiveTab(state),
+    },
+  });
+  return state;
+}
 
 /** Default line-wrap preference for a thread with no stored override. */
 export const DEFAULT_LINE_WRAP = true;
@@ -111,13 +230,13 @@ export const DEFAULT_LINE_WRAP = true;
  * fallback has a stored record yet (default width, closed, no open tabs).
  */
 export function createDefaultRightPanelState(): RightPanelState {
-  return {
+  return createRightPanelState({
     visible: false,
     width: getDefaultPanelWidthPx(),
     widthSource: "auto",
-    openTabs: [],
-    activeTab: "tasks",
-  };
+    tabInstances: [],
+    activeTabId: null,
+  });
 }
 
 /** Stable cache key for one inline diff payload. */
@@ -173,9 +292,10 @@ function effectiveRightPanel(
 ): RightPanelState {
   if (threadId) {
     const own = state.rightPanelByThread[threadId];
-    if (own) return own;
+    if (own) return createRightPanelState(own);
   }
-  return state.rightPanelFallbackByWorkspace[workspaceId] ?? createDefaultRightPanelState();
+  const fallback = state.rightPanelFallbackByWorkspace[workspaceId];
+  return fallback ? createRightPanelState(fallback) : createDefaultRightPanelState();
 }
 
 /**
@@ -192,13 +312,16 @@ function writeRightPanel(
 ): Partial<DiffState> {
   if (threadId) {
     return {
-      rightPanelByThread: { ...state.rightPanelByThread, [threadId]: next },
+      rightPanelByThread: {
+        ...state.rightPanelByThread,
+        [threadId]: createRightPanelState(next),
+      },
     };
   }
   return {
     rightPanelFallbackByWorkspace: {
       ...state.rightPanelFallbackByWorkspace,
-      [workspaceId]: next,
+      [workspaceId]: createRightPanelState(next),
     },
   };
 }
@@ -225,13 +348,13 @@ function setPanelVisible(
  * Static defaults for workspaces with no panel store row; live width uses
  * {@link getDefaultPanelWidthPx} through {@link createDefaultRightPanelState}.
  */
-export const RIGHT_PANEL_DEFAULTS: RightPanelState = {
+export const RIGHT_PANEL_DEFAULTS: RightPanelState = createRightPanelState({
   visible: false,
   width: PANEL_DEFAULT_WIDTH,
   widthSource: "auto",
-  openTabs: [],
-  activeTab: "tasks",
-} as const;
+  tabInstances: [],
+  activeTabId: null,
+});
 
 /** Zustand state shape for the diff panel. */
 interface DiffState {
@@ -252,6 +375,17 @@ interface DiffState {
    * {@link rightPanelByThread} entry. See ADR-0012.
    */
   readonly rightPanelFallbackByWorkspace: Record<string, RightPanelState>;
+  /**
+   * The remembered Subagents roster view for each thread. This inner-panel state
+   * survives right-panel unmounts but is intentionally dropped with its thread.
+   */
+  readonly subagentRosterTabByThread: Record<string, SubagentRosterTab>;
+  /** Selected Subagents detail and roster return position for each thread. */
+  readonly subagentDetailByThread: Record<string, SubagentDetailSelection>;
+  /** Transient subagent Review filters keyed by owning thread. */
+  readonly subagentReviewScopeByThread: Record<string, SubagentReviewScope>;
+  /** Explicit Files visibility choices keyed by Review scope. Missing scopes start closed. */
+  readonly reviewFilesVisibleByScope: Record<string, boolean>;
   /** View mode within the Changes tab (the single rendered view). */
   viewMode: DiffViewMode;
   /**
@@ -382,6 +516,30 @@ interface DiffState {
     source?: "auto" | "user" | "preserve",
   ) => void;
   setRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
+  setRightPanelTabInstance: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    instanceId: string,
+  ) => void;
+  /** Append or focus one PTY-backed Terminal rail tab. */
+  addRightPanelTerminalTab: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    ptyId: string,
+  ) => void;
+  /** Move one tab instance by one bounded position in its scope. */
+  reorderRightPanelTab: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    instanceId: string,
+    direction: -1 | 1,
+  ) => void;
+  /** Close one tab by stable instance identity. */
+  closeRightPanelTabInstance: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    instanceId: string,
+  ) => void;
   /**
    * Close (remove) a singleton tab from the open set. When the closed tab was
    * active, focus falls back to the most-recently-opened remaining tab; with
@@ -389,6 +547,22 @@ interface DiffState {
    * is not open. See ADR-0004.
    */
   closeRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
+  /** Read a thread's remembered Subagents roster view, if it has one. */
+  getSubagentRosterTab: (threadId: string) => SubagentRosterTab | undefined;
+  /** Remember the selected Subagents roster view for one thread. */
+  setSubagentRosterTab: (threadId: string, tab: SubagentRosterTab) => void;
+  /** Open a thread-scoped Subagents detail. */
+  selectSubagentDetail: (threadId: string, selection: SubagentDetailSelection) => void;
+  /** Return one thread to its Subagents roster. */
+  clearSubagentDetail: (threadId: string) => void;
+  /** Scope cumulative Review to workspace files attributed to one subagent. */
+  setSubagentReviewScope: (threadId: string, scope: SubagentReviewScope) => void;
+  /** Restore aggregate Review for one thread. */
+  clearSubagentReviewScope: (threadId: string) => void;
+  /** Read the persisted Files visibility choice for a Review scope. */
+  getReviewFilesVisible: (scopeId: string) => boolean;
+  /** Persist an explicit Files visibility choice for a Review scope. */
+  setReviewFilesVisible: (scopeId: string, visible: boolean) => void;
   setViewMode: (mode: DiffViewMode) => void;
   /**
    * Resolve the Review view a thread should show: the user's sticky pick when
@@ -460,6 +634,10 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   previewUrlByThread: {},
   rightPanelByThread: {},
   rightPanelFallbackByWorkspace: {},
+  subagentRosterTabByThread: {},
+  subagentDetailByThread: {},
+  subagentReviewScopeByThread: {},
+  reviewFilesVisibleByScope: readReviewFilesVisibility(),
   viewMode: "last-turn",
   reviewViewByThread: {},
   reviewViewManuallySelectedByThread: {},
@@ -518,34 +696,146 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       // Activating a tab opens it: tabs are singletons created on demand, so
       // focusing one that is not yet open adds it to the open set (the card grid
       // is the create surface). Already-open tabs are just refocused.
-      const openTabs = current.openTabs.includes(tab)
-        ? current.openTabs
-        : [...current.openTabs, tab];
+      const instanceId = rightPanelSingletonId(tab);
+      const currentInstances = rightPanelTabInstances(current);
+      const tabInstances = currentInstances.some((instance) => instance.id === instanceId)
+        ? currentInstances
+        : [...currentInstances, { id: instanceId, type: tab }];
+      const panelUpdate = writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        tabInstances,
+        activeTabId: instanceId,
+      });
+      return panelUpdate;
+    }),
+
+  setRightPanelTabInstance: (workspaceId, threadId, instanceId) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      const instance = rightPanelTabInstances(current).find(
+        (candidate) => candidate.id === instanceId,
+      );
+      if (!instance) return {};
       return writeRightPanel(state, workspaceId, threadId, {
         ...current,
-        openTabs,
-        activeTab: tab,
+        activeTabId: instance.id,
+      });
+    }),
+
+  addRightPanelTerminalTab: (workspaceId, threadId, ptyId) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      const instanceId = rightPanelTerminalId(ptyId);
+      const tabInstances = rightPanelTabInstances(current);
+      if (tabInstances.some((instance) => instance.id === instanceId)) {
+        return writeRightPanel(state, workspaceId, threadId, {
+          ...current,
+          activeTabId: instanceId,
+        });
+      }
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        tabInstances: [...tabInstances, { id: instanceId, type: "terminal" }],
+        activeTabId: instanceId,
+      });
+    }),
+
+  reorderRightPanelTab: (workspaceId, threadId, instanceId, direction) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      const currentInstances = rightPanelTabInstances(current);
+      const from = currentInstances.findIndex((instance) => instance.id === instanceId);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= currentInstances.length) return {};
+      const tabInstances = [...currentInstances];
+      [tabInstances[from], tabInstances[to]] = [tabInstances[to], tabInstances[from]];
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        tabInstances,
+      });
+    }),
+
+  closeRightPanelTabInstance: (workspaceId, threadId, instanceId) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      const currentInstances = rightPanelTabInstances(current);
+      const removedIndex = currentInstances.findIndex(
+        (instance) => instance.id === instanceId,
+      );
+      if (removedIndex < 0) return {};
+      const tabInstances = currentInstances.filter(
+        (instance) => instance.id !== instanceId,
+      );
+      const activeTabId = current.activeTabId;
+      const nextActive =
+        activeTabId === instanceId
+          ? (tabInstances[removedIndex] ?? tabInstances[removedIndex - 1] ?? null)
+          : null;
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        tabInstances,
+        activeTabId: activeTabId === instanceId ? nextActive?.id ?? null : activeTabId,
       });
     }),
 
   closeRightPanelTab: (workspaceId, threadId, tab) =>
+    get().closeRightPanelTabInstance(workspaceId, threadId, rightPanelSingletonId(tab)),
+
+  getSubagentRosterTab: (threadId) => get().subagentRosterTabByThread[threadId],
+  setSubagentRosterTab: (threadId, tab) =>
+    set((state) =>
+      state.subagentRosterTabByThread[threadId] === tab
+        ? {}
+        : { subagentRosterTabByThread: { ...state.subagentRosterTabByThread, [threadId]: tab } },
+    ),
+  selectSubagentDetail: (threadId, selection) =>
+    set((state) => ({
+      subagentDetailByThread: { ...state.subagentDetailByThread, [threadId]: selection },
+      subagentRosterTabByThread: {
+        ...state.subagentRosterTabByThread,
+        [threadId]: selection.originTab,
+      },
+    })),
+  clearSubagentDetail: (threadId) =>
     set((state) => {
-      const current = effectiveRightPanel(state, workspaceId, threadId);
-      if (!current.openTabs.includes(tab)) return {};
-      const openTabs = current.openTabs.filter((t) => t !== tab);
-      // Closing the active tab hands focus to the most-recently-opened survivor
-      // (the rail's right-most/last entry); with none left, activeTab is left
-      // untouched and inert — the empty-state grid renders and the panel's
-      // content guards on openTabs.includes(activeTab).
-      const activeTab =
-        current.activeTab === tab
-          ? (openTabs[openTabs.length - 1] ?? current.activeTab)
-          : current.activeTab;
-      return writeRightPanel(state, workspaceId, threadId, {
-        ...current,
-        openTabs,
-        activeTab,
-      });
+      if (!(threadId in state.subagentDetailByThread)) return {};
+      const subagentDetailByThread = { ...state.subagentDetailByThread };
+      delete subagentDetailByThread[threadId];
+      return { subagentDetailByThread };
+    }),
+  setSubagentReviewScope: (threadId, scope) =>
+    set((state) => {
+      const paths = [...new Set(scope.paths.map((path) => path.trim()).filter(Boolean))].slice(0, 256);
+      if (paths.length === 0) {
+        if (!(threadId in state.subagentReviewScopeByThread)) return {};
+        const subagentReviewScopeByThread = { ...state.subagentReviewScopeByThread };
+        delete subagentReviewScopeByThread[threadId];
+        return { subagentReviewScopeByThread };
+      }
+      return {
+        subagentReviewScopeByThread: {
+          ...state.subagentReviewScopeByThread,
+          [threadId]: { ...scope, label: scope.label.trim().slice(0, 96), paths },
+        },
+      };
+    }),
+  clearSubagentReviewScope: (threadId) =>
+    set((state) => {
+      if (!(threadId in state.subagentReviewScopeByThread)) return {};
+      const subagentReviewScopeByThread = { ...state.subagentReviewScopeByThread };
+      delete subagentReviewScopeByThread[threadId];
+      return { subagentReviewScopeByThread };
+    }),
+
+  getReviewFilesVisible: (scopeId) => get().reviewFilesVisibleByScope[scopeId] ?? false,
+  setReviewFilesVisible: (scopeId, visible) =>
+    set((state) => {
+      const reviewFilesVisibleByScope = {
+        ...state.reviewFilesVisibleByScope,
+        [scopeId]: visible,
+      };
+      writeReviewFilesVisibility(reviewFilesVisibleByScope);
+      return { reviewFilesVisibleByScope };
     }),
 
   setViewMode: (mode) =>
@@ -558,18 +848,23 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     return defaultReviewView("thread", changeState);
   },
   setReviewViewForThread: (threadId, mode) =>
-    set((s) => ({
-      viewMode: mode,
-      reviewViewByThread: { ...s.reviewViewByThread, [threadId]: mode },
-      reviewViewManuallySelectedByThread: {
-        ...s.reviewViewManuallySelectedByThread,
-        [threadId]: true,
-      },
-      // Match setViewMode's resets so a fresh pick clears stale selection/operand.
-      selectedFile: null,
-      diffContent: null,
-      selectedCommitSha: null,
-    })),
+    set((s) => {
+      const subagentReviewScopeByThread = { ...s.subagentReviewScopeByThread };
+      delete subagentReviewScopeByThread[threadId];
+      return {
+        viewMode: mode,
+        reviewViewByThread: { ...s.reviewViewByThread, [threadId]: mode },
+        reviewViewManuallySelectedByThread: {
+          ...s.reviewViewManuallySelectedByThread,
+          [threadId]: true,
+        },
+        subagentReviewScopeByThread,
+        // Match setViewMode's resets so a fresh pick clears stale selection/operand.
+        selectedFile: null,
+        diffContent: null,
+        selectedCommitSha: null,
+      };
+    }),
   resolveBranchComparison: (comparison, key, revision) =>
     set((s) => {
       const sameScope = s.branchComparisonKey === key;
@@ -714,12 +1009,21 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete lineWrapByThread[threadId];
       const rightPanelByThread = { ...state.rightPanelByThread };
       delete rightPanelByThread[threadId];
+      const subagentRosterTabByThread = { ...state.subagentRosterTabByThread };
+      delete subagentRosterTabByThread[threadId];
+      const subagentDetailByThread = { ...state.subagentDetailByThread };
+      delete subagentDetailByThread[threadId];
+      const subagentReviewScopeByThread = { ...state.subagentReviewScopeByThread };
+      delete subagentReviewScopeByThread[threadId];
       const reviewViewByThread = { ...state.reviewViewByThread };
       delete reviewViewByThread[threadId];
       const reviewViewManuallySelectedByThread = { ...state.reviewViewManuallySelectedByThread };
       delete reviewViewManuallySelectedByThread[threadId];
       const diffRevisionByScope = { ...state.diffRevisionByScope };
       delete diffRevisionByScope[threadId];
+      const reviewFilesVisibleByScope = { ...state.reviewFilesVisibleByScope };
+      delete reviewFilesVisibleByScope[threadId];
+      writeReviewFilesVisibility(reviewFilesVisibleByScope);
       const branchManuallySelectedByScope = omitByKeySuffix(
         state.branchManuallySelectedByScope,
         `:${threadId}`,
@@ -744,9 +1048,13 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         previewUrlByThread: previewUrls,
         lineWrapByThread,
         rightPanelByThread,
+        subagentRosterTabByThread,
+        subagentDetailByThread,
+        subagentReviewScopeByThread,
         reviewViewByThread,
         reviewViewManuallySelectedByThread,
         diffRevisionByScope,
+        reviewFilesVisibleByScope,
         branchManuallySelectedByScope,
         branchResolvedRevisionByScope,
         inlineDiffCache,
@@ -774,6 +1082,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       if (
         !(workspaceId in state.rightPanelFallbackByWorkspace) &&
         !(workspaceId in state.diffRevisionByScope) &&
+        !(workspaceId in state.reviewFilesVisibleByScope) &&
         !hasInlineDiffCache &&
         !hasBranchScope
       ) {
@@ -783,9 +1092,13 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       delete rightPanelFallbackByWorkspace[workspaceId];
       const diffRevisionByScope = { ...state.diffRevisionByScope };
       delete diffRevisionByScope[workspaceId];
+      const reviewFilesVisibleByScope = { ...state.reviewFilesVisibleByScope };
+      delete reviewFilesVisibleByScope[workspaceId];
+      writeReviewFilesVisibility(reviewFilesVisibleByScope);
       return {
         rightPanelFallbackByWorkspace,
         diffRevisionByScope,
+        reviewFilesVisibleByScope,
         branchManuallySelectedByScope: omitByKeyPrefix(
           state.branchManuallySelectedByScope,
           cachePrefix,

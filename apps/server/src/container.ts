@@ -10,6 +10,7 @@ import { openDatabase } from "./store/database";
 
 // Repositories
 import { WorkspaceRepo } from "./repositories/workspace-repo";
+import { WorktreeRepo } from "./repositories/worktree-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
 import { MessageRepo } from "./repositories/message-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
@@ -22,6 +23,7 @@ import { ModelCacheRepo } from "./repositories/model-cache-repo";
 import { PlanQuestionAnswersRepo } from "./repositories/plan-question-answers-repo";
 import { PlanRepo } from "./repositories/plan-repo";
 import { PullRequestReviewLinkRepo } from "./repositories/pull-request-review-link-repo";
+import { ProviderCatalogSnapshotRepo } from "./repositories/provider-catalog-snapshot-repo";
 
 // Providers
 import { ClaudeProvider } from "./providers/claude/claude-provider";
@@ -41,6 +43,12 @@ import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
 import { ConfigService } from "./services/config-service";
 import { SkillService } from "./services/skill-service";
+import {
+  CodexCatalogClientFactory,
+  CodexCatalogService,
+} from "./services/codex-catalog-service";
+import { CodexCustomPromptService } from "./services/codex-custom-prompt-service";
+import { ProviderCatalogService } from "./services/provider-catalog-service";
 import { TerminalService } from "./services/terminal-service";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
@@ -67,6 +75,11 @@ import { ModelCacheService } from "./services/model-cache-service";
 import { ProtectedEnvStore } from "./services/protected-env-store";
 import { ShellEnvResolver } from "./services/shell-env-resolver";
 import { EnvService } from "./services/env-service";
+import { ThreadControlService } from "./services/thread-control-service";
+import { ThreadControlApprovalRepo } from "./repositories/thread-control-approval-repo";
+import { ThreadControlAuditRepo } from "./repositories/thread-control-audit-repo";
+import { InternalThreadControlMcpAuthority } from "./services/thread-control-mcp-authority";
+import { InternalThreadControlMcpRuntime } from "./services/thread-control-mcp-runtime";
 import { UtilityCompletionService } from "./services/utility-completion-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
@@ -227,6 +240,11 @@ export function setupContainer(mcodeDir: string): typeof container {
     { useClass: PullRequestReviewLinkRepo },
     { lifecycle: Lifecycle.Singleton },
   );
+  container.register(
+    ProviderCatalogSnapshotRepo,
+    { useClass: ProviderCatalogSnapshotRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
 
   // Providers
   container.register(
@@ -328,6 +346,20 @@ export function setupContainer(mcodeDir: string): typeof container {
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
+    WorktreeRepo,
+    { useClass: WorktreeRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ThreadControlApprovalRepo,
+    { useClass: ThreadControlApprovalRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(ThreadControlAuditRepo, { useClass: ThreadControlAuditRepo }, { lifecycle: Lifecycle.Singleton });
+  container.register(ThreadControlService, { useClass: ThreadControlService }, { lifecycle: Lifecycle.Singleton });
+  container.register(InternalThreadControlMcpAuthority, { useClass: InternalThreadControlMcpAuthority }, { lifecycle: Lifecycle.Singleton });
+  container.register(InternalThreadControlMcpRuntime, { useClass: InternalThreadControlMcpRuntime }, { lifecycle: Lifecycle.Singleton });
+  container.register(
     ThreadTeardownService,
     { useClass: ThreadTeardownService },
     { lifecycle: Lifecycle.Singleton },
@@ -363,6 +395,26 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     SkillService,
     { useClass: SkillService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    CodexCatalogClientFactory,
+    { useClass: CodexCatalogClientFactory },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    CodexCustomPromptService,
+    { useClass: CodexCustomPromptService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    CodexCatalogService,
+    { useClass: CodexCatalogService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ProviderCatalogService,
+    { useClass: ProviderCatalogService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

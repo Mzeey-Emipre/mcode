@@ -7,6 +7,10 @@ import {
 } from "../index.js";
 
 describe("isXhighEffortModel", () => {
+  it("returns true for claude-opus-5", () => {
+    expect(isXhighEffortModel("claude-opus-5")).toBe(true);
+  });
+
   it("returns true for claude-opus-4-8", () => {
     expect(isXhighEffortModel("claude-opus-4-8")).toBe(true);
   });
@@ -41,6 +45,10 @@ describe("isXhighEffortModel", () => {
 });
 
 describe("isMaxEffortModel", () => {
+  it("returns true for claude-opus-5", () => {
+    expect(isMaxEffortModel("claude-opus-5")).toBe(true);
+  });
+
   it("returns true for claude-opus-4-8", () => {
     expect(isMaxEffortModel("claude-opus-4-8")).toBe(true);
   });
@@ -71,6 +79,10 @@ describe("isMaxEffortModel", () => {
 });
 
 describe("supportsEffortParameter", () => {
+  it("returns true for claude-opus-5", () => {
+    expect(supportsEffortParameter("claude-opus-5")).toBe(true);
+  });
+
   it("returns true for claude-opus-4-7", () => {
     expect(supportsEffortParameter("claude-opus-4-7")).toBe(true);
   });
@@ -97,6 +109,16 @@ describe("supportsEffortParameter", () => {
 });
 
 describe("normalizeReasoningLevelForModel", () => {
+  describe("claude-opus-5 (supports all tiers)", () => {
+    it("passes xhigh through unchanged", () => {
+      expect(normalizeReasoningLevelForModel("claude-opus-5", "xhigh")).toBe("xhigh");
+    });
+
+    it("passes max through unchanged", () => {
+      expect(normalizeReasoningLevelForModel("claude-opus-5", "max")).toBe("max");
+    });
+  });
+
   describe("claude-opus-4-8 (supports all tiers)", () => {
     it("passes xhigh through unchanged", () => {
       expect(normalizeReasoningLevelForModel("claude-opus-4-8", "xhigh")).toBe("xhigh");

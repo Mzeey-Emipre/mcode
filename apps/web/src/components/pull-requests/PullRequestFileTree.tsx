@@ -1,4 +1,4 @@
-import type { PullRequestFile } from "@mcode/contracts";
+import type { PullRequestFile, ReviewFileChange } from "@mcode/contracts";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useEffect,
@@ -23,10 +23,13 @@ import {
 } from "@/lib/pull-request-file-tree";
 import { cn } from "@/lib/utils";
 import { PullRequestFileRow } from "./PullRequestFileRow";
+import { ReviewFileChangeRow } from "./ReviewFileChangeRow";
 
 const VIRTUALIZATION_THRESHOLD = 30;
 const TREE_ROW_HEIGHT = 32;
 const TREE_OVERSCAN = 1;
+const EMPTY_PULL_REQUEST_FILES: readonly PullRequestFile[] = [];
+const EMPTY_REVIEW_FILE_CHANGES: readonly ReviewFileChange[] = [];
 
 interface OverflowPathLabelProps {
   label: string;
@@ -100,8 +103,9 @@ interface FileTreeBaseProps {
 /** Props for the virtual, keyboard-navigable path tree. */
 export type PullRequestFileTreeProps = FileTreeBaseProps &
   (
-    | { files: readonly PullRequestFile[]; filePaths?: never }
-    | { files?: never; filePaths: readonly string[] }
+    | { files: readonly PullRequestFile[]; filePaths?: never; reviewFiles?: never }
+    | { files?: never; filePaths: readonly string[]; reviewFiles?: never }
+    | { files?: never; filePaths?: never; reviewFiles: readonly ReviewFileChange[] }
   );
 
 /** Virtual path tree and jump index for the loaded pull request Change stack. */
@@ -113,12 +117,17 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
     ariaLabel = "Pull request changed files",
     onActivate,
   } = props;
-  const files = "files" in props && props.files ? props.files : [];
+  const files =
+    "files" in props && props.files ? props.files : EMPTY_PULL_REQUEST_FILES;
   const providedFilePaths =
     "filePaths" in props && props.filePaths ? props.filePaths : undefined;
+  const reviewFiles =
+    "reviewFiles" in props && props.reviewFiles
+      ? props.reviewFiles
+      : EMPTY_REVIEW_FILE_CHANGES;
   const filePaths = useMemo(
-    () => providedFilePaths ?? files.map((file) => file.path),
-    [files, providedFilePaths],
+    () => providedFilePaths ?? (reviewFiles.length > 0 ? reviewFiles : files).map((file) => file.path),
+    [files, providedFilePaths, reviewFiles],
   );
   const viewportRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -129,6 +138,10 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
   const filesByPath = useMemo(
     () => new Map(files.map((file) => [file.path, file])),
     [files],
+  );
+  const reviewFilesByPath = useMemo(
+    () => new Map(reviewFiles.map((file) => [file.path, file])),
+    [reviewFiles],
   );
   const [expandedDirectoryIds, setExpandedDirectoryIds] = useState<Set<string>>(
     () => new Set(),
@@ -282,10 +295,27 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
   const renderRow = (row: PullRequestFileTreeRow, index: number) => {
     if (row.node.kind === "file") {
       const item = filesByPath.get(row.node.path);
+      const reviewFile = reviewFilesByPath.get(row.node.path);
       return item ? (
         <PullRequestFileRow
           file={item}
           active={item.path === activePath}
+          depth={row.depth}
+          positionInSet={row.positionInSet}
+          setSize={row.setSize}
+          tabIndex={focusedId === row.node.id ? 0 : -1}
+          buttonRef={(node) => {
+            if (node) rowRefs.current.set(row.node.id, node);
+            else rowRefs.current.delete(row.node.id);
+          }}
+          onActivate={onActivate}
+          onFocus={() => setFocusedId(row.node.id)}
+          onKeyDown={(event) => handleKeyDown(event, row, index)}
+        />
+      ) : reviewFile ? (
+        <ReviewFileChangeRow
+          file={reviewFile}
+          active={reviewFile.path === activePath}
           depth={row.depth}
           positionInSet={row.positionInSet}
           setSize={row.setSize}
@@ -348,7 +378,7 @@ export function PullRequestFileTree(props: PullRequestFileTreeProps) {
           if (node) rowRefs.current.set(row.node.id, node);
           else rowRefs.current.delete(row.node.id);
         }}
-        className="mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1 rounded-md px-2 font-mono text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+        className="mx-1 h-8 w-[calc(100%-0.5rem)] justify-start gap-1 rounded-md px-2 font-mono text-xs font-medium text-muted-foreground aria-expanded:bg-transparent hover:bg-muted/40 hover:text-foreground"
         style={{ paddingLeft: `${Math.max(8, row.depth * 12 - 4)}px` }}
         onClick={() => toggleDirectory(row.node.id)}
         onFocus={() => setFocusedId(row.node.id)}

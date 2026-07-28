@@ -22,9 +22,50 @@ import {
 describe("pickProviderModelsForSettings", () => {
   const staticModels = [{ id: "a", label: "A", providerId: "cursor" }];
 
-  it("prefers a non-empty dynamic list", () => {
+  it("merges a non-empty dynamic list without hiding static models", () => {
     const dynamic = [{ id: "b", label: "B", providerId: "cursor" }];
-    expect(pickProviderModelsForSettings(staticModels, dynamic)).toEqual(dynamic);
+    expect(pickProviderModelsForSettings(staticModels, dynamic)).toEqual([
+      ...staticModels,
+      ...dynamic,
+    ]);
+  });
+
+  it("preserves the settings context window when dynamic discovery reports provider capacity", () => {
+    const staticClaude = [{
+      id: "claude-opus-5",
+      label: "Claude Opus 5",
+      providerId: "claude",
+      contextWindow: 200_000,
+    }];
+    const dynamicClaude = [{
+      id: "claude-opus-5",
+      label: "Claude Opus 5",
+      providerId: "claude",
+      contextWindow: 1_000_000,
+      supportedReasoningLevels: ["low", "high", "max"] as const,
+    }];
+
+    expect(pickProviderModelsForSettings(staticClaude, dynamicClaude)).toEqual([{
+      ...dynamicClaude[0],
+      contextWindow: 200_000,
+    }]);
+  });
+
+  it("uses dynamic context updates for non-Claude models", () => {
+    const staticCodex = [{
+      id: "gpt-test",
+      label: "GPT Test",
+      providerId: "codex",
+      contextWindow: 200_000,
+    }];
+    const dynamicCodex = [{
+      id: "gpt-test",
+      label: "GPT Test",
+      providerId: "codex",
+      contextWindow: 400_000,
+    }];
+
+    expect(pickProviderModelsForSettings(staticCodex, dynamicCodex)).toEqual(dynamicCodex);
   });
 
   it("falls back to static models when dynamic is undefined", () => {
@@ -37,11 +78,21 @@ describe("pickProviderModelsForSettings", () => {
 });
 
 describe("ModelRegistry", () => {
-  it("MODEL_PROVIDERS contains Claude with 7 models", () => {
+  it("MODEL_PROVIDERS contains Claude with 8 models", () => {
     const claude = MODEL_PROVIDERS.find((p) => p.id === "claude");
     expect(claude).toBeTruthy();
-    expect(claude?.models).toHaveLength(7);
+    expect(claude?.models).toHaveLength(8);
     expect(claude?.comingSoon).toBe(false);
+  });
+
+  it("findModelById returns Opus 5 with the standard-mode context clamp", () => {
+    const model = findModelById("claude-opus-5");
+    expect(model).toEqual({
+      id: "claude-opus-5",
+      label: "Claude Opus 5",
+      providerId: "claude",
+      contextWindow: 200_000,
+    });
   });
 
   it("findModelById returns Fable 5 with no availability end date", () => {

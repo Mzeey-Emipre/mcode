@@ -49,7 +49,7 @@ export function TurnFooter({ counts, durationMs }: TurnFooterProps) {
   if (parts.length === 0 && durationMs == null) return null;
 
   return (
-    <div className="mt-2 flex items-baseline gap-3 pl-[18px] font-mono uppercase text-xs tracking-[0.08em] text-muted-foreground/45">
+    <div className="mt-2 flex items-baseline gap-3 pl-4 font-mono uppercase text-xs tracking-[0.08em] text-muted-foreground/45">
       {parts.length > 0 && <span>{parts.join(" · ")}</span>}
       <span className="flex-1 h-px bg-border/40" aria-hidden="true" />
       <span className="tabular-nums">{formatDuration(durationMs)}</span>

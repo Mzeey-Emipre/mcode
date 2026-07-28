@@ -1,6 +1,9 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AgentEventType } from "@mcode/contracts";
 import type {
   AgentEvent,
@@ -123,12 +126,15 @@ function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
  * The returned `providerEmitter` lets the test fire events as if the SDK
  * produced them, exercising the handler registered in `init()`.
  */
-function buildService(): {
+function buildService(cwd = process.cwd()): {
   service: AgentService;
   providerEmitter: EventEmitter;
   attachmentService: AttachmentService;
   messageRepo: MessageRepo;
   memoryPressureService: { markActive: ReturnType<typeof vi.fn>; markIdle: ReturnType<typeof vi.fn> };
+  snapshotService: { captureRef: ReturnType<typeof vi.fn> };
+  turnSnapshotRepo: { create: ReturnType<typeof vi.fn> };
+  toolCallRecordRepo: { bulkCreate: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
   const providerEmitter = new EventEmitter();
@@ -152,18 +158,24 @@ function buildService(): {
   } as unknown as ThreadRepo;
 
   const workspaceRepo = {
-    findById: vi.fn(() => ({ id: "ws-1", path: "/workspace" })),
+    findById: vi.fn(() => ({ id: "ws-1", path: cwd })),
   } as unknown as WorkspaceRepo;
 
+  let assistantMessageCount = 0;
   const messageRepo = {
     listByThread: vi.fn(() => ({ messages: [] })),
     create: vi.fn(() => ({ id: "msg-1", sequence: 1 })),
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
+    createAssistantIdempotent: vi.fn(() => ({
+      id: `assistant-${++assistantMessageCount}`,
+      sequence: assistantMessageCount + 1,
+      content: "",
+    })),
   } as unknown as MessageRepo;
 
   const gitService = {
-    resolveWorkingDir: vi.fn(() => "/workspace"),
+    resolveWorkingDir: vi.fn(() => cwd),
     listWorktrees: vi.fn(() => []),
   } as unknown as GitService;
 
@@ -279,6 +291,9 @@ function buildService(): {
     attachmentService,
     messageRepo,
     memoryPressureService: memoryPressureService as MemoryPressureService & { markActive: ReturnType<typeof vi.fn>; markIdle: ReturnType<typeof vi.fn> },
+    snapshotService: snapshotService as SnapshotService & { captureRef: ReturnType<typeof vi.fn> },
+    turnSnapshotRepo: turnSnapshotRepo as TurnSnapshotRepo & { create: ReturnType<typeof vi.fn> },
+    toolCallRecordRepo: toolCallRecordRepo as ToolCallRecordRepo & { bulkCreate: ReturnType<typeof vi.fn> },
   };
 }
 
@@ -292,7 +307,14 @@ describe("AgentService turn cleanup", () => {
     service.init();
 
     // sendMessage adds thread to activeSessionIds and emits TurnStarted
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
 
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
@@ -318,30 +340,16 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter, attachmentService, messageRepo } = buildService();
     const bundle = makePreviewAnnotationBundle();
 
-    await service.sendMessage(
-      THREAD_ID,
-      "fix this",
-      "default",
-      "claude-sonnet-4-6",
-      [],
-      undefined,
-      "claude",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      [],
-      bundle,
-    );
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "fix this",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+      mentions: [],
+      previewAnnotations: bundle,
+    });
 
     const expectedAttachment = {
       id: "annotation-shot-1",
@@ -385,7 +393,14 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter } = buildService();
     service.init();
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
     // Start compaction first
@@ -416,7 +431,14 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
     service.init();
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
     // Turn completes, thread removed from active
@@ -441,16 +463,220 @@ describe("AgentService turn cleanup", () => {
       threadId: THREAD_ID,
     } satisfies AgentEvent);
 
-    // Thread should be active again
-    expect(service.activeThreadIds()).toContain(THREAD_ID);
-    expect(memoryPressureService.markActive).toHaveBeenCalled();
+    // The resumed turn becomes active after prior-turn persistence releases its barrier.
+    await vi.waitFor(() => {
+      expect(service.activeThreadIds()).toContain(THREAD_ID);
+      expect(memoryPressureService.markActive).toHaveBeenCalled();
+    });
+  });
+
+  it("initializes file tracking for provider-originated auto-resumed turns", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-auto-resume-tracker-"));
+    try {
+      await writeFile(join(root, "tracked.txt"), "before\n");
+      const {
+        service,
+        providerEmitter,
+        snapshotService,
+        turnSnapshotRepo,
+      } = buildService(root);
+      service.init();
+      snapshotService.captureRef.mockClear();
+      const internals = service as unknown as {
+        turnFileTracker: { observeToolUse: (...args: unknown[]) => Promise<void> };
+      };
+      const observeToolUse = vi.spyOn(internals.turnFileTracker, "observeToolUse");
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TurnStarted,
+        threadId: THREAD_ID,
+      } satisfies AgentEvent);
+      providerEmitter.emit("event", {
+        type: AgentEventType.ToolUse,
+        threadId: THREAD_ID,
+        toolCallId: "auto-edit",
+        toolName: "Edit",
+        toolInput: { file_path: "tracked.txt" },
+      } satisfies AgentEvent);
+      await vi.waitFor(() => expect(observeToolUse).toHaveBeenCalledOnce());
+      await observeToolUse.mock.results[0]!.value;
+
+      await writeFile(join(root, "tracked.txt"), "after\n");
+      providerEmitter.emit("event", {
+        type: AgentEventType.ToolResult,
+        threadId: THREAD_ID,
+        toolCallId: "auto-edit",
+        output: "updated",
+        isError: false,
+      } satisfies AgentEvent);
+      providerEmitter.emit("event", {
+        type: AgentEventType.TurnComplete,
+        threadId: THREAD_ID,
+        reason: "end_turn",
+        costUsd: null,
+        tokensIn: 1,
+        tokensOut: 1,
+        contextWindow: 200000,
+        totalProcessedTokens: 2,
+        providerId: "claude",
+      } satisfies AgentEvent);
+
+      await vi.waitFor(() => expect(turnSnapshotRepo.create).toHaveBeenCalledOnce());
+      expect(snapshotService.captureRef).toHaveBeenCalledWith(root);
+      expect(turnSnapshotRepo.create.mock.calls[0]![0]).toMatchObject({
+        fileEffects: {
+          fileCount: 1,
+          effects: [expect.objectContaining({
+            path: "tracked.txt",
+            kind: "edited",
+            scope: "workspace",
+          })],
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps overlapping auto-resumed generations isolated until prior persistence finishes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-auto-resume-overlap-"));
+    try {
+      await writeFile(join(root, "first.txt"), "before first\n");
+      await writeFile(join(root, "second.txt"), "before second\n");
+      const {
+        service,
+        providerEmitter,
+        turnSnapshotRepo,
+        toolCallRecordRepo,
+      } = buildService(root);
+      service.init();
+      const tracker = (service as unknown as {
+        turnFileTracker: {
+          observeToolUse: (...args: unknown[]) => Promise<void>;
+          observeToolResult: (...args: unknown[]) => Promise<void>;
+        };
+      }).turnFileTracker;
+      const observeToolUse = vi.spyOn(tracker, "observeToolUse");
+      const originalObserveToolResult = tracker.observeToolResult.bind(tracker);
+      let releaseFirstResult!: () => void;
+      const firstResultGate = new Promise<void>((resolve) => {
+        releaseFirstResult = resolve;
+      });
+      let resultCount = 0;
+      vi.spyOn(tracker, "observeToolResult").mockImplementation(async (...args) => {
+        resultCount += 1;
+        if (resultCount === 1) await firstResultGate;
+        await originalObserveToolResult(...args);
+      });
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TurnStarted,
+        threadId: THREAD_ID,
+      } satisfies AgentEvent);
+      providerEmitter.emit("event", {
+        type: AgentEventType.ToolUse,
+        threadId: THREAD_ID,
+        toolCallId: "first-edit",
+        toolName: "Edit",
+        toolInput: { file_path: "first.txt" },
+      } satisfies AgentEvent);
+      await vi.waitFor(() => expect(observeToolUse).toHaveBeenCalledTimes(1));
+      await observeToolUse.mock.results[0]!.value;
+      await writeFile(join(root, "first.txt"), "after first\n");
+      providerEmitter.emit("event", {
+        type: AgentEventType.ToolResult,
+        threadId: THREAD_ID,
+        toolCallId: "first-edit",
+        output: "updated",
+        isError: false,
+      } satisfies AgentEvent);
+      providerEmitter.emit("event", {
+        type: AgentEventType.TurnComplete,
+        threadId: THREAD_ID,
+        reason: "end_turn",
+        costUsd: null,
+        tokensIn: 1,
+        tokensOut: 1,
+        contextWindow: 200000,
+        totalProcessedTokens: 2,
+        providerId: "claude",
+      } satisfies AgentEvent);
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TurnStarted,
+        threadId: THREAD_ID,
+      } satisfies AgentEvent);
+      providerEmitter.emit("event", {
+        type: AgentEventType.ToolUse,
+        threadId: THREAD_ID,
+        toolCallId: "second-edit",
+        toolName: "Edit",
+        toolInput: { file_path: "second.txt" },
+      } satisfies AgentEvent);
+      await writeFile(join(root, "second.txt"), "after second\n");
+      providerEmitter.emit("event", {
+        type: AgentEventType.Message,
+        threadId: THREAD_ID,
+        content: "second turn complete",
+        tokens: null,
+      } satisfies AgentEvent);
+      providerEmitter.emit("event", {
+        type: AgentEventType.ToolResult,
+        threadId: THREAD_ID,
+        toolCallId: "second-edit",
+        output: "updated",
+        isError: false,
+      } satisfies AgentEvent);
+      providerEmitter.emit("event", {
+        type: AgentEventType.TurnComplete,
+        threadId: THREAD_ID,
+        reason: "end_turn",
+        costUsd: null,
+        tokensIn: 1,
+        tokensOut: 1,
+        contextWindow: 200000,
+        totalProcessedTokens: 2,
+        providerId: "claude",
+      } satisfies AgentEvent);
+      await vi.waitFor(() => expect(observeToolUse).toHaveBeenCalledTimes(2));
+      expect(turnSnapshotRepo.create).not.toHaveBeenCalled();
+
+      releaseFirstResult();
+      await vi.waitFor(() => expect(turnSnapshotRepo.create).toHaveBeenCalledTimes(2));
+      const firstSnapshot = turnSnapshotRepo.create.mock.calls[0]![0];
+      const secondSnapshot = turnSnapshotRepo.create.mock.calls[1]![0];
+      expect(firstSnapshot.fileEffects.effects.map((effect: { path: string }) => effect.path)).toEqual(["first.txt"]);
+      expect(secondSnapshot.fileEffects.effects.map((effect: { path: string }) => effect.path)).toEqual(["second.txt"]);
+      expect(toolCallRecordRepo.bulkCreate).toHaveBeenCalledTimes(2);
+      expect(toolCallRecordRepo.bulkCreate.mock.calls[0]![0]).toEqual([
+        expect.objectContaining({
+          toolCallId: "first-edit",
+          messageId: firstSnapshot.messageId,
+        }),
+      ]);
+      expect(toolCallRecordRepo.bulkCreate.mock.calls[1]![0]).toEqual([
+        expect.objectContaining({
+          toolCallId: "second-edit",
+          messageId: secondSnapshot.messageId,
+        }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("does not re-add thread after an Error event following TurnComplete", async () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
     service.init();
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
     // Turn completes, thread removed
@@ -484,7 +710,14 @@ describe("AgentService turn cleanup", () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
     service.init();
 
-    await service.sendMessage(THREAD_ID, "hello", "default", "claude-sonnet-4-6", [], undefined, "claude");
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
 
     providerEmitter.emit("event", {
@@ -586,7 +819,14 @@ describe("AgentService Ended finalization", () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "codex");
 
-    await service.sendMessage(thread.id, "please investigate", "default", "gpt-5", [], undefined, "codex");
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "please investigate",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
     providerEmitter.emit("event", {
       type: AgentEventType.TextDelta,
       threadId: thread.id,
@@ -613,7 +853,14 @@ describe("AgentService Ended finalization", () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "cursor");
 
-    await service.sendMessage(thread.id, "please investigate", "default", "gpt-5", [], undefined, "cursor");
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "please investigate",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "cursor",
+    });
     providerEmitter.emit("event", {
       type: AgentEventType.TextDelta,
       threadId: thread.id,

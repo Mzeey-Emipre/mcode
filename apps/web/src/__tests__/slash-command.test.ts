@@ -4,23 +4,69 @@ import { renderHook, act } from "@testing-library/react";
 // Mock transport so IPC doesn't run
 vi.mock("@/transport", () => ({
   getTransport: vi.fn(() => ({
-    listSkills: vi.fn().mockResolvedValue([
-      { name: "commit", description: "Create a git commit" },
-      { name: "review-pr", description: "Review a pull request" },
-      { name: "tdd", description: "Write tests first" },
-    ]),
+    getProviderCatalog: vi.fn().mockResolvedValue({
+      providerId: "claude",
+      context: { scope: "user" },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T12:00:00.000Z" },
+      diagnostics: [],
+      entries: [
+        { kind: "skill", identity: { providerId: "claude", kind: "skill", nativeId: "commit" }, name: "commit", description: "Create a git commit", source: "user" },
+        { kind: "skill", identity: { providerId: "claude", kind: "skill", nativeId: "review-pr" }, name: "review-pr", description: "Review a pull request", source: "user" },
+        { kind: "skill", identity: { providerId: "claude", kind: "skill", nativeId: "tdd" }, name: "tdd", description: "Write tests first", source: "user" },
+      ],
+      selectableAgents: [],
+    }),
   })),
 }));
 
 import { useSlashCommand } from "@/components/chat/useSlashCommand";
-import { getTransport } from "@/transport";
-import { useSkillsStore } from "@/stores/skillsStore";
+import { getTransport, type ProviderCatalogRequest } from "@/transport";
+import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
+
+interface LegacySkillFixture {
+  name: string;
+  description: string;
+  kind?: "skill" | "command";
+  source?: "user" | "project" | "agent" | "plugin";
+}
+
+function snapshotFromSkills(
+  skills: LegacySkillFixture[],
+  request: ProviderCatalogRequest = { providerId: "claude" },
+) {
+  const context = request.workspaceId
+    ? { scope: "workspace" as const, workspaceId: request.workspaceId, ...(request.threadId ? { threadId: request.threadId } : {}) }
+    : request.cwd
+      ? { scope: "path" as const, cwd: request.cwd }
+      : { scope: "user" as const };
+  return {
+    providerId: request.providerId,
+    context,
+    freshness: { status: "fresh" as const, fetchedAt: "2026-07-20T12:00:00.000Z" },
+    diagnostics: [],
+    entries: skills.map((skill) => {
+      const kind = skill.kind === "command" ? "providerCommand" as const : "skill" as const;
+      const base = {
+        kind,
+        identity: { providerId: request.providerId, kind, nativeId: skill.name },
+        name: skill.name,
+        description: skill.description,
+      };
+      return kind === "skill" ? { ...base, source: skill.source ?? "user" as const } : base;
+    }),
+    selectableAgents: [],
+  };
+}
+
+function catalogMock(skills: LegacySkillFixture[]) {
+  return vi.fn(async (request: ProviderCatalogRequest) => snapshotFromSkills(skills, request));
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   // Reset store between tests to prevent cross-test cache pollution now that
-  // useSlashCommand delegates caching to the module-scoped skillsStore.
-  useSkillsStore.getState().reset();
+  // useSlashCommand delegates caching to the module-scoped provider catalog store.
+  useProviderCatalogStore.getState().reset();
 });
 
 function makeAnchor() {
@@ -120,7 +166,7 @@ describe("filter logic", () => {
       description: `Skill ${index}`,
     }));
     vi.mocked(getTransport).mockReturnValue({
-      listSkills: vi.fn().mockResolvedValue(manySkills),
+      getProviderCatalog: catalogMock(manySkills),
     } as never);
 
     const ref = makeAnchor();
@@ -264,7 +310,14 @@ describe("selection + text replacement", () => {
     let emittedValue = "";
     await act(async () => {
       result.current.onSelect(
-        { name: "commit", description: "Commit changes", namespace: "skill" },
+        {
+          id: "skill:commit",
+          name: "commit",
+          description: "Commit changes",
+          namespace: "skill",
+          capabilityKind: "skill",
+          nativeId: "commit",
+        },
         (v: string) => { emittedValue = v; }
       );
     });
@@ -366,9 +419,9 @@ describe("mcode side-effect dispatch", () => {
 });
 
 describe("IPC cache", () => {
-  it("calls listSkills only once across multiple trigger openings", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([{ name: "commit", description: "Create a git commit" }]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+  it("calls provider.catalog only once across multiple trigger openings", async () => {
+    const mockCatalog = catalogMock([{ name: "commit", description: "Create a git commit" }]);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -382,14 +435,14 @@ describe("IPC cache", () => {
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {});
 
-    expect(mockListSkills).toHaveBeenCalledTimes(1);
+    expect(mockCatalog).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("cwd passthrough", () => {
-  it("passes cwd to listSkills", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+  it("passes cwd to provider.catalog", async () => {
+    const mockCatalog = catalogMock([]);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -399,14 +452,14 @@ describe("cwd passthrough", () => {
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {});
 
-    expect(mockListSkills).toHaveBeenCalledWith("/my/project", undefined);
+    expect(mockCatalog).toHaveBeenCalledWith({ providerId: "claude", cwd: "/my/project" });
   });
 });
 
 describe("provider-scoped commands", () => {
   it("passes providerId through to store load", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    const mockCatalog = catalogMock([]);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -416,12 +469,12 @@ describe("provider-scoped commands", () => {
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {});
 
-    expect(mockListSkills).toHaveBeenCalledWith("/my/project", "codex");
+    expect(mockCatalog).toHaveBeenCalledWith({ providerId: "codex", cwd: "/my/project" });
   });
 
   it("settles two mounted consumers with different provider scopes", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    const mockCatalog = catalogMock([]);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
     const composerAnchor = makeAnchor();
     const previewAnchor = makeAnchor();
 
@@ -434,16 +487,16 @@ describe("provider-scoped commands", () => {
       useSlashCommand({
         anchorRef: previewAnchor,
         cwd: "/my/project",
-        providerId: undefined,
+        providerId: "codex",
         includeBuiltins: false,
       });
     });
     await act(async () => {});
     await act(async () => {});
 
-    expect(mockListSkills).toHaveBeenCalledTimes(2);
-    expect(mockListSkills).toHaveBeenCalledWith("/my/project", "claude");
-    expect(mockListSkills).toHaveBeenCalledWith("/my/project", undefined);
+    expect(mockCatalog).toHaveBeenCalledTimes(2);
+    expect(mockCatalog).toHaveBeenCalledWith({ providerId: "claude", cwd: "/my/project" });
+    expect(mockCatalog).toHaveBeenCalledWith({ providerId: "codex", cwd: "/my/project" });
   });
 
   it("hides /plan for copilot provider", async () => {
@@ -515,7 +568,7 @@ describe("provider-scoped commands", () => {
   });
 
   // Each provider case is its own test: useSlashCommand subscribes to the
-  // module-scoped skillsStore, so two hooks mounted at once with different
+  // module-scoped catalog store, so two hooks mounted at once with different
   // providerIds would fight over the store's cached providerId, each treating
   // the other's value as a provider change and reloading forever (an infinite
   // render loop that OOMs the vitest worker). beforeEach resets the store, so
@@ -544,7 +597,7 @@ describe("popup state machine", () => {
     // Self-contained mock: earlier tests leave a mockReturnValue in place
     // (vi.clearAllMocks does not reset return values), so set ours explicitly.
     vi.mocked(getTransport).mockReturnValue({
-      listSkills: vi.fn().mockResolvedValue([{ name: "commit", description: "Create a git commit" }]),
+      getProviderCatalog: catalogMock([{ name: "commit", description: "Create a git commit" }]),
     } as never);
 
     const ref = makeAnchor();
@@ -567,10 +620,10 @@ describe("popup state machine", () => {
   });
 
   it("keeps an open command list stable until the picker closes", async () => {
-    const listSkills = vi.fn().mockResolvedValue([
+    const getProviderCatalog = catalogMock([
       { name: "commit", description: "Create a git commit" },
     ]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills } as never);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
@@ -578,7 +631,7 @@ describe("popup state machine", () => {
     await act(async () => {});
     await act(async () => { result.current.onInputChange("/"); });
     await act(async () => {
-      useSkillsStore.getState().invalidate();
+      useProviderCatalogStore.getState().invalidate();
     });
     await act(async () => {});
 
@@ -587,16 +640,184 @@ describe("popup state machine", () => {
       const names = result.current.state.items.map((i) => i.name);
       expect(names).toContain("commit");
     }
-    expect(listSkills).toHaveBeenCalledTimes(1);
+    expect(getProviderCatalog).toHaveBeenCalledTimes(1);
 
     await act(async () => { result.current.onDismiss(); });
     await act(async () => {});
 
-    expect(listSkills).toHaveBeenCalledTimes(2);
+    expect(getProviderCatalog).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes a warm Codex catalog when the slash picker opens", async () => {
+    const getProviderCatalog = catalogMock([
+      { name: "prompts:release", description: "Prepare a release", kind: "command" },
+    ]);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+    }));
+
+    await act(async () => {});
+    expect(getProviderCatalog).toHaveBeenCalledTimes(1);
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(getProviderCatalog).toHaveBeenCalledTimes(2);
+    expect(result.current.items.map((item) => item.name)).toContain("prompts:release");
+  });
+
+  it("reconciles changed rows while the Codex picker remains open", async () => {
+    const request = { providerId: "codex" as const };
+    const getProviderCatalog = vi.fn()
+      .mockResolvedValueOnce(snapshotFromSkills([
+        { name: "prompts:release", description: "Release v1", kind: "command" },
+        { name: "review", description: "Review", kind: "skill" },
+      ], request))
+      .mockResolvedValueOnce(snapshotFromSkills([
+        { name: "prompts:release", description: "Release v2", kind: "command" },
+        { name: "review", description: "Review", kind: "skill" },
+      ], request));
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+    }));
+
+    await act(async () => {});
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.items.find((item) => item.name === "prompts:release")?.description)
+      .toBe("Release v2");
+    expect(result.current.items.map((item) => item.name)).toContain("review");
+  });
+
+  it("groups prompt additions and removals while the Codex picker remains open", async () => {
+    const request = { providerId: "codex" as const };
+    const getProviderCatalog = vi.fn()
+      .mockResolvedValueOnce(snapshotFromSkills([
+        { name: "prompts:old", description: "Old prompt", kind: "command" },
+        { name: "review", description: "Review", kind: "skill" },
+      ], request))
+      .mockResolvedValueOnce(snapshotFromSkills([
+        { name: "prompts:added", description: "Added prompt", kind: "command" },
+        { name: "review", description: "Review", kind: "skill" },
+      ], request));
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+      includeBuiltins: false,
+    }));
+
+    await act(async () => {});
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.items.map((item) => [item.name, item.namespace])).toEqual([
+      ["prompts:added", "command"],
+      ["review", "skill"],
+    ]);
+  });
+
+  it("keeps same-name Skills and custom prompts distinct by catalog identity", async () => {
+    const getProviderCatalog = vi.fn().mockResolvedValue({
+      providerId: "codex",
+      context: { scope: "user" },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T12:00:00.000Z" },
+      diagnostics: [],
+      entries: [
+        {
+          kind: "skill",
+          identity: { providerId: "codex", kind: "skill", nativeId: "C:/skills/release/SKILL.md" },
+          name: "prompts:release",
+          description: "Release Skill",
+          source: "user",
+        },
+        {
+          kind: "customPrompt",
+          identity: { providerId: "codex", kind: "customPrompt", nativeId: "release" },
+          name: "prompts:release",
+          description: "Release prompt",
+        },
+      ],
+      selectableAgents: [],
+    });
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+    }));
+
+    await act(async () => { result.current.onInputChange("/prompts:release"); });
+    await act(async () => {});
+
+    const collisions = result.current.items.filter((item) => item.name === "prompts:release");
+    expect(collisions.map((item) => item.identity?.kind)).toEqual([
+      "customPrompt",
+      "skill",
+    ]);
   });
 });
 
 describe("includeBuiltins: false", () => {
+  it("keeps same-named plugin and Skill entries distinct in the picker", async () => {
+    const getProviderCatalog = vi.fn().mockResolvedValue({
+      providerId: "codex",
+      context: { scope: "user" },
+      freshness: { status: "fresh", fetchedAt: "2026-07-20T12:00:00.000Z" },
+      diagnostics: [],
+      entries: [
+        { kind: "providerCommand", identity: { providerId: "codex", kind: "providerCommand", nativeId: "deploy" }, name: "deploy", description: "Deploy" },
+        { kind: "customPrompt", identity: { providerId: "codex", kind: "customPrompt", nativeId: "release" }, name: "prompts:release", description: "Release" },
+        { kind: "plugin", identity: { providerId: "codex", kind: "plugin", nativeId: "review@personal" }, name: "review", description: "Review plugin", mentionPath: "plugin://review@personal", marketplaceName: "personal", capabilities: [] },
+        { kind: "skill", identity: { providerId: "codex", kind: "skill", nativeId: "review" }, name: "review", description: "Review", source: "user" },
+      ],
+      selectableAgents: [{ providerId: "codex", nativeId: "reviewer", name: "reviewer", path: "C:/agents/reviewer.toml" }],
+    });
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog } as never);
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+      includeBuiltins: false,
+    }));
+
+    await act(async () => { result.current.onInputChange("/"); });
+    await act(async () => {});
+
+    expect(result.current.allCommands.map((command) => [
+      command.name,
+      command.namespace,
+      command.capabilityKind,
+      command.nativeId,
+    ])).toEqual([
+      ["deploy", "command", "providerCommand", "deploy"],
+      ["prompts:release", "command", "customPrompt", "release"],
+      ["review", "skill", "skill", "review"],
+      ["review", "plugin", "plugin", "review@personal"],
+    ]);
+
+    const replaceText = vi.fn();
+    await act(async () => {
+      result.current.onInputChange("/rev");
+      result.current.onSelect(
+        result.current.allCommands.find((command) => command.capabilityKind === "plugin")!,
+        replaceText,
+      );
+    });
+    expect(replaceText).toHaveBeenCalledWith("@review ");
+  });
+
   it("excludes all BUILTIN_COMMANDS when includeBuiltins is false", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -613,11 +834,11 @@ describe("includeBuiltins: false", () => {
   });
 
   it("retains skills from the store when includeBuiltins is false", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([
+    const mockCatalog = catalogMock([
       { name: "commit", description: "Create a git commit" },
       { name: "review-pr", description: "Review a PR" },
     ]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -632,10 +853,10 @@ describe("includeBuiltins: false", () => {
   });
 
   it("retains plugin-namespaced skills when includeBuiltins is false", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([
+    const mockCatalog = catalogMock([
       { name: "superpowers:pm", description: "Project manager", source: "plugin" },
     ]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -650,10 +871,10 @@ describe("includeBuiltins: false", () => {
   });
 
   it("retains kind==='command' user skills when includeBuiltins is false", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([
+    const mockCatalog = catalogMock([
       { name: "my-custom", description: "My custom command", kind: "command" },
     ]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -669,10 +890,10 @@ describe("includeBuiltins: false", () => {
   });
 
   it("still shows the popup when includeBuiltins is false but skills exist", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([
+    const mockCatalog = catalogMock([
       { name: "commit", description: "Create a git commit" },
     ]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -701,11 +922,11 @@ describe("includeBuiltins: false", () => {
 
 describe("plugin namespace detection", () => {
   it("assigns 'plugin' namespace to skills with colon in name", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([
+    const mockCatalog = catalogMock([
       { name: "superpowers:project-manager", description: "Manage projects" },
       { name: "commit", description: "Create a git commit" },
     ]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>
@@ -722,10 +943,10 @@ describe("plugin namespace detection", () => {
   });
 
   it("assigns 'plugin' namespace to native plugin skills without colon in name", async () => {
-    const mockListSkills = vi.fn().mockResolvedValue([
+    const mockCatalog = catalogMock([
       { name: "control-in-app-browser", description: "Control browser", source: "plugin" },
     ]);
-    vi.mocked(getTransport).mockReturnValue({ listSkills: mockListSkills } as never);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
 
     const ref = makeAnchor();
     const { result } = renderHook(() =>

@@ -11,8 +11,8 @@ import type {
   WorktreeInfo,
   PrInfo,
   PrDetail,
-  SkillInfo,
-  SkillDiagnostics,
+  ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
   PermissionMode,
   ReasoningLevel,
   ContextWindowMode,
@@ -26,7 +26,6 @@ import type {
   PlanAnswer,
   InteractionMode,
   OrchestrationMode,
-  PlanAction,
   ProviderModelInfo,
   ProviderUsageInfo,
   ProviderAvailability,
@@ -39,12 +38,10 @@ import type {
   PermissionRequest,
   CreateAndSendResult,
   ConversationPage,
-  MessageMention,
   GoalLookupResult,
   BrowserAutomationHostRegistration,
   BrowserAutomationHostDispatchTarget,
   BrowserAutomationResponse,
-  PreviewAnnotationBundle,
   PullRequestCapabilitiesRequest,
   PullRequestCapabilitiesResult,
   PullRequestListRequest,
@@ -73,9 +70,12 @@ import type {
   PullRequestCloseResult,
   PullRequestMergeRequest,
   PullRequestMergeResult,
+  SendMessageInput,
+  CreateAndSendInput,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
+export type { PlanAction } from "@mcode/contracts";
 export type {
   Workspace,
   WorkspaceEnrichment,
@@ -90,8 +90,8 @@ export type {
   WorktreeInfo,
   PrInfo,
   PrDetail,
-  SkillInfo,
-  SkillDiagnostics,
+  ProviderCatalogRequest,
+  ProviderCatalogSnapshot,
   PermissionMode,
   InteractionMode,
   ContextWindowMode,
@@ -99,7 +99,6 @@ export type {
   PartialSettings,
   GitCommit,
   PlanAnswer,
-  PlanAction,
   ProviderModelInfo,
   MessageMention,
   PullRequestCapabilities,
@@ -121,18 +120,13 @@ export type {
   PullRequestFileChangeType,
   PullRequestFilePatchStatus,
   PullRequestPatchResult,
+  SendMessageInput,
+  CreateAndSendInput,
 } from "@mcode/contracts";
 
 export type { PaginatedMessages, ConversationPage, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
-
-/** Codex sub-agent metadata exposed for @ mention autocomplete. */
-export interface CodexAgentMentionInfo {
-  name: string;
-  path: string;
-  description?: string;
-}
 
 /** In-progress tool call tracked by the frontend streaming layer. */
 export interface ToolCall {
@@ -142,6 +136,8 @@ export interface ToolCall {
   output: string | null;
   isError: boolean;
   isComplete: boolean;
+  /** True when a persisted tool call ended through cancellation. */
+  isCancelled?: boolean;
   /** True when the live output preview omits middle bytes from the full output. */
   outputTruncated?: boolean;
   /** UTF-8 byte count for the full output when the server bounded the preview. */
@@ -154,8 +150,12 @@ export interface ToolCall {
   elapsedSeconds?: number;
   /** Epoch ms when the toolUse event was received, used for duration display. */
   startedAt?: number;
+  /** Epoch ms when the provider last reported meaningful activity for this call. */
+  lastActivityAt?: number;
   /** Wall-clock duration when the tool call completed (ms). */
   durationMs?: number;
+  /** Process exit code reported for a completed shell command. */
+  exitCode?: number;
 }
 
 /** Ephemeral hook execution state tracked during a session. Not persisted to DB. */
@@ -284,54 +284,8 @@ export interface McodeTransport {
   listWorktrees(workspaceId: string): Promise<WorktreeInfo[]>;
 
   // Agent commands
-  sendMessage(
-    threadId: string,
-    content: string,
-    model?: string,
-    permissionMode?: PermissionMode,
-    attachments?: AttachmentMeta[],
-    displayContent?: string,
-    reasoningLevel?: ReasoningLevel,
-    provider?: string,
-    interactionMode?: InteractionMode,
-    copilotAgent?: string,
-    contextWindow?: ContextWindowMode,
-    thinking?: boolean,
-    codexFastMode?: boolean,
-    replyToMessageId?: string,
-    quotedText?: string,
-    planAction?: PlanAction,
-    mentions?: MessageMention[],
-    previewAnnotations?: PreviewAnnotationBundle,
-    goalObjective?: string,
-    orchestrationMode?: OrchestrationMode,
-  ): Promise<void>;
-  createAndSendMessage(
-    workspaceId: string,
-    content: string,
-    model: string,
-    permissionMode?: PermissionMode,
-    mode?: "direct" | "worktree",
-    branch?: string,
-    worktreeBranchMode?: "branchless" | "named",
-    existingWorktreePath?: string,
-    existingWorktreeBaseBranch?: string,
-    attachments?: AttachmentMeta[],
-    reasoningLevel?: ReasoningLevel,
-    provider?: string,
-    interactionMode?: InteractionMode,
-    parentThreadId?: string,
-    forkedFromMessageId?: string,
-    copilotAgent?: string,
-    contextWindow?: ContextWindowMode,
-    thinking?: boolean,
-    codexFastMode?: boolean,
-    displayContent?: string,
-    mentions?: MessageMention[],
-    previewAnnotations?: PreviewAnnotationBundle,
-    goalObjective?: string,
-    orchestrationMode?: OrchestrationMode,
-  ): Promise<CreateAndSendResult>;
+  sendMessage(input: SendMessageInput): Promise<void>;
+  createAndSendMessage(input: CreateAndSendInput): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<void>;
   /** Respond to a tool permission request from the agent. */
   respondToPermission(requestId: string, decision: PermissionDecision): Promise<void>;
@@ -416,8 +370,6 @@ export interface McodeTransport {
 
   // File operations (@ file tagging)
   listWorkspaceFiles(workspaceId: string, threadId?: string): Promise<string[]>;
-  /** List Codex sub-agents available for @ mention autocomplete. */
-  listCodexAgents(workspaceId?: string, threadId?: string): Promise<CodexAgentMentionInfo[]>;
   readFileContent(workspaceId: string, relativePath: string, threadId?: string): Promise<string>;
 
   // Open-in app actions
@@ -497,10 +449,8 @@ export interface McodeTransport {
   checkStatus(threadId: string, force?: boolean): Promise<ChecksStatus>;
 
   // Skills
-  /** List discoverable skills and commands, optionally scoped to a workspace path and provider. */
-  listSkills(cwd?: string, providerId?: string): Promise<SkillInfo[]>;
-  /** Run a filesystem scan across all skill search paths and return per-path diagnostics. */
-  diagnoseSkills(cwd?: string): Promise<SkillDiagnostics>;
+  /** Return a provider capability catalog for one validated discovery context. */
+  getProviderCatalog(request: ProviderCatalogRequest): Promise<ProviderCatalogSnapshot>;
 
   // Terminal (PTY)
   /** Create a new PTY attached to a thread's working directory. Returns the pty ID and shell name. */
@@ -522,7 +472,25 @@ export interface McodeTransport {
    * The server replays any buffered output with seq > lastSeq as binary frames
    * before returning. Returns gapped=true when eviction means output was lost.
    */
-  terminalReattach(ptyId: string, lastSeq: number): Promise<{ gapped: boolean }>;
+  terminalReattach(
+    ptyId: string,
+    lastSeq: number,
+    cold?: boolean,
+  ): Promise<
+    | { mode: "delta" }
+    | {
+        mode: "checkpoint";
+        checkpoint: string;
+        checkpointThrough: number;
+      }
+    | { mode: "reset"; discardThrough: number }
+  >;
+  /** Save a bounded serialized xterm state for a later cold renderer mount. */
+  terminalCheckpoint(
+    ptyId: string,
+    seq: number,
+    data: string,
+  ): Promise<{ accepted: boolean }>;
   /** List all active PTY sessions on the server. Used during reconnect. */
   terminalListActive(): Promise<Array<{ ptyId: string; threadId: string }>>;
   /** Check whether a PTY has non-shell child processes running. */
@@ -563,6 +531,8 @@ export interface McodeTransport {
   listSnapshots(threadId: string): Promise<TurnSnapshot[]>;
   /** Get cumulative diff across all turns for a thread. Implemented in Phase 3. */
   getCumulativeDiff(threadId: string, filePath?: string, maxLines?: number): Promise<string>;
+  /** Return authoritative net file stats from the first turn ref to the final turn ref. */
+  getCumulativeDiffStats(threadId: string): Promise<{ filePath: string; additions: number; deletions: number }[]>;
   /** Get commit log for a workspace branch. Pass threadId so the server runs git from the thread's worktree path. */
   getGitLog(
     workspaceId: string,
@@ -605,6 +575,15 @@ export interface McodeTransport {
     /** Worktree thread — resolves the right cwd. */
     threadId?: string;
   }): Promise<{ additions: number; deletions: number }>;
+  /** Resolve file metadata and totals for one Review comparison in one request. */
+  getReviewComparison(params: {
+    workspaceId: string;
+    view: "unstaged" | "staged" | "branch" | "commit";
+    base?: string;
+    target?: string;
+    sha?: string;
+    threadId?: string;
+  }): Promise<import("@mcode/contracts").ReviewComparison>;
 
   // GitHub PR (advanced)
   /** Push a branch to the remote. */

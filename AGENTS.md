@@ -32,8 +32,8 @@ Read `.dev/ports.json` instead of recomputing ports. It includes the paired
 live in `.dev/logs`. In single-instance dev mode, `/health` does not return a
 token or set an auth cookie.
 
-Write exploratory Playwright specs in `.dev/playwright-scratch`. Promote a spec
-to the committed e2e suite only when the behavior deserves permanent coverage.
+Use `.dev/playwright-scratch` for exploratory external Playwright setup when it
+helps; the repository does not install or configure Playwright.
 Stop the runtime with `bun run --shell system agent:down`; use
 `bun run --shell system agent:reset` to stop it, delete only `.dev/db`, and start
 a fresh seeded runtime.
@@ -48,7 +48,14 @@ Per-repo configuration for the engineering skills (`to-issues`, `to-prd`, `triag
 
 ## Code Style
 
-Always add JSDoc/TSDoc docstrings to all exported functions, components, types, and interfaces. AI-powered code reviews depend on these for context. At minimum include a one-line summary of what the symbol does.
+Write self-documenting code. Use precise names, small focused units, explicit types,
+and straightforward control flow so readers can understand behavior from the code.
+Prefer this over explanatory comments or separate documentation. Except for
+required public-symbol docstrings, add documentation only for context the code
+cannot express, such as rationale, constraints, public contracts, or operational
+guidance.
+
+Always add JSDoc/TSDoc docstrings to exported functions, components, classes, types, interfaces, and constants. AI-powered code reviews depend on these for context. Keep them to a one-line summary unless a public contract or other necessary context needs more detail.
 
 Comments explain **why**, not **what**. The code itself shows what it does.
 
@@ -84,11 +91,9 @@ For user-visible frontend work, use this instruction order:
 1. The user's explicit feedback, screenshots, and selected references.
 2. [PRODUCT.md](PRODUCT.md) for audience, jobs, and product principles.
 3. [DESIGN.md](DESIGN.md) for tokens, typography, spacing, components, and
-   surface treatment.
-4. [docs/guides/ui-design-spec.md](docs/guides/ui-design-spec.md) for
-   qualitative direction where it agrees with PRODUCT.md and DESIGN.md.
-5. Existing shared components and neighboring product patterns.
-6. Generic design skills and heuristics.
+   surface treatment, interaction contracts, and qualitative direction.
+4. Existing shared components and neighboring product patterns.
+5. Generic design skills and heuristics.
 
 Higher items override lower ones. A generic design rule must not erase an
 intentional Mcode pattern or a capability the user asked to preserve.
@@ -107,7 +112,7 @@ viewport, split position, state, and transition that the user reported.
 
 When working on frontend code, follow the component registry and rules in **[docs/guides/ui-components.md](docs/guides/ui-components.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
 
-That guide's **Testing UI Changes** section defines the live checks required for interactive components, responsive layout, accessibility semantics, theme tokens, floating overlays, and persisted first-paint state. Use browser use or computer use against the running app, report the observed result, and keep any task-specific scripts or artifacts under `.dev/verification/`.
+That guide's **Testing UI Changes** section defines the live checks required for interactive components, responsive layout, accessibility semantics, theme tokens, floating overlays, and persisted first-paint state. Use browser use or computer use against the running app, report the observed result, keep temporary Playwright specs under `.dev/playwright-scratch`, and keep captured evidence under `.dev/verification/`.
 
 ## Narrative Timeline
 
@@ -175,6 +180,15 @@ UI behavior, IPC handlers, server endpoints, stores, and agent-service behavior.
    closest `__tests__/` directory that asserts the observed behavior. Do not
    commit task-specific browser-driving or screenshot scripts.
 3. Run the regression floor with `bun run verify`.
+
+For local UI changes, use an external Playwright installation when a connected
+browser or computer-use session is unavailable. A missing connected browser
+does not block live verification. Write temporary deterministic specs in
+`.dev/playwright-scratch` and keep screenshots, logs, and other evidence under
+`.dev/verification/`. If existing data does not expose the changed state, create
+a bounded test fixture instead of skipping the UI check. Report live
+verification as blocked only when the runtime and available external tooling
+cannot launch or exercise the behavior.
 
 Report all three: the live action and observed outcome, the regular test that
 protects it, and the `bun run verify` result. If the environment blocks live

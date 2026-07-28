@@ -1,10 +1,11 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { MessageRepo } from "../repositories/message-repo.js";
+import { openElectronMemoryDatabase } from "./electron-sqlite.js";
 
 function createTestDb(): Database.Database {
-  const db = new Database(":memory:");
+  const db = openElectronMemoryDatabase();
   db.exec(`
     CREATE TABLE messages (
       id TEXT PRIMARY KEY,
@@ -23,6 +24,11 @@ function createTestDb(): Database.Database {
       reply_to_message_id TEXT,
       quoted_text TEXT,
       model TEXT,
+      provider TEXT,
+      origin_type TEXT NOT NULL DEFAULT 'legacy',
+      source_thread_id TEXT,
+      source_turn_id TEXT,
+      source_provider_id TEXT,
       is_internal INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE tool_call_records (
@@ -203,6 +209,35 @@ ORDER BY page.sequence ASC`,
   });
 
   describe("create with reply fields", () => {
+    it("persists authenticated cross-thread provenance", () => {
+      const message = repo.create(
+        "thread-1",
+        "user",
+        "delegated request",
+        1,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          type: "thread",
+          sourceThreadId: "source-thread",
+          sourceTurnId: "source-turn",
+          sourceProviderId: "codex",
+        },
+      );
+
+      expect(db.prepare("SELECT origin_type, source_thread_id, source_turn_id, source_provider_id FROM messages WHERE id = ?").get(message.id)).toEqual({
+        origin_type: "thread",
+        source_thread_id: "source-thread",
+        source_turn_id: "source-turn",
+        source_provider_id: "codex",
+      });
+    });
+
     it("persists replyToMessageId and quotedText", () => {
       const original = repo.create("thread-1", "assistant", "hello", 1);
       const reply = repo.create("thread-1", "user", "reply text", 2, undefined, original.id, "quoted excerpt");

@@ -3,7 +3,7 @@ import type {
   Workspace,
   Thread,
   Message,
-  SkillInfo,
+  ProviderCatalogRequest,
 } from "@/transport/types";
 import { getDefaultSettings } from "@mcode/contracts";
 import { vi } from "vitest";
@@ -154,7 +154,7 @@ export const mockTransport: McodeTransport = {
   readClipboardImage: vi.fn().mockResolvedValue(null),
   saveClipboardFile: vi.fn().mockResolvedValue(null),
   listWorkspaceFiles: vi.fn().mockResolvedValue([]),
-  listCodexAgents: vi.fn().mockResolvedValue([]),
+  getReviewComparison: vi.fn().mockResolvedValue({ files: [], additions: 0, deletions: 0 }),
   readFileContent: vi.fn().mockResolvedValue(""),
   listOpenInApps: vi.fn().mockResolvedValue([]),
   openIn: vi.fn().mockResolvedValue(undefined),
@@ -177,8 +177,18 @@ export const mockTransport: McodeTransport = {
   fetchBranch: vi.fn().mockResolvedValue(undefined),
   getPrByUrl: vi.fn().mockResolvedValue(null),
   checkStatus: vi.fn().mockResolvedValue({ aggregate: "no_checks", runs: [], fetchedAt: 0 }),
-  listSkills: vi.fn().mockResolvedValue([] as SkillInfo[]),
-  diagnoseSkills: vi.fn().mockResolvedValue({ scanned: [], errors: [], totalSkills: 0, totalCommands: 0 }),
+  getProviderCatalog: vi.fn().mockImplementation(async (request: ProviderCatalogRequest) => ({
+    providerId: request.providerId,
+    context: request.workspaceId
+      ? { scope: "workspace" as const, workspaceId: request.workspaceId, ...(request.threadId ? { threadId: request.threadId } : {}) }
+      : request.cwd
+        ? { scope: "path" as const, cwd: request.cwd }
+        : { scope: "user" as const },
+    freshness: { status: "fresh" as const, fetchedAt: "2026-07-20T12:00:00.000Z" },
+    diagnostics: [],
+    entries: [],
+    selectableAgents: [],
+  })),
   terminalCreate: vi.fn().mockResolvedValue({ ptyId: "pty-mock-1", shell: "pwsh" }),
   terminalWrite: vi.fn().mockResolvedValue(undefined),
   terminalResize: vi.fn().mockResolvedValue(undefined),
@@ -186,7 +196,8 @@ export const mockTransport: McodeTransport = {
   terminalPause: vi.fn().mockResolvedValue(undefined),
   terminalResume: vi.fn().mockResolvedValue(undefined),
   terminalKillByThread: vi.fn().mockResolvedValue(undefined),
-  terminalReattach: vi.fn().mockResolvedValue({ gapped: false }),
+  terminalReattach: vi.fn().mockResolvedValue({ mode: "delta" }),
+  terminalCheckpoint: vi.fn().mockResolvedValue({ accepted: true }),
   terminalListActive: vi.fn().mockResolvedValue([]),
   terminalHasChildren: vi.fn().mockResolvedValue({ hasChildren: false }),
   ptySetLastSeq: vi.fn(),
@@ -201,7 +212,8 @@ export const mockTransport: McodeTransport = {
   getSnapshotDiffStats: vi.fn().mockResolvedValue([]),
   cleanupSnapshots: vi.fn().mockResolvedValue({ removed: 0 }),
   listSnapshots: vi.fn().mockResolvedValue([]),
-  getCumulativeDiff: vi.fn().mockResolvedValue(""),
+    getCumulativeDiff: vi.fn().mockResolvedValue(""),
+    getCumulativeDiffStats: vi.fn().mockResolvedValue([]),
   getGitLog: vi.fn().mockResolvedValue([]),
   getCommitDiff: vi.fn().mockResolvedValue(""),
   getCommitFiles: vi.fn().mockResolvedValue([]),

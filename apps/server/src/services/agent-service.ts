@@ -8,6 +8,7 @@
 import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
+import { randomUUID } from "node:crypto";
 import { logger, validateBranchName } from "@mcode/shared";
 import {
   AgentEventType,
@@ -31,11 +32,14 @@ import type {
   PermissionDecision,
   PermissionRequest,
   PlanOutput,
-  PlanAction,
   MessageMention,
   PreviewAnnotationBundle,
   GoalState,
   GoalLookupResult,
+  SendMessageInput,
+  CreateAndSendInput,
+  PermissionMode,
+  ProviderFileMutationStart,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -43,6 +47,7 @@ import { MessageRepo } from "../repositories/message-repo";
 import { HookExecutionRepo, type CreateHookExecutionInput } from "../repositories/hook-execution-repo";
 import { NarrativeStore } from "./narrative-store.js";
 import { TurnFinalizer } from "./turn-finalizer.js";
+import { TurnFileTracker } from "./turn-file-tracker.js";
 import { PlanQuestionService } from "./plan-question-service.js";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
@@ -73,6 +78,7 @@ import { HandoffCoordinator } from "./handoff/handoff-coordinator.js";
 import { ScopedPreGrantService } from "./scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "./turn-error-policy.js";
+import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js";
 import type { TurnOutcome } from "./turn-outcome.js";
 
 /**
@@ -84,6 +90,28 @@ function escapeXml(s: string): string {
 }
 
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
+
+/** Command accepted by {@link AgentService.sendMessage}, including service-only delivery metadata. */
+export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "provider"> & {
+  permissionMode?: PermissionMode | "default";
+  provider?: ProviderId;
+  /** Assistant message whose plan-question batch is settled by this send. */
+  markPlanAnswerForMessageId?: string;
+  /** Provider payload used instead of the persisted user-facing content. */
+  providerWireOverride?: string;
+  /** Server-assigned turn identity used by thread-control creation results. */
+  sourceTurnId?: string;
+};
+
+/** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
+export type CreateAndSendCommand = Omit<
+  CreateAndSendInput,
+  "model" | "permissionMode" | "provider"
+> & {
+  model?: string;
+  permissionMode?: PermissionMode | "default";
+  provider?: ProviderId;
+};
 
 function buildInjectedFileMessage(
   text: string,
@@ -220,6 +248,20 @@ export class AgentService {
    * {@link TurnFinalizer.finalize} from each turn-end path.
    */
   private readonly turnFinalizer: TurnFinalizer;
+  /** Explicit provider mutation tracker used for authored file effects. */
+  private readonly turnFileTracker: TurnFileTracker;
+  /** Tracker initialization for the active generation of each thread. */
+  private readonly fileTrackingSetupByThread = new Map<string, Promise<void>>();
+  /** Serializes provider file events behind tracker initialization. */
+  private readonly fileTrackingActivityByThread = new Map<string, Promise<void>>();
+  /** Pre-turn Git capture that may continue after an auto-resumed tracker becomes ready. */
+  private readonly fileTrackingRefCaptureByThread = new Map<string, Promise<void>>();
+  /** Prevents a resumed turn from replacing the prior generation before persistence. */
+  private readonly fileTrackingFinalizationByThread = new Map<string, Promise<void>>();
+  /** Holds a resumed provider event stream until the preceding turn is persisted. */
+  private readonly providerEventBarrierByThread = new Map<string, Promise<void>>();
+  /** Provider events whose file-tracking portion ran before deferred narrative handling. */
+  private readonly earlyFileTrackingEvents = new WeakSet<object>();
   /**
    * Classifies a failed send as transient or fatal and caps the automatic
    * retry, so a brief flake doesn't cost the user a manual re-send while a
@@ -265,6 +307,7 @@ export class AgentService {
       /** False once the in-flight `sendTurn` promise has settled (success or throw). */
       sendTurnInFlight: boolean;
       sessionName: string;
+      sourceTurnId: string;
       resolvedProvider: import("@mcode/contracts").IAgentProvider;
       effectiveProvider: ProviderId;
       turnRequest: TurnRequest;
@@ -339,7 +382,15 @@ export class AgentService {
     @inject(PlanQuestionService)
     private readonly planQuestionService: PlanQuestionService,
     @inject(FileService) private readonly fileService?: FileService,
+    @inject(delay(() => InternalThreadControlMcpRuntime))
+    private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
   ) {
+    this.turnFileTracker = new TurnFileTracker(
+      (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
+      (threadId, turnId, summary) => {
+        broadcast("turn.fileEffectsUpdated", { threadId, turnId, summary });
+      },
+    );
     this.turnFinalizer = new TurnFinalizer(
       this.messageRepo,
       this.threadRepo,
@@ -347,6 +398,7 @@ export class AgentService {
       this.snapshotService,
       this.turnSnapshotRepo,
       this.db,
+      this.turnFileTracker,
     );
     this.goalCommand = new GoalCommand(
       { messageRepo: this.messageRepo, db: this.db },
@@ -355,56 +407,107 @@ export class AgentService {
     this.commandRouter = new CommandRouter([this.goalCommand]);
   }
 
+  /** Initialize file tracking once for the active turn, including provider-originated resumes. */
+  private ensureTurnFileTracking(threadId: string, cwdOverride?: string): Promise<void> {
+    const existing = this.fileTrackingSetupByThread.get(threadId);
+    if (existing) return existing;
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) return Promise.resolve();
+    const workspace = this.workspaceRepo.findById(thread.workspace_id);
+    if (!workspace) return Promise.resolve();
+    const cwd = cwdOverride ?? this.gitService.resolveWorkingDir(
+      workspace.path,
+      thread.mode,
+      thread.worktree_path,
+    );
+    let generation: number;
+    try {
+      generation = this.turnFileTracker.beginTurn(threadId, cwd, null);
+      this.turnFinalizer.recordTurnRef(threadId, null, cwd, generation);
+    } catch (err) {
+      logger.warn("Failed to initialize file tracker", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return Promise.resolve();
+    }
+    const setup = Promise.resolve();
+    this.fileTrackingSetupByThread.set(threadId, setup);
+    this.fileTrackingActivityByThread.set(threadId, setup);
+    const refCapture = (async () => {
+      try {
+        const refBefore = await this.snapshotService.captureRef(cwd);
+        this.turnFinalizer.recordTurnRef(threadId, refBefore, cwd, generation);
+        await this.turnFileTracker.setBaselineRef(threadId, generation, refBefore);
+      } catch (err) {
+        logger.warn("Failed to capture ref_before", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    this.fileTrackingRefCaptureByThread.set(threadId, refCapture);
+    return setup;
+  }
+
+  /** Return the server tracker generation that owns live file effects for a thread. */
+  getCurrentFileEffectTurnId(threadId: string): string | undefined {
+    return this.turnFileTracker.getCurrentTurnId(threadId);
+  }
+
+  /** Start one provider file observation immediately and retain its completion for finalization. */
+  private queueTurnFileTracking(threadId: string, action: () => Promise<void>): void {
+    const setup = this.fileTrackingSetupByThread.get(threadId);
+    if (!setup) return;
+    const previous = this.fileTrackingActivityByThread.get(threadId) ?? setup;
+    let observation: Promise<void>;
+    try {
+      observation = action();
+    } catch (err) {
+      observation = Promise.reject(err);
+    }
+    const guardedObservation = observation.catch((err) => {
+      logger.warn("Failed to observe provider file event", {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    const next = Promise.all([previous, guardedObservation]).then(() => undefined);
+    this.fileTrackingActivityByThread.set(threadId, next);
+  }
+
   /**
    * Send a user message to the Claude agent for a given thread.
    * Loads the thread, persists the user message, resolves the working
    * directory, and dispatches to the provider.
    */
-  async sendMessage(
-    threadId: string,
-    content: string,
-    permissionMode: string,
+  async sendMessage({
+    threadId,
+    content,
+    permissionMode = "default",
     model = "claude-sonnet-4-6",
-    attachments: AttachmentMeta[] = [],
-    reasoningLevel?: ReasoningLevel,
-    provider?: ProviderId,
-    interactionMode?: InteractionMode,
-    maxBudgetUsd?: number,
-    maxTurns?: number,
-    copilotAgent?: string,
-    contextWindowMode?: ContextWindowMode,
-    thinking?: boolean,
-    codexFastMode?: boolean,
-    /**
-     * If set, persist a plan-questions "answered" marker for the given
-     * assistant message id in the same SQLite transaction as the user
-     * message create. Used by `answerQuestions` to record that the wizard
-     * has been satisfied so it does not re-pop on reload.
-     */
-    markPlanAnswerForMessageId?: string,
-    /**
-     * Provider-only payload for this send (fork continuation, stitched replay).
-     * The persisted user row uses {@link messageDisplayContent} when supplied,
-     * otherwise the original `content` argument; this string is forwarded to
-     * the agent without writing the override text to SQLite when set.
-     */
-    providerWireOverride?: string,
-    /** ID of the message being replied to. Stored on the user message row. */
-    replyToMessageId?: string,
-    /** Highlighted text excerpt from the replied-to message. Stored on the user message row. */
-    quotedText?: string,
-    /**
-     * Transcript stored in SQLite for the user bubble. When omitted, the
-     * original `content` argument is persisted. The `content` argument is
-     * still the base for plan/reply wrapping sent to the provider.
-     */
-    messageDisplayContent?: string,
-    planAction?: PlanAction,
-    mentions: MessageMention[] = [],
-    previewAnnotations?: PreviewAnnotationBundle,
-    goalObjective?: string,
-    orchestrationMode?: OrchestrationMode,
-  ): Promise<void> {
+    attachments = [],
+    reasoningLevel,
+    provider,
+    interactionMode,
+    maxBudgetUsd,
+    maxTurns,
+    copilotAgent,
+    contextWindow: contextWindowMode,
+    thinking,
+    codexFastMode,
+    markPlanAnswerForMessageId,
+    providerWireOverride,
+    replyToMessageId,
+    quotedText,
+    displayContent: messageDisplayContent,
+    planAction,
+    mentions = [],
+    previewAnnotations,
+    goalObjective,
+    orchestrationMode,
+    sourceTurnId: requestedSourceTurnId,
+  }: SendMessageCommand): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     // Use the thread's stored provider as authoritative fallback; only override
@@ -626,16 +729,16 @@ export class AgentService {
 
     this.threadRepo.updateStatus(threadId, "active");
 
-    // Capture git snapshot ref_before for this turn
-    try {
-      const refBefore = await this.snapshotService.captureRef(cwd);
-      this.turnFinalizer.recordTurnRef(threadId, refBefore, cwd);
-    } catch (err) {
-      logger.warn("Failed to capture ref_before", {
-        threadId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
+    // Emit before baseline I/O so the UI enters running state immediately. AgentService's
+    // provider listener initializes the tracker synchronously before the broadcaster reads its id.
+    (resolvedProvider as unknown as import("events").EventEmitter).emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId,
+    } satisfies AgentEvent);
+
+    await this.ensureTurnFileTracking(threadId, cwd);
+    await this.fileTrackingRefCaptureByThread.get(threadId);
     this.narrativeStore.beginTurn(threadId);
     this.narrativeStore.resetTurnCounters(threadId);
 
@@ -702,6 +805,7 @@ export class AgentService {
     });
 
     const sessionName = `mcode-${threadId}`;
+    const sourceTurnId = requestedSourceTurnId ?? randomUUID();
     // A branched child has a system handoff at seq 1 but no sdk_session_id.
     // Only treat as resume if there is actually a session to resume.
     const isResume = nextSeq > 1 && !!thread.sdk_session_id;
@@ -710,18 +814,6 @@ export class AgentService {
     // Replaces the former setSdkSessionId(...) + resume:true two-step dance.
     const resumeFrom: string | undefined =
       isResume && thread.sdk_session_id ? thread.sdk_session_id : undefined;
-
-    const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
-
-    // Emit the live-session "turn started" signal before any other events so
-    // clients can populate runningThreadIds (drives sidebar + composer indicators).
-    // Cast to EventEmitter since IAgentProvider only exposes on(); all providers
-    // extend EventEmitter, matching the same pattern used for synthetic error/ended
-    // emission in the catch block below.
-    (resolvedProvider as unknown as import("events").EventEmitter).emit("event", {
-      type: AgentEventType.TurnStarted,
-      threadId,
-    } satisfies AgentEvent);
 
     let providerMessage = providerWireOverride ?? wirePayload;
     if (effectiveProvider !== "codex") {
@@ -792,11 +884,21 @@ export class AgentService {
       resumeFrom: attemptResumeFrom,
       providerOptions,
     } as TurnRequest;
+    if (effectiveProvider === "claude" || effectiveProvider === "codex") {
+      this.threadControlMcp?.activate({
+        sessionId: sessionName,
+        sourceThreadId: threadId,
+        sourceTurnId,
+        sourceProviderId: effectiveProvider,
+        permissionMode: permissionMode === "full" ? "full" : "supervised",
+      });
+    }
     this.turnRetryDispatchByThread.set(threadId, {
       attempt: 1,
       retryInFlight: false,
       sendTurnInFlight: false,
       sessionName,
+      sourceTurnId,
       resolvedProvider,
       effectiveProvider,
       turnRequest: baseTurnRequest,
@@ -854,7 +956,7 @@ export class AgentService {
   async answerQuestions(
     threadId: string,
     answers: Array<{ questionId: string; selectedOptionId: string | null; freeText: string | null }>,
-    permissionMode = "default",
+    permissionMode: PermissionMode | "default" = "default",
     reasoningLevel?: ReasoningLevel,
     contextWindowMode?: ContextWindowMode,
     thinking?: boolean,
@@ -872,23 +974,18 @@ export class AgentService {
     this.armPlanGenerationTurn(threadId);
 
     // interactionMode intentionally omitted — no question wrapping for the answer turn
-    await this.sendMessage(
+    await this.sendMessage({
       threadId,
       content,
       permissionMode,
-      thread.model ?? "claude-sonnet-4-6",
-      [],
+      model: thread.model ?? "claude-sonnet-4-6",
+      attachments: [],
       reasoningLevel,
-      (thread.provider as ProviderId) ?? "claude",
-      undefined, // interactionMode
-      undefined, // maxBudgetUsd
-      undefined, // maxTurns
-      undefined, // copilotAgent
-      contextWindowMode,
+      provider: (thread.provider as ProviderId) ?? "claude",
+      contextWindow: contextWindowMode,
       thinking,
-      undefined,
       markPlanAnswerForMessageId,
-    );
+    });
   }
 
   /**
@@ -921,12 +1018,12 @@ export class AgentService {
     let previousEnd = 0;
 
     for (const mention of sorted) {
-      const displayText = `@${mention.label}`;
+      const displayText = mention.kind === "command" ? `/${mention.label}` : `@${mention.label}`;
       if (
         mention.range.end > input.content.length ||
         input.content.slice(mention.range.start, mention.range.end) !== displayText
       ) {
-        throw new Error(`Invalid mention range for @${mention.label}`);
+        throw new Error(`Invalid mention range for ${displayText}`);
       }
       if (mention.range.start < previousEnd) {
         throw new Error("Mention ranges must not overlap");
@@ -941,8 +1038,10 @@ export class AgentService {
         continue;
       }
 
+      if (mention.kind === "command") continue;
+
       if (input.provider !== "codex") {
-        throw new Error("Agent mentions are only supported by Codex");
+        throw new Error("Provider mentions are only supported by Codex");
       }
     }
 
@@ -1036,34 +1135,34 @@ export class AgentService {
    * Generates a title from the content, creates the thread, sends,
    * and returns the fully-populated Thread object.
    */
-  async createAndSend(
-    workspaceId: string,
-    content: string,
+  async createAndSend({
+    workspaceId,
+    content,
     model = "claude-sonnet-4-6",
     permissionMode = "default",
-    mode: "direct" | "worktree" = "direct",
+    mode = "direct",
     branch = "main",
-    worktreeBranchMode: "branchless" | "named" = "branchless",
-    existingWorktreePath?: string,
-    existingWorktreeBaseBranch?: string,
-    attachments: AttachmentMeta[] = [],
-    reasoningLevel?: ReasoningLevel,
-    provider: ProviderId = "claude",
-    interactionMode?: InteractionMode,
-    parentThreadId?: string,
-    forkedFromMessageId?: string,
-    maxBudgetUsd?: number,
-    maxTurns?: number,
-    copilotAgent?: string,
-    contextWindowMode?: ContextWindowMode,
-    thinking?: boolean,
-    codexFastMode?: boolean,
-    displayContent?: string,
-    mentions: MessageMention[] = [],
-    previewAnnotations?: PreviewAnnotationBundle,
-    goalObjective?: string,
-    orchestrationMode?: OrchestrationMode,
-  ): Promise<Thread & { warnings?: string[] }> {
+    worktreeBranchMode = "branchless",
+    existingWorktreePath,
+    existingWorktreeBaseBranch,
+    attachments = [],
+    reasoningLevel,
+    provider = "claude",
+    interactionMode,
+    parentThreadId,
+    forkedFromMessageId,
+    maxBudgetUsd,
+    maxTurns,
+    copilotAgent,
+    contextWindow: contextWindowMode,
+    thinking,
+    codexFastMode,
+    displayContent,
+    mentions = [],
+    previewAnnotations,
+    goalObjective,
+    orchestrationMode,
+  }: CreateAndSendCommand): Promise<Thread & { warnings?: string[] }> {
     const title = truncateTitle(displayContent ?? content);
 
     if (parentThreadId) {
@@ -1147,8 +1246,8 @@ export class AgentService {
         : thread.codex_fast_mode,
     };
 
-    void this.sendMessage(
-      thread.id,
+    void this.sendMessage({
+      threadId: thread.id,
       content,
       permissionMode,
       model,
@@ -1159,20 +1258,14 @@ export class AgentService {
       maxBudgetUsd,
       maxTurns,
       copilotAgent,
-      contextWindowMode,
+      contextWindow: contextWindowMode,
       thinking,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
       displayContent,
-      undefined,
       mentions,
       previewAnnotations,
       goalObjective,
       orchestrationMode,
-    ).catch((err) => {
+    }).catch((err) => {
       logger.error("createAndSend initial send failed", {
         threadId: thread.id,
         error: err instanceof Error ? err.message : String(err),
@@ -1193,7 +1286,7 @@ export class AgentService {
     workspaceId: string;
     content: string;
     model: string;
-    permissionMode: string;
+    permissionMode: PermissionMode | "default";
     mode: "direct" | "worktree";
     branch: string;
     worktreeBranchMode?: "branchless" | "named";
@@ -1374,8 +1467,8 @@ export class AgentService {
       });
     }
 
-    void this.sendMessage(
-      thread.id,
+    void this.sendMessage({
+      threadId: thread.id,
       content,
       permissionMode,
       model,
@@ -1386,20 +1479,16 @@ export class AgentService {
       maxBudgetUsd,
       maxTurns,
       copilotAgent,
-      effectiveContextWindowMode,
-      effectiveThinking,
-      resolvedCodexFast ?? undefined,
-      undefined,
-      providerInput,
-      undefined,
-      undefined,
+      contextWindow: effectiveContextWindowMode,
+      thinking: effectiveThinking,
+      codexFastMode: resolvedCodexFast ?? undefined,
+      providerWireOverride: providerInput,
       displayContent,
-      undefined,
       mentions,
       previewAnnotations,
       goalObjective,
       orchestrationMode,
-    ).catch((err) => {
+    }).catch((err) => {
       logger.error("createBranchedThread initial send failed", {
         threadId: thread.id,
         error: err instanceof Error ? err.message : String(err),
@@ -1890,14 +1979,38 @@ export class AgentService {
   ): Promise<void> | null {
     if (this.terminalFinalizedThreads.has(threadId)) return null;
     this.terminalFinalizedThreads.add(threadId);
-    return this.turnFinalizer.finalize(threadId, outcome).catch((err) => {
+    const setup = this.fileTrackingSetupByThread.get(threadId);
+    const activity = this.fileTrackingActivityByThread.get(threadId) ?? setup;
+    const refCapture = this.fileTrackingRefCaptureByThread.get(threadId);
+    const prerequisite = Promise.all([
+      activity ?? Promise.resolve(),
+      refCapture ?? Promise.resolve(),
+    ]);
+    const finalize = this.turnFinalizer.finalize(threadId, outcome, prerequisite)
+      .catch((err) => {
       logger.error("finalize failed on terminal event", {
         threadId,
         outcome,
         source,
         error: err instanceof Error ? err.message : String(err),
       });
+      });
+    this.fileTrackingFinalizationByThread.set(threadId, finalize);
+    void finalize.finally(() => {
+      if (this.fileTrackingSetupByThread.get(threadId) === setup) {
+        this.fileTrackingSetupByThread.delete(threadId);
+      }
+      if (this.fileTrackingActivityByThread.get(threadId) === activity) {
+        this.fileTrackingActivityByThread.delete(threadId);
+      }
+      if (this.fileTrackingRefCaptureByThread.get(threadId) === refCapture) {
+        this.fileTrackingRefCaptureByThread.delete(threadId);
+      }
+      if (this.fileTrackingFinalizationByThread.get(threadId) === finalize) {
+        this.fileTrackingFinalizationByThread.delete(threadId);
+      }
     });
+    return finalize;
   }
 
   /**
@@ -1936,6 +2049,15 @@ export class AgentService {
         logger.warn("Failed to discard pooled session before retry", {
           threadId,
           error: evictErr instanceof Error ? evictErr.message : String(evictErr),
+        });
+      }
+      if (dispatch.effectiveProvider === "claude" || dispatch.effectiveProvider === "codex") {
+        this.threadControlMcp?.activate({
+          sessionId: dispatch.sessionName,
+          sourceThreadId: threadId,
+          sourceTurnId: dispatch.sourceTurnId,
+          sourceProviderId: dispatch.effectiveProvider,
+          permissionMode: dispatch.turnRequest.permissionMode === "full" ? "full" : "supervised",
         });
       }
       try {
@@ -2059,7 +2181,61 @@ export class AgentService {
     });
 
     for (const provider of this.providerRegistry.resolveAll()) {
-      provider.on("event", (event: AgentEvent) => {
+      provider.on("file_mutation_start", (event: ProviderFileMutationStart) => {
+        void this.ensureTurnFileTracking(event.threadId);
+        this.queueTurnFileTracking(event.threadId, () => (
+          this.turnFileTracker.observeToolUse(
+            event.threadId,
+            event.toolCallId,
+            event.toolName,
+            event.toolInput,
+          )
+        ));
+      });
+      const handleEvent = (event: AgentEvent): void => {
+        const priorFinalization = this.fileTrackingFinalizationByThread.get(event.threadId);
+        const existingBarrier = this.providerEventBarrierByThread.get(event.threadId);
+        if (!existingBarrier && priorFinalization && event.type === AgentEventType.TurnStarted) {
+          this.fileTrackingSetupByThread.delete(event.threadId);
+          this.fileTrackingActivityByThread.delete(event.threadId);
+          this.fileTrackingRefCaptureByThread.delete(event.threadId);
+          void this.ensureTurnFileTracking(event.threadId);
+          this.earlyFileTrackingEvents.add(event);
+        }
+        if (existingBarrier && event.type === AgentEventType.ToolUse) {
+          this.queueTurnFileTracking(event.threadId, () => (
+            this.turnFileTracker.observeToolUse(
+              event.threadId,
+              event.toolCallId,
+              event.toolName,
+              event.toolInput,
+            )
+          ));
+          this.earlyFileTrackingEvents.add(event);
+        }
+        if (existingBarrier && event.type === AgentEventType.ToolResult) {
+          this.queueTurnFileTracking(event.threadId, () => (
+            this.turnFileTracker.observeToolResult(
+              event.threadId,
+              event.toolCallId,
+              event.toolInput,
+            )
+          ));
+          this.earlyFileTrackingEvents.add(event);
+        }
+        const barrier = existingBarrier
+          ?? (event.type === AgentEventType.TurnStarted ? priorFinalization : undefined);
+        if (barrier) {
+          if (!existingBarrier) this.providerEventBarrierByThread.set(event.threadId, barrier);
+          void barrier.then(() => {
+            if (event.type === AgentEventType.TurnStarted
+              && this.providerEventBarrierByThread.get(event.threadId) === barrier) {
+              this.providerEventBarrierByThread.delete(event.threadId);
+            }
+            handleEvent(event);
+          });
+          return;
+        }
         // Plan mode: feed streaming text to the question parser.
         // Buffer questions until the session closes (`ended`) so the client
         // cannot submit answers against a still-active session, which would
@@ -2272,6 +2448,16 @@ export class AgentService {
         if (event.type === AgentEventType.ToolUse) {
           this.narrativeStore.closeOpenThought(event.threadId);
           this.bufferToolCall(event.threadId, event);
+          if (!this.earlyFileTrackingEvents.delete(event)) {
+            this.queueTurnFileTracking(event.threadId, () => (
+              this.turnFileTracker.observeToolUse(
+                event.threadId,
+                event.toolCallId,
+                event.toolName,
+                event.toolInput,
+              )
+            ));
+          }
         }
 
         if (event.type === AgentEventType.HookStarted) {
@@ -2344,6 +2530,15 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.ToolResult) {
+          if (!this.earlyFileTrackingEvents.delete(event)) {
+            this.queueTurnFileTracking(event.threadId, () => (
+              this.turnFileTracker.observeToolResult(
+                event.threadId,
+                event.toolCallId,
+                event.toolInput,
+              )
+            ));
+          }
           this.narrativeStore.updateBufferedToolCallOutput(
             event.threadId,
             event.toolCallId,
@@ -2354,6 +2549,7 @@ export class AgentService {
               ...(event.outputTruncated === true ? { outputTruncated: true } : {}),
               ...(event.outputTotalBytes != null ? { outputTotalBytes: event.outputTotalBytes } : {}),
               ...(event.outputArtifactPath ? { outputArtifactPath: event.outputArtifactPath } : {}),
+              ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
             },
           );
           // Persist a just-created task now that the harness has assigned its id.
@@ -2366,6 +2562,12 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.TurnStarted) {
+          if (!this.earlyFileTrackingEvents.delete(event)) {
+            this.fileTrackingSetupByThread.delete(event.threadId);
+            this.fileTrackingActivityByThread.delete(event.threadId);
+            this.fileTrackingRefCaptureByThread.delete(event.threadId);
+            void this.ensureTurnFileTracking(event.threadId);
+          }
           // Re-add to activeSessionIds for auto-resumed turns (ScheduleWakeup/loop).
           // For sendMessage()-originated turns this is a no-op since sendMessage()
           // already added the thread before emitting TurnStarted.
@@ -2401,6 +2603,7 @@ export class AgentService {
           // before the compaction API call, but the session continues
           // automatically.
           if (!this.compactionInProgressByThread.has(event.threadId)) {
+            this.threadControlMcp?.revoke(`mcode-${event.threadId}`);
             this.trackSessionEnded(event.threadId);
             this.disarmTurnRetryWindow(event.threadId);
             void this.refreshNativeClaudeGoalAfterTurn(event.threadId);
@@ -2562,6 +2765,7 @@ export class AgentService {
             void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
           }
           this.trackSessionEnded(event.threadId);
+          this.threadControlMcp?.revoke(`mcode-${event.threadId}`);
           // Turn-scoped cleanup of any one-shot handoff Read grant. No-op on
           // later turns since the grant is already gone (consumed or cleared).
           this.scopedPreGrant.clear(event.threadId);
@@ -2571,7 +2775,8 @@ export class AgentService {
           this.pendingExitPlanMarkdown.delete(event.threadId);
           this.planCapturedThisTurn.delete(event.threadId);
         }
-      });
+      };
+      provider.on("event", handleEvent);
     }
   }
 

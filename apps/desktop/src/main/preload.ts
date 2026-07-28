@@ -8,11 +8,29 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  /** Platform facts and allowlisted native window actions for the custom title bar. */
+  window: {
+    platform: process.platform,
+    isDevelopment: Boolean(process.env.ELECTRON_RENDERER_URL),
+    onCommand(callback: (command: string) => void) {
+      const listener = (_event: unknown, command: string) => callback(command);
+      ipcRenderer.on("desktop:command", listener);
+      return listener;
+    },
+    offCommand(listener: (...args: unknown[]) => void): void {
+      ipcRenderer.removeListener("desktop:command", listener);
+    },
+    perform(action: string): Promise<void> {
+      return ipcRenderer.invoke("window:perform", action);
+    },
+  },
   /** Get the WebSocket URL (with auth token) and IPC path for connecting to the server. */
-  getServerUrl: (): Promise<{ url: string; ipcPath: string }> => ipcRenderer.invoke("get-server-url"),
+  getServerUrl: (): Promise<{ url: string; ipcPath: string }> =>
+    ipcRenderer.invoke("get-server-url"),
 
   /** Verify the server is reachable; the main process silently restarts it if not. */
-  ensureServerRunning: (): Promise<void> => ipcRenderer.invoke("ensure-server-running"),
+  ensureServerRunning: (): Promise<void> =>
+    ipcRenderer.invoke("ensure-server-running"),
 
   /** Report whether this renderer considers the server busy (running turns / terminals).
    * While any renderer is busy, the main process holds a power save blocker. */
@@ -24,11 +42,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke("show-open-dialog", opts),
 
   /** Open a URL in the default browser (https, http, mailto, or resolved mcode-workspace file targets). */
-  openExternalUrl: (url: string, workspacePath?: string | null): Promise<void> =>
+  openExternalUrl: (
+    url: string,
+    workspacePath?: string | null,
+  ): Promise<void> =>
     ipcRenderer.invoke("open-external-url", url, workspacePath ?? null),
 
   /** List openable apps (metadata + detection status) from the main-process registry. */
-  listOpenInApps: (): Promise<unknown> => ipcRenderer.invoke("list-open-in-apps"),
+  listOpenInApps: (): Promise<unknown> =>
+    ipcRenderer.invoke("list-open-in-apps"),
 
   /**
    * Open a path in the given registry app. The main-process registry dispatches
@@ -44,7 +66,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke("read-clipboard-image"),
 
   /** Save a file blob from the clipboard to a temp location. */
-  saveClipboardFile: (buffer: Uint8Array, mimeType: string, fileName: string): Promise<unknown> =>
+  saveClipboardFile: (
+    buffer: Uint8Array,
+    mimeType: string,
+    fileName: string,
+  ): Promise<unknown> =>
     ipcRenderer.invoke("save-clipboard-file", buffer, mimeType, fileName),
 
   /** Get the absolute path to the log directory. */
@@ -66,8 +92,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const { images, scripts, cssStyleSheets, xslStyleSheets, fonts, other } =
       webFrame.getResourceUsage();
     return (
-      images.size + scripts.size + cssStyleSheets.size +
-      xslStyleSheets.size + fonts.size + other.size
+      images.size +
+      scripts.size +
+      cssStyleSheets.size +
+      xslStyleSheets.size +
+      fonts.size +
+      other.size
     );
   },
 
@@ -165,10 +195,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }): Promise<void> {
       return ipcRenderer.invoke("preview:sync", payload);
     },
-    resolveNavigation(url: string, workspacePath?: string | null): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-      return ipcRenderer.invoke("preview:resolve-navigation", url, workspacePath ?? null);
+    resolveNavigation(
+      url: string,
+      workspacePath?: string | null,
+    ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+      return ipcRenderer.invoke(
+        "preview:resolve-navigation",
+        url,
+        workspacePath ?? null,
+      );
     },
-    navigate(url: string, workspacePath?: string | null): Promise<{ ok: true } | { ok: false; error: string }> {
+    navigate(
+      url: string,
+      workspacePath?: string | null,
+    ): Promise<{ ok: true } | { ok: false; error: string }> {
       return ipcRenderer.invoke("preview:navigate", url, workspacePath ?? null);
     },
     goBack(): Promise<boolean> {
@@ -206,7 +246,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     openGuestDevTools(target?: { readonly threadId: string; readonly tabId: string }): Promise<void> {
       return ipcRenderer.invoke("preview:open-guest-devtools", target);
     },
-    getNavigationState(): Promise<{ canGoBack: boolean; canGoForward: boolean }> {
+    getNavigationState(): Promise<{
+      canGoBack: boolean;
+      canGoForward: boolean;
+    }> {
       return ipcRenderer.invoke("preview:get-navigation-state");
     },
     /** Capture the visible preview viewport as a PNG for attaching to the composer. */
@@ -230,7 +273,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return ipcRenderer.invoke("preview:capture-context-reference");
     },
     releaseBrowserCaptureSpills(paths: readonly string[]): Promise<void> {
-      return ipcRenderer.invoke("preview:release-browser-capture-spill", [...paths]);
+      return ipcRenderer.invoke("preview:release-browser-capture-spill", [
+        ...paths,
+      ]);
     },
     /**
      * Subscribe to the single page-status channel: the full PreviewPageStatus
@@ -238,9 +283,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
      * active tab. Replaces the old loading-state / did-navigate /
      * did-update-favicon trio.
      */
-    onPageStatus(callback: (status: import("@mcode/contracts").PreviewPageStatus) => void) {
-      const listener = (_event: unknown, status: import("@mcode/contracts").PreviewPageStatus) =>
-        callback(status);
+    onPageStatus(
+      callback: (status: import("@mcode/contracts").PreviewPageStatus) => void,
+    ) {
+      const listener = (
+        _event: unknown,
+        status: import("@mcode/contracts").PreviewPageStatus,
+      ) => callback(status);
       ipcRenderer.on("preview:page-status", listener);
       return () => ipcRenderer.removeListener("preview:page-status", listener);
     },
@@ -257,7 +306,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     onShortcutFired(callback: (combo: string) => void) {
       const listener = (_event: unknown, combo: string) => callback(combo);
       ipcRenderer.on("preview:shortcut-fired", listener);
-      return () => ipcRenderer.removeListener("preview:shortcut-fired", listener);
+      return () =>
+        ipcRenderer.removeListener("preview:shortcut-fired", listener);
     },
     /** Read the live perf counter bag (dev HUD only). */
     getPerfCounters(): Promise<unknown> {
@@ -276,7 +326,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }): Promise<unknown> {
       return ipcRenderer.invoke("preview:adopt-webview", payload);
     },
-    releaseWebview(payload: { threadId: string; tabId: string }): Promise<unknown> {
+    releaseWebview(payload: {
+      threadId: string;
+      tabId: string;
+    }): Promise<unknown> {
       return ipcRenderer.invoke("preview:release-webview", payload);
     },
     /** Bounded provider-neutral browser operations. Raw CDP is intentionally not exposed. */
@@ -334,7 +387,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         return ipcRenderer.invoke("preview:design.set-inspect", { enabled });
       },
       setAnnotationGuard(enabled: boolean): Promise<unknown> {
-        return ipcRenderer.invoke("preview:design.set-annotation-guard", { enabled });
+        return ipcRenderer.invoke("preview:design.set-annotation-guard", {
+          enabled,
+        });
       },
     },
     /**
@@ -348,7 +403,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         return ipcRenderer.invoke("preview:tabs.list", { threadId });
       },
       create(threadId: string, activate = true): Promise<unknown> {
-        return ipcRenderer.invoke("preview:tabs.create", { threadId, activate });
+        return ipcRenderer.invoke("preview:tabs.create", {
+          threadId,
+          activate,
+        });
       },
       activate(threadId: string, tabId: string): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.activate", { threadId, tabId });
@@ -360,9 +418,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         return ipcRenderer.invoke("preview:tabs.closeScope", { threadId });
       },
       onUpdated(callback: (payload: unknown) => void): () => void {
-        const listener = (_event: unknown, payload: unknown) => callback(payload);
+        const listener = (_event: unknown, payload: unknown) =>
+          callback(payload);
         ipcRenderer.on("preview:tabs-updated", listener);
-        return () => ipcRenderer.removeListener("preview:tabs-updated", listener);
+        return () =>
+          ipcRenderer.removeListener("preview:tabs-updated", listener);
       },
     },
   },
@@ -371,7 +431,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   ipc: {
     /** Listen for push messages forwarded by the main process IPC relay. */
     onPush(callback: (data: unknown) => void) {
-      ipcRenderer.on("ipc-push-message", (_event: unknown, data: unknown) => callback(data));
+      ipcRenderer.on("ipc-push-message", (_event: unknown, data: unknown) =>
+        callback(data),
+      );
     },
     /** Listen for IPC connection close events. */
     onDisconnect(callback: () => void) {

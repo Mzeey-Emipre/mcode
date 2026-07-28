@@ -34,18 +34,13 @@ describe("CumulativeView summary lens", () => {
     render(
       <CumulativeView
         threadId="thread-1"
-        snapshots={[
-          {
-            id: "snap-1",
-            thread_id: "thread-1",
-            message_id: "turn-1",
-            ref_before: "a",
-            ref_after: "b",
-            files_changed: ["apps/web/src/a.ts"],
-            worktree_path: null,
-            created_at: "2026-06-12T10:00:00.000Z",
-          },
-        ]}
+        comparison={{
+          files: [{ path: "apps/web/src/a.ts", previousPath: null, changeType: "modified", binary: false }],
+          additions: 1,
+          deletions: 0,
+        }}
+        cacheVersion="snap-1"
+        turnCount={1}
       />,
     );
 
@@ -68,21 +63,48 @@ describe("CumulativeView summary lens", () => {
     render(
       <CumulativeView
         threadId="thread-1"
-        snapshots={[
-          {
-            id: "snap-1",
-            thread_id: "thread-1",
-            message_id: "turn-1",
-            ref_before: "a",
-            ref_after: "b",
-            files_changed: ["apps/web/src/a.ts"],
-            worktree_path: null,
-            created_at: "2026-06-12T10:00:00.000Z",
-          },
-        ]}
+        comparison={{
+          files: [{ path: "apps/web/src/a.ts", previousPath: null, changeType: "modified", binary: false }],
+          additions: 1,
+          deletions: 0,
+        }}
+        cacheVersion="snap-1"
+        turnCount={1}
       />,
     );
 
     expect(screen.queryByTestId("cumulative-summary-toggle")).not.toBeInTheDocument();
+  });
+
+  it("shows the scoped diff when a subagent scope replaces an open summary lens", async () => {
+    const comparison = {
+      files: [{ path: "apps/web/src/a.ts", previousPath: null, changeType: "modified" as const, binary: false }],
+      additions: 1,
+      deletions: 0,
+    };
+    const { rerender } = render(
+      <CumulativeView
+        threadId="thread-1"
+        comparison={comparison}
+        cacheVersion="snap-1"
+        turnCount={1}
+      />,
+    );
+
+    await userEvent.click(screen.getByTestId("cumulative-summary-toggle"));
+    expect(screen.getByTestId("summary-lens")).toBeInTheDocument();
+
+    rerender(
+      <CumulativeView
+        threadId="thread-1"
+        comparison={comparison}
+        cacheVersion="snap-1"
+        turnCount={1}
+        scopeLabel="explorer_state"
+      />,
+    );
+
+    expect(screen.queryByTestId("summary-lens")).not.toBeInTheDocument();
+    expect(screen.getByText("a.ts")).toBeInTheDocument();
   });
 });

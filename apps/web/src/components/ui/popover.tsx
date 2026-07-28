@@ -12,18 +12,20 @@ function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
+/** Renders collision-aware popover content in a portal. */
 function PopoverContent({
   className,
   align = "center",
   sideOffset = 4,
   alignOffset,
   collisionPadding,
+  collisionAvoidance,
   side,
   ...props
 }: PopoverPrimitive.Popup.Props &
   Pick<
     PopoverPrimitive.Positioner.Props,
-    "align" | "sideOffset" | "alignOffset" | "collisionPadding" | "side"
+    "align" | "sideOffset" | "alignOffset" | "collisionPadding" | "collisionAvoidance" | "side"
   >) {
   return (
     <PopoverPrimitive.Portal>
@@ -32,6 +34,7 @@ function PopoverContent({
         sideOffset={sideOffset}
         alignOffset={alignOffset}
         collisionPadding={collisionPadding}
+        collisionAvoidance={collisionAvoidance}
         side={side}
         className="pointer-events-none isolate z-50"
       >

@@ -14,11 +14,11 @@ import { NarrativeEntrySchema, TurnRangeSchema } from "../models/narrative-entry
 import { GitBranchSchema, WorktreeSchema, BranchComparisonSchema, GitRefSchema, GitRemoteUrlSchema, GitBranchNameSchema } from "../git.js";
 import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
-import { SkillInfoSchema, SkillDiagnosticsSchema } from "../skills.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
 import { PlanStatusSchema, PlanRecordSchema, PlanActionSchema } from "../models/plan-output.js";
 import { DiffStatsSchema } from "../models/diff-stats.js";
+import { ReviewComparisonSchema } from "../models/review-comparison.js";
 import {
   SettingsSchema,
   PartialSettingsSchema,
@@ -30,6 +30,10 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
+import {
+  ProviderCatalogRequestSchema,
+  ProviderCatalogSnapshotSchema,
+} from "../providers/capability-catalog.js";
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
 import { GoalLookupResultSchema, GoalObjectiveSchema } from "../models/goal.js";
@@ -140,6 +144,9 @@ export const SendMessageSchema = lazySchema(() =>
   }),
 );
 
+/** Validated command for sending a message to an existing thread. */
+export type SendMessageInput = z.infer<ReturnType<typeof SendMessageSchema>>;
+
 /** Schema for creating a thread and sending a message in one call. */
 export const CreateAndSendSchema = lazySchema(() =>
   z.object({
@@ -189,6 +196,9 @@ export const CreateAndSendSchema = lazySchema(() =>
   { message: "forkedFromMessageId requires parentThreadId", path: ["forkedFromMessageId"] },
   ),
 );
+
+/** Validated command for creating a thread and sending its first message. */
+export type CreateAndSendInput = z.infer<ReturnType<typeof CreateAndSendSchema>>;
 
 /** Result schema for agent.createAndSend: a Thread with optional non-fatal warnings. */
 export const CreateAndSendResultSchema = lazySchema(() =>
@@ -567,6 +577,18 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.object({ additions: z.number(), deletions: z.number() }),
   },
+  /** Resolve file metadata and totals for one Review comparison in one RPC. */
+  "git.reviewComparison": {
+    params: z.object({
+      workspaceId: z.string(),
+      view: z.enum(["unstaged", "staged", "branch", "commit"]),
+      base: GitRefSchema.optional(),
+      target: GitRefSchema.optional(),
+      sha: z.string().optional(),
+      threadId: z.string().optional(),
+    }),
+    result: ReviewComparisonSchema(),
+  },
   "agent.send": {
     params: SendMessageSchema(),
     result: z.void(),
@@ -781,16 +803,10 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ workspacePath: z.string() }),
     result: z.record(z.unknown()),
   },
-  "skill.list": {
-    params: z.object({
-      cwd: z.string().optional(),
-      providerId: z.string().optional(),
-    }),
-    result: z.array(SkillInfoSchema()),
-  },
-  "skill.diagnose": {
-    params: z.object({ cwd: z.string().optional() }),
-    result: SkillDiagnosticsSchema(),
+  /** Returns provider capabilities for one validated discovery context. */
+  "provider.catalog": {
+    params: ProviderCatalogRequestSchema(),
+    result: ProviderCatalogSnapshotSchema(),
   },
   "terminal.create": {
     params: z.object({ threadId: z.string() }),
@@ -824,6 +840,14 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ ptyId: z.string() }),
     result: z.void(),
   },
+  "terminal.checkpoint": {
+    params: z.object({
+      ptyId: z.string(),
+      seq: z.number().int().min(-1),
+      data: z.string().max(8 * 1024 * 1024),
+    }),
+    result: z.object({ accepted: z.boolean() }),
+  },
   "terminal.killByThread": {
     params: z.object({ threadId: z.string() }),
     result: z.void(),
@@ -841,11 +865,20 @@ export const WS_METHODS = lazySchema(() => ({
        * Pass -1 when the client has seen no output (replay everything).
        */
       lastSeq: z.number().int().min(-1),
+      cold: z.boolean().optional(),
     }),
-    result: z.object({
-      /** True when eviction means the client may have missed output. */
-      gapped: z.boolean(),
-    }),
+    result: z.discriminatedUnion("mode", [
+      z.object({ mode: z.literal("delta") }),
+      z.object({
+        mode: z.literal("checkpoint"),
+        checkpoint: z.string(),
+        checkpointThrough: z.number().int().min(-1),
+      }),
+      z.object({
+        mode: z.literal("reset"),
+        discardThrough: z.number().int().min(-1),
+      }),
+    ]),
   },
   /** List all active PTY sessions on the server. Used during reconnect. */
   "terminal.listActive": {
@@ -937,6 +970,10 @@ export const WS_METHODS = lazySchema(() => ({
     }),
     result: z.string(),
   },
+  "snapshot.getCumulativeDiffStats": {
+    params: z.object({ threadId: z.string() }),
+    result: z.array(DiffStatsSchema()).max(10_000),
+  },
   "clipboard.saveFile": {
     params: z.object({
       /**
@@ -983,18 +1020,6 @@ export const WS_METHODS = lazySchema(() => ({
       workspaceId: z.string(),
     }),
     result: z.array(CopilotSubagentSchema()),
-  },
-  /** Fetches Codex sub-agent definitions available for @ mentions. */
-  "provider.codexAgents": {
-    params: z.object({
-      workspaceId: z.string().optional(),
-      threadId: z.string().optional(),
-    }),
-    result: z.array(z.object({
-      name: z.string(),
-      path: z.string(),
-      description: z.string().optional(),
-    })),
   },
   "providers.listAvailability": {
     params: z.object({}),

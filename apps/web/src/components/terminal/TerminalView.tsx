@@ -1,8 +1,12 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Terminal, IDisposable } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+import type { SerializeAddon } from "@xterm/addon-serialize";
 import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useDiffStore } from "@/stores/diffStore";
+import { useTerminalStore } from "@/stores/terminalStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
 import { onPtyData, onPtyExit, onPtyReconnectGap, type PtyDataPayload } from "./ptyDataRegistry";
@@ -323,7 +327,11 @@ export const TerminalView = memo(function TerminalView({
 
     async function init(el: HTMLElement) {
       // Cached after the first mount, so remounts skip the cold import cost.
-      const { Terminal: XTerminal, FitAddon: XFitAddon } = await loadXtermModules();
+      const [{ Terminal: XTerminal, FitAddon: XFitAddon }, serializeModule] =
+        await Promise.all([
+          loadXtermModules(),
+          import("@xterm/addon-serialize"),
+        ]);
 
       if (disposed || !containerRef.current) return;
 
@@ -339,7 +347,9 @@ export const TerminalView = memo(function TerminalView({
       });
 
       const fitAddon = new XFitAddon();
+      const serializeAddon: SerializeAddon = new serializeModule.SerializeAddon();
       term.loadAddon(fitAddon);
+      term.loadAddon(serializeAddon);
       term.open(el);
       incrementLiveTerminalCount();
 
@@ -371,7 +381,10 @@ export const TerminalView = memo(function TerminalView({
         useSettingsStore.getState().settings.terminal.flowControl;
       const fc = new ClientTerminalFlowControl({
         onPause: () => transport.terminalPause(ptyId).catch(() => {}),
-        onResume: () => transport.terminalResume(ptyId).catch(() => {}),
+        onResume: () => {
+          if (disposed) return;
+          transport.terminalResume(ptyId).catch(() => {});
+        },
         highBytes: flowSettings.clientHighBytes,
         lowBytes: flowSettings.clientLowBytes,
       });
@@ -418,22 +431,50 @@ export const TerminalView = memo(function TerminalView({
       let replaying = true;
       let replayMode: "cold" | "warm" = "cold";
       const replayPending: PtyDataPayload[] = [];
+      let replayPrefix: Uint8Array | null = null;
       // Highest seq actually written. seq is monotonic per PTY, so anything not
       // strictly newer has already been painted. Guards against double delivery:
       // a newly created PTY's first prompt is both retained in the replay buffer
       // (sent by reattach) and queued in the flow-control pause buffer (re-sent
       // when resume drains it), and the resume drain lands after the gate closes.
       let lastWrittenSeq = Number.NEGATIVE_INFINITY;
+      const pendingWrites = new Set<Promise<void>>();
+
+      const trackedWrite = (
+        data: string | Uint8Array,
+        callback?: () => void,
+      ) => {
+        if (disposed) return;
+        let finishWrite = () => {};
+        const completed = new Promise<void>((resolve) => {
+          finishWrite = resolve;
+        });
+        pendingWrites.add(completed);
+        try {
+          term.write(data, () => {
+            try {
+              callback?.();
+            } finally {
+              pendingWrites.delete(completed);
+              finishWrite();
+            }
+          });
+        } catch (error) {
+          pendingWrites.delete(completed);
+          finishWrite();
+          throw error;
+        }
+      };
 
       const writeChunk = (detail: PtyDataPayload) => {
-        if (detail.seq <= lastWrittenSeq) return;
+        if (disposed || detail.seq <= lastWrittenSeq) return;
         lastWrittenSeq = detail.seq;
         transport.ptySetLastSeq(ptyId, detail.seq);
         const n = detail.payload.length;
         fc.written(n);
         // xterm's callback form fires acked() only after bytes are committed to
         // the buffer, so client flow control reflects real write progress.
-        term.write(detail.payload, () => {
+        trackedWrite(detail.payload, () => {
           fc.acked(n);
         });
       };
@@ -446,6 +487,11 @@ export const TerminalView = memo(function TerminalView({
         replayPending.sort((a, b) => a.seq - b.seq);
         const frames: Uint8Array[] = [];
         let totalBytes = 0;
+        if (replayPrefix) {
+          frames.push(replayPrefix);
+          totalBytes += replayPrefix.length;
+          replayPrefix = null;
+        }
         for (const detail of replayPending) {
           if (detail.seq <= lastWrittenSeq) continue;
           lastWrittenSeq = detail.seq;
@@ -475,7 +521,7 @@ export const TerminalView = memo(function TerminalView({
         // task per chunk, so a large scrollback replay paints quickly.
         transport.ptySetLastSeq(ptyId, lastWrittenSeq);
         fc.written(totalBytes);
-        term.write(concatChunks(frames, totalBytes), () => {
+        trackedWrite(concatChunks(frames, totalBytes), () => {
           fc.acked(totalBytes);
           follow();
         });
@@ -496,7 +542,9 @@ export const TerminalView = memo(function TerminalView({
       // Show a reconnect banner when the server signals that the replay window
       // was exceeded and some output may have been missed.
       const unsubReconnectGap = onPtyReconnectGap(ptyId, () => {
-        term.write("\r\n\x1b[90m[Reconnected - some output may be missing]\x1b[0m\r\n");
+        trackedWrite(
+          "\r\n\x1b[90m[Reconnected - some output may be missing]\x1b[0m\r\n",
+        );
       });
 
       // Listen for PTY exit via the direct callback registry (attached
@@ -505,11 +553,26 @@ export const TerminalView = memo(function TerminalView({
       const unsubPtyExit = onPtyExit(ptyId, (detail) => {
         exited = true;
         term.options.disableStdin = true;
-        term.write(
+        trackedWrite(
           `\r\n\x1b[90m[Process exited with code ${detail.code}]\x1b[0m\r\n`,
         );
         // The PTY is gone and cannot remount; drop any saved scroll anchor.
         dropRemountAnchor(ptyId);
+        const terminal = useTerminalStore.getState();
+        const scopeId = terminal.ptyToThread[ptyId];
+        if (!scopeId) return;
+        terminal.removeTerminal(ptyId);
+        const workspace = useWorkspaceStore.getState();
+        const thread = workspace.threads.find((candidate) => candidate.id === scopeId);
+        const workspaceId = thread?.workspace_id ??
+          (workspace.workspaces.some((candidate) => candidate.id === scopeId) ? scopeId : undefined);
+        if (workspaceId) {
+          useDiffStore.getState().closeRightPanelTabInstance(
+            workspaceId,
+            thread ? scopeId : undefined,
+            `terminal:${ptyId}`,
+          );
+        }
       });
 
       // Resize handling:
@@ -576,7 +639,11 @@ export const TerminalView = memo(function TerminalView({
       });
       observer.observe(el);
 
+      let cleanupStarted = false;
       const cleanup = () => {
+        if (cleanupStarted) return;
+        cleanupStarted = true;
+        disposed = true;
         if (rafId !== null) cancelAnimationFrame(rafId);
         if (rpcTimer !== null) clearTimeout(rpcTimer);
         flushResizeRpcRef.current = null;
@@ -603,11 +670,18 @@ export const TerminalView = memo(function TerminalView({
         clearWebglSlot(ptyId);
         clearActiveRenderer();
         unregisterTerminalScrollHarness(ptyId);
-        // #751: remember where the user was before this view goes away so the
-        // next remount can restore it (no-op when they were following the tail).
-        captureRemountAnchor(ptyId, term);
-        term.dispose();
-        decrementLiveTerminalCount();
+        void Promise.all([...pendingWrites]).then(() => {
+          // #751: remember where the user was before this view goes away so the
+          // next remount can restore it (no-op when they followed the tail).
+          captureRemountAnchor(ptyId, term);
+          const checkpointSeq = Number.isFinite(lastWrittenSeq) ? lastWrittenSeq : -1;
+          const checkpoint = serializeAddon.serialize();
+          void transport
+            .terminalCheckpoint(ptyId, checkpointSeq, checkpoint)
+            .catch(() => {});
+          term.dispose();
+          decrementLiveTerminalCount();
+        });
       };
 
       // Register cleanup BEFORE awaiting the renderer so a mid-await unmount
@@ -631,14 +705,22 @@ export const TerminalView = memo(function TerminalView({
         replaying = true;
         replayMode = mode;
         return transport
-          .terminalReattach(ptyId, lastSeq)
-        .then(({ gapped }) => {
+          .terminalReattach(ptyId, lastSeq, mode === "cold")
+        .then((result) => {
           if (disposed) return;
-          if (gapped) {
-            // The shell exceeded the scrollback budget, so the oldest output
-            // was evicted server-side. Flag the trim at the top of the replay.
-            term.write(
-              "\r\n\x1b[90m[Earlier output beyond the scrollback limit was trimmed]\x1b[0m\r\n",
+          if (result.mode === "checkpoint") {
+            lastWrittenSeq = result.checkpointThrough;
+            transport.ptySetLastSeq(ptyId, result.checkpointThrough);
+            replayPrefix = new TextEncoder().encode(result.checkpoint);
+          } else if (result.mode === "reset") {
+            lastWrittenSeq = result.discardThrough;
+            replayPending.splice(
+              0,
+              replayPending.length,
+              ...replayPending.filter((frame) => frame.seq > result.discardThrough),
+            );
+            trackedWrite(
+              "\r\n[Earlier output beyond the scrollback limit was trimmed]\r\n",
             );
           }
           flushReplayGate();

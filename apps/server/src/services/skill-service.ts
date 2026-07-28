@@ -1,10 +1,8 @@
 /**
  * Skill and command scanning service.
  * Walks user, project, agent, and plugin directories looking for both
- * `skills/` (each subdirectory is a skill), provider command directories, and
- * Codex's `prompts/` directory. Mirrors Claude Code's native discovery,
- * extended to cover Codex and Copilot provider directories, plus Cursor
- * `.cursor/skills` and commands.
+ * `skills/` (each subdirectory is a skill) and provider command directories.
+ * Codex capabilities are intentionally excluded and enter through the provider catalog.
  */
 
 import { injectable } from "tsyringe";
@@ -197,53 +195,6 @@ function scanPluginMarketplaceDir(ctx: ScanContext, marketplacesDir: string, pro
   }
 }
 
-/**
- * Scan one Codex plugin install directory. Codex plugins can ship plain
- * `skills/` trees, and contributor-authored plugins may also carry provider
- * subtrees used by the Codex CLI.
- */
-function scanCodexPluginVersionDir(
-  ctx: ScanContext,
-  versionDir: string,
-  pluginName: string,
-  providers: string[],
-): void {
-  for (const sub of ["", ".codex", ".agents"]) {
-    const base = sub ? join(versionDir, sub) : versionDir;
-    scanSkillsDir(ctx, join(base, "skills"), pluginName, "plugin", providers);
-  }
-}
-
-/** Walk Codex plugin cache: cache/<marketplace>/<plugin>/<version>/. */
-function scanCodexPluginCacheDir(ctx: ScanContext, cacheDir: string, providers: string[]): void {
-  for (const mp of scanDir(ctx, cacheDir)) {
-    if (!mp.isDirectory()) continue;
-    const mpDir = join(cacheDir, mp.name);
-    for (const plugin of scanDir(ctx, mpDir)) {
-      if (!plugin.isDirectory()) continue;
-      const pluginDir = join(mpDir, plugin.name);
-      const versions = scanDir(ctx, pluginDir)
-        .filter((e) => e.isDirectory())
-        .map((e) => e.name)
-        .sort(VERSION_COLLATOR.compare);
-      if (versions.length === 0) continue;
-      scanCodexPluginVersionDir(ctx, join(pluginDir, versions[versions.length - 1]), plugin.name, providers);
-    }
-  }
-}
-
-/** Walk bundled Codex runtime plugins: runtime/plugins/<marketplace>/plugins/<plugin>/. */
-function scanCodexRuntimePluginsDir(ctx: ScanContext, runtimePluginsDir: string, providers: string[]): void {
-  for (const marketplace of scanDir(ctx, runtimePluginsDir)) {
-    if (!marketplace.isDirectory()) continue;
-    const pluginsDir = join(runtimePluginsDir, marketplace.name, "plugins");
-    for (const plugin of scanDir(ctx, pluginsDir)) {
-      if (!plugin.isDirectory()) continue;
-      scanCodexPluginVersionDir(ctx, join(pluginsDir, plugin.name), plugin.name, providers);
-    }
-  }
-}
-
 function pathSegmentsUnder(root: string, filePath: string): string[] | null {
   const rootNorm = root.replace(/\\/g, "/").replace(/\/+$/, "");
   const fileNorm = filePath.replace(/\\/g, "/");
@@ -353,9 +304,7 @@ interface ScanRoot {
 /** Build the ordered list of directories to scan for skills and commands. */
 function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
   const claudeDir = join(home, ".claude");
-  const codexDir = join(home, ".codex");
   const copilotDir = join(home, ".copilot");
-  const agentsDir = join(home, ".agents");
   const cursorDir = join(home, ".cursor");
 
   const roots: ScanRoot[] = [
@@ -364,10 +313,6 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
     { path: join(claudeDir, "commands"), source: "user", providers: ["claude"], kind: "commands" },
     { path: join(claudeDir, ".agents", "skills"), source: "agent", providers: ["claude"], kind: "skills" },
 
-    // Codex ecosystem
-    { path: join(codexDir, "skills"), source: "user", providers: ["codex"], kind: "skills" },
-    { path: join(codexDir, "prompts"), source: "user", providers: ["codex"], kind: "commands", prefix: "prompts" },
-
     // Copilot ecosystem
     { path: join(copilotDir, "skills"), source: "user", providers: ["copilot"], kind: "skills" },
     { path: join(copilotDir, "commands"), source: "user", providers: ["copilot"], kind: "commands" },
@@ -375,10 +320,6 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
     // Cursor CLI ecosystem (cursor-agent discovers workspace rules separately; these roots drive Mcode UI listing)
     { path: join(cursorDir, "skills"), source: "user", providers: ["cursor"], kind: "skills" },
     { path: join(cursorDir, "commands"), source: "user", providers: ["cursor"], kind: "commands" },
-
-    // Cross-provider (.agents at home root — visible to Codex but not Claude or Copilot)
-    { path: join(agentsDir, "skills"), source: "agent", providers: ["codex"], kind: "skills" },
-    { path: join(agentsDir, "commands"), source: "agent", providers: ["codex"], kind: "commands" },
 
     // Copilot user-level agents (OS-native config path)
     { path: copilotUserAgentsDir(), source: "user", providers: ["copilot"], kind: "both" },
@@ -389,13 +330,6 @@ function buildScanRoots(home: string, cwd?: string): ScanRoot[] {
       // Claude project-level
       { path: join(cwd, ".claude", "skills"), source: "project", providers: ["claude"], kind: "skills" },
       { path: join(cwd, ".claude", "commands"), source: "project", providers: ["claude"], kind: "commands" },
-
-      // Codex project-level
-      { path: join(cwd, ".codex", "skills"), source: "project", providers: ["codex"], kind: "skills" },
-
-      // Cross-provider project-level
-      { path: join(cwd, ".agents", "skills"), source: "project", providers: ["codex"], kind: "skills" },
-      { path: join(cwd, ".agents", "commands"), source: "project", providers: ["codex"], kind: "commands" },
 
       // Copilot project-level agents
       { path: join(cwd, ".github", "agents"), source: "project", providers: ["copilot"], kind: "both" },
@@ -424,14 +358,14 @@ export class SkillService {
    * that id are returned. Deduplication by name (higher-priority source wins)
    * is applied per filtered set, so the same name can coexist across providers.
    */
-  list(cwd?: string, providerId?: string, nativeItems?: SkillInfo[]): SkillInfo[] {
+  list(cwd?: string, providerId?: string): SkillInfo[] {
     if (this.cache && this.cachedCwd === cwd) {
-      return this.filterAndDedup(this.cache, providerId, nativeItems);
+      return this.filterAndDedup(this.cache, providerId);
     }
     const result = this.scan(cwd);
     this.cache = result.items;
     this.cachedCwd = cwd;
-    return this.filterAndDedup(result.items, providerId, nativeItems);
+    return this.filterAndDedup(result.items, providerId);
   }
 
   /** Force a full rescan and return per-path diagnostics. Provider-agnostic. */
@@ -470,7 +404,7 @@ export class SkillService {
    * Deduplication is intentionally scoped to the filtered set so that a skill
    * named "deploy" can independently exist for both claude and codex.
    */
-  private filterAndDedup(items: SkillInfo[], providerId?: string, nativeItems: SkillInfo[] = []): SkillInfo[] {
+  private filterAndDedup(items: SkillInfo[], providerId?: string): SkillInfo[] {
     const filtered = providerId
       ? items.filter((s) => s.providers.includes(providerId))
       : items;
@@ -483,26 +417,12 @@ export class SkillService {
       }
     }
 
-    const nativeFiltered = providerId
-      ? nativeItems.filter((s) => s.providers.includes(providerId))
-      : nativeItems;
-    for (const item of nativeFiltered) {
-      const nativeKeys = new Set([item.name, item.nativeName].filter((key): key is string => !!key));
-      for (const [key, existing] of seen) {
-        if (nativeKeys.has(existing.name) || (existing.nativeName && nativeKeys.has(existing.nativeName))) {
-          seen.delete(key);
-        }
-      }
-      seen.set(item.name, item);
-    }
-
     return Array.from(seen.values());
   }
 
   private scan(cwd?: string): { items: SkillInfo[]; diag: SkillDiagnostics } {
     const home = homedir();
     const claudeDir = join(home, ".claude");
-    const codexDir = join(home, ".codex");
     const cursorDir = join(home, ".cursor");
     const ctx: ScanContext = {
       out: [],
@@ -526,10 +446,6 @@ export class SkillService {
     // Cursor plugin installs (mtime-selected hash dirs under ~/.cursor/plugins)
     scanCursorPluginCacheDir(ctx, join(cursorDir, "plugins", "cache"), ["cursor"]);
     scanCursorPluginCacheDir(ctx, join(cursorDir, "plugins", "local"), ["cursor"]);
-
-    // Codex plugin installs (pre-session fallback only; native catalog wins once a session exists)
-    scanCodexPluginCacheDir(ctx, join(codexDir, "plugins", "cache"), ["codex"]);
-    scanCodexRuntimePluginsDir(ctx, join(home, ".cache", "codex-runtimes", "codex-primary-runtime", "plugins"), ["codex"]);
 
     return { items: ctx.out, diag: ctx.diag };
   }
