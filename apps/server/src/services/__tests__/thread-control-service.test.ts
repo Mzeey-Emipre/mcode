@@ -880,6 +880,61 @@ describe("ThreadControlService", () => {
     await expect(service.threadSend(authority, { threadId: authority.sourceThreadId, message: "Self-target" })).resolves.toMatchObject({ status: "rejected", error: { code: "not_found" } });
   });
 
+  it("derives internal send permission from authenticated authority", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };
+    threads.findById.mockReturnValue(target);
+
+    await expect(service.threadSend(authority, {
+      threadId: target.id,
+      message: "Forged full mode",
+      permissionMode: "full",
+    })).resolves.toMatchObject({ status: "pending_approval" });
+    expect(approvals.createSend).toHaveBeenCalledWith(expect.objectContaining({
+      execution: expect.objectContaining({ permissionMode: "supervised" }),
+    }));
+    expect(agentService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a competing supervised mutation while approval is pending", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };
+    threads.findById.mockReturnValue(target);
+
+    await expect(service.threadSend(authority, { threadId: target.id, message: "First" })).resolves.toMatchObject({ status: "pending_approval" });
+    await expect(service.threadSend(authority, { threadId: target.id, message: "Second" })).resolves.toMatchObject({
+      status: "rejected",
+      error: { code: "thread_busy" },
+    });
+    expect(approvals.createSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the pending send reservation token through approval dispatch", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };
+    threads.findById.mockReturnValue(target);
+    await service.threadSend(authority, { threadId: target.id, message: "Resume once" });
+    approvals.claim.mockReturnValue({
+      operation: "thread_send",
+      approvalId: "approval-send",
+      threadId: target.id,
+      workspaceId: workspace.id,
+      message: "Resume once",
+      execution: { providerId: "claude", modelId: "claude-exact", permissionMode: "supervised", interactionMode: "build" },
+      turnId: "turn-send",
+      operationPhase: "pre_dispatch",
+      callerId: authority.userId,
+      sourceThreadId: authority.sourceThreadId,
+      sourceTurnId: authority.sourceTurnId,
+      sourceProviderId: authority.sourceProviderId,
+    });
+
+    await expect(service.respondToApproval("approval-send", "allow")).resolves.toBe(true);
+    expect(agentService.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      mutationReservationToken: "approval-send",
+    }));
+  });
+
   it("stops a full target and leaves it in the stopped lifecycle state", async () => {
     const service = createService();
     const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };

@@ -79,6 +79,7 @@ import { ScopedPreGrantService } from "./scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "./turn-error-policy.js";
 import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js";
+import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
 import type { TurnOutcome } from "./turn-outcome.js";
 
 /**
@@ -107,6 +108,8 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   sourceProviderId?: string;
   /** Source turn identity for a cross-thread user message origin. */
   originSourceTurnId?: string;
+  /** Existing shared mutation reservation supplied by thread-control approval dispatch. */
+  mutationReservationToken?: string;
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -354,6 +357,9 @@ export class AgentService {
   private pendingExitPlanMarkdown = new Map<string, string>();
   /** Prevents duplicate plan records when ExitPlanMode and plan-output both fire. */
   private planCapturedThisTurn = new Set<string>();
+  /** Reservation token attached to each active provider turn. */
+  private readonly activeMutationReservations = new Map<string, string>();
+  private readonly mutationReservations: ThreadControlMutationReservationService;
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -390,7 +396,10 @@ export class AgentService {
     @inject(FileService) private readonly fileService?: FileService,
     @inject(delay(() => InternalThreadControlMcpRuntime))
     private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
+    @inject(ThreadControlMutationReservationService)
+    mutationReservations?: ThreadControlMutationReservationService,
   ) {
+    this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
     this.turnFileTracker = new TurnFileTracker(
       (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
       (threadId, turnId, summary) => {
@@ -516,9 +525,13 @@ export class AgentService {
     sourceThreadId: originSourceThreadId,
     sourceProviderId: originSourceProviderId,
     originSourceTurnId,
+    mutationReservationToken,
   }: SendMessageCommand): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
+    if (["completed", "errored", "failed", "interrupted", "stopped"].includes(thread.status)) {
+      throw new Error(`Cannot send message to terminal thread: ${threadId}`);
+    }
     // Use the thread's stored provider as authoritative fallback; only override
     // when the caller explicitly supplies a provider (new thread or explicit switch).
     const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
@@ -564,16 +577,28 @@ export class AgentService {
       provider: effectiveProvider,
     });
 
+    const reservationToken = mutationReservationToken
+      ? this.mutationReservations.owns(threadId, mutationReservationToken, "activeTurn")
+        ? mutationReservationToken
+        : null
+      : this.mutationReservations.reserve(threadId, "activeTurn");
+    if (!reservationToken) {
+      throw new Error(`Thread ${threadId} already has a pending mutation`);
+    }
     let activeSlotReserved = this.reserveTurn(threadId);
     if (!activeSlotReserved) {
+      if (!mutationReservationToken) this.mutationReservations.release(threadId, reservationToken);
       throw new Error(`Thread ${threadId} already has an active agent session`);
     }
+    this.activeMutationReservations.set(threadId, reservationToken);
     const releaseReservedSlot = () => {
       if (!activeSlotReserved) return;
       activeSlotReserved = false;
       if (this.activeSessionIds.delete(threadId)) {
         this.memoryPressureService.markIdle(threadId);
       }
+      this.activeMutationReservations.delete(threadId);
+      this.mutationReservations.release(threadId, reservationToken);
     };
 
     // Route the message through the mcode-native command namespace before it
@@ -1568,6 +1593,7 @@ export class AgentService {
       this.activeSessionIds.delete(threadId);
       this.memoryPressureService.markIdle(threadId);
     }
+    this.releaseMutationReservation(threadId);
   }
 
   /** Return a thread's active open goal without starting provider work. */
@@ -1956,9 +1982,19 @@ export class AgentService {
    * If this was the last active session, signals idle to MemoryPressureService.
    */
   private trackSessionEnded(threadId: string): void {
-    if (!this.activeSessionIds.has(threadId)) return;
-    this.activeSessionIds.delete(threadId);
-    this.memoryPressureService.markIdle(threadId);
+    if (this.activeSessionIds.delete(threadId)) {
+      this.memoryPressureService.markIdle(threadId);
+    }
+    this.releaseMutationReservation(threadId);
+  }
+
+  /** Release the shared mutation token without forcing provider-session teardown. */
+  private releaseMutationReservation(threadId: string): void {
+    const reservationToken = this.activeMutationReservations.get(threadId);
+    if (reservationToken) {
+      this.activeMutationReservations.delete(threadId);
+      this.mutationReservations.release(threadId, reservationToken);
+    }
   }
 
   /**
@@ -2173,6 +2209,7 @@ export class AgentService {
     if (wasActive) {
       this.memoryPressureService.markIdle(threadId);
     }
+    this.releaseMutationReservation(threadId);
     // Roll the just-installed command side effect back so a failed send doesn't
     // leave a hidden gate (e.g. a Stop-hook goal) active on the next turn. Runs
     // only here, after the retry budget is spent; transient retries keep it.
@@ -2621,6 +2658,10 @@ export class AgentService {
             this.activeSessionIds.add(event.threadId);
             this.memoryPressureService.markActive(event.threadId);
           }
+          if (!this.activeMutationReservations.has(event.threadId)) {
+            const reservationToken = this.mutationReservations.reserve(event.threadId, "activeTurn");
+            if (reservationToken) this.activeMutationReservations.set(event.threadId, reservationToken);
+          }
           // Reset per-turn state that must survive past turn finalize so late
           // hooks can attach to the previous turn. Re-seeding them here rather
           // than in the finalizer's clear ensures a fresh counter for each new turn
@@ -2704,6 +2745,7 @@ export class AgentService {
           // broadcasting turn.persisted against the wrong (user) message id.
           this.disarmTurnRetryWindow(event.threadId);
           void this.finalizeTerminalTurn(event.threadId, "errored", "error");
+          this.releaseMutationReservation(event.threadId);
           // Turn-scoped cleanup of any one-shot handoff Read grant when the
           // first Turn errors out before completing normally.
           this.scopedPreGrant.clear(event.threadId);
@@ -3277,5 +3319,9 @@ ${userMessage}`;
       }
     }
     this.activeSessionIds.clear();
+    for (const [threadId, token] of this.activeMutationReservations) {
+      this.mutationReservations.release(threadId, token);
+    }
+    this.activeMutationReservations.clear();
   }
 }

@@ -76,6 +76,7 @@ import { ProtectedEnvStore } from "./services/protected-env-store";
 import { ShellEnvResolver } from "./services/shell-env-resolver";
 import { EnvService } from "./services/env-service";
 import { ThreadControlService } from "./services/thread-control-service";
+import { ThreadControlMutationReservationService } from "./services/thread-control-mutation-reservation-service";
 import { ThreadControlApprovalRepo } from "./repositories/thread-control-approval-repo";
 import { ThreadControlAuditRepo } from "./repositories/thread-control-audit-repo";
 import { InternalThreadControlMcpAuthority } from "./services/thread-control-mcp-authority";
@@ -332,6 +333,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     AgentService,
     { useClass: AgentService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ThreadControlMutationReservationService,
+    { useClass: ThreadControlMutationReservationService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

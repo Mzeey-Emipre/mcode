@@ -61,11 +61,13 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 function buildService({
   assertUsable = vi.fn(),
   resolveProvider = vi.fn(),
+  threadStatus = "idle",
 }: {
   assertUsable?: ReturnType<typeof vi.fn>;
   resolveProvider?: ReturnType<typeof vi.fn>;
+  threadStatus?: Thread["status"] | "idle";
 } = {}): AgentService {
-  const thread = makeThread();
+  const thread = threadStatus === "idle" ? makeThread() : makeThread({ status: threadStatus });
 
   const threadRepo = {
     findById: vi.fn(() => thread),
@@ -231,5 +233,21 @@ describe("AgentService.sendMessage — provider availability gate", () => {
       reason: "disabled",
       configuredPath: undefined,
     });
+  });
+
+  it.each(["completed", "errored", "interrupted"] as const)("rejects composer sends to %s threads before persistence", async (threadStatus) => {
+    const assertUsable = vi.fn();
+    const svc = buildService({ threadStatus, assertUsable });
+
+    await expect(svc.sendMessage({
+      threadId: THREAD_ID,
+      content: "Must not append",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "codex",
+    })).rejects.toThrow("terminal thread");
+
+    expect(assertUsable).not.toHaveBeenCalled();
   });
 });

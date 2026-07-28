@@ -106,7 +106,7 @@ export class ThreadControlApprovalRepo {
   }
 
   /** Persist a supervised cross-thread send before a human decision. */
-  createSend(input: Omit<PendingThreadSendApproval, "approvalId" | "operation" | "operationPhase">): string {
+  createSend(input: Omit<PendingThreadSendApproval, "approvalId" | "operation" | "operationPhase"> & { approvalId?: string }): string {
     return this.createMutation({
       operation: "thread_send",
       prompt: input.message,
@@ -116,7 +116,7 @@ export class ThreadControlApprovalRepo {
   }
 
   /** Persist a supervised cross-thread stop before a human decision. */
-  createStop(input: Omit<PendingThreadStopApproval, "approvalId" | "operation" | "operationPhase">): string {
+  createStop(input: Omit<PendingThreadStopApproval, "approvalId" | "operation" | "operationPhase"> & { approvalId?: string }): string {
     return this.createMutation({
       operation: "thread_stop",
       prompt: "",
@@ -137,8 +137,9 @@ export class ThreadControlApprovalRepo {
     sourceThreadId?: string;
     sourceTurnId?: string;
     sourceProviderId?: string;
+    approvalId?: string;
   }): string {
-    const approvalId = randomUUID();
+    const approvalId = input.approvalId ?? randomUUID();
     this.db.prepare(
       "INSERT INTO thread_control_approvals (id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, caller_id, source_thread_id, source_turn_id, source_provider_id, operation, operation_phase, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pre_dispatch', 'pending')",
     ).run(
@@ -268,6 +269,14 @@ export class ThreadControlApprovalRepo {
       callerId: row.caller_id ?? "unknown",
       ...(row.source_thread_id ? { sourceThreadId: row.source_thread_id } : {}),
     };
+  }
+
+  /** Return all durable pending approvals so mutation reservations can rehydrate before ingress. */
+  listPending(): PendingThreadControlApproval[] {
+    const rows = this.db.prepare(
+      "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, caller_id, source_thread_id, source_turn_id, source_provider_id, operation FROM thread_control_approvals WHERE status = 'pending' ORDER BY created_at, id",
+    ).all() as ApprovalRow[];
+    return rows.map((row) => this.parse(row));
   }
 
   /** Requeue a mutation that had not crossed its external dispatch boundary. */
