@@ -7,6 +7,7 @@ const { mockBroadcast } = vi.hoisted(() => ({ mockBroadcast: vi.fn() }));
 vi.mock("../../transport/push.js", () => ({ broadcast: mockBroadcast }));
 
 import { ThreadControlService, type InternalThreadControlAuthority } from "../thread-control-service.js";
+import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
 
 const authority: InternalThreadControlAuthority = {
   type: "internal",
@@ -68,11 +69,13 @@ describe("ThreadControlService", () => {
     claim: ReturnType<typeof vi.fn>;
     settle: ReturnType<typeof vi.fn>;
     setOperationPhase: ReturnType<typeof vi.fn>;
+    listPending: ReturnType<typeof vi.fn>;
     listProcessing: ReturnType<typeof vi.fn>;
     requeue: ReturnType<typeof vi.fn>;
     requeueRecoveredProvisioning: ReturnType<typeof vi.fn>;
     listPendingByThread: ReturnType<typeof vi.fn>;
   };
+  let mutationReservations: ThreadControlMutationReservationService;
   let audit: { write: ReturnType<typeof vi.fn> };
   let messages: { listByThreadForThreadControl: ReturnType<typeof vi.fn> };
 
@@ -122,11 +125,13 @@ describe("ThreadControlService", () => {
       claim: vi.fn(),
       settle: vi.fn().mockReturnValue(true),
       setOperationPhase: vi.fn().mockReturnValue(true),
+      listPending: vi.fn().mockReturnValue([]),
       listProcessing: vi.fn().mockReturnValue([]),
       requeue: vi.fn().mockReturnValue(true),
       requeueRecoveredProvisioning: vi.fn().mockReturnValue(true),
       listPendingByThread: vi.fn().mockReturnValue([]),
     };
+    mutationReservations = new ThreadControlMutationReservationService();
     audit = { write: vi.fn() };
   });
 
@@ -160,6 +165,7 @@ describe("ThreadControlService", () => {
       approvals as never,
       audit as never,
       messages as never,
+      mutationReservations,
     );
   }
 
@@ -570,6 +576,36 @@ describe("ThreadControlService", () => {
     expect(approvals.settle).toHaveBeenCalledWith("malformed", "failed");
     expect(threads.updateStatus).toHaveBeenCalledWith("thread-malformed", "errored");
     expect(approvals.requeue).toHaveBeenCalledWith("valid");
+  });
+
+  it("fails malformed pending recovery and rehydrates valid mutation reservations", async () => {
+    const service = createService();
+    approvals.listPending.mockReturnValue([
+      {
+        invalid: true,
+        approvalId: "malformed-pending",
+        threadId: "thread-malformed-pending",
+        workspaceId: workspace.id,
+        callerId: "local-user",
+      },
+      {
+        operation: "thread_send",
+        approvalId: "valid-pending",
+        threadId: "thread-valid-pending",
+        workspaceId: workspace.id,
+        message: "Continue safely.",
+        execution: { providerId: "codex", modelId: "gpt-default", permissionMode: "supervised", interactionMode: "build" },
+        turnId: "turn-valid-pending",
+        operationPhase: "pre_dispatch",
+        callerId: "local-user",
+      },
+    ]);
+
+    await expect(service.recoverApprovals()).resolves.toBeUndefined();
+
+    expect(approvals.settle).toHaveBeenCalledWith("malformed-pending", "failed");
+    expect(threads.updateStatus).toHaveBeenCalledWith("thread-malformed-pending", "errored");
+    expect(mutationReservations.owns("thread-valid-pending", "valid-pending", "pendingApproval")).toBe(true);
   });
 
   it("continues recovery when failure persistence or audit logging throws", async () => {

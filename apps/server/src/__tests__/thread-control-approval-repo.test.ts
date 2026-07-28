@@ -125,4 +125,42 @@ describe("ThreadControlApprovalRepo", () => {
       callerId: "local-user",
     }]);
   });
+
+  it("isolates malformed pending payloads while preserving valid approvals", () => {
+    const malformedApprovalId = approvals.create({
+      threadId,
+      workspaceId,
+      prompt: "Malformed pending approval.",
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "full", interactionMode: "build" },
+      placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-malformed-pending",
+      callerId: "local-user",
+    });
+    const validApprovalId = approvals.create({
+      threadId,
+      workspaceId,
+      prompt: "Valid pending approval.",
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "full", interactionMode: "build" },
+      placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-valid-pending",
+      callerId: "local-user",
+    });
+    db.prepare("UPDATE thread_control_approvals SET execution_json = ? WHERE id = ?").run("{", malformedApprovalId);
+
+    const pending = approvals.listPending();
+
+    expect(pending).toHaveLength(2);
+    expect(pending).toEqual(expect.arrayContaining([
+      {
+        invalid: true,
+        approvalId: malformedApprovalId,
+        threadId,
+        workspaceId,
+        callerId: "local-user",
+      },
+      expect.objectContaining({ approvalId: validApprovalId, prompt: "Valid pending approval." }),
+    ]));
+    expect(approvals.settle(malformedApprovalId, "failed")).toBe(true);
+    expect(db.prepare("SELECT status FROM thread_control_approvals WHERE id = ?").get(malformedApprovalId)).toEqual({ status: "failed" });
+  });
 });

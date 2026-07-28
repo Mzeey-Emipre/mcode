@@ -603,6 +603,14 @@ export class ThreadControlService {
   async recoverApprovals(): Promise<void> {
     const pendingApprovals = this.approvals.listPending?.() ?? [];
     for (const approval of pendingApprovals) {
+      if ("invalid" in approval) {
+        logger.error("Thread-control pending approval payload is invalid during recovery", {
+          approvalId: approval.approvalId,
+          threadId: approval.threadId,
+        });
+        this.failRecovery(approval);
+        continue;
+      }
       if (!("operation" in approval) || (approval.operation !== "thread_send" && approval.operation !== "thread_stop")) continue;
       if (!this.mutationReservations.rehydrate(approval.threadId, approval.approvalId)) {
         logger.error("Thread-control pending approval reservation conflict", {

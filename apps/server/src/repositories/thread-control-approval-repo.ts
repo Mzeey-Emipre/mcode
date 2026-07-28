@@ -209,11 +209,12 @@ export class ThreadControlApprovalRepo {
     return this.db.prepare("UPDATE thread_control_approvals SET status = 'pending', processing_started_at = NULL, operation_phase = 'pre_provision' WHERE id = ? AND status = 'processing' AND operation_phase = 'provisioning'").run(approvalId).changes === 1;
   }
 
-  /** Mark a claimed approval with its terminal outcome. */
+  /** Mark a processing approval with its terminal outcome, or fail malformed pending data. */
   settle(approvalId: string, status: "approved" | "rejected" | "failed"): boolean {
-    return this.db.prepare(
-      "UPDATE thread_control_approvals SET status = ?, resolved_at = ? WHERE id = ? AND status = 'processing'",
-    ).run(status, new Date().toISOString(), approvalId).changes === 1;
+    const query = status === "failed"
+      ? "UPDATE thread_control_approvals SET status = ?, resolved_at = ? WHERE id = ? AND status IN ('pending', 'processing')"
+      : "UPDATE thread_control_approvals SET status = ?, resolved_at = ? WHERE id = ? AND status = 'processing'";
+    return this.db.prepare(query).run(status, new Date().toISOString(), approvalId).changes === 1;
   }
 
   /** Return pending approval cards for one visible thread. */
@@ -272,11 +273,24 @@ export class ThreadControlApprovalRepo {
   }
 
   /** Return all durable pending approvals so mutation reservations can rehydrate before ingress. */
-  listPending(): PendingThreadControlApproval[] {
+  listPending(): RecoverableThreadCreateApproval[] {
     const rows = this.db.prepare(
       "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, caller_id, source_thread_id, source_turn_id, source_provider_id, operation FROM thread_control_approvals WHERE status = 'pending' ORDER BY created_at, id",
     ).all() as ApprovalRow[];
-    return rows.map((row) => this.parse(row));
+    return rows.map((row) => {
+      try {
+        return this.parse(row);
+      } catch {
+        return {
+          invalid: true,
+          approvalId: row.id,
+          threadId: row.thread_id,
+          workspaceId: row.workspace_id,
+          callerId: row.caller_id ?? "unknown",
+          ...(row.source_thread_id ? { sourceThreadId: row.source_thread_id } : {}),
+        };
+      }
+    });
   }
 
   /** Requeue a mutation that had not crossed its external dispatch boundary. */
