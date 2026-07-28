@@ -9,9 +9,16 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
+const { checkCodexVersionMock, meetsMinVersionMock } = vi.hoisted(() => ({
+  checkCodexVersionMock: vi.fn<() =>
+    | { ok: true; version: string }
+    | { ok: false; error: string }>(() => ({ ok: true, version: "0.40.0" })),
+  meetsMinVersionMock: vi.fn(() => true),
+}));
+
 vi.mock("../codex-version.js", () => ({
-  checkCodexVersion: () => ({ ok: true, version: "0.40.0" }),
-  meetsMinVersion: () => true,
+  checkCodexVersion: checkCodexVersionMock,
+  meetsMinVersion: meetsMinVersionMock,
 }));
 
 const { sendTurnMock, appServers } = vi.hoisted(() => ({
@@ -85,6 +92,8 @@ describe("CodexProvider first turn on new session", () => {
 
   beforeEach(() => {
     sendTurnMock.mockClear();
+    checkCodexVersionMock.mockClear();
+    meetsMinVersionMock.mockClear();
     appServers.length = 0;
   });
 
@@ -124,6 +133,113 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await ended;
+  });
+
+  it("emits Error before Ended when CLI preflight fails before runtime acquire", async () => {
+    checkCodexVersionMock.mockReturnValueOnce({ ok: false, error: "Codex CLI unavailable" });
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+
+    await provider.sendTurn({
+      sessionId: "mcode-preflight-failure",
+      threadId: "preflight-failure",
+      message: "hello",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    expect(events).toEqual([
+      { type: AgentEventType.Error, threadId: "preflight-failure", error: "Codex CLI unavailable" },
+      { type: AgentEventType.Ended, threadId: "preflight-failure" },
+    ]);
+    expect(appServers).toHaveLength(0);
+  });
+
+  it("skips CLI preflight when reusing a live session", async () => {
+    const provider = makeProvider();
+    const sessionId = "mcode-reusable-session";
+    const threadId = "reusable-session";
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const request = {
+      sessionId,
+      threadId,
+      message: "first",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "auto" as const,
+    };
+
+    await provider.sendTurn(request);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(checkCodexVersionMock).toHaveBeenCalledTimes(1);
+    const runtime = (provider as unknown as {
+      runtime: { get: (id: string) => { server: { emit: (event: string, value: unknown) => void } } | undefined };
+    }).runtime;
+    const state = runtime.get(sessionId);
+    expect(state).toBeDefined();
+    state!.server.emit("notification", {
+      method: "turn/completed",
+      params: { turn: { id: "turn-test-id", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await provider.sendTurn({ ...request, message: "second" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(checkCodexVersionMock).toHaveBeenCalledTimes(1);
+    state!.server.emit("notification", {
+      method: "turn/completed",
+      params: { turn: { id: "turn-test-id", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(events.filter((event) => event.type === AgentEventType.Ended)).toHaveLength(2);
+  });
+
+  it("keeps caller-specific policy for unsupported CLI versions", async () => {
+    checkCodexVersionMock.mockReturnValueOnce({ ok: true, version: "0.36.0" });
+    meetsMinVersionMock.mockReturnValueOnce(false);
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+
+    await provider.sendTurn({
+      sessionId: "mcode-unsupported-version",
+      threadId: "unsupported-version",
+      message: "hello",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    expect(events).toEqual([
+      {
+        type: AgentEventType.Error,
+        threadId: "unsupported-version",
+        error: "Codex CLI version 0.36.0 is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex",
+      },
+      { type: AgentEventType.Ended, threadId: "unsupported-version" },
+    ]);
+
+    checkCodexVersionMock.mockReturnValueOnce({ ok: true, version: "0.36.0" });
+    meetsMinVersionMock.mockReturnValueOnce(false);
+    await expect(provider.runSideChannelQuery({
+      parentThreadId: "parent-thread",
+      parentSdkSessionId: "sdk-thread-1",
+      prompt: "Generate the handoff.",
+      cwd: process.cwd(),
+    })).rejects.toMatchObject({
+      code: "ETIMEDOUT",
+      message: "Codex CLI version 0.36.0 is too old for side-channel handoff",
+    });
+    expect(appServers).toHaveLength(0);
   });
 
   it("starts the first turn from cached Skills without waiting for catalog I/O", async () => {
@@ -639,5 +755,21 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await expect(result).resolves.toBe("# Handoff");
+  });
+
+  it("maps side-channel CLI preflight failures to transient errors before creating a server", async () => {
+    checkCodexVersionMock.mockReturnValueOnce({ ok: false, error: "Codex CLI unavailable" });
+    const provider = makeProvider();
+
+    await expect(provider.runSideChannelQuery({
+      parentThreadId: "parent-thread",
+      parentSdkSessionId: "sdk-thread-1",
+      prompt: "Generate the handoff.",
+      cwd: process.cwd(),
+    })).rejects.toMatchObject({
+      code: "ETIMEDOUT",
+      message: "Codex CLI unavailable",
+    });
+    expect(appServers).toHaveLength(0);
   });
 });

@@ -84,8 +84,14 @@ const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
 const USAGE_WARMUP_TIMEOUT_MS = 10_000;
 const USAGE_WARMUP_RETRY_MS = 60_000;
+const CODEX_MIN_VERSION = "0.37.0";
 
 type CodexEndedOutcome = "completed" | "errored" | "cancelled";
+
+type CodexCliPreflightResult =
+  | { ok: true; version: string }
+  | { ok: false; reason: "unavailable"; error: string }
+  | { ok: false; reason: "unsupported"; version: string };
 
 function codexRateLimitLabel(windowDurationMins: number | undefined, fallback: string): string {
   if (windowDurationMins === 300) return "5-hour limit";
@@ -610,6 +616,35 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     return sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
   }
 
+  /** Check Codex CLI availability and minimum version without applying caller policy. */
+  private checkCodexCliPreflight(cliPath: string): CodexCliPreflightResult {
+    const versionResult = checkCodexVersion(cliPath);
+    if (!versionResult.ok) {
+      return { ok: false, reason: "unavailable", error: versionResult.error };
+    }
+    if (!meetsMinVersion(versionResult.version, CODEX_MIN_VERSION)) {
+      return { ok: false, reason: "unsupported", version: versionResult.version };
+    }
+    return { ok: true, version: versionResult.version };
+  }
+
+  /** Emit a failed turn's error and terminal events, optionally deferring Ended. */
+  private emitTurnFailure(
+    threadId: string,
+    error: string,
+    outcome?: CodexEndedOutcome,
+    emitEnded = true,
+  ): AgentEvent {
+    this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
+    const ended = {
+      type: AgentEventType.Ended,
+      threadId,
+      ...(outcome ? { outcome } : {}),
+    } satisfies AgentEvent;
+    if (emitEnded) this.emit("event", ended);
+    return ended;
+  }
+
   /** Convert a native Codex goal into Mcode's provider-neutral goal state. */
   private mapCodexGoal(sessionId: string, goal: ThreadGoal, turnId?: string | null): GoalState {
     return {
@@ -843,8 +878,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         promptName: err.promptName,
         cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
       });
-      this.emit("event", { type: AgentEventType.Error, threadId, error: err.message } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      this.emitTurnFailure(threadId, err.message);
       return;
     }
 
@@ -905,17 +939,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // never spawns a child.
     const reusable = existing && existing.server.isAlive && existing.sandboxMode === sandbox;
     if (!reusable) {
-      const versionResult = checkCodexVersion(cliPath);
-      if (!versionResult.ok) {
-        this.emit("event", { type: AgentEventType.Error, threadId, error: versionResult.error } satisfies AgentEvent);
-        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
-        return;
-      }
-
-      if (!meetsMinVersion(versionResult.version, "0.37.0")) {
-        const errorMsg = `Codex CLI version ${versionResult.version} is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex`;
-        this.emit("event", { type: AgentEventType.Error, threadId, error: errorMsg } satisfies AgentEvent);
-        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      const preflight = this.checkCodexCliPreflight(cliPath);
+      if (!preflight.ok) {
+        const errorMessage = preflight.reason === "unavailable"
+          ? preflight.error
+          : `Codex CLI version ${preflight.version} is not supported. Minimum required: ${CODEX_MIN_VERSION}. Update with: npm install -g @openai/codex`;
+        this.emitTurnFailure(threadId, errorMessage);
         return;
       }
     }
@@ -938,8 +967,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       this.pendingSpawnTurns.delete(sessionId);
       const errorMessage = e instanceof Error ? e.message : String(e);
       logger.error("CodexAppServer start failed", { sessionId, error: errorMessage });
-      this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      this.emitTurnFailure(threadId, errorMessage);
       return;
     }
     this.runtime.recordUsage(sessionId);
@@ -1051,8 +1079,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       for (const event of mapper.drainPendingAssistantBoundary(false)) {
         this.emit("event", event);
       }
-      this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      this.emitTurnFailure(threadId, error);
       void this.runtime.stop(sessionId);
     });
 
@@ -1219,10 +1246,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.codex || "codex";
-    const versionResult = checkCodexVersion(cliPath);
-    if (!versionResult.ok) throw transientHandoffError(versionResult.error);
-    if (!meetsMinVersion(versionResult.version, "0.37.0")) {
-      throw transientHandoffError(`Codex CLI version ${versionResult.version} is too old for side-channel handoff`);
+    const preflight = this.checkCodexCliPreflight(cliPath);
+    if (!preflight.ok) {
+      const errorMessage = preflight.reason === "unavailable"
+        ? preflight.error
+        : `Codex CLI version ${preflight.version} is too old for side-channel handoff`;
+      throw transientHandoffError(errorMessage);
     }
 
     const server = new CodexAppServer({
@@ -1360,8 +1389,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       const error = err instanceof Error ? err.message : String(err);
       logger.error("Codex goal install failed", { sessionId, error });
       this.emitGoalCleared(sessionId, "rollback");
-      this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId, outcome: "errored" } satisfies AgentEvent);
+      this.emitTurnFailure(threadId, error, "errored");
       return;
     }
     await this.runTurn(sessionId, threadId, server, input, turnOptions);
@@ -1407,6 +1435,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     let serverDied = false;
     let endedEmitted = false;
     let endedOutcome: CodexEndedOutcome | undefined;
+    let deferredEnded: AgentEvent | undefined;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -1535,7 +1564,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
           this.emit("event", event);
         }
-        this.emit("event", { type: AgentEventType.Error, threadId, error: errorMessage } satisfies AgentEvent);
+        deferredEnded = this.emitTurnFailure(threadId, errorMessage, endedOutcome, false);
       }
     } finally {
       if (seq === entry.runTurnSeq) {
@@ -1546,7 +1575,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       }
       if (!serverDied && seq === entry.runTurnSeq && !endedEmitted) {
         endedEmitted = true;
-        this.emit("event", {
+        this.emit("event", deferredEnded ?? {
           type: AgentEventType.Ended,
           threadId,
           ...(endedOutcome ? { outcome: endedOutcome } : {}),
