@@ -5,12 +5,10 @@ import { existsSync } from "fs";
 import { createRequire } from "module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
+import { killProcessTree } from "./kill-process-tree.mjs";
 
 /** Maximum time one Electron CLI invocation may run before its owned process tree is killed. */
 export const ELECTRON_PROCESS_TIMEOUT_MS = 10 * 60 * 1_000;
-
-/** Maximum time allowed for the Windows process-tree terminator to settle. */
-const PROCESS_TREE_KILL_TIMEOUT_MS = 5_000;
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(scriptDir, "..");
@@ -58,49 +56,6 @@ function resolveWorkspaceCli(args) {
 }
 
 /**
- * Terminates only the Electron child and descendants without blocking Bun's event loop.
- *
- * @param {import("child_process").ChildProcess} child
- * @returns {Promise<void>}
- */
-function terminateProcessTree(child) {
-  if (!child.pid) return Promise.resolve();
-  if (process.platform !== "win32") {
-    try {
-      child.kill("SIGTERM");
-    } catch (error) {
-      if (error?.code !== "ESRCH") throw error;
-    }
-    return Promise.resolve();
-  }
-
-  return new Promise((resolveTermination) => {
-    const terminator = spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    let settled = false;
-    let timeoutHandle;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutHandle);
-      resolveTermination();
-    };
-    timeoutHandle = setTimeout(() => {
-      try {
-        terminator.kill();
-      } catch {
-        // The terminator may have already exited.
-      }
-      finish();
-    }, PROCESS_TREE_KILL_TIMEOUT_MS);
-    terminator.once("error", finish);
-    terminator.once("close", finish);
-  });
-}
-
-/**
  * Runs Electron asynchronously so Bun can drain both child output pipes while the
  * Electron process starts and exits.
  *
@@ -115,6 +70,7 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
       cwd,
       env,
       shell: false,
+      detached: process.platform !== "win32",
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -159,15 +115,17 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
 
     timeoutHandle = setTimeout(() => {
       timedOut = true;
-      void terminateProcessTree(child).then(() => {
-        if (settled) return;
-        try {
-          child.kill();
-        } catch (error) {
-          if (error?.code !== "ESRCH") throw error;
-        }
-        forcedSettlementHandle = setTimeout(() => settle(1, "SIGTERM"), 1_000);
-      });
+      Promise.resolve(killProcessTree(child, { useProcessGroup: process.platform !== "win32" }))
+        .catch(() => undefined)
+        .finally(() => {
+          if (settled) return;
+          try {
+            child.kill();
+          } catch {
+            // The forced settlement below still closes the adapter if the child race is unusual.
+          }
+          forcedSettlementHandle = setTimeout(() => settle(1, "SIGTERM"), 1_000);
+        });
     }, timeoutMs);
   });
 }

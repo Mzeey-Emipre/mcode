@@ -48,19 +48,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: ".node-version"
-          package-manager-cache: false
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-node-${{ hashFiles('.node-version') }}-lock-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-runtime-${{ hashFiles('package.json') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-node-${{ hashFiles('.node-version') }}-lock-
+            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-runtime-${{ hashFiles('package.json') }}-lock-
 
       - name: Install dependencies
         shell: bash
@@ -90,18 +86,18 @@ jobs:
         run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools 2>/dev/null || pip install setuptools 2>/dev/null || true
 
       - name: Ensure Claude SDK platform package for packaging target
-        run: node apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs
+        run: bun apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs
         env:
           MCODE_TARGET_ARCH: ${{ matrix.target-arch }}
 
       - name: Package with electron-builder
-        run: node apps/desktop/scripts/ci-package.mjs ${{ matrix.build-args }}
+        run: bun apps/desktop/scripts/ci-package.mjs ${{ matrix.build-args }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && 'false' || '' }}
 
       - name: Smoke test packaged server
         if: matrix.target-arch == '' || matrix.target-arch == 'arm64'
-        run: node apps/desktop/scripts/smoke-test.mjs
+        run: bun apps/desktop/scripts/smoke-test.mjs
 
       - name: Verify Linux artifacts on Ubuntu 22.04
         if: runner.os == 'Linux'
@@ -203,7 +199,7 @@ jobs:
             if [ -f "$X64_YML" ]; then cp "$X64_YML" latest-mac.yml; fi
             if [ ! -f latest-mac.yml ]; then exit 0; fi
           else
-            node -e "
+            bun -e "
               const fs = require('fs');
               const arm64 = fs.readFileSync('$ARM64_YML', 'utf8');
               const x64 = fs.readFileSync('$X64_YML', 'utf8');

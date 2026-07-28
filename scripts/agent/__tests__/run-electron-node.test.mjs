@@ -1,8 +1,14 @@
 /** Tests workspace CLI entry containment in the Electron Node wrapper. */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { test } from "node:test";
-import { ELECTRON_PROCESS_TIMEOUT_MS } from "../../run-electron-node.mjs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  ELECTRON_PROCESS_TIMEOUT_MS,
+  runElectronProcess,
+} from "../../run-electron-node.mjs";
 
 const wrapper = "scripts/run-electron-node.mjs";
 const options = {
@@ -63,4 +69,47 @@ test("workspace CLI rejects entries outside the package directory", testOptions,
   assert.equal(result.error, undefined);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Workspace CLI entry must stay inside its package directory/);
+});
+
+test("Electron timeout terminates a detached descendant group", { timeout: 10_000 }, async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "mcode-electron-process-"));
+  const descendantFile = join(tempDirectory, "descendant.pid");
+  const childCode = [
+    "const { spawn } = require('node:child_process');",
+    "const { writeFileSync } = require('node:fs');",
+    "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+    "writeFileSync(process.env.MCODE_TEST_DESCENDANT_FILE, String(descendant.pid));",
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+
+  try {
+    const result = await runElectronProcess(process.execPath, ["-e", childCode], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        MCODE_TEST_DESCENDANT_FILE: descendantFile,
+      },
+      timeoutMs: 250,
+    });
+
+    assert.equal(result.timedOut, true);
+    assert.equal(result.status, 1);
+
+    const deadline = Date.now() + 5_000;
+    while (!existsSync(descendantFile) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(existsSync(descendantFile), true);
+
+    const descendantPid = Number.parseInt(readFileSync(descendantFile, "utf8"), 10);
+    assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+    if (process.platform === "win32") {
+      const alive = spawnSync("tasklist", ["/FI", `PID eq ${descendantPid}`], { encoding: "utf8" });
+      assert.doesNotMatch(alive.stdout, new RegExp(`\\b${descendantPid}\\b`));
+    } else {
+      assert.throws(() => process.kill(descendantPid, 0), { code: "ESRCH" });
+    }
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
 });

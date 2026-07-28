@@ -11,14 +11,19 @@ import { spawnSync } from "node:child_process";
 /** Max wait for taskkill to propagate through a deep process tree. */
 export const TASKKILL_TIMEOUT_MS = 5_000;
 
+/** Grace period between the soft and hard POSIX process-group signals. */
+export const PROCESS_GROUP_GRACE_MS = 500;
+
 /**
  * Kill a child process and its entire process tree.
  *
  * @param {import("node:child_process").ChildProcess | null | undefined} child
+ * @param {{ graceMs?: number, useProcessGroup?: boolean }} [options]
+ * @returns {Promise<void> | undefined}
  */
-export function killProcessTree(child) {
+export function killProcessTree(child, options) {
   if (!child?.pid) return;
-  killPidTree(child.pid);
+  return killPidTree(child.pid, "SIGTERM", options);
 }
 
 /**
@@ -26,8 +31,14 @@ export function killProcessTree(child) {
  *
  * @param {number} pid
  * @param {NodeJS.Signals} [signal]
+ * @param {{ graceMs?: number, useProcessGroup?: boolean }} [options]
+ * @returns {Promise<void> | undefined}
  */
-export function killPidTree(pid, signal = "SIGTERM") {
+export function killPidTree(
+  pid,
+  signal = "SIGTERM",
+  { graceMs = PROCESS_GROUP_GRACE_MS, useProcessGroup = false } = {},
+) {
   if (!Number.isSafeInteger(pid) || pid <= 0) {
     throw new Error(`Invalid PID: ${pid}`);
   }
@@ -38,6 +49,44 @@ export function killPidTree(pid, signal = "SIGTERM") {
       timeout: TASKKILL_TIMEOUT_MS,
     });
     return;
+  }
+
+  return terminatePosixProcess(pid, signal, graceMs, useProcessGroup).catch(() => undefined);
+}
+
+/**
+ * Signal a detached POSIX process group, then hard-kill any members that ignore
+ * the graceful signal. A non-detached child falls back to its direct PID when
+ * no group exists for that PID.
+ *
+ * @param {number} pid
+ * @param {NodeJS.Signals} signal
+ * @param {number} graceMs
+ * @returns {Promise<void>}
+ */
+async function terminatePosixProcess(pid, signal, graceMs, useProcessGroup) {
+  signalPosixProcess(pid, signal, useProcessGroup);
+  if (graceMs <= 0) return;
+
+  await new Promise((resolve) => setTimeout(resolve, graceMs));
+  signalPosixProcess(pid, "SIGKILL", useProcessGroup);
+}
+
+/**
+ * Signals a process group when requested and falls back to the direct PID.
+ *
+ * @param {number} pid
+ * @param {NodeJS.Signals} signal
+ * @param {boolean} useProcessGroup
+ */
+function signalPosixProcess(pid, signal, useProcessGroup) {
+  if (useProcessGroup) {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
   }
 
   try {

@@ -35,10 +35,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: ".node-version"
-          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
 
       - id: check
         name: Compare HEAD to last nightly tag
@@ -88,7 +85,7 @@ jobs:
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: |
-          version=$(node <<'NODE'
+          version=$(bun <<'NODE'
           const fs = require("fs");
           const path = require("path");
           const { pathToFileURL } = require("url");
@@ -171,19 +168,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: ".node-version"
-          package-manager-cache: false
       - uses: oven-sh/setup-bun@v2
       - name: Cache Bun install cache
         uses: actions/cache@v4
         continue-on-error: true
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-node-${{ hashFiles('.node-version') }}-lock-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-runtime-${{ hashFiles('package.json') }}-lock-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-node-${{ hashFiles('.node-version') }}-lock-
+            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-runtime-${{ hashFiles('package.json') }}-lock-
 
       - name: Install dependencies
         shell: bash
@@ -205,7 +198,7 @@ jobs:
         env:
           MCODE_NIGHTLY_VERSION: ${{ needs.setup.outputs.version }}
         run: |
-          node <<'NODE'
+          bun <<'NODE'
           const fs = require("fs");
           const version = process.env.MCODE_NIGHTLY_VERSION;
           if (!version) {
@@ -232,25 +225,25 @@ jobs:
         run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools 2>/dev/null || pip install setuptools 2>/dev/null || true
 
       - name: Ensure Claude SDK platform package for packaging target
-        run: node apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs
+        run: bun apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs
         env:
           MCODE_TARGET_ARCH: ${{ matrix.target-arch }}
 
       - name: Package with electron-builder (nightly channel)
-        run: node apps/desktop/scripts/ci-package.mjs --config.publish.channel=nightly ${{ matrix.build-args }}
+        run: bun apps/desktop/scripts/ci-package.mjs --config.publish.channel=nightly ${{ matrix.build-args }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && 'false' || '' }}
 
       - name: Smoke test packaged server
         if: matrix.target-arch == '' || matrix.target-arch == 'arm64'
-        run: node apps/desktop/scripts/smoke-test.mjs
+        run: bun apps/desktop/scripts/smoke-test.mjs
 
       - name: Smoke test packaged server under Rosetta
         if: runner.os == 'macOS' && matrix.target-arch == 'x64'
         shell: bash
         run: |
           if /usr/bin/pgrep oahd >/dev/null 2>&1 || /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
-            node apps/desktop/scripts/smoke-test.mjs
+            bun apps/desktop/scripts/smoke-test.mjs
           else
             echo "Skipping x64 packaged-server smoke: Rosetta is unavailable on this macOS runner."
           fi
@@ -339,7 +332,7 @@ jobs:
             echo "Both macOS update metadata files are required."
             exit 1
           fi
-          node -e "
+          bun -e "
               const fs = require('fs');
               const arm64 = fs.readFileSync('$ARM64_YML', 'utf8');
               const x64 = fs.readFileSync('$X64_YML', 'utf8');
