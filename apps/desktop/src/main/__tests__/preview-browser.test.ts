@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -925,7 +932,7 @@ describe("preview-browser", () => {
       const view = createdViews[0]!;
       // Should resolve through the symlink target directory's index.html.
       expect(view.webContents.loadURL).toHaveBeenCalledWith(
-        pathToFileURL(join(tempDir, "hasindex", "index.html")).href,
+        pathToFileURL(join(await realpath(linkPath), "index.html")).href,
       );
     });
 
