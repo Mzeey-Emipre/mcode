@@ -331,6 +331,31 @@ test("dev:server SIGTERM stops the Electron server without a Vite reference erro
   }
 });
 
+test("server stop polling does not treat a self-caused probe timeout as stopped", { timeout: 2_000 }, async () => {
+  const originalFetch = globalThis.fetch;
+  let probes = 0;
+  globalThis.fetch = async (_url, { signal }) => {
+    probes += 1;
+    await new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        const error = new Error("probe timed out");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    });
+  };
+
+  try {
+    await assert.rejects(
+      () => waitForServerStop(41_999, { timeoutMs: 120, intervalMs: 5, probeTimeoutMs: 20 }),
+      /dev:server still responds on port 41999 after SIGTERM/,
+    );
+    assert.ok(probes >= 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 /** Waits for dev-web to report the server-only health port. */
 async function waitForServerPort(readOutput) {
   return waitUntil(() => {
@@ -345,17 +370,27 @@ async function waitForServerPort(readOutput) {
 }
 
 /** Waits for the server-only child to release its health endpoint. */
-async function waitForServerStop(port) {
+async function waitForServerStop(
+  port,
+  { timeoutMs = 5_000, intervalMs = 100, probeTimeoutMs = 1_000 } = {},
+) {
   return waitUntil(async () => {
+    const controller = new AbortController();
+    const probeTimer = setTimeout(() => controller.abort(), probeTimeoutMs);
     try {
-      await fetch(`http://127.0.0.1:${port}/health`);
+      await fetch(`http://127.0.0.1:${port}/health`, { signal: controller.signal });
       return false;
-    } catch {
-      return true;
+    } catch (error) {
+      if (controller.signal.aborted) return false;
+      return error?.code === "ECONNREFUSED"
+        || error?.cause?.code === "ECONNREFUSED"
+        || /unable to connect/i.test(error?.message ?? "");
+    } finally {
+      clearTimeout(probeTimer);
     }
   }, {
-    timeoutMs: 5_000,
-    intervalMs: 100,
+    timeoutMs,
+    intervalMs,
     message: () => `dev:server still responds on port ${port} after SIGTERM`,
   });
 }

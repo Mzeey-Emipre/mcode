@@ -10,7 +10,20 @@ const packagingWorkflowAllowlist = new Set([
   "desktop-package-dry-run.yml",
   "nightly-desktop.yml",
 ]);
+const bunCheckoutJobs = new Map([
+  ["build-release.yml", "merge-mac-yml"],
+  ["nightly-desktop.yml", "merge-mac-yml-nightly"],
+]);
 const directNodeCommandPattern = /(?:^|(?:&&|\|\||;)\s*)node(?:\.exe)?(?=\s|$)/m;
+
+function extractWorkflowJob(source, jobName) {
+  const jobStart = source.indexOf(`  ${jobName}:`);
+  if (jobStart < 0) return null;
+  const bodyStart = source.indexOf("\n", jobStart) + 1;
+  if (bodyStart === 0) return null;
+  const nextJobOffset = source.slice(bodyStart).search(/^  [A-Za-z0-9_-]+:/m);
+  return source.slice(bodyStart, nextJobOffset < 0 ? source.length : bodyStart + nextJobOffset);
+}
 
 function extractRunCommands(source) {
   const lines = source.split(/\r?\n/);
@@ -72,6 +85,20 @@ test("workflows use Bun runtime and repository commands", () => {
     const source = readFileSync(join(workflowDirectory, file), "utf8");
     assert.doesNotMatch(source, /\.node-version/i, file);
     assert.match(source, /oven-sh\/setup-bun@v2/, file);
+
+    const bunCheckoutJob = bunCheckoutJobs.get(file);
+    if (bunCheckoutJob) {
+      const jobSource = extractWorkflowJob(source, bunCheckoutJob);
+      assert.ok(jobSource, `${file}: ${bunCheckoutJob} job missing`);
+      const checkoutIndex = jobSource.indexOf("actions/checkout@v4");
+      const setupBunIndex = jobSource.indexOf("oven-sh/setup-bun@v2");
+      assert.ok(checkoutIndex >= 0, `${file}: ${bunCheckoutJob} must checkout repository`);
+      assert.ok(setupBunIndex >= 0, `${file}: ${bunCheckoutJob} must setup Bun`);
+      assert.ok(
+        checkoutIndex < setupBunIndex,
+        `${file}: ${bunCheckoutJob} checkout must precede setup-bun`,
+      );
+    }
 
     if (packagingWorkflowAllowlist.has(file)) {
       assert.equal((source.match(/actions\/setup-node@/gi) ?? []).length, 1, file);

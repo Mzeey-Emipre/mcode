@@ -178,6 +178,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+
       - uses: oven-sh/setup-bun@v2
 
       - name: Download arm64 yml
