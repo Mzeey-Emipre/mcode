@@ -7,6 +7,7 @@ import {
   type ResolvedExecution,
   type ThreadPlacement,
 } from "@mcode/contracts";
+import { logger } from "@mcode/shared";
 
 /** Persisted input needed to resume a protected delegated-thread creation. */
 export interface PendingThreadCreateApproval {
@@ -227,12 +228,24 @@ export class ThreadControlApprovalRepo {
     return this.db.prepare(query).run(status, new Date().toISOString(), approvalId).changes === 1;
   }
 
-  /** Return pending approval cards for one visible thread. */
+  /** Return pending approval cards for one visible thread, skipping malformed payloads. */
   listPendingByThread(threadId: string): PendingThreadControlApproval[] {
     const rows = this.db.prepare(
       "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, caller_id, source_thread_id, source_turn_id, source_provider_id, operation FROM thread_control_approvals WHERE thread_id = ? AND status = 'pending' ORDER BY created_at, id",
     ).all(threadId) as ApprovalRow[];
-    return rows.map((row) => this.parse(row));
+    const parsed: PendingThreadControlApproval[] = [];
+    for (const row of rows) {
+      try {
+        parsed.push(this.parse(row));
+      } catch (error) {
+        logger.error("Skipping malformed pending thread-control approval", {
+          approvalId: row.id,
+          threadId: row.thread_id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return parsed;
   }
 
   private parse(row: ApprovalRow): PendingThreadControlApproval {

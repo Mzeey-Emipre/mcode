@@ -163,6 +163,9 @@ describe("ThreadControlApprovalRepo", () => {
       },
       expect.objectContaining({ approvalId: validApprovalId, prompt: "Valid pending approval." }),
     ]));
+    expect(approvals.listPendingByThread(threadId)).toEqual([
+      expect.objectContaining({ approvalId: validApprovalId, prompt: "Valid pending approval." }),
+    ]);
     expect(approvals.settle(malformedApprovalId, "failed")).toBe(true);
     expect(db.prepare("SELECT status FROM thread_control_approvals WHERE id = ?").get(malformedApprovalId)).toEqual({ status: "failed" });
   });

@@ -92,7 +92,7 @@ function escapeXml(s: string): string {
 
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
 
-/** Command accepted by {@link AgentService.sendMessage}, including service-only delivery metadata. */
+/** Command accepted by {@link AgentService.sendMessage}, including cross-thread provenance and mutation-reservation metadata. */
 export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "provider"> & {
   permissionMode?: PermissionMode | "default";
   provider?: ProviderId;
@@ -527,6 +527,13 @@ export class AgentService {
     originSourceTurnId,
     mutationReservationToken,
   }: SendMessageCommand): Promise<void> {
+    const provenance = [originSourceThreadId, originSourceTurnId, originSourceProviderId];
+    const hasAnyProvenance = provenance.some((value) => value !== undefined);
+    const hasCompleteProvenance = provenance.every((value) => typeof value === "string" && value.length > 0);
+    if (hasAnyProvenance && !hasCompleteProvenance) {
+      throw new Error("Cross-thread messages require a complete thread provenance tuple");
+    }
+
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     if (["completed", "errored", "failed", "interrupted", "stopped"].includes(thread.status)) {
@@ -689,11 +696,11 @@ export class AgentService {
     // back too, keeping marker durability == answer durability.
     this.turnFinalizer.resetStreamingText(threadId);
 
-    const origin = originSourceThreadId && originSourceProviderId
+    const origin = originSourceThreadId && originSourceTurnId && originSourceProviderId
       ? {
           type: "thread" as const,
           sourceThreadId: originSourceThreadId,
-          sourceTurnId: originSourceTurnId ?? requestedSourceTurnId ?? randomUUID(),
+          sourceTurnId: originSourceTurnId,
           sourceProviderId: originSourceProviderId,
         }
       : undefined;
@@ -2634,6 +2641,33 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.TurnStarted) {
+          if (!this.activeMutationReservations.has(event.threadId)) {
+            const reservationToken = this.mutationReservations.reserve(event.threadId, "activeTurn");
+            if (!reservationToken) {
+              logger.warn("Aborting auto-resumed turn because a mutation reservation is owned", {
+                threadId: event.threadId,
+                reservationState: this.mutationReservations.get(event.threadId)?.state,
+              });
+              try {
+                const thread = this.threadRepo.findById(event.threadId);
+                const providerId = (thread?.provider ?? "claude") as ProviderId;
+                const provider = this.providerRegistry.resolve(providerId);
+                void Promise.resolve(provider.stopSession(`mcode-${event.threadId}`)).catch((error) => {
+                  logger.warn("Failed to stop blocked auto-resumed turn", {
+                    threadId: event.threadId,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                });
+              } catch (error) {
+                logger.warn("Failed to resolve provider for blocked auto-resumed turn", {
+                  threadId: event.threadId,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
+              return;
+            }
+            this.activeMutationReservations.set(event.threadId, reservationToken);
+          }
           if (!this.earlyFileTrackingEvents.delete(event)) {
             this.fileTrackingSetupByThread.delete(event.threadId);
             this.fileTrackingActivityByThread.delete(event.threadId);
@@ -2646,10 +2680,6 @@ export class AgentService {
           if (!this.activeSessionIds.has(event.threadId)) {
             this.activeSessionIds.add(event.threadId);
             this.memoryPressureService.markActive(event.threadId);
-          }
-          if (!this.activeMutationReservations.has(event.threadId)) {
-            const reservationToken = this.mutationReservations.reserve(event.threadId, "activeTurn");
-            if (reservationToken) this.activeMutationReservations.set(event.threadId, reservationToken);
           }
           // Reset per-turn state that must survive past turn finalize so late
           // hooks can attach to the previous turn. Re-seeding them here rather

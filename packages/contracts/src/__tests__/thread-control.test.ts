@@ -59,7 +59,18 @@ describe("thread mutation schemas", () => {
     };
     expect(ThreadSendResultSchema().parse(accepted)).toEqual(accepted);
     expect(ThreadSendResultSchema().parse({ status: "pending_approval", workspaceId: "workspace", threadId: "target", approvalId: "approval", state: { status: "waiting_for_approval", approvalId: "approval" } })).toBeTruthy();
+    expect(ThreadSendResultSchema().parse({
+      status: "rejected",
+      workspaceId: "workspace",
+      threadId: "target",
+      error: { code: "thread_busy", message: "Thread is already running", retryable: true },
+    })).toBeTruthy();
     expect(ThreadStopResultSchema().parse({ status: "accepted", workspaceId: "workspace", threadId: "target", state: { status: "stopped" } })).toBeTruthy();
+    expect(ThreadStopResultSchema().parse({
+      status: "rejected",
+      threadId: "target",
+      error: { code: "conflict", message: "Thread is terminal", retryable: false },
+    })).toBeTruthy();
     expect(ThreadStopResultSchema().safeParse({ status: "accepted", workspaceId: "workspace", threadId: "target", state: { status: "stopped" }, turnId: "forged" }).success).toBe(false);
   });
 });
