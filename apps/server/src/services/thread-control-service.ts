@@ -59,6 +59,8 @@ import { SettingsService } from "./settings-service.js";
 import { ThreadService } from "./thread-service.js";
 import { broadcast } from "../transport/push.js";
 
+const THREAD_WAIT_POLL_INTERVAL_MS = 250;
+
 /** Git operations required by thread-control discovery and placement. */
 export interface ThreadControlGitDiscovery {
   listWorktrees(workspaceId: string): Promise<Array<{ name: string; path: string; branch: string; managed: boolean }>>;
@@ -83,7 +85,7 @@ export class ThreadControlService {
     @inject(delay(() => ModelCacheService)) private readonly models: ModelCacheService,
     @inject(ThreadControlApprovalRepo) private readonly approvals: ThreadControlApprovalRepo,
     @inject(ThreadControlAuditRepo) private readonly audit: ThreadControlAuditRepo,
-    @inject(MessageRepo, { isOptional: true }) private readonly messages?: MessageRepo,
+    @inject("MessageRepo", { isOptional: true }) private readonly messages?: MessageRepo,
   ) {}
 
   /** Search only registered workspaces; authority is intentionally not tool input. */
@@ -138,6 +140,7 @@ export class ThreadControlService {
     const validated = ThreadGetInputSchema().parse(input);
     const thread = this.findReadableThread(authority, validated.threadId);
     if (!thread || thread.deleted_at != null || !this.canReadThread(authority, thread.id, thread.workspace_id)) {
+      this.auditRead(authority, "thread_get", "not_found");
       return {
         status: "rejected",
         threadId: validated.threadId,
@@ -181,6 +184,7 @@ export class ThreadControlService {
     }
     const targets = validated.threadIds.map((threadId) => this.findReadableThread(authority, threadId));
     if (targets.some((thread) => !thread || thread.deleted_at != null || !this.canReadThread(authority, thread.id, thread.workspace_id))) {
+      this.auditRead(authority, "thread_wait", "not_found");
       return { status: "rejected", error: this.error("not_found", "Thread not found", false) };
     }
     const targetThreads = targets as NonNullable<typeof targets[number]>[];
@@ -217,7 +221,7 @@ export class ThreadControlService {
           finish(true);
           return;
         }
-        timer = setTimeout(check, Math.min(50, remaining));
+        timer = setTimeout(check, Math.min(THREAD_WAIT_POLL_INTERVAL_MS, remaining));
       };
       if (signal?.aborted) {
         finish(true);
@@ -432,7 +436,7 @@ export class ThreadControlService {
     return {
       workspaceId: thread.workspace_id,
       threadId: thread.id,
-      title: thread.title,
+      title: thread.title.trim().length === 0 ? "Untitled thread" : thread.title,
       providerId: thread.provider || "unknown",
       modelId: thread.model || "unknown",
       createdAt: thread.created_at,

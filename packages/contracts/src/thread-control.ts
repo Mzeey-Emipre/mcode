@@ -279,7 +279,7 @@ export const ThreadSearchInputSchema = lazySchema(() =>
   z.object({
     workspaceIds: z.array(opaqueId).min(1).max(THREAD_SEARCH_WORKSPACE_IDS_MAX).optional(),
     query: z.string().trim().max(WORKSPACE_SEARCH_QUERY_MAX_LENGTH).optional(),
-    statuses: z.array(z.enum(observedStatuses)).max(THREAD_SEARCH_STATUSES_MAX).optional(),
+    statuses: z.array(z.enum(observedStatuses)).min(1).max(THREAD_SEARCH_STATUSES_MAX).optional(),
     limit: z.number().int().min(1).max(THREAD_SEARCH_LIMIT_MAX).default(THREAD_SEARCH_LIMIT_DEFAULT),
   }).strict().superRefine((input, ctx) => {
     if (input.workspaceIds && new Set(input.workspaceIds).size !== input.workspaceIds.length) {

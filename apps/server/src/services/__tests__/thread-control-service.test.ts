@@ -694,6 +694,91 @@ describe("ThreadControlService", () => {
     expect(agentService.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("audits denied reads without recording the unreadable target", async () => {
+    const service = createService();
+
+    expect(service.threadGet(authority, { threadId: "missing-thread", messageLimit: 10 })).toMatchObject({
+      status: "rejected",
+      error: { code: "not_found" },
+    });
+    await expect(service.threadWait(authority, {
+      threadIds: ["missing-thread"],
+      until: "attention_or_terminal",
+      timeoutSeconds: 1,
+    })).resolves.toMatchObject({
+      status: "rejected",
+      error: { code: "not_found" },
+    });
+
+    expect(audit.write).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      operation: "thread_get",
+      outcome: "not_found",
+      callerId: authority.userId,
+      sourceThreadId: authority.sourceThreadId,
+    }));
+    expect(audit.write).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      operation: "thread_wait",
+      outcome: "not_found",
+      callerId: authority.userId,
+      sourceThreadId: authority.sourceThreadId,
+    }));
+    for (const [event] of audit.write.mock.calls) {
+      expect(event).not.toHaveProperty("workspaceId");
+      expect(event).not.toHaveProperty("threadId");
+    }
+  });
+
+  it("normalizes empty thread titles at the projection boundary", () => {
+    const service = createService();
+    const emptyTitleThread = {
+      ...createdThread,
+      id: "empty-title-thread",
+      title: "",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:01.000Z",
+      deleted_at: null,
+    };
+    const namedThread = { ...emptyTitleThread, id: "named-thread", title: "Keep this title" };
+    threads.search.mockReturnValue({ threads: [emptyTitleThread, namedThread], workspaces: [] });
+
+    const result = service.threadSearch(authority, { limit: 20 });
+
+    expect(result.threads).toEqual(expect.arrayContaining([
+      expect.objectContaining({ threadId: emptyTitleThread.id, title: "Untitled thread" }),
+      expect.objectContaining({ threadId: namedThread.id, title: "Keep this title" }),
+    ]));
+  });
+
+  it("bounds wait polling to a quarter-second interval", async () => {
+    const service = createService();
+    const runningThread = {
+      ...createdThread,
+      id: "running-thread",
+      title: "Running",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:02.000Z",
+      deleted_at: null,
+    };
+    threads.findById.mockReturnValue(runningThread);
+    agentService.activeThreadIds = vi.fn().mockReturnValue([runningThread.id]);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    try {
+      await expect(service.threadWait(authority, {
+        threadIds: [runningThread.id],
+        until: "attention_or_terminal",
+        timeoutSeconds: 1,
+      })).resolves.toMatchObject({ status: "success", timedOut: true });
+
+      const delays = setTimeoutSpy.mock.calls
+        .map(([, delay]) => delay)
+        .filter((delay): delay is number => typeof delay === "number");
+      expect(delays.some((delay) => delay >= 250 && delay <= 500)).toBe(true);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   it("preserves authoritative state on wait timeout without mutating the target", async () => {
     const service = createService();
     const runningThread = {

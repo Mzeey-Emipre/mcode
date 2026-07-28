@@ -87,6 +87,8 @@ describe("internal thread-control MCP transport", () => {
       workspaceSearch: vi.fn().mockReturnValue({ workspaces: [] }),
       worktreeList: vi.fn(),
       threadCreateBatch: vi.fn().mockResolvedValue({ results: [] }),
+      threadSearch: vi.fn(),
+      threadWait: vi.fn(),
     } as unknown as ThreadControlService;
     const session = createInternalThreadControlMcpSession({ authority, service });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -109,6 +111,14 @@ describe("internal thread-control MCP transport", () => {
       name: "thread_wait",
       arguments: { threadIds: ["duplicate", "duplicate"] },
     })).resolves.toMatchObject({ isError: true });
+    expect(service.threadWait).not.toHaveBeenCalled();
+    await expect(session.dispatch({
+      bearerCredential: lease.credential,
+      requestId: "call-empty-statuses",
+      toolName: "thread_search",
+      arguments: { statuses: [] },
+    })).rejects.toThrow();
+    expect(service.threadSearch).not.toHaveBeenCalled();
     await expect(session.dispatch({
       bearerCredential: lease.credential,
       requestId: "call-4",

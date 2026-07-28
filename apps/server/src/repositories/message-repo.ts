@@ -469,10 +469,11 @@ export class MessageRepo {
     `);
     const messages = selected
       .sort((left, right) => left.sequence - right.sequence)
-      .map((row) => {
+      .flatMap((row) => {
         const fetched = row.contentLimit === undefined
           ? fullStmt.get(row.id, threadId)
           : truncatedStmt.get(row.contentLimit, row.id, threadId);
+        if (!fetched) return [];
         const contentRow = fetched as {
           id: string;
           role: "user" | "assistant" | "system";
@@ -488,7 +489,7 @@ export class MessageRepo {
         const prefix = row.contentLimit === undefined
           ? contentRow.content
           : takeUtf8Prefix(contentRow.content, row.contentLimit).text;
-        return {
+        return [{
           id: contentRow.id,
           role: contentRow.role,
           content: prefix,
@@ -499,7 +500,7 @@ export class MessageRepo {
           sourceThreadId: contentRow.source_thread_id,
           sourceTurnId: contentRow.source_turn_id,
           sourceProviderId: contentRow.source_provider_id,
-        } satisfies ThreadControlMessageRecord;
+        } satisfies ThreadControlMessageRecord];
       });
     return {
       messages,
