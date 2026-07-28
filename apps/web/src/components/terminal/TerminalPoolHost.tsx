@@ -174,7 +174,6 @@ export function TerminalPoolHost() {
       <TerminalView
         key={mountedTerm.id}
         ptyId={mountedTerm.id}
-        shellLabel={mountedTerm.label}
         visible={displayed}
         threadActive={displayed}
       />

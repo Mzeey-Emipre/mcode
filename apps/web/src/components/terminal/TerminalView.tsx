@@ -277,8 +277,6 @@ async function loadRenderer(
 interface TerminalViewProps {
   /** The PTY session ID this view is bound to. */
   readonly ptyId: string;
-  /** The shell name shown above the active terminal canvas. */
-  readonly shellLabel?: string;
   /**
    * Whether this terminal is the active tab for the active workspace thread
    * (combined pool flag from {@link TerminalTabContent}).
@@ -295,7 +293,6 @@ interface TerminalViewProps {
 /** Renders a single xterm.js terminal backed by a server-side PTY via WS transport. */
 export const TerminalView = memo(function TerminalView({
   ptyId,
-  shellLabel,
   visible: shown,
   threadActive,
 }: TerminalViewProps) {
@@ -944,30 +941,16 @@ export const TerminalView = memo(function TerminalView({
     };
   }, [shown, threadActive, ptyId]);
 
-  const terminalCanvas = (
-    <div
-      ref={containerRef}
-      className="h-full min-h-0 w-full"
-      data-terminal-hydrated={hydrated}
-      style={{ visibility: shown && hydrated ? "visible" : "hidden" }}
-    />
-  );
-
-  if (!shellLabel) return terminalCanvas;
-
   return (
     <div
-      className="flex h-full min-h-0 flex-col"
-      style={{ backgroundColor: TERMINAL_BACKGROUND }}
-    >
-      <div className="flex h-11 shrink-0 items-center border-b border-border/40 px-5">
-        <span className="text-sm font-semibold">{shellLabel}</span>
-      </div>
-      <div className="min-h-0 flex-1" data-testid="terminal-render-content">
-        <div className="h-full min-h-0 px-5 py-6">
-          {terminalCanvas}
-        </div>
-      </div>
-    </div>
+      ref={containerRef}
+      className="h-full min-h-0 w-full px-5 py-6"
+      data-terminal-hydrated={hydrated}
+      data-testid="terminal-render-content"
+      style={{
+        backgroundColor: TERMINAL_BACKGROUND,
+        visibility: shown && hydrated ? "visible" : "hidden",
+      }}
+    />
   );
 });
