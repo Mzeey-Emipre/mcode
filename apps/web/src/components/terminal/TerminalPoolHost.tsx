@@ -170,10 +170,11 @@ export function TerminalPoolHost() {
   if (!portalTarget || !mountedTerm) return null;
 
   return createPortal(
-    <div className="absolute inset-0 flex min-h-0 flex-col">
+    <div className="absolute inset-0 min-h-0">
       <TerminalView
         key={mountedTerm.id}
         ptyId={mountedTerm.id}
+        shellLabel={mountedTerm.label}
         visible={displayed}
         threadActive={displayed}
       />

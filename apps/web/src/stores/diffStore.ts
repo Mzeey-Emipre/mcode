@@ -726,7 +726,9 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     set((state) => {
       const current = effectiveRightPanel(state, workspaceId, threadId);
       const instanceId = rightPanelTerminalId(ptyId);
-      const tabInstances = rightPanelTabInstances(current);
+      const tabInstances = rightPanelTabInstances(current).filter(
+        (instance) => instance.id !== rightPanelSingletonId("terminal"),
+      );
       if (tabInstances.some((instance) => instance.id === instanceId)) {
         return writeRightPanel(state, workspaceId, threadId, {
           ...current,
