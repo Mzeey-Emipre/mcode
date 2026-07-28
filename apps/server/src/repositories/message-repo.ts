@@ -32,6 +32,11 @@ interface MessageRow {
   reply_to_message_id: string | null;
   quoted_text: string | null;
   model: string | null;
+  provider: string | null;
+  origin_type: string;
+  source_thread_id: string | null;
+  source_turn_id: string | null;
+  source_provider_id: string | null;
   is_internal: number;
   tool_call_count?: number;
 }
@@ -51,6 +56,20 @@ type MessageOriginInput =
       sourceTurnId: string;
       sourceProviderId: string;
     };
+
+/** Persisted fields needed to build the bounded thread-control transcript. */
+export interface ThreadControlMessageRecord {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp: string;
+  provider: string | null;
+  model: string | null;
+  originType: "composer" | "thread" | "legacy";
+  sourceThreadId: string | null;
+  sourceTurnId: string | null;
+  sourceProviderId: string | null;
+}
 
 export interface ThreadHistoryBudget {
   budgetBytes: number;
@@ -130,10 +149,10 @@ function rowToMessage(row: MessageRow): Message {
 }
 
 const MESSAGE_COLUMNS =
-  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, is_internal";
+  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, provider, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal";
 
 const MESSAGE_COLUMNS_PREFIXED =
-  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal";
+  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.provider, m.origin_type, m.source_thread_id, m.source_turn_id, m.source_provider_id, m.is_internal";
 
 /**
  * Pre-aggregates tool call counts for the selected page only.
@@ -387,6 +406,51 @@ export class MessageRepo {
     }
 
     return { messages: rows.map(rowToMessage), hasMore };
+  }
+
+  /** Return a bounded newest transcript window with persisted provenance fields. */
+  listByThreadForThreadControl(
+    threadId: string,
+    limit: number,
+  ): { messages: ThreadControlMessageRecord[]; hasMore: boolean } {
+    const clampedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const rows = this.db.prepare(`
+      SELECT id, role, content, timestamp, provider, model, origin_type,
+             source_thread_id, source_turn_id, source_provider_id
+      FROM messages
+      WHERE thread_id = ? AND is_internal = 0
+      ORDER BY sequence DESC
+      LIMIT ?
+    `).all(threadId, clampedLimit + 1) as Array<{
+      id: string;
+      role: "user" | "assistant" | "system";
+      content: string;
+      timestamp: string;
+      provider: string | null;
+      model: string | null;
+      origin_type: string;
+      source_thread_id: string | null;
+      source_turn_id: string | null;
+      source_provider_id: string | null;
+    }>;
+    const hasMore = rows.length > clampedLimit;
+    const selected = hasMore ? rows.slice(0, clampedLimit) : rows;
+    selected.reverse();
+    return {
+      messages: selected.map((row) => ({
+        id: row.id,
+        role: row.role,
+        content: row.content,
+        timestamp: row.timestamp,
+        provider: row.provider,
+        model: row.model,
+        originType: row.origin_type === "composer" || row.origin_type === "thread" ? row.origin_type : "legacy",
+        sourceThreadId: row.source_thread_id,
+        sourceTurnId: row.source_turn_id,
+        sourceProviderId: row.source_provider_id,
+      })),
+      hasMore,
+    };
   }
 
   /**

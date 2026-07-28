@@ -1,14 +1,33 @@
 import {
   ThreadCreateBatchInputSchema,
   ThreadCreateBatchResultSchema,
+  ThreadGetInputSchema,
+  ThreadGetResultSchema,
+  ThreadSearchInputSchema,
+  ThreadSearchResultSchema,
+  ThreadWaitInputSchema,
+  ThreadWaitResultSchema,
   WorkspaceSearchInputSchema,
   WorkspaceSearchResultSchema,
   WorktreeListInputSchema,
   WorktreeListResultSchema,
 } from "@mcode/contracts";
+import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { InternalThreadControlMcpAuthority } from "./thread-control-mcp-authority.js";
 import type { ThreadControlService } from "./thread-control-service.js";
+
+const threadSearchToolInputSchema = z.object({
+  workspaceIds: z.array(z.string().trim().min(1).max(128)).min(1).max(20).optional(),
+  query: z.string().trim().max(256).optional(),
+  statuses: z.array(z.enum(["starting", "running", "idle", "completed", "failed", "stopped", "waiting_for_approval", "waiting_for_user"])).max(9).optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+}).strict();
+const threadWaitToolInputSchema = z.object({
+  threadIds: z.array(z.string().trim().min(1).max(128)).min(1).max(20),
+  until: z.enum(["attention_or_terminal", "terminal"]).default("attention_or_terminal"),
+  timeoutSeconds: z.number().int().min(1).max(1_800).default(300),
+}).strict();
 
 /** Incoming request context for the server-internal MCP transport. */
 export interface InternalThreadControlMcpRequest {
@@ -16,6 +35,7 @@ export interface InternalThreadControlMcpRequest {
   requestId: string | number;
   toolName: string;
   arguments: unknown;
+  signal?: AbortSignal;
 }
 
 /** Creates MCP servers and direct dispatchers for one server-owned thread-control authority. */
@@ -49,6 +69,8 @@ export function createInternalThreadControlMcpSession(
       ? undefined
       : options.authority.authorize(request.bearerCredential, sourceToolCallId);
     if (!authority) throw new InternalThreadControlMcpAuthorizationError();
+    const leaseSignal = options.authority.signal(request.bearerCredential);
+    const signal = combineAbortSignals([leaseSignal, request.signal]);
 
     switch (request.toolName) {
       case "workspace_search": {
@@ -64,6 +86,18 @@ export function createInternalThreadControlMcpSession(
         return ThreadCreateBatchResultSchema().parse(
           await options.service.threadCreateBatch(authority, input),
         );
+      }
+      case "thread_search": {
+        const input = ThreadSearchInputSchema().parse(request.arguments);
+        return ThreadSearchResultSchema().parse(options.service.threadSearch(authority, input));
+      }
+      case "thread_get": {
+        const input = ThreadGetInputSchema().parse(request.arguments);
+        return ThreadGetResultSchema().parse(options.service.threadGet(authority, input));
+      }
+      case "thread_wait": {
+        const input = ThreadWaitInputSchema().parse(request.arguments);
+        return ThreadWaitResultSchema().parse(await options.service.threadWait(authority, input, signal));
       }
       default:
         throw new InternalThreadControlMcpAuthorizationError();
@@ -103,9 +137,49 @@ export function createInternalThreadControlMcpSession(
         toolName: "thread_create_batch",
         arguments: arguments_,
       })));
+      server.registerTool("thread_search", {
+        description: "Search readable threads across registered Mcode Projects.",
+        inputSchema: threadSearchToolInputSchema,
+        outputSchema: ThreadSearchResultSchema(),
+      }, async (arguments_, extra) => createToolResult(await dispatch({
+        bearerCredential,
+        requestId: extra.requestId,
+        toolName: "thread_search",
+        arguments: arguments_,
+        signal: extra.signal,
+      })));
+      server.registerTool("thread_get", {
+        description: "Read one bounded thread transcript.",
+        inputSchema: ThreadGetInputSchema(),
+        outputSchema: ThreadGetResultSchema(),
+      }, async (arguments_, extra) => createToolResult(await dispatch({
+        bearerCredential,
+        requestId: extra.requestId,
+        toolName: "thread_get",
+        arguments: arguments_,
+        signal: extra.signal,
+      })));
+      server.registerTool("thread_wait", {
+        description: "Wait for exact readable threads to require attention or finish.",
+        inputSchema: threadWaitToolInputSchema,
+        outputSchema: ThreadWaitResultSchema(),
+      }, async (arguments_, extra) => createToolResult(await dispatch({
+        bearerCredential,
+        requestId: extra.requestId,
+        toolName: "thread_wait",
+        arguments: arguments_,
+        signal: extra.signal,
+      })));
       return server;
     },
   };
+}
+
+function combineAbortSignals(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (active.length === 0) return undefined;
+  if (active.some((signal) => signal.aborted)) return AbortSignal.abort();
+  return AbortSignal.any(active);
 }
 
 function normalizeRequestId(requestId: string | number): string | undefined {

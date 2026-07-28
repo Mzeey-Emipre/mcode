@@ -12,11 +12,23 @@ import {
   type ThreadCreateInput,
   type ThreadCreateItemResult,
   type ThreadControlError,
+  type ThreadGetInput,
+  type ThreadGetResult,
+  type ThreadObservedState,
+  type ThreadReadMessage,
+  type ThreadSearchInput,
+  type ThreadSearchResult,
+  type ThreadWaitInput,
+  type ThreadWaitResult,
+  type ThreadWaitItem,
   type WorkspaceSearchInput,
   type WorkspaceSearchResult,
   type WorktreeListInput,
   type WorktreeListResult,
   ThreadCreateBatchInputSchema,
+  ThreadGetInputSchema,
+  ThreadSearchInputSchema,
+  ThreadWaitInputSchema,
 } from "@mcode/contracts";
 import type {
   ExternalThreadControlAuthority,
@@ -32,6 +44,7 @@ import { delay, inject, injectable } from "tsyringe";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { WorktreeRepo, type InternalRegisteredWorktree } from "../repositories/worktree-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
+import { MessageRepo, type ThreadControlMessageRecord } from "../repositories/message-repo.js";
 import {
   ThreadControlApprovalRepo,
   type RecoverableThreadCreateApproval,
@@ -69,6 +82,7 @@ export class ThreadControlService {
     @inject(delay(() => ModelCacheService)) private readonly models: ModelCacheService,
     @inject(ThreadControlApprovalRepo) private readonly approvals: ThreadControlApprovalRepo,
     @inject(ThreadControlAuditRepo) private readonly audit: ThreadControlAuditRepo,
+    @inject(MessageRepo, { isOptional: true }) private readonly messages?: MessageRepo,
   ) {}
 
   /** Search only registered workspaces; authority is intentionally not tool input. */
@@ -81,6 +95,131 @@ export class ThreadControlService {
         ...(workspace.last_opened_at ? { lastUsedAt: new Date(workspace.last_opened_at).toISOString() } : {}),
       })),
     };
+  }
+
+  /** Search readable registered Projects using authoritative observed state. */
+  threadSearch(
+    authority: ThreadControlAuthority,
+    input: ThreadSearchInput,
+  ): ThreadSearchResult {
+    const validated = ThreadSearchInputSchema().parse(input);
+    if (validated.workspaceIds && new Set(validated.workspaceIds).size !== validated.workspaceIds.length) {
+      throw new Error("workspaceIds must be unique");
+    }
+    if (validated.statuses && new Set(validated.statuses).size !== validated.statuses.length) {
+      throw new Error("statuses must be unique");
+    }
+    const rows = this.threads.search({
+      query: validated.query?.trim() ?? "",
+      workspaceIds: validated.workspaceIds,
+      excludeThreadId: authority.type === "internal" ? authority.sourceThreadId : undefined,
+      limit: 200,
+    }).threads;
+    const threads = rows
+      .filter((thread) => this.canReadThread(authority, thread.id, thread.workspace_id))
+      .map((thread) => ({ thread, state: this.observedState(thread) }))
+      .filter(({ state }) => !validated.statuses || validated.statuses.some((status) => status === state.status))
+      .sort((left, right) => right.thread.updated_at.localeCompare(left.thread.updated_at) || left.thread.id.localeCompare(right.thread.id))
+      .slice(0, validated.limit)
+      .map(({ thread, state }) => this.threadRef(thread, state));
+    this.auditRead(authority, "thread_search", "success");
+    return { threads };
+  }
+
+  /** Read one bounded transcript window without exposing filesystem metadata. */
+  threadGet(
+    authority: ThreadControlAuthority,
+    input: ThreadGetInput,
+  ): ThreadGetResult {
+    const validated = ThreadGetInputSchema().parse(input);
+    const thread = this.threads.findById(validated.threadId);
+    if (!thread || thread.deleted_at != null || !this.canReadThread(authority, thread.id, thread.workspace_id)) {
+      return {
+        status: "rejected",
+        threadId: validated.threadId,
+        error: this.error("not_found", "Thread not found", false),
+      };
+    }
+    const state = this.observedState(thread);
+    if (!this.messages) {
+      return {
+        status: "rejected",
+        workspaceId: thread.workspace_id,
+        threadId: validated.threadId,
+        error: this.error("internal_error", "Thread transcript is unavailable", true),
+      };
+    }
+    const transcript = this.messages.listByThreadForThreadControl(validated.threadId, validated.messageLimit);
+    const result: ThreadGetResult = {
+      status: "found",
+      workspaceId: thread.workspace_id,
+      thread: this.threadRef(thread, state),
+      messages: transcript.messages.map((message) => this.readMessage(message, thread.provider, thread.model)),
+      hasMoreMessages: transcript.hasMore,
+    };
+    this.auditRead(authority, "thread_get", "success", thread.workspace_id, thread.id);
+    return result;
+  }
+
+  /** Wait until every exact readable target reaches the requested boundary. */
+  async threadWait(
+    authority: ThreadControlAuthority,
+    input: ThreadWaitInput,
+    signal?: AbortSignal,
+  ): Promise<ThreadWaitResult> {
+    const validated = ThreadWaitInputSchema().parse(input);
+    if (new Set(validated.threadIds).size !== validated.threadIds.length) {
+      throw new Error("threadIds must be unique");
+    }
+    const targets = validated.threadIds.map((threadId) => this.threads.findById(threadId));
+    if (targets.some((thread) => !thread || thread.deleted_at != null || !this.canReadThread(authority, thread.id, thread.workspace_id))) {
+      return { status: "rejected", error: this.error("not_found", "Thread not found", false) };
+    }
+    const targetThreads = targets as NonNullable<typeof targets[number]>[];
+    const readCurrent = (): ThreadWaitItem[] => targetThreads.map((thread) => ({
+      workspaceId: thread.workspace_id,
+      threadId: thread.id,
+      state: this.observedState(this.threads.findById(thread.id) ?? thread),
+    }));
+    const satisfied = (state: ThreadObservedState): boolean => {
+      if (validated.until === "terminal") return state.status === "completed" || state.status === "failed" || state.status === "stopped";
+      return state.status === "waiting_for_approval" || state.status === "waiting_for_user"
+        || state.status === "completed" || state.status === "failed" || state.status === "stopped";
+    };
+    const timeoutAt = Date.now() + validated.timeoutSeconds * 1000;
+    const result = await new Promise<ThreadWaitResult>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const finish = (timedOut: boolean): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve({ status: "success", timedOut, results: readCurrent() });
+      };
+      const onAbort = (): void => finish(true);
+      const check = (): void => {
+        const current = readCurrent();
+        if (current.every((item) => satisfied(item.state))) {
+          finish(false);
+          return;
+        }
+        const remaining = timeoutAt - Date.now();
+        if (remaining <= 0) {
+          finish(true);
+          return;
+        }
+        timer = setTimeout(check, Math.min(50, remaining));
+      };
+      if (signal?.aborted) {
+        finish(true);
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      check();
+    });
+    if (result.status === "success") this.auditRead(authority, "thread_wait", "success");
+    return result;
   }
 
   /** Revalidate workspace registration and return only opaque worktree identities. */
@@ -211,6 +350,112 @@ export class ThreadControlService {
         this.failRecovery(approval);
       }
     }
+  }
+
+  private canReadThread(authority: ThreadControlAuthority, threadId: string, workspaceId: string): boolean {
+    if (!this.workspaces.findById(workspaceId)) return false;
+    if (authority.type === "internal") {
+      return threadId !== authority.sourceThreadId;
+    }
+    if (!authority.allowedWorkspaceIds.includes(workspaceId)) return false;
+    return authority.scopes.includes("threads:read-project") || authority.scopes.includes("threads:read-owned");
+  }
+
+  private auditRead(
+    authority: ThreadControlAuthority,
+    operation: "thread_search" | "thread_get" | "thread_wait",
+    outcome: string,
+    workspaceId?: string,
+    threadId?: string,
+  ): void {
+    this.writeAudit({
+      callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
+      ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(threadId ? { threadId } : {}),
+      operation,
+      outcome,
+    }, threadId ? { threadId } : {});
+  }
+
+  private observedState(thread: { id: string; status: string }): ThreadObservedState {
+    let pendingApproval: ReturnType<ThreadControlApprovalRepo["listPendingByThread"]>[number] | undefined;
+    try {
+      pendingApproval = this.approvals.listPendingByThread(thread.id)[0];
+    } catch {
+      pendingApproval = undefined;
+    }
+    if (pendingApproval) return { status: "waiting_for_approval", approvalId: pendingApproval.approvalId };
+    if (this.agentService.activeThreadIds?.().includes(thread.id)) return { status: "running" };
+    switch (thread.status) {
+      case "completed": return { status: "completed" };
+      case "errored": return { status: "failed" };
+      case "interrupted": return { status: "stopped" };
+      case "paused": return { status: "waiting_for_user" };
+      case "deleted":
+      case "archived": return { status: "stopped" };
+      case "active": return { status: "idle" };
+      default: return { status: "idle" };
+    }
+  }
+
+  private threadRef(thread: {
+    id: string;
+    workspace_id: string;
+    title: string;
+    provider: string;
+    model: string | null;
+    created_at: string;
+    updated_at: string;
+  }, state: ThreadObservedState) {
+    return {
+      workspaceId: thread.workspace_id,
+      threadId: thread.id,
+      title: thread.title,
+      providerId: thread.provider || "unknown",
+      modelId: thread.model || "unknown",
+      createdAt: thread.created_at,
+      updatedAt: thread.updated_at,
+      state,
+    };
+  }
+
+  private readMessage(
+    message: ThreadControlMessageRecord,
+    threadProvider: string,
+    threadModel: string | null,
+  ): ThreadReadMessage {
+    if (message.role === "assistant") {
+      return {
+        messageId: message.id,
+        role: "assistant",
+        content: message.content,
+        createdAt: message.timestamp,
+        providerId: message.provider || threadProvider || "unknown",
+        modelId: message.model || threadModel || "unknown",
+      };
+    }
+    if (message.role === "system") {
+      return { messageId: message.id, role: "system", content: message.content, createdAt: message.timestamp };
+    }
+    const origin = message.originType === "thread"
+      && message.sourceThreadId && message.sourceTurnId && message.sourceProviderId
+      ? {
+          type: "thread" as const,
+          sourceThreadId: message.sourceThreadId,
+          sourceTurnId: message.sourceTurnId,
+          sourceProviderId: message.sourceProviderId,
+        }
+      : message.originType === "composer"
+        ? { type: "composer" as const }
+        : { type: "legacy" as const };
+    return {
+      messageId: message.id,
+      role: "user",
+      content: message.content,
+      createdAt: message.timestamp,
+      origin,
+    };
   }
 
   private async recoverApproval(approval: RecoverableThreadCreateApproval): Promise<void> {

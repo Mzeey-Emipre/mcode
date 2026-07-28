@@ -100,6 +100,9 @@ describe("internal thread-control MCP transport", () => {
         { name: "workspace_search" },
         { name: "worktree_list" },
         { name: "thread_create_batch" },
+        { name: "thread_search" },
+        { name: "thread_get" },
+        { name: "thread_wait" },
       ],
     });
     await expect(session.dispatch({
@@ -142,6 +145,9 @@ describe("internal thread-control MCP transport", () => {
         { name: "workspace_search" },
         { name: "worktree_list" },
         { name: "thread_create_batch" },
+        { name: "thread_search" },
+        { name: "thread_get" },
+        { name: "thread_wait" },
       ],
     });
     await expect(client.callTool({ name: "worktree_list", arguments: { workspaceId: "workspace-1" } }))
