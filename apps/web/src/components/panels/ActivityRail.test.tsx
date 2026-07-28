@@ -103,19 +103,27 @@ describe("ActivityRail expansion", () => {
     expect(rail).toHaveClass("w-12");
   });
 
-  it("anchors tab, Browser-page, and maximize controls to the same trailing edge", () => {
+  it("anchors trailing controls right and reserves their label space", () => {
     const { rerender } = renderRail();
     fireEvent.focus(screen.getByRole("button", { name: "Terminal" }));
 
     expect(screen.getByRole("button", { name: "Close Terminal" })).toHaveClass(
       "absolute",
-      "left-[7.75rem]",
+      "right-0",
       "top-0",
     );
     expect(screen.getByTestId("rail-maximize-toggle")).toHaveClass(
       "absolute",
-      "left-[7.75rem]",
+      "right-0",
       "top-0",
+    );
+    expect(screen.getByRole("button", { name: "Terminal" }).querySelector("span")).toHaveClass(
+      "left-8",
+      "right-8",
+    );
+    expect(screen.getByTestId("rail-panel-toggle").querySelector("span")).toHaveClass(
+      "left-8",
+      "right-8",
     );
 
     rerender(
@@ -134,8 +142,12 @@ describe("ActivityRail expansion", () => {
 
     expect(screen.getByRole("button", { name: "Close page Example" })).toHaveClass(
       "absolute",
-      "left-[7.75rem]",
+      "right-0",
       "top-0",
+    );
+    expect(screen.getByRole("button", { name: "Browser page: Example" }).querySelector("span")).toHaveClass(
+      "left-8",
+      "right-8",
     );
   });
 

@@ -22,13 +22,20 @@ import {
   usePreviewDisplayTabSet,
   usePreviewTabsStore,
 } from "@/stores/previewTabsStore";
-import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
-import { ensureTerminalForScope } from "@/lib/ensure-terminal";
+import { createTerminalForScope } from "@/lib/ensure-terminal";
+import {
+  MAX_TERMINALS_PER_SCOPE,
+  type TerminalInstance,
+  useTerminalStore,
+} from "@/stores/terminalStore";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
+import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
 import { SubagentsPanel } from "./SubagentsPanel";
+
+const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
 
 /**
  * Tracks whether the Changes tab has unreviewed new files for the active
@@ -115,6 +122,25 @@ export function RightPanel() {
   // workspace itself in the threadless new-thread view (where they run against
   // the local workspace root). Their stores treat this as an opaque scope key.
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
+  const terminalsByScope = useTerminalStore((s) => s.terminals);
+  const scopeTerminals = panelScopeId
+    ? (terminalsByScope[panelScopeId] ?? EMPTY_SCOPE_TERMINALS)
+    : EMPTY_SCOPE_TERMINALS;
+  const terminalLabels = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    for (const terminal of scopeTerminals) {
+      occurrences.set(terminal.label, (occurrences.get(terminal.label) ?? 0) + 1);
+    }
+    const seen = new Map<string, number>();
+    return Object.fromEntries(scopeTerminals.map((terminal) => {
+      const ordinal = (seen.get(terminal.label) ?? 0) + 1;
+      seen.set(terminal.label, ordinal);
+      const label = occurrences.get(terminal.label)! > 1
+        ? `${terminal.label} (${ordinal})`
+        : terminal.label;
+      return [`terminal:${terminal.id}`, label];
+    }));
+  }, [scopeTerminals]);
 
   // The Browser tab's open pages drive the rail's page switcher. The store is
   // seeded by the mounted PreviewPanel; reading it here lets the rail render
@@ -169,17 +195,6 @@ export function RightPanel() {
     changesCount,
     isChangesActive,
   );
-
-  // Anticipate the next step: opening the Terminal tab spawns a shell when the
-  // thread has none, so the user lands in a ready terminal instead of an empty
-  // pane. Gated on visibility so a hidden (persisted) terminal tab never spawns
-  // in the background, and intentionally not gated on the terminal count so
-  // killing the last terminal does not immediately respawn one.
-  useEffect(() => {
-    if (panelVisible && terminalActive && panelScopeId) {
-      ensureTerminalForScope(panelScopeId);
-    }
-  }, [panelVisible, terminalActive, panelScopeId]);
 
   // Exit maximize when the panel is hidden so the user never lands on a blank
   // full-screen shell with no panel chrome to restore from.
@@ -272,11 +287,28 @@ export function RightPanel() {
             toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId)
           }
           onToggleMaximized={toggleMaximized}
-          onSelect={(instanceId) =>
-            setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId)
-          }
+          onSelect={(instanceId) => {
+            setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
+            const terminal = tabInstances.find((instance) => instance.id === instanceId);
+            if (terminal?.type === "terminal" && panelScopeId) {
+              useTerminalStore
+                .getState()
+                .setActiveTerminal(panelScopeId, instanceId.slice("terminal:".length));
+            }
+          }}
           onClose={(instanceId) =>
-            closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId)
+            {
+              const terminal = tabInstances.find((instance) => instance.id === instanceId);
+              if (terminal?.type === "terminal") {
+                const ptyId = instanceId.slice("terminal:".length);
+                void getTransport().terminalKill(ptyId).then(() => {
+                  useTerminalStore.getState().removeTerminal(ptyId);
+                  closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
+                });
+              } else {
+                closeRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
+              }
+            }
           }
           onReorder={(instanceId, direction) =>
             reorderRightPanelTab(
@@ -286,9 +318,15 @@ export function RightPanel() {
               direction,
             )
           }
-          onCreate={(id) =>
-            setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
-          }
+          terminalCapReached={scopeTerminals.length >= MAX_TERMINALS_PER_SCOPE}
+          terminalLabels={terminalLabels}
+          onCreate={(id) => {
+            if (id === "terminal" && panelScopeId) {
+              createTerminalForScope(panelScopeId);
+              return;
+            }
+            setRightPanelTab(activeWorkspaceId!, activeThreadId, id);
+          }}
           onSelectBrowserPage={(instanceId, pageId) => {
             // Focus the Browser tab and switch the guest to that page.
             setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
@@ -325,7 +363,9 @@ export function RightPanel() {
               scope={panelScope}
               openTabs={openTabs}
               onOpen={(id) =>
-                setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
+                id === "terminal" && panelScopeId
+                  ? createTerminalForScope(panelScopeId)
+                  : setRightPanelTab(activeWorkspaceId!, activeThreadId, id)
               }
             />
           )}
@@ -356,9 +396,6 @@ export function RightPanel() {
             aria-hidden={!terminalActive}
             inert={!terminalActive ? true : undefined}
           >
-            {terminalActive && panelScopeId && (
-              <TerminalTabContent threadId={panelScopeId} />
-            )}
             <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden p-2" />
           </div>
         </div>

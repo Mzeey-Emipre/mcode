@@ -45,7 +45,7 @@ const RAIL_EXPAND_DELAY_MS = 140;
 const RAIL_COLLAPSE_DELAY_MS = 250;
 
 /** Shared trailing anchor for expanded-rail actions. */
-const RAIL_TRAILING_CONTROL_CLASS = "absolute left-[7.75rem] top-0";
+const RAIL_TRAILING_CONTROL_CLASS = "absolute right-0 top-0";
 /** Pointer and keyboard reorder boundary for one top-level rail instance. */
 function ReorderableRailItem({
   instanceId,
@@ -221,6 +221,7 @@ function RailStatus({
 /** One rail entry: a select glyph with an active lamp, plus a hover-revealed × to close. */
 function RailTab({
   id,
+  label: labelOverride,
   active,
   expanded,
   scope,
@@ -230,6 +231,7 @@ function RailTab({
   onClose,
 }: {
   id: RightPanelTab;
+  label?: string;
   active: boolean;
   expanded: boolean;
   scope: ScopeProgress;
@@ -241,7 +243,7 @@ function RailTab({
   const meta = metaForTab(id);
   if (!meta) return null;
   const Icon = meta.icon;
-  const label = meta.label;
+  const label = labelOverride ?? meta.label;
   return (
     <div className="group relative w-full">
       <Button
@@ -474,14 +476,18 @@ function RailAddControl({
   openTabs,
   expanded,
   onCreate,
+  terminalCapReached,
 }: {
   scope: PanelScope;
   openTabs: readonly RightPanelTab[];
   expanded: boolean;
   onCreate: (id: RightPanelTab) => void;
+  readonly terminalCapReached?: boolean;
 }) {
   const shown = shownTabTypes(scope, openTabs);
-  const creatable = creatableTypes(scope, openTabs);
+  const creatable = creatableTypes(scope, openTabs).filter(
+    (type) => !(terminalCapReached && type.id === "terminal"),
+  );
 
   // Nothing openable hides the control entirely, even if a coming-soon teaser remains.
   if (creatable.length === 0) return null;
@@ -542,8 +548,10 @@ function RailAddControl({
           return (
             <DropdownMenuItem
               key={type.id}
-              disabled={type.comingSoon}
-              onClick={type.comingSoon ? undefined : () => onCreate(type.id as RightPanelTab)}
+            disabled={type.comingSoon || (terminalCapReached && type.id === "terminal")}
+            onClick={type.comingSoon || (terminalCapReached && type.id === "terminal")
+              ? undefined
+              : () => onCreate(type.id as RightPanelTab)}
               className="flex items-center justify-between gap-3 px-2.5 py-1.5 text-xs"
             >
               <span className="flex items-center gap-2">
@@ -586,6 +594,8 @@ export function ActivityRail({
   onClose,
   onReorder,
   onCreate,
+  terminalCapReached,
+  terminalLabels,
   onSelectBrowserPage,
   onCloseBrowserPage,
 }: {
@@ -605,6 +615,10 @@ export function ActivityRail({
   onClose: (instanceId: string) => void;
   onReorder: (instanceId: string, direction: -1 | 1) => void;
   onCreate: (id: RightPanelTab) => void;
+  /** Whether this scope already owns its four allowed shell sessions. */
+  readonly terminalCapReached?: boolean;
+  /** PTY-backed rail labels keyed by terminal tab identity. */
+  readonly terminalLabels?: Readonly<Record<string, string>>;
   onSelectBrowserPage: (instanceId: string, pageId: string) => void;
   onCloseBrowserPage: (pageId: string) => void;
 }) {
@@ -771,6 +785,7 @@ export function ActivityRail({
           <ReorderableRailItem key={instanceId} instanceId={instanceId} onReorder={onReorder}>
             <RailTab
               id={id}
+              label={id === "terminal" ? terminalLabels?.[instanceId] ?? "Terminal" : undefined}
               active={instanceId === activeTabId}
               expanded={expanded}
               scope={scopeProgress}
@@ -790,7 +805,13 @@ export function ActivityRail({
           openTabs={openTabs}
           expanded={expanded}
           onCreate={onCreate}
+          terminalCapReached={terminalCapReached}
         />
+      )}
+      {terminalCapReached && (
+        <span className="sr-only" role="status">
+          Maximum of 4 terminals reached for this scope.
+        </span>
       )}
       </div>
     </div>

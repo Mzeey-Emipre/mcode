@@ -26,7 +26,7 @@ type PtyReconnectGapCallback = (detail: PtyReconnectGapPayload) => void;
  * the browser's full event dispatch machinery on every PTY data chunk.
  */
 const dataListeners = new Map<string, PtyDataCallback>();
-const exitListeners = new Map<string, PtyExitCallback>();
+const exitListeners = new Map<string, Set<PtyExitCallback>>();
 const reconnectGapListeners = new Map<string, PtyReconnectGapCallback>();
 
 /**
@@ -44,14 +44,16 @@ export function onPtyData(ptyId: string, cb: PtyDataCallback): () => void {
 
 /**
  * Register an exit listener for a specific PTY. Returns an unsubscribe function.
- * Only one listener per PTY is allowed.
+ * Terminal lifecycle consumers may observe the same exit independently.
  */
 export function onPtyExit(ptyId: string, cb: PtyExitCallback): () => void {
-  if (import.meta.env.DEV && exitListeners.has(ptyId)) {
-    console.warn(`[ptyDataRegistry] overwriting existing exit listener for PTY ${ptyId}`);
-  }
-  exitListeners.set(ptyId, cb);
-  return () => { exitListeners.delete(ptyId); };
+  const listeners = exitListeners.get(ptyId) ?? new Set<PtyExitCallback>();
+  listeners.add(cb);
+  exitListeners.set(ptyId, listeners);
+  return () => {
+    listeners.delete(cb);
+    if (listeners.size === 0) exitListeners.delete(ptyId);
+  };
 }
 
 /**
@@ -73,7 +75,7 @@ export function emitPtyData(detail: PtyDataPayload): void {
 
 /** Dispatch an exit event to the registered listener for the given PTY. */
 export function emitPtyExit(detail: PtyExitPayload): void {
-  exitListeners.get(detail.ptyId)?.(detail);
+  for (const listener of exitListeners.get(detail.ptyId) ?? []) listener(detail);
 }
 
 /** Dispatch a reconnect-gap event to the registered listener for the given PTY. */

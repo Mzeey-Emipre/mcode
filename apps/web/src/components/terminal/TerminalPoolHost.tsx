@@ -11,6 +11,7 @@ import { useTerminalPoolSlot } from "./TerminalPoolSlotContext";
 import { isContainerReadyForFit } from "./safeFit";
 import { dispatchTerminalPoolRefit } from "./terminalPoolRefit";
 import { resolveActiveTerminalId } from "./resolveActiveTerminalId";
+import { onPtyExit } from "./ptyDataRegistry";
 
 /**
  * Mounts at most one terminal view (ADR-0010): the active shell on the active
@@ -55,6 +56,29 @@ export function TerminalPoolHost() {
   }, [terminalTabVisible]);
 
   const terminals = useTerminalStore((s) => s.terminals);
+
+  useEffect(() => {
+    const unsubs = Object.values(terminals).flat().map((terminal) =>
+      onPtyExit(terminal.id, () => {
+        const state = useTerminalStore.getState();
+        const scopeId = state.ptyToThread[terminal.id];
+        if (!scopeId) return;
+        state.removeTerminal(terminal.id);
+        const workspace = useWorkspaceStore.getState();
+        const thread = workspace.threads.find((candidate) => candidate.id === scopeId);
+        const workspaceId = thread?.workspace_id ??
+          (workspace.workspaces.some((candidate) => candidate.id === scopeId) ? scopeId : undefined);
+        if (workspaceId) {
+          useDiffStore.getState().closeRightPanelTabInstance(
+            workspaceId,
+            thread ? scopeId : undefined,
+            `terminal:${terminal.id}`,
+          );
+        }
+      }),
+    );
+    return () => unsubs.forEach((unsubscribe) => unsubscribe());
+  }, [terminals]);
   const storedActiveTerminalId = useTerminalStore((s) =>
     terminalScopeId
       ? (s.terminalPanelByThread[terminalScopeId] ?? TERMINAL_PANEL_DEFAULTS)

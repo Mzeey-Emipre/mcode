@@ -424,6 +424,22 @@ describe("diffStore", () => {
   });
 
   describe("setRightPanelTab", () => {
+    it("interleaves PTY-backed terminal instances with singleton tabs", () => {
+      const { addRightPanelTerminalTab, setRightPanelTab, getRightPanel } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "thread-1", "preview");
+      addRightPanelTerminalTab("ws-1", "thread-1", "pty-1");
+      setRightPanelTab("ws-1", "thread-1", "changes");
+      addRightPanelTerminalTab("ws-1", "thread-1", "pty-2");
+
+      const panel = getRightPanel("ws-1", "thread-1");
+      expect(panel.tabInstances.map((instance) => instance.id)).toEqual([
+        "singleton:preview",
+        "terminal:pty-1",
+        "singleton:changes",
+        "terminal:pty-2",
+      ]);
+      expect(panel.activeTabId).toBe("terminal:pty-2");
+    });
     it("preserves an explicit canonical null over a stale compatibility active tab", () => {
       const panel = createRightPanelState({
         visible: true,

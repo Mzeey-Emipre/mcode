@@ -90,10 +90,10 @@ describe("shownTabTypes — cardinality filter", () => {
     ]);
   });
 
-  it("keeps the coming-soon teaser even when every openable type is open", () => {
+  it("keeps Terminal creatable after other singleton tools are open", () => {
     expect(
       ids(shownTabTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents"])),
-    ).toEqual(["files"]);
+    ).toEqual(["terminal", "files"]);
   });
 
   it("ignores open ids that the scope filter already removed", () => {
@@ -144,10 +144,10 @@ describe("creatableTypes — combined scope + cardinality", () => {
     ]);
   });
 
-  it("returns an empty set when every openable type is open", () => {
+  it("keeps Terminal creatable when every singleton tool is open", () => {
     expect(
       ids(creatableTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents"])),
-    ).toEqual([]);
+    ).toEqual(["terminal"]);
   });
 
   it("is a strict subset of shownTabTypes (only the coming-soon teaser differs)", () => {

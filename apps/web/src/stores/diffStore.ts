@@ -163,6 +163,11 @@ export function rightPanelSingletonId(type: RightPanelTab): string {
   return `singleton:${type}`;
 }
 
+/** Stable rail identity for one PTY-backed Terminal tab. */
+export function rightPanelTerminalId(ptyId: string): string {
+  return `terminal:${ptyId}`;
+}
+
 /** Resolve ordered instances from current or legacy in-memory panel state. */
 export function rightPanelTabInstances(
   state: Pick<RightPanelState, "openTabs"> & Partial<Pick<RightPanelState, "tabInstances">>,
@@ -516,6 +521,12 @@ interface DiffState {
     threadId: string | null | undefined,
     instanceId: string,
   ) => void;
+  /** Append or focus one PTY-backed Terminal rail tab. */
+  addRightPanelTerminalTab: (
+    workspaceId: string,
+    threadId: string | null | undefined,
+    ptyId: string,
+  ) => void;
   /** Move one tab instance by one bounded position in its scope. */
   reorderRightPanelTab: (
     workspaceId: string,
@@ -708,6 +719,24 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       return writeRightPanel(state, workspaceId, threadId, {
         ...current,
         activeTabId: instance.id,
+      });
+    }),
+
+  addRightPanelTerminalTab: (workspaceId, threadId, ptyId) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      const instanceId = rightPanelTerminalId(ptyId);
+      const tabInstances = rightPanelTabInstances(current);
+      if (tabInstances.some((instance) => instance.id === instanceId)) {
+        return writeRightPanel(state, workspaceId, threadId, {
+          ...current,
+          activeTabId: instanceId,
+        });
+      }
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        tabInstances: [...tabInstances, { id: instanceId, type: "terminal" }],
+        activeTabId: instanceId,
       });
     }),
 
