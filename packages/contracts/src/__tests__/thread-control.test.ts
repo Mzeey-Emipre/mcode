@@ -5,6 +5,10 @@ import {
   ThreadCreateBatchInputSchema,
   ThreadCreateBatchResultSchema,
   ThreadSearchInputSchema,
+  ThreadSendInputSchema,
+  ThreadSendResultSchema,
+  ThreadStopInputSchema,
+  ThreadStopResultSchema,
   ThreadWaitInputSchema,
   WORKSPACE_SEARCH_LIMIT_DEFAULT,
   WorkspaceSearchInputSchema,
@@ -31,6 +35,32 @@ describe("thread search and wait schemas", () => {
   it("rejects empty status filters and duplicate wait targets", () => {
     expect(ThreadSearchInputSchema().safeParse({ statuses: [] }).success).toBe(false);
     expect(ThreadWaitInputSchema().safeParse({ threadIds: ["thread-1", "thread-1"] }).success).toBe(false);
+  });
+});
+
+describe("thread mutation schemas", () => {
+  it("accepts bounded send and stop inputs without authority fields", () => {
+    expect(ThreadSendInputSchema().parse({ threadId: "target", message: "Follow up" })).toEqual({
+      threadId: "target",
+      message: "Follow up",
+    });
+    expect(ThreadSendInputSchema().safeParse({ threadId: "target", message: "x", sourceThreadId: "forged" }).success).toBe(false);
+    expect(ThreadStopInputSchema().safeParse({ threadId: "target", sourceThreadId: "forged" }).success).toBe(false);
+  });
+
+  it("validates accepted, pending, and rejected mutation results", () => {
+    const accepted = {
+      status: "accepted" as const,
+      workspaceId: "workspace",
+      threadId: "target",
+      turnId: "turn",
+      execution: { providerId: "codex", modelId: "gpt", permissionMode: "full" as const, interactionMode: "build" as const },
+      state: { status: "starting" as const },
+    };
+    expect(ThreadSendResultSchema().parse(accepted)).toEqual(accepted);
+    expect(ThreadSendResultSchema().parse({ status: "pending_approval", workspaceId: "workspace", threadId: "target", approvalId: "approval", state: { status: "waiting_for_approval", approvalId: "approval" } })).toBeTruthy();
+    expect(ThreadStopResultSchema().parse({ status: "accepted", workspaceId: "workspace", threadId: "target", state: { status: "stopped" } })).toBeTruthy();
+    expect(ThreadStopResultSchema().safeParse({ status: "accepted", workspaceId: "workspace", threadId: "target", state: { status: "stopped" }, turnId: "forged" }).success).toBe(false);
   });
 });
 

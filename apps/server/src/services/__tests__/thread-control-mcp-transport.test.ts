@@ -104,6 +104,8 @@ describe("internal thread-control MCP transport", () => {
         { name: "thread_create_batch" },
         { name: "thread_search" },
         { name: "thread_get" },
+        { name: "thread_send" },
+        { name: "thread_stop" },
         { name: "thread_wait" },
       ],
     });
@@ -161,6 +163,8 @@ describe("internal thread-control MCP transport", () => {
         { name: "thread_create_batch" },
         { name: "thread_search" },
         { name: "thread_get" },
+        { name: "thread_send" },
+        { name: "thread_stop" },
         { name: "thread_wait" },
       ],
     });

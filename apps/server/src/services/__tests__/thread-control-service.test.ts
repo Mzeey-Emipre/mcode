@@ -60,9 +60,11 @@ describe("ThreadControlService", () => {
     countActiveByIntegration: ReturnType<typeof vi.fn>;
   };
   let threadService: { provisionWorktree: ReturnType<typeof vi.fn>; cleanupInterruptedProvisioning: ReturnType<typeof vi.fn> };
-  let agentService: { sendMessage: ReturnType<typeof vi.fn>; activeThreadIds?: ReturnType<typeof vi.fn> };
+  let agentService: { sendMessage: ReturnType<typeof vi.fn>; stopSession: ReturnType<typeof vi.fn>; activeThreadIds?: ReturnType<typeof vi.fn> };
   let approvals: {
     create: ReturnType<typeof vi.fn>;
+    createSend: ReturnType<typeof vi.fn>;
+    createStop: ReturnType<typeof vi.fn>;
     claim: ReturnType<typeof vi.fn>;
     settle: ReturnType<typeof vi.fn>;
     setOperationPhase: ReturnType<typeof vi.fn>;
@@ -112,9 +114,11 @@ describe("ThreadControlService", () => {
       }),
       cleanupInterruptedProvisioning: vi.fn().mockResolvedValue(true),
     };
-    agentService = { sendMessage: vi.fn().mockResolvedValue(undefined) };
+    agentService = { sendMessage: vi.fn().mockResolvedValue(undefined), stopSession: vi.fn().mockResolvedValue(undefined) };
     approvals = {
       create: vi.fn().mockReturnValue("approval-1"),
+      createSend: vi.fn().mockReturnValue("approval-send"),
+      createStop: vi.fn().mockReturnValue("approval-stop"),
       claim: vi.fn(),
       settle: vi.fn().mockReturnValue(true),
       setOperationPhase: vi.fn().mockReturnValue(true),
@@ -843,5 +847,47 @@ describe("ThreadControlService", () => {
       "integration-1",
     );
     expect(agentService.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a full cross-thread message with authenticated origin", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };
+    threads.findById.mockReturnValue(target);
+    const fullAuthority = { ...authority, permissionMode: "full" as const };
+
+    await expect(service.threadSend(fullAuthority, { threadId: target.id, message: "Continue the task." })).resolves.toMatchObject({
+      status: "accepted",
+      workspaceId: workspace.id,
+      threadId: target.id,
+      execution: { providerId: "claude", modelId: "claude-exact", permissionMode: "full", interactionMode: "build" },
+    });
+    expect(agentService.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: target.id,
+      content: "Continue the task.",
+      sourceThreadId: authority.sourceThreadId,
+      originSourceTurnId: authority.sourceTurnId,
+      sourceProviderId: authority.sourceProviderId,
+    }));
+  });
+
+  it("persists supervised send approval and excludes the source thread", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };
+    threads.findById.mockImplementation((id: string) => id === target.id ? target : id === authority.sourceThreadId ? { ...target, id: authority.sourceThreadId } : null);
+
+    await expect(service.threadSend(authority, { threadId: target.id, message: "Needs approval." })).resolves.toMatchObject({ status: "pending_approval", approvalId: "approval-send" });
+    expect(approvals.createSend).toHaveBeenCalledWith(expect.objectContaining({ message: "Needs approval.", sourceThreadId: authority.sourceThreadId }));
+    await expect(service.threadSend(authority, { threadId: authority.sourceThreadId, message: "Self-target" })).resolves.toMatchObject({ status: "rejected", error: { code: "not_found" } });
+  });
+
+  it("stops a full target and leaves it in the stopped lifecycle state", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };
+    threads.findById.mockReturnValue(target);
+    const fullAuthority = { ...authority, permissionMode: "full" as const };
+
+    await expect(service.threadStop(fullAuthority, { threadId: target.id })).resolves.toEqual({ status: "accepted", workspaceId: workspace.id, threadId: target.id, state: { status: "stopped" } });
+    expect(agentService.stopSession).toHaveBeenCalledWith(target.id);
+    expect(threads.updateStatus).toHaveBeenCalledWith(target.id, "interrupted");
   });
 });

@@ -101,6 +101,12 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   providerWireOverride?: string;
   /** Server-assigned turn identity used by thread-control creation results. */
   sourceTurnId?: string;
+  /** Source thread identity for a cross-thread user message origin. */
+  sourceThreadId?: string;
+  /** Source provider identity for a cross-thread user message origin. */
+  sourceProviderId?: string;
+  /** Source turn identity for a cross-thread user message origin. */
+  originSourceTurnId?: string;
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -507,6 +513,9 @@ export class AgentService {
     goalObjective,
     orchestrationMode,
     sourceTurnId: requestedSourceTurnId,
+    sourceThreadId: originSourceThreadId,
+    sourceProviderId: originSourceProviderId,
+    originSourceTurnId,
   }: SendMessageCommand): Promise<void> {
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
@@ -555,6 +564,18 @@ export class AgentService {
       provider: effectiveProvider,
     });
 
+    let activeSlotReserved = this.reserveTurn(threadId);
+    if (!activeSlotReserved) {
+      throw new Error(`Thread ${threadId} already has an active agent session`);
+    }
+    const releaseReservedSlot = () => {
+      if (!activeSlotReserved) return;
+      activeSlotReserved = false;
+      if (this.activeSessionIds.delete(threadId)) {
+        this.memoryPressureService.markIdle(threadId);
+      }
+    };
+
     // Route the message through the mcode-native command namespace before it
     // reaches the provider. The router probes each command's required
     // capability and passes through when the resolved provider lacks it, so the
@@ -571,16 +592,33 @@ export class AgentService {
     // catch block runs onRollback as a belt-and-suspenders guard.
     let pendingDispatch: (() => void | Promise<void>) | null = null;
     let pendingRollback: (() => void | Promise<void>) | null = null;
-    const commandContext = {
-      threadId,
-      content,
-      provider: this.providerRegistry.resolve(effectiveProvider),
+    let commandContext: {
+      threadId: string;
+      content: string;
+      provider: IAgentProvider;
     };
-    const commandOutcome = goalObjective !== undefined
-      ? await this.goalCommand.prepareSet(commandContext, goalObjective)
-      : await this.commandRouter.route(commandContext);
+    try {
+      commandContext = {
+        threadId,
+        content,
+        provider: this.providerRegistry.resolve(effectiveProvider),
+      };
+    } catch (error) {
+      releaseReservedSlot();
+      throw error;
+    }
+    let commandOutcome;
+    try {
+      commandOutcome = goalObjective !== undefined
+        ? await this.goalCommand.prepareSet(commandContext, goalObjective)
+        : await this.commandRouter.route(commandContext);
+    } catch (error) {
+      releaseReservedSlot();
+      throw error;
+    }
     if (commandOutcome.kind === "handled") {
       logger.info("Handled mcode-native command", { threadId });
+      releaseReservedSlot();
       return;
     }
     if (commandOutcome.kind === "rewrite") {
@@ -590,19 +628,7 @@ export class AgentService {
       content = commandOutcome.content;
     }
 
-    if (this.activeSessionIds.has(threadId)) {
-      throw new Error(`Thread ${threadId} already has an active agent session`);
-    }
-
-    let activeSlotReserved = false;
     let commandDispatched = false;
-    const releaseReservedSlot = () => {
-      if (!activeSlotReserved) return;
-      activeSlotReserved = false;
-      if (this.activeSessionIds.delete(threadId)) {
-        this.memoryPressureService.markIdle(threadId);
-      }
-    };
 
     try {
       const cwd = this.gitService.resolveWorkingDir(
@@ -621,8 +647,6 @@ export class AgentService {
       }
 
       this.memoryPressureService.assertCanStartTurn();
-      this.activeSessionIds.add(threadId);
-      activeSlotReserved = true;
       this.memoryPressureService.markActive(threadId);
 
       // Compute next sequence number and persist user message
@@ -651,20 +675,36 @@ export class AgentService {
     // back too, keeping marker durability == answer durability.
     this.turnFinalizer.resetStreamingText(threadId);
 
+    const origin = originSourceThreadId && originSourceProviderId
+      ? {
+          type: "thread" as const,
+          sourceThreadId: originSourceThreadId,
+          sourceTurnId: originSourceTurnId ?? requestedSourceTurnId ?? randomUUID(),
+          sourceProviderId: originSourceProviderId,
+        }
+      : undefined;
     this.db.transaction(() => {
-      this.messageRepo.create(
-        threadId,
-        "user",
-        persistedUserText,
-        nextSeq,
-        stored.length > 0 ? stored : undefined,
-        replyToMessageId,
-        quotedText,
-        undefined,
-        undefined,
-        validatedMentions.length > 0 ? validatedMentions : undefined,
-        previewAnnotations,
-      );
+      const createUserMessage = () => {
+        const args = [
+          threadId,
+          "user" as const,
+          persistedUserText,
+          nextSeq,
+          stored.length > 0 ? stored : undefined,
+          replyToMessageId,
+          quotedText,
+          undefined,
+          undefined,
+          validatedMentions.length > 0 ? validatedMentions : undefined,
+          previewAnnotations,
+        ] as const;
+        if (origin) {
+          this.messageRepo.create(...args, origin);
+        } else {
+          this.messageRepo.create(...args);
+        }
+      };
+      createUserMessage();
       if (markPlanAnswerForMessageId) {
         // INSERT OR IGNORE inside the repo skips PK collisions (idempotent
         // re-marking) but FK violations still abort the tx, which is exactly
@@ -1873,6 +1913,13 @@ export class AgentService {
   /** Number of currently active sessions. */
   activeCount(): number {
     return this.activeSessionIds.size;
+  }
+
+  /** Atomically reserve the first accepted send for one thread. */
+  reserveTurn(threadId: string): boolean {
+    if (this.activeSessionIds.has(threadId)) return false;
+    this.activeSessionIds.add(threadId);
+    return true;
   }
 
   /** Get all currently active thread IDs. */

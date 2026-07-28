@@ -5,6 +5,10 @@ import {
   ThreadGetResultSchema,
   ThreadSearchInputSchema,
   ThreadSearchResultSchema,
+  ThreadSendInputSchema,
+  ThreadSendResultSchema,
+  ThreadStopInputSchema,
+  ThreadStopResultSchema,
   ThreadWaitInputSchema,
   ThreadWaitResultSchema,
   WorkspaceSearchInputSchema,
@@ -82,6 +86,14 @@ export function createInternalThreadControlMcpSession(
         const input = ThreadGetInputSchema().parse(request.arguments);
         return ThreadGetResultSchema().parse(options.service.threadGet(authority, input));
       }
+      case "thread_send": {
+        const input = ThreadSendInputSchema().parse(request.arguments);
+        return ThreadSendResultSchema().parse(await options.service.threadSend(authority, input));
+      }
+      case "thread_stop": {
+        const input = ThreadStopInputSchema().parse(request.arguments);
+        return ThreadStopResultSchema().parse(await options.service.threadStop(authority, input));
+      }
       case "thread_wait": {
         const input = ThreadWaitInputSchema().parse(request.arguments);
         return ThreadWaitResultSchema().parse(await options.service.threadWait(authority, input, signal));
@@ -143,6 +155,28 @@ export function createInternalThreadControlMcpSession(
         bearerCredential,
         requestId: extra.requestId,
         toolName: "thread_get",
+        arguments: arguments_,
+        signal: extra.signal,
+      })));
+      server.registerTool("thread_send", {
+        description: "Send a message to another normal Mcode thread.",
+        inputSchema: ThreadSendInputSchema(),
+        outputSchema: ThreadSendResultSchema(),
+      }, async (arguments_, extra) => createToolResult(await dispatch({
+        bearerCredential,
+        requestId: extra.requestId,
+        toolName: "thread_send",
+        arguments: arguments_,
+        signal: extra.signal,
+      })));
+      server.registerTool("thread_stop", {
+        description: "Stop another normal Mcode thread.",
+        inputSchema: ThreadStopInputSchema(),
+        outputSchema: ThreadStopResultSchema(),
+      }, async (arguments_, extra) => createToolResult(await dispatch({
+        bearerCredential,
+        requestId: extra.requestId,
+        toolName: "thread_stop",
         arguments: arguments_,
         signal: extra.signal,
       })));
