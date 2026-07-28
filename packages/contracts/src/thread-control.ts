@@ -32,6 +32,8 @@ export const THREAD_SEARCH_LIMIT_DEFAULT = 20;
 export const THREAD_GET_MESSAGE_LIMIT_MAX = 100;
 /** Default transcript messages returned by thread_get. */
 export const THREAD_GET_MESSAGE_LIMIT_DEFAULT = 50;
+/** Maximum UTF-8 transcript content returned by one thread_get request. */
+export const THREAD_GET_TRANSCRIPT_MAX_BYTES = 64 * 1024;
 /** Maximum exact thread targets accepted by one thread_wait request. */
 export const THREAD_WAIT_TARGETS_MAX = 20;
 /** Maximum timeout accepted by one thread_wait request, in seconds. */

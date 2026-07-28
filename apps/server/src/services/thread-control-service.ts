@@ -29,6 +29,7 @@ import {
   ThreadGetInputSchema,
   ThreadSearchInputSchema,
   ThreadWaitInputSchema,
+  THREAD_GET_TRANSCRIPT_MAX_BYTES,
 } from "@mcode/contracts";
 import type {
   ExternalThreadControlAuthority,
@@ -109,12 +110,15 @@ export class ThreadControlService {
     if (validated.statuses && new Set(validated.statuses).size !== validated.statuses.length) {
       throw new Error("statuses must be unique");
     }
-    const rows = this.threads.search({
+    const searchOptions: Parameters<ThreadRepo["search"]>[0] = {
       query: validated.query?.trim() ?? "",
       workspaceIds: validated.workspaceIds,
       excludeThreadId: authority.type === "internal" ? authority.sourceThreadId : undefined,
       limit: 200,
-    }).threads;
+    };
+    const ownedIntegrationId = this.readOwnedIntegrationId(authority);
+    if (ownedIntegrationId !== undefined) searchOptions.createdByIntegrationId = ownedIntegrationId;
+    const rows = this.threads.search(searchOptions).threads;
     const threads = rows
       .filter((thread) => this.canReadThread(authority, thread.id, thread.workspace_id))
       .map((thread) => ({ thread, state: this.observedState(thread) }))
@@ -132,7 +136,7 @@ export class ThreadControlService {
     input: ThreadGetInput,
   ): ThreadGetResult {
     const validated = ThreadGetInputSchema().parse(input);
-    const thread = this.threads.findById(validated.threadId);
+    const thread = this.findReadableThread(authority, validated.threadId);
     if (!thread || thread.deleted_at != null || !this.canReadThread(authority, thread.id, thread.workspace_id)) {
       return {
         status: "rejected",
@@ -149,7 +153,11 @@ export class ThreadControlService {
         error: this.error("internal_error", "Thread transcript is unavailable", true),
       };
     }
-    const transcript = this.messages.listByThreadForThreadControl(validated.threadId, validated.messageLimit);
+    const transcript = this.messages.listByThreadForThreadControl(
+      validated.threadId,
+      validated.messageLimit,
+      THREAD_GET_TRANSCRIPT_MAX_BYTES,
+    );
     const result: ThreadGetResult = {
       status: "found",
       workspaceId: thread.workspace_id,
@@ -171,7 +179,7 @@ export class ThreadControlService {
     if (new Set(validated.threadIds).size !== validated.threadIds.length) {
       throw new Error("threadIds must be unique");
     }
-    const targets = validated.threadIds.map((threadId) => this.threads.findById(threadId));
+    const targets = validated.threadIds.map((threadId) => this.findReadableThread(authority, threadId));
     if (targets.some((thread) => !thread || thread.deleted_at != null || !this.canReadThread(authority, thread.id, thread.workspace_id))) {
       return { status: "rejected", error: this.error("not_found", "Thread not found", false) };
     }
@@ -359,6 +367,19 @@ export class ThreadControlService {
     }
     if (!authority.allowedWorkspaceIds.includes(workspaceId)) return false;
     return authority.scopes.includes("threads:read-project") || authority.scopes.includes("threads:read-owned");
+  }
+
+  private readOwnedIntegrationId(authority: ThreadControlAuthority): string | undefined {
+    if (authority.type !== "external") return undefined;
+    if (authority.scopes.includes("threads:read-project")) return undefined;
+    return authority.scopes.includes("threads:read-owned") ? authority.integrationId : undefined;
+  }
+
+  private findReadableThread(authority: ThreadControlAuthority, threadId: string) {
+    const ownedIntegrationId = this.readOwnedIntegrationId(authority);
+    return ownedIntegrationId === undefined
+      ? this.threads.findById(threadId)
+      : this.threads.findById(threadId, { createdByIntegrationId: ownedIntegrationId });
   }
 
   private auditRead(

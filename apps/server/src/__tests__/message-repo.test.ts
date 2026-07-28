@@ -208,6 +208,30 @@ ORDER BY page.sequence ASC`,
     });
   });
 
+  describe("listByThreadForThreadControl", () => {
+    it("keeps newest rows in chronological order under the UTF-8 byte cap", () => {
+      repo.create("thread-1", "user", "older", 1);
+      repo.create("thread-1", "assistant", "éé", 2);
+      repo.create("thread-1", "user", "newest", 3);
+
+      const result = repo.listByThreadForThreadControl("thread-1", 3, 6);
+
+      expect(result.messages.map((message) => message.content)).toEqual(["newest"]);
+      expect(Buffer.byteLength(result.messages[0]!.content, "utf8")).toBeLessThanOrEqual(6);
+      expect(result.hasMore).toBe(true);
+    });
+
+    it("truncates one oversized message at a valid UTF-8 boundary", () => {
+      repo.create("thread-1", "assistant", "😀😀", 1);
+
+      const result = repo.listByThreadForThreadControl("thread-1", 1, 5);
+
+      expect(result.messages.map((message) => message.content)).toEqual(["😀"]);
+      expect(Buffer.byteLength(result.messages[0]!.content, "utf8")).toBe(4);
+      expect(result.hasMore).toBe(true);
+    });
+  });
+
   describe("create with reply fields", () => {
     it("persists authenticated cross-thread provenance", () => {
       const message = repo.create(

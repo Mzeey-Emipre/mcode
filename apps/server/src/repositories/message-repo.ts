@@ -13,7 +13,7 @@ import type {
   PreviewAnnotationBundle,
   StoredAttachment,
 } from "@mcode/contracts";
-import { PreviewAnnotationBundleSchema } from "@mcode/contracts";
+import { PreviewAnnotationBundleSchema, THREAD_GET_TRANSCRIPT_MAX_BYTES } from "@mcode/contracts";
 
 interface MessageRow {
   id: string;
@@ -412,10 +412,15 @@ export class MessageRepo {
   listByThreadForThreadControl(
     threadId: string,
     limit: number,
+    maxBytes = THREAD_GET_TRANSCRIPT_MAX_BYTES,
   ): { messages: ThreadControlMessageRecord[]; hasMore: boolean } {
     const clampedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const byteBudget = Number.isFinite(maxBytes)
+      ? Math.max(1, Math.min(THREAD_GET_TRANSCRIPT_MAX_BYTES, Math.floor(maxBytes)))
+      : THREAD_GET_TRANSCRIPT_MAX_BYTES;
     const rows = this.db.prepare(`
-      SELECT id, role, content, timestamp, provider, model, origin_type,
+      SELECT id, sequence, role, length(CAST(content AS BLOB)) AS content_bytes,
+             timestamp, provider, model, origin_type,
              source_thread_id, source_turn_id, source_provider_id
       FROM messages
       WHERE thread_id = ? AND is_internal = 0
@@ -423,8 +428,9 @@ export class MessageRepo {
       LIMIT ?
     `).all(threadId, clampedLimit + 1) as Array<{
       id: string;
+      sequence: number;
       role: "user" | "assistant" | "system";
-      content: string;
+      content_bytes: number;
       timestamp: string;
       provider: string | null;
       model: string | null;
@@ -433,22 +439,70 @@ export class MessageRepo {
       source_turn_id: string | null;
       source_provider_id: string | null;
     }>;
-    const hasMore = rows.length > clampedLimit;
-    const selected = hasMore ? rows.slice(0, clampedLimit) : rows;
-    selected.reverse();
+    let hasMore = rows.length > clampedLimit;
+    const selected: Array<typeof rows[number] & { contentLimit?: number }> = [];
+    let remainingBytes = byteBudget;
+    for (const row of rows.slice(0, clampedLimit)) {
+      const contentBytes = Math.max(0, row.content_bytes ?? 0);
+      if (contentBytes <= remainingBytes) {
+        selected.push(row);
+        remainingBytes -= contentBytes;
+        continue;
+      }
+      if (selected.length === 0) {
+        selected.push({ ...row, contentLimit: remainingBytes });
+      }
+      hasMore = true;
+      break;
+    }
+    const fullStmt = this.db.prepare(`
+      SELECT id, role, content, timestamp, provider, model, origin_type,
+             source_thread_id, source_turn_id, source_provider_id
+      FROM messages
+      WHERE id = ? AND thread_id = ? AND is_internal = 0
+    `);
+    const truncatedStmt = this.db.prepare(`
+      SELECT id, role, substr(content, 1, ?) AS content, timestamp, provider, model, origin_type,
+             source_thread_id, source_turn_id, source_provider_id
+      FROM messages
+      WHERE id = ? AND thread_id = ? AND is_internal = 0
+    `);
+    const messages = selected
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((row) => {
+        const fetched = row.contentLimit === undefined
+          ? fullStmt.get(row.id, threadId)
+          : truncatedStmt.get(row.contentLimit, row.id, threadId);
+        const contentRow = fetched as {
+          id: string;
+          role: "user" | "assistant" | "system";
+          content: string;
+          timestamp: string;
+          provider: string | null;
+          model: string | null;
+          origin_type: string;
+          source_thread_id: string | null;
+          source_turn_id: string | null;
+          source_provider_id: string | null;
+        };
+        const prefix = row.contentLimit === undefined
+          ? contentRow.content
+          : takeUtf8Prefix(contentRow.content, row.contentLimit).text;
+        return {
+          id: contentRow.id,
+          role: contentRow.role,
+          content: prefix,
+          timestamp: contentRow.timestamp,
+          provider: contentRow.provider,
+          model: contentRow.model,
+          originType: contentRow.origin_type === "composer" || contentRow.origin_type === "thread" ? contentRow.origin_type : "legacy",
+          sourceThreadId: contentRow.source_thread_id,
+          sourceTurnId: contentRow.source_turn_id,
+          sourceProviderId: contentRow.source_provider_id,
+        } satisfies ThreadControlMessageRecord;
+      });
     return {
-      messages: selected.map((row) => ({
-        id: row.id,
-        role: row.role,
-        content: row.content,
-        timestamp: row.timestamp,
-        provider: row.provider,
-        model: row.model,
-        originType: row.origin_type === "composer" || row.origin_type === "thread" ? row.origin_type : "legacy",
-        sourceThreadId: row.source_thread_id,
-        sourceTurnId: row.source_turn_id,
-        sourceProviderId: row.source_provider_id,
-      })),
+      messages,
       hasMore,
     };
   }

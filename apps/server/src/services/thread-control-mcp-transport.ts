@@ -12,22 +12,9 @@ import {
   WorktreeListInputSchema,
   WorktreeListResultSchema,
 } from "@mcode/contracts";
-import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { InternalThreadControlMcpAuthority } from "./thread-control-mcp-authority.js";
 import type { ThreadControlService } from "./thread-control-service.js";
-
-const threadSearchToolInputSchema = z.object({
-  workspaceIds: z.array(z.string().trim().min(1).max(128)).min(1).max(20).optional(),
-  query: z.string().trim().max(256).optional(),
-  statuses: z.array(z.enum(["starting", "running", "idle", "completed", "failed", "stopped", "waiting_for_approval", "waiting_for_user"])).max(9).optional(),
-  limit: z.number().int().min(1).max(50).default(20),
-}).strict();
-const threadWaitToolInputSchema = z.object({
-  threadIds: z.array(z.string().trim().min(1).max(128)).min(1).max(20),
-  until: z.enum(["attention_or_terminal", "terminal"]).default("attention_or_terminal"),
-  timeoutSeconds: z.number().int().min(1).max(1_800).default(300),
-}).strict();
 
 /** Incoming request context for the server-internal MCP transport. */
 export interface InternalThreadControlMcpRequest {
@@ -139,7 +126,7 @@ export function createInternalThreadControlMcpSession(
       })));
       server.registerTool("thread_search", {
         description: "Search readable threads across registered Mcode Projects.",
-        inputSchema: threadSearchToolInputSchema,
+        inputSchema: ThreadSearchInputSchema(),
         outputSchema: ThreadSearchResultSchema(),
       }, async (arguments_, extra) => createToolResult(await dispatch({
         bearerCredential,
@@ -161,7 +148,7 @@ export function createInternalThreadControlMcpSession(
       })));
       server.registerTool("thread_wait", {
         description: "Wait for exact readable threads to require attention or finish.",
-        inputSchema: threadWaitToolInputSchema,
+        inputSchema: ThreadWaitInputSchema(),
         outputSchema: ThreadWaitResultSchema(),
       }, async (arguments_, extra) => createToolResult(await dispatch({
         bearerCredential,

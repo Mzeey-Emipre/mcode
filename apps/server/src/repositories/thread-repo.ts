@@ -189,11 +189,14 @@ export class ThreadRepo {
     };
   }
 
-  /** Find a thread by its primary key. Returns null if not found. */
-  findById(id: string): Thread | null {
+  /** Find a thread by its primary key, optionally constrained to one external owner. */
+  findById(id: string, options: { createdByIntegrationId?: string } = {}): Thread | null {
+    const ownershipClause = options.createdByIntegrationId === undefined
+      ? ""
+      : " AND created_by_integration_id = ?";
     const row = this.db
-      .prepare(`SELECT ${THREAD_COLUMNS} FROM threads WHERE id = ?`)
-      .get(id) as ThreadRow | undefined;
+      .prepare(`SELECT ${THREAD_COLUMNS} FROM threads WHERE id = ?${ownershipClause}`)
+      .get(id, ...(options.createdByIntegrationId === undefined ? [] : [options.createdByIntegrationId])) as ThreadRow | undefined;
 
     return row ? rowToThread(row) : null;
   }
@@ -248,6 +251,7 @@ export class ThreadRepo {
     filters?: { status?: string[]; provider?: string[] };
     workspaceIds?: string[];
     excludeThreadId?: string;
+    createdByIntegrationId?: string;
     sort?: { field: "updated_at" | "created_at" | "title"; direction: "asc" | "desc" };
     limit?: number;
   }): { threads: Thread[]; workspaces: { id: string; name: string; path: string }[] } {
@@ -290,6 +294,11 @@ export class ThreadRepo {
     if (opts.excludeThreadId) {
       conditions.push("t.id != ?");
       params.push(opts.excludeThreadId);
+    }
+
+    if (opts.createdByIntegrationId !== undefined) {
+      conditions.push("t.created_by_integration_id = ?");
+      params.push(opts.createdByIntegrationId);
     }
 
     const sortField = opts.sort?.field ?? "updated_at";

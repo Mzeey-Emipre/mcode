@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { THREAD_GET_TRANSCRIPT_MAX_BYTES } from "@mcode/contracts";
 
 const { mockBroadcast } = vi.hoisted(() => ({ mockBroadcast: vi.fn() }));
 
@@ -47,6 +48,8 @@ describe("ThreadControlService", () => {
   let git: { listWorktrees: ReturnType<typeof vi.fn>; getCurrentBranch: ReturnType<typeof vi.fn> };
   let threads: {
     create: ReturnType<typeof vi.fn>;
+    findById: ReturnType<typeof vi.fn>;
+    search: ReturnType<typeof vi.fn>;
     updateModel: ReturnType<typeof vi.fn>;
     updateSettings: ReturnType<typeof vi.fn>;
     updateDelegationLineage: ReturnType<typeof vi.fn>;
@@ -57,7 +60,7 @@ describe("ThreadControlService", () => {
     countActiveByIntegration: ReturnType<typeof vi.fn>;
   };
   let threadService: { provisionWorktree: ReturnType<typeof vi.fn>; cleanupInterruptedProvisioning: ReturnType<typeof vi.fn> };
-  let agentService: { sendMessage: ReturnType<typeof vi.fn> };
+  let agentService: { sendMessage: ReturnType<typeof vi.fn>; activeThreadIds?: ReturnType<typeof vi.fn> };
   let approvals: {
     create: ReturnType<typeof vi.fn>;
     claim: ReturnType<typeof vi.fn>;
@@ -69,6 +72,7 @@ describe("ThreadControlService", () => {
     listPendingByThread: ReturnType<typeof vi.fn>;
   };
   let audit: { write: ReturnType<typeof vi.fn> };
+  let messages: { listByThreadForThreadControl: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     workspaces = {
@@ -86,6 +90,8 @@ describe("ThreadControlService", () => {
     };
     threads = {
       create: vi.fn().mockReturnValue(createdThread),
+      findById: vi.fn().mockReturnValue(null),
+      search: vi.fn().mockReturnValue({ threads: [], workspaces: [] }),
       updateModel: vi.fn().mockReturnValue(true),
       updateSettings: vi.fn().mockReturnValue(true),
       updateDelegationLineage: vi.fn().mockReturnValue(true),
@@ -94,6 +100,9 @@ describe("ThreadControlService", () => {
       clearWorktreePath: vi.fn().mockReturnValue(true),
       updateExternalCreator: vi.fn().mockReturnValue(true),
       countActiveByIntegration: vi.fn().mockReturnValue(0),
+    };
+    messages = {
+      listByThreadForThreadControl: vi.fn().mockReturnValue({ messages: [], hasMore: false }),
     };
     threadService = {
       provisionWorktree: vi.fn().mockResolvedValue({
@@ -146,6 +155,7 @@ describe("ThreadControlService", () => {
       } as never,
       approvals as never,
       audit as never,
+      messages as never,
     );
   }
 
@@ -609,6 +619,104 @@ describe("ThreadControlService", () => {
     expect(approvals.requeueRecoveredProvisioning).not.toHaveBeenCalled();
     expect(agentService.sendMessage).not.toHaveBeenCalled();
     expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ outcome: "recovery-failed" }));
+  });
+
+  it("enforces external owned-read ownership for search, get, and wait", async () => {
+    const service = createService();
+    const ownedThread = {
+      ...createdThread,
+      id: "owned-thread",
+      title: "Owned",
+      workspace_id: workspace.id,
+      provider: "claude",
+      model: "claude-model",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:02.000Z",
+      deleted_at: null,
+      created_by_integration_id: "integration-a",
+    };
+    const otherOwnedThread = { ...ownedThread, id: "other-owned", title: "Other", created_by_integration_id: "integration-b" };
+    const unownedThread = { ...ownedThread, id: "unowned", title: "Unowned", created_by_integration_id: null };
+    const externalAuthority = {
+      type: "external" as const,
+      integrationId: "integration-a",
+      allowedWorkspaceIds: [workspace.id],
+      scopes: ["threads:read-owned"] as const,
+      limits: { callsPerMinute: 10, maxActiveThreads: 10 },
+    };
+    const byId = new Map<string, typeof ownedThread | typeof otherOwnedThread | typeof unownedThread>([
+      [ownedThread.id, ownedThread],
+      [otherOwnedThread.id, otherOwnedThread],
+      [unownedThread.id, unownedThread],
+    ]);
+    threads.search.mockImplementation((options: { createdByIntegrationId?: string }) => ({
+      threads: options.createdByIntegrationId === "integration-a" ? [ownedThread] : [...byId.values()],
+      workspaces: [],
+    }));
+    threads.findById.mockImplementation((id: string, options?: { createdByIntegrationId?: string }) => {
+      const thread = byId.get(id);
+      return thread && (options?.createdByIntegrationId === undefined || thread.created_by_integration_id === options.createdByIntegrationId)
+        ? thread
+        : null;
+    });
+
+    expect(service.threadSearch(externalAuthority, { limit: 20 })).toMatchObject({
+      threads: [{ threadId: ownedThread.id }],
+    });
+    expect(threads.search).toHaveBeenCalledWith(expect.objectContaining({ createdByIntegrationId: "integration-a" }));
+
+    const found = service.threadGet(externalAuthority, { threadId: ownedThread.id, messageLimit: 10 });
+    expect(found).toMatchObject({ status: "found", thread: { threadId: ownedThread.id } });
+    expect(messages.listByThreadForThreadControl).toHaveBeenCalledWith(
+      ownedThread.id,
+      10,
+      THREAD_GET_TRANSCRIPT_MAX_BYTES,
+    );
+    expect(service.threadGet(externalAuthority, { threadId: otherOwnedThread.id, messageLimit: 10 })).toMatchObject({
+      status: "rejected",
+      error: { code: "not_found" },
+    });
+    expect(service.threadGet(externalAuthority, { threadId: unownedThread.id, messageLimit: 10 })).toMatchObject({
+      status: "rejected",
+      error: { code: "not_found" },
+    });
+
+    await expect(service.threadWait(externalAuthority, { threadIds: [ownedThread.id], until: "attention_or_terminal", timeoutSeconds: 1 })).resolves.toMatchObject({
+      status: "success",
+      timedOut: true,
+      results: [{ threadId: ownedThread.id }],
+    });
+    await expect(service.threadWait(externalAuthority, { threadIds: [ownedThread.id, otherOwnedThread.id], until: "attention_or_terminal", timeoutSeconds: 1 })).resolves.toMatchObject({
+      status: "rejected",
+      error: { code: "not_found" },
+    });
+    expect(threads.updateStatus).not.toHaveBeenCalled();
+    expect(agentService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("preserves authoritative state on wait timeout without mutating the target", async () => {
+    const service = createService();
+    const runningThread = {
+      ...createdThread,
+      id: "running-thread",
+      title: "Running",
+      workspace_id: workspace.id,
+      provider: "claude",
+      model: "claude-model",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:02.000Z",
+      deleted_at: null,
+    };
+    threads.findById.mockReturnValue(runningThread);
+    agentService.activeThreadIds = vi.fn().mockReturnValue([runningThread.id]);
+
+    await expect(service.threadWait(authority, { threadIds: [runningThread.id], until: "attention_or_terminal", timeoutSeconds: 1 })).resolves.toEqual({
+      status: "success",
+      timedOut: true,
+      results: [{ workspaceId: workspace.id, threadId: runningThread.id, state: { status: "running" } }],
+    });
+    expect(threads.updateStatus).not.toHaveBeenCalled();
+    expect(agentService.sendMessage).not.toHaveBeenCalled();
   });
 
   it("reserves external capacity in input order and preserves earlier success", async () => {
