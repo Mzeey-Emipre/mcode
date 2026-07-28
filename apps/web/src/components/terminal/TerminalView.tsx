@@ -964,7 +964,7 @@ export const TerminalView = memo(function TerminalView({
         <span className="text-sm font-semibold">{shellLabel}</span>
       </div>
       <div className="min-h-0 flex-1" data-testid="terminal-render-content">
-        <div className="h-full min-h-0 px-6 py-8">
+        <div className="h-full min-h-0 px-5 py-6">
           {terminalCanvas}
         </div>
       </div>
