@@ -77,7 +77,8 @@ async function terminatePosixProcess(pid, signal, graceMs, useProcessGroup, chil
 }
 
 /**
- * Signals a process group when requested and falls back to the direct PID.
+ * Signals a process group when requested. A missing group means ownership ended,
+ * so it must not fall back to a potentially reused direct PID.
  *
  * @param {number} pid
  * @param {NodeJS.Signals} signal
@@ -89,7 +90,8 @@ function signalPosixProcess(pid, signal, useProcessGroup) {
       process.kill(-pid, signal);
       return;
     } catch (error) {
-      if (error?.code !== "ESRCH") throw error;
+      if (error?.code === "ESRCH") return;
+      throw error;
     }
   }
 

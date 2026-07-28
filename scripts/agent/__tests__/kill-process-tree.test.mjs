@@ -23,3 +23,27 @@ test("graceful child exit suppresses delayed hard kill", async () => {
     process.platform = originalPlatform;
   }
 });
+
+test("missing process group never falls back to a reused direct PID", async () => {
+  const originalKill = process.kill;
+  const originalPlatform = process.platform;
+  const signals = [];
+  process.platform = "linux";
+  process.kill = (pid, signal) => {
+    signals.push([pid, signal]);
+    const error = new Error("process group missing");
+    error.code = "ESRCH";
+    throw error;
+  };
+
+  try {
+    await killProcessTree({ pid: 12345, exitCode: null, signalCode: null }, {
+      graceMs: 20,
+      useProcessGroup: true,
+    });
+    assert.deepEqual(signals, [[-12345, "SIGTERM"], [-12345, 0]]);
+  } finally {
+    process.kill = originalKill;
+    process.platform = originalPlatform;
+  }
+});
