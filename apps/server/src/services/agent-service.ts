@@ -577,30 +577,6 @@ export class AgentService {
       provider: effectiveProvider,
     });
 
-    const reservationToken = mutationReservationToken
-      ? this.mutationReservations.owns(threadId, mutationReservationToken, "activeTurn")
-        ? mutationReservationToken
-        : null
-      : this.mutationReservations.reserve(threadId, "activeTurn");
-    if (!reservationToken) {
-      throw new Error(`Thread ${threadId} already has a pending mutation`);
-    }
-    let activeSlotReserved = this.reserveTurn(threadId);
-    if (!activeSlotReserved) {
-      if (!mutationReservationToken) this.mutationReservations.release(threadId, reservationToken);
-      throw new Error(`Thread ${threadId} already has an active agent session`);
-    }
-    this.activeMutationReservations.set(threadId, reservationToken);
-    const releaseReservedSlot = () => {
-      if (!activeSlotReserved) return;
-      activeSlotReserved = false;
-      if (this.activeSessionIds.delete(threadId)) {
-        this.memoryPressureService.markIdle(threadId);
-      }
-      this.activeMutationReservations.delete(threadId);
-      this.mutationReservations.release(threadId, reservationToken);
-    };
-
     // Route the message through the mcode-native command namespace before it
     // reaches the provider. The router probes each command's required
     // capability and passes through when the resolved provider lacks it, so the
@@ -622,28 +598,16 @@ export class AgentService {
       content: string;
       provider: IAgentProvider;
     };
-    try {
-      commandContext = {
-        threadId,
-        content,
-        provider: this.providerRegistry.resolve(effectiveProvider),
-      };
-    } catch (error) {
-      releaseReservedSlot();
-      throw error;
-    }
-    let commandOutcome;
-    try {
-      commandOutcome = goalObjective !== undefined
-        ? await this.goalCommand.prepareSet(commandContext, goalObjective)
-        : await this.commandRouter.route(commandContext);
-    } catch (error) {
-      releaseReservedSlot();
-      throw error;
-    }
+    commandContext = {
+      threadId,
+      content,
+      provider: this.providerRegistry.resolve(effectiveProvider),
+    };
+    const commandOutcome = goalObjective !== undefined
+      ? await this.goalCommand.prepareSet(commandContext, goalObjective)
+      : await this.commandRouter.route(commandContext);
     if (commandOutcome.kind === "handled") {
       logger.info("Handled mcode-native command", { threadId });
-      releaseReservedSlot();
       return;
     }
     if (commandOutcome.kind === "rewrite") {
@@ -652,6 +616,31 @@ export class AgentService {
       messageDisplayContent ??= content;
       content = commandOutcome.content;
     }
+
+    let activeSlotReserved = this.reserveTurn(threadId);
+    if (!activeSlotReserved) {
+      throw new Error(`Thread ${threadId} already has an active agent session`);
+    }
+    let reservationToken: string | null = null;
+    const releaseReservedSlot = () => {
+      if (!activeSlotReserved) return;
+      activeSlotReserved = false;
+      if (this.activeSessionIds.delete(threadId)) {
+        this.memoryPressureService.markIdle(threadId);
+      }
+      this.activeMutationReservations.delete(threadId);
+      if (reservationToken) this.mutationReservations.release(threadId, reservationToken);
+    };
+    reservationToken = mutationReservationToken
+      ? this.mutationReservations.owns(threadId, mutationReservationToken, "activeTurn")
+        ? mutationReservationToken
+        : null
+      : this.mutationReservations.reserve(threadId, "activeTurn");
+    if (!reservationToken) {
+      releaseReservedSlot();
+      throw new Error(`Thread ${threadId} already has a pending mutation`);
+    }
+    this.activeMutationReservations.set(threadId, reservationToken);
 
     let commandDispatched = false;
 
