@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Manages runtime process PID files under the `.dev` directory.
  */

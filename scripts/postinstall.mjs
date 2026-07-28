@@ -1,11 +1,10 @@
 /**
  * Monorepo postinstall script.
  *
- * Downloads an Electron-compatible better-sqlite3 prebuild and installs it
- * alongside the default Node.js prebuild. Both binaries coexist so that
- * vitest (Node.js) and Electron each load the correct ABI at runtime:
+ * Downloads an Electron-compatible better-sqlite3 prebuild for the backend
+ * runtime. Bun owns repository orchestration while Electron owns the backend
+ * and native-module ABI:
  *
- *   build/Release/better_sqlite3.node          - Node.js prebuild (default)
  *   build/Release/better_sqlite3.electron.node  - Electron prebuild
  *
  * Skips gracefully when:
@@ -21,17 +20,13 @@ import { createRequire } from "module";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { tmpdir } from "os";
-import { validateNodeRuntime } from "./node-runtime.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 const desktopDir = resolve(rootDir, "apps", "desktop");
 
-if (!validateNodeRuntime({ rootDir }).ok) process.exit(1);
-
 // Allow explicit skip (useful for CI, worktrees, server-only dev).
-// This only skips the Electron download; the Node.js prebuild verification
-// at the bottom of the script still runs.
+// This skips Electron download and verification for environments without it.
 let skipElectron = false;
 if (process.env.SKIP_ELECTRON_REBUILD === "1") {
   console.log("Skipping Electron prebuild (SKIP_ELECTRON_REBUILD=1)");
@@ -48,12 +43,6 @@ const betterSqliteDir = dirname(
 const bsqlVersion = JSON.parse(
   readFileSync(resolve(betterSqliteDir, "package.json"), "utf-8"),
 ).version;
-const nativeBinary = resolve(
-  betterSqliteDir,
-  "build",
-  "Release",
-  "better_sqlite3.node",
-);
 const electronBinary = resolve(
   betterSqliteDir,
   "build",
@@ -98,7 +87,6 @@ function getElectronABI(electronBin) {
         stdio: ["ignore", "pipe", "ignore"],
       },
     ).trim();
-
     if (!/^\d+$/.test(abi)) return null;
     return abi;
   } catch {
@@ -177,10 +165,9 @@ if (electronABI) {
         "Release",
         "better_sqlite3.node",
       );
-      mkdirSync(dirname(nativeBinary), { recursive: true });
+      mkdirSync(dirname(electronBinary), { recursive: true });
 
-      // Install the Electron prebuild as the named Electron copy.
-      // The original Node.js prebuild (better_sqlite3.node) is never overwritten.
+      // Install the Electron prebuild under its explicit ABI-specific name.
       copyFileSync(extractedBinary, electronBinary);
 
       // Write marker so we skip on next install
@@ -192,59 +179,13 @@ if (electronABI) {
   }
 }
 
-// ---- Verify the Node.js prebuild is correct ----
-// The old postinstall used to overwrite better_sqlite3.node with the Electron
-// binary. If that happened, vitest (which runs under Node.js) will crash with
-// an ABI mismatch. Detect and repair by downloading the correct Node.js prebuild.
-// This runs regardless of whether the Electron flow was skipped.
-const nodeABI = process.versions.modules;
-let nodePrebuiltOk = false;
-try {
-  execFileSync(process.execPath, [
-    "-e",
-    `require(${JSON.stringify(nativeBinary)})`,
-  ], { timeout: 10_000, stdio: "ignore" });
-  nodePrebuiltOk = true;
-} catch {
-  // Binary is missing or built for wrong ABI
-}
-
-if (!nodePrebuiltOk) {
-  const nodeTarName = `better-sqlite3-v${bsqlVersion}-node-v${nodeABI}-${platform}-${arch}.tar.gz`;
-  const nodeUrl = `https://github.com/WiseLibs/better-sqlite3/releases/download/v${bsqlVersion}/${nodeTarName}`;
-  console.log(`Node.js prebuild has wrong ABI, downloading: ${nodeTarName}`);
-
-  const nodeTmpDir = mkdtempSync(resolve(tmpdir(), "mcode-postinstall-node-"));
-
-  try {
-    const nodeTmpTarPath = resolve(nodeTmpDir, nodeTarName).replace(/\\/g, "/");
-
-    execSync(`curl -fsSL -o "${nodeTmpTarPath}" "${nodeUrl}"`, {
-      stdio: "inherit",
-      timeout: 60_000,
-    });
-
-    mkdirSync(resolve(nodeTmpDir, "build", "Release"), { recursive: true });
-    execSync(`tar -xzf "${nodeTarName}"`, {
-      stdio: "inherit",
-      cwd: nodeTmpDir,
-    });
-
-    const nodeExtractedBinary = resolve(nodeTmpDir, "build", "Release", "better_sqlite3.node");
-    mkdirSync(dirname(nativeBinary), { recursive: true });
-    copyFileSync(nodeExtractedBinary, nativeBinary);
-    console.log(`Node.js prebuild restored for ABI ${nodeABI}`);
-  } finally {
-    rmSync(nodeTmpDir, { recursive: true, force: true });
-  }
-}
-
 if (electronABI) {
+  if (!existsSync(electronBinary)) {
+    throw new Error(`Electron better-sqlite3 binding missing after install: ${electronBinary}`);
+  }
   console.log(
-    `better-sqlite3 v${bsqlVersion}: Node.js prebuild (ABI ${nodeABI}) at better_sqlite3.node, Electron (ABI ${electronABI}) at better_sqlite3.electron.node`,
+    `better-sqlite3 v${bsqlVersion}: Electron ABI ${electronABI} at better_sqlite3.electron.node`,
   );
 } else {
-  console.log(
-    `better-sqlite3 v${bsqlVersion}: Node.js prebuild (ABI ${nodeABI}) verified`,
-  );
+  console.log(`better-sqlite3 v${bsqlVersion}: Electron binding not checked (Electron unavailable)`);
 }

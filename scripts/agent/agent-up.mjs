@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Starts a self-contained per-worktree runtime for automation agents.
  */

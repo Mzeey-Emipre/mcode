@@ -165,7 +165,7 @@ test("dev web single-instance flag preserves explicit false legacy mode", () => 
   assert.equal(resolveDevSingleInstanceFlag("off"), false);
 });
 
-test("dev:server SIGTERM stops the Electron server without a Vite reference error", async () => {
+test("dev:server SIGTERM stops the Electron server without a Vite reference error", { timeout: 75_000 }, async () => {
   const child = spawn(process.execPath, ["scripts/dev-web.mjs", "--server-only"], {
     cwd: resolve(process.cwd()),
     stdio: ["ignore", "pipe", "pipe"],

@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Verify all repo prerequisites before starting work.
  * Prints ✓/✗ per check with actionable remediation on failure.
  * Exits 1 if any check fails.
  */
-import { existsSync, accessSync, constants } from 'node:fs';
+import { existsSync, accessSync, constants, readFileSync } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -14,9 +14,7 @@ import {
   isElectronBinaryInstalled,
   resolveElectronPackageDir,
 } from './ensure-electron.mjs';
-import { validateNodeRuntime } from './node-runtime.mjs';
 
-const require = createRequire(import.meta.url);
 const mainRoot = resolveMainRoot();
 
 /**
@@ -24,11 +22,12 @@ const mainRoot = resolveMainRoot();
  * apps/server locations since Bun workspaces may not hoist it to the root.
  */
 function resolveSqliteModule() {
-  const candidates = [
-    resolve(mainRoot, 'node_modules/better-sqlite3'),
-    resolve(mainRoot, 'apps/server/node_modules/better-sqlite3'),
-  ];
-  return candidates.find(p => existsSync(p)) ?? null;
+  try {
+    const serverRequire = createRequire(resolve(mainRoot, 'apps', 'server', 'package.json'));
+    return resolve(serverRequire.resolve('better-sqlite3/package.json'), '..');
+  } catch {
+    return null;
+  }
 }
 
 let passed = 0;
@@ -55,26 +54,16 @@ function hasCommand(cmd) {
 
 console.log('Checking prerequisites...\n');
 
-// The runtime check comes first because every install and verification command depends on it.
-if (!validateNodeRuntime({ rootDir: root, printer: console.log }).ok) process.exit(1);
+// Repository scripts run under Bun; backend and native modules run under Electron.
+check('Bun runtime', () => {
+  if (!process.versions.bun) throw new Error('doctor must run under Bun');
+}, 'Run: bun run doctor');
 
 // Required binaries
 check('bun in PATH',  () => hasCommand('bun'),  'Install from https://bun.sh');
 check('git in PATH',  () => hasCommand('git'),  'Install from https://git-scm.com');
-check('node in PATH', () => hasCommand('node'), 'Install from https://nodejs.org');
 
-// 4. better-sqlite3 Node binding
-check(
-  'better-sqlite3 Node binding loads',
-  () => {
-    const modulePath = resolveSqliteModule();
-    if (!modulePath) throw new Error('not found');
-    require(modulePath);
-  },
-  'bun install'
-);
-
-// 5. Electron binary (desktop dev)
+// Electron binary (desktop dev and backend runtime)
 check(
   'Electron binary installed',
   () => {
@@ -83,16 +72,21 @@ check(
   'bun run install:electron'
 );
 
-// 6. Electron-ABI binding
+// Electron-compatible better-sqlite3 binding
 check(
-  'Electron-ABI better-sqlite3 binding exists',
+  'better-sqlite3 Electron binding installed',
   () => {
     const modulePath = resolveSqliteModule();
     if (!modulePath) throw new Error('not found');
     const electronBinding = resolve(modulePath, 'build', 'Release', 'better_sqlite3.electron.node');
     if (!existsSync(electronBinding)) throw new Error();
+
+    const markerPath = resolve(modulePath, 'build', 'Release', '.electron-abi');
+    if (!existsSync(markerPath) || !/^\d+$/.test(readFileSync(markerPath, 'utf8').trim())) {
+      throw new Error('Electron ABI marker is missing or invalid');
+    }
   },
-  'bun run install:electron && node scripts/postinstall.mjs'
+  'bun install'
 );
 
 // 7. MCODE_DATA_DIR writable

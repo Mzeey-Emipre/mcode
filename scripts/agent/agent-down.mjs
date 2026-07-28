@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Stops only the processes recorded for the per-worktree agent runtime.
  */

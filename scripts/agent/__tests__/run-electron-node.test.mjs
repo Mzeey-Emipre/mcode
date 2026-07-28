@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { ELECTRON_PROCESS_TIMEOUT_MS } from "../../run-electron-node.mjs";
 
 const wrapper = "scripts/run-electron-node.mjs";
 const options = {
@@ -9,6 +10,11 @@ const options = {
   encoding: "utf8",
   timeout: 60_000,
 };
+const testOptions = { timeout: 75_000 };
+
+test("Electron adapter uses the bounded verification phase timeout", () => {
+  assert.equal(ELECTRON_PROCESS_TIMEOUT_MS, 10 * 60 * 1_000);
+});
 
 function runWorkspaceCli(entryFile) {
   return spawnSync(
@@ -18,14 +24,32 @@ function runWorkspaceCli(entryFile) {
   );
 }
 
-test("workspace CLI accepts a nested package entry", () => {
+function runElectronNode(...args) {
+  return spawnSync(process.execPath, [wrapper, ...args], options);
+}
+
+test("Electron Node forwards output and preserves exit status", testOptions, () => {
+  const startedAt = Date.now();
+  const result = runElectronNode(
+    "-e",
+    "console.log('electron-stdout'); console.error('electron-stderr'); process.exitCode = 7;",
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 7, result.stderr);
+  assert.equal(result.stdout, "electron-stdout\n");
+  assert.equal(result.stderr, "electron-stderr\n");
+  assert.ok(Date.now() - startedAt < testOptions.timeout);
+});
+
+test("workspace CLI accepts a nested package entry", testOptions, () => {
   const result = runWorkspaceCli("lib/index.js");
 
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("workspace CLI preserves missing-entry errors", () => {
+test("workspace CLI preserves missing-entry errors", testOptions, () => {
   const result = runWorkspaceCli("missing-entry.mjs");
 
   assert.equal(result.error, undefined);
@@ -33,7 +57,7 @@ test("workspace CLI preserves missing-entry errors", () => {
   assert.match(result.stderr, /Workspace CLI entry not found/);
 });
 
-test("workspace CLI rejects entries outside the package directory", () => {
+test("workspace CLI rejects entries outside the package directory", testOptions, () => {
   const result = runWorkspaceCli("../package.json");
 
   assert.equal(result.error, undefined);

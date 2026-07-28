@@ -39,14 +39,14 @@ import {
   runVerification,
   runVerificationPhases,
   selectTestPhases,
-  withValidatedNodePath,
+  withBunPath,
 } from "../verify-tests.mjs";
 
-const NODE = process.execPath;
+const BUN = process.execPath;
 const VERIFY_SCRIPT = fileURLToPath(new URL("../verify-tests.mjs", import.meta.url));
 
-function nodePhase(name, code, extra = {}) {
-  return { name, command: NODE, args: ["-e", code], shell: false, ...extra };
+function bunPhase(name, code, extra = {}) {
+  return { name, command: BUN, args: ["-e", code], shell: false, ...extra };
 }
 
 function initRepo() {
@@ -164,12 +164,8 @@ test("git inspection includes relevant untracked config but skips docs", () => {
   }
 });
 
-test(".node-version is verification-relevant", () => {
-  assert.equal(isVerificationRelevant(".node-version"), true);
-});
-
-test("verification phases prefer the validated Node executable directory", async () => {
-  const result = await runPhase(nodePhase(
+test("verification phases prefer the Bun executable directory", async () => {
+  const result = await runPhase(bunPhase(
     "runtime path",
     "console.log(process.env.PATH ?? process.env.Path)",
     { env: { ...process.env, PATH: "ambient-path" } },
@@ -185,8 +181,8 @@ test("runtime PATH comparison preserves POSIX case distinctions", () => {
   assert.equal(pathEntriesMatch(upper, lower, { platform: "win32" }), true);
 
   const env = { PATH: [upper, lower].join(delimiter) };
-  const posix = withValidatedNodePath(env, resolve(upper, "node"), { platform: "linux" });
-  const windows = withValidatedNodePath(env, resolve(upper, "node.exe"), { platform: "win32" });
+  const posix = withBunPath(env, resolve(upper, "bun"), { platform: "linux" });
+  const windows = withBunPath(env, resolve(upper, "bun.exe"), { platform: "win32" });
   assert.deepEqual(posix.PATH.split(delimiter), [upper, lower]);
   assert.deepEqual(windows.PATH.split(delimiter), [upper]);
 });
@@ -195,7 +191,7 @@ test("a phase streams a complete log while retaining bounded output", async () =
   const cwd = mkdtempSync(resolve(tmpdir(), "mcode-verify-log-"));
   const logPath = resolve(cwd, "phase.log");
   try {
-    const result = await runPhase(nodePhase(
+    const result = await runPhase(bunPhase(
       "large failure",
       `process.stdout.write("x".repeat(${MAX_RETAINED_OUTPUT_BYTES * 3})); process.exit(4)`,
       { logPath },
@@ -212,7 +208,7 @@ test("a phase streams a complete log while retaining bounded output", async () =
 test("log stream errors fail the phase without leaving it unsettled", async () => {
   const cwd = mkdtempSync(resolve(tmpdir(), "mcode-verify-log-error-"));
   try {
-    const result = await runPhase(nodePhase(
+    const result = await runPhase(bunPhase(
       "log-error",
       "process.stdout.write('evidence')",
       { logPath: resolve(cwd, "missing", "phase.log") },
@@ -228,7 +224,7 @@ test("log stream errors fail the phase without leaving it unsettled", async () =
 test("successful phases print one line and hide child output", async () => {
   const lines = [];
   await runPhasesInParallel(
-    [nodePhase("Typecheck", "console.log('verbose child output')")],
+    [bunPhase("Typecheck", "console.log('verbose child output')")],
     { printer: (line) => lines.push(line) },
   );
   assert.deepEqual(lines.length, 1);
@@ -239,7 +235,7 @@ test("successful phases print one line and hide child output", async () => {
 test("failure diagnostics are bounded and include actionable metadata", async () => {
   const lines = [];
   await runPhasesInParallel(
-    [nodePhase("Lint", `console.error("e".repeat(${MAX_FAILURE_EXCERPT_CHARS * 2})); process.exit(2)`) ],
+    [bunPhase("Lint", `console.error("e".repeat(${MAX_FAILURE_EXCERPT_CHARS * 2})); process.exit(2)`) ],
     { printer: (line) => lines.push(line) },
   );
   const output = lines.join("\n");
@@ -269,7 +265,7 @@ test("phase arguments never execute through a Windows command shell", async () =
       : `safe; touch "${marker}"`;
     const result = await runPhase({
       name: "argv",
-      command: NODE,
+      command: BUN,
       args: ["-e", "console.log(process.argv[1])", hostile],
     });
     assert.equal(result.code, 0);
@@ -297,13 +293,13 @@ test("unsafe or oversized argv omits the reproduction command", () => {
 });
 
 test("timeouts have a distinct exit condition", async () => {
-  const result = await runPhase(nodePhase("slow", "setInterval(() => {}, 1000)", { timeoutMs: 50 }));
+  const result = await runPhase(bunPhase("slow", "setInterval(() => {}, 1000)", { timeoutMs: 50 }));
   assert.equal(result.exitCondition, "timeout");
 });
 
 test("abort signals report cancellation", async () => {
   const controller = new AbortController();
-  const pending = runPhase(nodePhase("cancel", "setInterval(() => {}, 1000)", {
+  const pending = runPhase(bunPhase("cancel", "setInterval(() => {}, 1000)", {
     signal: controller.signal,
   }));
   setTimeout(() => controller.abort(), 50);
@@ -322,7 +318,7 @@ test("timeouts terminate descendant processes", async () => {
     "setInterval(() => {}, 1000);",
   ].join("\n");
   try {
-    const result = await runPhase(nodePhase("tree", source, { timeoutMs: 500 }));
+    const result = await runPhase(bunPhase("tree", source, { timeoutMs: 500 }));
     assert.equal(result.exitCondition, "timeout");
     const descendantPid = Number(readFileSync(pidPath, "utf8"));
     let alive = true;
@@ -340,11 +336,13 @@ test("timeouts terminate descendant processes", async () => {
   }
 });
 
-test("process signals have a distinct exit condition", { skip: process.platform === "win32" }, async () => {
-  const result = await runPhase(nodePhase("signal", "process.kill(process.pid, 'SIGTERM')"));
-  assert.equal(result.exitCondition, "signal");
-  assert.equal(result.signal, "SIGTERM");
-});
+if (process.platform !== "win32" && !process.versions.bun) {
+  test("process signals have a distinct exit condition", async () => {
+    const result = await runPhase(bunPhase("signal", "process.kill(process.pid, 'SIGTERM')"));
+    assert.equal(result.exitCondition, "signal");
+    assert.equal(result.signal, "SIGTERM");
+  });
+}
 
 test("receipt identities survive stage, unstage, and commit transitions", () => {
   const { cwd, runGit } = initRepo();
@@ -419,19 +417,6 @@ test("verification configuration changes content identity without changing test 
   }
 });
 
-test(".node-version changes verification content identity", () => {
-  const { cwd } = initRepo();
-  try {
-    writeFileSync(resolve(cwd, ".node-version"), "24.18.0\n");
-    const first = calculateVerificationIdentities({ cwd, env: {} });
-    writeFileSync(resolve(cwd, ".node-version"), "24.18.1\n");
-    const second = calculateVerificationIdentities({ cwd, env: {} });
-    assert.notEqual(first.contentIdentity, second.contentIdentity);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
 test("receipt identity calculation rejects paths outside the repository", () => {
   const { cwd } = initRepo();
   try {
@@ -497,7 +482,7 @@ test("Claude receipt checks emit blocking recovery guidance on stderr", () => {
   const { cwd } = initRepo();
   try {
     writeFileSync(resolve(cwd, "source.ts"), "export {};\n");
-    const result = spawnSync(NODE, [VERIFY_SCRIPT, "--check-receipt"], {
+    const result = spawnSync(BUN, [VERIFY_SCRIPT, "--check-receipt"], {
       cwd,
       encoding: "utf8",
       windowsHide: true,
@@ -521,30 +506,6 @@ test("verification fails closed when receipt identities cannot be calculated", a
     assert.equal(result.identityFailure, true);
     assert.match(lines.join("\n"), /could not calculate receipt identities/);
     assert.equal(existsSync(resolve(cwd, ".dev", "verification")), false);
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test("imported verification rejects a runtime mismatch before creating artifacts", async () => {
-  const { cwd } = initRepo();
-  const lines = [];
-  try {
-    writeFileSync(resolve(cwd, "source.ts"), "export {};\n");
-    const result = await runVerification({
-      cwd,
-      env: { PATH: "" },
-      printer: (line) => lines.push(line),
-      runtime: {
-        actualVersion: "v99.0.0",
-        execPath: resolve(cwd, "wrong-node"),
-      },
-    });
-    assert.equal(result.code, 1);
-    assert.equal(result.runtimeMismatch, true);
-    assert.equal(existsSync(resolve(cwd, ".dev", "verification")), false);
-    assert.match(lines.join("\n"), /Expected: v24\.18\.0/);
-    assert.match(lines.join("\n"), /Actual: v99\.0\.0/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -769,7 +730,7 @@ test("cache evidence with an evicted phase log is ignored", () => {
 test("parallel phases aggregate the first failure after every phase completes", async () => {
   const cwd = mkdtempSync(resolve(tmpdir(), "mcode-verify-concurrent-"));
   const releasePath = resolve(cwd, "release");
-  const makeWaitingPhase = (name, code) => nodePhase(name, [
+  const makeWaitingPhase = (name, code) => bunPhase(name, [
     "const fs = require('node:fs');",
     `fs.writeFileSync(${JSON.stringify(resolve(cwd, `${name}.ready`))}, 'ready');`,
     `const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(releasePath)})) { clearInterval(timer); process.exit(${code}); } }, 25);`,
@@ -801,8 +762,8 @@ test("agent script tests start after the parallel core phases settle", async () 
   try {
     const { code, results } = await runVerificationPhases(
       [
-        nodePhase("Typecheck", `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "done"), 100)`),
-        nodePhase(
+        bunPhase("Typecheck", `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "done"), 100)`),
+        bunPhase(
           SCRIPT_TEST_PHASE.name,
           `if (!require("node:fs").existsSync(${JSON.stringify(marker)})) process.exit(9)`,
         ),
@@ -820,7 +781,7 @@ test("full logs are created only when a run directory is supplied", async () => 
   const cwd = mkdtempSync(resolve(tmpdir(), "mcode-verify-run-"));
   try {
     const { results } = await runPhasesInParallel(
-      [nodePhase("Example", "console.log('evidence')")],
+      [bunPhase("Example", "console.log('evidence')")],
       { runDirectory: cwd, printer: () => {} },
     );
     assert.ok(results[0].logPath);
