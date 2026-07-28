@@ -1319,7 +1319,7 @@ export class ThreadControlService {
     }
   }
 
-  private failRecovery(approval: Pick<RecoverableThreadCreateApproval, "approvalId" | "threadId" | "workspaceId" | "callerId" | "sourceThreadId">): void {
+  private failRecovery(approval: RecoverableThreadCreateApproval): void {
     const identity = { approvalId: approval.approvalId, threadId: approval.threadId };
     try {
       if (!this.approvals.settle(approval.approvalId, "failed")) {
@@ -1328,7 +1328,7 @@ export class ThreadControlService {
     } catch {
       logger.error("Could not fail recovered approval", identity);
     }
-    if (!("operation" in approval)) {
+    if (approval.operation === "thread_create_batch") {
       try {
         if (!this.threads.updateStatus(approval.threadId, "errored")) {
           logger.error("Could not mark recovered thread errored", identity);
@@ -1338,15 +1338,15 @@ export class ThreadControlService {
       }
     }
     this.writeRecoveryAudit(approval, "recovery-failed");
-    if (!("operation" in approval)) broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
+    if (approval.operation === "thread_create_batch") broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
   }
 
   private writeRecoveryAudit(
-    approval: Pick<RecoverableThreadCreateApproval, "approvalId" | "threadId" | "workspaceId" | "callerId" | "sourceThreadId">,
+    approval: RecoverableThreadCreateApproval,
     outcome: "recovery-failed" | "recovery-requeued",
   ): void {
     this.writeAudit(
-      { callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: !("invalid" in approval) && "operation" in approval ? (approval as { operation: string }).operation : "thread_create_batch", outcome },
+      { callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: approval.operation ?? "unknown", outcome },
       { approvalId: approval.approvalId, threadId: approval.threadId },
     );
   }

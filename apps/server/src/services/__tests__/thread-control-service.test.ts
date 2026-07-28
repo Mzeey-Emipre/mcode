@@ -443,6 +443,7 @@ describe("ThreadControlService", () => {
   it("resumes the same pending operation exactly once after human approval", async () => {
     const service = createService();
     approvals.claim.mockReturnValue({
+      operation: "thread_create_batch",
       approvalId: "approval-1",
       threadId: createdThread.id,
       workspaceId: workspace.id,
@@ -481,6 +482,7 @@ describe("ThreadControlService", () => {
   it("keeps an approved thread active when its post-settlement audit write fails", async () => {
     const service = createService();
     approvals.claim.mockReturnValue({
+      operation: "thread_create_batch",
       approvalId: "approval-audit-failure",
       threadId: createdThread.id,
       workspaceId: workspace.id,
@@ -506,6 +508,7 @@ describe("ThreadControlService", () => {
   it.each(["deny", "failure"])("does not throw when %s auditing fails", async (outcome) => {
     const service = createService();
     approvals.claim.mockReturnValue({
+      operation: "thread_create_batch",
       approvalId: `approval-${outcome}`,
       threadId: createdThread.id,
       workspaceId: workspace.id,
@@ -525,8 +528,9 @@ describe("ThreadControlService", () => {
   it("requeues a recovered provisioning approval only after cleanup clears its persisted checkout", async () => {
     const service = createService();
     approvals.listProcessing.mockReturnValue([
-      { approvalId: "safe", threadId: "thread-safe", operationPhase: "pre_provision" },
+      { operation: "thread_create_batch", approvalId: "safe", threadId: "thread-safe", operationPhase: "pre_provision" },
       {
+        operation: "thread_create_batch",
         approvalId: "provisioning",
         threadId: "thread-provisioning",
         workspaceId: workspace.id,
@@ -557,6 +561,7 @@ describe("ThreadControlService", () => {
     approvals.listProcessing.mockReturnValue([
       {
         invalid: true,
+        operation: "thread_create_batch",
         approvalId: "malformed",
         threadId: "thread-malformed",
         workspaceId: workspace.id,
@@ -583,6 +588,7 @@ describe("ThreadControlService", () => {
     approvals.listPending.mockReturnValue([
       {
         invalid: true,
+        operation: "thread_create_batch",
         approvalId: "malformed-pending",
         threadId: "thread-malformed-pending",
         workspaceId: workspace.id,
@@ -608,6 +614,33 @@ describe("ThreadControlService", () => {
     expect(mutationReservations.owns("thread-valid-pending", "valid-pending", "pendingApproval")).toBe(true);
   });
 
+  it.each([
+    ["thread_send", "malformed-send"],
+    ["thread_stop", "malformed-stop"],
+    [undefined, "malformed-unknown"],
+  ])("settles malformed %s recovery without mutating target", async (operation, approvalId) => {
+    const service = createService();
+    mockBroadcast.mockClear();
+    approvals.listPending.mockReturnValue([{
+      invalid: true,
+      ...(operation ? { operation } : {}),
+      approvalId,
+      threadId: `thread-${approvalId}`,
+      workspaceId: workspace.id,
+      callerId: "local-user",
+    }]);
+
+    await expect(service.recoverApprovals()).resolves.toBeUndefined();
+
+    expect(approvals.settle).toHaveBeenCalledWith(approvalId, "failed");
+    expect(threads.updateStatus).not.toHaveBeenCalled();
+    expect(mockBroadcast).not.toHaveBeenCalled();
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({
+      operation: operation ?? "unknown",
+      outcome: "recovery-failed",
+    }));
+  });
+
   it("continues recovery when failure persistence or audit logging throws", async () => {
     const service = createService();
     approvals.settle.mockImplementationOnce(() => { throw new Error("database unavailable"); });
@@ -615,6 +648,7 @@ describe("ThreadControlService", () => {
     approvals.listProcessing.mockReturnValue([
       {
         invalid: true,
+        operation: "thread_create_batch",
         approvalId: "broken",
         threadId: "thread-broken",
         workspaceId: workspace.id,
@@ -642,6 +676,7 @@ describe("ThreadControlService", () => {
     const service = createService();
     arrange();
     approvals.listProcessing.mockReturnValue([{
+      operation: "thread_create_batch",
       approvalId: "provisioning",
       threadId: "thread-provisioning",
       workspaceId: workspace.id,

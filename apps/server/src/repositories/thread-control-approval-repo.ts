@@ -10,6 +10,7 @@ import {
 
 /** Persisted input needed to resume a protected delegated-thread creation. */
 export interface PendingThreadCreateApproval {
+  operation: "thread_create_batch";
   approvalId: string;
   threadId: string;
   workspaceId: string;
@@ -54,6 +55,7 @@ export interface PendingThreadStopApproval {
 /** Safe persisted identity for a processing approval whose payload cannot be rehydrated. */
 export interface MalformedThreadCreateApproval {
   invalid: true;
+  operation?: ThreadControlApprovalOperation;
   approvalId: string;
   threadId: string;
   workspaceId: string;
@@ -64,6 +66,8 @@ export interface MalformedThreadCreateApproval {
 /** Processing approval that can either resume safely or must fail closed. */
 export type PendingThreadControlApproval = PendingThreadCreateApproval | PendingThreadSendApproval | PendingThreadStopApproval;
 export type RecoverableThreadCreateApproval = PendingThreadControlApproval | MalformedThreadCreateApproval;
+/** Durable operation identifiers stored with thread-control approvals. */
+export type ThreadControlApprovalOperation = "thread_create_batch" | "thread_send" | "thread_stop";
 
 interface ApprovalRow {
   id: string;
@@ -78,7 +82,11 @@ interface ApprovalRow {
   source_thread_id: string | null;
   source_turn_id: string | null;
   source_provider_id: string | null;
-  operation: string;
+  operation: string | null;
+}
+
+function parseOperation(value: string | null | undefined): ThreadControlApprovalOperation | undefined {
+  return value === "thread_create_batch" || value === "thread_send" || value === "thread_stop" ? value : undefined;
 }
 
 /** Durable repository for protected thread-control creation approvals. */
@@ -187,8 +195,10 @@ export class ThreadControlApprovalRepo {
       try {
         return this.parse(row);
       } catch {
+        const operation = parseOperation(row.operation);
         return {
           invalid: true,
+          ...(operation ? { operation } : {}),
           approvalId: row.id,
           threadId: row.thread_id,
           workspaceId: row.workspace_id,
@@ -226,8 +236,10 @@ export class ThreadControlApprovalRepo {
   }
 
   private parse(row: ApprovalRow): PendingThreadControlApproval {
+    const operation = parseOperation(row.operation);
+    if (!operation) throw new Error("Stored thread-control approval has invalid operation");
     const execution = ResolvedExecutionSchema().parse(JSON.parse(row.execution_json));
-    if (row.operation === "thread_send") {
+    if (operation === "thread_send") {
       return {
         operation: "thread_send",
         approvalId: row.id,
@@ -243,7 +255,7 @@ export class ThreadControlApprovalRepo {
         ...(row.source_provider_id ? { sourceProviderId: row.source_provider_id } : {}),
       };
     }
-    if (row.operation === "thread_stop") {
+    if (operation === "thread_stop") {
       return {
         operation: "thread_stop",
         approvalId: row.id,
@@ -259,6 +271,7 @@ export class ThreadControlApprovalRepo {
     const placement = ThreadPlacementSchema().parse(JSON.parse(row.placement_json));
     if (placement.type !== "new_worktree") throw new Error("Stored thread-control approval has invalid placement");
     return {
+      operation: "thread_create_batch",
       approvalId: row.id,
       threadId: row.thread_id,
       workspaceId: row.workspace_id,
@@ -281,8 +294,10 @@ export class ThreadControlApprovalRepo {
       try {
         return this.parse(row);
       } catch {
+        const operation = parseOperation(row.operation);
         return {
           invalid: true,
+          ...(operation ? { operation } : {}),
           approvalId: row.id,
           threadId: row.thread_id,
           workspaceId: row.workspace_id,

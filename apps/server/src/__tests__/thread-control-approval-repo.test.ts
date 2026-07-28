@@ -49,6 +49,7 @@ describe("ThreadControlApprovalRepo", () => {
     });
 
     expect(approvals.listPendingByThread(threadId)).toEqual([{
+      operation: "thread_create_batch",
       approvalId,
       threadId,
       workspaceId,
@@ -119,6 +120,7 @@ describe("ThreadControlApprovalRepo", () => {
 
     expect(approvals.listProcessing()).toEqual([{
       invalid: true,
+      operation: "thread_create_batch",
       approvalId,
       threadId,
       workspaceId,
@@ -153,6 +155,7 @@ describe("ThreadControlApprovalRepo", () => {
     expect(pending).toEqual(expect.arrayContaining([
       {
         invalid: true,
+        operation: "thread_create_batch",
         approvalId: malformedApprovalId,
         threadId,
         workspaceId,
@@ -162,5 +165,56 @@ describe("ThreadControlApprovalRepo", () => {
     ]));
     expect(approvals.settle(malformedApprovalId, "failed")).toBe(true);
     expect(db.prepare("SELECT status FROM thread_control_approvals WHERE id = ?").get(malformedApprovalId)).toEqual({ status: "failed" });
+  });
+
+  it.each([
+    ["thread_send", () => approvals.createSend({
+      threadId,
+      workspaceId,
+      message: "Malformed send.",
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "supervised", interactionMode: "build" },
+      turnId: "turn-malformed-send",
+      callerId: "local-user",
+    })],
+    ["thread_stop", () => approvals.createStop({
+      threadId,
+      workspaceId,
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "supervised", interactionMode: "build" },
+      turnId: "turn-malformed-stop",
+      callerId: "local-user",
+    })],
+  ])("preserves malformed %s operation for recovery", (operation, createApproval) => {
+    const approvalId = createApproval();
+    db.prepare("UPDATE thread_control_approvals SET execution_json = ? WHERE id = ?").run("{", approvalId);
+
+    expect(approvals.listPending()).toEqual([{
+      invalid: true,
+      operation,
+      approvalId,
+      threadId,
+      workspaceId,
+      callerId: "local-user",
+    }]);
+  });
+
+  it("drops an invalid durable operation from malformed recovery identity", () => {
+    const approvalId = approvals.create({
+      threadId,
+      workspaceId,
+      prompt: "Malformed operation.",
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "supervised", interactionMode: "build" },
+      placement: { type: "new_worktree", baseRef: "main" },
+      turnId: "turn-malformed-operation",
+      callerId: "local-user",
+    });
+    db.prepare("UPDATE thread_control_approvals SET operation = ?, execution_json = ? WHERE id = ?").run("legacy_operation", "{", approvalId);
+
+    expect(approvals.listPending()).toEqual([{
+      invalid: true,
+      approvalId,
+      threadId,
+      workspaceId,
+      callerId: "local-user",
+    }]);
   });
 });
