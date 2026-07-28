@@ -220,4 +220,20 @@ describe("ThreadControlApprovalRepo", () => {
       callerId: "local-user",
     }]);
   });
+
+  it("fails a claimed approval whose payload cannot be parsed", () => {
+    const approvalId = approvals.createSend({
+      threadId,
+      workspaceId,
+      message: "Malformed claim.",
+      execution: { providerId: "codex", modelId: "gpt-5.6-sol", permissionMode: "supervised", interactionMode: "build" },
+      turnId: "turn-malformed-claim",
+      callerId: "local-user",
+    });
+    db.prepare("UPDATE thread_control_approvals SET execution_json = ? WHERE id = ?").run("{", approvalId);
+
+    expect(approvals.claim(approvalId)).toBeNull();
+    expect(db.prepare("SELECT status FROM thread_control_approvals WHERE id = ?").get(approvalId)).toEqual({ status: "failed" });
+    expect(approvals.listProcessing()).toEqual([]);
+  });
 });

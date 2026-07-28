@@ -439,9 +439,11 @@ export class ThreadControlService {
     }
     const observed = this.observedState(target);
     if (observed.status === "stopped") {
+      this.auditMutation(authority, "thread_stop", "accepted", target.id, target.workspace_id);
       return { status: "accepted", workspaceId: target.workspace_id, threadId: target.id, state: { status: "stopped" } };
     }
     if (observed.status === "waiting_for_approval") {
+      this.auditMutation(authority, "thread_stop", "thread_busy", target.id, target.workspace_id);
       return {
         status: "rejected",
         workspaceId: target.workspace_id,
@@ -528,6 +530,7 @@ export class ThreadControlService {
       this.mutationReservations.release(target.id, reservationToken);
     } catch {
       this.mutationReservations.release(target.id, reservationToken);
+      this.auditMutation(authority, "thread_stop", "internal_error", target.id, target.workspace_id);
       const error = this.error("internal_error", "Thread stop failed", true);
       return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
     }
@@ -601,7 +604,7 @@ export class ThreadControlService {
 
   /** Restore stranded approvals without replaying an ambiguous external side effect. */
   async recoverApprovals(): Promise<void> {
-    const pendingApprovals = this.approvals.listPending?.() ?? [];
+    const pendingApprovals = this.approvals.listPending();
     for (const approval of pendingApprovals) {
       if ("invalid" in approval) {
         logger.error("Thread-control pending approval payload is invalid during recovery", {
@@ -762,7 +765,13 @@ export class ThreadControlService {
     }
     if ("operation" in approval && (approval.operation === "thread_send" || approval.operation === "thread_stop")) {
       if (approval.operationPhase === "pre_dispatch" && this.approvals.requeueDispatch(approval.approvalId)) {
-        this.mutationReservations.rehydrate(approval.threadId, approval.approvalId);
+        const rehydrated = this.mutationReservations.rehydrate(approval.threadId, approval.approvalId);
+        if (!rehydrated) {
+          logger.error("Thread-control processing approval reservation conflict", {
+            approvalId: approval.approvalId,
+            threadId: approval.threadId,
+          });
+        }
         this.writeRecoveryAudit(approval, "recovery-requeued");
       } else {
         this.failRecovery(approval);
@@ -1190,6 +1199,18 @@ export class ThreadControlService {
     decision: PermissionDecision,
   ): Promise<boolean> {
     const operation = pending.operation;
+    if (operation === "thread_send") {
+      const provenance = [pending.sourceThreadId, pending.sourceTurnId, pending.sourceProviderId];
+      const hasAnyProvenance = provenance.some((value) => value !== undefined);
+      const hasCompleteProvenance = provenance.every((value) => typeof value === "string" && value.length > 0);
+      if (hasAnyProvenance && !hasCompleteProvenance) {
+        this.approvals.settle(pending.approvalId, "failed");
+        this.mutationReservations.release(pending.threadId, pending.approvalId);
+        this.writeAudit({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation, outcome: "resumed-failed" }, { approvalId: pending.approvalId, threadId: pending.threadId });
+        broadcast("permission.resolved", { requestId: pending.approvalId, decision });
+        return true;
+      }
+    }
     if (decision === "deny" || decision === "cancelled") {
       this.approvals.settle(pending.approvalId, "rejected");
       this.mutationReservations.release(pending.threadId, pending.approvalId);

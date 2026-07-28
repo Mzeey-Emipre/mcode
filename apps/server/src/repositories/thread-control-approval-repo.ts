@@ -181,7 +181,18 @@ export class ThreadControlApprovalRepo {
       return updated.changes === 1 ? row : null;
     });
     const row = claim();
-    return row ? this.parse(row) : null;
+    if (!row) return null;
+    try {
+      return this.parse(row);
+    } catch (error) {
+      logger.error("Failed to parse claimed thread-control approval", {
+        approvalId: row.id,
+        threadId: row.thread_id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.settle(row.id, "failed");
+      return null;
+    }
   }
 
   /** Persist a completed side-effect boundary before the next operation begins. */

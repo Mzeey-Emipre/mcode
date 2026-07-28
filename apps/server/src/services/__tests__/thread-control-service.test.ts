@@ -72,6 +72,7 @@ describe("ThreadControlService", () => {
     listPending: ReturnType<typeof vi.fn>;
     listProcessing: ReturnType<typeof vi.fn>;
     requeue: ReturnType<typeof vi.fn>;
+    requeueDispatch: ReturnType<typeof vi.fn>;
     requeueRecoveredProvisioning: ReturnType<typeof vi.fn>;
     listPendingByThread: ReturnType<typeof vi.fn>;
   };
@@ -128,6 +129,7 @@ describe("ThreadControlService", () => {
       listPending: vi.fn().mockReturnValue([]),
       listProcessing: vi.fn().mockReturnValue([]),
       requeue: vi.fn().mockReturnValue(true),
+      requeueDispatch: vi.fn().mockReturnValue(true),
       requeueRecoveredProvisioning: vi.fn().mockReturnValue(true),
       listPendingByThread: vi.fn().mockReturnValue([]),
     };
@@ -1006,6 +1008,31 @@ describe("ThreadControlService", () => {
     }));
   });
 
+  it("fails approval recovery when persisted send provenance is incomplete", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };
+    threads.findById.mockReturnValue(target);
+    mutationReservations.rehydrate(target.id, "approval-send");
+    approvals.claim.mockReturnValue({
+      operation: "thread_send",
+      approvalId: "approval-send",
+      threadId: target.id,
+      workspaceId: workspace.id,
+      message: "Resume with bad provenance",
+      execution: { providerId: "claude", modelId: "claude-exact", permissionMode: "supervised", interactionMode: "build" },
+      turnId: "turn-send",
+      operationPhase: "pre_dispatch",
+      callerId: authority.userId,
+      sourceThreadId: authority.sourceThreadId,
+      sourceTurnId: authority.sourceTurnId,
+    });
+
+    await expect(service.respondToApproval("approval-send", "allow")).resolves.toBe(true);
+    expect(agentService.sendMessage).not.toHaveBeenCalled();
+    expect(approvals.settle).toHaveBeenCalledWith("approval-send", "failed");
+    expect(mutationReservations.get(target.id)).toBeUndefined();
+  });
+
   it("stops a full target and leaves it in the stopped lifecycle state", async () => {
     const service = createService();
     const target = { ...createdThread, id: "target-thread", model: "claude-exact", deleted_at: null };
@@ -1015,5 +1042,32 @@ describe("ThreadControlService", () => {
     await expect(service.threadStop(fullAuthority, { threadId: target.id })).resolves.toEqual({ status: "accepted", workspaceId: workspace.id, threadId: target.id, state: { status: "stopped" } });
     expect(agentService.stopSession).toHaveBeenCalledWith(target.id);
     expect(threads.updateStatus).toHaveBeenCalledWith(target.id, "interrupted");
+  });
+
+  it("audits idempotent and busy stopped outcomes", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", status: "interrupted", deleted_at: null };
+    threads.findById.mockReturnValue(target);
+
+    await expect(service.threadStop({ ...authority, permissionMode: "full" }, { threadId: target.id })).resolves.toMatchObject({ status: "accepted" });
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ operation: "thread_stop", outcome: "accepted" }));
+
+    audit.write.mockClear();
+    approvals.listPendingByThread.mockReturnValue([{ approvalId: "pending-stop", operation: "thread_stop", threadId: target.id }]);
+    await expect(service.threadStop({ ...authority, permissionMode: "full" }, { threadId: target.id })).resolves.toMatchObject({ status: "rejected", error: { code: "thread_busy" } });
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ operation: "thread_stop", outcome: "thread_busy" }));
+  });
+
+  it("audits a full stop internal error", async () => {
+    const service = createService();
+    const target = { ...createdThread, id: "target-thread", deleted_at: null };
+    threads.findById.mockReturnValue(target);
+    agentService.stopSession.mockRejectedValueOnce(new Error("provider unavailable"));
+
+    await expect(service.threadStop({ ...authority, permissionMode: "full" }, { threadId: target.id })).resolves.toMatchObject({
+      status: "rejected",
+      error: { code: "internal_error" },
+    });
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({ operation: "thread_stop", outcome: "internal_error" }));
   });
 });

@@ -320,6 +320,8 @@ export class AgentService {
       resolvedProvider: import("@mcode/contracts").IAgentProvider;
       effectiveProvider: ProviderId;
       turnRequest: TurnRequest;
+      /** Shared mutation token required for every provider dispatch and release. */
+      mutationReservationToken: string;
       /**
        * The command side-effect rollback closure (`commandOutcome.onRollback`)
        * captured for this turn. Run only when the retry budget is exhausted so
@@ -635,7 +637,9 @@ export class AgentService {
       if (this.activeSessionIds.delete(threadId)) {
         this.memoryPressureService.markIdle(threadId);
       }
-      this.activeMutationReservations.delete(threadId);
+      if (reservationToken && this.activeMutationReservations.get(threadId) === reservationToken) {
+        this.activeMutationReservations.delete(threadId);
+      }
       if (reservationToken) this.mutationReservations.release(threadId, reservationToken);
     };
     reservationToken = mutationReservationToken
@@ -891,6 +895,9 @@ export class AgentService {
     // block below runs the rollback so failures don't leave a hidden side
     // effect active. Only set for a rewrite outcome that supplied onDispatch.
     if (pendingDispatch !== null) {
+      if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
+        throw new Error("Thread mutation reservation is no longer owned");
+      }
       // Flag the attempt before running it so the catch-block rollback fires
       // even if the (possibly async) side effect itself throws. Awaited because
       // a command's onDispatch may be async (e.g. installing a goal), and the
@@ -963,6 +970,7 @@ export class AgentService {
       effectiveProvider,
       turnRequest: baseTurnRequest,
       pendingRollback,
+      mutationReservationToken: reservationToken,
     });
     for (;;) {
       const dispatch = this.turnRetryDispatchByThread.get(threadId);
@@ -973,7 +981,16 @@ export class AgentService {
       };
       dispatch.sendTurnInFlight = true;
       try {
-        await resolvedProvider.sendTurn(dispatch.turnRequest);
+        const sendTurn = this.mutationReservations.runIfOwned(
+          threadId,
+          reservationToken,
+          "activeTurn",
+          () => resolvedProvider.sendTurn(dispatch.turnRequest),
+        );
+        if (sendTurn === undefined) {
+          throw new Error("Thread mutation reservation is no longer owned");
+        }
+        await sendTurn;
         dispatch.sendTurnInFlight = false;
         logger.info("Message sent via provider", {
           threadId,
@@ -986,6 +1003,9 @@ export class AgentService {
         return;
       } catch (err) {
         dispatch.sendTurnInFlight = false;
+        if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
+          throw new Error("Thread mutation reservation is no longer owned");
+        }
         const retried = await this.runTransientTurnRetry(threadId, err);
         if (retried) return;
         await this.giveUpTransientTurnRetry(threadId, err);
@@ -1563,6 +1583,10 @@ export class AgentService {
     const sessionId = `mcode-${threadId}`;
     const thread = this.threadRepo.findById(threadId);
     const providerId = (thread?.provider ?? "claude") as ProviderId;
+    const reservationToken = this.activeMutationReservations.get(threadId);
+    if (reservationToken) {
+      this.mutationReservations.transition(threadId, reservationToken, "activeTurn", "stopping");
+    }
     // Tear down any armed transient-retry window so a scheduled stream retry
     // can't re-dispatch after the user stopped, and the suppression flags don't
     // outlive the turn (they would otherwise swallow the next turn's terminal
@@ -1589,7 +1613,7 @@ export class AgentService {
       this.activeSessionIds.delete(threadId);
       this.memoryPressureService.markIdle(threadId);
     }
-    this.releaseMutationReservation(threadId);
+    this.releaseMutationReservation(threadId, reservationToken);
   }
 
   /** Return a thread's active open goal without starting provider work. */
@@ -1981,15 +2005,17 @@ export class AgentService {
     if (this.activeSessionIds.delete(threadId)) {
       this.memoryPressureService.markIdle(threadId);
     }
-    this.releaseMutationReservation(threadId);
+    const reservationToken = this.turnRetryDispatchByThread.get(threadId)?.mutationReservationToken;
+    this.releaseMutationReservation(threadId, reservationToken);
   }
 
   /** Release the shared mutation token without forcing provider-session teardown. */
-  private releaseMutationReservation(threadId: string): void {
-    const reservationToken = this.activeMutationReservations.get(threadId);
-    if (reservationToken) {
+  private releaseMutationReservation(threadId: string, reservationToken?: string): void {
+    const currentToken = this.activeMutationReservations.get(threadId);
+    const token = reservationToken ?? currentToken;
+    if (token && currentToken === token) {
       this.activeMutationReservations.delete(threadId);
-      this.mutationReservations.release(threadId, reservationToken);
+      this.mutationReservations.release(threadId, token);
     }
   }
 

@@ -67,6 +67,17 @@ export class ThreadControlMutationReservationService {
     return existing?.token === token && (state === undefined || existing.state === state);
   }
 
+  /** Invoke a dispatch only while the caller still owns the current reservation. */
+  runIfOwned<T>(
+    threadId: string,
+    token: string,
+    state: ThreadMutationReservationState,
+    dispatch: () => T,
+  ): T | undefined {
+    if (!this.owns(threadId, token, state)) return undefined;
+    return dispatch();
+  }
+
   /** Return the current reservation state for diagnostics and policy decisions. */
   get(threadId: string): { token: string; state: ThreadMutationReservationState } | undefined {
     const existing = this.reservations.get(threadId);

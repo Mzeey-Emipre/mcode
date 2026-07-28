@@ -233,6 +233,49 @@ describe("internal thread-control MCP transport", () => {
     );
   });
 
+  it("validates send and stop result variants at the in-memory caller boundary", async () => {
+    const authority = new InternalThreadControlMcpAuthority();
+    const lease = authority.activate({
+      sessionId: "pooled-provider-session",
+      sourceThreadId: "source-thread",
+      sourceTurnId: "source-turn",
+      sourceProviderId: "claude",
+      permissionMode: "full",
+    });
+    const execution = {
+      providerId: "claude",
+      modelId: "claude-sonnet-4-6",
+      permissionMode: "full",
+      interactionMode: "build",
+    } as const;
+    const service = {
+      workspaceSearch: vi.fn(),
+      worktreeList: vi.fn(),
+      threadCreateBatch: vi.fn(),
+      threadSend: vi.fn()
+        .mockResolvedValueOnce({ status: "accepted", workspaceId: "workspace-1", threadId: "destination-thread", turnId: "turn-1", execution, state: { status: "starting" } })
+        .mockResolvedValueOnce({ status: "pending_approval", workspaceId: "workspace-1", threadId: "destination-thread", approvalId: "approval-1", state: { status: "waiting_for_approval", approvalId: "approval-1" } })
+        .mockResolvedValueOnce({ status: "rejected", workspaceId: "workspace-1", threadId: "destination-thread", error: { code: "thread_busy", message: "Thread is already running", retryable: true } }),
+      threadStop: vi.fn()
+        .mockResolvedValueOnce({ status: "accepted", workspaceId: "workspace-1", threadId: "destination-thread", state: { status: "stopped" } })
+        .mockResolvedValueOnce({ status: "pending_approval", workspaceId: "workspace-1", threadId: "destination-thread", approvalId: "approval-2", state: { status: "waiting_for_approval", approvalId: "approval-2" } })
+        .mockResolvedValueOnce({ status: "rejected", workspaceId: "workspace-1", threadId: "destination-thread", error: { code: "internal_error", message: "Stop failed", retryable: true } }),
+    } as unknown as ThreadControlService;
+    const session = createInternalThreadControlMcpSession({ authority, service });
+
+    await expect(session.dispatch({ bearerCredential: lease.credential, requestId: "send-accepted", toolName: "thread_send", arguments: { threadId: "destination-thread", message: "Continue" } })).resolves.toMatchObject({ status: "accepted" });
+    await expect(session.dispatch({ bearerCredential: lease.credential, requestId: "send-pending", toolName: "thread_send", arguments: { threadId: "destination-thread", message: "Wait" } })).resolves.toMatchObject({ status: "pending_approval" });
+    await expect(session.dispatch({ bearerCredential: lease.credential, requestId: "send-rejected", toolName: "thread_send", arguments: { threadId: "destination-thread", message: "Retry" } })).resolves.toMatchObject({ status: "rejected" });
+    await expect(session.dispatch({ bearerCredential: lease.credential, requestId: "stop-accepted", toolName: "thread_stop", arguments: { threadId: "destination-thread" } })).resolves.toMatchObject({ status: "accepted" });
+    await expect(session.dispatch({ bearerCredential: lease.credential, requestId: "stop-pending", toolName: "thread_stop", arguments: { threadId: "destination-thread" } })).resolves.toMatchObject({ status: "pending_approval" });
+    await expect(session.dispatch({ bearerCredential: lease.credential, requestId: "stop-rejected", toolName: "thread_stop", arguments: { threadId: "destination-thread" } })).resolves.toMatchObject({ status: "rejected" });
+
+    await expect(session.dispatch({ bearerCredential: lease.credential, requestId: "forged-send", toolName: "thread_send", arguments: { threadId: "destination-thread", message: "Forged", sourceThreadId: "source-thread" } })).rejects.toThrow();
+    await expect(session.dispatch({ bearerCredential: lease.credential, requestId: "forged-stop", toolName: "thread_stop", arguments: { threadId: "destination-thread", sourceThreadId: "source-thread" } })).rejects.toThrow();
+    expect(service.threadSend).toHaveBeenCalledTimes(3);
+    expect(service.threadStop).toHaveBeenCalledTimes(3);
+  });
+
   it("dispatches authenticated search, get, and wait calls without destination mutation", async () => {
     const authority = new InternalThreadControlMcpAuthority();
     const lease = authority.activate({
