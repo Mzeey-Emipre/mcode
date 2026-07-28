@@ -1,6 +1,6 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Minimal NDJSON JSON-RPC 2.0 client for `codex app-server`.
-// Usage: node scripts/codex-trace.mjs <cwd> <traceOut> [prompt]
+// Usage: bun scripts/codex-trace.mjs <cwd> <traceOut> [prompt]
 import { spawn } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
 import readline from "node:readline";

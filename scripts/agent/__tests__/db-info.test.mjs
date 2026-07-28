@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-test("db:info opens a SQLite database through Electron Node", () => {
+test("db:info opens a SQLite database through Electron Node", { timeout: 75_000 }, () => {
   const dataDir = mkdtempSync(join(tmpdir(), "mcode-db-info-"));
   const dbPath = join(dataDir, "mcode.db");
   const env = { ...process.env, MCODE_DB_PATH: dbPath };

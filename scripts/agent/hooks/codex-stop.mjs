@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /** Inspects the changed-file receipt and emits Codex's stop-hook protocol. */
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";

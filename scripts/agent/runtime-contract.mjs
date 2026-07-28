@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Defines the per-worktree agent runtime filesystem and port contract.
  */
