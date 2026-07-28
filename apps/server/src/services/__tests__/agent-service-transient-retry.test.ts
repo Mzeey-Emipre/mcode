@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
+import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
 import type { ThreadRepo } from "../../repositories/thread-repo.js";
@@ -70,6 +71,7 @@ function buildService(): {
   waitForSessionExit: ReturnType<typeof vi.fn>;
   threadControlMcp: { activate: ReturnType<typeof vi.fn> };
   providerEmitter: EventEmitter;
+  mutationReservations: ThreadControlMutationReservationService;
   threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
@@ -159,6 +161,7 @@ function buildService(): {
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as PlanQuestionAnswersRepo;
   const threadControlMcp = { activate: vi.fn(), revoke: vi.fn(), close: vi.fn() };
+  const mutationReservations = new ThreadControlMutationReservationService();
   const db = {
     transaction: vi.fn((fn: (...args: unknown[]) => unknown) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
@@ -193,9 +196,19 @@ function buildService(): {
     new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
     undefined,
     threadControlMcp as never,
+    mutationReservations,
   );
 
-  return { service, sendTurn, discardSession, waitForSessionExit, providerEmitter, threadRepo, threadControlMcp };
+  return {
+    service,
+    sendTurn,
+    discardSession,
+    waitForSessionExit,
+    providerEmitter,
+    threadRepo,
+    threadControlMcp,
+    mutationReservations,
+  };
 }
 
 describe("AgentService transient-failure auto-retry", () => {
@@ -472,6 +485,53 @@ describe("AgentService transient-failure auto-retry", () => {
     await service.stopSession(THREAD_ID);
 
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
+  });
+
+  it("fences a delayed stream retry from stop and a replacement turn", async () => {
+    const { service, sendTurn, discardSession, providerEmitter, mutationReservations } = buildService();
+    service.init();
+
+    let releaseEviction!: () => void;
+    let evictionStarted!: () => void;
+    const evictionReady = new Promise<void>((resolve) => { evictionStarted = resolve; });
+    const evictionReleased = new Promise<void>((resolve) => { releaseEviction = resolve; });
+    discardSession.mockImplementation(async () => {
+      evictionStarted();
+      await evictionReleased;
+    });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    providerEmitter.emit("event", {
+      type: "error",
+      threadId: THREAD_ID,
+      error: "read ECONNRESET",
+    });
+    await evictionReady;
+
+    await service.stopSession(THREAD_ID);
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "replacement",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const replacementReservation = mutationReservations.get(THREAD_ID);
+    expect(replacementReservation?.state).toBe("activeTurn");
+
+    releaseEviction();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sendTurn).toHaveBeenCalledTimes(2);
+    expect(mutationReservations.get(THREAD_ID)).toEqual(replacementReservation);
   });
 
   it("retries when sendTurn resolves early then a transient stream Error arrives", async () => {

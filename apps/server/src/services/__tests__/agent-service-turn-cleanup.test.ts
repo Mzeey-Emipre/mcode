@@ -149,7 +149,9 @@ function buildService(
 
   const threadRepo = {
     findById: vi.fn(() => thread),
-    updateStatus: vi.fn(),
+    updateStatus: vi.fn((_threadId: string, status: Thread["status"]) => {
+      thread.status = status;
+    }),
     updateModel: vi.fn(),
     updateProvider: vi.fn(),
     updateSettings: vi.fn(),
@@ -342,6 +344,30 @@ describe("AgentService turn cleanup", () => {
     // Thread should no longer be active
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markIdle).toHaveBeenCalled();
+  });
+
+  it("ignores a late TurnStarted after stop instead of auto-resuming the thread", async () => {
+    const { service, providerEmitter, memoryPressureService } = buildService();
+    service.init();
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    await service.stopSession(THREAD_ID);
+    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+    } satisfies AgentEvent);
+
+    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(memoryPressureService.markActive).toHaveBeenCalledTimes(1);
   });
 
   it("persists preview annotation snapshots as visible provider attachments", async () => {
