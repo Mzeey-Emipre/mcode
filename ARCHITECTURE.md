@@ -758,7 +758,8 @@ stateDiagram-v2
 
 ## 13. Development Setup
 
-**Prerequisites:** Bun, Git, and a supported provider CLI on PATH.
+**Prerequisites:** Bun and Git. Install at least one supported provider CLI, or
+configure its executable path in Settings > Providers.
 
 ```bash
 git clone <repo-url>

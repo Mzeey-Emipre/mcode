@@ -23,9 +23,9 @@ You also need at least one supported provider CLI installed:
 
 | Provider | Install | Min version |
 |----------|---------|-------------|
-| [Claude Code](https://claude.ai/download) | `npm i -g @anthropic-ai/claude-code` | — |
-| [Codex](https://github.com/openai/codex) | `npm i -g @openai/codex` | 0.37.0 |
-| [GitHub Copilot](https://github.com/github/copilot) | `npm i -g @github/copilot` | — |
+| [Claude Code](https://claude.ai/download) | `bun add --global @anthropic-ai/claude-code` | — |
+| [Codex](https://github.com/openai/codex) | `bun add --global @openai/codex` | 0.37.0 |
+| [GitHub Copilot](https://github.com/github/copilot) | `bun add --global @github/copilot` | — |
 
 Provider CLIs do not need to be on your system PATH. You can set a custom binary path per provider in **Settings > Providers**.
 

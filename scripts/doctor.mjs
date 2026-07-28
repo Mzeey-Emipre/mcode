@@ -30,6 +30,25 @@ function resolveSqliteModule() {
   }
 }
 
+/** Returns the installed Electron module ABI. */
+function getElectronABI() {
+  const desktopRequire = createRequire(resolve(mainRoot, 'apps', 'desktop', 'package.json'));
+  const electronBinary = desktopRequire('electron');
+  const abi = execFileSync(
+    electronBinary,
+    ['-e', 'process.stdout.write(process.versions.modules)'],
+    {
+      cwd: mainRoot,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 30_000,
+    },
+  ).trim();
+  if (!/^\d+$/.test(abi)) throw new Error(`Electron reported invalid ABI: ${abi || 'empty'}`);
+  return abi;
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -39,8 +58,10 @@ function check(label, fn, fix) {
     fn();
     console.log(`  ✓ ${label}`);
     passed++;
-  } catch {
+  } catch (error) {
     console.log(`  ✗ ${label}`);
+    const reason = error instanceof Error ? error.message : String(error);
+    if (reason) console.log(`    Reason: ${reason}`);
     console.log(`    Fix: ${fix}`);
     failed++;
   }
@@ -77,13 +98,20 @@ check(
   'better-sqlite3 Electron binding installed',
   () => {
     const modulePath = resolveSqliteModule();
-    if (!modulePath) throw new Error('not found');
+    if (!modulePath) throw new Error('better-sqlite3 module is not installed; run bun install');
     const electronBinding = resolve(modulePath, 'build', 'Release', 'better_sqlite3.electron.node');
-    if (!existsSync(electronBinding)) throw new Error();
+    if (!existsSync(electronBinding)) {
+      throw new Error(`better-sqlite3 Electron binding is missing: ${electronBinding}`);
+    }
 
     const markerPath = resolve(modulePath, 'build', 'Release', '.electron-abi');
-    if (!existsSync(markerPath) || !/^\d+$/.test(readFileSync(markerPath, 'utf8').trim())) {
-      throw new Error('Electron ABI marker is missing or invalid');
+    if (!existsSync(markerPath)) throw new Error(`Electron ABI marker is missing: ${markerPath}`);
+    const marker = readFileSync(markerPath, 'utf8').trim();
+    const electronABI = getElectronABI();
+    if (!/^\d+$/.test(marker) || marker !== electronABI) {
+      throw new Error(
+        `Electron ABI marker mismatch: expected ${electronABI}, found ${marker || 'missing'}`,
+      );
     }
   },
   'bun install'

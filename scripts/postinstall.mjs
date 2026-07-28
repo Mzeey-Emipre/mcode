@@ -183,6 +183,15 @@ if (electronABI) {
   if (!existsSync(electronBinary)) {
     throw new Error(`Electron better-sqlite3 binding missing after install: ${electronBinary}`);
   }
+  if (!existsSync(abiMarker)) {
+    throw new Error(`Electron better-sqlite3 ABI marker missing after install: ${abiMarker}`);
+  }
+  const installedABI = readFileSync(abiMarker, "utf-8").trim();
+  if (!/^\d+$/.test(installedABI) || installedABI !== electronABI) {
+    throw new Error(
+      `Electron better-sqlite3 ABI marker mismatch: expected ${electronABI}, found ${installedABI || "missing"}`,
+    );
+  }
   console.log(
     `better-sqlite3 v${bsqlVersion}: Electron ABI ${electronABI} at better_sqlite3.electron.node`,
   );

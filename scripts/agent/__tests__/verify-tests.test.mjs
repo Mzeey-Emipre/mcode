@@ -336,7 +336,7 @@ test("timeouts terminate descendant processes", async () => {
   }
 });
 
-if (process.platform !== "win32" && !process.versions.bun) {
+if (process.platform !== "win32") {
   test("process signals have a distinct exit condition", async () => {
     const result = await runPhase(bunPhase("signal", "process.kill(process.pid, 'SIGTERM')"));
     assert.equal(result.exitCondition, "signal");

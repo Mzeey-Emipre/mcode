@@ -63,7 +63,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.18.0
-          package-manager-cache: false
 
       - name: Package unpacked app with electron-builder
         run: bun apps/desktop/scripts/ci-package.mjs --linux dir

@@ -342,7 +342,7 @@ export function runPhase({
   logPath,
 }) {
   return new Promise((resolve) => {
-    const phaseEnv = withBunPath(env);
+    const phaseEnv = withBunPath(env, process.execPath);
     const startedAt = Date.now();
     let tail = Buffer.alloc(0);
     let settled = false;

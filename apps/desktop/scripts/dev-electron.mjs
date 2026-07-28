@@ -187,6 +187,8 @@ const scheduleServerBundleRebuild = makeCoalescedAsync(async () => {
 let viteProcess = null;
 /** Electron child handle; declared before Vite startup so early Vite exit cannot hit TDZ. */
 let electronProcess = null;
+/** Active esbuild watch contexts; initialized before startup so early cleanup is safe. */
+let watchContexts = [];
 
 /** True while `cleanup()` is tearing children down so Vite exit is not treated as a crash. */
 let devSessionShuttingDown = false;
@@ -251,7 +253,7 @@ function startViteDevServer() {
 }
 
 // Run Vite startup and esbuild (main/preload) watch in parallel
-const [devServerUrl, watchContexts] = await Promise.all([
+const [devServerUrl, initialWatchContexts] = await Promise.all([
   startViteDevServer(),
   Promise.all(
     entries.map(async (cfg) => {
@@ -262,6 +264,7 @@ const [devServerUrl, watchContexts] = await Promise.all([
     }),
   ),
 ]);
+watchContexts = initialWatchContexts;
 
 if (!devServerUrl) {
   console.error("[dev] Vite dev server failed to start");
@@ -410,7 +413,7 @@ function cleanup() {
   }
 
   for (const ctx of watchContexts) {
-    ctx.dispose().catch(() => {});
+    processes.push(Promise.resolve(ctx.dispose()).catch(() => undefined));
   }
 
   if (electronProcess) {

@@ -3,8 +3,10 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { discoverAgentTestFiles } from "../test-scripts.mjs";
 
 test("root dev uses the paired dev:web runtime", () => {
   const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
@@ -43,4 +45,16 @@ test("repository orchestration scripts use Bun without a system Node contract", 
     assert.doesNotMatch(packageJson.scripts[name], /\bnode(?:\.exe)?\b/);
   }
   assert.equal(packageJson.engines, undefined);
+});
+
+test("maintained test discovery fails when no tests exist", () => {
+  const directory = mkdtempSync(resolve(tmpdir(), "mcode-agent-tests-"));
+  try {
+    assert.throws(
+      () => discoverAgentTestFiles(directory),
+      /No agent tests found/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

@@ -32,6 +32,7 @@ test("workflows use Bun runtime and repository commands", () => {
       assert.equal((source.match(/actions\/setup-node@/gi) ?? []).length, 1, file);
       assert.match(source, /actions\/setup-node@v\d+/i, file);
       assert.match(source, /node-version:\s*["']?24\.18\.0["']?(?:\s|$)/i, file);
+      assert.doesNotMatch(source, /package-manager-cache\s*:/i, file);
       assert.match(source, /run:\s*bun[^\r\n]*ci-package\.mjs/i, file);
       assert.ok(
         source.indexOf("actions/setup-node@") < source.indexOf("ci-package.mjs"),

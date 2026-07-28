@@ -51,7 +51,7 @@ export function killPidTree(
     return;
   }
 
-  return terminatePosixProcess(pid, signal, graceMs, useProcessGroup, child).catch(() => undefined);
+  return terminatePosixProcess(pid, signal, graceMs, useProcessGroup, child);
 }
 
 /**
@@ -67,13 +67,38 @@ export function killPidTree(
  * @returns {Promise<void>}
  */
 async function terminatePosixProcess(pid, signal, graceMs, useProcessGroup, child) {
+  if (child && isChildExited(child)) return;
   signalPosixProcess(pid, signal, useProcessGroup);
   if (graceMs <= 0) return;
 
-  await new Promise((resolve) => setTimeout(resolve, graceMs));
-  if (child && (child.exitCode !== null || child.signalCode !== null)) return;
+  await waitForChildExitOrTimeout(child, graceMs);
+  if (child && isChildExited(child)) return;
   if (!isProcessAlive(pid, useProcessGroup)) return;
   signalPosixProcess(pid, "SIGKILL", useProcessGroup);
+}
+
+/** Waits for a child to exit, or for the graceful termination window to end. */
+function waitForChildExitOrTimeout(child, graceMs) {
+  if (!child?.once) return new Promise((resolve) => setTimeout(resolve, graceMs));
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off?.("exit", finish);
+      resolve();
+    };
+    timer = setTimeout(finish, graceMs);
+    child.once("exit", finish);
+    if (isChildExited(child)) finish();
+  });
+}
+
+/** Returns whether a child has already reported an exit status or signal. */
+function isChildExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
 }
 
 /**

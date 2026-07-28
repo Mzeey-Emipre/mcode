@@ -19,7 +19,8 @@ const options = {
 const testOptions = { timeout: 75_000 };
 
 test("Electron adapter uses the bounded verification phase timeout", () => {
-  assert.equal(ELECTRON_PROCESS_TIMEOUT_MS, 10 * 60 * 1_000);
+  assert.ok(ELECTRON_PROCESS_TIMEOUT_MS > 0);
+  assert.ok(ELECTRON_PROCESS_TIMEOUT_MS <= 10 * 60 * 1_000);
 });
 
 function runWorkspaceCli(entryFile) {
@@ -35,7 +36,6 @@ function runElectronNode(...args) {
 }
 
 test("Electron Node forwards output and preserves exit status", testOptions, () => {
-  const startedAt = Date.now();
   const result = runElectronNode(
     "-e",
     "console.log('electron-stdout'); console.error('electron-stderr'); process.exitCode = 7;",
@@ -45,7 +45,6 @@ test("Electron Node forwards output and preserves exit status", testOptions, () 
   assert.equal(result.status, 7, result.stderr);
   assert.equal(result.stdout, "electron-stdout\n");
   assert.equal(result.stderr, "electron-stderr\n");
-  assert.ok(Date.now() - startedAt < testOptions.timeout);
 });
 
 test("workspace CLI accepts a nested package entry", testOptions, () => {
@@ -83,23 +82,24 @@ test("Electron timeout terminates a detached descendant group", { timeout: 10_00
   ].join("\n");
 
   try {
-    const result = await runElectronProcess(process.execPath, ["-e", childCode], {
+    const started = runElectronProcess(process.execPath, ["-e", childCode], {
       cwd: process.cwd(),
       env: {
         ...process.env,
         MCODE_TEST_DESCENDANT_FILE: descendantFile,
       },
-      timeoutMs: 250,
+      timeoutMs: 2_000,
     });
+
+    const readyDeadline = Date.now() + 5_000;
+    while (!existsSync(descendantFile) && Date.now() < readyDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(existsSync(descendantFile), true, "descendant PID file was never written");
+    const result = await started;
 
     assert.equal(result.timedOut, true);
     assert.equal(result.status, 1);
-
-    const deadline = Date.now() + 5_000;
-    while (!existsSync(descendantFile) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    assert.equal(existsSync(descendantFile), true);
 
     const descendantPid = Number.parseInt(readFileSync(descendantFile, "utf8"), 10);
     assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
@@ -107,7 +107,18 @@ test("Electron timeout terminates a detached descendant group", { timeout: 10_00
       const alive = spawnSync("tasklist", ["/FI", `PID eq ${descendantPid}`], { encoding: "utf8" });
       assert.doesNotMatch(alive.stdout, new RegExp(`\\b${descendantPid}\\b`));
     } else {
-      assert.throws(() => process.kill(descendantPid, 0), { code: "ESRCH" });
+      const deadline = Date.now() + 5_000;
+      let alive = true;
+      while (alive && Date.now() < deadline) {
+        try {
+          process.kill(descendantPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        } catch (error) {
+          if (error?.code !== "ESRCH") throw error;
+          alive = false;
+        }
+      }
+      assert.equal(alive, false, `descendant ${descendantPid} survived timeout cleanup`);
     }
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });

@@ -184,14 +184,39 @@ test("PID records remain until owned termination completes", async () => {
       },
     });
 
-    while (!terminationStarted) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
-    }
+    await waitUntil(() => terminationStarted, {
+      timeoutMs: 5_000,
+      intervalMs: 5,
+      message: "owned termination did not start",
+    });
     assert.equal(existsSync(pidFile), true);
 
     releaseTermination();
     await stopping;
     assert.equal(existsSync(pidFile), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("PID records remain when owned termination fails", async () => {
+  const repo = makeRepo();
+  try {
+    const paths = getRuntimePaths(repo);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "999998\n");
+
+    await assert.rejects(
+      () => stopRecordedPidFile(pidFile, {
+        repoRoot: repo,
+        stop: async () => {
+          throw new Error("permission denied");
+        },
+      }),
+      /permission denied/,
+    );
+    assert.equal(existsSync(pidFile), true);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -218,9 +243,11 @@ test("agentDown waits for owned termination before returning", async () => {
       },
     });
 
-    while (!terminationStarted) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
-    }
+    await waitUntil(() => terminationStarted, {
+      timeoutMs: 5_000,
+      intervalMs: 5,
+      message: "owned shutdown did not start",
+    });
     assert.equal(existsSync(pidFile), true);
 
     releaseTermination();
@@ -254,9 +281,11 @@ test("agentReset does not start replacement before shutdown completes", async ()
       },
     });
 
-    while (!shutdownStarted) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
-    }
+    await waitUntil(() => shutdownStarted, {
+      timeoutMs: 5_000,
+      intervalMs: 5,
+      message: "shutdown did not start",
+    });
     assert.equal(existsSync(paths.dbDir), true);
 
     releaseShutdown();
@@ -304,27 +333,42 @@ test("dev:server SIGTERM stops the Electron server without a Vite reference erro
 
 /** Waits for dev-web to report the server-only health port. */
 async function waitForServerPort(readOutput) {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
+  return waitUntil(() => {
     const match = /Server ready on port (\d+)/.exec(readOutput());
     if (match) return Number(match[1]);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
-  }
-  throw new Error(`dev:server did not become ready: ${readOutput()}`);
+    return false;
+  }, {
+    timeoutMs: 30_000,
+    intervalMs: 100,
+    message: () => `dev:server did not become ready: ${readOutput()}`,
+  });
 }
 
 /** Waits for the server-only child to release its health endpoint. */
 async function waitForServerStop(port) {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
+  return waitUntil(async () => {
     try {
       await fetch(`http://127.0.0.1:${port}/health`);
+      return false;
     } catch {
-      return;
+      return true;
     }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }, {
+    timeoutMs: 5_000,
+    intervalMs: 100,
+    message: () => `dev:server still responds on port ${port} after SIGTERM`,
+  });
+}
+
+/** Polls a bounded condition and returns its first truthy value. */
+async function waitUntil(predicate, { timeoutMs, intervalMs, message }) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await predicate();
+    if (value) return value;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
   }
-  throw new Error(`dev:server still responds on port ${port} after SIGTERM`);
+  throw new Error(typeof message === "function" ? message() : message);
 }
 
 /**

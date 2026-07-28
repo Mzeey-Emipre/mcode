@@ -5,7 +5,7 @@ import { existsSync } from "fs";
 import { createRequire } from "module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
-import { killProcessTree } from "./kill-process-tree.mjs";
+import { killPidTree, killProcessTree } from "./kill-process-tree.mjs";
 
 /** Maximum time one Electron CLI invocation may run before its owned process tree is killed. */
 export const ELECTRON_PROCESS_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -82,12 +82,19 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
     let exitStatus;
     let exitSignal;
 
-    child.stdout.pipe(process.stdout);
-    child.stderr.pipe(process.stderr);
+    child.stdout.pipe(process.stdout, { end: false });
+    child.stderr.pipe(process.stderr, { end: false });
+
+    const signalHandlers = new Map();
+    const removeSignalHandlers = () => {
+      for (const [signal, handler] of signalHandlers) process.off(signal, handler);
+      signalHandlers.clear();
+    };
 
     const settle = (status, signal) => {
       if (settled) return;
       settled = true;
+      removeSignalHandlers();
       clearTimeout(timeoutHandle);
       clearTimeout(forcedSettlementHandle);
       resolveProcess({
@@ -97,6 +104,25 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
         timedOut,
       });
     };
+
+    const forwardSignal = (signal) => {
+      if (settled || !child.pid) return;
+      try {
+        void Promise.resolve(killPidTree(child.pid, signal, {
+          useProcessGroup: !isWindows,
+          child,
+        })).catch((error) => {
+          spawnError ??= error;
+        });
+      } catch (error) {
+        spawnError ??= error;
+      }
+    };
+    for (const signal of ["SIGINT", "SIGTERM"]) {
+      const handler = () => forwardSignal(signal);
+      signalHandlers.set(signal, handler);
+      process.on(signal, handler);
+    }
 
     child.once("error", (error) => {
       spawnError = error;
@@ -119,6 +145,15 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
         .catch(() => undefined)
         .finally(() => {
           if (settled) return;
+          try {
+            killPidTree(child.pid, "SIGKILL", {
+              graceMs: 0,
+              useProcessGroup: process.platform !== "win32",
+              child,
+            });
+          } catch (error) {
+            spawnError ??= error;
+          }
           try {
             child.kill();
           } catch {
@@ -154,5 +189,5 @@ if (isMain) {
   });
 
   if (result.error) throw result.error;
-  process.exit(result.status ?? 1);
+  process.exitCode = result.status ?? 1;
 }
