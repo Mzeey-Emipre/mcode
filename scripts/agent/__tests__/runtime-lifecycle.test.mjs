@@ -25,6 +25,7 @@ import {
   writePortsFile,
 } from "../runtime-contract.mjs";
 import { resolveDevSingleInstanceFlag } from "../single-instance-flag.mjs";
+import { stopRecordedPidFile } from "../runtime-processes.mjs";
 
 test("agentDown posts shutdown with seedLogin.authHeader and cleans only .dev/pids", async () => {
   const repo = makeRepo();
@@ -57,7 +58,7 @@ test("agentDown posts shutdown with seedLogin.authHeader and cleans only .dev/pi
     const outsidePid = join(paths.devDir, "web.pid");
     writeFileSync(outsidePid, "999997\n");
 
-    await agentDown(repo);
+    await agentDown(repo, { stop: async () => {} });
 
     assert.equal(fetchCalls.length, 1);
     assert.equal(fetchCalls[0].url, "http://127.0.0.1:41123/shutdown");
@@ -88,7 +89,7 @@ test("agentDown still cleans PID files when ports.json is malformed", async () =
     writeFileSync(paths.portsFile, "{not json");
     writeFileSync(join(paths.pidsDir, "server.pid"), "999998\n");
 
-    await agentDown(repo);
+    await agentDown(repo, { stop: async () => {} });
 
     assert.equal(existsSync(join(paths.pidsDir, "server.pid")), false);
   } finally {
@@ -102,6 +103,9 @@ test("agentUp removes stale PID files before launching server and web processes"
   const repo = makeRepo();
   let spawnAttempted = false;
   const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async (receivedRepo) => {
+      rmSync(join(getRuntimePaths(receivedRepo).pidsDir, "server.pid"), { force: true });
+    },
     seedFixtureRepo: () => join(repo, ".dev", "fixture-repo"),
     computeAvailablePorts: async () => ({ serverPort: 41_223, webPort: 41_224 }),
     getElectronBinary: () => process.execPath,
@@ -153,6 +157,110 @@ test("agentReset deletes only .dev/db between shutdown and restart", async () =>
     assert.equal(existsSync(paths.dbDir), false);
     assert.equal(readFileSync(join(paths.logsDir, "server.log"), "utf8"), "keep\n");
     assert.equal(readFileSync(join(paths.pidsDir, "web.pid"), "utf8"), "999999\n");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("PID records remain until owned termination completes", async () => {
+  const repo = makeRepo();
+  let releaseTermination;
+  let terminationStarted = false;
+  const termination = new Promise((resolve) => {
+    releaseTermination = resolve;
+  });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "999998\n");
+
+    const stopping = stopRecordedPidFile(pidFile, {
+      repoRoot: repo,
+      stop: async () => {
+        terminationStarted = true;
+        await termination;
+      },
+    });
+
+    while (!terminationStarted) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    assert.equal(existsSync(pidFile), true);
+
+    releaseTermination();
+    await stopping;
+    assert.equal(existsSync(pidFile), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentDown waits for owned termination before returning", async () => {
+  const repo = makeRepo();
+  let releaseTermination;
+  let terminationStarted = false;
+  const termination = new Promise((resolve) => {
+    releaseTermination = resolve;
+  });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "999998\n");
+
+    const stopping = agentDown(repo, {
+      stop: async () => {
+        terminationStarted = true;
+        await termination;
+      },
+    });
+
+    while (!terminationStarted) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    assert.equal(existsSync(pidFile), true);
+
+    releaseTermination();
+    await stopping;
+    assert.equal(existsSync(pidFile), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentReset does not start replacement before shutdown completes", async () => {
+  const repo = makeRepo();
+  let releaseShutdown;
+  let shutdownStarted = false;
+  const shutdown = new Promise((resolve) => {
+    releaseShutdown = resolve;
+  });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    mkdirSync(paths.dbDir, { recursive: true });
+    writeFileSync(join(paths.dbDir, "app.sqlite"), "keep\n");
+
+    const resetting = agentReset(repo, {
+      down: async () => {
+        shutdownStarted = true;
+        await shutdown;
+      },
+      up: async () => {
+        assert.equal(existsSync(paths.dbDir), false);
+      },
+    });
+
+    while (!shutdownStarted) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    assert.equal(existsSync(paths.dbDir), true);
+
+    releaseShutdown();
+    await resetting;
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

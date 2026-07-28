@@ -23,7 +23,7 @@ export const PROCESS_GROUP_GRACE_MS = 500;
  */
 export function killProcessTree(child, options) {
   if (!child?.pid) return;
-  return killPidTree(child.pid, "SIGTERM", options);
+  return killPidTree(child.pid, "SIGTERM", { ...options, child });
 }
 
 /**
@@ -31,13 +31,13 @@ export function killProcessTree(child, options) {
  *
  * @param {number} pid
  * @param {NodeJS.Signals} [signal]
- * @param {{ graceMs?: number, useProcessGroup?: boolean }} [options]
+ * @param {{ graceMs?: number, useProcessGroup?: boolean, child?: import("node:child_process").ChildProcess }} [options]
  * @returns {Promise<void> | undefined}
  */
 export function killPidTree(
   pid,
   signal = "SIGTERM",
-  { graceMs = PROCESS_GROUP_GRACE_MS, useProcessGroup = false } = {},
+  { graceMs = PROCESS_GROUP_GRACE_MS, useProcessGroup = false, child } = {},
 ) {
   if (!Number.isSafeInteger(pid) || pid <= 0) {
     throw new Error(`Invalid PID: ${pid}`);
@@ -51,7 +51,7 @@ export function killPidTree(
     return;
   }
 
-  return terminatePosixProcess(pid, signal, graceMs, useProcessGroup).catch(() => undefined);
+  return terminatePosixProcess(pid, signal, graceMs, useProcessGroup, child).catch(() => undefined);
 }
 
 /**
@@ -62,13 +62,17 @@ export function killPidTree(
  * @param {number} pid
  * @param {NodeJS.Signals} signal
  * @param {number} graceMs
+ * @param {boolean} useProcessGroup
+ * @param {import("node:child_process").ChildProcess | undefined} child
  * @returns {Promise<void>}
  */
-async function terminatePosixProcess(pid, signal, graceMs, useProcessGroup) {
+async function terminatePosixProcess(pid, signal, graceMs, useProcessGroup, child) {
   signalPosixProcess(pid, signal, useProcessGroup);
   if (graceMs <= 0) return;
 
   await new Promise((resolve) => setTimeout(resolve, graceMs));
+  if (child && (child.exitCode !== null || child.signalCode !== null)) return;
+  if (!isProcessAlive(pid, useProcessGroup)) return;
   signalPosixProcess(pid, "SIGKILL", useProcessGroup);
 }
 
@@ -93,5 +97,22 @@ function signalPosixProcess(pid, signal, useProcessGroup) {
     process.kill(pid, signal);
   } catch (error) {
     if (error?.code !== "ESRCH") throw error;
+  }
+}
+
+/**
+ * Checks process or process-group liveness immediately before hard kill.
+ *
+ * @param {number} pid
+ * @param {boolean} useProcessGroup
+ * @returns {boolean}
+ */
+function isProcessAlive(pid, useProcessGroup) {
+  try {
+    process.kill(useProcessGroup ? -pid : pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    return true;
   }
 }
