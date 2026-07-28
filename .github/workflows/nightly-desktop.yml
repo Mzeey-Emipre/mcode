@@ -229,6 +229,12 @@ jobs:
         env:
           MCODE_TARGET_ARCH: ${{ matrix.target-arch }}
 
+      - name: Set up Node 24 for desktop packaging
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+
       - name: Package with electron-builder (nightly channel)
         run: bun apps/desktop/scripts/ci-package.mjs --config.publish.channel=nightly ${{ matrix.build-args }}
         env:

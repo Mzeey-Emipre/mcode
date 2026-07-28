@@ -64,6 +64,13 @@ Electron is installed by `bun install` and bundles the Node.js runtime used by
 the backend and native modules. Chromium is bundled by Electron and renders the
 web frontend. No system Node.js executable or version manager is required.
 
+CI desktop packaging is the only exception. The packaging jobs provision Node
+24.18.0 with `actions/setup-node` before running
+`bun apps/desktop/scripts/ci-package.mjs`. Bun remains the workflow orchestrator;
+the helper uses the provisioned Node executable for npm, electron-builder, and
+native-module rebuild compatibility. Local development and agent workflows need
+only Bun.
+
 `better-sqlite3` has one repository-managed native binding:
 `build/Release/better_sqlite3.electron.node`. Postinstall downloads and verifies
 that Electron-compatible binding when Electron is installed. Bun never loads
