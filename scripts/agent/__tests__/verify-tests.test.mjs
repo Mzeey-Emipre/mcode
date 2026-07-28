@@ -366,6 +366,18 @@ test("receipt identities survive stage, unstage, and commit transitions", () => 
   }
 });
 
+test("receipt identities stay deterministic with an empty PATH", () => {
+  const { cwd } = initRepo();
+  try {
+    const first = calculateVerificationIdentities({ cwd, env: { PATH: "" } });
+    const second = calculateVerificationIdentities({ cwd, env: { PATH: "" } });
+    assert.ok(first);
+    assert.deepEqual(first, second);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("content identities change for edits, deletion, rename, and relevant untracked files", () => {
   const { cwd, runGit } = initRepo();
   try {

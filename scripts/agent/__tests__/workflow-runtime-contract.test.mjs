@@ -10,7 +10,52 @@ const packagingWorkflowAllowlist = new Set([
   "desktop-package-dry-run.yml",
   "nightly-desktop.yml",
 ]);
-const directNodeCommandPattern = /^\s*(?:run:\s*)?node(?:\.exe)?(?:\s|$)/m;
+const directNodeCommandPattern = /(?:^|(?:&&|\|\||;)\s*)node(?:\.exe)?(?=\s|$)/m;
+
+function extractRunCommands(source) {
+  const lines = source.split(/\r?\n/);
+  const commands = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const inline = line.match(/^\s*run:\s*(.+)$/);
+    if (inline && !/^[|>][-+]?\s*$/.test(inline[1])) {
+      commands.push(inline[1]);
+      continue;
+    }
+    if (!/^\s*run:\s*[|>][-+]?\s*$/.test(line)) continue;
+    const runIndent = line.match(/^\s*/)[0].length;
+    for (index += 1; index < lines.length; index += 1) {
+      const blockLine = lines[index];
+      if (blockLine.trim() && blockLine.match(/^\s*/)[0].length <= runIndent) {
+        index -= 1;
+        break;
+      }
+      commands.push(blockLine.trimStart());
+    }
+  }
+  return commands.join("\n");
+}
+
+test("direct Node detection only matches shell command tokens", () => {
+  for (const fixture of [
+    "run: node --version",
+    "run: node ./script.mjs",
+    "run: node -p \"1 + 1\"",
+    "run: |\n  echo ready\n  node --version",
+    "run: bun run lint && node ./script.mjs",
+  ]) {
+    assert.match(extractRunCommands(fixture), directNodeCommandPattern, fixture);
+  }
+  for (const fixture of [
+    "name: node --version",
+    "node-version: 24.18.0",
+    "run: bun node --version",
+    "run: echo node ./script.mjs",
+    "run: ./node-script.mjs",
+  ]) {
+    assert.doesNotMatch(extractRunCommands(fixture), directNodeCommandPattern, fixture);
+  }
+});
 
 test("workflows use Bun runtime and repository commands", () => {
   const workflowFiles = readdirSync(workflowDirectory)
@@ -41,7 +86,7 @@ test("workflows use Bun runtime and repository commands", () => {
     } else {
       assert.doesNotMatch(source, /actions\/setup-node@/i, file);
       assert.doesNotMatch(source, /\bnode-version\s*:/i, file);
-      assert.doesNotMatch(source, directNodeCommandPattern, file);
+      assert.doesNotMatch(extractRunCommands(source), directNodeCommandPattern, file);
     }
   }
 });

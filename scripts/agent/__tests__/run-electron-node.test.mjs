@@ -1,6 +1,7 @@
 /** Tests workspace CLI entry containment in the Electron Node wrapper. */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
@@ -124,3 +125,58 @@ test("Electron timeout terminates a detached descendant group", { timeout: 10_00
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 });
+
+if (process.platform !== "win32") {
+test("Electron adapter forwards parent signals to its owned detached tree", { timeout: 15_000 }, async () => {
+  const tempDirectory = mkdtempSync(join(tmpdir(), "mcode-electron-signal-"));
+  const descendantFile = join(tempDirectory, "descendant.pid");
+  const childCode = [
+    "const { spawn } = require('node:child_process');",
+    "const { writeFileSync } = require('node:fs');",
+    "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+    "writeFileSync(process.env.MCODE_TEST_DESCENDANT_FILE, String(descendant.pid));",
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+  const wrapperChild = spawn(
+    process.execPath,
+    [wrapper, "-e", childCode],
+    {
+      cwd: process.cwd(),
+      env: { ...process.env, MCODE_TEST_DESCENDANT_FILE: descendantFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+
+  try {
+    const readyDeadline = Date.now() + 5_000;
+    while (!existsSync(descendantFile) && Date.now() < readyDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(existsSync(descendantFile), true, "descendant PID file was never written");
+    const descendantPid = Number.parseInt(readFileSync(descendantFile, "utf8"), 10);
+    assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+
+    const exited = once(wrapperChild, "exit");
+    assert.equal(wrapperChild.kill("SIGTERM"), true);
+    const [status, signal] = await exited;
+    assert.equal(status, 1);
+    assert.equal(signal, null);
+
+    const deadline = Date.now() + 5_000;
+    let alive = true;
+    while (alive && Date.now() < deadline) {
+      try {
+        process.kill(descendantPid, 0);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      } catch (error) {
+        if (error?.code !== "ESRCH") throw error;
+        alive = false;
+      }
+    }
+    assert.equal(alive, false, `descendant ${descendantPid} survived signal cleanup`);
+  } finally {
+    if (wrapperChild.exitCode === null && wrapperChild.signalCode === null) wrapperChild.kill("SIGKILL");
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+});
+}

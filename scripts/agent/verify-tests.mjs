@@ -583,10 +583,10 @@ export function calculateVerificationIdentities({
     hashPart(content, "schema", VERIFICATION_SCHEMA_VERSION);
     hashPart(content, "platform", `${process.platform}/${process.arch}`);
     hashPart(content, "bun-runtime", `${process.execPath}\0${process.version}`);
-    hashPart(content, "bun", execFileSync("bun", ["--version"], {
+    hashPart(content, "bun", execFileSync(process.execPath, ["--version"], {
       cwd,
       encoding: "utf8",
-      env,
+      env: withBunPath(env, process.execPath),
       stdio: ["ignore", "pipe", "pipe"],
     }).trim());
     for (const file of files) hashEffectivePath(content, cwd, file);

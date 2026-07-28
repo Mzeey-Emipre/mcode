@@ -66,11 +66,12 @@ function resolveWorkspaceCli(args) {
  */
 export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = ELECTRON_PROCESS_TIMEOUT_MS }) {
   return new Promise((resolveProcess) => {
+    const isWindows = process.platform === "win32";
     const child = spawn(electronPath, args, {
       cwd,
       env,
       shell: false,
-      detached: process.platform !== "win32",
+      detached: !isWindows,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -141,14 +142,14 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
 
     timeoutHandle = setTimeout(() => {
       timedOut = true;
-      Promise.resolve(killProcessTree(child, { useProcessGroup: process.platform !== "win32" }))
+      Promise.resolve(killProcessTree(child, { useProcessGroup: !isWindows }))
         .catch(() => undefined)
         .finally(() => {
           if (settled) return;
           try {
             killPidTree(child.pid, "SIGKILL", {
               graceMs: 0,
-              useProcessGroup: process.platform !== "win32",
+              useProcessGroup: !isWindows,
               child,
             });
           } catch (error) {
