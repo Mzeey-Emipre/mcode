@@ -51,11 +51,26 @@ function isVisible(element: HTMLElement, ownerDocument: Document): boolean {
   return rect.width > 0 && rect.height > 0;
 }
 
-function isEnabled(element: HTMLElement): boolean {
+function isNativeControl(element: HTMLElement, ownerDocument: Document): boolean {
+  const tagName = element.localName?.toLowerCase();
+  if (tagName !== "button" && tagName !== "input" && tagName !== "select" && tagName !== "textarea") return false;
+  const view = ownerDocument.defaultView;
+  const constructor = tagName === "button"
+    ? view?.HTMLButtonElement
+    : tagName === "input"
+      ? view?.HTMLInputElement
+      : tagName === "select"
+        ? view?.HTMLSelectElement
+        : view?.HTMLTextAreaElement;
+  return typeof constructor === "function" && element instanceof constructor;
+}
+
+function isEnabled(element: HTMLElement, ownerDocument: Document): boolean {
   if (element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true") return false;
-  return !(element instanceof HTMLButtonElement || element instanceof HTMLInputElement ||
-    element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) ||
-    !(element as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled;
+  const tagName = element.localName?.toLowerCase();
+  const nativeTag = tagName === "button" || tagName === "input" || tagName === "select" || tagName === "textarea";
+  if (nativeTag && !isNativeControl(element, ownerDocument)) return false;
+  return !nativeTag || !(element as HTMLElement & { disabled?: boolean }).disabled;
 }
 
 function accessibleName(element: HTMLElement): string {
@@ -94,7 +109,7 @@ export function resolveWebTarget(ownerDocument: Document, target: BrowserAutomat
       element = ownerDocument.elementFromPoint(target.x, target.y) as HTMLElement | null;
     }
     if (!element) return fail("TARGET_NOT_FOUND", "Browser target was not found");
-    if (!isVisible(element, ownerDocument) || !isEnabled(element)) return fail("TARGET_NOT_FOUND", "Browser target is not eligible");
+    if (!isVisible(element, ownerDocument) || !isEnabled(element, ownerDocument)) return fail("TARGET_NOT_FOUND", "Browser target is not eligible");
     return { ok: true, element };
   } catch {
     return fail("TARGET_NOT_FOUND", "Browser target selector is invalid");
@@ -161,7 +176,9 @@ export async function executeWebInteraction(
     const element = resolved.element;
     if (dispatch.request.operation === "type") {
       const args = dispatch.request.args;
-      const editable = element.isContentEditable || element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement;
+      const tagName = element.localName?.toLowerCase();
+      const editable = element.isContentEditable ||
+        ((tagName === "input" || tagName === "textarea") && isNativeControl(element, ownerDocument));
       if (!editable) return errorResponse(dispatch, "TARGET_NOT_FOUND", "Browser type target is not editable");
       guardMutation(guard);
       element.focus();
@@ -177,12 +194,16 @@ export async function executeWebInteraction(
         descriptor?.set?.call(input, `${input.value}${args.text}`);
         if (!input.value.endsWith(args.text)) input.value = `${input.value}${args.text}`;
       }
-      const inputEvent = new InputEvent("input", { bubbles: true, composed: true, inputType: "insertText" });
+      const view = ownerDocument.defaultView;
+      if (!view || typeof view.InputEvent !== "function" || typeof view.KeyboardEvent !== "function") {
+        throw new Error("Browser iframe event constructors are unavailable");
+      }
+      const inputEvent = new view.InputEvent("input", { bubbles: true, composed: true, inputType: "insertText" });
       markExecutorEvent(inputEvent);
       element.dispatchEvent(inputEvent);
       if (args.submit) {
         guardMutation(guard);
-        const keyEvent = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, composed: true });
+        const keyEvent = new view.KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, composed: true });
         markExecutorEvent(keyEvent);
         element.dispatchEvent(keyEvent);
       }
@@ -191,11 +212,15 @@ export async function executeWebInteraction(
     }
     const args = dispatch.request.args;
     guardMutation(guard);
+    const view = ownerDocument.defaultView;
+    if (!view || typeof view.MouseEvent !== "function") {
+      throw new Error("Browser iframe event constructors are unavailable");
+    }
     const button = args.button === "right" ? 2 : args.button === "middle" ? 1 : 0;
     for (let clickIndex = 0; clickIndex < args.clickCount; clickIndex += 1) {
-      const mouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
-      const mouseUp = new MouseEvent("mouseup", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
-      const click = new MouseEvent("click", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
+      const mouseDown = new view.MouseEvent("mousedown", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
+      const mouseUp = new view.MouseEvent("mouseup", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
+      const click = new view.MouseEvent("click", { bubbles: true, cancelable: true, composed: true, button, detail: clickIndex + 1 });
       markExecutorEvent(mouseDown); markExecutorEvent(mouseUp); markExecutorEvent(click);
       element.dispatchEvent(mouseDown);
       guardMutation(guard);

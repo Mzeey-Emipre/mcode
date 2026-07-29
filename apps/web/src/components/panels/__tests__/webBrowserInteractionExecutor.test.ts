@@ -50,6 +50,52 @@ describe("web browser interaction executor", () => {
     expect(clicked).toHaveBeenCalledOnce();
   });
 
+  it("uses iframe-realm controls and event constructors for click, type, and submit", async () => {
+    const frame = document.createElement("iframe");
+    document.body.append(frame);
+    const frameDocument = frame.contentDocument!;
+    frameDocument.body.innerHTML = '<button id="save">Save</button><input id="email" />';
+    const button = frameDocument.querySelector("button")!;
+    const input = frameDocument.querySelector("input")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const frameView = frameDocument.defaultView!;
+    const clickEvent = frameView.MouseEvent;
+    const inputEvent = frameView.InputEvent;
+    const keyboardEvent = frameView.KeyboardEvent;
+    const clicked = vi.fn();
+    const typed = vi.fn();
+    const submitted = vi.fn();
+    button.addEventListener("click", (event) => {
+      clicked(event instanceof clickEvent);
+    });
+    input.addEventListener("input", (event) => {
+      typed(event instanceof inputEvent);
+    });
+    input.addEventListener("keydown", (event) => {
+      event.preventDefault();
+      submitted(event instanceof keyboardEvent && (event as KeyboardEvent).key === "Enter");
+    });
+
+    const clickResult = await executeWebInteraction(
+      frameDocument,
+      dispatch("click", { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 }),
+      guard(),
+    );
+    const typeResult = await executeWebInteraction(
+      frameDocument,
+      dispatch("type", { target: { cssSelector: "#email" }, text: "typed", clear: true, submit: true, timeoutMs: 1000 }),
+      guard(),
+    );
+
+    expect(clickResult.ok).toBe(true);
+    expect(typeResult.ok).toBe(true);
+    expect(clicked).toHaveBeenCalledWith(true);
+    expect(typed).toHaveBeenCalledWith(true);
+    expect(submitted).toHaveBeenCalledWith(true);
+    expect(input.value).toBe("typed");
+  });
+
   it("types into editable controls and never echoes typed text in failures", async () => {
     document.body.innerHTML = '<input id="email" />';
     const input = document.querySelector("input") as HTMLInputElement;
