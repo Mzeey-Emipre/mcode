@@ -40,6 +40,7 @@ describe("ThreadControlService", () => {
   let workspaces: {
     search: ReturnType<typeof vi.fn>;
     findById: ReturnType<typeof vi.fn>;
+    findByIdIncludeDeleted: ReturnType<typeof vi.fn>;
   };
   let worktrees: {
     reconcile: ReturnType<typeof vi.fn>;
@@ -86,6 +87,7 @@ describe("ThreadControlService", () => {
     workspaces = {
       search: vi.fn().mockReturnValue([workspace]),
       findById: vi.fn().mockReturnValue(workspace),
+      findByIdIncludeDeleted: vi.fn().mockReturnValue(workspace),
     };
     worktrees = {
       reconcile: vi.fn().mockReturnValue([]),
@@ -251,6 +253,7 @@ describe("ThreadControlService", () => {
       model: "claude-sonnet",
     };
     workspaces.findById.mockImplementation((id: string) => id === sourceWorkspace.id ? sourceWorkspace : workspace);
+    workspaces.findByIdIncludeDeleted.mockImplementation((id: string) => id === sourceWorkspace.id ? sourceWorkspace : workspace);
     threads.findById.mockImplementation((id: string) => id === source.id ? source : id === destination.id ? destination : null);
     messages.listByThreadForThreadControl.mockReturnValue({
       messages: [{
@@ -282,7 +285,84 @@ describe("ThreadControlService", () => {
             type: "thread",
             sourceWorkspaceId: sourceWorkspace.id,
             sourceWorkspaceName: sourceWorkspace.name,
+            sourceUnavailable: false,
             sourceThread: { threadId: source.id, title: source.title, workspaceId: sourceWorkspace.id },
+          },
+        }],
+      },
+    });
+  });
+
+  it("keeps historical thread origin after source thread and Project soft-delete", () => {
+    const service = createService();
+    const destination = {
+      ...createdThread,
+      id: "destination-thread",
+      title: "Destination",
+      workspace_id: workspace.id,
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      created_at: "2026-07-29T00:00:00.000Z",
+      updated_at: "2026-07-29T00:00:00.000Z",
+      deleted_at: null,
+    };
+    const deletedWorkspace = {
+      ...workspace,
+      id: "source-workspace",
+      name: "Deleted Project",
+      deleted_at: "2026-07-29T00:01:00.000Z",
+    };
+    const deletedSource = {
+      ...destination,
+      id: "source-thread",
+      title: "Deleted Source",
+      workspace_id: deletedWorkspace.id,
+      provider: "claude",
+      model: "claude-sonnet",
+      deleted_at: "2026-07-29T00:01:00.000Z",
+    };
+    workspaces.findById.mockImplementation((id: string) => id === workspace.id ? workspace : null);
+    workspaces.findByIdIncludeDeleted.mockImplementation((id: string) => id === deletedWorkspace.id ? deletedWorkspace : null);
+    threads.findById.mockImplementation((id: string) => id === deletedSource.id ? deletedSource : id === destination.id ? destination : null);
+    messages.listByThreadForThreadControl.mockReturnValue({
+      messages: [{
+        id: "message-deleted-source",
+        role: "user",
+        content: "Historical delegation",
+        timestamp: "2026-07-29T00:00:00.000Z",
+        provider: null,
+        model: null,
+        originType: "thread",
+        sourceThreadId: deletedSource.id,
+        sourceTurnId: "turn-1",
+        sourceProviderId: deletedSource.provider,
+      }],
+      hasMore: false,
+    });
+
+    const result = service.threadControlRead({
+      identity: { workspaceId: workspace.id, threadId: destination.id },
+      messageLimit: 10,
+    });
+
+    expect(result).toMatchObject({
+      status: "found",
+      projection: {
+        relation: null,
+        messages: [{
+          origin: {
+            type: "thread",
+            sourceThreadId: deletedSource.id,
+            sourceTurnId: "turn-1",
+            sourceProviderId: deletedSource.provider,
+            sourceWorkspaceId: deletedWorkspace.id,
+            sourceWorkspaceName: deletedWorkspace.name,
+            sourceUnavailable: true,
+            sourceThread: {
+              threadId: deletedSource.id,
+              workspaceId: deletedWorkspace.id,
+              title: deletedSource.title,
+            },
           },
         }],
       },

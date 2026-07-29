@@ -204,22 +204,28 @@ function OriginRow({
   if (message.role !== "user") return null;
   const origin = message.origin;
   const source = origin.type === "thread" ? origin.sourceThread : null;
+  const sourceUnavailable = origin.type === "thread" && origin.sourceUnavailable;
   const label = origin.type === "composer"
     ? "From composer"
     : origin.type === "thread"
-      ? `From ${origin.sourceWorkspaceName} / ${threadName(source)} (thread origin)`
+      ? `From ${origin.sourceWorkspaceName} / ${threadName(source)} (${sourceUnavailable ? "source unavailable" : "thread origin"})`
       : "Legacy origin";
   return (
     <div className="border-b border-border/40 px-4 py-2.5" data-testid="coordination-message-origin">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {origin.type === "thread" && <ProviderIcon providerId={origin.sourceProviderId} />}
         <span>{label}</span>
-        {source && (
+        {source && !sourceUnavailable && (
           <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={() => void navigateToThread(source)}>
             Open source
           </Button>
         )}
       </div>
+      {sourceUnavailable && (
+        <p className="mt-1 text-xs text-muted-foreground" role="status">
+          Historical source unavailable; navigation disabled.
+        </p>
+      )}
       <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-foreground">{message.content}</p>
     </div>
   );

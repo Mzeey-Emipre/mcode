@@ -920,23 +920,30 @@ export class ThreadControlService {
       return { messageId: message.id, role: "system", content: message.content, createdAt: message.timestamp };
     }
     const sourceThread = message.sourceThreadId ? this.threads.findById(message.sourceThreadId) : null;
-    const sourceWorkspace = sourceThread ? this.workspaces.findById(sourceThread.workspace_id) : null;
+    const sourceWorkspace = sourceThread
+      ? (this.workspaces.findByIdIncludeDeleted?.(sourceThread.workspace_id)
+        ?? this.workspaces.findById(sourceThread.workspace_id))
+      : null;
     const sourceRef = sourceThread ? this.threadRef(sourceThread, this.observedState(sourceThread)) : null;
     const boundedSourceRef = sourceRef
       ? { ...sourceRef, title: sourceRef.title.slice(0, THREAD_CREATE_TITLE_MAX_LENGTH) }
       : null;
-    const sourceWorkspaceName = sourceWorkspace?.name.trim().slice(0, WORKSPACE_SEARCH_QUERY_MAX_LENGTH) || "Untitled Project";
+    const sourceWorkspaceName = sourceWorkspace?.name.trim().slice(0, WORKSPACE_SEARCH_QUERY_MAX_LENGTH) || "Unavailable Project";
+    const sourceUnavailable = !sourceThread
+      || !sourceWorkspace
+      || sourceThread.deleted_at != null
+      || sourceWorkspace.deleted_at != null;
     const origin = message.originType === "thread"
       && message.sourceThreadId && message.sourceTurnId && message.sourceProviderId
-      && boundedSourceRef && sourceWorkspace
       ? {
           type: "thread" as const,
           sourceThreadId: message.sourceThreadId,
           sourceTurnId: message.sourceTurnId,
           sourceProviderId: message.sourceProviderId,
-          sourceWorkspaceId: sourceWorkspace.id,
+          sourceWorkspaceId: sourceThread?.workspace_id ?? null,
           sourceWorkspaceName,
           sourceThread: boundedSourceRef,
+          sourceUnavailable,
         }
       : message.originType === "composer"
         ? { type: "composer" as const }

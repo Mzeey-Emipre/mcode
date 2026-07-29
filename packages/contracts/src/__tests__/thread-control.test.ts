@@ -14,6 +14,7 @@ import {
   ThreadControlUserSendInputSchema,
   ThreadControlUserStopInputSchema,
   ThreadWaitInputSchema,
+  MessageOriginSchema,
   WORKSPACE_SEARCH_LIMIT_DEFAULT,
   WorkspaceSearchInputSchema,
   WorktreeListInputSchema,
@@ -120,6 +121,7 @@ describe("user-facing coordination schemas", () => {
           sourceProviderId: "claude",
           sourceWorkspaceId: "workspace-2",
           sourceWorkspaceName: "Source Project",
+          sourceUnavailable: false,
           sourceThread: {
             ...thread,
             workspaceId: "workspace-2",
@@ -152,6 +154,25 @@ describe("user-facing coordination schemas", () => {
       }],
     };
     expect(ThreadControlProjectionSchema().parse(projection)).toEqual(projection);
+    expect(MessageOriginSchema().parse({
+      type: "thread",
+      sourceThreadId: "source-thread",
+      sourceTurnId: "turn-1",
+      sourceProviderId: "claude",
+      sourceWorkspaceId: null,
+      sourceWorkspaceName: "Unavailable Project",
+      sourceThread: null,
+      sourceUnavailable: true,
+    })).toEqual({
+      type: "thread",
+      sourceThreadId: "source-thread",
+      sourceTurnId: "turn-1",
+      sourceProviderId: "claude",
+      sourceWorkspaceId: null,
+      sourceWorkspaceName: "Unavailable Project",
+      sourceThread: null,
+      sourceUnavailable: true,
+    });
   });
 });
 

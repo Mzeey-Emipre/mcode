@@ -57,6 +57,7 @@ const projection: ThreadControlProjection = {
       sourceProviderId: "claude",
       sourceWorkspaceId: "workspace-2",
       sourceWorkspaceName: "Source Project",
+      sourceUnavailable: false,
       sourceThread: {
         workspaceId: "workspace-2",
         threadId: "source-thread",
@@ -166,5 +167,49 @@ describe("CoordinationPanel", () => {
     expect(setActiveWorkspaceMock).toHaveBeenCalledWith("workspace-2", undefined, false);
     expect(loadThreadsMock).toHaveBeenCalledWith("workspace-2");
     expect(setActiveThreadMock).toHaveBeenCalledWith("source-thread");
+  });
+
+  it("explains unavailable historical origin and disables source navigation", () => {
+    const unavailable: ThreadControlProjection = {
+      ...projection,
+      relation: null,
+      children: [],
+      messages: [{
+        messageId: "message-unavailable-source",
+        role: "user",
+        content: "Historical delegation",
+        createdAt: "2026-07-29T00:00:00.000Z",
+        origin: {
+          type: "thread",
+          sourceThreadId: "source-thread",
+          sourceTurnId: "turn-1",
+          sourceProviderId: "claude",
+          sourceWorkspaceId: "workspace-2",
+          sourceWorkspaceName: "Deleted Project",
+          sourceThread: {
+            workspaceId: "workspace-2",
+            threadId: "source-thread",
+            title: "Deleted Source",
+            providerId: "claude",
+            modelId: "claude-sonnet",
+            createdAt: "2026-07-29T00:00:00.000Z",
+            updatedAt: "2026-07-29T00:00:00.000Z",
+            state: { status: "stopped" },
+          },
+          sourceUnavailable: true,
+        },
+      }],
+    };
+    useThreadControlStore.setState({
+      entries: {
+        [threadControlKey(IDENTITY)]: { projection: unavailable, loading: false, error: null, epoch: 1 },
+      },
+    });
+
+    render(<CoordinationPanel workspaceId={IDENTITY.workspaceId} threadId={IDENTITY.threadId} />);
+
+    expect(screen.getByText("From Deleted Project / Deleted Source (source unavailable)")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Historical source unavailable; navigation disabled.");
+    expect(screen.queryByRole("button", { name: "Open source" })).not.toBeInTheDocument();
   });
 });
