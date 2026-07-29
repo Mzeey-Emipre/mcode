@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useShallow } from "zustand/shallow";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { recordThreadPositioned } from "@/lib/thread-switch-telemetry";
 import { useThreadStore } from "@/stores/threadStore";
 import { useActiveThreadRecord } from "@/stores/thread-selectors";
 import { getThreadRecord, getHandoffStatus } from "@/stores/thread-record";
@@ -367,6 +368,12 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   useLayoutEffect(() => {
     isPositionedRef.current = isPositioned;
   }, [isPositioned]);
+
+  useLayoutEffect(() => {
+    if (!isPositioned || !activeThreadId) return;
+    if (renderedThreadId && renderedThreadId !== activeThreadId) return;
+    recordThreadPositioned(activeThreadId);
+  }, [activeThreadId, isPositioned, renderedThreadId]);
 
   /** Syncs sticky preview visibility with the current scroll position. */
   const syncStickyUserMessageVisibility = useCallback(() => {

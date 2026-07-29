@@ -29,6 +29,7 @@ import { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
 import type { ConversationPage } from "@mcode/contracts";
 import { hasRememberedHistoryPosition } from "@/components/chat/scrollPositionMemory";
+import { recordThreadCommit } from "@/lib/thread-switch-telemetry";
 
 interface PendingHistoryPrefetch {
   expectedEpoch: number;
@@ -565,6 +566,7 @@ export class ThreadHydrator {
   ): void {
     const renderableCachedRecord = this.compactCachedRecordForRestore(threadId, cached);
     this.restoreFromCache(threadId, renderableCachedRecord, restoreOpts);
+    recordThreadCommit(threadId, "cache-restore");
     const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
     void this.refreshThreadGoal(threadId, expectedEpoch);
     this.auxiliaryHydrator.hydrate(threadId, {
@@ -869,6 +871,7 @@ export class ThreadHydrator {
           }),
         };
       });
+      recordThreadCommit(threadId, "network-fetch");
 
       this.auxiliaryHydrator.hydrate(threadId, {
         freshnessTtlMs: HYDRATION_TTL_MS,
