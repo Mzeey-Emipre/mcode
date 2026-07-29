@@ -143,6 +143,28 @@ function createFakeDb(): FakeDbState & {
             state.deliveries.splice(0, state.deliveries.length, ...state.deliveries.filter((delivery) => !(delivery.status === "terminal" && delivery.expires_at <= cutoff)));
             return { changes: before - state.deliveries.length };
           }
+          if (statement.startsWith("UPDATE external_thread_control_deliveries")) {
+            if (args.length === 5) {
+              const [resultJson, updatedAt, pairingId, epoch, deliveryId] = args as [string, string, string, number, string];
+              const delivery = state.deliveries.find((candidate) => candidate.pairing_id === pairingId
+                && candidate.authority_epoch === epoch && candidate.delivery_id === deliveryId && candidate.status === "in_flight");
+              if (!delivery) return { changes: 0 };
+              delivery.status = "terminal";
+              delivery.result_json = resultJson;
+              delivery.updated_at = updatedAt;
+              return { changes: 1 };
+            }
+            const [resultJson, updatedAt, expiresAt] = args as [string, string, string];
+            let changes = 0;
+            for (const delivery of state.deliveries) {
+              if (delivery.status !== "in_flight" || delivery.expires_at > expiresAt) continue;
+              delivery.status = "terminal";
+              delivery.result_json = resultJson;
+              delivery.updated_at = updatedAt;
+              changes += 1;
+            }
+            return { changes };
+          }
           if (statement.startsWith("DELETE FROM external_thread_control_deliveries WHERE pairing_id")) {
             const [pairingId, epoch, deliveryId] = args as [string, number, string];
             const before = state.deliveries.length;
@@ -225,5 +247,36 @@ describe("external thread-control pairing service", () => {
       });
     }
     expect(() => service.beginDelivery(authority, "delivery-new", "fingerprint")).toThrowError("External replay retention is full");
+  });
+
+  it("terminalizes expired in-flight rows before capacity accounting and preserves replay", () => {
+    const db = createFakeDb();
+    const service = new ExternalThreadControlPairingService(db as unknown as Database.Database);
+    const secret = service.create(input());
+    const authority = authenticate(service, secret.credential);
+    const expired = {
+      pairing_id: authority.pairing.pairingId, authority_epoch: authority.pairing.authorityEpoch, delivery_id: "expired",
+      fingerprint: "fingerprint", status: "in_flight" as const, result_json: null,
+      created_at: "2026-07-28T00:00:00.000Z", updated_at: "2026-07-28T00:00:00.000Z", expires_at: "2026-07-29T00:00:00.000Z",
+    };
+    db.deliveries.push(expired);
+    for (let index = 0; index < 9_999; index += 1) {
+      db.deliveries.push({
+        pairing_id: authority.pairing.pairingId, authority_epoch: authority.pairing.authorityEpoch, delivery_id: `delivery-${index}`,
+        fingerprint: "fingerprint", status: "in_flight", result_json: null,
+        created_at: "2026-07-29T00:00:00.000Z", updated_at: "2026-07-29T00:00:00.000Z", expires_at: "2026-07-30T00:00:00.000Z",
+      });
+    }
+
+    const replay = service.beginDelivery(authority, "expired", "fingerprint");
+    expect(replay.status).toBe("replayed");
+    expect(replay.result).toEqual({
+      status: "rejected",
+      error: { code: "internal_error", message: "External delivery expired before completion", retryable: true },
+    });
+    expect(expired.status).toBe("terminal");
+    service.finalizeDelivery(authority, "expired", { status: "completed" });
+    expect(JSON.parse(expired.result_json ?? "null")).toEqual(replay.result);
+    expect(() => service.beginDelivery(authority, "delivery-new", "fingerprint")).not.toThrow();
   });
 });
