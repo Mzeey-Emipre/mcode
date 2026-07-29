@@ -526,6 +526,7 @@ export function ChatView() {
     const setThreadSubscriptions = getTransport().setThreadSubscriptions;
     if (setThreadSubscriptions) {
       const sortedThreadIds = Array.from(desired).sort();
+      const sentThreadIds = new Set(sortedThreadIds);
       const confirmed = confirmedThreadIdsRef.current;
       const alreadyApplied = confirmed.size === desired.size
         && Array.from(confirmed).every((threadId) => desired.has(threadId));
@@ -534,10 +535,14 @@ export function ChatView() {
       atomicSubscriptionRequestRef.current = { epoch, signature: targetSignature };
       void setThreadSubscriptions({ threadIds: sortedThreadIds }).then(() => {
         if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
-        confirmedThreadIdsRef.current = new Set(desiredThreadIdsRef.current);
+        confirmedThreadIdsRef.current = sentThreadIds;
         subscriptionRetryAttemptRef.current = 0;
         subscriptionRetryExhaustedRef.current = false;
-        if (subscriptionTargetSignatureRef.current !== targetSignature) {
+        const latestDesired = desiredThreadIdsRef.current;
+        const responseIsCurrent = subscriptionTargetSignatureRef.current === targetSignature
+          && latestDesired.size === sentThreadIds.size
+          && Array.from(latestDesired).every((threadId) => sentThreadIds.has(threadId));
+        if (!responseIsCurrent) {
           setSubscriptionReconcileVersion((version) => version + 1);
         }
       }).catch(() => {

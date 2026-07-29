@@ -542,6 +542,48 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
   });
 
+  it("reconciles a newer atomic target after an older response and failed replacement", async () => {
+    const requests: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+    const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve, reject) => {
+      requests.push({ resolve, reject });
+    }));
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2", status: "active" });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: "thread-1",
+      threads: [makeThread(), thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      runningThreadIds: new Set([thread2.id]),
+    });
+    rerender(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(2, {
+        threadIds: ["thread-1", "thread-2"],
+      });
+    });
+
+    requests[0]?.resolve();
+    requests[1]?.reject(new Error("temporary atomic subscribe failure"));
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(3);
+      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(3, {
+        threadIds: ["thread-1", "thread-2"],
+      });
+    }, { timeout: 3000 });
+  });
+
   it("retries a failed atomic replacement at the caller boundary", async () => {
     const setThreadSubscriptions = enableAtomicSubscriptionTransport();
     setThreadSubscriptions
