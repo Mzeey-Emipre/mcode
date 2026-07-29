@@ -229,6 +229,7 @@ export class ThreadHydrator {
   private readonly backgroundHydrates = new Map<string, Promise<void>>();
   private readonly pendingHistoryPrefetches = new Map<string, PendingHistoryPrefetch>();
   private readonly deferredWork = new Map<string, DeferredWorkHandle>();
+  private readonly invalidationGenerations = new Map<string, number>();
 
   constructor(private readonly deps: ThreadHydratorDeps) {
     this.auxiliaryHydrator = new AuxiliaryHydrator({
@@ -282,7 +283,19 @@ export class ThreadHydrator {
 
   /** Discard a stale cached conversation before an authoritative mutation. */
   invalidateConversation(threadId: string): void {
+    if (this.activeHydrates.has(threadId) || this.backgroundHydrates.has(threadId)) {
+      this.invalidationGenerations.set(
+        threadId,
+        (this.invalidationGenerations.get(threadId) ?? 0) + 1,
+      );
+    }
     evictCachedRecord(threadId);
+  }
+
+  private pruneInvalidationGeneration(threadId: string): void {
+    if (!this.activeHydrates.has(threadId) && !this.backgroundHydrates.has(threadId)) {
+      this.invalidationGenerations.delete(threadId);
+    }
   }
 
   /** Synchronize the current resident conversation into its bounded cache entry. */
@@ -352,6 +365,7 @@ export class ThreadHydrator {
       if (this.backgroundHydrates.get(threadId) === hydrate) {
         this.backgroundHydrates.delete(threadId);
       }
+      this.pruneInvalidationGeneration(threadId);
     });
     this.backgroundHydrates.set(threadId, hydrate);
     await hydrate;
@@ -470,6 +484,7 @@ export class ThreadHydrator {
         this.activeHydrates.delete(threadId);
         this.discardInactiveLoadingRecord(threadId);
       }
+      this.pruneInvalidationGeneration(threadId);
     });
     this.activeHydrates.set(threadId, hydrate);
     await hydrate;
@@ -850,6 +865,7 @@ export class ThreadHydrator {
       this.prepareActiveLoad(threadId);
     }
     const expectedEpoch = getThreadRecord(getState().records, threadId).loadEpoch;
+    const expectedInvalidationGeneration = this.invalidationGenerations.get(threadId) ?? 0;
     const expectedConversationRevision = conversationRevision(
       getThreadRecord(getState().records, threadId),
     );
@@ -879,7 +895,26 @@ export class ThreadHydrator {
 
       const stateAtCommit = getState();
       const recordAtCommit = getThreadRecord(stateAtCommit.records, threadId);
-      if (stateAtCommit.currentThreadId !== threadId || recordAtCommit.loadEpoch !== expectedEpoch) {
+      if (
+        stateAtCommit.currentThreadId !== threadId
+        || recordAtCommit.loadEpoch !== expectedEpoch
+        || (this.invalidationGenerations.get(threadId) ?? 0) !== expectedInvalidationGeneration
+      ) {
+        if (
+          stateAtCommit.currentThreadId === threadId
+          && recordAtCommit.loadEpoch === expectedEpoch
+        ) {
+          setState((state: ThreadHydratorWriteState) => {
+            const current = getThreadRecord(state.records, threadId);
+            if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return {};
+            return {
+              records: patchThreadRecord(state.records, threadId, {
+                loading: false,
+                isLoadingMore: false,
+              }),
+            };
+          });
+        }
         return;
       }
       if (conversationRevision(recordAtCommit) !== expectedConversationRevision) {
@@ -939,20 +974,40 @@ export class ThreadHydrator {
         skipFileChangeSnapshots: true,
       });
 
+      let tailFollowupInvalidated = false;
       if (usedTail) {
         const postTailState = getState();
         if (
           postTailState.currentThreadId !== threadId
           || getThreadRecord(postTailState.records, threadId).loadEpoch !== expectedEpoch
+          || (this.invalidationGenerations.get(threadId) ?? 0) !== expectedInvalidationGeneration
         ) return;
+        const tailRevision = conversationRevision(getThreadRecord(postTailState.records, threadId));
+        const tailGeneration = this.invalidationGenerations.get(threadId) ?? 0;
         try {
           const narrativePage = await this.transport().loadConversationPage(
             threadId,
             MESSAGE_FETCH_SIZE,
           );
+          const stateAtTailFollowup = getState();
+          const recordAtTailFollowup = getThreadRecord(stateAtTailFollowup.records, threadId);
+          if (
+            stateAtTailFollowup.currentThreadId !== threadId
+            || recordAtTailFollowup.loadEpoch !== expectedEpoch
+            || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
+            || conversationRevision(recordAtTailFollowup) !== tailRevision
+          ) {
+            tailFollowupInvalidated = true;
+          }
           setState((state: ThreadHydratorWriteState) => {
             const current = getThreadRecord(state.records, threadId);
-            if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return {};
+            if (
+              tailFollowupInvalidated
+              || state.currentThreadId !== threadId
+              || current.loadEpoch !== expectedEpoch
+              || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
+              || conversationRevision(current) !== tailRevision
+            ) return {};
             const retained = new Set(current.messages.map((message) => message.id));
             return {
               records: patchThreadRecord(state.records, threadId, {
@@ -966,6 +1021,13 @@ export class ThreadHydrator {
             };
           });
         } catch {
+          const stateAtTailFailure = getState();
+          const recordAtTailFailure = getThreadRecord(stateAtTailFailure.records, threadId);
+          tailFollowupInvalidated =
+            stateAtTailFailure.currentThreadId !== threadId
+            || recordAtTailFailure.loadEpoch !== expectedEpoch
+            || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
+            || conversationRevision(recordAtTailFailure) !== tailRevision;
           // First-paint tail remains usable when the narrative follow-up fails.
         }
       }
@@ -981,10 +1043,16 @@ export class ThreadHydrator {
         }
       }
 
-      cacheRecord(
-        threadId,
-        projectConversationCacheState(getThreadRecord(getState().records, threadId)),
-      );
+      const stateBeforeCache = getState();
+      const recordBeforeCache = getThreadRecord(stateBeforeCache.records, threadId);
+      if (
+        !tailFollowupInvalidated
+        && stateBeforeCache.currentThreadId === threadId
+        && recordBeforeCache.loadEpoch === expectedEpoch
+        && (this.invalidationGenerations.get(threadId) ?? 0) === expectedInvalidationGeneration
+      ) {
+        cacheRecord(threadId, projectConversationCacheState(recordBeforeCache));
+      }
       void snapshotsPromise.then((snapshots) => {
         this.applySnapshots(threadId, snapshots, expectedEpoch);
       });

@@ -1161,6 +1161,53 @@ describe("ThreadHydrator", () => {
     }
   });
 
+  it("does not let an invalidated tail follow-up overwrite newer cached messages", async () => {
+    const staleTail = createMockMessage({
+      id: "stale-tail-message",
+      thread_id: THREAD_A,
+      content: "stale tail",
+      sequence: 1,
+    });
+    const freshCachedMessage = createMockMessage({
+      id: "fresh-cached-message",
+      thread_id: THREAD_A,
+      content: "fresh cached message",
+      sequence: 2,
+    });
+    let resolveFollowup!: (value: {
+      messages: typeof staleTail[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    const tailLoader = vi.fn().mockResolvedValue({
+      messages: [staleTail],
+      hasMore: false,
+    });
+    mockTransport.loadConversationTail = tailLoader;
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveFollowup = resolve;
+      }),
+    );
+
+    try {
+      const hydration = hydrator.hydrate(THREAD_A, "active");
+      await vi.waitFor(() => expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(
+        THREAD_A,
+        MESSAGE_FETCH_SIZE,
+      ));
+
+      hydrator.invalidateConversation(THREAD_A);
+      cacheRecord(THREAD_A, makeCachedRecord([freshCachedMessage]));
+      resolveFollowup({ messages: [staleTail], hasMore: false, narrativeByMessage: {} });
+      await hydration;
+
+      expect(getCachedRecord(THREAD_A)?.messages).toEqual([freshCachedMessage]);
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
   it("does not let a background prefetch replace an inactive WebSocket update", async () => {
     const staleMessage = createMockMessage({
       id: "stale-prefetch-message",
