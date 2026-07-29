@@ -61,6 +61,16 @@ vi.mock("../PreviewPanel", () => ({
 }));
 
 vi.mock("../browserAutomationWebExecutor", () => webExecutor);
+vi.mock("../webBrowserInteractionExecutor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../webBrowserInteractionExecutor")>();
+  return {
+    ...actual,
+    observeWebHumanInput: (
+      ownerDocument: Document,
+      onHumanInput: () => void,
+    ) => actual.observeWebHumanInput(ownerDocument, onHumanInput, () => true),
+  };
+});
 
 import { BrowserAutomationHost, isBrowserAutomationWebRuntimeEnabled } from "../BrowserAutomationHost";
 import { BrowserAutomationRecorder } from "../browserAutomationRecorder";
@@ -76,7 +86,7 @@ function deferred<T>() {
 function dispatch(
   generation: number,
   sequence: number,
-  options: { requestId?: string; threadId?: string; tabId?: string } = {},
+  options: { requestId?: string; threadId?: string; tabId?: string; targetGeneration?: number; expectedControlEpoch?: number } = {},
 ): BrowserAutomationHostDispatch {
   const threadId = options.threadId ?? "thread-1";
   const tabId = options.tabId ?? "tab-1";
@@ -91,7 +101,7 @@ function dispatch(
       desktopInstanceId: `desktop-${generation}`,
       windowId: 7,
       connectionGeneration: generation,
-      targetGeneration: 3,
+      targetGeneration: options.targetGeneration ?? 3,
     },
     request: {
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -102,7 +112,7 @@ function dispatch(
       requestId: options.requestId ?? `request-${sequence}`,
       sequence,
       deadline: Date.now() + 60_000,
-      expectedControlEpoch: 0,
+      expectedControlEpoch: options.expectedControlEpoch ?? 0,
       operation: "status",
       args: {},
     },
@@ -112,7 +122,7 @@ function dispatch(
       connectionGeneration: generation,
       threadId,
       tabId,
-      targetGeneration: 3,
+      targetGeneration: options.targetGeneration ?? 3,
       active: true,
       focused: true,
       lastUsedAt: 10,
@@ -253,11 +263,203 @@ describe("BrowserAutomationHost", () => {
       args: { url: `${window.location.origin}/fixture`, activate: true },
     };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(openRequest.args.url));
+    expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
+    const iframe = document.createElement("iframe");
+    iframe.src = openRequest.args.url;
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "web-preview";
+    document.body.append(iframe);
+    window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
     expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(`${window.location.origin}/fixture`);
     expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(expect.objectContaining({
-      request: expect.objectContaining({ operation: "open", args: openRequest.args }),
+      request: expect.objectContaining({ operation: "open", args: { activate: true } }),
     }), expect.any(AbortSignal));
+    iframe.remove();
+    view.unmount();
+  });
+
+  it("waits for the seeded web preview iframe before the first open dispatch", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", "web-preview");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 36).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openRequest = {
+      ...dispatch(1, 36).request,
+      operation: "open" as const,
+      args: { url: `${window.location.origin}/first-open`, activate: true },
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(openRequest.args.url));
+    expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
+    const iframe = document.createElement("iframe");
+    iframe.src = openRequest.args.url;
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "web-preview";
+    document.body.append(iframe);
+    window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
+    await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ args: { activate: true } }) }),
+      expect.any(AbortSignal),
+    ));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    iframe.remove();
+    view.unmount();
+  });
+
+  it("routes normal web status and open requests through the web executor", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 32).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const statusDispatch = dispatch(1, 32);
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: statusDispatch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    const openDispatch = dispatch(1, 33, { targetGeneration: 1 });
+    openDispatch.request = {
+      ...openDispatch.request,
+      operation: "open",
+      args: { url: `${window.location.origin}/normal-open`, activate: true },
+    } as never;
+    const normalOpenUrl = `${window.location.origin}/normal-open`;
+    const existingIframe = document.createElement("iframe");
+    existingIframe.src = normalOpenUrl;
+    existingIframe.dataset.threadId = "thread-1";
+    existingIframe.dataset.tabId = "tab-1";
+    document.body.append(existingIframe);
+    window.setTimeout(() => existingIframe.dispatchEvent(new Event("load")), 0);
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledTimes(2));
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(statusDispatch, expect.any(AbortSignal));
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ args: { activate: true } }) }),
+      expect.any(AbortSignal),
+    );
+    expect(harness.transport.respondToBrowserAutomationRequest.mock.calls.every(([, , response]) => response.ok)).toBe(true);
+    existingIframe.remove();
+    view.unmount();
+  });
+
+  it("seeds an empty registered web target for normal open requests", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", "web-preview");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 37).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openDispatch = dispatch(1, 37, { tabId: "web-preview", targetGeneration: 1 });
+    openDispatch.request = {
+      ...openDispatch.request,
+      operation: "open",
+      args: { url: `${window.location.origin}/normal-first-open`, activate: true },
+    } as never;
+    const firstOpenUrl = `${window.location.origin}/normal-first-open`;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
+    await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(firstOpenUrl));
+    expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
+    const iframe = document.createElement("iframe");
+    iframe.src = firstOpenUrl;
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "web-preview";
+    document.body.append(iframe);
+    window.setTimeout(() => {
+      iframe.dispatchEvent(new Event("load"));
+      useBrowserAutomationStore.getState().refreshTarget("thread-1", "web-preview");
+    }, 0);
+    await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ args: { activate: true } }) }),
+      expect.any(AbortSignal),
+    ));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    iframe.remove();
+    view.unmount();
+  });
+
+  it("accepts the expected target revision advanced by a same-origin open load", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 38).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openDispatch = dispatch(1, 38, { tabId: "tab-1", targetGeneration: 1 });
+    openDispatch.request = {
+      ...openDispatch.request,
+      operation: "open",
+      args: { url: `${window.location.origin}/revision-open`, activate: true },
+    } as never;
+    const expectedUrl = `${window.location.origin}/revision-open`;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
+    await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(expectedUrl));
+    expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
+
+    const iframe = document.createElement("iframe");
+    iframe.src = expectedUrl;
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "tab-1";
+    Object.defineProperty(iframe, "contentWindow", {
+      configurable: true,
+      value: { location: { origin: window.location.origin } },
+    });
+    document.body.append(iframe);
+    window.setTimeout(() => {
+      useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1");
+      iframe.dispatchEvent(new Event("load"));
+    }, 0);
+
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: true }),
+    );
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ args: { activate: true } }) }),
+      expect.any(AbortSignal),
+    );
+    iframe.remove();
+    view.unmount();
+  });
+
+  it("rejects an unrelated iframe replacement during a same-origin open", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 39).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openDispatch = dispatch(1, 39, { tabId: "tab-1", targetGeneration: 1 });
+    openDispatch.request = {
+      ...openDispatch.request,
+      operation: "open",
+      args: { url: `${window.location.origin}/replacement-open`, activate: true },
+    } as never;
+    const expectedUrl = `${window.location.origin}/replacement-open`;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
+    await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(expectedUrl));
+
+    const replacement = document.createElement("iframe");
+    replacement.src = `${window.location.origin}/unrelated-replacement`;
+    replacement.dataset.threadId = "thread-1";
+    replacement.dataset.tabId = "tab-1";
+    document.body.append(replacement);
+    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "STALE_TARGET_GENERATION" }) }),
+    );
+    expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
+    replacement.remove();
     view.unmount();
   });
 
@@ -1222,6 +1424,7 @@ describe("BrowserAutomationHost", () => {
     expect(sent.result.url).toMatch(/^https:\/\/example\.com\//);
     expect(sent.result.url).not.toMatch(/user|password|eyJabcdefghijk|secret|fragment/);
     view.unmount();
+    iframe.remove();
   });
 
   it("returns typed cross-origin status failure for an inaccessible mounted web target", async () => {
@@ -1248,6 +1451,180 @@ describe("BrowserAutomationHost", () => {
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
     expect(harness.transport.respondToBrowserAutomationRequest.mock.calls.at(-1)?.[2]).toMatchObject({ ok: false, error: { code: "CROSS_ORIGIN" } });
     view.unmount();
+    iframe.remove();
+  });
+
+  it("routes web click and type through the broker for the exact iframe target", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    delete window.desktopBridge;
+    const frame = document.createElement("iframe");
+    frame.dataset.threadId = "thread-1";
+    frame.dataset.tabId = "tab-1";
+    document.body.append(frame);
+    Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
+    const frameDocument = frame.contentDocument!;
+    frameDocument.body.innerHTML = '<button id="save">Save</button><input id="name" />';
+    const button = frameDocument.querySelector("button")!;
+    const input = frameDocument.querySelector("input")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const clicked = vi.fn();
+    button.addEventListener("click", clicked);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    await waitFor(() => expect(useBrowserAutomationStore.getState().registered).toBe(true));
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const clickDispatch = dispatch(1, 30, { targetGeneration: 1 });
+    clickDispatch.request = { ...clickDispatch.request, operation: "click", args: { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 } } as never;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: clickDispatch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(clicked).toHaveBeenCalledOnce();
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(hostId, 1, expect.objectContaining({ ok: true, result: expect.objectContaining({ operation: "click" }) }), clickDispatch.target);
+    expect(harness.transport.cancelBrowserAutomationRequest).not.toHaveBeenCalled();
+    const typeDispatch = dispatch(1, 31, { targetGeneration: 1 });
+    typeDispatch.request = { ...typeDispatch.request, operation: "type", args: { target: { cssSelector: "#name" }, text: "typed", clear: true, submit: false, timeoutMs: 1000 } } as never;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: typeDispatch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledTimes(2));
+    expect(input.value).toBe("typed");
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenLastCalledWith(hostId, 1, expect.objectContaining({ ok: true, result: expect.objectContaining({ operation: "type" }) }), typeDispatch.target);
+    view.unmount();
+    frame.remove();
+  });
+
+  it("cancels the exact web request on direct pointer takeover before click mutation", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    delete window.desktopBridge;
+    const frame = document.createElement("iframe");
+    frame.dataset.threadId = "thread-1";
+    frame.dataset.tabId = "tab-1";
+    document.body.append(frame);
+    Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
+    const frameDocument = frame.contentDocument!;
+    frameDocument.body.innerHTML = '<button id="save">Save</button>';
+    const button = frameDocument.querySelector("button")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    const clicked = vi.fn();
+    button.addEventListener("click", clicked);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const clickDispatch = dispatch(1, 32, { targetGeneration: 1 });
+    clickDispatch.request = { ...clickDispatch.request, operation: "click", args: { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 } } as never;
+    frameDocument.addEventListener("mousedown", () => frameDocument.dispatchEvent(new frameDocument.defaultView!.Event("pointerdown", { bubbles: true })), true);
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: clickDispatch }));
+    await waitFor(() => expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(hostId, 1, clickDispatch.request.requestId, clickDispatch.request.sequence, "human-interrupted"));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests.size).toBe(0));
+    expect(clicked).not.toHaveBeenCalled();
+    expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
+    view.unmount();
+    frame.remove();
+  });
+
+  it("rejects stale web generations and control epochs without mutating the iframe", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    delete window.desktopBridge;
+    const frame = document.createElement("iframe");
+    frame.dataset.threadId = "thread-1";
+    frame.dataset.tabId = "tab-1";
+    document.body.append(frame);
+    Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
+    const frameDocument = frame.contentDocument!;
+    frameDocument.body.innerHTML = '<button id="save">Save</button><input id="name" />';
+    const button = frameDocument.querySelector("button")!;
+    const input = frameDocument.querySelector("input")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const clicked = vi.fn();
+    button.addEventListener("click", clicked);
+    useBrowserAutomationStore.getState().setControllerForTarget("thread-1", "tab-1", { tabId: "tab-1", controller: "agent", controlEpoch: 2 });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const staleGeneration = dispatch(1, 33, { targetGeneration: 9 });
+    staleGeneration.request = { ...staleGeneration.request, operation: "click", args: { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 } } as never;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: staleGeneration }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenLastCalledWith(hostId, 1, expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "STALE_TARGET_GENERATION" }) }), staleGeneration.target);
+    expect(clicked).not.toHaveBeenCalled();
+    const staleEpoch = dispatch(1, 34, { targetGeneration: 1, expectedControlEpoch: 0 });
+    staleEpoch.request = { ...staleEpoch.request, operation: "type", args: { target: { cssSelector: "#name" }, text: "typed", clear: true, submit: false, timeoutMs: 1000 } } as never;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: staleEpoch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledTimes(2));
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenLastCalledWith(hostId, 1, expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "STALE_CONTROL_EPOCH" }) }), staleEpoch.target);
+    expect(input.value).toBe("");
+    view.unmount();
+    frame.remove();
+  });
+
+  it("rejects a pending request after web iframe replacement without mutating the new document", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    delete window.desktopBridge;
+    const frame = document.createElement("iframe");
+    frame.dataset.threadId = "thread-1";
+    frame.dataset.tabId = "tab-1";
+    document.body.append(frame);
+    Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
+    const frameDocument = frame.contentDocument!;
+    frameDocument.body.innerHTML = '<input id="name" />';
+    const input = frameDocument.querySelector("input")!;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const pending: Array<FrameRequestCallback> = [];
+    Object.defineProperty(frameDocument.defaultView, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        pending.push(callback);
+        return pending.length;
+      },
+    });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    await waitFor(() => expect(useBrowserAutomationStore.getState().registered).toBe(true));
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const typeDispatch = dispatch(1, 36, { targetGeneration: 1 });
+    typeDispatch.request = { ...typeDispatch.request, operation: "type", args: { target: { cssSelector: "#name" }, text: "typed", clear: true, submit: false, timeoutMs: 1000 } } as never;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: typeDispatch }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests.size).toBe(1));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    pending.shift()?.(performance.now());
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenLastCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "STALE_TARGET_GENERATION" }) }),
+      typeDispatch.target,
+    );
+    expect(input).toHaveValue("");
+    view.unmount();
+    frame.remove();
+    delete (frameDocument.defaultView as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+  });
+
+  it("suppresses mutation and response after broker cancellation", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    delete window.desktopBridge;
+    const frame = document.createElement("iframe");
+    frame.dataset.threadId = "thread-1";
+    frame.dataset.tabId = "tab-1";
+    document.body.append(frame);
+    Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
+    const frameDocument = frame.contentDocument!;
+    frameDocument.body.innerHTML = '<button id="save">Save</button>';
+    const button = frameDocument.querySelector("button")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    const clicked = vi.fn();
+    button.addEventListener("click", clicked);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const clickDispatch = dispatch(1, 35, { targetGeneration: 1 });
+    clickDispatch.request = { ...clickDispatch.request, operation: "click", args: { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 } } as never;
+    frameDocument.addEventListener("mousedown", () => harness.emit("browserAutomation.cancel", { hostId, generation: 1, requestId: clickDispatch.request.requestId, sequence: clickDispatch.request.sequence }), true);
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: clickDispatch }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests.size).toBe(0));
+    expect(clicked).not.toHaveBeenCalled();
+    expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
+    view.unmount();
+    frame.remove();
   });
 
   it("disposes exact target recording on human takeover even after start settled", async () => {

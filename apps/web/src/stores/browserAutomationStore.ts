@@ -213,7 +213,10 @@ export function interruptBrowserAutomationTarget(
   reason: BrowserAutomationInterruptionReason,
 ): void {
   const bridge = window.desktopBridge?.preview?.automation;
-  if (!bridge) return;
+  if (!bridge) {
+    for (const listener of interruptionListeners) listener(threadId, tabId, reason);
+    return;
+  }
   const key = browserAutomationTargetKey(threadId, tabId);
   if (pendingInterruptions.has(key)) return;
   const interruption = bridge.interrupt({ threadId, tabId });

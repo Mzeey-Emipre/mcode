@@ -27,9 +27,17 @@ import {
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
+import {
+  executeWebInteraction,
+  observeWebHumanInput,
+  resolveSameOriginFrame,
+} from "./webBrowserInteractionExecutor";
 import { PreviewPanel, WEB_RUNTIME_PREVIEW_TAB_ID } from "./PreviewPanel";
 import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
-import { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
+import {
+  isBrowserAutomationWebRuntimeEnabled,
+  normalizeWebPreviewUrl,
+} from "./browserAutomationRuntime";
 import { executeWebBrowserDispatch } from "./browserAutomationWebExecutor";
 import { captureVisibleWebLocation, sanitizeWebLocation } from "./web-browser-automation/capture";
 
@@ -40,6 +48,11 @@ const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
 const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
 
 export { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
+
+function escapeWebSelector(value: string): string {
+  const escape = (globalThis as { CSS?: { escape?: (input: string) => string } }).CSS?.escape;
+  return escape ? escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
+}
 
 function webTargetIdentity(
   worktreeIdentity: string,
@@ -237,11 +250,129 @@ function waitForLiveTarget(
   });
 }
 
+function webPreviewIframe(
+  threadId: string,
+  tabId: string,
+  expectedUrl: string,
+): HTMLIFrameElement | null {
+  const selector = `iframe[data-thread-id="${escapeWebSelector(threadId)}"][data-tab-id="${escapeWebSelector(tabId)}"]`;
+  const iframe = document.querySelector<HTMLIFrameElement>(selector);
+  if (!iframe || normalizeWebPreviewUrl(iframe.src) !== expectedUrl) return null;
+  return resolveSameOriginFrame(iframe) ? iframe : null;
+}
+
+function isSameOriginWebPreviewUrl(url: string): boolean {
+  try {
+    return new URL(url, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function waitForWebPreviewIframe(
+  threadId: string,
+  tabId: string,
+  expectedUrl: string,
+  deadline: number,
+  signal: AbortSignal,
+  onNavigationLoad?: (iframe: HTMLIFrameElement) => void,
+): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  const ready = webPreviewIframe(threadId, tabId, expectedUrl);
+  if (ready?.contentDocument?.readyState === "complete" && !onNavigationLoad) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let observedIframe: HTMLIFrameElement | null = null;
+    let onLoad: (() => void) | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const observeReady = () => {
+      const iframe = webPreviewIframe(threadId, tabId, expectedUrl);
+      if (!iframe) return;
+      if (iframe.contentDocument?.readyState === "complete" && !onNavigationLoad) {
+        finish();
+        return;
+      }
+      if (observedIframe === iframe) return;
+      if (observedIframe && onLoad) observedIframe.removeEventListener("load", onLoad);
+      observedIframe = iframe;
+      onLoad = () => {
+        onNavigationLoad?.(iframe);
+        finish();
+      };
+      iframe.addEventListener("load", onLoad, { once: true });
+    };
+    const observer = new MutationObserver(() => {
+      observeReady();
+    });
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Web Preview iframe did not attach before the request deadline"));
+    }, Math.max(1, Math.min(60_000, deadline - Date.now())));
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(signal.reason);
+    };
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      if (observedIframe && onLoad) observedIframe.removeEventListener("load", onLoad);
+      observer.disconnect();
+    };
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["src", "data-thread-id", "data-tab-id", "class", "style", "hidden", "aria-hidden"],
+    });
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    observeReady();
+  });
+}
+
 interface HostLease {
   readonly hostId: string;
   readonly generation: number;
   readonly desktopInstanceId: string;
   readonly epoch: number;
+}
+
+interface WebNavigationExpectation {
+  readonly targetKey: string;
+  readonly expectedUrl: string;
+  readonly initialRevision: number;
+  loadObserved: boolean;
+  acceptedRevision?: number;
+}
+
+function acceptExpectedWebNavigationRevision(
+  dispatch: BrowserAutomationHostDispatch,
+  navigation: WebNavigationExpectation | undefined,
+  target: { readonly revision: number } | undefined,
+): number | undefined {
+  if (!navigation || dispatch.request.operation !== "open") return undefined;
+  if (navigation.acceptedRevision !== undefined) {
+    return navigation.acceptedRevision === target?.revision ? navigation.acceptedRevision : undefined;
+  }
+  const expectedUrl = normalizeWebPreviewUrl(dispatch.request.args.url ?? "");
+  if (
+    navigation.targetKey !== browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId) ||
+    navigation.expectedUrl !== expectedUrl ||
+    dispatch.target.targetGeneration !== navigation.initialRevision ||
+    target?.revision !== navigation.initialRevision + 1 ||
+    !webPreviewIframe(dispatch.target.threadId, dispatch.target.tabId, navigation.expectedUrl)
+  ) return undefined;
+  navigation.acceptedRevision = target.revision;
+  return target.revision;
 }
 
 interface BackgroundBrowserScope {
@@ -352,10 +483,14 @@ export function BrowserAutomationHost() {
   const registrationEpochRef = useRef(0);
   const inFlightRef = useRef(new Map<string, BrowserAutomationHostDispatch>());
   const requestAbortRef = useRef(new Map<string, AbortController>());
+  const webAbortRef = useRef(new Map<string, AbortController>());
+  const webObserverRef = useRef(new Map<string, () => void>());
+  const webNavigationRef = useRef(new Map<string, WebNavigationExpectation>());
   const bootstrapPendingRef = useRef(new Set<string>());
   const bootstrapAbortRef = useRef(new Map<string, AbortController>());
   const bootstrapRequestRef = useRef(new Map<string, BrowserAutomationRequest>());
   const priorLiveTargetKeysRef = useRef(new Set<string>());
+  const priorLiveTargetRevisionsRef = useRef(new Map<string, number>());
   const cancelledRef = useRef(new Set<string>());
   const stableHostId = useMemo(hostId, []);
   const [backgroundScopes, setBackgroundScopes] = useState<readonly BackgroundBrowserScope[]>([]);
@@ -375,6 +510,7 @@ export function BrowserAutomationHost() {
   ): void => {
     if (cancelledRef.current.has(key)) return;
     cancelledRef.current.add(key);
+    webAbortRef.current.get(key)?.abort(new Error(`Browser operation was cancelled: ${reason}`));
     recorderRef.current.cancel(dispatch);
     void window.desktopBridge?.preview?.automation?.cancel(dispatch.request.requestId);
     const lease = leaseOverride ?? leaseRef.current;
@@ -439,7 +575,8 @@ export function BrowserAutomationHost() {
       } : {}),
       capabilities: BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
-          const available = operation === "status" || operation === "open" || operation === "navigate" || operation === "snapshot";
+          const available = operation === "click" || operation === "type" ||
+            operation === "status" || operation === "open" || operation === "navigate" || operation === "snapshot";
           return available
             ? { operation, available: true }
             : { operation, available: false, unavailableReason: WEB_AUTOMATION_UNAVAILABLE_REASON };
@@ -557,6 +694,21 @@ export function BrowserAutomationHost() {
 
   useEffect(() => {
     const next = new Set(liveTargets.keys());
+    const priorRevisions = priorLiveTargetRevisionsRef.current;
+    for (const [key, target] of liveTargets) {
+      const previousRevision = priorRevisions.get(key);
+      if (previousRevision === undefined || previousRevision === target.revision) continue;
+      for (const [requestKey, dispatch] of inFlightRef.current) {
+        if (browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId) !== key) continue;
+        const navigation = webNavigationRef.current.get(requestKey);
+        const expectedNavigation = acceptExpectedWebNavigationRevision(dispatch, navigation, target) !== undefined;
+        if (expectedNavigation) {
+          continue;
+        }
+        webAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
+        requestAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
+      }
+    }
     for (const removed of priorLiveTargetKeysRef.current) {
       if (next.has(removed)) continue;
       const [threadId, tabId] = JSON.parse(removed) as [string, string];
@@ -567,6 +719,9 @@ export function BrowserAutomationHost() {
       }
     }
     priorLiveTargetKeysRef.current = next;
+    priorLiveTargetRevisionsRef.current = new Map(
+      [...liveTargets].map(([key, target]) => [key, target.revision]),
+    );
   }, [cancelHostedRequest, liveTargets]);
 
   useEffect(() => {
@@ -585,7 +740,8 @@ export function BrowserAutomationHost() {
 
   useEffect(() => {
     const bridge = window.desktopBridge?.preview?.automation;
-    if (!bridge && !isBrowserAutomationWebRuntimeEnabled()) return;
+    const webAutomationEnabled = isBrowserAutomationWebRuntimeEnabled();
+    if (!bridge && !webAutomationEnabled) return;
     const unsubscribeRequest = pushEmitter.on("browserAutomation.request", (input) => {
       const payload = input as { hostId?: unknown; generation?: unknown; dispatch?: unknown };
       const lease = leaseRef.current;
@@ -604,14 +760,165 @@ export function BrowserAutomationHost() {
       store.setActiveRequest({ dispatch, startedAt: Date.now() });
       const controller = new AbortController();
       requestAbortRef.current.set(key, controller);
-      void executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal).then((response) => {
-        if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
-        return getTransport().respondToBrowserAutomationRequest(
+      const webDispatch = !bridge && webAutomationEnabled &&
+        (dispatch.request.operation === "click" || dispatch.request.operation === "type");
+      const webExecutorDispatch = !bridge && webAutomationEnabled;
+      const webOpenRequest = !bridge && webAutomationEnabled &&
+        dispatch.request.operation === "open" && Boolean(dispatch.request.args.url);
+      const operationAbort = webDispatch ? new AbortController() : null;
+      if (operationAbort) webAbortRef.current.set(key, operationAbort);
+      const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+      const liveTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
+      const currentEpoch = useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
+      const staleAtStart = !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration || currentEpoch !== dispatch.request.expectedControlEpoch;
+      const cancelForHuman = () => {
+        if (!operationAbort || cancelledRef.current.has(key)) return;
+        cancelledRef.current.add(key);
+        operationAbort.abort(new Error("Browser operation was interrupted by human input"));
+        const nextEpoch = (useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch) + 1;
+        useBrowserAutomationStore.getState().setControllerForTarget(
+          dispatch.target.threadId,
+          dispatch.target.tabId,
+          { tabId: dispatch.target.tabId, controller: "human", controlEpoch: nextEpoch },
+        );
+        void getTransport().cancelBrowserAutomationRequest(
           lease.hostId,
           lease.generation,
-          response,
+          dispatch.request.requestId,
+          dispatch.request.sequence,
+          "human-interrupted",
+        ).catch(() => undefined);
+      };
+      const executeWeb = async (): Promise<BrowserAutomationResponse> => {
+        if (staleAtStart) {
+          return failureResponse(dispatch.request, !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration ? "STALE_TARGET_GENERATION" : "STALE_CONTROL_EPOCH", "Browser operation is stale");
+        }
+        if (!operationAbort) return failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser target is unavailable");
+        const selector = `iframe[data-thread-id="${escapeWebSelector(dispatch.target.threadId)}"][data-tab-id="${escapeWebSelector(dispatch.target.tabId)}"]`;
+        const targetDocument = resolveSameOriginFrame(document.querySelector<HTMLIFrameElement>(selector));
+        if (!targetDocument) return failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser target is unavailable");
+        webObserverRef.current.set(key, observeWebHumanInput(targetDocument.document, cancelForHuman));
+        return executeWebInteraction(targetDocument.document, dispatch, {
+          signal: operationAbort.signal,
+          deadline: dispatch.request.deadline,
+          expectedControlEpoch: dispatch.request.expectedControlEpoch,
+          targetGeneration: dispatch.target.targetGeneration,
+          getControlEpoch: () => useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch,
+          getTargetGeneration: () => useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision ?? 0,
+        });
+      };
+      const executeWebOpen = async (): Promise<BrowserAutomationResponse> => {
+        if (!webOpenRequest || dispatch.request.operation !== "open" || !dispatch.request.args.url) {
+          return executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal);
+        }
+        const requestedUrl = normalizeWebPreviewUrl(dispatch.request.args.url);
+        if (!requestedUrl || !isSameOriginWebPreviewUrl(requestedUrl)) {
+          return executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal);
+        }
+        const currentTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
+        if (!currentTarget || currentTarget.revision !== dispatch.target.targetGeneration) {
+          return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+        }
+        const currentIframe = webPreviewIframe(dispatch.target.threadId, dispatch.target.tabId, requestedUrl);
+        if (!currentIframe) {
+          webNavigationRef.current.set(key, {
+            targetKey,
+            expectedUrl: requestedUrl,
+            initialRevision: currentTarget.revision,
+            loadObserved: false,
+          });
+        }
+        if (!currentIframe) {
+          useDiffStore.getState().setPreviewUrlForThread(dispatch.target.threadId, requestedUrl);
+        }
+        await waitForWebPreviewIframe(
+          dispatch.target.threadId,
+          dispatch.target.tabId,
+          requestedUrl,
+          dispatch.request.deadline,
+          controller.signal,
+          !currentIframe
+          ? () => {
+              const navigation = webNavigationRef.current.get(key);
+              if (navigation?.targetKey === targetKey && navigation.expectedUrl === requestedUrl) {
+                navigation.loadObserved = true;
+              }
+            }
+            : undefined,
         );
+        const latestStore = useBrowserAutomationStore.getState();
+        const latestTarget = latestStore.liveTargets.get(targetKey);
+        const navigation = webNavigationRef.current.get(key);
+        const expectedRevision = navigation?.acceptedRevision ??
+          acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
+          dispatch.target.targetGeneration;
+        if (!latestTarget || latestTarget.revision !== expectedRevision) {
+          return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+        }
+        const latestEpoch = latestStore.controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
+        if (latestEpoch !== dispatch.request.expectedControlEpoch) {
+          return failureResponse(dispatch.request, "STALE_CONTROL_EPOCH", "Browser operation is stale");
+        }
+        const executionDispatch = {
+          ...dispatch,
+          request: {
+            ...dispatch.request,
+            args: { activate: dispatch.request.args.activate },
+          },
+        };
+        return executeBrowserDispatch(bridge, recorderRef.current, executionDispatch, controller.signal);
+      };
+      const operation = webDispatch
+        ? executeWeb()
+        : webOpenRequest
+          ? executeWebOpen()
+        : bridge || webExecutorDispatch
+          ? executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal)
+          : Promise.resolve(failureResponse(dispatch.request, "UNSUPPORTED_OPERATION", WEB_AUTOMATION_UNAVAILABLE_REASON));
+      const guardedOperation = operation.then((response) => {
+        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
+          const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
+          const navigation = webNavigationRef.current.get(key);
+          const expectedRevision = navigation?.acceptedRevision ??
+            acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
+            dispatch.target.targetGeneration;
+          if (!latestTarget || latestTarget.revision !== expectedRevision) {
+            return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+          }
+        }
+        return response;
+      }).catch((cause: unknown) => {
+        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
+          const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
+          const navigation = webNavigationRef.current.get(key);
+          const expectedRevision = navigation?.acceptedRevision ??
+            acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
+            dispatch.target.targetGeneration;
+          if (!latestTarget || latestTarget.revision !== expectedRevision) {
+            return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+          }
+        }
+        throw cause;
+      });
+      void guardedOperation.then((response) => {
+        if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
+        return webDispatch
+          ? getTransport().respondToBrowserAutomationRequest(
+            lease.hostId,
+            lease.generation,
+            response,
+            dispatch.target,
+          )
+          : getTransport().respondToBrowserAutomationRequest(
+            lease.hostId,
+            lease.generation,
+            response,
+          );
       }).catch(() => undefined).finally(() => {
+        webObserverRef.current.get(key)?.();
+        webObserverRef.current.delete(key);
+        webAbortRef.current.delete(key);
+        webNavigationRef.current.delete(key);
         if (inFlightRef.current.get(key) === dispatch) inFlightRef.current.delete(key);
         requestAbortRef.current.delete(key);
         cancelledRef.current.delete(key);
@@ -640,6 +947,7 @@ export function BrowserAutomationHost() {
       }
       if (!inFlightRef.current.has(key) || cancelledRef.current.has(key)) return;
       cancelledRef.current.add(key);
+      webAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
       recorderRef.current.cancel(inFlightRef.current.get(key)!);
       requestAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
       if (bridge) void bridge.cancel(payload.requestId);
@@ -761,7 +1069,9 @@ export function BrowserAutomationHost() {
         }
         if (!tabId) throw new Error("Browser tab could not be created or restored");
         const selectedTab = existingSet?.tabs.find((tab) => tab.id === tabId);
-        const requestedWebUrl = !bridge ? request.args.url : undefined;
+        const requestedWebUrl = !bridge && request.args.url
+          ? normalizeWebPreviewUrl(request.args.url)
+          : undefined;
         const initialUrl = requestedWebUrl ?? selectedTab?.url ?? "about:blank";
         if (!selectedTab?.url || requestedWebUrl) {
           usePreviewTabsStore.getState().updateTabChrome(request.threadId, tabId, {
@@ -773,6 +1083,16 @@ export function BrowserAutomationHost() {
         }
         if (controller.signal.aborted) {
           throw controller.signal.reason;
+        }
+        if (!bridge && requestedWebUrl) {
+          await waitForWebPreviewIframe(
+            request.threadId,
+            tabId,
+            requestedWebUrl,
+            request.deadline,
+            controller.signal,
+          );
+          ensureActive();
         }
         await waitForLiveTarget(request.threadId, tabId, request.deadline, controller.signal);
         ensureActive();
@@ -817,7 +1137,16 @@ export function BrowserAutomationHost() {
         });
         inFlightRef.current.set(key, dispatch);
         requestAbortRef.current.set(key, controller);
-        const response = await executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal);
+        const executionDispatch = !bridge && requestedWebUrl
+          ? {
+              ...dispatch,
+              request: {
+                ...dispatch.request,
+                args: { activate: request.args.activate },
+              },
+            }
+          : dispatch;
+        const response = await executeBrowserDispatch(bridge, recorderRef.current, executionDispatch, controller.signal);
         await restoreBackgroundContext();
         if (leaseRef.current === lease && !cancelledRef.current.has(key)) {
           await getTransport().respondToBrowserAutomationRequest(
@@ -942,7 +1271,12 @@ export function BrowserAutomationHost() {
     bootstrapPendingRef.current.clear();
     inFlightRef.current.clear();
     cancelledRef.current.clear();
+    webNavigationRef.current.clear();
     recorderRef.current.dispose();
+    for (const abort of webAbortRef.current.values()) abort.abort(new Error("Browser host was replaced"));
+    for (const dispose of webObserverRef.current.values()) dispose();
+    webAbortRef.current.clear();
+    webObserverRef.current.clear();
   }, []);
 
   return backgroundScopes.map((scope) => (

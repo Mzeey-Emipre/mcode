@@ -308,6 +308,13 @@ describe("PreviewPanel: unavailable state", () => {
     expect(useBrowserAutomationStore.getState().liveTargets.get(
       JSON.stringify(["thread-1", "web-preview"]),
     )).toMatchObject({ workspaceId: "workspace-1", threadId: "thread-1", tabId: "web-preview" });
+    const initialRevision = useBrowserAutomationStore.getState().liveTargets.get(
+      JSON.stringify(["thread-1", "web-preview"]),
+    )!.revision;
+    fireEvent.load(iframe);
+    expect(useBrowserAutomationStore.getState().liveTargets.get(
+      JSON.stringify(["thread-1", "web-preview"]),
+    )!.revision).toBe(initialRevision + 1);
     const page = document.implementation.createHTMLDocument("Fixture");
     page.body.innerHTML = "<main>Visible fixture</main>";
     Object.defineProperty(iframe, "contentDocument", { configurable: true, value: page });
