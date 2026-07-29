@@ -127,6 +127,26 @@ function response(request: BrowserAutomationHostDispatch["request"]): BrowserAut
   };
 }
 
+function successResponse(request: BrowserAutomationHostDispatch["request"]): BrowserAutomationResponse {
+  return {
+    contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+    requestId: request.requestId,
+    sequence: request.sequence,
+    ok: true,
+    result: {
+      operation: "status",
+      available: true,
+      active: true,
+      tabId: "tab-1",
+      url: "about:blank",
+      loading: false,
+      focused: true,
+      viewport: { width: 800, height: 600 },
+      capabilities: [],
+    },
+  };
+}
+
 describe("BrowserAutomationHost", () => {
   const execute = vi.fn();
   const beginRendererOperation = vi.fn();
@@ -254,6 +274,75 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
+  it("cancels in-flight dispatch and bootstrap work when registration is replaced", async () => {
+    const executing = deferred<BrowserAutomationResponse>();
+    const creating = deferred<{
+      ok: true;
+      data: {
+        tabId: string;
+        tabs: { threadId: string; activeTabId: string; tabs: Array<{ id: string; threadId: string; url: string | null; title: string | null; faviconUrl: string | null; warm: boolean }> };
+      };
+    }>();
+    execute.mockReturnValueOnce(executing.promise);
+    createTab.mockReturnValueOnce(creating.promise);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const activeDispatch = dispatch(1, 21);
+    act(() => harness.emit("browserAutomation.request", {
+      hostId,
+      generation: 1,
+      dispatch: activeDispatch,
+    }));
+    await waitFor(() => expect(execute).toHaveBeenCalledWith(activeDispatch));
+
+    const openRequest = {
+      ...dispatch(1, 22).request,
+      operation: "open" as const,
+      args: { url: "https://example.com/", activate: false },
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", {
+      hostId,
+      generation: 1,
+      request: openRequest,
+    }));
+    await waitFor(() => expect(createTab).toHaveBeenCalledOnce());
+
+    act(() => useConnectionStore.setState({ status: "reconnecting" }));
+    await waitFor(() => expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      activeDispatch.request.requestId,
+      activeDispatch.request.sequence,
+      "host-shutdown",
+    ));
+    expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      openRequest.requestId,
+      openRequest.sequence,
+      "host-shutdown",
+    );
+    expect(cancel).toHaveBeenCalledWith(activeDispatch.request.requestId);
+    expect(useBrowserAutomationStore.getState().activeRequests).toHaveLength(0);
+
+    creating.resolve({
+      ok: true,
+      data: {
+        tabId: "bootstrap-tab",
+        tabs: {
+          threadId: "thread-1",
+          activeTabId: "bootstrap-tab",
+          tabs: [{ id: "bootstrap-tab", threadId: "thread-1", url: null, title: null, faviconUrl: null, warm: true }],
+        },
+      },
+    });
+    executing.resolve(successResponse(activeDispatch.request));
+    await act(async () => Promise.all([creating.promise, executing.promise]));
+    expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it("publishes targets after registration and refreshes desktop identity on replacement", async () => {
     const view = render(<BrowserAutomationHost />);
     await waitFor(() => expect(harness.transport.updateBrowserAutomationHostTargets).toHaveBeenCalledTimes(1));
@@ -309,6 +398,37 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
+  it("cancels an exact removed target and suppresses its late success response", async () => {
+    const executing = deferred<BrowserAutomationResponse>();
+    execute.mockReturnValueOnce(executing.promise);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const activeDispatch = dispatch(1, 23);
+    act(() => harness.emit("browserAutomation.request", {
+      hostId,
+      generation: 1,
+      dispatch: activeDispatch,
+    }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests).toHaveLength(1));
+
+    act(() => useBrowserAutomationStore.getState().unregisterTarget("thread-1", "tab-1"));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith(activeDispatch.request.requestId));
+    expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      activeDispatch.request.requestId,
+      activeDispatch.request.sequence,
+      "host-shutdown",
+    );
+    expect(useBrowserAutomationStore.getState().activeRequests).toHaveLength(0);
+
+    executing.resolve(successResponse(activeDispatch.request));
+    await act(async () => executing.promise);
+    expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it("interrupts only the exact thread and tab selected by the human", async () => {
     const first = deferred<BrowserAutomationResponse>();
     const second = deferred<BrowserAutomationResponse>();
@@ -354,6 +474,77 @@ describe("BrowserAutomationHost", () => {
     )).toBe(true);
     first.resolve(response(dispatch(1, 1).request));
     second.resolve(response(dispatch(1, 2).request));
+  });
+
+  it("aborts bootstrap work and clears hosted scope state on unmount", async () => {
+    useBrowserAutomationStore.setState({ liveTargets: new Map() });
+    const creating = deferred<{
+      ok: true;
+      data: {
+        tabId: string;
+        tabs: { threadId: string; activeTabId: string; tabs: Array<{ id: string; threadId: string; url: string | null; title: string | null; faviconUrl: string | null; warm: boolean }> };
+      };
+    }>();
+    const executing = deferred<BrowserAutomationResponse>();
+    createTab.mockReturnValueOnce(creating.promise);
+    execute.mockReturnValueOnce(executing.promise);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const activeDispatch = dispatch(1, 24);
+    act(() => harness.emit("browserAutomation.request", {
+      hostId,
+      generation: 1,
+      dispatch: activeDispatch,
+    }));
+    await waitFor(() => expect(execute).toHaveBeenCalledOnce());
+
+    const openRequest = {
+      ...dispatch(1, 25).request,
+      operation: "open" as const,
+      args: { url: "https://example.com/", activate: false },
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", {
+      hostId,
+      generation: 1,
+      request: openRequest,
+    }));
+    await waitFor(() => expect(createTab).toHaveBeenCalledOnce());
+    await waitFor(() => expect(useBrowserAutomationStore.getState().hostedScopeIds.has("thread-1")).toBe(true));
+
+    view.unmount();
+    expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      activeDispatch.request.requestId,
+      activeDispatch.request.sequence,
+      "host-shutdown",
+    );
+    expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      openRequest.requestId,
+      openRequest.sequence,
+      "host-shutdown",
+    );
+    expect(cancel).toHaveBeenCalledWith(activeDispatch.request.requestId);
+    expect(useBrowserAutomationStore.getState().activeRequests).toHaveLength(0);
+    expect(useBrowserAutomationStore.getState().hostedScopeIds).toHaveLength(0);
+
+    creating.resolve({
+      ok: true,
+      data: {
+        tabId: "unmounted-tab",
+        tabs: {
+          threadId: "thread-1",
+          activeTabId: "unmounted-tab",
+          tabs: [{ id: "unmounted-tab", threadId: "thread-1", url: null, title: null, faviconUrl: null, warm: true }],
+        },
+      },
+    });
+    executing.resolve(successResponse(activeDispatch.request));
+    await act(async () => Promise.all([creating.promise, executing.promise]));
+    expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
   });
 
   it("bootstraps open from zero targets, reveals Browser, creates a tab, and navigates it", async () => {

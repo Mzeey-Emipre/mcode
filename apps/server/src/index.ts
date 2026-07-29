@@ -829,6 +829,7 @@ async function shutdown(): Promise<void> {
 
   // 3. Shutdown provider registry
   providerRegistry.shutdown();
+  browserAutomationBroker.shutdown();
   browserAutomationAccess.shutdown();
 
   // 4. Mark active threads as interrupted

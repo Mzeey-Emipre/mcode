@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
@@ -336,6 +336,32 @@ export function BrowserAutomationHost() {
   ), [activeWorkspaceId, liveTargets, workspaces]);
   const workspaceSignature = JSON.stringify(workspaceIds);
 
+  const cancelHostedRequest = useCallback((
+    key: string,
+    dispatch: BrowserAutomationHostDispatch,
+    reason: "human-interrupted" | "user-stopped" | "host-shutdown",
+    leaseOverride?: HostLease | null,
+  ): void => {
+    if (cancelledRef.current.has(key)) return;
+    cancelledRef.current.add(key);
+    recorderRef.current.cancel(dispatch);
+    void window.desktopBridge?.preview?.automation?.cancel(dispatch.request.requestId);
+    const lease = leaseOverride ?? leaseRef.current;
+    if (lease) {
+      void getTransport().cancelBrowserAutomationRequest(
+        lease.hostId,
+        lease.generation,
+        dispatch.request.requestId,
+        dispatch.request.sequence,
+        reason,
+      ).catch(() => undefined);
+    }
+    useBrowserAutomationStore.getState().clearActiveRequest(
+      dispatch.request.requestId,
+      dispatch.request.sequence,
+    );
+  }, []);
+
   useEffect(() => {
     backgroundScopesRef.current = backgroundScopes;
     useBrowserAutomationStore.getState().setHostedScopeIds(
@@ -415,13 +441,30 @@ export function BrowserAutomationHost() {
     });
     return () => {
       if (registrationEpochRef.current === epoch) {
+        const previousLease = leaseRef.current;
+        for (const [key, dispatch] of inFlightRef.current) {
+          cancelHostedRequest(key, dispatch, "host-shutdown", previousLease);
+        }
+        for (const [key, request] of bootstrapRequestRef.current) {
+          bootstrapAbortRef.current.get(key)?.abort(new Error("Browser host registration was replaced"));
+          const lease = previousLease;
+          if (lease) {
+            void getTransport().cancelBrowserAutomationRequest(
+              lease.hostId,
+              lease.generation,
+              request.requestId,
+              request.sequence,
+              "host-shutdown",
+            ).catch(() => undefined);
+          }
+        }
         registrationEpochRef.current += 1;
         leaseRef.current = null;
         useBrowserAutomationStore.getState().setRegistered(false);
         useBrowserAutomationStore.getState().setStatus("unavailable");
       }
     };
-  }, [connectionStatus, stableHostId, workspaceSignature]);
+  }, [cancelHostedRequest, connectionStatus, stableHostId, workspaceSignature]);
 
   useEffect(() => {
     const lease = leaseRef.current;
@@ -441,11 +484,13 @@ export function BrowserAutomationHost() {
         focused: candidate.threadId === useWorkspaceStore.getState().activeThreadId,
         lastUsedAt: candidate.lastUsedAt,
       } satisfies BrowserAutomationHostDispatchTarget));
-      void getTransport().updateBrowserAutomationHostTargets(
-        lease.hostId,
-        lease.generation,
-        targets,
-      ).catch(() => undefined);
+      if (leaseRef.current === lease) {
+        void getTransport().updateBrowserAutomationHostTargets(
+          lease.hostId,
+          lease.generation,
+          targets,
+        ).catch(() => undefined);
+      }
       return;
     }
     const targets = [...liveTargets.values()].slice(0, 64);
@@ -474,7 +519,7 @@ export function BrowserAutomationHost() {
     return () => {
       cancelled = true;
     };
-  }, [connectionStatus, liveTargets, registered]);
+  }, [cancelHostedRequest, connectionStatus, liveTargets, registered]);
 
   useEffect(() => {
     const next = new Set(liveTargets.keys());
@@ -482,9 +527,13 @@ export function BrowserAutomationHost() {
       if (next.has(removed)) continue;
       const [threadId, tabId] = JSON.parse(removed) as [string, string];
       recorderRef.current.disposeTarget(threadId, tabId);
+      for (const [key, dispatch] of inFlightRef.current) {
+        if (dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
+        cancelHostedRequest(key, dispatch, "host-shutdown");
+      }
     }
     priorLiveTargetKeysRef.current = next;
-  }, [liveTargets]);
+  }, [cancelHostedRequest, liveTargets]);
 
   useEffect(() => {
     const lease = leaseRef.current;
@@ -561,7 +610,7 @@ export function BrowserAutomationHost() {
       unsubscribeRequest();
       unsubscribeCancel();
     };
-  }, []);
+  }, [cancelHostedRequest]);
 
   useEffect(() => {
     const bridge = window.desktopBridge?.preview?.automation;
@@ -761,18 +810,10 @@ export function BrowserAutomationHost() {
         const lease = leaseRef.current;
         if (!lease) continue;
         const key = browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence);
-        if (cancelledRef.current.has(key)) continue;
-        cancelledRef.current.add(key);
-        void getTransport().cancelBrowserAutomationRequest(
-          lease.hostId,
-          lease.generation,
-          dispatch.request.requestId,
-          dispatch.request.sequence,
-          "human-interrupted",
-        ).catch(() => undefined);
+        cancelHostedRequest(key, dispatch, "human-interrupted", lease);
       }
     });
-  }, []);
+  }, [cancelHostedRequest]);
 
   useEffect(() => onBrowserAutomationInterruption((threadId, tabId, reason) => {
     recorderRef.current.disposeTarget(threadId, tabId);
@@ -781,19 +822,9 @@ export function BrowserAutomationHost() {
       const lease = leaseRef.current;
       if (!lease) continue;
       const key = browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence);
-      if (cancelledRef.current.has(key)) continue;
-      cancelledRef.current.add(key);
-      recorderRef.current.cancel(dispatch);
-      void window.desktopBridge?.preview?.automation.cancel(dispatch.request.requestId);
-      void getTransport().cancelBrowserAutomationRequest(
-        lease.hostId,
-        lease.generation,
-        dispatch.request.requestId,
-        dispatch.request.sequence,
-        reason,
-      ).catch(() => undefined);
+      cancelHostedRequest(key, dispatch, reason, lease);
     }
-  }), []);
+  }), [cancelHostedRequest]);
 
   useEffect(() => onBrowserAutomationScopeRelease((release) => {
     const matches = (threadId: string, workspaceId: string): boolean =>
@@ -825,37 +856,34 @@ export function BrowserAutomationHost() {
     }
     for (const [key, dispatch] of inFlightRef.current) {
       if (!matches(dispatch.scope.threadId, dispatch.scope.workspaceId)) continue;
-      if (cancelledRef.current.has(key)) continue;
-      cancelledRef.current.add(key);
-      recorderRef.current.cancel(dispatch);
-      void window.desktopBridge?.preview?.automation.cancel(dispatch.request.requestId);
-      if (lease) {
-        void getTransport().cancelBrowserAutomationRequest(
-          lease.hostId,
-          lease.generation,
-          dispatch.request.requestId,
-          dispatch.request.sequence,
-          "host-shutdown",
-        ).catch(() => undefined);
-      }
+      cancelHostedRequest(key, dispatch, "host-shutdown", lease);
     }
-  }), []);
+  }), [cancelHostedRequest]);
 
   useEffect(() => () => {
     // Registration cleanup runs before this effect during unmount, so retain
     // the last authorized lease solely for bounded shutdown cancellation.
     const lease = shutdownLeaseRef.current;
     if (lease) {
-      for (const dispatch of inFlightRef.current.values()) {
+      for (const [key, dispatch] of inFlightRef.current) {
+        cancelHostedRequest(key, dispatch, "host-shutdown", lease);
+      }
+      for (const [key, request] of bootstrapRequestRef.current) {
+        bootstrapAbortRef.current.get(key)?.abort(new Error("Browser host unmounted"));
         void getTransport().cancelBrowserAutomationRequest(
           lease.hostId,
           lease.generation,
-          dispatch.request.requestId,
-          dispatch.request.sequence,
+          request.requestId,
+          request.sequence,
           "host-shutdown",
         ).catch(() => undefined);
       }
     }
+    bootstrapAbortRef.current.clear();
+    bootstrapRequestRef.current.clear();
+    bootstrapPendingRef.current.clear();
+    inFlightRef.current.clear();
+    cancelledRef.current.clear();
     recorderRef.current.dispose();
   }, []);
 

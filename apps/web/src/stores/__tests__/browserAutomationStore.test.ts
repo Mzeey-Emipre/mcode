@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
 import {
   browserAutomationRequestKey,
   browserAutomationTargetKey,
@@ -8,6 +9,7 @@ import {
   resolveBrowserAutomationControllerTarget,
   selectWarmBrowserTabIds,
   useBrowserAutomationStore,
+  type BrowserAutomationActiveRequest,
   type BrowserAutomationLiveTarget,
 } from "../browserAutomationStore";
 import { selectBrowserAutomationWorkspaceIds } from "@/components/panels/BrowserAutomationHost";
@@ -86,6 +88,45 @@ describe("browser automation renderer scope", () => {
     const settled = selectWarmBrowserTabIds(tabs, "thread-a", "tab-0");
     expect(settled.size).toBe(3);
     expect(settled.has("tab-0")).toBe(true);
+  });
+
+  it("bounds active requests while keeping the newest in-flight target visible for cancellation", () => {
+    useBrowserAutomationStore.setState({ activeRequests: new Map() });
+    const requests = Array.from({ length: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS + 1 }, (_, index) => {
+      const activeDispatch = {
+        request: { requestId: `request-${index}`, sequence: index },
+        target: { threadId: "thread-a", tabId: `tab-${index}` },
+      } as BrowserAutomationActiveRequest["dispatch"];
+      return {
+        dispatch: activeDispatch,
+        startedAt: index,
+      };
+    });
+
+    for (const request of requests) useBrowserAutomationStore.getState().setActiveRequest(request);
+
+    const activeRequests = useBrowserAutomationStore.getState().activeRequests;
+    const newest = requests.at(-1)!;
+    const newestRequestId = `request-${BROWSER_AUTOMATION_MAX_PENDING_REQUESTS}`;
+    expect(activeRequests).toHaveLength(BROWSER_AUTOMATION_MAX_PENDING_REQUESTS);
+    expect(activeRequests.has(browserAutomationRequestKey("request-0", 0))).toBe(false);
+    expect(activeRequests.has(browserAutomationRequestKey(
+      newestRequestId,
+      BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
+    ))).toBe(true);
+    expect(selectWarmBrowserTabIds(
+      requests.map((request) => ({ id: request.dispatch.target.tabId })),
+      "thread-a",
+      "tab-0",
+    )).toContain("tab-32");
+
+    useBrowserAutomationStore.getState().clearActiveRequest(
+      newest.dispatch.request.requestId,
+      newest.dispatch.request.sequence,
+    );
+    expect(useBrowserAutomationStore.getState().activeRequests.has(
+      browserAutomationRequestKey(newestRequestId, BROWSER_AUTOMATION_MAX_PENDING_REQUESTS),
+    )).toBe(false);
   });
 
   it("routes authoritative thread and workspace cleanup to exact host scopes", () => {
