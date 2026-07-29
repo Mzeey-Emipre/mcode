@@ -26,6 +26,7 @@ import {
   BrowserAutomationResultSchema,
   BrowserAutomationResponseSchema,
   BrowserAutomationSnapshotSchema,
+  BrowserAutomationTargetIdentitySchema,
   BrowserAutomationTargetSchema,
   BrowserAutomationUrlSchema,
 } from "../browser-automation.js";
@@ -536,6 +537,37 @@ describe("browser automation boundaries", () => {
         ],
       }).success,
     ).toBe(false);
+  });
+
+  it("validates opt-in web runtime target identity and positive generations", () => {
+    const registration = {
+      contractVersion: 1,
+      hostId: "host-web",
+      runtime: "web",
+      desktopInstanceId: "connection-web",
+      worktreeIdentity: "worktree-a",
+      workspaceIds: ["workspace-a"],
+      targetIdentity: {
+        worktreeIdentity: "worktree-a",
+        connectionId: "connection-web",
+        workspaceId: "workspace-a",
+        threadId: "thread-a",
+        tabId: "tab-a",
+        generation: 1,
+      },
+      capabilities: [{ operation: "status", available: false, unavailableReason: "disabled" }],
+      maxPendingRequests: 1,
+      connectedAt: 1,
+    };
+    expect(BrowserAutomationHostRegistrationSchema().safeParse(registration).success).toBe(true);
+    expect(BrowserAutomationTargetIdentitySchema().safeParse({
+      ...registration.targetIdentity,
+      generation: 0,
+    }).success).toBe(false);
+    expect(BrowserAutomationHostRegistrationSchema().safeParse({
+      ...registration,
+      targetIdentity: { ...registration.targetIdentity, worktreeIdentity: "other-worktree" },
+    }).success).toBe(true);
   });
 
   it("requires expiring credential claims with unique operations", () => {

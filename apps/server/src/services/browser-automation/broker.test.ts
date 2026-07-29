@@ -54,6 +54,7 @@ function registration(hostId: string, workspaceId: string): BrowserAutomationHos
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
     hostId,
+    runtime: "electron",
     desktopInstanceId: `desktop-${hostId}`,
     worktreeIdentity: "worktree-a",
     workspaceIds: [workspaceId],

@@ -75,6 +75,7 @@ import type { AgentEvent } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
 import type Database from "better-sqlite3";
 import type { JobObject } from "./services/job-object.js";
+import { resolveWebAutomationFlag } from "./startup-policy.js";
 import {
   BrowserAutomationAccessService,
   BrowserAutomationBroker,
@@ -153,6 +154,7 @@ function resolveSingleInstanceFlag(env: NodeJS.ProcessEnv): boolean {
 }
 
 const SINGLE_INSTANCE = resolveSingleInstanceFlag(process.env);
+const WEB_AUTOMATION_ENABLED = resolveWebAutomationFlag(process.env);
 const INSTANCE_TOKEN = process.env.MCODE_INSTANCE_TOKEN?.trim() || null;
 const WORKTREE_IDENTITY = process.env.MCODE_WORKTREE_IDENTITY?.trim() || null;
 
@@ -678,6 +680,7 @@ const { httpServer, wss } = createWsServer({
     desktopInstanceId: randomUUID(),
     worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
     allowedWorkspaceIds: workspaceService.list().map((workspace) => workspace.id),
+    allowWebRuntime: WEB_AUTOMATION_ENABLED,
   }),
   shutdown: requestShutdown,
 });

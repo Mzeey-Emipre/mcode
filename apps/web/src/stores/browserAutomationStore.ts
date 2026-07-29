@@ -7,6 +7,9 @@ import { create } from "zustand";
 /** Maximum number of inactive, non-busy Browser targets retained warm. */
 export const BROWSER_AUTOMATION_WARM_TARGET_LIMIT = 3;
 
+/** Discovery state for the browser automation host in the current runtime. */
+export type BrowserAutomationHostStatus = "disabled" | "unavailable" | "registered";
+
 /** Renderer-owned Browser tab currently eligible for desktop target discovery. */
 export interface BrowserAutomationLiveTarget {
   readonly workspaceId: string;
@@ -27,6 +30,7 @@ interface BrowserAutomationState {
   readonly controllers: ReadonlyMap<string, BrowserAutomationControllerState>;
   readonly activeRequests: ReadonlyMap<string, BrowserAutomationActiveRequest>;
   readonly registered: boolean;
+  readonly status: BrowserAutomationHostStatus;
   readonly viewportByTarget: ReadonlyMap<string, { readonly width: number; readonly height: number }>;
   readonly hostedScopeIds: ReadonlySet<string>;
   registerTarget: (workspaceId: string, threadId: string, tabId: string) => void;
@@ -41,6 +45,7 @@ interface BrowserAutomationState {
   setActiveRequest: (request: BrowserAutomationActiveRequest) => void;
   clearActiveRequest: (requestId: string, sequence: number) => void;
   setRegistered: (registered: boolean) => void;
+  setStatus: (status: BrowserAutomationHostStatus) => void;
   setViewport: (threadId: string, tabId: string, width: number, height: number) => void;
   setHostedScopeIds: (scopeIds: ReadonlySet<string>) => void;
 }
@@ -70,6 +75,7 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
   controllers: new Map(),
   activeRequests: new Map(),
   registered: false,
+  status: "unavailable",
   viewportByTarget: new Map(),
   hostedScopeIds: new Set(),
   registerTarget: (workspaceId, threadId, tabId) =>
@@ -143,6 +149,7 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       return { activeRequests };
     }),
   setRegistered: (registered) => set({ registered }),
+  setStatus: (status) => set({ status }),
   setHostedScopeIds: (hostedScopeIds) => set({ hostedScopeIds: new Set(hostedScopeIds) }),
   setViewport: (threadId, tabId, width, height) =>
     set((state) => {
