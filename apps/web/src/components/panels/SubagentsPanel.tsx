@@ -24,8 +24,9 @@ import { useDiffStore, type SubagentRosterTab } from "@/stores/diffStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
-import { getTransport } from "@/transport";
+import { getTransport, type Message } from "@/transport";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
+import { MessageBubble } from "@/components/chat/MessageBubble";
 import { SubagentChangeSummary } from "./SubagentChangeSummary";
 
 const FINISHED_STATUS: Record<FinishedSubagentStatus, string> = {
@@ -109,6 +110,10 @@ function DetailView({ threadId, row, onBack }: { readonly threadId: string; read
   const status = finished ? FINISHED_STATUS[row.status] : "Running";
   const showLifecycleDot = !finished || row.status !== "completed";
   const duration = formatDuration(row.elapsedSeconds);
+  const metadata = [
+    row.detail.model ? resolveModelDisplayLabel(row.detail.model) : null,
+    row.detail.reasoningEffort ? formatReasoningLevel(row.detail.reasoningEffort) : null,
+  ].filter(Boolean).join(" · ");
   const statusDescription = finished
     ? `${status}, ran for ${duration}`
     : `${status}, ${duration} elapsed`;
@@ -123,6 +128,19 @@ function DetailView({ threadId, row, onBack }: { readonly threadId: string; read
     outputTotalBytes: row.detail.outputTotalBytes,
     outputArtifactPath: row.detail.outputArtifactPath,
   };
+  const taskMessage = useMemo<Message>(() => ({
+    id: `subagent-task-${row.id}`,
+    thread_id: threadId,
+    role: "user",
+    content: row.task,
+    tool_calls: null,
+    files_changed: null,
+    cost_usd: null,
+    tokens_used: null,
+    timestamp: new Date(row.startedAt).toISOString(),
+    sequence: 0,
+    attachments: null,
+  }), [row.id, row.startedAt, row.task, threadId]);
   const handleViewAllDiffs = useCallback((paths: readonly string[], additions: number, deletions: number) => {
     const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
     if (!workspaceId) return;
@@ -152,23 +170,30 @@ function DetailView({ threadId, row, onBack }: { readonly threadId: string; read
             size={15}
           />
           <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{row.identity}</h2>
-          <span
-            role="group"
-            aria-label={statusDescription}
-            className="flex shrink-0 items-center gap-2"
-          >
-            {showLifecycleDot && (
-              <SubagentLifecycleStatus
-                label=""
-                tone={finished ? FINISHED_TONE[row.status] : "running"}
-              />
+          <div className="flex min-w-0 shrink-0 items-center gap-2">
+            {metadata && (
+              <span
+                data-testid="subagent-header-metadata"
+                className="min-w-0 max-w-40 truncate font-mono text-xs tabular-nums text-muted-foreground"
+                title={metadata}
+              >
+                {metadata}
+              </span>
             )}
-            <time aria-hidden className="font-mono text-xs tabular-nums text-muted-foreground">{duration}</time>
-          </span>
+            <span role="group" aria-label={statusDescription} className="flex shrink-0 items-center gap-2">
+              {showLifecycleDot && (
+                <SubagentLifecycleStatus
+                  label=""
+                  tone={finished ? FINISHED_TONE[row.status] : "running"}
+                />
+              )}
+            </span>
+          </div>
         </div>
       </header>
       <ScrollArea className="min-h-0 flex-1">
         <div className={`${PRIMARY_CONTENT_RAIL_CLASS} px-6 py-8 sm:px-10`}>
+          <MessageBubble message={taskMessage} interactive={false} />
           {row.detail.transcript.length > 0 && (
             <NarrativeFlow
               toolCalls={row.detail.transcript}
@@ -197,17 +222,6 @@ function DetailView({ threadId, row, onBack }: { readonly threadId: string; read
           {row.detail.transcript.length === 0 && !row.detail.output && (
             <p role="status" className="text-sm text-muted-foreground">
               {finished ? FINISHED_STATUS[row.status] : "Working"}
-            </p>
-          )}
-          {(row.detail.model || row.detail.reasoningEffort) && (
-            <p
-              data-testid="subagent-response-byline"
-              className="mt-3 text-right font-mono text-xs tabular-nums text-muted-foreground/55"
-            >
-              {[
-                row.detail.model ? resolveModelDisplayLabel(row.detail.model) : null,
-                row.detail.reasoningEffort ? formatReasoningLevel(row.detail.reasoningEffort) : null,
-              ].filter(Boolean).join(" · ")}
             </p>
           )}
           <TurnFooter

@@ -288,6 +288,7 @@ describe("projectSubagents", () => {
     expect(roster.finished).toEqual([expect.objectContaining({
       id: "latest",
       memberCallIds: ["first", "latest"],
+      startedAt: Date.parse("2026-07-22T10:00:00.000Z"),
       detail: expect.objectContaining({
         output: "Latest result",
         subtreeIds: ["first", "first-child", "latest", "latest-child"],
@@ -324,6 +325,7 @@ describe("projectSubagents", () => {
         identity: "Security reviewer",
         hasExplicitIdentity: true,
         task: "Review auth changes",
+        startedAt: 1_000,
         activity: "Read file: auth.ts",
         activityAt: 8_000,
         elapsedSeconds: 10,
