@@ -8,7 +8,7 @@ const inflight = new Set<string>();
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Debounce delay before triggering prefetch on hover (ms). */
-const HOVER_DEBOUNCE_MS = 150;
+const HOVER_DEBOUNCE_MS = 50;
 
 /**
  * Schedule a background prefetch of messages for a thread.
@@ -30,6 +30,12 @@ export function cancelPrefetch(): void {
     clearTimeout(hoverTimer);
     hoverTimer = null;
   }
+}
+
+/** Start a speculative prefetch immediately when a thread receives pointer-down. */
+export function prefetchOnPointerDown(threadId: string): void {
+  cancelPrefetch();
+  void prefetchThread(threadId);
 }
 
 /**

@@ -10,7 +10,7 @@ import type { ConversationPage } from "@mcode/contracts";
  * Initial default thread cache capacity.
  * Overridden by the `performance.threadCacheSize` user setting at runtime.
  */
-export const RECORD_CACHE_SIZE = 15;
+export const RECORD_CACHE_SIZE = 25;
 
 /** Maximum messages retained across one thread's record and warm history page. */
 export const RECORD_MESSAGE_CACHE_SIZE = 100;
