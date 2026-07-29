@@ -46,6 +46,14 @@ interface ThreadRow {
   has_file_changes: number;
 }
 
+/** Persisted delegation provenance attached to a destination thread. */
+export interface ThreadDelegationLineageRecord {
+  coordinatorThreadId: string | null;
+  creatorTurnId: string | null;
+  creatorToolCallId: string | null;
+  creationKind: "thread_delegation" | null;
+}
+
 /** Normalizes legacy reasoning values and rejects corrupted persisted state at the DB boundary. */
 function parseStoredReasoningLevel(value: string | null): ReasoningLevel | null {
   if (value === null) return null;
@@ -670,6 +678,64 @@ export class ThreadRepo {
         id,
       );
     return result.changes > 0;
+  }
+
+  /** Read persisted delegation provenance without exposing raw database columns. */
+  findDelegationLineage(id: string): ThreadDelegationLineageRecord | null {
+    const row = this.db.prepare(
+      "SELECT delegation_coordinator_thread_id, delegation_creator_turn_id, delegation_creator_tool_call_id, delegation_creation_kind FROM threads WHERE id = ?",
+    ).get(id) as {
+      delegation_coordinator_thread_id: string | null;
+      delegation_creator_turn_id: string | null;
+      delegation_creator_tool_call_id: string | null;
+      delegation_creation_kind: string | null;
+    } | undefined;
+    if (!row) return null;
+    return {
+      coordinatorThreadId: row.delegation_coordinator_thread_id,
+      creatorTurnId: row.delegation_creator_turn_id,
+      creatorToolCallId: row.delegation_creator_tool_call_id,
+      creationKind: row.delegation_creation_kind === "thread_delegation" ? "thread_delegation" : null,
+    };
+  }
+
+  /** List non-deleted delegated children for one coordinator thread. */
+  listDelegationChildren(coordinatorThreadId: string): Array<{
+    thread: Thread;
+    lineage: ThreadDelegationLineageRecord;
+  }> {
+    const rows = this.db.prepare(
+      `SELECT ${THREAD_COLUMNS},
+              t.delegation_coordinator_thread_id,
+              t.delegation_creator_turn_id,
+              t.delegation_creator_tool_call_id,
+              t.delegation_creation_kind
+       FROM threads t
+       WHERE t.deleted_at IS NULL AND t.delegation_coordinator_thread_id = ?
+       ORDER BY t.updated_at DESC, t.id ASC`,
+    ).all(coordinatorThreadId) as Array<ThreadRow & {
+      delegation_coordinator_thread_id: string | null;
+      delegation_creator_turn_id: string | null;
+      delegation_creator_tool_call_id: string | null;
+      delegation_creation_kind: string | null;
+    }>;
+    return rows.flatMap((row) => {
+      if (
+        row.delegation_creation_kind !== "thread_delegation"
+        || !row.delegation_coordinator_thread_id
+        || !row.delegation_creator_turn_id
+        || !row.delegation_creator_tool_call_id
+      ) return [];
+      return [{
+        thread: rowToThread(row),
+        lineage: {
+          coordinatorThreadId: row.delegation_coordinator_thread_id,
+          creatorTurnId: row.delegation_creator_turn_id,
+          creatorToolCallId: row.delegation_creator_tool_call_id,
+          creationKind: "thread_delegation" as const,
+        },
+      }];
+    });
   }
 
   /** Persist ownership for a thread created by a paired external integration. */

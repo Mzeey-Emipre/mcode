@@ -39,6 +39,14 @@ import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/per
 import { GoalLookupResultSchema, GoalObjectiveSchema } from "../models/goal.js";
 import { PreviewAnnotationBundleSchema } from "../models/browser-preview.js";
 import {
+  ThreadControlReadInputSchema,
+  ThreadControlReadResultSchema,
+  ThreadControlUserSendInputSchema,
+  ThreadControlUserStopInputSchema,
+  ThreadSendResultSchema,
+  ThreadStopResultSchema,
+} from "../thread-control.js";
+import {
   PullRequestCapabilitiesRequestSchema,
   PullRequestCapabilitiesResultSchema,
   PullRequestListRequestSchema,
@@ -378,6 +386,21 @@ export const WS_METHODS = lazySchema(() => ({
         path: z.string(),
       })),
     }),
+  },
+  /** Read the canonical persisted coordination projection for one Project/Thread identity. */
+  "thread.control.read": {
+    params: ThreadControlReadInputSchema(),
+    result: ThreadControlReadResultSchema(),
+  },
+  /** Send a user-owned follow-up from one source thread to another thread. */
+  "thread.control.send": {
+    params: ThreadControlUserSendInputSchema(),
+    result: ThreadSendResultSchema(),
+  },
+  /** Stop a destination thread from the owning source thread. */
+  "thread.control.stop": {
+    params: ThreadControlUserStopInputSchema(),
+    result: ThreadStopResultSchema(),
   },
   "git.listBranches": {
     params: z.object({ workspaceId: z.string() }),

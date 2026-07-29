@@ -59,6 +59,8 @@ describe("ThreadControlService", () => {
     clearWorktreePath: ReturnType<typeof vi.fn>;
     updateExternalCreator: ReturnType<typeof vi.fn>;
     countActiveByIntegration: ReturnType<typeof vi.fn>;
+    findDelegationLineage: ReturnType<typeof vi.fn>;
+    listDelegationChildren: ReturnType<typeof vi.fn>;
   };
   let threadService: { provisionWorktree: ReturnType<typeof vi.fn>; cleanupInterruptedProvisioning: ReturnType<typeof vi.fn> };
   let agentService: { sendMessage: ReturnType<typeof vi.fn>; stopSession: ReturnType<typeof vi.fn>; activeThreadIds?: ReturnType<typeof vi.fn> };
@@ -106,6 +108,8 @@ describe("ThreadControlService", () => {
       clearWorktreePath: vi.fn().mockReturnValue(true),
       updateExternalCreator: vi.fn().mockReturnValue(true),
       countActiveByIntegration: vi.fn().mockReturnValue(0),
+      findDelegationLineage: vi.fn().mockReturnValue(null),
+      listDelegationChildren: vi.fn().mockReturnValue([]),
     };
     messages = {
       listByThreadForThreadControl: vi.fn().mockReturnValue({ messages: [], hasMore: false }),
@@ -191,6 +195,51 @@ describe("ThreadControlService", () => {
 
     expect(JSON.stringify(result)).not.toContain(workspacePath);
     expect(result.workspaces).toEqual([{ workspaceId: "workspace-1", name: "Workspace" }]);
+  });
+
+  it("reads a canonical Project/Thread coordination projection with persisted identity", () => {
+    const service = createService();
+    const thread = {
+      ...createdThread,
+      id: "thread-1",
+      title: "Coordinator",
+      workspace_id: workspace.id,
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      created_at: "2026-07-29T00:00:00.000Z",
+      updated_at: "2026-07-29T00:00:00.000Z",
+      deleted_at: null,
+    };
+    threads.findById.mockReturnValue(thread);
+
+    expect(service.threadControlRead({
+      identity: { workspaceId: workspace.id, threadId: thread.id },
+      messageLimit: 10,
+    })).toMatchObject({
+      status: "found",
+      projection: {
+        identity: { workspaceId: workspace.id, threadId: thread.id },
+        thread: { title: "Coordinator", providerId: "codex" },
+        relation: null,
+        children: [],
+        approvals: [],
+      },
+    });
+    expect(messages.listByThreadForThreadControl).toHaveBeenCalledWith(thread.id, 10, THREAD_GET_TRANSCRIPT_MAX_BYTES);
+  });
+
+  it("rejects a user mutation when the explicit target Project does not match the persisted thread", async () => {
+    const service = createService();
+    const source = { ...createdThread, id: "source-thread", workspace_id: workspace.id, deleted_at: null };
+    const target = { ...createdThread, id: "target-thread", workspace_id: workspace.id, deleted_at: null };
+    threads.findById.mockImplementation((id: string) => id === source.id ? source : id === target.id ? target : null);
+
+    await expect(service.threadControlSend({
+      source: { workspaceId: workspace.id, threadId: source.id },
+      target: { workspaceId: "other-workspace", threadId: target.id },
+      message: "Follow up",
+    })).resolves.toMatchObject({ status: "rejected", error: { code: "not_found" } });
+    expect(agentService.sendMessage).not.toHaveBeenCalled();
   });
 
   it("creates a direct thread with user defaults, exact title, lineage, and Build mode", async () => {

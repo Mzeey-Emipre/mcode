@@ -259,6 +259,27 @@ export class ThreadControlApprovalRepo {
     return parsed;
   }
 
+  /** Return pending mutation approvals created by one source thread. */
+  listPendingBySourceThread(sourceThreadId: string): PendingThreadControlApproval[] {
+    const rows = this.db.prepare(
+      "SELECT id, thread_id, workspace_id, prompt, execution_json, placement_json, turn_id, operation_phase, caller_id, source_thread_id, source_turn_id, source_provider_id, operation FROM thread_control_approvals WHERE source_thread_id = ? AND status = 'pending' ORDER BY created_at, id",
+    ).all(sourceThreadId) as ApprovalRow[];
+    const parsed: PendingThreadControlApproval[] = [];
+    for (const row of rows) {
+      try {
+        parsed.push(this.parse(row));
+      } catch (error) {
+        logger.error("Skipping malformed pending source-thread approval", {
+          approvalId: row.id,
+          threadId: row.thread_id,
+          sourceThreadId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return parsed;
+  }
+
   private parse(row: ApprovalRow): PendingThreadControlApproval {
     const operation = parseOperation(row.operation);
     if (!operation) throw new Error("Stored thread-control approval has invalid operation");
