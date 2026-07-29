@@ -354,6 +354,27 @@ interface WebNavigationExpectation {
   acceptedRevision?: number;
 }
 
+function acceptExpectedWebNavigationRevision(
+  dispatch: BrowserAutomationHostDispatch,
+  navigation: WebNavigationExpectation | undefined,
+  target: { readonly revision: number } | undefined,
+): number | undefined {
+  if (!navigation || dispatch.request.operation !== "open") return undefined;
+  if (navigation.acceptedRevision !== undefined) {
+    return navigation.acceptedRevision === target?.revision ? navigation.acceptedRevision : undefined;
+  }
+  const expectedUrl = normalizeWebPreviewUrl(dispatch.request.args.url ?? "");
+  if (
+    navigation.targetKey !== browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId) ||
+    navigation.expectedUrl !== expectedUrl ||
+    dispatch.target.targetGeneration !== navigation.initialRevision ||
+    target?.revision !== navigation.initialRevision + 1 ||
+    !webPreviewIframe(dispatch.target.threadId, dispatch.target.tabId, navigation.expectedUrl)
+  ) return undefined;
+  navigation.acceptedRevision = target.revision;
+  return target.revision;
+}
+
 interface BackgroundBrowserScope {
   readonly threadId: string;
   readonly workspaceId: string;
@@ -680,17 +701,8 @@ export function BrowserAutomationHost() {
       for (const [requestKey, dispatch] of inFlightRef.current) {
         if (browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId) !== key) continue;
         const navigation = webNavigationRef.current.get(requestKey);
-        const expectedNavigation = dispatch.request.operation === "open" &&
-          navigation?.targetKey === key &&
-          navigation.expectedUrl === normalizeWebPreviewUrl(
-            dispatch.request.args.url ?? "",
-          ) &&
-          navigation.loadObserved &&
-          navigation.acceptedRevision === undefined &&
-          dispatch.target.targetGeneration === navigation.initialRevision &&
-          target.revision === navigation.initialRevision + 1;
+        const expectedNavigation = acceptExpectedWebNavigationRevision(dispatch, navigation, target) !== undefined;
         if (expectedNavigation) {
-          navigation.acceptedRevision = target.revision;
           continue;
         }
         webAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
@@ -837,11 +849,9 @@ export function BrowserAutomationHost() {
         const latestStore = useBrowserAutomationStore.getState();
         const latestTarget = latestStore.liveTargets.get(targetKey);
         const navigation = webNavigationRef.current.get(key);
-        const expectedRevision = navigation?.acceptedRevision ?? (
-          navigation?.loadObserved && navigation.initialRevision === dispatch.target.targetGeneration
-            ? navigation.initialRevision + 1
-            : dispatch.target.targetGeneration
-        );
+        const expectedRevision = navigation?.acceptedRevision ??
+          acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
+          dispatch.target.targetGeneration;
         if (!latestTarget || latestTarget.revision !== expectedRevision) {
           return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
         }
@@ -869,11 +879,9 @@ export function BrowserAutomationHost() {
         if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
           const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
           const navigation = webNavigationRef.current.get(key);
-          const expectedRevision = navigation?.acceptedRevision ?? (
-            navigation?.loadObserved && navigation.initialRevision === dispatch.target.targetGeneration
-              ? navigation.initialRevision + 1
-              : dispatch.target.targetGeneration
-          );
+          const expectedRevision = navigation?.acceptedRevision ??
+            acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
+            dispatch.target.targetGeneration;
           if (!latestTarget || latestTarget.revision !== expectedRevision) {
             return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
           }
@@ -883,11 +891,9 @@ export function BrowserAutomationHost() {
         if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
           const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
           const navigation = webNavigationRef.current.get(key);
-          const expectedRevision = navigation?.acceptedRevision ?? (
-            navigation?.loadObserved && navigation.initialRevision === dispatch.target.targetGeneration
-              ? navigation.initialRevision + 1
-              : dispatch.target.targetGeneration
-          );
+          const expectedRevision = navigation?.acceptedRevision ??
+            acceptExpectedWebNavigationRevision(dispatch, navigation, latestTarget) ??
+            dispatch.target.targetGeneration;
           if (!latestTarget || latestTarget.revision !== expectedRevision) {
             return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
           }

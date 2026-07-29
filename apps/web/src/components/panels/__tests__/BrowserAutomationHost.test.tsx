@@ -410,8 +410,8 @@ describe("BrowserAutomationHost", () => {
     });
     document.body.append(iframe);
     window.setTimeout(() => {
-      iframe.dispatchEvent(new Event("load"));
       useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1");
+      iframe.dispatchEvent(new Event("load"));
     }, 0);
 
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
