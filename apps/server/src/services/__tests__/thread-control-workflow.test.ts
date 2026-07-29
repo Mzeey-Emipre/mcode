@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ThreadCreateBatchResultSchema } from "@mcode/contracts";
 import { MessageRepo } from "../../repositories/message-repo.js";
 import { ThreadControlApprovalRepo } from "../../repositories/thread-control-approval-repo.js";
 import { ThreadControlAuditRepo } from "../../repositories/thread-control-audit-repo.js";
@@ -152,11 +153,16 @@ describe("internal thread-control MCP workflow", () => {
         },
       ],
     });
-    expect(batch.results).toMatchObject([
+    const batchResult = ThreadCreateBatchResultSchema().parse(batch);
+    expect(batchResult.results).toMatchObject([
       { index: 0, status: "created", workspaceId: destinationWorkspace.id, placement: { type: "new_worktree", worktreeId: "worktree-created" } },
       { index: 1, status: "rejected", error: { code: "not_found" } },
     ]);
-    const destinationThreadId = (batch.results as Array<{ threadId: string }>)[0].threadId;
+    const destinationResult = batchResult.results.find((result) => result.index === 0);
+    if (!destinationResult || destinationResult.status !== "created") {
+      throw new Error("Expected first batch result to be created");
+    }
+    const destinationThreadId = destinationResult.threadId;
     expect(threads.findById(destinationThreadId)).toMatchObject({ workspace_id: destinationWorkspace.id, title: "Issue 965 child" });
     expect(threads.findDelegationLineage(destinationThreadId)).toEqual({
       coordinatorThreadId: sourceThread.id,
