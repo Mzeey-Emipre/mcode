@@ -8,7 +8,7 @@ import { ThoughtSegmentRepo } from "../../repositories/thought-segment-repo";
 import { HookExecutionRepo } from "../../repositories/hook-execution-repo";
 import { PlanQuestionAnswersRepo } from "../../repositories/plan-question-answers-repo";
 import { NarrativeStore } from "../narrative-store";
-import { loadConversationPage } from "../conversation-page";
+import { loadConversationPage, loadConversationTail } from "../conversation-page";
 
 function seedThread(db: Database.Database): void {
   const now = new Date().toISOString();
@@ -140,5 +140,35 @@ describe("loadConversationPage", () => {
     expect(page.messages.map((m) => m.sequence)).toEqual([3, 4]);
     expect(page.hasMore).toBe(true);
     expect(page.narrativeByMessage.m4).toEqual({ tools: [], thoughts: [], hooks: [] });
+  });
+});
+
+describe("loadConversationTail", () => {
+  it("returns the newest visible messages and bypasses narrative and plan queries", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    insertMessage(db, "u1", "user", "start", 1);
+    insertMessage(db, "a1", "assistant", "answer", 2);
+    insertMessage(db, "internal", "assistant", "hidden", 3, true);
+    insertMessage(db, "u2", "user", "latest", 4);
+    const deps = createDeps(db);
+    const narrativeSpy = vi.spyOn(deps.narrativeStore, "loadForMessages");
+    const planSpy = vi.spyOn(deps.planQuestionAnswersRepo, "listAnsweredForThread");
+
+    const tail = loadConversationTail(deps, {
+      threadId: "thread-1",
+      limit: 2,
+    });
+
+    expect(tail).toEqual({
+      messages: [
+        expect.objectContaining({ id: "a1", sequence: 2 }),
+        expect.objectContaining({ id: "u2", sequence: 4 }),
+      ],
+      hasMore: true,
+      nextBefore: 2,
+    });
+    expect(narrativeSpy).not.toHaveBeenCalled();
+    expect(planSpy).not.toHaveBeenCalled();
   });
 });
