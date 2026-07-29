@@ -962,7 +962,7 @@ export class AgentService {
       resumeFrom: attemptResumeFrom,
       providerOptions,
     } as TurnRequest;
-    if (effectiveProvider === "claude" || effectiveProvider === "codex") {
+    if (["claude", "codex", "cursor", "copilot"].includes(effectiveProvider)) {
       this.threadControlMcp?.activate({
         sessionId: sessionName,
         sourceThreadId: threadId,
@@ -2209,7 +2209,7 @@ export class AgentService {
         });
       }
       if (!this.getCurrentRetryDispatch(threadId, identity)) return false;
-      if (dispatch.effectiveProvider === "claude" || dispatch.effectiveProvider === "codex") {
+      if (["claude", "codex", "cursor", "copilot"].includes(dispatch.effectiveProvider)) {
         this.threadControlMcp?.activate({
           sessionId: dispatch.sessionName,
           sourceThreadId: threadId,

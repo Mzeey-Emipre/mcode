@@ -30,6 +30,7 @@ import {
 import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import { EnvService } from "../../services/env-service.js";
+import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
@@ -207,6 +208,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(EnvService) private readonly envService: EnvService,
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
     super();
     this.runtime = new SessionRuntime<CopilotSessionState>(this, {
@@ -865,11 +868,21 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // approved automatically regardless of the thread's permissionMode setting.
     const userInstructions = readUserInstructions();
     const skillDirs = userSkillDirectories();
+    const internalMcp = await this.threadControlMcp?.createHttpConnection(sessionId);
+    if (!internalMcp) throw new Error("Copilot internal thread-control MCP connection unavailable");
     const sessionBase = {
       onPermissionRequest: approveAll,
       model: staged?.model || undefined,
       workingDirectory: cwd,
       enableConfigDiscovery: true,
+      mcpServers: {
+        [internalMcp.name]: {
+          type: "http" as const,
+          url: internalMcp.url,
+          headers: internalMcp.headers,
+          tools: ["*"],
+        },
+      },
       ...(customAgents.length > 0 && { customAgents }),
       ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
       ...(userInstructions && { systemMessage: { content: userInstructions } }),

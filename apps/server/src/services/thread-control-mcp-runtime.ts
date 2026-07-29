@@ -13,6 +13,13 @@ import { ThreadControlService } from "./thread-control-service.js";
 const CODEX_MCP_TOKEN_ENV = "MCODE_INTERNAL_THREAD_CONTROL_TOKEN";
 const CODEX_MCP_NAME = "mcode_internal_thread_control";
 
+/** Authenticated HTTP MCP connection details for one pooled provider session. */
+export interface InternalThreadControlMcpHttpConnection {
+  name: string;
+  url: string;
+  headers: Record<string, string>;
+}
+
 /** Server-only lifecycle bridge for provider-injected thread-control MCP sessions. */
 @injectable()
 export class InternalThreadControlMcpRuntime {
@@ -59,8 +66,8 @@ export class InternalThreadControlMcpRuntime {
     return credential ? this.transport.createServer(credential) : undefined;
   }
 
-  /** Creates bounded loopback configuration for one Codex app-server session. */
-  async createCodexConfiguration(sessionId: string): Promise<{ configOverrides: string[]; env: Record<string, string> } | undefined> {
+  /** Creates one authenticated loopback HTTP connection for a pooled provider session. */
+  async createHttpConnection(sessionId: string): Promise<InternalThreadControlMcpHttpConnection | undefined> {
     const credential = this.authority.credential(sessionId);
     if (!credential) return undefined;
     return this.inLifecycle(async () => {
@@ -80,15 +87,28 @@ export class InternalThreadControlMcpRuntime {
         }
         this.httpSessions.set(sessionId, { server, transport });
       }
-      const url = `http://127.0.0.1:${this.httpPort}/${encodeURIComponent(sessionId)}`;
       return {
-        configOverrides: [
-          `mcp_servers.${CODEX_MCP_NAME}.url=\"${url}\"`,
-          `mcp_servers.${CODEX_MCP_NAME}.bearer_token_env_var=\"${CODEX_MCP_TOKEN_ENV}\"`,
-        ],
-        env: { [CODEX_MCP_TOKEN_ENV]: credential },
+        name: CODEX_MCP_NAME,
+        url: `http://127.0.0.1:${this.httpPort}/${encodeURIComponent(sessionId)}`,
+        headers: { Authorization: `Bearer ${credential}` },
       };
     });
+  }
+
+  /** Creates bounded loopback configuration for one Codex app-server session. */
+  async createCodexConfiguration(sessionId: string): Promise<{ configOverrides: string[]; env: Record<string, string> } | undefined> {
+    const connection = await this.createHttpConnection(sessionId);
+    if (!connection) return undefined;
+    const authorization = connection.headers.Authorization;
+    const credential = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
+    if (!credential) return undefined;
+    return {
+      configOverrides: [
+        `mcp_servers.${connection.name}.url=\"${connection.url}\"`,
+        `mcp_servers.${connection.name}.bearer_token_env_var=\"${CODEX_MCP_TOKEN_ENV}\"`,
+      ],
+      env: { [CODEX_MCP_TOKEN_ENV]: credential },
+    };
   }
 
   private async inLifecycle<T>(operation: () => Promise<T>): Promise<T> {

@@ -23,9 +23,11 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
+  type McpServer,
 } from "@agentclientprotocol/sdk";
 
 import { SettingsService } from "../../services/settings-service.js";
+import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
 import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
@@ -165,6 +167,7 @@ interface CursorAcpSessionEntry {
   cursorModelAppliedPair: { acpSessionId: string; modelId: string } | null;
   /** Set immediately before issuing ACP cancel while a prompt is in flight (explicit Stop vs noisy upstream errors). */
   pendingUserStopAbort: boolean;
+  supportsHttpMcp: boolean;
 }
 
 /**
@@ -222,6 +225,8 @@ export class CursorProvider
     @inject(SkillService) private readonly skillService: SkillService,
     @inject(EnvService) private readonly envService: EnvService,
     @inject("JobObject") private readonly jobObject: JobObject,
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
     super();
     this.runtime = new SessionRuntime<CursorSessionState>(this, {
@@ -564,6 +569,7 @@ export class CursorProvider
       stderrTailLines: [],
       cursorModelAppliedPair: null,
       pendingUserStopAbort: false,
+      supportsHttpMcp: false,
     };
 
     entry.connection = new ClientSideConnection(
@@ -599,7 +605,8 @@ export class CursorProvider
       void this.runtime.stop(mcodeSessionId);
     });
 
-    await this.acpHandshake(connection, threadId);
+    const supportsHttpMcp = await this.acpHandshake(connection, threadId);
+    entry.supportsHttpMcp = supportsHttpMcp;
 
     return entry as CursorAcpSessionEntry;
   }
@@ -609,7 +616,7 @@ export class CursorProvider
    * fresh connection. Shared by the pooled session spawn and the throwaway
    * side-channel transport.
    */
-  private async acpHandshake(connection: ClientSideConnection, threadId: string): Promise<void> {
+  private async acpHandshake(connection: ClientSideConnection, threadId: string): Promise<boolean> {
     const initResult = await connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientInfo: { name: "mcode", title: "Mcode", version: "0.0.1" },
@@ -629,6 +636,7 @@ export class CursorProvider
         });
       });
     }
+    return initResult.agentCapabilities?.mcpCapabilities?.http === true;
   }
 
   private buildAcpClient(entry: CursorAcpSessionEntry): Client {
@@ -847,13 +855,24 @@ export class CursorProvider
     if (entry.acpSessionId) return;
 
     const stored = this.sdkSessionIds.get(entry.mcodeSessionId);
+    if (!entry.supportsHttpMcp) {
+      throw new Error("Cursor ACP does not advertise HTTP MCP support; internal thread-control MCP is unavailable");
+    }
+    const internalMcp = await this.threadControlMcp?.createHttpConnection(entry.mcodeSessionId);
+    if (!internalMcp) throw new Error("Cursor internal thread-control MCP connection unavailable");
+    const mcpServers: McpServer[] = [{
+      type: "http",
+      name: internalMcp.name,
+      url: internalMcp.url,
+      headers: Object.entries(internalMcp.headers).map(([name, value]) => ({ name, value })),
+    }];
     let acpId: string;
 
     if (resume && stored) {
       try {
         await entry.connection.loadSession({
           cwd: entry.cwd,
-          mcpServers: [],
+          mcpServers,
           sessionId: stored,
         });
         acpId = stored;
@@ -864,14 +883,14 @@ export class CursorProvider
         });
         const created = await entry.connection.newSession({
           cwd: entry.cwd,
-          mcpServers: [],
+          mcpServers,
         });
         acpId = created.sessionId;
       }
     } else {
       const created = await entry.connection.newSession({
         cwd: entry.cwd,
-        mcpServers: [],
+        mcpServers,
       });
       acpId = created.sessionId;
     }

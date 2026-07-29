@@ -1094,6 +1094,22 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // Propagates start failures to the runtime, which surfaces them to the
     // `acquire` caller in `sendTurn` (emits Error/Ended there).
     await server.start();
+    if (internalMcp) {
+      try {
+        const effectiveConfig = await server.readConfig(cwd);
+        const mcpServers = effectiveConfig.config.mcp_servers;
+        const registered =
+          mcpServers !== null &&
+          typeof mcpServers === "object" &&
+          Object.prototype.hasOwnProperty.call(mcpServers, "mcode_internal_thread_control");
+        if (!registered) {
+          throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
+        }
+      } catch (error) {
+        await server.kill().catch(() => undefined);
+        throw error;
+      }
+    }
     this.refreshUsageFromServer(server, threadId);
 
     // Register after a successful handshake so a mid-handshake thread/started
