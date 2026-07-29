@@ -142,6 +142,16 @@ function targetsMatch(
     left.targetGeneration === right.targetGeneration;
 }
 
+function isExactOpenTargetReplacement(
+  oldTarget: BrowserAutomationHostDispatchTarget,
+  replacement: BrowserAutomationHostDispatchTarget,
+): boolean {
+  return replacement.desktopInstanceId === oldTarget.desktopInstanceId &&
+    replacement.windowId === oldTarget.windowId &&
+    replacement.connectionGeneration === oldTarget.connectionGeneration &&
+    replacement.targetGeneration === oldTarget.targetGeneration + 1;
+}
+
 function incrementBounded(value: number, amount = 1): number {
   return Math.min(Number.MAX_SAFE_INTEGER, value + Math.max(0, amount));
 }
@@ -348,7 +358,7 @@ export class BrowserAutomationBroker {
     for (const [key, oldTarget] of host.targets) {
       const replacement = next.get(key);
       if (replacement && replacement.targetGeneration === oldTarget.targetGeneration && replacement.windowId === oldTarget.windowId) continue;
-      this.invalidateTarget(host, key);
+      this.invalidateTarget(host, key, replacement !== undefined && isExactOpenTargetReplacement(oldTarget, replacement));
     }
     for (const [key, target] of next) {
       host.targetGenerationTombstones.delete(key);
@@ -916,12 +926,17 @@ export class BrowserAutomationBroker {
     return null;
   }
 
-  private invalidateTarget(host: RegisteredHost, removedTargetKey: string): void {
+  private invalidateTarget(
+    host: RegisteredHost,
+    removedTargetKey: string,
+    preserveOpenTransition = false,
+  ): void {
     for (const [key, assignment] of this.assignments) {
       if (assignment.host === host && assignment.targetKey === removedTargetKey) this.assignments.delete(key);
     }
     for (const [key, pending] of this.pending) {
       if (pending.host === host && pending.target && targetKey(pending.target) === removedTargetKey) {
+        if (preserveOpenTransition && pending.request.operation === "open") continue;
         this.settle(
           key,
           pending,

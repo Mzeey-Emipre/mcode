@@ -389,6 +389,126 @@ describe("BrowserAutomationBroker", () => {
     expect(broker.status().pending).toBe(0);
   });
 
+  it("preserves an assigned open across an exact target generation transition", async () => {
+    const deliveries: any[] = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        if (channel === "browserAutomation.request") deliveries.push(data);
+        return true;
+      },
+    }));
+    const hostSocket = socket("first");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("first", "workspace-a"),
+      capabilities: [
+        { operation: "open", available: true },
+        { operation: "status", available: true },
+      ],
+    }, authorization("first")).generation;
+    const target = {
+      desktopInstanceId: "desktop-first",
+      windowId: 1,
+      connectionGeneration: generation,
+      threadId: "thread-a",
+      tabId: "tab-thread-a",
+      targetGeneration: 0,
+      active: true,
+      focused: true,
+      lastUsedAt: 10,
+    };
+    broker.updateTargets(hostSocket, "first", generation, [target]);
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      allowedOperations: ["open" as const, "status" as const],
+    };
+    const opened = broker.execute(scope, {
+      ...request(scope),
+      operation: "open",
+      args: { url: "https://example.test/" },
+    });
+    const replacement = { ...target, targetGeneration: 1, lastUsedAt: 11 };
+    broker.updateTargets(hostSocket, "first", generation, [replacement]);
+    expect(broker.status().pending).toBe(1);
+
+    broker.respond(hostSocket, "first", generation, {
+      contractVersion: 1,
+      requestId: deliveries[0].dispatch.request.requestId,
+      sequence: deliveries[0].dispatch.request.sequence,
+      ok: true,
+      result: { operation: "open", url: "https://example.test/", title: "Example", controlEpoch: 0 },
+    });
+    await expect(opened).resolves.toMatchObject({ ok: true });
+
+    const status = broker.execute(scope, request(scope, 2));
+    expect(deliveries[1].dispatch.target).toMatchObject({ targetGeneration: 1 });
+    broker.respond(hostSocket, "first", generation, {
+      contractVersion: 1,
+      requestId: deliveries[1].dispatch.request.requestId,
+      sequence: deliveries[1].dispatch.request.sequence,
+      ok: true,
+      result: statusResult(),
+    });
+    await expect(status).resolves.toMatchObject({ ok: true });
+  });
+
+  it("settles non-open work when an assigned target advances generations", async () => {
+    let delivery: any;
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        if (channel === "browserAutomation.request") delivery = data;
+        return true;
+      },
+    }));
+    const hostSocket = socket("first");
+    const generation = register(broker, hostSocket, "first", "workspace-a");
+    updateTargets(broker, hostSocket, "first", generation, ["thread-a"]);
+    const scope = claims("thread-a", "workspace-a");
+    const pending = broker.execute(scope, request(scope));
+    broker.updateTargets(hostSocket, "first", generation, [{
+      ...delivery.dispatch.target,
+      targetGeneration: delivery.dispatch.target.targetGeneration + 1,
+    }]);
+    await expect(pending).resolves.toMatchObject({ ok: false, error: { code: "TAB_UNAVAILABLE" } });
+  });
+
+  it("settles open work for generation jumps and window changes", async () => {
+    const run = async (replacement: (target: any) => any) => {
+      const broker = new BrowserAutomationBroker(options({
+        now: () => 10,
+        send: () => true,
+      }));
+      const hostSocket = socket("first");
+      const generation = broker.registerHost(hostSocket, {
+        ...registration("first", "workspace-a"),
+        capabilities: [{ operation: "open", available: true }],
+      }, authorization("first")).generation;
+      const target = {
+        desktopInstanceId: "desktop-first",
+        windowId: 1,
+        connectionGeneration: generation,
+        threadId: "thread-a",
+        tabId: "tab-thread-a",
+        targetGeneration: 0,
+        active: true,
+        focused: true,
+        lastUsedAt: 10,
+      };
+      broker.updateTargets(hostSocket, "first", generation, [target]);
+      const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["open" as const] };
+      const pending = broker.execute(scope, {
+        ...request(scope),
+        operation: "open",
+        args: { url: "https://example.test/" },
+      });
+      broker.updateTargets(hostSocket, "first", generation, [replacement(target)]);
+      await expect(pending).resolves.toMatchObject({ ok: false, error: { code: "TAB_UNAVAILABLE" } });
+    };
+    await run((target) => ({ ...target, targetGeneration: 2 }));
+    await run((target) => ({ ...target, windowId: 2, targetGeneration: 1 }));
+  });
+
   it("settles and decrements when directed delivery throws synchronously", async () => {
     const broker = new BrowserAutomationBroker(options({ now: () => 10, send: () => { throw new Error("socket failed"); } }));
     const hostSocket = socket("first");
