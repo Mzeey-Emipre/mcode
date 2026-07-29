@@ -630,7 +630,6 @@ export function ProjectTree() {
                     workspace={ws}
                     isExpanded={expanded[ws.id] ?? false}
                     isActive={activeWorkspaceId === ws.id}
-                    activeThreadId={activeThreadId}
                     threads={wsThreads}
                     runningThreadIds={runningThreadIds}
                     pendingPermissionThreadIds={pendingPermissionThreadIds}
@@ -905,7 +904,6 @@ interface VirtualizedThreadListProps {
   treeItems: ThreadTreeItem[];
   /** Maximum number of tree rows to render. Used by the parent to enforce the THREAD_LIST_CAP. */
   maxVisible: number;
-  activeThreadId: string | null;
   runningThreadIds: Set<string>;
   /** Thread IDs with at least one unsettled permission request. */
   pendingPermissionThreadIds: Set<string>;
@@ -921,6 +919,260 @@ interface VirtualizedThreadListProps {
   onSelectThread: (id: string) => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
 }
+
+interface ThreadRowProps {
+  workspaceName: string;
+  thread: WorkspaceThread;
+  depth: number;
+  isRunning: boolean;
+  hasPendingPermission: boolean;
+  checks?: ChecksStatus;
+  isEditing: boolean;
+  inlineEdit: InlineEditState | null;
+  worktreesLoadedFor: string | null;
+  validWorktreePaths: Set<string>;
+  availableProviders: Array<{
+    id: string;
+    enabled: boolean;
+    cli: { status: string };
+  }>;
+  onInlineEditChange: (title: string) => void;
+  onInlineEditCommit: () => void;
+  onInlineEditCancel: () => void;
+  onThreadClick: (threadId: string, title: string) => void;
+  onThreadDoubleClick: (threadId: string, title: string) => void;
+  onSelectThread: (id: string) => void;
+  onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
+}
+
+/** Renders one sidebar thread row and subscribes only to its own active state. */
+const ThreadRow = memo(function ThreadRow({
+  workspaceName,
+  thread,
+  depth,
+  isRunning,
+  hasPendingPermission,
+  checks,
+  isEditing,
+  inlineEdit,
+  worktreesLoadedFor,
+  validWorktreePaths,
+  availableProviders,
+  onInlineEditChange,
+  onInlineEditCommit,
+  onInlineEditCancel,
+  onThreadClick,
+  onThreadDoubleClick,
+  onSelectThread,
+  onThreadContextMenu,
+}: ThreadRowProps) {
+  const isActive = useWorkspaceStore((s) => s.activeThreadId === thread.id);
+  const marker = getThreadStateMarker({
+    thread,
+    checks,
+    isRunning,
+    hasPendingPermission,
+  });
+  const prable = isPrable(thread);
+  const showPrCi = Boolean(
+    prable &&
+      thread.pr_number != null &&
+      checks &&
+      checks.aggregate !== "no_checks" &&
+      marker.kind !== "action" &&
+      marker.kind !== "running",
+  );
+  const showEndMarker = !showPrCi;
+  const isStaleWorktree =
+    worktreesLoadedFor === thread.workspace_id &&
+    thread.mode === "worktree" &&
+    !!thread.worktree_path &&
+    !validWorktreePaths.has(
+      thread.worktree_path
+        .replace(/\\/g, "/")
+        .replace(/\/$/, "")
+        .toLowerCase(),
+    );
+  const providerRow = availableProviders.find((p) => p.id === thread.provider);
+  const unusable = providerRow
+    ? !providerRow.enabled || providerRow.cli.status === "not_found"
+    : false;
+  const unusableReason = !providerRow
+    ? ""
+    : !providerRow.enabled
+      ? "Provider disabled"
+      : "CLI not found";
+  const scaffoldDim =
+    (thread.clientPreparing || thread.clientError) && "opacity-[0.72]";
+  const providerMeta = getProviderMeta(thread.provider);
+  const RowProviderIcon = providerMeta.icon;
+  const row = (
+    <div
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (isEditing) return;
+        // Keyboard navigation fires immediately — no double-click semantics for keyboard users.
+        // Enter/Space always navigates; rename must be triggered via mouse double-click.
+        if (
+          (e.key === "Enter" || e.key === " ") &&
+          e.target === e.currentTarget
+        ) {
+          e.preventDefault();
+          onSelectThread(thread.id);
+        }
+      }}
+      onClick={() => onThreadClick(thread.id, thread.title)}
+      onDoubleClick={() => onThreadDoubleClick(thread.id, thread.title)}
+      onContextMenu={(e) => onThreadContextMenu(e, thread)}
+      onMouseEnter={() => {
+        if (!thread.clientPreparing && !thread.clientError) {
+          schedulePrefetch(thread.id);
+        }
+      }}
+      onMouseLeave={cancelPrefetch}
+      className={cn(
+        "group/row relative flex min-h-8 items-center gap-2 rounded-md pr-2 text-[13px] cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+        isActive
+          ? "bg-accent text-foreground"
+          : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
+      )}
+      style={{ paddingLeft: `${42 + depth * 12}px` }}
+    >
+      <span
+        className="absolute left-0.5 top-1/2 flex -translate-y-1/2 items-center justify-end gap-1"
+        style={{ width: `${36 + depth * 12}px` }}
+      >
+        {prable && thread.pr_number != null ? (
+          <ThreadPrIndicator
+            threadId={thread.id}
+            prNumber={thread.pr_number}
+            prStatus={thread.pr_status}
+            checks={checks}
+            showCi={showPrCi}
+          />
+        ) : null}
+        <span
+          aria-label={`Provider, ${providerMeta.label}`}
+          className={cn(
+            "-mt-px flex h-4 w-4 items-center justify-center",
+            providerMeta.color,
+            scaffoldDim,
+          )}
+        >
+          <RowProviderIcon size={12} />
+        </span>
+      </span>
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2",
+          scaffoldDim,
+        )}
+      >
+        {isEditing ? (
+          <Input
+            type="text"
+            size="xs"
+            value={inlineEdit?.title ?? ""}
+            onChange={(e) => onInlineEditChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (!e.nativeEvent.isComposing) {
+                if (e.key === "Enter") onInlineEditCommit();
+                if (e.key === "Escape") onInlineEditCancel();
+              }
+              e.stopPropagation();
+            }}
+            onBlur={onInlineEditCommit}
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+            className="flex-1 border-ring"
+          />
+        ) : (
+          <>
+            <span
+              className={cn(
+                "truncate flex-1",
+                isStaleWorktree &&
+                  "text-[var(--diff-remove-strong)]/85 line-through",
+              )}
+              data-testid="thread-title"
+            >
+              {isStaleWorktree && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <AlertTriangle
+                        size={11}
+                        className="inline mr-1 align-text-bottom text-[var(--diff-remove-strong)]/80"
+                      />
+                    }
+                  />
+                  <TooltipContent side="right" className="text-xs">
+                    Worktree directory no longer exists
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              {thread.title}
+            </span>
+            {thread.mode === "worktree" && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <WorktreeModeIcon
+                      size={12}
+                      data-testid={`thread-worktree-indicator-${thread.id}`}
+                      aria-label="Worktree mode"
+                      className="text-muted-foreground/65"
+                    />
+                  }
+                />
+                <TooltipContent side="right" className="text-xs">
+                  Worktree
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </>
+        )}
+        {!isEditing && unusable && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  data-testid={`sidebar-unusable-${thread.id}`}
+                  className="ml-1 shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
+                  aria-label={unusableReason}
+                />
+              }
+            />
+            <TooltipContent side="right" className="text-xs">
+              {unusableReason}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+      {!isEditing && showEndMarker && (
+        <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
+      )}
+    </div>
+  );
+
+  return isEditing ? (
+    row
+  ) : (
+    <Tooltip>
+      <TooltipTrigger render={row} />
+      <TooltipContent
+        side="right"
+        align="start"
+        sideOffset={8}
+        variant="surface"
+        className="max-w-none p-3"
+      >
+        <SidebarThreadPreview workspaceName={workspaceName} thread={thread} />
+      </TooltipContent>
+    </Tooltip>
+  );
+});
 
 /**
  * Workspace-row CI roll-up chip.
@@ -1103,7 +1355,6 @@ function VirtualizedThreadList({
   workspaceName,
   treeItems: allTreeItems,
   maxVisible,
-  activeThreadId,
   runningThreadIds,
   pendingPermissionThreadIds,
   checksById,
@@ -1188,7 +1439,7 @@ function VirtualizedThreadList({
       const next = containerRef.current?.offsetTop ?? 0;
       return prev === next ? prev : next;
     });
-  });
+  }, [allTreeItems, maxVisible, scrollElementRef]);
 
   const virtualizer = useVirtualizer({
     count: treeItems.length,
@@ -1210,213 +1461,7 @@ function VirtualizedThreadList({
     >
       {virtualizer.getVirtualItems().map((virtualItem) => {
         const { thread, depth } = treeItems[virtualItem.index];
-        const isRunning = runningThreadIds.has(thread.id);
-        const hasPendingPermission = pendingPermissionThreadIds.has(thread.id);
-        const checks = checksById[thread.id];
-        const marker = getThreadStateMarker({
-          thread,
-          checks,
-          isRunning,
-          hasPendingPermission,
-        });
         const isEditing = inlineEdit?.threadId === thread.id;
-        // Only PR-able (worktree) threads surface PR affordances. A direct-mode
-        // thread shows its branch/agent status, never a PR icon, even if a PR
-        // number happens to be attached.
-        const prable = isPrable(thread);
-        const showPrCi = Boolean(
-          prable &&
-            thread.pr_number != null &&
-            checks &&
-            checks.aggregate !== "no_checks" &&
-            marker.kind !== "action" &&
-            marker.kind !== "running",
-        );
-        const showEndMarker = !showPrCi;
-        // Worktree thread whose directory no longer exists on disk.
-        // Only check threads from the workspace whose worktrees are loaded — comparing
-        // against a different workspace's worktree list would produce false positives.
-        const isStaleWorktree =
-          worktreesLoadedFor === thread.workspace_id &&
-          thread.mode === "worktree" &&
-          !!thread.worktree_path &&
-          !validWorktreePaths.has(
-            thread.worktree_path
-              .replace(/\\/g, "/")
-              .replace(/\/$/, "")
-              .toLowerCase(),
-          );
-        // Unusable when the provider is disabled or its CLI binary is missing.
-        // "unchecked" is not treated as unusable — the server may not have verified yet.
-        const providerRow = availableProviders.find(
-          (p) => p.id === thread.provider,
-        );
-        const unusable = providerRow
-          ? !providerRow.enabled || providerRow.cli.status === "not_found"
-          : false;
-        // Only compute a reason when the thread is actually unusable. A missing
-        // providerRow means availability hasn't arrived yet — don't label those as "disabled".
-        const unusableReason = !providerRow
-          ? ""
-          : !providerRow.enabled
-            ? "Provider disabled"
-            : "CLI not found";
-        // Opacity on the row would compound onto status markers; dim only the title cluster and timestamp.
-        const scaffoldDim =
-          (thread.clientPreparing || thread.clientError) && "opacity-[0.72]";
-        const providerMeta = getProviderMeta(thread.provider);
-        const RowProviderIcon = providerMeta.icon;
-        const row = (
-          <div
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (isEditing) return;
-              // Keyboard navigation fires immediately — no double-click semantics for keyboard users.
-              // Enter/Space always navigates; rename must be triggered via mouse double-click.
-              if (
-                (e.key === "Enter" || e.key === " ") &&
-                e.target === e.currentTarget
-              ) {
-                e.preventDefault();
-                onSelectThread(thread.id);
-              }
-            }}
-            onClick={() => handleThreadClick(thread.id, thread.title)}
-            onDoubleClick={() =>
-              handleThreadDoubleClick(thread.id, thread.title)
-            }
-            onContextMenu={(e) => onThreadContextMenu(e, thread)}
-            onMouseEnter={() => {
-              if (!thread.clientPreparing && !thread.clientError) {
-                schedulePrefetch(thread.id);
-              }
-            }}
-            onMouseLeave={cancelPrefetch}
-            className={cn(
-              "group/row relative flex min-h-8 items-center gap-2 rounded-md pr-2 text-[13px] cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
-              activeThreadId === thread.id
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
-            )}
-            style={{ paddingLeft: `${42 + depth * 12}px` }}
-          >
-            <span
-              className="absolute left-0.5 top-1/2 flex -translate-y-1/2 items-center justify-end gap-1"
-              style={{ width: `${36 + depth * 12}px` }}
-            >
-              {prable && thread.pr_number != null ? (
-                <ThreadPrIndicator
-                  threadId={thread.id}
-                  prNumber={thread.pr_number}
-                  prStatus={thread.pr_status}
-                  checks={checks}
-                  showCi={showPrCi}
-                />
-              ) : null}
-              <span
-                aria-label={`Provider, ${providerMeta.label}`}
-                className={cn(
-                  "-mt-px flex h-4 w-4 items-center justify-center",
-                  providerMeta.color,
-                  scaffoldDim,
-                )}
-              >
-                <RowProviderIcon size={12} />
-              </span>
-            </span>
-            <div
-              className={cn(
-                "flex min-w-0 flex-1 items-center gap-2",
-                scaffoldDim,
-              )}
-            >
-              {isEditing ? (
-                <Input
-                  type="text"
-                  size="xs"
-                  value={inlineEdit.title}
-                  onChange={(e) => onInlineEditChange(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (!e.nativeEvent.isComposing) {
-                      if (e.key === "Enter") onInlineEditCommit();
-                      if (e.key === "Escape") onInlineEditCancel();
-                    }
-                    e.stopPropagation();
-                  }}
-                  onBlur={onInlineEditCommit}
-                  autoFocus
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex-1 border-ring"
-                />
-              ) : (
-                <>
-                  <span
-                    className={cn(
-                      "truncate flex-1",
-                      isStaleWorktree &&
-                        "text-[var(--diff-remove-strong)]/85 line-through",
-                    )}
-                    data-testid="thread-title"
-                  >
-                    {isStaleWorktree && (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <AlertTriangle
-                              size={11}
-                              className="inline mr-1 align-text-bottom text-[var(--diff-remove-strong)]/80"
-                            />
-                          }
-                        />
-                        <TooltipContent side="right" className="text-xs">
-                          Worktree directory no longer exists
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                    {thread.title}
-                  </span>
-                  {thread.mode === "worktree" && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <WorktreeModeIcon
-                            size={12}
-                            data-testid={`thread-worktree-indicator-${thread.id}`}
-                            aria-label="Worktree mode"
-                            className="text-muted-foreground/65"
-                          />
-                        }
-                      />
-                      <TooltipContent side="right" className="text-xs">
-                        Worktree
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                </>
-              )}
-              {!isEditing && unusable && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        data-testid={`sidebar-unusable-${thread.id}`}
-                        className="ml-1 shrink-0 inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
-                        aria-label={unusableReason}
-                      />
-                    }
-                  />
-                  <TooltipContent side="right" className="text-xs">
-                    {unusableReason}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-            {!isEditing && showEndMarker && (
-              <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
-            )}
-          </div>
-        );
         return (
           <div
             key={thread.id}
@@ -1431,25 +1476,26 @@ function VirtualizedThreadList({
               transform: `translateY(${virtualItem.start - scrollMargin}px)`,
             }}
           >
-            {isEditing ? (
-              row
-            ) : (
-              <Tooltip>
-                <TooltipTrigger render={row} />
-                <TooltipContent
-                  side="right"
-                  align="start"
-                  sideOffset={8}
-                  variant="surface"
-                  className="max-w-none p-3"
-                >
-                  <SidebarThreadPreview
-                    workspaceName={workspaceName}
-                    thread={thread}
-                  />
-                </TooltipContent>
-              </Tooltip>
-            )}
+            <ThreadRow
+              workspaceName={workspaceName}
+              thread={thread}
+              depth={depth}
+              isRunning={runningThreadIds.has(thread.id)}
+              hasPendingPermission={pendingPermissionThreadIds.has(thread.id)}
+              checks={checksById[thread.id]}
+              isEditing={isEditing}
+              inlineEdit={isEditing ? inlineEdit : null}
+              worktreesLoadedFor={worktreesLoadedFor}
+              validWorktreePaths={validWorktreePaths}
+              availableProviders={availableProviders}
+              onInlineEditChange={onInlineEditChange}
+              onInlineEditCommit={onInlineEditCommit}
+              onInlineEditCancel={onInlineEditCancel}
+              onThreadClick={handleThreadClick}
+              onThreadDoubleClick={handleThreadDoubleClick}
+              onSelectThread={onSelectThread}
+              onThreadContextMenu={onThreadContextMenu}
+            />
           </div>
         );
       })}
@@ -1464,7 +1510,6 @@ interface ProjectNodeProps {
   workspace: Workspace;
   isExpanded: boolean;
   isActive: boolean;
-  activeThreadId: string | null;
   threads: WorkspaceThread[];
   runningThreadIds: Set<string>;
   /** Thread IDs with at least one unsettled permission request. */
@@ -1503,7 +1548,6 @@ const ProjectNode = memo(function ProjectNode({
   workspace,
   isExpanded,
   isActive,
-  activeThreadId,
   threads,
   runningThreadIds,
   pendingPermissionThreadIds,
@@ -1535,10 +1579,13 @@ const ProjectNode = memo(function ProjectNode({
   // Use the flattened tree order (same order VirtualizedThreadList renders) for cap decisions.
   const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
   const needsCap = treeItems.length > THREAD_LIST_CAP;
-  const activeIndex = activeThreadId
-    ? treeItems.findIndex((item) => item.thread.id === activeThreadId)
-    : -1;
-  const forceExpand = activeIndex >= THREAD_LIST_CAP;
+  const forceExpand = useWorkspaceStore((s) => {
+    if (!s.activeThreadId) return false;
+    const activeIndex = treeItems.findIndex(
+      (item) => item.thread.id === s.activeThreadId,
+    );
+    return activeIndex >= THREAD_LIST_CAP;
+  });
   const maxVisible =
     !needsCap || isThreadListExpanded || forceExpand
       ? Infinity
@@ -1763,7 +1810,6 @@ const ProjectNode = memo(function ProjectNode({
             workspaceName={workspace.name}
             treeItems={treeItems}
             maxVisible={maxVisible}
-            activeThreadId={activeThreadId}
             runningThreadIds={runningThreadIds}
             pendingPermissionThreadIds={pendingPermissionThreadIds}
             checksById={checksById}
