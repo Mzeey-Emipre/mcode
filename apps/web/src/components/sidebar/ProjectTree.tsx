@@ -70,6 +70,7 @@ import {
 import {
   schedulePrefetch,
   cancelPrefetch,
+  prefetchOnPointerDown,
 } from "@/lib/thread-hydrator/prefetch-scheduler";
 import { isPrable } from "@/lib/is-prable";
 import { getCiVisual, CI_ICON_STROKE } from "@/lib/ci-status";
@@ -1023,6 +1024,17 @@ const ThreadRow = memo(function ThreadRow({
         }
       }}
       onClick={() => onThreadClick(thread.id, thread.title)}
+      onPointerDown={(event) => {
+        if (
+          event.button !== 0 ||
+          isEditing ||
+          thread.clientPreparing ||
+          thread.clientError
+        ) {
+          return;
+        }
+        prefetchOnPointerDown(thread.id);
+      }}
       onDoubleClick={() => onThreadDoubleClick(thread.id, thread.title)}
       onContextMenu={(e) => onThreadContextMenu(e, thread)}
       onMouseEnter={() => {
