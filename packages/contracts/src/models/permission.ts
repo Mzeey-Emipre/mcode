@@ -19,6 +19,12 @@ export const PermissionRequestSchema = lazySchema(() => z.object({
   /** Raw tool input arguments; shape varies by tool. */
   input: z.unknown(),
   title: z.string().optional(),
+  /** Owning Project and Thread for cross-thread approvals. */
+  ownerWorkspaceId: z.string().optional(),
+  ownerThreadId: z.string().optional(),
+  /** Source identity recorded for a delegated mutation approval. */
+  sourceThreadId: z.string().optional(),
+  operation: z.enum(["thread_create_batch", "thread_send", "thread_stop"]).optional(),
 }));
 /** A pending tool permission request awaiting user decision. */
 export type PermissionRequest = z.infer<ReturnType<typeof PermissionRequestSchema>>;

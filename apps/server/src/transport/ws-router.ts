@@ -522,6 +522,12 @@ async function dispatch(
         sort: params.sort,
         limit: params.limit,
       });
+    case "thread.control.read":
+      return deps.threadControlService.threadControlRead(params);
+    case "thread.control.send":
+      return deps.threadControlService.threadControlSend(params);
+    case "thread.control.stop":
+      return deps.threadControlService.threadControlStop(params);
     case "thread.syncPrs": {
       const syncWs = deps.workspaceService.findById(params.workspaceId);
       if (!syncWs?.is_git_repo) return [];

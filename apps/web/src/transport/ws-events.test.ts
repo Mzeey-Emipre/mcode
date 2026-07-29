@@ -12,6 +12,7 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
+import { useThreadControlStore } from "@/stores/threadControlStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { onPtyExit } from "@/components/terminal/ptyDataRegistry";
 
@@ -116,6 +117,27 @@ describe("ws-events skills.changed", () => {
 
     expect(invalidate).toHaveBeenCalledOnce();
     expect(invalidate).toHaveBeenCalledWith(change.providerIds);
+  });
+});
+
+describe("ws-events thread.controlChanged", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.restoreAllMocks();
+  });
+
+  it("invalidates only the caller-bound Project/Thread identity", () => {
+    const refresh = vi.spyOn(useThreadControlStore.getState(), "refreshByThreadId").mockResolvedValue(undefined);
+    startPushListeners();
+
+    pushEmitter.emit("thread.controlChanged", {
+      workspaceId: "workspace-2",
+      threadId: "thread-2",
+      state: { status: "running" },
+    });
+
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledWith("thread-2", "workspace-2");
   });
 });
 

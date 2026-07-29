@@ -14,6 +14,12 @@ import {
   type ThreadControlError,
   type ThreadGetInput,
   type ThreadGetResult,
+  type ThreadControlReadInput,
+  type ThreadControlReadResult,
+  type ThreadControlProjection,
+  type ThreadControlThreadRef,
+  type ThreadControlUserSendInput,
+  type ThreadControlUserStopInput,
   type ThreadSendInput,
   type ThreadSendResult,
   type ThreadStopInput,
@@ -31,11 +37,17 @@ import {
   type WorktreeListResult,
   ThreadCreateBatchInputSchema,
   ThreadGetInputSchema,
+  ThreadControlReadInputSchema,
+  ThreadControlUserSendInputSchema,
+  ThreadControlUserStopInputSchema,
   ThreadSendInputSchema,
   ThreadStopInputSchema,
   ThreadSearchInputSchema,
   ThreadWaitInputSchema,
   THREAD_GET_TRANSCRIPT_MAX_BYTES,
+  THREAD_SEARCH_LIMIT_MAX,
+  THREAD_CREATE_TITLE_MAX_LENGTH,
+  WORKSPACE_SEARCH_QUERY_MAX_LENGTH,
 } from "@mcode/contracts";
 import type {
   ExternalThreadControlAuthority,
@@ -188,6 +200,79 @@ export class ThreadControlService {
     return result;
   }
 
+  /** Read one canonical user-facing coordination projection by explicit identity. */
+  threadControlRead(input: ThreadControlReadInput): ThreadControlReadResult {
+    const validated = ThreadControlReadInputSchema().parse(input);
+    const identity = validated.identity;
+    const thread = this.threads.findById(identity.threadId);
+    if (!thread || thread.deleted_at != null || thread.workspace_id !== identity.workspaceId) {
+      return {
+        status: "rejected",
+        identity,
+        error: this.error("not_found", "Thread not found", false),
+      };
+    }
+
+    const projection = this.buildThreadControlProjection(thread, validated.messageLimit);
+    return { status: "found", projection };
+  }
+
+  /** Send a cross-thread message on behalf of the local human user. */
+  async threadControlSend(input: ThreadControlUserSendInput): Promise<ThreadSendResult> {
+    const validated = ThreadControlUserSendInputSchema().parse(input);
+    const source = this.threads.findById(validated.source.threadId);
+    const target = this.threads.findById(validated.target.threadId);
+    if (!source || source.deleted_at != null || source.workspace_id !== validated.source.workspaceId) {
+      return { status: "rejected", threadId: validated.target.threadId, error: this.error("not_found", "Source thread not found", false) };
+    }
+    if (!target || target.deleted_at != null || target.workspace_id !== validated.target.workspaceId) {
+      return { status: "rejected", threadId: validated.target.threadId, error: this.error("not_found", "Target thread not found", false) };
+    }
+    const authority: InternalThreadControlAuthority = {
+      type: "internal",
+      userId: "local-user",
+      sourceThreadId: source.id,
+      sourceTurnId: randomUUID(),
+      sourceToolCallId: "ui-thread-control",
+      sourceProviderId: source.provider || "unknown",
+      permissionMode: this.resolveInternalPermissionMode(source.permission_mode),
+    };
+    const result = await this.threadSend(authority, {
+      threadId: validated.target.threadId,
+      message: validated.message,
+      interactionMode: validated.interactionMode,
+    });
+    this.broadcastControlState(validated.target.workspaceId, validated.target.threadId);
+    this.broadcastControlState(validated.source.workspaceId, validated.source.threadId);
+    return result;
+  }
+
+  /** Stop a destination thread on behalf of the local human user. */
+  async threadControlStop(input: ThreadControlUserStopInput): Promise<ThreadStopResult> {
+    const validated = ThreadControlUserStopInputSchema().parse(input);
+    const source = this.threads.findById(validated.source.threadId);
+    const target = this.threads.findById(validated.target.threadId);
+    if (!source || source.deleted_at != null || source.workspace_id !== validated.source.workspaceId) {
+      return { status: "rejected", threadId: validated.target.threadId, error: this.error("not_found", "Source thread not found", false) };
+    }
+    if (!target || target.deleted_at != null || target.workspace_id !== validated.target.workspaceId) {
+      return { status: "rejected", threadId: validated.target.threadId, error: this.error("not_found", "Target thread not found", false) };
+    }
+    const authority: InternalThreadControlAuthority = {
+      type: "internal",
+      userId: "local-user",
+      sourceThreadId: source.id,
+      sourceTurnId: randomUUID(),
+      sourceToolCallId: "ui-thread-control",
+      sourceProviderId: source.provider || "unknown",
+      permissionMode: this.resolveInternalPermissionMode(source.permission_mode),
+    };
+    const result = await this.threadStop(authority, { threadId: validated.target.threadId });
+    this.broadcastControlState(validated.target.workspaceId, validated.target.threadId);
+    this.broadcastControlState(validated.source.workspaceId, validated.source.threadId);
+    return result;
+  }
+
   /** Wait until every exact readable target reaches the requested boundary. */
   async threadWait(
     authority: ThreadControlAuthority,
@@ -296,6 +381,9 @@ export class ThreadControlService {
         const result = await this.createOne(authority, validatedInput.items[index]!, index);
         this.auditCreateResult(authority, result);
         results.push(result);
+        if ("threadId" in result && result.threadId) {
+          this.broadcastControlState(result.workspaceId, result.threadId);
+        }
       } finally {
         if (authority.type === "external" && reservations[index]) {
           await this.releaseExternalReservation(authority.integrationId);
@@ -383,6 +471,10 @@ export class ThreadControlService {
         toolName: "thread_send",
         title: "Send a message to another thread",
         input: { threadId: target.id, message: validated.message, execution: execution.value },
+        ownerWorkspaceId: target.workspace_id,
+        ownerThreadId: authority.type === "internal" ? authority.sourceThreadId : target.id,
+        ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
+        operation: "thread_send" as const,
       });
       this.auditMutation(authority, "thread_send", "pending_approval", target.id, target.workspace_id, approvalId);
       return {
@@ -506,6 +598,10 @@ export class ThreadControlService {
         toolName: "thread_stop",
         title: "Stop another thread",
         input: { threadId: target.id },
+        ownerWorkspaceId: target.workspace_id,
+        ownerThreadId: authority.type === "internal" ? authority.sourceThreadId : target.id,
+        ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
+        operation: "thread_stop" as const,
       });
       this.auditMutation(authority, "thread_stop", "pending_approval", target.id, target.workspace_id, approvalId);
       return { status: "pending_approval", workspaceId: target.workspace_id, threadId: target.id, approvalId, state: { status: "waiting_for_approval", approvalId } };
@@ -695,6 +791,95 @@ export class ThreadControlService {
     }
   }
 
+  private buildThreadControlProjection(
+    thread: {
+      id: string;
+      workspace_id: string;
+      title: string;
+      provider: string;
+      model: string | null;
+      created_at: string;
+      updated_at: string;
+      status: string;
+    },
+    messageLimit: number,
+  ): ThreadControlProjection {
+    const state = this.observedState(thread);
+    if (!this.messages) {
+      return {
+        identity: { workspaceId: thread.workspace_id, threadId: thread.id },
+        thread: this.threadRef(thread, state),
+        messages: [],
+        hasMoreMessages: false,
+        relation: null,
+        children: [],
+        approvals: this.listPendingApprovals(thread.id).slice(0, THREAD_SEARCH_LIMIT_MAX),
+      };
+    }
+    const transcript = this.messages.listByThreadForThreadControl(thread.id, messageLimit, THREAD_GET_TRANSCRIPT_MAX_BYTES);
+    const lineage = this.threads.findDelegationLineage(thread.id);
+    const relation = lineage?.creationKind && lineage.creatorTurnId && lineage.creatorToolCallId
+      ? {
+        source: lineage.coordinatorThreadId
+          ? this.threadControlRef(this.threads.findById(lineage.coordinatorThreadId))
+          : null,
+        destination: this.threadControlRef(thread)!,
+        creatorTurnId: lineage.creatorTurnId,
+        creatorToolCallId: lineage.creatorToolCallId,
+        creationKind: "thread_delegation" as const,
+      }
+      : null;
+    const children = this.threads.listDelegationChildren(thread.id).map(({ thread: child, lineage: childLineage }) => ({
+      source: this.threadControlRef(thread)!,
+      destination: this.threadControlRef(child)!,
+      creatorTurnId: childLineage.creatorTurnId!,
+      creatorToolCallId: childLineage.creatorToolCallId!,
+      creationKind: "thread_delegation" as const,
+    }));
+    return {
+      identity: { workspaceId: thread.workspace_id, threadId: thread.id },
+      thread: this.threadRef(thread, state),
+      messages: transcript.messages.map((message) => this.readMessage(message, thread.provider, thread.model)),
+      hasMoreMessages: transcript.hasMore,
+      relation,
+      children: children.slice(0, THREAD_SEARCH_LIMIT_MAX),
+      approvals: this.listPendingApprovals(thread.id).slice(0, THREAD_SEARCH_LIMIT_MAX),
+    };
+  }
+
+  private threadControlRef(thread: {
+    id: string;
+    workspace_id: string;
+    title: string;
+    provider: string;
+    model: string | null;
+    created_at: string;
+    updated_at: string;
+    status: string;
+    deleted_at?: string | null;
+  } | null): ThreadControlThreadRef | null {
+    if (!thread || thread.deleted_at != null) return null;
+    const state = this.observedState(thread);
+    return {
+      workspaceId: thread.workspace_id,
+      threadId: thread.id,
+      title: thread.title.trim().length === 0 ? "Untitled thread" : thread.title,
+      providerId: thread.provider || "unknown",
+      modelId: thread.model || "unknown",
+      state,
+    };
+  }
+
+  private broadcastControlState(workspaceId: string, threadId: string): void {
+    const thread = this.threads.findById(threadId);
+    if (!thread || thread.workspace_id !== workspaceId) return;
+    broadcast("thread.controlChanged", {
+      workspaceId,
+      threadId,
+      state: this.observedState(thread),
+    });
+  }
+
   private threadRef(thread: {
     id: string;
     workspace_id: string;
@@ -734,6 +919,20 @@ export class ThreadControlService {
     if (message.role === "system") {
       return { messageId: message.id, role: "system", content: message.content, createdAt: message.timestamp };
     }
+    const sourceThread = message.sourceThreadId ? this.threads.findById(message.sourceThreadId) : null;
+    const sourceWorkspace = sourceThread
+      ? (this.workspaces.findByIdIncludeDeleted?.(sourceThread.workspace_id)
+        ?? this.workspaces.findById(sourceThread.workspace_id))
+      : null;
+    const sourceRef = sourceThread ? this.threadRef(sourceThread, this.observedState(sourceThread)) : null;
+    const boundedSourceRef = sourceRef
+      ? { ...sourceRef, title: sourceRef.title.slice(0, THREAD_CREATE_TITLE_MAX_LENGTH) }
+      : null;
+    const sourceWorkspaceName = sourceWorkspace?.name.trim().slice(0, WORKSPACE_SEARCH_QUERY_MAX_LENGTH) || "Unavailable Project";
+    const sourceUnavailable = !sourceThread
+      || !sourceWorkspace
+      || sourceThread.deleted_at != null
+      || sourceWorkspace.deleted_at != null;
     const origin = message.originType === "thread"
       && message.sourceThreadId && message.sourceTurnId && message.sourceProviderId
       ? {
@@ -741,6 +940,10 @@ export class ThreadControlService {
           sourceThreadId: message.sourceThreadId,
           sourceTurnId: message.sourceTurnId,
           sourceProviderId: message.sourceProviderId,
+          sourceWorkspaceId: sourceThread?.workspace_id ?? null,
+          sourceWorkspaceName,
+          sourceThread: boundedSourceRef,
+          sourceUnavailable,
         }
       : message.originType === "composer"
         ? { type: "composer" as const }
@@ -812,7 +1015,19 @@ export class ThreadControlService {
 
   /** Return durable thread-control approvals for frontend rehydration. */
   listPendingApprovals(threadId: string): PermissionRequest[] {
-    return this.approvals.listPendingByThread(threadId).map((approval) => {
+    const byTarget = this.approvals.listPendingByThread(threadId);
+    const bySource = this.approvals.listPendingBySourceThread?.(threadId) ?? [];
+    const seen = new Set<string>();
+    return [...byTarget, ...bySource].filter((approval) => {
+      if (seen.has(approval.approvalId)) return false;
+      seen.add(approval.approvalId);
+      return true;
+    }).map((approval) => {
+      const ownerThread = approval.sourceThreadId
+        ? this.threads.findById(approval.sourceThreadId)
+        : null;
+      const ownerWorkspaceId = ownerThread?.workspace_id ?? approval.workspaceId;
+      const ownerThreadId = ownerThread?.id ?? approval.threadId;
       if ("operation" in approval && approval.operation === "thread_send") {
         return {
           requestId: approval.approvalId,
@@ -820,6 +1035,10 @@ export class ThreadControlService {
           toolName: "thread_send",
           title: "Send a message to another thread",
           input: { threadId: approval.threadId, message: approval.message, execution: approval.execution },
+          ownerWorkspaceId,
+          ownerThreadId,
+          ...(approval.sourceThreadId ? { sourceThreadId: approval.sourceThreadId } : {}),
+          operation: approval.operation,
         };
       }
       if ("operation" in approval && approval.operation === "thread_stop") {
@@ -829,18 +1048,26 @@ export class ThreadControlService {
           toolName: "thread_stop",
           title: "Stop another thread",
           input: { threadId: approval.threadId },
+          ownerWorkspaceId,
+          ownerThreadId,
+          ...(approval.sourceThreadId ? { sourceThreadId: approval.sourceThreadId } : {}),
+          operation: approval.operation,
         };
       }
       return {
-      requestId: approval.approvalId,
-      threadId: approval.threadId,
-      toolName: "thread_create_batch",
-      title: "Create a new worktree",
-      input: {
-        workspaceId: approval.workspaceId,
-        placement: approval.placement,
-        execution: approval.execution,
-      },
+        requestId: approval.approvalId,
+        threadId: approval.threadId,
+        toolName: "thread_create_batch",
+        title: "Create a new worktree",
+        input: {
+          workspaceId: approval.workspaceId,
+          placement: approval.placement,
+          execution: approval.execution,
+        },
+        ownerWorkspaceId,
+        ownerThreadId,
+        ...(approval.sourceThreadId ? { sourceThreadId: approval.sourceThreadId } : {}),
+        operation: approval.operation,
       };
     });
   }
@@ -960,6 +1187,10 @@ export class ThreadControlService {
             placement: input.placement,
             execution: execution.value,
           },
+          ownerWorkspaceId: input.workspaceId,
+          ownerThreadId: authority.type === "internal" ? authority.sourceThreadId : threadId,
+          ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
+          operation: "thread_create_batch" as const,
         });
         return {
           index,
@@ -1308,6 +1539,12 @@ export class ThreadControlService {
         interactionMode: input.interactionMode ?? (target.interaction_mode === "plan" ? "plan" : "build"),
       },
     };
+  }
+
+  private resolveInternalPermissionMode(permissionMode: string | null | undefined): "full" | "supervised" {
+    if (permissionMode === "supervised") return "supervised";
+    if (permissionMode === "full") return "full";
+    return this.settings.get().agent.defaults.permission === "supervised" ? "supervised" : "full";
   }
 
   private async stopTarget(threadId: string): Promise<void> {

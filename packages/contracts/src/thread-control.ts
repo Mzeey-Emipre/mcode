@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { lazySchema } from "./utils/lazySchema.js";
 import { InteractionModeSchema, PermissionModeSchema } from "./models/enums.js";
+import { PermissionRequestSchema } from "./models/permission.js";
 
 /** Maximum characters accepted for an opaque thread-control identifier. */
 export const THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH = 128;
@@ -322,6 +323,10 @@ export const MessageOriginSchema = lazySchema(() => z.discriminatedUnion("type",
     sourceThreadId: opaqueId,
     sourceTurnId: opaqueId,
     sourceProviderId: executionId,
+    sourceWorkspaceId: opaqueId.nullable(),
+    sourceWorkspaceName: z.string().trim().min(1).max(WORKSPACE_SEARCH_QUERY_MAX_LENGTH),
+    sourceThread: ThreadRefSchema().nullable(),
+    sourceUnavailable: z.boolean(),
   }).strict(),
   z.object({ type: z.literal("legacy") }).strict(),
 ]));
@@ -381,6 +386,93 @@ export const ThreadGetResultSchema = lazySchema(() => z.discriminatedUnion("stat
 ]));
 /** Internal thread_get result. */
 export type ThreadGetResult = z.infer<ReturnType<typeof ThreadGetResultSchema>>;
+
+/** Stable identity used by the renderer for one Project/Thread projection. */
+export const ThreadControlIdentitySchema = lazySchema(() => z.object({
+  workspaceId: opaqueId,
+  threadId: opaqueId,
+}).strict());
+/** Stable Project/Thread identity. */
+export type ThreadControlIdentity = z.infer<ReturnType<typeof ThreadControlIdentitySchema>>;
+
+/** Bounded thread summary used by coordination relation cards. */
+export const ThreadControlThreadRefSchema = lazySchema(() => z.object({
+  workspaceId: opaqueId,
+  threadId: opaqueId,
+  title: z.string().min(1).max(THREAD_CREATE_TITLE_MAX_LENGTH),
+  providerId: executionId,
+  modelId: executionId,
+  state: ThreadObservedStateSchema(),
+}).strict());
+/** Coordination-friendly thread summary. */
+export type ThreadControlThreadRef = z.infer<ReturnType<typeof ThreadControlThreadRefSchema>>;
+
+/** Persisted delegation relationship between a coordinator and destination thread. */
+export const ThreadControlRelationSchema = lazySchema(() => z.object({
+  source: ThreadControlThreadRefSchema().nullable(),
+  destination: ThreadControlThreadRefSchema(),
+  creatorTurnId: opaqueId,
+  creatorToolCallId: opaqueId,
+  creationKind: z.literal("thread_delegation"),
+}).strict());
+/** Persisted delegation relationship projection. */
+export type ThreadControlRelation = z.infer<ReturnType<typeof ThreadControlRelationSchema>>;
+
+/** Input for the user-facing canonical coordination read. */
+export const ThreadControlReadInputSchema = lazySchema(() => z.object({
+  identity: ThreadControlIdentitySchema(),
+  messageLimit: z.number().int().min(1).max(THREAD_GET_MESSAGE_LIMIT_MAX).default(THREAD_GET_MESSAGE_LIMIT_DEFAULT),
+}).strict());
+/** Canonical coordination read input. */
+export type ThreadControlReadInput = z.infer<ReturnType<typeof ThreadControlReadInputSchema>>;
+
+/** Canonical coordination projection for one Project/Thread identity. */
+export const ThreadControlProjectionSchema = lazySchema(() => z.object({
+  identity: ThreadControlIdentitySchema(),
+  thread: ThreadRefSchema(),
+  messages: z.array(ThreadReadMessageSchema()),
+  hasMoreMessages: z.boolean(),
+  relation: ThreadControlRelationSchema().nullable(),
+  children: z.array(ThreadControlRelationSchema()).max(THREAD_SEARCH_LIMIT_MAX),
+  approvals: z.array(PermissionRequestSchema()).max(THREAD_SEARCH_LIMIT_MAX),
+}).strict());
+/** Canonical coordination projection. */
+export type ThreadControlProjection = z.infer<ReturnType<typeof ThreadControlProjectionSchema>>;
+
+/** Result for one canonical coordination read. */
+export const ThreadControlReadResultSchema = lazySchema(() => z.discriminatedUnion("status", [
+  z.object({ status: z.literal("found"), projection: ThreadControlProjectionSchema() }).strict(),
+  z.object({
+    status: z.literal("rejected"),
+    identity: ThreadControlIdentitySchema(),
+    error: ThreadControlErrorSchema(),
+  }).strict(),
+]));
+/** Canonical coordination read result. */
+export type ThreadControlReadResult = z.infer<ReturnType<typeof ThreadControlReadResultSchema>>;
+
+/** Source and destination identity for a user-owned coordination mutation. */
+export const ThreadControlMutationTargetSchema = lazySchema(() => z.object({
+  source: ThreadControlIdentitySchema(),
+  target: ThreadControlIdentitySchema(),
+}).strict());
+/** User-owned coordination mutation target. */
+export type ThreadControlMutationTarget = z.infer<ReturnType<typeof ThreadControlMutationTargetSchema>>;
+
+/** Input for a user-owned cross-thread follow-up. */
+export const ThreadControlUserSendInputSchema = lazySchema(() => z.object({
+  source: ThreadControlIdentitySchema(),
+  target: ThreadControlIdentitySchema(),
+  message: z.string().min(1).max(THREAD_SEND_MESSAGE_MAX_LENGTH),
+  interactionMode: InteractionModeSchema.optional(),
+}).strict());
+/** User-owned cross-thread follow-up input. */
+export type ThreadControlUserSendInput = z.infer<ReturnType<typeof ThreadControlUserSendInputSchema>>;
+
+/** Input for a user-owned cross-thread stop. */
+export const ThreadControlUserStopInputSchema = ThreadControlMutationTargetSchema;
+/** User-owned cross-thread stop input. */
+export type ThreadControlUserStopInput = z.infer<ReturnType<typeof ThreadControlUserStopInputSchema>>;
 
 /** Input accepted by the internal thread_send tool. */
 export const ThreadSendInputSchema = lazySchema(() => z.object({
