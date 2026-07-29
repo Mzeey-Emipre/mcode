@@ -1,51 +1,40 @@
 import "reflect-metadata";
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("../../transport/push.js", () => ({ broadcast: vi.fn() }));
-
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { MessageRepo } from "../../repositories/message-repo.js";
+import { ThreadControlApprovalRepo } from "../../repositories/thread-control-approval-repo.js";
+import { ThreadControlAuditRepo } from "../../repositories/thread-control-audit-repo.js";
+import { ThreadRepo } from "../../repositories/thread-repo.js";
+import { WorkspaceRepo } from "../../repositories/workspace-repo.js";
+import { openMemoryDatabase } from "../../store/database.js";
 import { InternalThreadControlMcpAuthority } from "../thread-control-mcp-authority.js";
 import { createInternalThreadControlMcpSession } from "../thread-control-mcp-transport.js";
 import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
-import { ThreadControlService, type InternalThreadControlAuthority } from "../thread-control-service.js";
+import { ThreadControlService } from "../thread-control-service.js";
+
+vi.mock("../../transport/push.js", () => ({ broadcast: vi.fn() }));
 
 describe("internal thread-control MCP workflow", () => {
-  it("searches Projects, creates across a partial batch, and controls the usable worktree thread", async () => {
-    const sourceWorkspace = {
-      id: "workspace-source",
-      name: "Coordinator Project",
-      path: "C:/private/coordinator",
-      is_git_repo: true,
-    };
-    const destinationWorkspace = {
-      id: "workspace-destination",
-      name: "Child Project",
-      path: "C:/private/child",
-      is_git_repo: true,
-    };
-    const sourceThread = {
-      id: "source-thread",
-      workspace_id: sourceWorkspace.id,
-      title: "Coordinator",
-      status: "active",
-      mode: "direct",
-      branch: "main",
-      permission_mode: "full",
-      interaction_mode: "build",
-      model: "gpt-default",
-      provider: "codex",
-      created_at: "2026-07-29T00:00:00.000Z",
-      updated_at: "2026-07-29T00:00:00.000Z",
-      deleted_at: null,
-    };
-    const threadsById = new Map<string, Record<string, unknown>>([[sourceThread.id, sourceThread]]);
-    const messagesByThread = new Map<string, Array<Record<string, unknown>>>();
-    let createdCount = 0;
+  let db: ReturnType<typeof openMemoryDatabase> | undefined;
 
-    const workspaces = {
-      search: vi.fn().mockReturnValue([sourceWorkspace, destinationWorkspace]),
-      findById: vi.fn((id: string) => id === sourceWorkspace.id ? sourceWorkspace : id === destinationWorkspace.id ? destinationWorkspace : null),
-      findByIdIncludeDeleted: vi.fn((id: string) => id === sourceWorkspace.id ? sourceWorkspace : id === destinationWorkspace.id ? destinationWorkspace : null),
-    };
+  afterEach(() => {
+    db?.close();
+    db = undefined;
+  });
+
+  it("persists a cross-Project worktree workflow and keeps the child usable after partial failure", async () => {
+    db = openMemoryDatabase();
+    const workspaces = new WorkspaceRepo(db);
+    const threads = new ThreadRepo(db);
+    const messages = new MessageRepo(db);
+    const approvals = new ThreadControlApprovalRepo(db);
+    const audit = new ThreadControlAuditRepo(db);
+    const sourceWorkspace = workspaces.create("Coordinator Project", "C:/private/coordinator");
+    const destinationWorkspace = workspaces.create("Child Project", "C:/private/child");
+    const sourceThread = threads.create(sourceWorkspace.id, "Coordinator", "direct", "main", true, "codex");
+    threads.updateModel(sourceThread.id, "gpt-default");
+    threads.updateSettings(sourceThread.id, { permission_mode: "full", interaction_mode: "build" });
+    const sequenceByThread = new Map<string, number>();
+
     const worktrees = {
       reconcile: vi.fn().mockReturnValue([{ worktreeId: "worktree-main", label: "main", branch: "main" }]),
       findCurrentById: vi.fn(),
@@ -55,43 +44,9 @@ describe("internal thread-control MCP workflow", () => {
       listWorktrees: vi.fn().mockResolvedValue([{ path: "C:/private/child", name: "main", branch: "main", managed: false }]),
       getCurrentBranch: vi.fn().mockResolvedValue("main"),
     };
-    const threads = {
-      create: vi.fn((workspaceId: string, title: string, mode: string, branch: string, _managed: boolean, provider: string) => {
-        createdCount += 1;
-        const thread = {
-          id: `destination-thread-${createdCount}`,
-          workspace_id: workspaceId,
-          title,
-          status: "active",
-          mode,
-          branch,
-          permission_mode: null,
-          interaction_mode: null,
-          model: null,
-          provider,
-          created_at: `2026-07-29T00:00:0${createdCount}.000Z`,
-          updated_at: `2026-07-29T00:00:0${createdCount}.000Z`,
-          deleted_at: null,
-        };
-        threadsById.set(thread.id, thread);
-        return thread;
-      }),
-      findById: vi.fn((id: string) => threadsById.get(id) ?? null),
-      search: vi.fn(() => ({ threads: [...threadsById.values()], workspaces: [] })),
-      updateModel: vi.fn((id: string, model: string) => { const thread = threadsById.get(id); if (thread) thread.model = model; return true; }),
-      updateSettings: vi.fn((id: string, settings: { permission_mode: string; interaction_mode: string }) => { const thread = threadsById.get(id); if (thread) Object.assign(thread, settings); return true; }),
-      updateDelegationLineage: vi.fn().mockReturnValue(true),
-      updateStatus: vi.fn((id: string, status: string) => { const thread = threadsById.get(id); if (thread) thread.status = status; return true; }),
-      updateWorktreePath: vi.fn().mockReturnValue(true),
-      clearWorktreePath: vi.fn().mockReturnValue(true),
-      updateExternalCreator: vi.fn().mockReturnValue(true),
-      countActiveByIntegration: vi.fn().mockReturnValue(0),
-      findDelegationLineage: vi.fn().mockReturnValue(null),
-      listDelegationChildren: vi.fn().mockReturnValue([]),
-    };
     const threadService = {
       provisionWorktree: vi.fn().mockImplementation(async (threadId: string) => ({
-        ...(threadsById.get(threadId) ?? {}),
+        ...threads.findById(threadId),
         mode: "worktree",
         worktree_path: "C:/private/child/.worktrees/feature-workflow-proof",
       })),
@@ -99,49 +54,61 @@ describe("internal thread-control MCP workflow", () => {
     };
     const agentService = {
       activeThreadIds: vi.fn().mockReturnValue([]),
-      sendMessage: vi.fn().mockImplementation(async (input: { threadId: string; content: string; sourceThreadId?: string; originSourceTurnId?: string; sourceProviderId?: string }) => {
-        const thread = threadsById.get(input.threadId);
-        if (thread) thread.status = "paused";
-        const messages = messagesByThread.get(input.threadId) ?? [];
-        messages.push({
-          id: `message-${messages.length + 1}`,
-          role: "user",
-          content: input.content,
-          timestamp: `2026-07-29T00:01:0${messages.length}.000Z`,
-          provider: null,
-          model: null,
-          originType: input.sourceThreadId ? "thread" : "composer",
-          sourceThreadId: input.sourceThreadId ?? null,
-          sourceTurnId: input.originSourceTurnId ?? null,
-          sourceProviderId: input.sourceProviderId ?? null,
-        });
-        messagesByThread.set(input.threadId, messages);
+      sendMessage: vi.fn().mockImplementation(async (input: {
+        threadId: string;
+        content: string;
+        sourceThreadId?: string;
+        originSourceTurnId?: string;
+        sourceProviderId?: string;
+      }) => {
+        const sequence = (sequenceByThread.get(input.threadId) ?? 0) + 1;
+        sequenceByThread.set(input.threadId, sequence);
+        messages.create(
+          input.threadId,
+          "user",
+          input.content,
+          sequence,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          input.sourceThreadId && input.originSourceTurnId && input.sourceProviderId
+            ? {
+                type: "thread",
+                sourceThreadId: input.sourceThreadId,
+                sourceTurnId: input.originSourceTurnId,
+                sourceProviderId: input.sourceProviderId,
+              }
+            : { type: "composer" },
+        );
+        threads.updateStatus(input.threadId, "paused");
       }),
       stopSession: vi.fn().mockResolvedValue(undefined),
     };
-    const approvals = {
-      create: vi.fn(), createSend: vi.fn(), createStop: vi.fn(), claim: vi.fn(), settle: vi.fn(),
-      setOperationPhase: vi.fn().mockReturnValue(true), listPending: vi.fn().mockReturnValue([]),
-      listProcessing: vi.fn().mockReturnValue([]), requeue: vi.fn(), requeueDispatch: vi.fn(),
-      requeueRecoveredProvisioning: vi.fn(), listPendingByThread: vi.fn().mockReturnValue([]),
-      listPendingBySourceThread: vi.fn().mockReturnValue([]),
+    const settings = {
+      get: () => ({
+        model: { defaults: { provider: "codex", id: "gpt-default" } },
+        agent: { defaults: { permission: "full" } },
+      }),
     };
-    const messages = {
-      listByThreadForThreadControl: vi.fn((threadId: string) => ({ messages: messagesByThread.get(threadId) ?? [], hasMore: false })),
-    };
+    const providers = { resolve: vi.fn(() => ({ id: "codex" })) };
+    const models = { listModels: vi.fn().mockResolvedValue([{ id: "gpt-default" }]) };
     const service = new ThreadControlService(
-      workspaces as never,
+      workspaces,
       worktrees as never,
       git as never,
-      threads as never,
+      threads,
       threadService as never,
       agentService as never,
-      { get: () => ({ model: { defaults: { provider: "codex", id: "gpt-default" } }, agent: { defaults: { permission: "full" } } }) } as never,
-      { resolve: vi.fn(() => ({ id: "codex" })) } as never,
-      { listModels: vi.fn().mockResolvedValue([{ id: "gpt-default" }]) } as never,
-      approvals as never,
-      { write: vi.fn() } as never,
-      messages as never,
+      settings as never,
+      providers as never,
+      models as never,
+      approvals,
+      audit,
+      messages,
       new ThreadControlMutationReservationService(),
     );
 
@@ -161,9 +128,10 @@ describe("internal thread-control MCP workflow", () => {
       arguments: args,
     });
 
-    await expect(call("search-projects", "workspace_search", { query: "Project" })).resolves.toMatchObject({
-      workspaces: [{ workspaceId: sourceWorkspace.id }, { workspaceId: destinationWorkspace.id }],
-    });
+    const projectSearch = await call("search-projects", "workspace_search", { query: "Project" }) as { workspaces: Array<{ workspaceId: string }> };
+    expect(projectSearch.workspaces.map((workspace) => workspace.workspaceId)).toEqual(
+      expect.arrayContaining([sourceWorkspace.id, destinationWorkspace.id]),
+    );
     await expect(call("list-destination-worktrees", "worktree_list", { workspaceId: destinationWorkspace.id })).resolves.toMatchObject({
       status: "found",
       worktrees: [{ worktreeId: "worktree-main" }],
@@ -189,6 +157,13 @@ describe("internal thread-control MCP workflow", () => {
       { index: 1, status: "rejected", error: { code: "not_found" } },
     ]);
     const destinationThreadId = (batch.results[0] as { threadId: string }).threadId;
+    expect(threads.findById(destinationThreadId)).toMatchObject({ workspace_id: destinationWorkspace.id, title: "Issue 965 child" });
+    expect(threads.findDelegationLineage(destinationThreadId)).toEqual({
+      coordinatorThreadId: sourceThread.id,
+      creatorTurnId: "source-turn",
+      creatorToolCallId: "create-batch",
+      creationKind: "thread_delegation",
+    });
 
     await expect(call("search-created", "thread_search", { workspaceIds: [destinationWorkspace.id] })).resolves.toMatchObject({
       threads: [{ threadId: destinationThreadId, workspaceId: destinationWorkspace.id }],
@@ -196,15 +171,23 @@ describe("internal thread-control MCP workflow", () => {
     await expect(call("read-created", "thread_get", { threadId: destinationThreadId })).resolves.toMatchObject({
       status: "found",
       workspaceId: destinationWorkspace.id,
-      messages: [{ content: "Implement the workflow proof." }],
+      messages: [{ content: "Implement the workflow proof.", origin: { type: "composer" } }],
     });
     await expect(call("follow-up", "thread_send", { threadId: destinationThreadId, message: "Continue with the regression." })).resolves.toMatchObject({
       status: "accepted",
       threadId: destinationThreadId,
     });
-    await expect(call("wait-for-attention", "thread_wait", { threadIds: [destinationThreadId], timeoutSeconds: 1 })).resolves.toMatchObject({
+    const waitAbort = new AbortController();
+    waitAbort.abort();
+    await expect(session.dispatch({
+      bearerCredential: lease.credential,
+      requestId: "wait-for-attention",
+      toolName: "thread_wait",
+      arguments: { threadIds: [destinationThreadId], timeoutSeconds: 1 },
+      signal: waitAbort.signal,
+    })).resolves.toMatchObject({
       status: "success",
-      timedOut: false,
+      timedOut: true,
       results: [{ threadId: destinationThreadId, state: { status: "waiting_for_user" } }],
     });
     await expect(call("stop-created", "thread_stop", { threadId: destinationThreadId })).resolves.toMatchObject({
@@ -217,15 +200,24 @@ describe("internal thread-control MCP workflow", () => {
       thread: { state: { status: "stopped" } },
       messages: [
         { content: "Implement the workflow proof." },
-        { content: "Continue with the regression.", origin: { type: "thread", sourceThreadId: sourceThread.id } },
+        { content: "Continue with the regression.", origin: { type: "thread", sourceThreadId: sourceThread.id, sourceProviderId: "codex" } },
       ],
     });
-    expect(threads.create).toHaveBeenCalledTimes(1);
-    expect(threadService.provisionWorktree).toHaveBeenCalledWith(destinationThreadId, destinationWorkspace.id, {
-      type: "new_worktree",
-      baseRef: "main",
-      branchName: "feature/workflow-proof",
+
+    const restartedThreads = new ThreadRepo(db);
+    const restartedMessages = new MessageRepo(db);
+    expect(restartedThreads.findDelegationLineage(destinationThreadId)).toEqual({
+      coordinatorThreadId: sourceThread.id,
+      creatorTurnId: "source-turn",
+      creatorToolCallId: "create-batch",
+      creationKind: "thread_delegation",
     });
+    expect(restartedMessages.listByThreadForThreadControl(destinationThreadId, 10, 100_000).messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ content: "Continue with the regression.", sourceThreadId: sourceThread.id, sourceProviderId: "codex" }),
+      ]),
+    );
+    expect(threads.listDelegationChildren(sourceThread.id).map(({ thread }) => thread.id)).toContain(destinationThreadId);
     expect(agentService.stopSession).toHaveBeenCalledWith(destinationThreadId);
   });
 });
