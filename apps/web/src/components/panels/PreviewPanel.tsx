@@ -1585,6 +1585,10 @@ function WebRuntimePreview({
   };
 
   const onIframeLoad = (event: React.SyntheticEvent<HTMLIFrameElement>): void => {
+    useBrowserAutomationStore.getState().refreshTarget(
+      threadId,
+      WEB_RUNTIME_PREVIEW_TAB_ID,
+    );
     try {
       const actualOrigin = event.currentTarget.contentWindow?.location.origin;
       setCrossOriginObserved(actualOrigin !== window.location.origin);

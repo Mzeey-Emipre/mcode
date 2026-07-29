@@ -1472,6 +1472,49 @@ describe("BrowserAutomationHost", () => {
     frame.remove();
   });
 
+  it("rejects a pending request after web iframe replacement without mutating the new document", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    delete window.desktopBridge;
+    const frame = document.createElement("iframe");
+    frame.dataset.threadId = "thread-1";
+    frame.dataset.tabId = "tab-1";
+    document.body.append(frame);
+    Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
+    const frameDocument = frame.contentDocument!;
+    frameDocument.body.innerHTML = '<input id="name" />';
+    const input = frameDocument.querySelector("input")!;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const pending: Array<FrameRequestCallback> = [];
+    Object.defineProperty(frameDocument.defaultView, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        pending.push(callback);
+        return pending.length;
+      },
+    });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    await waitFor(() => expect(useBrowserAutomationStore.getState().registered).toBe(true));
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const typeDispatch = dispatch(1, 36, { targetGeneration: 1 });
+    typeDispatch.request = { ...typeDispatch.request, operation: "type", args: { target: { cssSelector: "#name" }, text: "typed", clear: true, submit: false, timeoutMs: 1000 } } as never;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: typeDispatch }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests.size).toBe(1));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    pending.shift()?.(performance.now());
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenLastCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "STALE_TARGET_GENERATION" }) }),
+      typeDispatch.target,
+    );
+    expect(input).toHaveValue("");
+    view.unmount();
+    frame.remove();
+    delete (frameDocument.defaultView as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+  });
+
   it("suppresses mutation and response after broker cancellation", async () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     delete window.desktopBridge;

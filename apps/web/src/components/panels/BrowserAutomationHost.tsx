@@ -456,6 +456,7 @@ export function BrowserAutomationHost() {
   const bootstrapAbortRef = useRef(new Map<string, AbortController>());
   const bootstrapRequestRef = useRef(new Map<string, BrowserAutomationRequest>());
   const priorLiveTargetKeysRef = useRef(new Set<string>());
+  const priorLiveTargetRevisionsRef = useRef(new Map<string, number>());
   const cancelledRef = useRef(new Set<string>());
   const stableHostId = useMemo(hostId, []);
   const [backgroundScopes, setBackgroundScopes] = useState<readonly BackgroundBrowserScope[]>([]);
@@ -659,6 +660,16 @@ export function BrowserAutomationHost() {
 
   useEffect(() => {
     const next = new Set(liveTargets.keys());
+    const priorRevisions = priorLiveTargetRevisionsRef.current;
+    for (const [key, target] of liveTargets) {
+      const previousRevision = priorRevisions.get(key);
+      if (previousRevision === undefined || previousRevision === target.revision) continue;
+      for (const [requestKey, dispatch] of inFlightRef.current) {
+        if (browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId) !== key) continue;
+        webAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
+        requestAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
+      }
+    }
     for (const removed of priorLiveTargetKeysRef.current) {
       if (next.has(removed)) continue;
       const [threadId, tabId] = JSON.parse(removed) as [string, string];
@@ -669,6 +680,9 @@ export function BrowserAutomationHost() {
       }
     }
     priorLiveTargetKeysRef.current = next;
+    priorLiveTargetRevisionsRef.current = new Map(
+      [...liveTargets].map(([key, target]) => [key, target.revision]),
+    );
   }, [cancelHostedRequest, liveTargets]);
 
   useEffect(() => {
@@ -797,7 +811,24 @@ export function BrowserAutomationHost() {
         : bridge || webExecutorDispatch
           ? executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal)
           : Promise.resolve(failureResponse(dispatch.request, "UNSUPPORTED_OPERATION", WEB_AUTOMATION_UNAVAILABLE_REASON));
-      void operation.then((response) => {
+      const guardedOperation = operation.then((response) => {
+        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
+          const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
+          if (!latestTarget || latestTarget.revision !== dispatch.target.targetGeneration) {
+            return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+          }
+        }
+        return response;
+      }).catch((cause: unknown) => {
+        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
+          const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
+          if (!latestTarget || latestTarget.revision !== dispatch.target.targetGeneration) {
+            return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+          }
+        }
+        throw cause;
+      });
+      void guardedOperation.then((response) => {
         if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
         return webDispatch
           ? getTransport().respondToBrowserAutomationRequest(
