@@ -265,6 +265,8 @@ describe("PreviewPanel: unavailable state", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
     mockUsePreviewBridge.mockClear();
+    vi.unstubAllEnvs();
+    useDiffStore.setState({ previewUrlByThread: {} });
   });
 
   it("renders the unavailable state when desktopBridge is absent", () => {
@@ -277,6 +279,35 @@ describe("PreviewPanel: unavailable state", () => {
   it("does not render the full panel when desktopBridge is absent", () => {
     render(<PreviewPanel threadId="thread-1" />);
     expect(screen.queryByTestId("preview-panel")).not.toBeInTheDocument();
+  });
+
+  it("renders the enabled same-origin web preview without an Electron bridge", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toHaveAttribute(
+      "src",
+      window.location.origin + "/fixture",
+    );
+    expect(screen.queryByTestId("web-runtime-cross-origin")).not.toBeInTheDocument();
+  });
+
+  it("keeps a cross-origin page visible while identifying DOM automation as unsupported", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({ previewUrlByThread: { "thread-1": "https://example.com/fixture" } });
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toBeInTheDocument();
+    expect(screen.getByTestId("web-runtime-cross-origin")).toHaveTextContent(
+      "automation and DOM access are unsupported",
+    );
+  });
+
+  it("explains that web preview automation is disabled by default", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "0");
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.getByTestId("preview-panel-unavailable")).toHaveTextContent(
+      "Web preview automation is disabled",
+    );
   });
 });
 

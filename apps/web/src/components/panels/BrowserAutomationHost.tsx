@@ -28,6 +28,7 @@ import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
 import { PreviewPanel } from "./PreviewPanel";
 import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
+import { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
@@ -35,12 +36,7 @@ const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
 
 const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
 
-/** Resolves explicit web-runtime browser automation opt-in. */
-export function isBrowserAutomationWebRuntimeEnabled(
-  env: Pick<ImportMetaEnv, "VITE_MCODE_WEB_AUTOMATION"> = import.meta.env,
-): boolean {
-  return env.VITE_MCODE_WEB_AUTOMATION === "1";
-}
+export { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
 
 function webTargetIdentity(
   worktreeIdentity: string,
@@ -311,8 +307,8 @@ function PersistentAutomationPreviewSurface({ scope }: { readonly scope: Backgro
 }
 
 /**
- * Connects renderer-owned visible Browser tabs to the server broker while all
- * page execution remains inside the desktop control kernel.
+ * Connects visible Browser tabs to the server broker, preserving the Electron
+ * bridge when present and exposing the explicitly enabled web runtime seam.
  */
 export function BrowserAutomationHost() {
   const connectionStatus = useConnectionStore((state) => state.status);

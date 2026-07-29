@@ -35,6 +35,15 @@ export function isWebAutomationEnabled(env = process.env) {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+/** Builds matching server and Vite child-process opt-in values. */
+export function buildWebAutomationEnv(env = process.env) {
+  const enabled = isWebAutomationEnabled(env);
+  return {
+    MCODE_WEB_AUTOMATION: enabled ? "1" : "0",
+    VITE_MCODE_WEB_AUTOMATION: enabled ? "1" : "0",
+  };
+}
+
 /**
  * Installs process-local hooks for focused agentUp tests.
  *
@@ -124,6 +133,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
           MCODE_SINGLE_INSTANCE: "true",
           MCODE_INSTANCE_TOKEN: instanceToken,
           MCODE_WORKTREE_IDENTITY: repoRoot,
+          MCODE_WEB_AUTOMATION: buildWebAutomationEnv().MCODE_WEB_AUTOMATION,
         },
       },
       resolve(paths.logsDir, "server.log"),
@@ -146,7 +156,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
           VITE_MCODE_SINGLE_INSTANCE: "true",
           VITE_MCODE_WORKTREE_IDENTITY: repoRoot,
           VITE_MCODE_RUNTIME_CONTRACT: paths.portsFile,
-          VITE_MCODE_WEB_AUTOMATION: isWebAutomationEnabled() ? "1" : "0",
+          VITE_MCODE_WEB_AUTOMATION: buildWebAutomationEnv().VITE_MCODE_WEB_AUTOMATION,
         },
       },
       resolve(paths.logsDir, "web.log"),

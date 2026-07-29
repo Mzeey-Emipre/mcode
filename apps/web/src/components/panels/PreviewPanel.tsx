@@ -79,6 +79,11 @@ import {
   selectWarmBrowserTabIds,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import {
+  isBrowserAutomationWebRuntimeEnabled,
+  normalizeWebPreviewUrl,
+  resolveWebPreviewState,
+} from "./browserAutomationRuntime";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -1526,6 +1531,69 @@ export interface PreviewPanelProps {
   readonly automationOnly?: boolean;
 }
 
+/** Visible same-origin iframe surface used by the worktree-local web runtime. */
+function WebRuntimePreview({ threadId }: { readonly threadId: string }) {
+  const storedUrl = useDiffStore((state) => state.previewUrlByThread[threadId] ?? "");
+  const [inputUrl, setInputUrl] = useState(storedUrl);
+  const [src, setSrc] = useState<string | null>(() => normalizeWebPreviewUrl(storedUrl));
+  const enabled = isBrowserAutomationWebRuntimeEnabled();
+  const state = resolveWebPreviewState(src, enabled);
+
+  useEffect(() => {
+    setInputUrl(storedUrl);
+    setSrc(normalizeWebPreviewUrl(storedUrl));
+  }, [storedUrl]);
+
+  const navigate = (): void => {
+    const next = normalizeWebPreviewUrl(inputUrl);
+    if (!next) {
+      setSrc(null);
+      return;
+    }
+    setSrc(next);
+    useDiffStore.getState().setPreviewUrlForThread(threadId, next);
+  };
+
+  return (
+    <div data-testid="web-runtime-preview" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <form className="flex items-center gap-2 border-b border-border/60 px-2 py-1.5" onSubmit={(event) => { event.preventDefault(); navigate(); }}>
+        <Input aria-label="Preview URL" value={inputUrl} onChange={(event) => setInputUrl(event.target.value)} placeholder="Enter an http(s) URL" />
+        <Button type="submit" size="sm">Open</Button>
+      </form>
+      <div className="relative min-h-0 min-w-0 flex-1 bg-muted/10">
+        {state === "same-origin" && src ? (
+          <iframe
+            title="Web browser preview"
+            src={src}
+            data-testid="web-runtime-preview-iframe"
+            className="h-full w-full border-0"
+            referrerPolicy="no-referrer"
+          />
+        ) : state === "cross-origin" && src ? (
+          <>
+            <iframe
+              title="Cross-origin web preview"
+              src={src}
+              data-testid="web-runtime-preview-iframe"
+              className="h-full w-full border-0"
+              referrerPolicy="no-referrer"
+            />
+            <div data-testid="web-runtime-cross-origin" className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-amber-500/40 bg-background/95 px-3 py-2 text-xs text-amber-700 shadow-sm">
+              Cross-origin preview is visible, but web automation and DOM access are unsupported.
+            </div>
+          </>
+        ) : (
+          <div data-testid={`web-runtime-${state}`} className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+            {state === "disabled"
+              ? "Web preview automation is disabled. Set MCODE_WEB_AUTOMATION=1 and restart agent:up to enable it."
+              : "Web preview is unavailable until an HTTP(S) same-origin target is loaded."}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Embedded site preview: a clean URL header above a region aligned to an
  * Electron BrowserView. The header morphs across empty / focused / loaded
@@ -2286,7 +2354,12 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
       window.removeEventListener("mcode:preview-design-escape", onDesignEscape);
   }, [designModeActive, handleDesignEscape, threadId]);
 
-  if (!window.desktopBridge?.preview) {
+  const hasDesktopPreview = !!window.desktopBridge?.preview;
+  const webRuntimeEnabled = isBrowserAutomationWebRuntimeEnabled();
+  if (!hasDesktopPreview && webRuntimeEnabled) {
+    return <WebRuntimePreview threadId={threadId} />;
+  }
+  if (!hasDesktopPreview) {
     return (
       <div
         className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground"
@@ -2294,8 +2367,8 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
       >
         <Globe className="size-8 opacity-50" aria-hidden />
         <p className="max-w-xs text-balance">
-          Embedded preview runs in the desktop app. Open Mcode from Electron to
-          browse http and https sites alongside this thread.
+          Web preview automation is disabled. Set MCODE_WEB_AUTOMATION=1 and
+          restart agent:up to enable the same-origin Browser preview.
         </p>
       </div>
     );
