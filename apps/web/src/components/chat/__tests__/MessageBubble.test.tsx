@@ -32,6 +32,24 @@ function createUserMessage(): Message {
   } as Message;
 }
 
+function createPluginMessage(): Message {
+  return {
+    id: "message-plugin",
+    thread_id: "thread-1",
+    role: "user",
+    content: "@impeccable",
+    timestamp: "2026-07-28T12:00:00.000Z",
+    mentions: [{
+      id: "plugin:impeccable",
+      kind: "plugin",
+      label: "impeccable",
+      name: "Impeccable",
+      path: "plugin://impeccable",
+      range: { start: 0, end: 11 },
+    }],
+  } as Message;
+}
+
 describe("MessageBubble", () => {
   it("keeps a command mention in the standard user-message paragraph flow", () => {
     const { container } = render(<MessageBubble message={createUserMessage()} />);
@@ -40,5 +58,17 @@ describe("MessageBubble", () => {
 
     expect(text).toHaveClass("mb-2", "leading-relaxed", "whitespace-pre-wrap");
     expect(text).toHaveTextContent("Please review this change");
+  });
+
+  it("renders persisted plugin mentions with the frameless capability reference style", () => {
+    const { container } = render(<MessageBubble message={createPluginMessage()} />);
+
+    const token = container.querySelector('[data-entity-token="plugin"]');
+    const text = token?.closest("p");
+
+    expect(token).toHaveClass("text-primary");
+    expect(token).not.toHaveClass("h-5", "rounded-md", "px-1.5");
+    expect(token?.querySelector(".lucide-plug")).toBeInTheDocument();
+    expect(text).toHaveClass("mb-2", "leading-relaxed", "whitespace-pre-wrap");
   });
 });
