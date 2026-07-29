@@ -38,6 +38,7 @@ import type { SettingsService } from "../settings-service.js";
 import type { ThreadService } from "../thread-service.js";
 import type { ProviderAvailabilityService } from "../provider-availability-service.js";
 import type { PlanQuestionAnswersRepo } from "../../repositories/plan-question-answers-repo.js";
+import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
 
 vi.mock("../../transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -126,7 +127,10 @@ function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
  * The returned `providerEmitter` lets the test fire events as if the SDK
  * produced them, exercising the handler registered in `init()`.
  */
-function buildService(cwd = process.cwd()): {
+function buildService(
+  cwd = process.cwd(),
+  mutationReservations = new ThreadControlMutationReservationService(),
+): {
   service: AgentService;
   providerEmitter: EventEmitter;
   attachmentService: AttachmentService;
@@ -141,10 +145,13 @@ function buildService(cwd = process.cwd()): {
 
   // sendTurn() is called on the resolved provider
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
+  (providerEmitter as any).stopSession = vi.fn(() => Promise.resolve());
 
   const threadRepo = {
     findById: vi.fn(() => thread),
-    updateStatus: vi.fn(),
+    updateStatus: vi.fn((_threadId: string, status: Thread["status"]) => {
+      thread.status = status;
+    }),
     updateModel: vi.fn(),
     updateProvider: vi.fn(),
     updateSettings: vi.fn(),
@@ -283,6 +290,9 @@ function buildService(cwd = process.cwd()): {
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      undefined,
+      undefined,
+      mutationReservations,
   );
 
   return {
@@ -334,6 +344,30 @@ describe("AgentService turn cleanup", () => {
     // Thread should no longer be active
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markIdle).toHaveBeenCalled();
+  });
+
+  it("ignores a late TurnStarted after stop instead of auto-resuming the thread", async () => {
+    const { service, providerEmitter, memoryPressureService } = buildService();
+    service.init();
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    await service.stopSession(THREAD_ID);
+    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+    } satisfies AgentEvent);
+
+    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(memoryPressureService.markActive).toHaveBeenCalledTimes(1);
   });
 
   it("persists preview annotation snapshots as visible provider attachments", async () => {
@@ -468,6 +502,23 @@ describe("AgentService turn cleanup", () => {
       expect(service.activeThreadIds()).toContain(THREAD_ID);
       expect(memoryPressureService.markActive).toHaveBeenCalled();
     });
+  });
+
+  it("aborts an auto-resumed turn when a pending mutation reservation owns the thread", async () => {
+    const mutationReservations = new ThreadControlMutationReservationService();
+    const { service, providerEmitter } = buildService(process.cwd(), mutationReservations);
+    const provider = providerEmitter as EventEmitter & { stopSession: ReturnType<typeof vi.fn> };
+    service.init();
+
+    expect(mutationReservations.rehydrate(THREAD_ID, "pending-approval")).toBe(true);
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+    } satisfies AgentEvent);
+
+    await vi.waitFor(() => expect(provider.stopSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`));
+    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(mutationReservations.owns(THREAD_ID, "pending-approval", "pendingApproval")).toBe(true);
   });
 
   it("initializes file tracking for provider-originated auto-resumed turns", async () => {

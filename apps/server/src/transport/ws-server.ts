@@ -19,6 +19,7 @@ import { join } from "path";
 import { getMcodeDir } from "@mcode/shared";
 import type { BrowserAutomationMcpHandler } from "../services/browser-automation/mcp-handler.js";
 import type { BrowserAutomationHostConnectionAuthorization } from "../services/browser-automation/broker.js";
+import { EXTERNAL_THREAD_CONTROL_MCP_PATH } from "../services/external-thread-control-mcp-runtime.js";
 
 /** Constant-time string comparison to prevent timing attacks on token validation. */
 function safeTokenEqual(a: string, b: string): boolean {
@@ -121,13 +122,24 @@ export function createWsServer(deps: WsServerDeps): {
   wss: WebSocketServer;
 } {
   const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (new URL(req.url ?? "/", "http://localhost").pathname === "/mcp" && deps.browserAutomationMcpHandler) {
+    const requestPath = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (requestPath === "/mcp" && deps.browserAutomationMcpHandler) {
       void deps.browserAutomationMcpHandler.handle(req, res).catch((error: unknown) => {
         logger.error("Browser automation MCP request failed", {
           error: error instanceof Error ? error.message : String(error),
         });
         if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }));
+      });
+      return;
+    }
+    if (requestPath === EXTERNAL_THREAD_CONTROL_MCP_PATH && deps.externalThreadControlMcpRuntime) {
+      void deps.externalThreadControlMcpRuntime.handleRequest(req, res).catch((error: unknown) => {
+        logger.error("External thread-control MCP request failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!res.headersSent) res.writeHead(500);
+        res.end();
       });
       return;
     }

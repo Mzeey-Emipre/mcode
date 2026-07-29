@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Cross-platform setup script for bootstrapping a fresh clone.
  * Replaces scripts/setup-env.sh with Node.js so it works on Windows/PowerShell.

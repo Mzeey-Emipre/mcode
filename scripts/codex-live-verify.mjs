@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Live verification of the Codex thought-vs-final fix.
  *

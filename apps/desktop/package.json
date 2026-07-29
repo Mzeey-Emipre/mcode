@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "bun scripts/dev-electron.mjs",
     "build": "bun scripts/build-main.mjs",
-    "prod": "NODE_ENV=production bun run build && NODE_ENV=production npx electron .",
+    "prod": "NODE_ENV=production bun run build && NODE_ENV=production bunx electron .",
     "typecheck": "tsc --noEmit",
     "rebuild": "electron-rebuild -f",
     "dist": "bun run build && bun scripts/generate-snapshot.mjs && electron-builder --publish never",

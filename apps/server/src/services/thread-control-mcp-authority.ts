@@ -8,6 +8,7 @@ interface ActiveLease {
   sourceProviderId: string;
   permissionMode: "supervised" | "full";
   active: boolean;
+  controller: AbortController;
 }
 
 /** Provider turn fields used to activate the internal MCP authority. */
@@ -39,12 +40,14 @@ export class InternalThreadControlMcpAuthority {
   /** Activates a turn lease without rotating its pooled session credential. */
   activate(input: ActivateInternalThreadControlMcpLease): InternalThreadControlMcpLease {
     const entry = this.leases.get(input.sessionId) ?? { credential: randomBytes(32).toString("base64url") };
+    entry.active?.controller.abort();
     entry.active = {
       sourceThreadId: input.sourceThreadId,
       sourceTurnId: input.sourceTurnId,
       sourceProviderId: input.sourceProviderId,
       permissionMode: input.permissionMode,
       active: true,
+      controller: new AbortController(),
     };
     this.leases.set(input.sessionId, entry);
     return { credential: entry.credential, sessionId: input.sessionId };
@@ -73,14 +76,28 @@ export class InternalThreadControlMcpAuthority {
     return this.leases.get(sessionId)?.credential;
   }
 
+  /** Returns the revocation signal for one authenticated pooled session. */
+  signal(credential: string): AbortSignal | undefined {
+    for (const entry of this.leases.values()) {
+      if (constantTimeCredentialEqual(entry.credential, credential) && entry.active?.active) {
+        return entry.active.controller.signal;
+      }
+    }
+    return undefined;
+  }
+
   /** Revokes the active turn lease while retaining the credential for pooled reuse. */
   revoke(sessionId: string): void {
     const entry = this.leases.get(sessionId);
-    if (entry?.active) entry.active.active = false;
+    if (entry?.active) {
+      entry.active.active = false;
+      entry.active.controller.abort();
+    }
   }
 
   /** Removes a closed transport and its credential permanently. */
   close(sessionId: string): void {
+    this.leases.get(sessionId)?.active?.controller.abort();
     this.leases.delete(sessionId);
   }
 }

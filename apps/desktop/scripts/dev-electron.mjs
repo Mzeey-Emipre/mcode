@@ -194,6 +194,8 @@ const scheduleServerBundleRebuild = makeCoalescedAsync(async () => {
 let viteProcess = null;
 /** Electron child handle; declared before Vite startup so early Vite exit cannot hit TDZ. */
 let electronProcess = null;
+/** Active esbuild watch contexts; initialized before startup so early cleanup is safe. */
+let watchContexts = [];
 
 /** True while `cleanup()` is tearing children down so Vite exit is not treated as a crash. */
 let devSessionShuttingDown = false;
@@ -258,7 +260,7 @@ function startViteDevServer() {
 }
 
 // Run Vite startup and esbuild (main/preload) watch in parallel
-const [devServerUrl, watchContexts] = await Promise.all([
+const [devServerUrl, initialWatchContexts] = await Promise.all([
   startViteDevServer(),
   Promise.all(
     entries.map(async (cfg) => {
@@ -269,6 +271,7 @@ const [devServerUrl, watchContexts] = await Promise.all([
     }),
   ),
 ]);
+watchContexts = initialWatchContexts;
 
 if (!devServerUrl) {
   console.error("[dev] Vite dev server failed to start");
@@ -309,10 +312,12 @@ try {
 // -------------------------------------------------------------------------
 
 /** Spawn (or restart) the Electron process. */
-function spawnElectron() {
+async function spawnElectron() {
+  if (devSessionShuttingDown) return;
   if (electronProcess) {
-    killProcessTree(electronProcess);
+    const previousProcess = electronProcess;
     electronProcess = null;
+    await Promise.resolve(killProcessTree(previousProcess)).catch(() => undefined);
   }
 
   // Resolve the local Electron binary from the project's node_modules.
@@ -343,24 +348,25 @@ function spawnElectron() {
     shell: true,
   });
 
-  electronProcess.on("exit", (code) => {
+  const startedProcess = electronProcess;
+  startedProcess.on("exit", (code) => {
     // If Electron exits on its own (user closed window), shut down dev script
-    if (electronProcess) {
+    if (electronProcess === startedProcess) {
       electronProcess = null;
-      cleanup();
-      process.exit(code ?? 0);
+      void cleanup().finally(() => process.exit(code ?? 0));
     }
   });
 }
 
 ensureElectronBinary(projectRoot);
-spawnElectron();
+await spawnElectron();
 
 // -------------------------------------------------------------------------
 // Step 3: Restart Electron on main/server bundle rebuild (debounced)
 // -------------------------------------------------------------------------
 
 let debounceTimer = null;
+let restartPromise = Promise.resolve();
 
 /**
  * Debounce Electron restart so rapid esbuild increments coalesce.
@@ -370,8 +376,13 @@ let debounceTimer = null;
 function scheduleElectronRestart(reason) {
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
+    if (devSessionShuttingDown) return;
     console.log(`[dev] ${reason}, restarting Electron...`);
-    spawnElectron();
+    restartPromise = restartPromise
+      .then(() => spawnElectron())
+      .catch((error) => {
+        console.error("[dev] Electron restart failed:", error);
+      });
   }, 300);
 }
 
@@ -385,7 +396,9 @@ watch(serverOutFile, () => scheduleElectronRestart("server bundle updated"));
 // -------------------------------------------------------------------------
 
 /** Stop all child processes and esbuild watchers. */
+let cleanupPromise;
 function cleanup() {
+  if (cleanupPromise) return cleanupPromise;
   devSessionShuttingDown = true;
   if (debounceTimer) clearTimeout(debounceTimer);
   // The server-bundle rebuild timer is owned by makeCoalescedAsync; we
@@ -401,32 +414,35 @@ function cleanup() {
     distTscWatcher = null;
   }
 
+  const processes = [];
   if (serverTscWatch) {
-    killProcessTree(serverTscWatch);
+    processes.push(killProcessTree(serverTscWatch));
     serverTscWatch = null;
   }
 
   for (const ctx of watchContexts) {
-    ctx.dispose().catch(() => {});
+    processes.push(Promise.resolve(ctx.dispose()).catch(() => undefined));
   }
 
   if (electronProcess) {
-    killProcessTree(electronProcess);
+    processes.push(killProcessTree(electronProcess));
     electronProcess = null;
   }
 
   if (viteProcess) {
-    killProcessTree(viteProcess);
+    processes.push(killProcessTree(viteProcess));
     viteProcess = null;
   }
+  cleanupPromise = Promise.all(
+    processes.map((termination) => Promise.resolve(termination).catch(() => undefined)),
+  );
+  return cleanupPromise;
 }
 
 process.on("SIGINT", () => {
-  cleanup();
-  process.exit(0);
+  void cleanup().finally(() => process.exit(0));
 });
 
 process.on("SIGTERM", () => {
-  cleanup();
-  process.exit(0);
+  void cleanup().finally(() => process.exit(0));
 });

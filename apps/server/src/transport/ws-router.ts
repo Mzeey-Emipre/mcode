@@ -100,6 +100,8 @@ import type { PullRequestMutationService } from "../services/pull-requests/pull-
 import type { ReviewWorktreeService } from "../services/pull-requests/review-worktree-service.js";
 import type { BrowserAutomationBroker } from "../services/browser-automation/broker.js";
 import type { BrowserAutomationHostConnectionAuthorization } from "../services/browser-automation/broker.js";
+import type { ExternalThreadControlPairingService } from "../services/external-thread-control-pairing-service.js";
+import type { ExternalThreadControlMcpRuntime } from "../services/external-thread-control-mcp-runtime.js";
 
 const DEFAULT_PULL_REQUEST_CONNECTION = {};
 
@@ -220,6 +222,10 @@ export interface RouterDeps {
   pullRequestMutationService: PullRequestMutationService;
   /** Creates and restores local Review worktrees linked to pull requests. */
   reviewWorktreeService: ReviewWorktreeService;
+  /** Durable paired external MCP authority management. */
+  externalThreadControlPairingService?: ExternalThreadControlPairingService;
+  /** Existing HTTP server's loopback external MCP adapter. */
+  externalThreadControlMcpRuntime?: ExternalThreadControlMcpRuntime;
 }
 
 /**
@@ -442,6 +448,34 @@ async function dispatch(
         params.reason,
       );
       return;
+    case "threadControl.pairing.create": {
+      const pairings = deps.externalThreadControlPairingService;
+      if (!pairings) throw new Error("External thread-control pairing service unavailable");
+      const pairing = pairings.create(params);
+      return {
+        ...pairing,
+        externalMcpEndpoint: deps.externalThreadControlMcpRuntime?.endpoint() ?? pairing.externalMcpEndpoint,
+      };
+    }
+    case "threadControl.pairing.revoke": {
+      const pairings = deps.externalThreadControlPairingService;
+      if (!pairings) throw new Error("External thread-control pairing service unavailable");
+      const pairing = pairings.revoke(params.pairingId);
+      return {
+        ...pairing,
+        externalMcpEndpoint: deps.externalThreadControlMcpRuntime?.endpoint() ?? "/mcp/external-thread-control",
+      };
+    }
+    case "threadControl.pairing.replace": {
+      const pairings = deps.externalThreadControlPairingService;
+      if (!pairings) throw new Error("External thread-control pairing service unavailable");
+      const { pairingId, ...input } = params;
+      const pairing = pairings.replace(pairingId, input);
+      return {
+        ...pairing,
+        externalMcpEndpoint: deps.externalThreadControlMcpRuntime?.endpoint() ?? pairing.externalMcpEndpoint,
+      };
+    }
     case "push.subscribeThread":
       if (context.client) {
         subscribeClientToThread(context.client, params.threadId);
@@ -583,6 +617,12 @@ async function dispatch(
         sort: params.sort,
         limit: params.limit,
       });
+    case "thread.control.read":
+      return deps.threadControlService.threadControlRead(params);
+    case "thread.control.send":
+      return deps.threadControlService.threadControlSend(params);
+    case "thread.control.stop":
+      return deps.threadControlService.threadControlStop(params);
     case "thread.syncPrs": {
       const syncWs = deps.workspaceService.findById(params.workspaceId);
       if (!syncWs?.is_git_repo) return [];

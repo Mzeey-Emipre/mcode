@@ -1,6 +1,10 @@
 /**
  * CI-only helper that packages the desktop app with electron-builder.
  *
+ * Packaging workflows invoke this helper with Bun. Those workflows provision
+ * Node 24.18.0 for npm, electron-builder, and native-module rebuilds; local
+ * development does not require a system Node executable.
+ *
  * Solves three problems:
  *  1. electron-builder detects bun from PATH/lockfile and incorrectly invokes
  *     it via Node.js. We strip bun directories from PATH so it falls back to npm.
@@ -12,7 +16,7 @@
  *     get them into apps/desktop/node_modules so electron-builder can rebuild
  *     them for Electron and asarUnpack them.
  *
- * Usage: node apps/desktop/scripts/ci-package.mjs
+ * Usage: bun apps/desktop/scripts/ci-package.mjs
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
@@ -125,12 +129,15 @@ const ebCli = findEbCli();
 console.log(`[ci-package] Resolved electron-builder CLI: ${ebCli}`);
 
 // ---------------------------------------------------------------------------
-// 7. Run electron-builder (extra CLI args forwarded for platform/arch control)
+// 7. Run electron-builder under the Node executable provisioned by the CI
+// packaging workflow. Bun remains the workflow orchestrator, but electron-builder
+// and its native rebuild tooling require Node's runtime and module semantics.
 // ---------------------------------------------------------------------------
 
 const extraArgs = process.argv.slice(2);
-console.log("[ci-package] Running electron-builder (npm fallback)...");
-execFileSync(process.execPath, [ebCli, "--publish", "never", ...extraArgs], {
+const nodeExecutable = process.platform === "win32" ? "node.exe" : "node";
+console.log(`[ci-package] Running electron-builder with ${nodeExecutable}...`);
+execFileSync(nodeExecutable, [ebCli, "--publish", "never", ...extraArgs], {
   cwd: desktopRoot,
   stdio: "inherit",
   env: { ...process.env, PATH: filteredPath },

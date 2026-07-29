@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Live verification: start a long codex turn, stop mid-flight,
  * confirm thread.status push -> in-flight tool rows get cancelled.

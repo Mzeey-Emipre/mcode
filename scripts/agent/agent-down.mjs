@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Stops only the processes recorded for the per-worktree agent runtime.
  */
@@ -17,9 +17,10 @@ import { stopRecordedPidFile } from "./runtime-processes.mjs";
  * Stops the agent runtime processes recorded under `.dev/pids`.
  *
  * @param {string} [repoRoot]
+ * @param {{ stop?: (pid: number, signal: NodeJS.Signals) => Promise<void> | void }} [options]
  * @returns {Promise<void>}
  */
-export async function agentDown(repoRoot = resolveRepoRoot()) {
+export async function agentDown(repoRoot = resolveRepoRoot(), options = {}) {
   const contract = readPortsFileForShutdown(repoRoot);
   if (contract?.seedLogin?.token) {
     try {
@@ -32,7 +33,7 @@ export async function agentDown(repoRoot = resolveRepoRoot()) {
     }
   }
 
-  stopRecordedRuntimePids(repoRoot);
+  await stopRecordedRuntimePids(repoRoot, options);
 }
 
 /**
@@ -54,8 +55,10 @@ function readPortsFileForShutdown(repoRoot) {
  * Stops only runtime PID files recorded under this worktree's `.dev/pids`.
  *
  * @param {string} [repoRoot]
+ * @param {{ stop?: (pid: number, signal: NodeJS.Signals) => Promise<void> | void }} [options]
+ * @returns {Promise<void>}
  */
-export function stopRecordedRuntimePids(repoRoot = resolveRepoRoot()) {
+export async function stopRecordedRuntimePids(repoRoot = resolveRepoRoot(), options = {}) {
   const paths = getRuntimePaths(repoRoot);
   if (!existsSync(paths.pidsDir)) return;
   const pidFiles = readdirSync(paths.pidsDir)
@@ -66,7 +69,7 @@ export function stopRecordedRuntimePids(repoRoot = resolveRepoRoot()) {
   for (const name of pidFiles) {
     const pidFile = join(paths.pidsDir, name);
     try {
-      stopRecordedPidFile(pidFile, { repoRoot });
+      await stopRecordedPidFile(pidFile, { repoRoot, stop: options.stop });
     } catch (error) {
       if (error?.code !== "ENOENT") {
         console.warn(`[agent:down] ${error instanceof Error ? error.message : String(error)}`);

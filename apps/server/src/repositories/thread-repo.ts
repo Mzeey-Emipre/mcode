@@ -46,6 +46,14 @@ interface ThreadRow {
   has_file_changes: number;
 }
 
+/** Persisted delegation provenance attached to a destination thread. */
+export interface ThreadDelegationLineageRecord {
+  coordinatorThreadId: string | null;
+  creatorTurnId: string | null;
+  creatorToolCallId: string | null;
+  creationKind: "thread_delegation" | null;
+}
+
 /** Normalizes legacy reasoning values and rejects corrupted persisted state at the DB boundary. */
 function parseStoredReasoningLevel(value: string | null): ReasoningLevel | null {
   if (value === null) return null;
@@ -189,11 +197,14 @@ export class ThreadRepo {
     };
   }
 
-  /** Find a thread by its primary key. Returns null if not found. */
-  findById(id: string): Thread | null {
+  /** Find a thread by its primary key, optionally constrained to one external owner. */
+  findById(id: string, options: { createdByIntegrationId?: string } = {}): Thread | null {
+    const ownershipClause = options.createdByIntegrationId === undefined
+      ? ""
+      : " AND created_by_integration_id = ?";
     const row = this.db
-      .prepare(`SELECT ${THREAD_COLUMNS} FROM threads WHERE id = ?`)
-      .get(id) as ThreadRow | undefined;
+      .prepare(`SELECT ${THREAD_COLUMNS} FROM threads WHERE id = ?${ownershipClause}`)
+      .get(id, ...(options.createdByIntegrationId === undefined ? [] : [options.createdByIntegrationId])) as ThreadRow | undefined;
 
     return row ? rowToThread(row) : null;
   }
@@ -246,11 +257,14 @@ export class ThreadRepo {
   search(opts: {
     query: string;
     filters?: { status?: string[]; provider?: string[] };
+    workspaceIds?: string[];
+    excludeThreadId?: string;
+    createdByIntegrationId?: string;
     sort?: { field: "updated_at" | "created_at" | "title"; direction: "asc" | "desc" };
     limit?: number;
   }): { threads: Thread[]; workspaces: { id: string; name: string; path: string }[] } {
     const clampedLimit = Math.max(1, Math.min(200, opts.limit ?? 100));
-    const conditions: string[] = ["t.deleted_at IS NULL"];
+    const conditions: string[] = ["t.deleted_at IS NULL", "w.deleted_at IS NULL"];
     const params: unknown[] = [];
 
     if (opts.query) {
@@ -279,6 +293,22 @@ export class ThreadRepo {
       params.push(...opts.filters.provider);
     }
 
+    if (opts.workspaceIds?.length) {
+      const placeholders = opts.workspaceIds.map(() => "?").join(", ");
+      conditions.push(`t.workspace_id IN (${placeholders})`);
+      params.push(...opts.workspaceIds);
+    }
+
+    if (opts.excludeThreadId) {
+      conditions.push("t.id != ?");
+      params.push(opts.excludeThreadId);
+    }
+
+    if (opts.createdByIntegrationId !== undefined) {
+      conditions.push("t.created_by_integration_id = ?");
+      params.push(opts.createdByIntegrationId);
+    }
+
     const sortField = opts.sort?.field ?? "updated_at";
     const sortDir = opts.sort?.direction ?? "desc";
     const ALLOWED_SORT_FIELDS = new Set(["updated_at", "created_at", "title"]);
@@ -286,7 +316,9 @@ export class ThreadRepo {
     if (!ALLOWED_SORT_FIELDS.has(sortField) || !ALLOWED_SORT_DIRS.has(sortDir)) {
       throw new Error(`Invalid sort parameters: ${sortField} ${sortDir}`);
     }
-    const orderBy = `t.${sortField} ${sortDir.toUpperCase()}`;
+    const orderBy = sortField === "updated_at" && sortDir === "desc"
+      ? "t.updated_at DESC, t.id ASC"
+      : `t.${sortField} ${sortDir.toUpperCase()}`;
 
     const threadCols = THREAD_COLUMNS.split(", ").map((c) => `t.${c}`).join(", ");
     const sql = `
@@ -646,6 +678,64 @@ export class ThreadRepo {
         id,
       );
     return result.changes > 0;
+  }
+
+  /** Read persisted delegation provenance without exposing raw database columns. */
+  findDelegationLineage(id: string): ThreadDelegationLineageRecord | null {
+    const row = this.db.prepare(
+      "SELECT delegation_coordinator_thread_id, delegation_creator_turn_id, delegation_creator_tool_call_id, delegation_creation_kind FROM threads WHERE id = ?",
+    ).get(id) as {
+      delegation_coordinator_thread_id: string | null;
+      delegation_creator_turn_id: string | null;
+      delegation_creator_tool_call_id: string | null;
+      delegation_creation_kind: string | null;
+    } | undefined;
+    if (!row) return null;
+    return {
+      coordinatorThreadId: row.delegation_coordinator_thread_id,
+      creatorTurnId: row.delegation_creator_turn_id,
+      creatorToolCallId: row.delegation_creator_tool_call_id,
+      creationKind: row.delegation_creation_kind === "thread_delegation" ? "thread_delegation" : null,
+    };
+  }
+
+  /** List non-deleted delegated children for one coordinator thread. */
+  listDelegationChildren(coordinatorThreadId: string): Array<{
+    thread: Thread;
+    lineage: ThreadDelegationLineageRecord;
+  }> {
+    const rows = this.db.prepare(
+      `SELECT ${THREAD_COLUMNS},
+              t.delegation_coordinator_thread_id,
+              t.delegation_creator_turn_id,
+              t.delegation_creator_tool_call_id,
+              t.delegation_creation_kind
+       FROM threads t
+       WHERE t.deleted_at IS NULL AND t.delegation_coordinator_thread_id = ?
+       ORDER BY t.updated_at DESC, t.id ASC`,
+    ).all(coordinatorThreadId) as Array<ThreadRow & {
+      delegation_coordinator_thread_id: string | null;
+      delegation_creator_turn_id: string | null;
+      delegation_creator_tool_call_id: string | null;
+      delegation_creation_kind: string | null;
+    }>;
+    return rows.flatMap((row) => {
+      if (
+        row.delegation_creation_kind !== "thread_delegation"
+        || !row.delegation_coordinator_thread_id
+        || !row.delegation_creator_turn_id
+        || !row.delegation_creator_tool_call_id
+      ) return [];
+      return [{
+        thread: rowToThread(row),
+        lineage: {
+          coordinatorThreadId: row.delegation_coordinator_thread_id,
+          creatorTurnId: row.delegation_creator_turn_id,
+          creatorToolCallId: row.delegation_creator_tool_call_id,
+          creationKind: "thread_delegation" as const,
+        },
+      }];
+    });
   }
 
   /** Persist ownership for a thread created by a paired external integration. */

@@ -193,14 +193,22 @@ let vite;
 
 if (serverOnly) {
   let cleanupRequested = false;
+  let cleanupPromise;
   const cleanup = () => {
     cleanupRequested = true;
-    killProcessTree(server);
+    cleanupPromise ??= Promise.resolve(killProcessTree(server)).catch(() => undefined);
+    return cleanupPromise;
   };
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  process.on("SIGINT", () => {
+    void cleanup();
+  });
+  process.on("SIGTERM", () => {
+    void cleanup();
+  });
   server.on("exit", (code, signal) => {
-    process.exit(resolveServerOnlyExitCode({ code, signal, cleanupRequested }));
+    void cleanup().finally(() => {
+      process.exit(resolveServerOnlyExitCode({ code, signal, cleanupRequested }));
+    });
   });
   await new Promise(() => {});
 }
@@ -244,22 +252,28 @@ vite = spawn("bun", viteArgs, {
 });
 
 // Clean shutdown: kill both on exit
+let cleanupPromise;
 function cleanup() {
-  killProcessTree(server);
-  killProcessTree(vite);
+  cleanupPromise ??= Promise.all([
+    killProcessTree(server),
+    killProcessTree(vite),
+  ].map((termination) => Promise.resolve(termination).catch(() => undefined)));
+  return cleanupPromise;
 }
 
-process.on("SIGINT", cleanup);
-process.on("SIGTERM", cleanup);
+process.on("SIGINT", () => {
+  void cleanup();
+});
+process.on("SIGTERM", () => {
+  void cleanup();
+});
 server.on("exit", () => {
   if (!serverFailed) {
-    killProcessTree(vite);
-    process.exit();
+    void cleanup().finally(() => process.exit());
   }
 });
 vite.on("exit", () => {
-  killProcessTree(server);
-  process.exit();
+  void cleanup().finally(() => process.exit());
 });
 
 /**

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Tail today's mcode log file. Streams existing content then follows for new lines.
  * Press Ctrl+C to exit.

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Multi-scenario Codex app-server protocol capture for Mcode mapper coverage.
  *
@@ -6,7 +6,7 @@
  * `apps/server/src/providers/codex/__tests__/codex-protocol-coverage.test.ts`.
  *
  * Usage:
- *   node scripts/codex-protocol-capture.mjs <cwd> <out.ndjson>
+ *   bun scripts/codex-protocol-capture.mjs <cwd> <out.ndjson>
  *
  * Requires: `codex` on PATH, ChatGPT auth, network.
  */

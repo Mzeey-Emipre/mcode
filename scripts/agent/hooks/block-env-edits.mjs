@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Blocks direct edits to `.env` files from agent tool hooks.
  */

@@ -8,7 +8,8 @@ The codebase is split into four layers: a **contracts** package (shared types an
 
 Key architectural rules:
 
-- `server` has zero Electron imports. Pure Node.js.
+- `server` has zero Electron imports. It runs under Electron's Node.js runtime
+  when launched by the desktop shell or repository development scripts.
 - `desktop` has zero business logic. It cannot read the database or manage agents.
 - `web` never imports from `server` or `desktop`. It depends only on `contracts`.
 - `contracts` has zero runtime dependencies. Types and Zod schemas only.
@@ -17,11 +18,11 @@ Key architectural rules:
 
 | Layer | Technology |
 |-------|------------|
-| Runtime | Bun (package manager + script runner) |
+| Runtime | Bun (package manager + repository script runner) |
 | Monorepo | Turborepo |
 | Desktop | Electron 35, esbuild (main/preload) + Vite (renderer) |
-| Server | Node.js, tsyringe (DI), better-sqlite3, Claude Agent SDK |
-| Frontend | React 19, Vite, shadcn/ui, Tailwind CSS 4, Zustand |
+| Server | Electron Node.js, tsyringe (DI), better-sqlite3, Claude Agent SDK |
+| Frontend | Chromium renderer, React 19, Vite, shadcn/ui, Tailwind CSS 4, Zustand |
 | Contracts | Zod (schemas + type inference) |
 | Database | SQLite (WAL mode, better-sqlite3) |
 | Communication | WebSocket (JSON RPC + push events) |
@@ -36,7 +37,7 @@ packages/
   shared/                       Runtime utilities used across packages
 
 apps/
-  server/                       Standalone Node.js HTTP + WebSocket server
+  server/                       Electron Node.js HTTP + WebSocket backend
   web/                          React SPA (connects via WebSocket)
   desktop/                      Thin Electron shell (~500 lines)
 ```
@@ -93,7 +94,9 @@ packages/shared/src/
 
 ### apps/server
 
-Standalone Node.js process. Owns all business logic: database, AI providers, git operations, PTY management, and file serving.
+Standalone backend process launched with Electron's Node.js runtime. Owns all
+business logic: database, AI providers, git operations, PTY management, and
+file serving.
 
 ```text
 apps/server/src/
@@ -134,7 +137,9 @@ apps/server/src/
 
 ### apps/web
 
-React SPA. All business logic calls go through the WebSocket transport. Native desktop features (dialogs, clipboard, editors) use `window.desktopBridge` when running inside Electron.
+React SPA rendered by Chromium. All business logic calls go through the
+WebSocket transport. Native desktop features (dialogs, clipboard, editors) use
+`window.desktopBridge` when running inside Electron.
 
 ```text
 apps/web/src/
@@ -171,7 +176,7 @@ graph TB
         Proto["mcode-attachment://"]
     end
 
-    subgraph Server["Node.js Server Process"]
+    subgraph Server["Electron Node.js Backend Process"]
         WS["WebSocket Server<br/>(RPC + push events)"]
         HTTP["HTTP /health"]
         Services["Service Layer<br/>(tsyringe DI)"]
@@ -753,13 +758,15 @@ stateDiagram-v2
 
 ## 13. Development Setup
 
-**Prerequisites:** Bun, Git, Claude Code CLI on PATH.
+**Prerequisites:** Bun and Git. Install at least one supported provider CLI, or
+configure its executable path in Settings > Providers.
 
 ```bash
 git clone <repo-url>
 cd mcode
-bash scripts/setup-env.sh
+bun run setup
 bun install
+bun run doctor
 
 # Run the full Electron app (main + renderer)
 bun run dev:desktop

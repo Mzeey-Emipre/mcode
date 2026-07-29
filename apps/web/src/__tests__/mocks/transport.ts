@@ -142,6 +142,21 @@ export const mockTransport: McodeTransport = {
     source: "unsupported",
     reason: "unsupported-provider",
   }),
+  readThreadControl: vi.fn().mockResolvedValue({
+    status: "rejected",
+    identity: { workspaceId: "workspace-1", threadId: "thread-1" },
+    error: { code: "not_found", message: "Thread not found", retryable: false },
+  }),
+  sendThreadControl: vi.fn().mockResolvedValue({
+    status: "rejected",
+    threadId: "thread-1",
+    error: { code: "not_found", message: "Thread not found", retryable: false },
+  }),
+  stopThreadControl: vi.fn().mockResolvedValue({
+    status: "rejected",
+    threadId: "thread-1",
+    error: { code: "not_found", message: "Thread not found", retryable: false },
+  }),
   getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
   loadConversationPage: vi.fn(),
   createAndSendMessage: vi.fn(),

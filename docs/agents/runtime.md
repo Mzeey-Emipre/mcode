@@ -57,23 +57,25 @@ After cross-package changes (function signatures, shared interfaces), typecheck 
 
 | Tool | Default | Install |
 |------|---------|---------|
-| `bun` | Package manager + runtime | https://bun.sh |
+| `bun` | Package manager, repository script runner, and test runtime | https://bun.sh |
 | `git` | Version control | https://git-scm.com |
-| `node` | Script execution, exact version 24.18.0 | https://nodejs.org |
 
-> **Note:** Electron bundles its own Node.js binary for the renderer/server process.
-> The system `node` is only needed for running scripts at the repo root.
+Electron is installed by `bun install` and bundles the Node.js runtime used by
+the backend and native modules. Chromium is bundled by Electron and renders the
+web frontend. No system Node.js executable or version manager is required.
 
-The repository records its exact Node.js requirement in `.node-version`. Use
-your Node version manager to install and select Node.js 24.18.0 before running
-`bun install`, `bun run doctor`, or a verification command. Version managers
-that support `.node-version` can switch automatically when you enter the
-repository. The install and verification scripts stop before native or
-artifact work when the active executable does not match.
+CI desktop packaging is the only exception. The packaging jobs provision Node
+24.18.0 with `actions/setup-node` before running
+`bun apps/desktop/scripts/ci-package.mjs`. Bun remains the workflow orchestrator;
+the helper uses the provisioned Node executable for npm, electron-builder, and
+native-module rebuild compatibility. Local development and agent workflows need
+only Bun.
 
-> **Note:** `better-sqlite3` has two native bindings: one compiled for the system
-> Node ABI (used by root scripts) and one compiled for Electron's ABI (used by the
-> running server). Both are installed by `bun install` + `node scripts/postinstall.mjs`.
+`better-sqlite3` has one repository-managed native binding:
+`build/Release/better_sqlite3.electron.node`. Postinstall downloads and verifies
+that Electron-compatible binding when Electron is installed. Bun never loads
+the database binding; `dev:web`, `agent:up`, and desktop startup launch the
+backend with Electron's Node.js (`ELECTRON_RUN_AS_NODE=1`).
 
 ---
 
@@ -98,7 +100,7 @@ All variables are optional — defaults work for local development.
 | `MCODE_CLAUDE_PATH` | `claude` | Path to the Claude CLI binary |
 | `MCODE_GIT_PATH` | `git` | Path to the git binary |
 | `SNAPSHOT_MAX_AGE_DAYS` | `30` | Days before turn snapshot cleanup |
-| `SKIP_ELECTRON_REBUILD` | (unset) | Set to `1` to skip Electron ABI rebuild in postinstall |
+| `SKIP_ELECTRON_REBUILD` | (unset) | Set to `1` to skip Electron ABI download in postinstall |
 | `NODE_ENV` | `development` | Controls data dir suffix and log verbosity |
 | `MCODE_CODEX_TRACE` | (unset) | Set to `1` to log each Codex JSON-RPC notification and mapped `AgentEvent` summaries (for debugging sub-agent and narrative issues) |
 
@@ -284,5 +286,7 @@ cd mcode
 bun run setup       # Copy .env.example → .env, configure git hooks
 bun install         # Install dependencies (also builds Electron ABI binding)
 bun run doctor      # Verify all prerequisites pass
-bun run dev:web     # Start development server
+bun run --shell system agent:up  # Start isolated agent runtime
+# or
+bun run dev:web     # Start web development server
 ```

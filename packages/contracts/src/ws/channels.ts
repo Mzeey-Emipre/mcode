@@ -15,6 +15,7 @@ import {
 } from "../models/browser-automation.js";
 import { TurnFileEffectSummarySchema } from "../models/file-effect.js";
 import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
+import { ThreadObservedStateSchema } from "../thread-control.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
@@ -84,6 +85,12 @@ export const WS_CHANNELS = {
     model: z.string(),
     provider: z.string(),
   }),
+  /** Invalidates one canonical coordination projection after persisted control state changes. */
+  "thread.controlChanged": z.object({
+    workspaceId: z.string().min(1),
+    threadId: z.string().min(1),
+    state: ThreadObservedStateSchema(),
+  }).strict(),
   "thread.checkoutChanged": lazySchema(() =>
     z.object({
       threadId: z.string(),
