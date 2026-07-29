@@ -116,6 +116,18 @@ function makeSettingsService(cliPath = "") {
   };
 }
 
+/** Supplies the MCP connection required by provider send-turn fixtures. */
+function makeThreadControlMcp() {
+  return {
+    createHttpConnection: vi.fn().mockResolvedValue({
+      name: "mcode_internal_thread_control",
+      url: "http://127.0.0.1:43123/session",
+      headers: { Authorization: "Bearer fixture" },
+    }),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe("CopilotProvider bootstrap", () => {
   let origElectron: string | undefined;
 
@@ -246,7 +258,7 @@ describe("CopilotProvider bootstrap", () => {
         new Error("CLI server exited with code 1"),
       );
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
 
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
@@ -274,7 +286,7 @@ describe("CopilotProvider bootstrap", () => {
         new Error("Could not find @github/copilot"),
       );
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
 
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
@@ -382,7 +394,7 @@ async function runWithMockSession(
     mockSession.fire("session.idle");
   });
 
-  const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+  const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
   const events: AgentEvent[] = [];
   provider.on("event", (e: AgentEvent) => events.push(e));
 

@@ -156,7 +156,7 @@ describe("internal thread-control MCP workflow", () => {
       { index: 0, status: "created", workspaceId: destinationWorkspace.id, placement: { type: "new_worktree", worktreeId: "worktree-created" } },
       { index: 1, status: "rejected", error: { code: "not_found" } },
     ]);
-    const destinationThreadId = (batch.results[0] as { threadId: string }).threadId;
+    const destinationThreadId = (batch.results as Array<{ threadId: string }>)[0].threadId;
     expect(threads.findById(destinationThreadId)).toMatchObject({ workspace_id: destinationWorkspace.id, title: "Issue 965 child" });
     expect(threads.findDelegationLineage(destinationThreadId)).toEqual({
       coordinatorThreadId: sourceThread.id,
