@@ -61,6 +61,16 @@ vi.mock("../PreviewPanel", () => ({
 }));
 
 vi.mock("../browserAutomationWebExecutor", () => webExecutor);
+vi.mock("../webBrowserInteractionExecutor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../webBrowserInteractionExecutor")>();
+  return {
+    ...actual,
+    observeWebHumanInput: (
+      ownerDocument: Document,
+      onHumanInput: () => void,
+    ) => actual.observeWebHumanInput(ownerDocument, onHumanInput, () => true),
+  };
+});
 
 import { BrowserAutomationHost, isBrowserAutomationWebRuntimeEnabled } from "../BrowserAutomationHost";
 import { BrowserAutomationRecorder } from "../browserAutomationRecorder";

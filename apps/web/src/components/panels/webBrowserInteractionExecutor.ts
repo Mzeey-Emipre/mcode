@@ -8,9 +8,11 @@ import type {
 const MAX_TARGET_SCAN = 1_024;
 const MAX_METADATA_CHARS = 2_048;
 const SECRET_KEY = /^(?:access[_-]?token|api[_-]?key|auth|authorization|bearer|client[_-]?secret|code|cookie|credential|id[_-]?token|jwt|password|private[_-]?key|refresh[_-]?token|secret|session|session[_-]?id|signature|token)$/i;
-const SECRET_TEXT = /\b(?:access[_-]?token|api[_-]?key|authorization|bearer|cookie|credential|password|refresh[_-]?token|secret|session[_-]?id|token)\b\s*[:=]\s*([^\s,;]+)/gi;
+const SECRET_TEXT = /\b(access[_-]?token|api[_-]?key|authorization|bearer|cookie|credential|password|refresh[_-]?token|secret|session[_-]?id|token)(\s*[:=]\s*)([^,;!?\r\n]{1,512}?)(?=\s*(?:[,;!?\r\n]|\.\s+|$))/gi;
 const BEARER_TEXT = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
 const JWT_TEXT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
+const JWT_VALUE_TEXT = /\b(access[_-]?token|api[_-]?key|authorization|bearer|cookie|credential|password|refresh[_-]?token|secret|session[_-]?id|token)\b(\s*[:=]\s*)(eyJ[^\s,;]+)/gi;
+const OPAQUE_CREDENTIAL_FRAGMENT = /^(?:Bearer\s+)?eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/i;
 const URL_TEXT = /\bhttps?:\/\/[^\s"'<>]+/gi;
 const executorEvents = new WeakSet<Event>();
 
@@ -145,8 +147,9 @@ export function redactBrowserText(value: unknown): string {
   return String(value ?? "")
     .replace(URL_TEXT, (candidate) => redactBrowserLocation(candidate))
     .replace(BEARER_TEXT, "Bearer [REDACTED]")
+    .replace(JWT_VALUE_TEXT, (_match, key: string, separator: string) => `${key}${separator}[REDACTED]`)
     .replace(JWT_TEXT, "[REDACTED]")
-    .replace(SECRET_TEXT, (match, captured: string) => match.replace(captured, "[REDACTED]"))
+    .replace(SECRET_TEXT, (_match, key: string, separator: string) => `${key}${separator}[REDACTED]`)
     .slice(0, MAX_METADATA_CHARS);
 }
 
@@ -162,7 +165,17 @@ export function redactBrowserLocation(value: unknown): string {
         if (SECRET_KEY.test(key)) url.searchParams.set(key, "[REDACTED]");
       }
       if (url.hash.length > 1) {
-        const fragment = new URLSearchParams(url.hash.slice(1));
+        const rawFragment = url.hash.slice(1);
+        let decodedFragment = rawFragment;
+        try {
+          decodedFragment = decodeURIComponent(rawFragment);
+        } catch {
+          // Preserve the opaque fragment when it is not valid URL encoding.
+        }
+        if (OPAQUE_CREDENTIAL_FRAGMENT.test(decodedFragment.trim())) {
+          url.hash = "[REDACTED]";
+        }
+        const fragment = new URLSearchParams(rawFragment);
         let changed = false;
         for (const key of [...fragment.keys()]) {
           if (!SECRET_KEY.test(key)) continue;
@@ -186,23 +199,41 @@ function isNativeSubmitControl(element: HTMLElement, ownerDocument: Document): e
   return !["button", "checkbox", "color", "date", "datetime-local", "file", "hidden", "image", "month", "radio", "range", "reset", "submit", "time", "week"].includes(type);
 }
 
-function dispatchEnter(ownerDocument: Document, element: HTMLElement): boolean {
+function dispatchEnter(ownerDocument: Document, element: HTMLElement): { readonly defaultAllowed: boolean; readonly formSubmitRequested: boolean } {
   const view = ownerDocument.defaultView;
   if (!view || typeof view.KeyboardEvent !== "function") throw new Error("Browser iframe event constructors are unavailable");
   const init = { key: "Enter", code: "Enter", bubbles: true, cancelable: true, composed: true } as const;
-  const keydown = new view.KeyboardEvent("keydown", init);
-  markExecutorEvent(keydown);
-  const keydownAllowed = element.dispatchEvent(keydown);
-  let keypressAllowed = true;
-  if (keydownAllowed && !keydown.defaultPrevented) {
-    const keypress = new view.KeyboardEvent("keypress", init);
-    markExecutorEvent(keypress);
-    keypressAllowed = element.dispatchEvent(keypress);
+  const form = isNativeSubmitControl(element, ownerDocument) ? (element as HTMLInputElement).form : null;
+  const originalRequestSubmit = form?.requestSubmit;
+  let formSubmitRequested = false;
+  let wrappedRequestSubmit: HTMLFormElement["requestSubmit"] | null = null;
+  if (form && typeof originalRequestSubmit === "function") {
+    wrappedRequestSubmit = function(this: HTMLFormElement, submitter?: HTMLElement): void {
+      formSubmitRequested = true;
+      if (submitter === undefined) originalRequestSubmit.call(this);
+      else originalRequestSubmit.call(this, submitter);
+    };
+    form.requestSubmit = wrappedRequestSubmit;
   }
-  const keyup = new view.KeyboardEvent("keyup", init);
-  markExecutorEvent(keyup);
-  element.dispatchEvent(keyup);
-  return keydownAllowed && !keydown.defaultPrevented && keypressAllowed;
+  try {
+    const keydown = new view.KeyboardEvent("keydown", init);
+    markExecutorEvent(keydown);
+    const keydownAllowed = element.dispatchEvent(keydown);
+    let keypressAllowed = true;
+    if (keydownAllowed && !keydown.defaultPrevented) {
+      const keypress = new view.KeyboardEvent("keypress", init);
+      markExecutorEvent(keypress);
+      keypressAllowed = element.dispatchEvent(keypress);
+    }
+    const keyup = new view.KeyboardEvent("keyup", init);
+    markExecutorEvent(keyup);
+    element.dispatchEvent(keyup);
+    return { defaultAllowed: keydownAllowed && !keydown.defaultPrevented && keypressAllowed, formSubmitRequested };
+  } finally {
+    if (form && originalRequestSubmit && form.requestSubmit === wrappedRequestSubmit) {
+      form.requestSubmit = originalRequestSubmit;
+    }
+  }
 }
 
 function errorResponse(dispatch: BrowserAutomationHostDispatch, code: Extract<BrowserAutomationResponse, { ok: false }>["error"]["code"], message: string): BrowserAutomationResponse {
@@ -218,10 +249,19 @@ export function isExecutorGeneratedEvent(event: Event): boolean {
   return executorEvents.has(event);
 }
 
+/** True only for browser events carrying the platform's trusted-user signal. */
+export function isTrustedHumanInputEvent(event: Event): boolean {
+  return event.isTrusted === true;
+}
+
 /** Attach direct-user takeover observers to one same-origin document. */
-export function observeWebHumanInput(ownerDocument: Document, onHumanInput: () => void): () => void {
+export function observeWebHumanInput(
+  ownerDocument: Document,
+  onHumanInput: () => void,
+  isTrustedInput: (event: Event) => boolean = isTrustedHumanInputEvent,
+): () => void {
   const handler = (event: Event) => {
-    if (isExecutorGeneratedEvent(event)) return;
+    if (isExecutorGeneratedEvent(event) || !isTrustedInput(event)) return;
     onHumanInput();
   };
   ownerDocument.addEventListener("pointerdown", handler, true);
@@ -277,8 +317,9 @@ export async function executeWebInteraction(
       element.dispatchEvent(inputEvent);
       if (args.submit) {
         guardMutation(guard);
-        const defaultAllowed = dispatchEnter(ownerDocument, element);
-        if (defaultAllowed && isNativeSubmitControl(element, ownerDocument)) {
+        const enterResult = dispatchEnter(ownerDocument, element);
+        guardMutation(guard);
+        if (enterResult.defaultAllowed && !enterResult.formSubmitRequested && isNativeSubmitControl(element, ownerDocument)) {
           guardMutation(guard);
           const form = (element as HTMLInputElement).form;
           if (form && typeof form.requestSubmit === "function") form.requestSubmit();

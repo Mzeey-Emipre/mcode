@@ -6,6 +6,7 @@ import {
   redactBrowserLocation,
   redactBrowserText,
   resolveWebTarget,
+  isTrustedHumanInputEvent,
 } from "../webBrowserInteractionExecutor";
 
 function dispatch(operation: "click" | "type", args: Record<string, unknown>): BrowserAutomationHostDispatch {
@@ -184,6 +185,25 @@ describe("web browser interaction executor", () => {
     expect(submitted).not.toHaveBeenCalled();
   });
 
+  it("submits at most once when a page Enter handler requests submission", async () => {
+    document.body.innerHTML = '<form id="form"><input id="email" /></form>';
+    const form = document.querySelector("form")!;
+    const input = document.querySelector("input") as HTMLInputElement;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const submitted = vi.fn((event: SubmitEvent) => event.preventDefault());
+    form.addEventListener("submit", submitted);
+    input.addEventListener("keydown", () => form.requestSubmit());
+
+    const result = await executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: "#email" }, text: "typed", clear: true, submit: true, timeoutMs: 1000 }),
+      guard(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(submitted).toHaveBeenCalledOnce();
+  });
+
   it("redacts credential-shaped URL and title metadata while preserving useful identity", async () => {
     document.body.innerHTML = '<button id="save">Save</button>';
     const button = document.querySelector("button")!;
@@ -199,6 +219,10 @@ describe("web browser interaction executor", () => {
     expect(result).toMatchObject({ ok: true, result: { title: "Dashboard token: [REDACTED]" } });
     expect(redactBrowserLocation("https://user:pass@example.test/path?view=home&token=secret#next=ok&access_token=hidden")).toBe("https://example.test/path?view=home&token=%5BREDACTED%5D#next=ok&access_token=%5BREDACTED%5D");
     expect(redactBrowserText("Bearer abc.def password: secret")).toBe("Bearer [REDACTED] password: [REDACTED]");
+    expect(redactBrowserText("password: my secret")).toBe("password: [REDACTED]");
+    const fragmentToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMifQ.signature-value";
+    expect(redactBrowserLocation(`https://example.test/callback#${fragmentToken}`)).not.toContain(fragmentToken);
+    expect(redactBrowserLocation("https://example.test/callback#section-1")).toBe("https://example.test/callback#section-1");
     expect(JSON.stringify(result)).not.toContain("eyJheader.payloadxx.signaturexx");
   });
 
@@ -222,11 +246,18 @@ describe("web browser interaction executor", () => {
     expect(result).toMatchObject({ ok: false, error: { code: "OPERATION_CANCELLED" } });
   });
 
-  it("observes direct human input", () => {
+  it("ignores untrusted page events but recognizes trusted human input", () => {
     const onHumanInput = vi.fn();
     const dispose = observeWebHumanInput(document, onHumanInput);
     document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    expect(onHumanInput).toHaveBeenCalledOnce();
+    document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    expect(onHumanInput).not.toHaveBeenCalled();
     dispose();
+    const trustedDispose = observeWebHumanInput(document, onHumanInput, () => true);
+    document.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    expect(onHumanInput).toHaveBeenCalledOnce();
+    expect(isTrustedHumanInputEvent({ isTrusted: true } as Event)).toBe(true);
+    expect(isTrustedHumanInputEvent({ isTrusted: false } as Event)).toBe(false);
+    trustedDispose();
   });
 });
