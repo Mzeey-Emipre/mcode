@@ -29,8 +29,8 @@ describe("EntityToken command invocations", () => {
   });
 });
 
-describe("EntityToken capability references", () => {
-  it("renders rich plugin mentions as frameless inline references", () => {
+describe("EntityToken inline references", () => {
+  it("renders plugin mentions as frameless inline references", () => {
     const { container } = render(
       <EntityToken kind="plugin" label="@impeccable" tone="composer" />,
     );
@@ -43,7 +43,7 @@ describe("EntityToken capability references", () => {
     expect(token?.querySelector(".lucide-plug")).toBeInTheDocument();
   });
 
-  it("keeps file and agent mentions as padded chips", () => {
+  it("renders file and agent mentions with the same frameless style", () => {
     const { container } = render(
       <div>
         <EntityToken kind="file" label="@index.ts" tone="composer" filePath="index.ts" />
@@ -52,11 +52,18 @@ describe("EntityToken capability references", () => {
     );
 
     for (const kind of ["file", "agent"]) {
-      expect(container.querySelector(`[data-entity-token="${kind}"]`)).toHaveClass(
+      const token = container.querySelector(`[data-entity-token="${kind}"]`);
+
+      expect(token).toHaveClass("text-primary");
+      expect(token).not.toHaveClass(
         "h-5",
         "rounded-md",
         "px-1.5",
+        "bg-muted",
+        "bg-background",
+        "ring-1",
       );
+      expect(token?.querySelector(`[data-entity-icon="${kind}"]`)).toHaveClass("text-current");
     }
   });
 });
