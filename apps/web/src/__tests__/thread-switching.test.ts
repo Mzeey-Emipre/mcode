@@ -31,7 +31,7 @@ describe("Thread Switching", () => {
     vi.clearAllMocks();
   });
 
-  it("clears stale messages immediately when switching to a non-running thread", async () => {
+  it("keeps outgoing messages out of the target while switching to a non-running thread", async () => {
     // Arrange: Thread A has messages loaded
     const threadAMsg = createMockMessage({
       id: "a-1",
@@ -63,7 +63,7 @@ describe("Thread Switching", () => {
     // Act: switch to Thread B (don't await yet)
 const loadPromise = activateTestConversation("thread-b");
 
-    // Assert: messages cleared synchronously BEFORE fetch resolves
+    // Assert: target record owns the surface; outgoing messages never leak.
     const midState = useThreadStore.getState();
     expect(midState.currentThreadId).toBe("thread-b");
     expect(getTestActiveMessages()).toEqual([]);
@@ -84,7 +84,7 @@ const loadPromise = activateTestConversation("thread-b");
     expect(getTestActiveLoading()).toBe(false);
   });
 
-  it("clears stale messages immediately when switching to a running thread", async () => {
+  it("keeps outgoing messages out of the target while switching to a running thread", async () => {
     // Arrange: Thread A has messages, Thread B has a running agent
     const threadAMsg = createMockMessage({
       id: "a-1",
@@ -116,7 +116,7 @@ const loadPromise = activateTestConversation("thread-b");
     // Act: switch to running Thread B
     const loadPromise = activateTestConversation("thread-b");
 
-    // Assert: messages cleared even for a running thread
+    // Assert: target record owns the surface; outgoing messages never leak.
     const midState = useThreadStore.getState();
     expect(midState.currentThreadId).toBe("thread-b");
     expect(getTestActiveMessages()).toEqual([]);

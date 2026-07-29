@@ -10,7 +10,7 @@ import type { ConversationPage } from "@mcode/contracts";
  * Initial default thread cache capacity.
  * Overridden by the `performance.threadCacheSize` user setting at runtime.
  */
-export const RECORD_CACHE_SIZE = 15;
+export const RECORD_CACHE_SIZE = 25;
 
 /** Maximum messages retained across one thread's record and warm history page. */
 export const RECORD_MESSAGE_CACHE_SIZE = 100;
@@ -32,6 +32,8 @@ export interface ConversationCacheState {
   narrativeByMessage: ThreadRecord["narrativeByMessage"];
   answeredPlanMessageIds: ThreadRecord["answeredPlanMessageIds"];
   assistantResponseKeys: ThreadRecord["assistantResponseKeys"];
+  /** Auxiliary hydration freshness retained with the inactive conversation. */
+  lastHydratedAt?: ThreadRecord["lastHydratedAt"];
   /** Latest settled snapshot projection. Never populated from a live turn. */
   settledFileEffectSummary: ThreadRecord["fileEffectSummary"] | null;
 }
@@ -49,6 +51,7 @@ export function projectConversationCacheState(record: ThreadRecord): Conversatio
     narrativeByMessage: record.narrativeByMessage,
     answeredPlanMessageIds: record.answeredPlanMessageIds,
     assistantResponseKeys: record.assistantResponseKeys,
+    lastHydratedAt: record.lastHydratedAt,
     settledFileEffectSummary: record.fileEffectTurnId.length === 0
       ? record.fileEffectSummary
       : null,

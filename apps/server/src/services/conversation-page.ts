@@ -1,8 +1,10 @@
 import type {
   ConversationNarrativeBatch,
   ConversationPage,
+  ConversationTail,
   NarrativeEntry,
 } from "@mcode/contracts";
+import { CONVERSATION_TAIL_MAX_MESSAGES } from "@mcode/contracts";
 import type { MessageRepo } from "../repositories/message-repo.js";
 import type { NarrativeStore } from "./narrative-store.js";
 import type { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo.js";
@@ -12,6 +14,11 @@ export interface ConversationPageDeps {
   messageRepo: MessageRepo;
   narrativeStore: NarrativeStore;
   planQuestionAnswersRepo: PlanQuestionAnswersRepo;
+}
+
+/** Dependencies needed to load a bounded conversation tail. */
+export interface ConversationTailDeps {
+  messageRepo: MessageRepo;
 }
 
 /** Groups flat narrative entries into the legacy per-message payload shape. */
@@ -61,5 +68,31 @@ export function loadConversationPage(
     answeredPlanMessageIds:
       deps.planQuestionAnswersRepo.listAnsweredForThread(input.threadId),
     narrativeByMessage: groupNarrativeEntriesByMessage(entries),
+  };
+}
+
+/** Loads the newest visible messages without narrative or plan-answer queries. */
+export function loadConversationTail(
+  deps: ConversationTailDeps,
+  input: { threadId: string; limit: number },
+): ConversationTail {
+  const page = deps.messageRepo.listByThread(
+    input.threadId,
+    Math.min(CONVERSATION_TAIL_MAX_MESSAGES, input.limit),
+  );
+  const messages = page.messages.map((message) => ({
+    id: message.id,
+    thread_id: message.thread_id,
+    role: message.role,
+    content: message.content,
+    timestamp: message.timestamp,
+    sequence: message.sequence,
+  }));
+  return {
+    messages,
+    hasMore: page.hasMore,
+    ...(page.hasMore && messages.length > 0
+      ? { nextBefore: messages[0].sequence }
+      : {}),
   };
 }

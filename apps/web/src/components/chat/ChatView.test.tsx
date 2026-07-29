@@ -6,12 +6,21 @@ import type { Thread } from "@/transport/types";
 // Store mocks must be declared before importing the component under test.
 
 /** Holds the store snapshot backing both the hook selector and `getState()` (real Zustand API). */
-const { chatViewWorkspaceMockRef, chatViewThreadMockRef, chatViewTransportMock } = vi.hoisted(() => ({
+const {
+  chatViewWorkspaceMockRef,
+  chatViewThreadMockRef,
+  chatViewConnectionStatusRef,
+  chatViewGetTransportMock,
+  chatViewTransportMock,
+} = vi.hoisted(() => ({
   chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
   chatViewThreadMockRef: { current: null as Record<string, unknown> | null },
+  chatViewConnectionStatusRef: { current: "connected" as "connected" | "reconnecting" | "authFailed" },
+  chatViewGetTransportMock: vi.fn(),
   chatViewTransportMock: {
     subscribeThread: vi.fn(),
     unsubscribeThread: vi.fn(),
+    setThreadSubscriptions: vi.fn(),
   },
 }));
 
@@ -47,7 +56,7 @@ vi.mock("@/stores/threadStore", () => ({
 
 vi.mock("@/stores/connectionStore", () => ({
   useConnectionStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ status: "connected" }),
+    selector({ status: chatViewConnectionStatusRef.current }),
   ),
 }));
 
@@ -71,7 +80,7 @@ vi.mock("@/stores/composerDraftStore", () => ({
 }));
 
 vi.mock("@/transport", () => ({
-  getTransport: () => chatViewTransportMock,
+  getTransport: chatViewGetTransportMock,
 }));
 
 // Composer and MessageList have deep dependencies; stub them out.
@@ -160,7 +169,7 @@ function defaultWorkspaceState(overrides: Partial<{
   return {
     workspaces: [WORKSPACE],
     activeWorkspaceId: "ws-1",
-    activeThreadId: overrides.activeThreadId ?? thread.id,
+    activeThreadId: overrides.activeThreadId !== undefined ? overrides.activeThreadId : thread.id,
     pendingNewThread: false,
     threads: overrides.threads ?? [thread],
     loadWorkspaces: vi.fn(),
@@ -192,6 +201,26 @@ function setupWorkspaceMock(state: ReturnType<typeof defaultWorkspaceState>) {
   );
 }
 
+/** Keep the legacy per-thread transport path covered by the existing tests. */
+function disableAtomicSubscriptionTransport() {
+  Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+}
+
+/** Enable the atomic transport path and return its caller-boundary spy. */
+function enableAtomicSubscriptionTransport() {
+  const setThreadSubscriptions = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+    configurable: true,
+    writable: true,
+    value: setThreadSubscriptions,
+  });
+  return setThreadSubscriptions;
+}
+
 /** Produces the thread-store fields consumed by ChatView. */
 function defaultThreadState(overrides: Partial<{
   currentThreadId: string | null;
@@ -212,10 +241,14 @@ function defaultThreadState(overrides: Partial<{
 
 describe("ChatView - Thread Title Double-Click Rename", () => {
   beforeEach(() => {
+    chatViewConnectionStatusRef.current = "connected";
     chatViewTransportMock.subscribeThread.mockResolvedValue(undefined);
     chatViewTransportMock.unsubscribeThread.mockResolvedValue(undefined);
     chatViewTransportMock.subscribeThread.mockClear();
     chatViewTransportMock.unsubscribeThread.mockClear();
+    chatViewGetTransportMock.mockReset();
+    chatViewGetTransportMock.mockReturnValue(chatViewTransportMock);
+    disableAtomicSubscriptionTransport();
     setupWorkspaceMock(defaultWorkspaceState());
     chatViewThreadMockRef.current = defaultThreadState();
   });
@@ -308,13 +341,20 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.queryByTestId("chat-header-title-input")).not.toBeInTheDocument();
   });
 
-  it("swaps the thread shell before persisted history resolves", () => {
-    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: "thread-2" });
+  it("shows the selected thread shell before persisted history resolves", () => {
+    const selectedThread = makeThread({ id: "thread-2", title: "Thread 2" });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: selectedThread.id,
+      threads: [selectedThread],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: "thread-1" });
 
     render(<ChatView />);
 
-    expect(screen.getByTestId("chat-header-title")).toHaveTextContent("My Thread");
-    expect(screen.getByTestId("conversation-loading")).toBeVisible();
+    expect(screen.getByTestId("chat-header-title")).toHaveTextContent("Thread 2");
+    expect(screen.getByTestId("conversation-transition-shell")).toHaveTextContent("Thread 2");
+    expect(screen.getByTestId("conversation-transition-shell")).toHaveAttribute("data-thread-id", "thread-2");
+    expect(screen.queryByTestId("conversation-loading")).not.toBeInTheDocument();
     expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
   });
 
@@ -448,5 +488,224 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       expect(chatViewTransportMock.unsubscribeThread).toHaveBeenCalledTimes(2);
       expect(chatViewTransportMock.unsubscribeThread).toHaveBeenLastCalledWith(thread1.id);
     }, { timeout: 3000 });
+  });
+
+  it("replaces the full active and running thread set through the atomic transport", async () => {
+    const setThreadSubscriptions = enableAtomicSubscriptionTransport();
+    const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2", status: "active" });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread1.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread1.id,
+      runningThreadIds: new Set([thread2.id]),
+    });
+
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: ["thread-1", "thread-2"] });
+    });
+    expect(chatViewTransportMock.subscribeThread).not.toHaveBeenCalled();
+    expect(chatViewTransportMock.unsubscribeThread).not.toHaveBeenCalled();
+
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: thread1.id });
+    rerender(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: ["thread-1"] });
+    });
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+  });
+
+  it("coalesces repeated reconciliation while an atomic request is pending", async () => {
+    const requestResolvers: Array<() => void> = [];
+    const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve) => {
+      requestResolvers.push(resolve);
+    }));
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
+    });
+
+    chatViewThreadMockRef.current = defaultThreadState();
+    rerender(<ChatView />);
+    chatViewThreadMockRef.current = defaultThreadState();
+    rerender(<ChatView />);
+
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
+    requestResolvers[0]?.();
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+  });
+
+  it("clears a pending atomic set on unmount without retrying after it settles", async () => {
+    const requests: Array<{ resolve: () => void }> = [];
+    const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve) => {
+      requests.push({ resolve });
+    }));
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const { rerender, unmount } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: ["thread-1"] }));
+
+    setupWorkspaceMock({ ...defaultWorkspaceState(), activeThreadId: null, threads: [] });
+    rerender(<ChatView />);
+    unmount();
+
+    expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: [] });
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+
+    requests[0]?.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+  });
+
+  it("reconciles a newer atomic target after an older response and failed replacement", async () => {
+    const requests: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+    const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve, reject) => {
+      requests.push({ resolve, reject });
+    }));
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2", status: "active" });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: "thread-1",
+      threads: [makeThread(), thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      runningThreadIds: new Set([thread2.id]),
+    });
+    rerender(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(2, {
+        threadIds: ["thread-1", "thread-2"],
+      });
+    });
+
+    requests[0]?.resolve();
+    requests[1]?.reject(new Error("temporary atomic subscribe failure"));
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(3);
+      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(3, {
+        threadIds: ["thread-1", "thread-2"],
+      });
+    }, { timeout: 3000 });
+  });
+
+  it("retries a failed atomic replacement at the caller boundary", async () => {
+    const setThreadSubscriptions = enableAtomicSubscriptionTransport();
+    setThreadSubscriptions
+      .mockRejectedValueOnce(new Error("temporary atomic subscribe failure"))
+      .mockResolvedValue(undefined);
+
+    render(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(1, { threadIds: ["thread-1"] });
+      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(2, { threadIds: ["thread-1"] });
+    }, { timeout: 3000 });
+  });
+
+  it("does not let stale atomic failures consume the current target retry budget", async () => {
+    const requests: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+    const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve, reject) => {
+      requests.push({ resolve, reject });
+    }));
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2", status: "active" });
+    const thread3 = makeThread({ id: "thread-3", title: "Thread 3", status: "active" });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: "thread-1",
+      threads: [makeThread(), thread2, thread3],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      runningThreadIds: new Set([thread2.id]),
+    });
+    rerender(<ChatView />);
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(2));
+
+    chatViewThreadMockRef.current = defaultThreadState({
+      runningThreadIds: new Set([thread3.id]),
+    });
+    rerender(<ChatView />);
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(3));
+
+    requests[0]?.reject(new Error("stale D1 failure"));
+    requests[1]?.reject(new Error("stale D2 failure"));
+    requests[2]?.reject(new Error("current D3 failure"));
+
+    for (let requestIndex = 3; requestIndex < 7; requestIndex += 1) {
+      await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(requestIndex + 1), {
+        timeout: 3000,
+      });
+      requests[requestIndex]?.reject(new Error(`current retry ${requestIndex - 2} failure`));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1_700));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(7);
+  }, 10_000);
+
+  it("reconciles the complete atomic set after reconnecting", async () => {
+    const setThreadSubscriptions = enableAtomicSubscriptionTransport();
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
+      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({ threadIds: ["thread-1"] });
+    });
+
+    chatViewConnectionStatusRef.current = "reconnecting";
+    rerender(<ChatView />);
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
+
+    chatViewConnectionStatusRef.current = "connected";
+    rerender(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({ threadIds: ["thread-1"] });
+    });
+  });
+
+  it("does not resolve transport while unmounting without subscriptions", () => {
+    chatViewConnectionStatusRef.current = "reconnecting";
+    setupWorkspaceMock({ ...defaultWorkspaceState(), activeThreadId: null, threads: [] });
+    chatViewThreadMockRef.current = defaultThreadState();
+
+    const { unmount } = render(<ChatView />);
+    unmount();
+
+    expect(chatViewGetTransportMock).not.toHaveBeenCalled();
   });
 });

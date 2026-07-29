@@ -28,6 +28,8 @@ export {
 export type { ConversationCacheState } from "./record-cache";
 export { AuxiliaryHydrator } from "./auxiliary-hydrator";
 export type { AuxiliaryHydratorOptions, AuxiliaryHydratorDeps } from "./auxiliary-hydrator";
+export { scheduleDeferredWork } from "./deferred-work";
+export type { DeferredWorkHandle, DeferredWorkOptions } from "./deferred-work";
 export type {
   HydrateMode,
   ThreadHydratorOptions,

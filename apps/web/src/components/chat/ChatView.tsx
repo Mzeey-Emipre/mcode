@@ -13,7 +13,6 @@ import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -35,7 +34,6 @@ import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
 import { Button } from "@/components/ui/button";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
-import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -273,26 +271,31 @@ const THREAD_SUBSCRIPTION_RETRY_MAX_MS = 1_600;
 const THREAD_SUBSCRIPTION_MAX_RETRIES = 4;
 
 type ThreadSubscriptionAction = "subscribe" | "unsubscribe";
+type AtomicSubscriptionRequest = {
+  epoch: number;
+  signature: string;
+  id: number;
+};
 
-/** Keeps the conversation surface occupied while the latest persisted tail loads. */
-function ConversationLoadingState() {
+/** Keeps a cold switch target visible without rendering stale transcript content. */
+function ConversationTransitionState({
+  threadId,
+  threadTitle,
+}: {
+  threadId: string;
+  threadTitle: string;
+}) {
   return (
     <div
-      data-testid="conversation-loading"
+      data-testid="conversation-transition-shell"
+      data-thread-id={threadId}
       role="status"
-      aria-label="Loading conversation"
-      className="flex h-full items-end px-4 pb-6 sm:px-8"
+      aria-label={`Loading ${threadTitle}`}
+      className="flex h-full items-center justify-center px-4"
     >
-      <div className={`${PRIMARY_CONTENT_RAIL_CLASS} w-full space-y-5 motion-safe:animate-pulse`}>
-        <div className="ml-auto space-y-2">
-          <Skeleton className="ml-auto h-3 w-2/5 rounded bg-muted/55" />
-          <Skeleton className="ml-auto h-3 w-3/5 rounded bg-muted/40" />
-        </div>
-        <div className="space-y-2">
-          <Skeleton className="h-3 w-1/4 rounded bg-muted/55" />
-          <Skeleton className="h-3 w-4/5 rounded bg-muted/40" />
-          <Skeleton className="h-3 w-3/5 rounded bg-muted/40" />
-        </div>
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner size={16} />
+        <span>{threadTitle}</span>
       </div>
     </div>
   );
@@ -491,6 +494,9 @@ export function ChatView() {
   const subscriptionRetryAttemptRef = useRef(0);
   const subscriptionRetryExhaustedRef = useRef(false);
   const subscriptionTargetSignatureRef = useRef("");
+  const atomicSubscriptionRequestIdRef = useRef(0);
+  const atomicSubscriptionRequestRef = useRef<AtomicSubscriptionRequest | null>(null);
+  const pendingAtomicThreadIdsRef = useRef<Map<number, string[]>>(new Map());
   const subscriptionMountedRef = useRef(true);
   const [subscriptionReconcileVersion, setSubscriptionReconcileVersion] = useState(0);
 
@@ -524,6 +530,67 @@ export function ChatView() {
     if (connectionStatus !== "connected" || subscriptionRetryExhaustedRef.current) return;
 
     const epoch = subscriptionEpochRef.current;
+    const setThreadSubscriptions = getTransport().setThreadSubscriptions;
+    if (setThreadSubscriptions) {
+      const sortedThreadIds = Array.from(desired).sort();
+      const sentThreadIds = new Set(sortedThreadIds);
+      const confirmed = confirmedThreadIdsRef.current;
+      const alreadyApplied = confirmed.size === desired.size
+        && Array.from(confirmed).every((threadId) => desired.has(threadId));
+      const pending = atomicSubscriptionRequestRef.current;
+      if (alreadyApplied || (pending?.epoch === epoch && pending.signature === targetSignature)) return;
+      const requestId = atomicSubscriptionRequestIdRef.current + 1;
+      atomicSubscriptionRequestIdRef.current = requestId;
+      atomicSubscriptionRequestRef.current = {
+        epoch,
+        signature: targetSignature,
+        id: requestId,
+      };
+      pendingAtomicThreadIdsRef.current.set(requestId, sortedThreadIds);
+      void setThreadSubscriptions({ threadIds: sortedThreadIds }).then(() => {
+        if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
+        confirmedThreadIdsRef.current = sentThreadIds;
+        const latestDesired = desiredThreadIdsRef.current;
+        const responseIsCurrent = subscriptionTargetSignatureRef.current === targetSignature
+          && latestDesired.size === sentThreadIds.size
+          && Array.from(latestDesired).every((threadId) => sentThreadIds.has(threadId));
+        if (responseIsCurrent) {
+          subscriptionRetryAttemptRef.current = 0;
+          subscriptionRetryExhaustedRef.current = false;
+        }
+        if (!responseIsCurrent) {
+          setSubscriptionReconcileVersion((version) => version + 1);
+        }
+      }).catch(() => {
+        if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
+        const currentRequest = atomicSubscriptionRequestRef.current;
+        if (currentRequest?.epoch !== epoch || currentRequest.id !== requestId) return;
+        if (subscriptionTargetSignatureRef.current !== targetSignature) return;
+        if (subscriptionRetryAttemptRef.current >= THREAD_SUBSCRIPTION_MAX_RETRIES) {
+          subscriptionRetryExhaustedRef.current = true;
+          return;
+        }
+        const delay = Math.min(
+          THREAD_SUBSCRIPTION_RETRY_BASE_MS * (2 ** subscriptionRetryAttemptRef.current),
+          THREAD_SUBSCRIPTION_RETRY_MAX_MS,
+        );
+        subscriptionRetryAttemptRef.current += 1;
+        subscriptionRetryTimerRef.current = setTimeout(() => {
+          subscriptionRetryTimerRef.current = null;
+          if (subscriptionMountedRef.current) {
+            setSubscriptionReconcileVersion((version) => version + 1);
+          }
+        }, delay);
+      }).finally(() => {
+        pendingAtomicThreadIdsRef.current.delete(requestId);
+        if (atomicSubscriptionRequestRef.current?.epoch === epoch
+          && atomicSubscriptionRequestRef.current.id === requestId) {
+          atomicSubscriptionRequestRef.current = null;
+        }
+      });
+      return;
+    }
+
     const operations: Promise<boolean>[] = [];
     const startChange = (threadId: string, action: ThreadSubscriptionAction) => {
       const change = Symbol();
@@ -601,6 +668,7 @@ export function ChatView() {
     subscriptionMountedRef.current = true;
     return () => {
       subscriptionMountedRef.current = false;
+      const pendingAtomicThreadIds = Array.from(pendingAtomicThreadIdsRef.current.values()).flat();
       subscriptionEpochRef.current += 1;
       if (subscriptionRetryTimerRef.current !== null) {
         clearTimeout(subscriptionRetryTimerRef.current);
@@ -609,13 +677,22 @@ export function ChatView() {
       const threadIds = new Set([
         ...confirmedThreadIdsRef.current,
         ...desiredThreadIdsRef.current,
+        ...pendingAtomicThreadIds,
       ]);
-      for (const threadId of threadIds) {
-        void getTransport().unsubscribeThread(threadId).catch(() => {});
+      if (threadIds.size > 0) {
+        const setThreadSubscriptions = getTransport().setThreadSubscriptions;
+        if (setThreadSubscriptions) {
+          void setThreadSubscriptions({ threadIds: [] }).catch(() => {});
+        } else {
+          for (const threadId of threadIds) {
+            void getTransport().unsubscribeThread(threadId).catch(() => {});
+          }
+        }
       }
       confirmedThreadIdsRef.current.clear();
       desiredThreadIdsRef.current.clear();
       pendingThreadChangesRef.current.clear();
+      pendingAtomicThreadIdsRef.current.clear();
     };
   }, []);
 
@@ -789,7 +866,10 @@ export function ChatView() {
         style={{ paddingRight: overviewPaddingRight }}
       >
         {conversationLoading && !hasMessages && !isAgentRunning ? (
-          <ConversationLoadingState />
+          <ConversationTransitionState
+            threadId={activeThread.id}
+            threadTitle={activeThread.title || "Conversation"}
+          />
         ) : showFullConversationError ? (
           <ConversationErrorState error={sessionError ?? ""} />
         ) : showEmptyState ? (

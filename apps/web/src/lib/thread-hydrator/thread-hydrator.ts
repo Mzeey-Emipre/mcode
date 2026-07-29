@@ -27,8 +27,11 @@ import type {
 } from "./types";
 import { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
-import type { ConversationPage } from "@mcode/contracts";
+import type { ConversationPage, ConversationTail } from "@mcode/contracts";
 import { hasRememberedHistoryPosition } from "@/components/chat/scrollPositionMemory";
+import { recordThreadCommit } from "@/lib/thread-switch-telemetry";
+import { scheduleDeferredWork } from "./deferred-work";
+import type { DeferredWorkHandle } from "./deferred-work";
 
 interface PendingHistoryPrefetch {
   expectedEpoch: number;
@@ -193,6 +196,17 @@ function buildConversationPageSubset(
   };
 }
 
+function normalizeTailMessages(tail: ConversationTail): ConversationPage["messages"] {
+  return tail.messages.map((message) => ({
+    ...message,
+    cost_usd: null,
+    tokens_used: null,
+    tool_calls: null,
+    files_changed: null,
+    attachments: null,
+  }));
+}
+
 /** Latest messages fetched before the selected thread first paints. */
 export const MESSAGE_FETCH_SIZE = 2;
 
@@ -214,6 +228,8 @@ export class ThreadHydrator {
   private readonly activeHydrates = new Map<string, Promise<void>>();
   private readonly backgroundHydrates = new Map<string, Promise<void>>();
   private readonly pendingHistoryPrefetches = new Map<string, PendingHistoryPrefetch>();
+  private readonly deferredWork = new Map<string, DeferredWorkHandle>();
+  private readonly invalidationGenerations = new Map<string, number>();
 
   constructor(private readonly deps: ThreadHydratorDeps) {
     this.auxiliaryHydrator = new AuxiliaryHydrator({
@@ -249,6 +265,15 @@ export class ThreadHydrator {
     await this.hydrateActive(threadId, opts);
   }
 
+  private cancelDeferredForThread(threadId: string): void {
+    for (const [key, handle] of this.deferredWork) {
+      if (key === threadId || key.startsWith(`${threadId}:`)) {
+        handle.cancel();
+        this.deferredWork.delete(key);
+      }
+    }
+  }
+
   /** Retain an inactive resident transcript through the bounded conversation cache. */
   retainInactiveConversation(threadId: string): void {
     const state = this.deps.getState();
@@ -258,7 +283,19 @@ export class ThreadHydrator {
 
   /** Discard a stale cached conversation before an authoritative mutation. */
   invalidateConversation(threadId: string): void {
+    if (this.activeHydrates.has(threadId) || this.backgroundHydrates.has(threadId)) {
+      this.invalidationGenerations.set(
+        threadId,
+        (this.invalidationGenerations.get(threadId) ?? 0) + 1,
+      );
+    }
     evictCachedRecord(threadId);
+  }
+
+  private pruneInvalidationGeneration(threadId: string): void {
+    if (!this.activeHydrates.has(threadId) && !this.backgroundHydrates.has(threadId)) {
+      this.invalidationGenerations.delete(threadId);
+    }
   }
 
   /** Synchronize the current resident conversation into its bounded cache entry. */
@@ -328,6 +365,7 @@ export class ThreadHydrator {
       if (this.backgroundHydrates.get(threadId) === hydrate) {
         this.backgroundHydrates.delete(threadId);
       }
+      this.pruneInvalidationGeneration(threadId);
     });
     this.backgroundHydrates.set(threadId, hydrate);
     await hydrate;
@@ -390,6 +428,9 @@ export class ThreadHydrator {
   /** Active-thread load invoked from ChatView and workspaceStore. */
   private async hydrateActive(threadId: string, opts?: ThreadHydratorOptions): Promise<void> {
     const outgoingThreadId = this.deps.getState().currentThreadId;
+    if (outgoingThreadId && outgoingThreadId !== threadId) {
+      this.cancelDeferredForThread(outgoingThreadId);
+    }
     const outgoingHydrate = outgoingThreadId
       ? this.activeHydrates.get(outgoingThreadId)
       : undefined;
@@ -443,6 +484,7 @@ export class ThreadHydrator {
         this.activeHydrates.delete(threadId);
         this.discardInactiveLoadingRecord(threadId);
       }
+      this.pruneInvalidationGeneration(threadId);
     });
     this.activeHydrates.set(threadId, hydrate);
     await hydrate;
@@ -565,9 +607,10 @@ export class ThreadHydrator {
   ): void {
     const renderableCachedRecord = this.compactCachedRecordForRestore(threadId, cached);
     this.restoreFromCache(threadId, renderableCachedRecord, restoreOpts);
+    recordThreadCommit(threadId, "cache-restore");
     const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
     void this.refreshThreadGoal(threadId, expectedEpoch);
-    this.auxiliaryHydrator.hydrate(threadId, {
+    this.scheduleAuxiliaryHydration(threadId, expectedEpoch, {
       freshnessTtlMs: HYDRATION_TTL_MS,
       force: opts?.force,
       commitFileChangesToStore: true,
@@ -579,6 +622,26 @@ export class ThreadHydrator {
     ) {
       this.scheduleEarlierHistoryPrefetch(threadId, renderableCachedRecord);
     }
+  }
+
+  /** Run auxiliary fanout after the first paint, unless this selection is superseded. */
+  private scheduleAuxiliaryHydration(
+    threadId: string,
+    expectedEpoch: number,
+    options: Parameters<AuxiliaryHydrator["hydrate"]>[1],
+  ): void {
+    this.deferredWork.get(threadId)?.cancel();
+    const handle = scheduleDeferredWork(() => {
+      const state = this.deps.getState();
+      const record = getThreadRecord(state.records, threadId);
+      if (state.currentThreadId !== threadId || record.loadEpoch !== expectedEpoch) {
+        this.deferredWork.delete(threadId);
+        return;
+      }
+      this.auxiliaryHydrator.hydrate(threadId, options);
+      this.deferredWork.delete(threadId);
+    }, { maxDelayMs: 100 });
+    this.deferredWork.set(threadId, handle);
   }
 
   /** Keep cache-hit reconciliation bounded while retaining loaded history for upward pagination. */
@@ -733,6 +796,8 @@ export class ThreadHydrator {
   /** Prepare the live record for an active-thread load before the RPC settles. */
   private prepareActiveLoad(threadId: string): void {
     const { getState, setState } = this.deps;
+    this.deferredWork.get(threadId)?.cancel();
+    this.deferredWork.delete(threadId);
     const isRunning = getState().runningThreadIds.has(threadId);
 
     if (!isRunning) {
@@ -800,6 +865,7 @@ export class ThreadHydrator {
       this.prepareActiveLoad(threadId);
     }
     const expectedEpoch = getThreadRecord(getState().records, threadId).loadEpoch;
+    const expectedInvalidationGeneration = this.invalidationGenerations.get(threadId) ?? 0;
     const expectedConversationRevision = conversationRevision(
       getThreadRecord(getState().records, threadId),
     );
@@ -812,14 +878,43 @@ export class ThreadHydrator {
       const snapshotsPromise = shouldFetchSnapshots
         ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
         : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>);
-      const pageResult = await this.transport().loadConversationPage(
-        threadId,
-        commitOpts?.fetchLimit ?? MESSAGE_FETCH_SIZE,
-      );
+      const requestedLimit = commitOpts?.fetchLimit ?? MESSAGE_FETCH_SIZE;
+      const tailLoader = this.transport().loadConversationTail;
+      const usedTail = tailLoader != null && requestedLimit <= MESSAGE_FETCH_SIZE;
+      let pageResult: ConversationPage;
+      if (usedTail && tailLoader) {
+        const tail = await tailLoader(threadId, Math.min(requestedLimit, MESSAGE_FETCH_SIZE));
+        pageResult = {
+          messages: normalizeTailMessages(tail),
+          hasMore: tail.hasMore,
+          narrativeByMessage: {},
+        };
+      } else {
+        pageResult = await this.transport().loadConversationPage(threadId, requestedLimit);
+      }
 
       const stateAtCommit = getState();
       const recordAtCommit = getThreadRecord(stateAtCommit.records, threadId);
-      if (stateAtCommit.currentThreadId !== threadId || recordAtCommit.loadEpoch !== expectedEpoch) {
+      if (
+        stateAtCommit.currentThreadId !== threadId
+        || recordAtCommit.loadEpoch !== expectedEpoch
+        || (this.invalidationGenerations.get(threadId) ?? 0) !== expectedInvalidationGeneration
+      ) {
+        if (
+          stateAtCommit.currentThreadId === threadId
+          && recordAtCommit.loadEpoch === expectedEpoch
+        ) {
+          setState((state: ThreadHydratorWriteState) => {
+            const current = getThreadRecord(state.records, threadId);
+            if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return {};
+            return {
+              records: patchThreadRecord(state.records, threadId, {
+                loading: false,
+                isLoadingMore: false,
+              }),
+            };
+          });
+        }
         return;
       }
       if (conversationRevision(recordAtCommit) !== expectedConversationRevision) {
@@ -865,18 +960,80 @@ export class ThreadHydrator {
                 : {}),
             loading: false,
             isLoadingMore: false,
+            // Reserve the auxiliary freshness window with the conversation commit.
+            // The fanout itself is deferred so the first paint is not blocked.
+            lastHydratedAt: Date.now(),
             settings: this.deps.getWorkspaceThreadSettings(threadId),
           }),
         };
       });
+      recordThreadCommit(threadId, "network-fetch");
 
-      this.auxiliaryHydrator.hydrate(threadId, {
+      this.scheduleAuxiliaryHydration(threadId, expectedEpoch, {
         freshnessTtlMs: HYDRATION_TTL_MS,
         force: opts?.force ?? true,
         commitFileChangesToStore: true,
         expectedLoadEpoch: expectedEpoch,
         skipFileChangeSnapshots: true,
       });
+
+      let tailFollowupInvalidated = false;
+      if (usedTail) {
+        const postTailState = getState();
+        if (
+          postTailState.currentThreadId !== threadId
+          || getThreadRecord(postTailState.records, threadId).loadEpoch !== expectedEpoch
+          || (this.invalidationGenerations.get(threadId) ?? 0) !== expectedInvalidationGeneration
+        ) return;
+        const tailRevision = conversationRevision(getThreadRecord(postTailState.records, threadId));
+        const tailGeneration = this.invalidationGenerations.get(threadId) ?? 0;
+        try {
+          const narrativePage = await this.transport().loadConversationPage(
+            threadId,
+            MESSAGE_FETCH_SIZE,
+          );
+          const stateAtTailFollowup = getState();
+          const recordAtTailFollowup = getThreadRecord(stateAtTailFollowup.records, threadId);
+          if (
+            stateAtTailFollowup.currentThreadId !== threadId
+            || recordAtTailFollowup.loadEpoch !== expectedEpoch
+            || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
+            || conversationRevision(recordAtTailFollowup) !== tailRevision
+          ) {
+            tailFollowupInvalidated = true;
+          }
+          setState((state: ThreadHydratorWriteState) => {
+            const current = getThreadRecord(state.records, threadId);
+            if (
+              tailFollowupInvalidated
+              || state.currentThreadId !== threadId
+              || current.loadEpoch !== expectedEpoch
+              || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
+              || conversationRevision(current) !== tailRevision
+            ) return {};
+            const retained = new Set(current.messages.map((message) => message.id));
+            return {
+              records: patchThreadRecord(state.records, threadId, {
+                narrativeByMessage: Object.fromEntries(
+                  Object.entries(narrativePage.narrativeByMessage).filter(([id]) => retained.has(id)),
+                ),
+                answeredPlanMessageIds: new Set(
+                  (narrativePage.answeredPlanMessageIds ?? []).filter((id) => retained.has(id)),
+                ),
+              }),
+            };
+          });
+        } catch {
+          const stateAtTailFailure = getState();
+          const recordAtTailFailure = getThreadRecord(stateAtTailFailure.records, threadId);
+          tailFollowupInvalidated =
+            stateAtTailFailure.currentThreadId !== threadId
+            || recordAtTailFailure.loadEpoch !== expectedEpoch
+            || (this.invalidationGenerations.get(threadId) ?? 0) !== tailGeneration
+            || conversationRevision(recordAtTailFailure) !== tailRevision;
+          // First-paint tail remains usable when the narrative follow-up fails.
+        }
+      }
 
       const committed = getThreadRecord(getState().records, threadId);
       if (committed.planQuestionsStatus !== "pending") {
@@ -889,10 +1046,16 @@ export class ThreadHydrator {
         }
       }
 
-      cacheRecord(
-        threadId,
-        projectConversationCacheState(getThreadRecord(getState().records, threadId)),
-      );
+      const stateBeforeCache = getState();
+      const recordBeforeCache = getThreadRecord(stateBeforeCache.records, threadId);
+      if (
+        !tailFollowupInvalidated
+        && stateBeforeCache.currentThreadId === threadId
+        && recordBeforeCache.loadEpoch === expectedEpoch
+        && (this.invalidationGenerations.get(threadId) ?? 0) === expectedInvalidationGeneration
+      ) {
+        cacheRecord(threadId, projectConversationCacheState(recordBeforeCache));
+      }
       void snapshotsPromise.then((snapshots) => {
         this.applySnapshots(threadId, snapshots, expectedEpoch);
       });
@@ -925,7 +1088,7 @@ export class ThreadHydrator {
     if (hasPrefetchedHistoryPage(threadId, before)) return;
     const epoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
     const prefetchKey = `${threadId}:${before}`;
-    setTimeout(() => {
+    const deferred = scheduleDeferredWork(() => {
       const state = this.deps.getState();
       if (state.currentThreadId !== threadId) return;
       if (getThreadRecord(state.records, threadId).loadEpoch !== epoch) return;
@@ -946,9 +1109,11 @@ export class ThreadHydrator {
         if (this.pendingHistoryPrefetches.get(prefetchKey) === prefetch) {
           this.pendingHistoryPrefetches.delete(prefetchKey);
         }
+        this.deferredWork.delete(prefetchKey);
       });
       this.pendingHistoryPrefetches.set(prefetchKey, prefetch);
-    }, 0);
+    }, { maxDelayMs: 100 });
+    this.deferredWork.set(prefetchKey, deferred);
   }
 
   /** Cache the older history window without attaching it to live React state. */

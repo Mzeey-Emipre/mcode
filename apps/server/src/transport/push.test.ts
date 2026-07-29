@@ -4,6 +4,7 @@ import {
   addClient,
   broadcast,
   broadcastTerminalData,
+  setClientThreadSubscriptions,
   subscribeClientToThread,
   unsubscribeClientFromThread,
   _resetForTest,
@@ -129,6 +130,45 @@ describe("broadcast", () => {
       type: "textDelta",
       threadId: "thread-a",
       delta: "hello",
+    });
+
+    expect(received).toHaveLength(0);
+  });
+
+  it("atomically replaces all thread subscriptions", () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    const ws = fakeOpenSocket(received);
+    addClient(ws);
+    subscribeClientToThread(ws, "thread-old");
+
+    setClientThreadSubscriptions(ws, ["thread-new"]);
+
+    broadcast("agent.event", {
+      type: "textDelta",
+      threadId: "thread-old",
+      delta: "old",
+    });
+    broadcast("agent.event", {
+      type: "textDelta",
+      threadId: "thread-new",
+      delta: "new",
+    });
+
+    expect(received).toHaveLength(1);
+    expect(JSON.parse(received[0].buf.toString("utf-8")).data.threadId).toBe("thread-new");
+  });
+
+  it("clears all thread subscriptions when replacing with an empty set", () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    const ws = fakeOpenSocket(received);
+    addClient(ws);
+    subscribeClientToThread(ws, "thread-a");
+
+    setClientThreadSubscriptions(ws, []);
+    broadcast("agent.event", {
+      type: "textDelta",
+      threadId: "thread-a",
+      delta: "ignored",
     });
 
     expect(received).toHaveLength(0);

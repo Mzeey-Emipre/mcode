@@ -186,6 +186,21 @@ export type {
 } from "./models/conversation-page.js";
 
 export {
+  CONVERSATION_TAIL_MAX_MESSAGES,
+  CONVERSATION_TAIL_THREAD_ID_MAX_LENGTH,
+  ConversationTailMessageSchema,
+  ConversationTailParamsSchema,
+  ConversationTailSchema,
+  ConversationTailResultSchema,
+} from "./models/conversation-tail.js";
+export type {
+  ConversationTailMessage,
+  ConversationTailParams,
+  ConversationTail,
+  ConversationTailResult,
+} from "./models/conversation-tail.js";
+
+export {
   ToolCallRecordSchema,
   ToolCallStatusSchema,
   PROVIDER_AGENT_KEY_MAX_LENGTH,
@@ -688,12 +703,15 @@ export {
   RECAP_MAX_MESSAGES,
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
   RECAP_MAX_PREVIOUS_RECAP_CHARS,
+  MAX_THREAD_SUBSCRIPTIONS,
+  SetThreadSubscriptionsSchema,
 } from "./ws/methods.js";
 export type {
   WsMethodName,
   SendMessageInput,
   CreateAndSendInput,
   CreateAndSendResult,
+  SetThreadSubscriptionsInput,
 } from "./ws/methods.js";
 
 export { WS_CHANNELS } from "./ws/channels.js";

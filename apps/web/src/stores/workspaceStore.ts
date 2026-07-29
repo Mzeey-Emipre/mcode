@@ -27,6 +27,7 @@ import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode, Or
 import { sanitizeCustomBranchInput } from "@/lib/branch-name";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";
 import { readRememberedComposerMode } from "@/lib/composer-mode-preference";
+import { recordThreadSelection } from "@/lib/thread-switch-telemetry";
 
 /** Generate a short random branch name for auto-mode worktrees (e.g. `mcode-a1b2c3d4`). */
 function generateBranchId(): string {
@@ -350,8 +351,15 @@ interface WorkspaceState {
 
 /** Zustand store for workspace, thread, branch, and PR state management. */
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
+  let activationQueued = false;
   const reconcileSelectedConversation = () => {
-    void getConversationResidency().activate(get().activeThreadId, get().threads);
+    if (activationQueued) return;
+    activationQueued = true;
+    queueMicrotask(() => {
+      activationQueued = false;
+      const { activeThreadId, threads } = get();
+      void getConversationResidency().activate(activeThreadId, threads);
+    });
   };
 
   const applyOptimisticSuccess = (
@@ -1183,6 +1191,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
    * so it stays cleared across workspace switches and app restarts.
    */
   setActiveThread: (id) => {
+    if (id) recordThreadSelection(id);
     const thread = id ? get().threads.find((t) => t.id === id) : null;
     const isCompleted = thread?.status === "completed";
 

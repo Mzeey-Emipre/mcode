@@ -18,6 +18,22 @@ describe("settings.provider.enabled", () => {
   });
 });
 
+describe("settings.performance.threadCacheSize", () => {
+  it("defaults the thread cache to 25 entries", () => {
+    expect(getDefaultSettings().performance.threadCacheSize).toBe(25);
+    expect(SettingsSchema().parse({}).performance.threadCacheSize).toBe(25);
+  });
+
+  it("accepts bounded user overrides", () => {
+    expect(
+      SettingsSchema().parse({ performance: { threadCacheSize: 50 } }).performance.threadCacheSize,
+    ).toBe(50);
+    expect(
+      PartialSettingsSchema().parse({ performance: { threadCacheSize: 12 } }).performance?.threadCacheSize,
+    ).toBe(12);
+  });
+});
+
 describe("preview.memorySaver", () => {
   it("applies ADR 0002 defaults", () => {
     const s = SettingsSchema().parse({});

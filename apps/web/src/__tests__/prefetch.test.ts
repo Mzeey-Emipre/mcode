@@ -33,6 +33,7 @@ function cacheRecord(threadId: string, record: ThreadRecord): void {
 describe("prefetch", () => {
   let schedulePrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").schedulePrefetch;
   let cancelPrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").cancelPrefetch;
+  let prefetchOnPointerDown: typeof import("@/lib/thread-hydrator/prefetch-scheduler").prefetchOnPointerDown;
   let resetPrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").__resetPrefetchForTests;
 
   beforeEach(async () => {
@@ -55,6 +56,7 @@ describe("prefetch", () => {
     const mod = await import("@/lib/thread-hydrator/prefetch-scheduler");
     schedulePrefetch = mod.schedulePrefetch;
     cancelPrefetch = mod.cancelPrefetch;
+    prefetchOnPointerDown = mod.prefetchOnPointerDown;
     resetPrefetch = mod.__resetPrefetchForTests;
   });
 
@@ -63,14 +65,14 @@ describe("prefetch", () => {
     vi.useRealTimers();
   });
 
-  it("fires prefetch after 150ms debounce", async () => {
+  it("fires prefetch after 50ms debounce", async () => {
     schedulePrefetch("t1");
 
     // Not yet fired
     expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
 
     // Advance past debounce
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(50);
     expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", 100);
     expect(mockTransport.getMessages).not.toHaveBeenCalled();
 
@@ -83,7 +85,7 @@ describe("prefetch", () => {
     schedulePrefetch("t1");
     cancelPrefetch();
 
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(100);
     expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
   });
 
@@ -91,7 +93,7 @@ describe("prefetch", () => {
     cacheRecord("t1", makeRecord("t1"));
 
     schedulePrefetch("t1");
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(50);
 
     expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
   });
@@ -105,12 +107,12 @@ describe("prefetch", () => {
     );
 
     schedulePrefetch("t1");
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(50);
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
 
     // Schedule a second prefetch for the same thread while the first is in flight
     schedulePrefetch("t1");
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(50);
     // Should not fire a second RPC
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
 
@@ -129,7 +131,7 @@ describe("prefetch", () => {
     );
 
     schedulePrefetch("t1");
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(50);
 
     // Should not throw; the error is swallowed
     await vi.runAllTimersAsync();
@@ -138,16 +140,68 @@ describe("prefetch", () => {
     expect(getCachedRecord("t1")).toBeUndefined();
   });
 
+  it("prefetches immediately on pointer-down and cancels pending hover work", () => {
+    schedulePrefetch("t1");
+    vi.advanceTimersByTime(25);
+
+    prefetchOnPointerDown("t1");
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", 100);
+
+    vi.advanceTimersByTime(100);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+  });
+
   it("debounces rapid successive calls", () => {
     schedulePrefetch("t1");
-    vi.advanceTimersByTime(50);
+    vi.advanceTimersByTime(20);
     schedulePrefetch("t2");
-    vi.advanceTimersByTime(50);
+    vi.advanceTimersByTime(20);
     schedulePrefetch("t3");
 
     // Only the last one should fire after full debounce
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(50);
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
     expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t3", 100);
+  });
+
+  it("keeps rapid unique pointer prefetches within two shared slots", async () => {
+    const resolvers = new Map<string, (value: {
+      messages: ReturnType<typeof createMockMessage>[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void>();
+    vi.mocked(mockTransport.loadConversationPage).mockImplementation(
+      (threadId) =>
+        new Promise((resolve) => {
+          resolvers.set(threadId, resolve);
+        }),
+    );
+
+    prefetchOnPointerDown("t1");
+    prefetchOnPointerDown("t2");
+    prefetchOnPointerDown("t3");
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(2);
+
+    const page = (threadId: string) => ({
+      messages: [
+        createMockMessage({
+          id: `${threadId}-message`,
+          thread_id: threadId,
+          sequence: 1,
+        }),
+      ],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+    resolvers.get("t1")?.(page("t1"));
+    await vi.runAllTimersAsync();
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(3);
+
+    resolvers.get("t2")?.(page("t2"));
+    resolvers.get("t3")?.(page("t3"));
+    await vi.runAllTimersAsync();
   });
 });
