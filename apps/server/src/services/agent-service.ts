@@ -79,6 +79,7 @@ import { ScopedPreGrantService } from "./scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "./turn-error-policy.js";
 import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js";
+import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
 import type { TurnOutcome } from "./turn-outcome.js";
 
 /**
@@ -91,7 +92,12 @@ function escapeXml(s: string): string {
 
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
 
-/** Command accepted by {@link AgentService.sendMessage}, including service-only delivery metadata. */
+type RetryDispatchIdentity = Readonly<{
+  mutationReservationToken: string;
+  generation: number;
+}>;
+
+/** Command accepted by {@link AgentService.sendMessage}, including cross-thread provenance and mutation-reservation metadata. */
 export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "provider"> & {
   permissionMode?: PermissionMode | "default";
   provider?: ProviderId;
@@ -101,6 +107,14 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   providerWireOverride?: string;
   /** Server-assigned turn identity used by thread-control creation results. */
   sourceTurnId?: string;
+  /** Source thread identity for a cross-thread user message origin. */
+  sourceThreadId?: string;
+  /** Source provider identity for a cross-thread user message origin. */
+  sourceProviderId?: string;
+  /** Source turn identity for a cross-thread user message origin. */
+  originSourceTurnId?: string;
+  /** Existing shared mutation reservation supplied by thread-control approval dispatch. */
+  mutationReservationToken?: string;
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -311,6 +325,10 @@ export class AgentService {
       resolvedProvider: import("@mcode/contracts").IAgentProvider;
       effectiveProvider: ProviderId;
       turnRequest: TurnRequest;
+      /** Shared mutation token required for every provider dispatch and release. */
+      mutationReservationToken: string;
+      /** Monotonic turn generation used to reject stale retry callbacks. */
+      generation: number;
       /**
        * The command side-effect rollback closure (`commandOutcome.onRollback`)
        * captured for this turn. Run only when the retry budget is exhausted so
@@ -348,6 +366,11 @@ export class AgentService {
   private pendingExitPlanMarkdown = new Map<string, string>();
   /** Prevents duplicate plan records when ExitPlanMode and plan-output both fire. */
   private planCapturedThisTurn = new Set<string>();
+  /** Reservation token attached to each active provider turn. */
+  private readonly activeMutationReservations = new Map<string, string>();
+  /** Monotonic turn generation per thread, including turns that failed setup. */
+  private readonly turnGenerations = new Map<string, number>();
+  private readonly mutationReservations: ThreadControlMutationReservationService;
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -384,7 +407,10 @@ export class AgentService {
     @inject(FileService) private readonly fileService?: FileService,
     @inject(delay(() => InternalThreadControlMcpRuntime))
     private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
+    @inject(ThreadControlMutationReservationService)
+    mutationReservations?: ThreadControlMutationReservationService,
   ) {
+    this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
     this.turnFileTracker = new TurnFileTracker(
       (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
       (threadId, turnId, summary) => {
@@ -507,9 +533,23 @@ export class AgentService {
     goalObjective,
     orchestrationMode,
     sourceTurnId: requestedSourceTurnId,
+    sourceThreadId: originSourceThreadId,
+    sourceProviderId: originSourceProviderId,
+    originSourceTurnId,
+    mutationReservationToken,
   }: SendMessageCommand): Promise<void> {
+    const provenance = [originSourceThreadId, originSourceTurnId, originSourceProviderId];
+    const hasAnyProvenance = provenance.some((value) => value !== undefined);
+    const hasCompleteProvenance = provenance.every((value) => typeof value === "string" && value.length > 0);
+    if (hasAnyProvenance && !hasCompleteProvenance) {
+      throw new Error("Cross-thread messages require a complete thread provenance tuple");
+    }
+
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
+    if (["completed", "errored", "failed", "interrupted", "stopped"].includes(thread.status)) {
+      throw new Error(`Cannot send message to terminal thread: ${threadId}`);
+    }
     // Use the thread's stored provider as authoritative fallback; only override
     // when the caller explicitly supplies a provider (new thread or explicit switch).
     const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
@@ -571,7 +611,12 @@ export class AgentService {
     // catch block runs onRollback as a belt-and-suspenders guard.
     let pendingDispatch: (() => void | Promise<void>) | null = null;
     let pendingRollback: (() => void | Promise<void>) | null = null;
-    const commandContext = {
+    let commandContext: {
+      threadId: string;
+      content: string;
+      provider: IAgentProvider;
+    };
+    commandContext = {
       threadId,
       content,
       provider: this.providerRegistry.resolve(effectiveProvider),
@@ -590,19 +635,36 @@ export class AgentService {
       content = commandOutcome.content;
     }
 
-    if (this.activeSessionIds.has(threadId)) {
+    let activeSlotReserved = this.reserveTurn(threadId);
+    if (!activeSlotReserved) {
       throw new Error(`Thread ${threadId} already has an active agent session`);
     }
-
-    let activeSlotReserved = false;
-    let commandDispatched = false;
+    let reservationToken: string | null = null;
     const releaseReservedSlot = () => {
       if (!activeSlotReserved) return;
       activeSlotReserved = false;
       if (this.activeSessionIds.delete(threadId)) {
         this.memoryPressureService.markIdle(threadId);
       }
+      if (reservationToken && this.activeMutationReservations.get(threadId) === reservationToken) {
+        this.activeMutationReservations.delete(threadId);
+      }
+      if (reservationToken) this.mutationReservations.release(threadId, reservationToken);
     };
+    reservationToken = mutationReservationToken
+      ? this.mutationReservations.owns(threadId, mutationReservationToken, "activeTurn")
+        ? mutationReservationToken
+        : null
+      : this.mutationReservations.reserve(threadId, "activeTurn");
+    if (!reservationToken) {
+      releaseReservedSlot();
+      throw new Error(`Thread ${threadId} already has a pending mutation`);
+    }
+    this.activeMutationReservations.set(threadId, reservationToken);
+    const generation = (this.turnGenerations.get(threadId) ?? 0) + 1;
+    this.turnGenerations.set(threadId, generation);
+
+    let commandDispatched = false;
 
     try {
       const cwd = this.gitService.resolveWorkingDir(
@@ -621,8 +683,6 @@ export class AgentService {
       }
 
       this.memoryPressureService.assertCanStartTurn();
-      this.activeSessionIds.add(threadId);
-      activeSlotReserved = true;
       this.memoryPressureService.markActive(threadId);
 
       // Compute next sequence number and persist user message
@@ -651,20 +711,36 @@ export class AgentService {
     // back too, keeping marker durability == answer durability.
     this.turnFinalizer.resetStreamingText(threadId);
 
+    const origin = originSourceThreadId && originSourceTurnId && originSourceProviderId
+      ? {
+          type: "thread" as const,
+          sourceThreadId: originSourceThreadId,
+          sourceTurnId: originSourceTurnId,
+          sourceProviderId: originSourceProviderId,
+        }
+      : undefined;
     this.db.transaction(() => {
-      this.messageRepo.create(
-        threadId,
-        "user",
-        persistedUserText,
-        nextSeq,
-        stored.length > 0 ? stored : undefined,
-        replyToMessageId,
-        quotedText,
-        undefined,
-        undefined,
-        validatedMentions.length > 0 ? validatedMentions : undefined,
-        previewAnnotations,
-      );
+      const createUserMessage = () => {
+        const args = [
+          threadId,
+          "user" as const,
+          persistedUserText,
+          nextSeq,
+          stored.length > 0 ? stored : undefined,
+          replyToMessageId,
+          quotedText,
+          undefined,
+          undefined,
+          validatedMentions.length > 0 ? validatedMentions : undefined,
+          previewAnnotations,
+        ] as const;
+        if (origin) {
+          this.messageRepo.create(...args, origin);
+        } else {
+          this.messageRepo.create(...args);
+        }
+      };
+      createUserMessage();
       if (markPlanAnswerForMessageId) {
         // INSERT OR IGNORE inside the repo skips PK collisions (idempotent
         // re-marking) but FK violations still abort the tx, which is exactly
@@ -830,6 +906,9 @@ export class AgentService {
     // block below runs the rollback so failures don't leave a hidden side
     // effect active. Only set for a rewrite outcome that supplied onDispatch.
     if (pendingDispatch !== null) {
+      if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
+        throw new Error("Thread mutation reservation is no longer owned");
+      }
       // Flag the attempt before running it so the catch-block rollback fires
       // even if the (possibly async) side effect itself throws. Awaited because
       // a command's onDispatch may be async (e.g. installing a goal), and the
@@ -902,6 +981,8 @@ export class AgentService {
       effectiveProvider,
       turnRequest: baseTurnRequest,
       pendingRollback,
+      mutationReservationToken: reservationToken,
+      generation,
     });
     for (;;) {
       const dispatch = this.turnRetryDispatchByThread.get(threadId);
@@ -912,7 +993,16 @@ export class AgentService {
       };
       dispatch.sendTurnInFlight = true;
       try {
-        await resolvedProvider.sendTurn(dispatch.turnRequest);
+        const sendTurn = this.mutationReservations.runIfOwned(
+          threadId,
+          reservationToken,
+          "activeTurn",
+          () => resolvedProvider.sendTurn(dispatch.turnRequest),
+        );
+        if (sendTurn === undefined) {
+          throw new Error("Thread mutation reservation is no longer owned");
+        }
+        await sendTurn;
         dispatch.sendTurnInFlight = false;
         logger.info("Message sent via provider", {
           threadId,
@@ -925,6 +1015,9 @@ export class AgentService {
         return;
       } catch (err) {
         dispatch.sendTurnInFlight = false;
+        if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
+          return;
+        }
         const retried = await this.runTransientTurnRetry(threadId, err);
         if (retried) return;
         await this.giveUpTransientTurnRetry(threadId, err);
@@ -1502,6 +1595,10 @@ export class AgentService {
     const sessionId = `mcode-${threadId}`;
     const thread = this.threadRepo.findById(threadId);
     const providerId = (thread?.provider ?? "claude") as ProviderId;
+    const reservationToken = this.activeMutationReservations.get(threadId);
+    if (reservationToken) {
+      this.mutationReservations.transition(threadId, reservationToken, "activeTurn", "stopping");
+    }
     // Tear down any armed transient-retry window so a scheduled stream retry
     // can't re-dispatch after the user stopped, and the suppression flags don't
     // outlive the turn (they would otherwise swallow the next turn's terminal
@@ -1528,6 +1625,7 @@ export class AgentService {
       this.activeSessionIds.delete(threadId);
       this.memoryPressureService.markIdle(threadId);
     }
+    this.releaseMutationReservation(threadId, reservationToken);
   }
 
   /** Return a thread's active open goal without starting provider work. */
@@ -1875,6 +1973,13 @@ export class AgentService {
     return this.activeSessionIds.size;
   }
 
+  /** Atomically reserve the first accepted send for one thread. */
+  reserveTurn(threadId: string): boolean {
+    if (this.activeSessionIds.has(threadId)) return false;
+    this.activeSessionIds.add(threadId);
+    return true;
+  }
+
   /** Get all currently active thread IDs. */
   activeThreadIds(): string[] {
     return [...this.activeSessionIds];
@@ -1909,9 +2014,50 @@ export class AgentService {
    * If this was the last active session, signals idle to MemoryPressureService.
    */
   private trackSessionEnded(threadId: string): void {
-    if (!this.activeSessionIds.has(threadId)) return;
-    this.activeSessionIds.delete(threadId);
-    this.memoryPressureService.markIdle(threadId);
+    if (this.activeSessionIds.delete(threadId)) {
+      this.memoryPressureService.markIdle(threadId);
+    }
+    const reservationToken = this.turnRetryDispatchByThread.get(threadId)?.mutationReservationToken;
+    this.releaseMutationReservation(threadId, reservationToken);
+  }
+
+  /** Release the shared mutation token without forcing provider-session teardown. */
+  private releaseMutationReservation(threadId: string, reservationToken?: string): void {
+    const currentToken = this.activeMutationReservations.get(threadId);
+    const token = reservationToken ?? currentToken;
+    if (token && currentToken === token) {
+      this.activeMutationReservations.delete(threadId);
+      this.mutationReservations.release(threadId, token);
+    }
+  }
+
+  /** Return a retry dispatch only while its token and generation still own the thread. */
+  private getCurrentRetryDispatch(
+    threadId: string,
+    identity?: RetryDispatchIdentity,
+  ): (typeof this.turnRetryDispatchByThread extends Map<string, infer T> ? T : never) | null {
+    const dispatch = this.turnRetryDispatchByThread.get(threadId);
+    if (!dispatch) return null;
+    if (identity
+      && (dispatch.mutationReservationToken !== identity.mutationReservationToken
+        || dispatch.generation !== identity.generation)) {
+      return null;
+    }
+    if (!this.mutationReservations.owns(threadId, dispatch.mutationReservationToken, "activeTurn")) {
+      return null;
+    }
+    return dispatch;
+  }
+
+  /** Snapshot the identity used to fence delayed retry work from a replacement turn. */
+  private retryDispatchIdentity(dispatch: {
+    mutationReservationToken: string;
+    generation: number;
+  }): RetryDispatchIdentity {
+    return {
+      mutationReservationToken: dispatch.mutationReservationToken,
+      generation: dispatch.generation,
+    };
   }
 
   /**
@@ -1961,10 +2107,17 @@ export class AgentService {
   /**
    * Clears the transient-retry window once the turn has finished or given up.
    */
-  private disarmTurnRetryWindow(threadId: string): void {
+  private disarmTurnRetryWindow(threadId: string, identity?: RetryDispatchIdentity): boolean {
+    const dispatch = this.turnRetryDispatchByThread.get(threadId);
+    if (identity && (!dispatch
+      || dispatch.mutationReservationToken !== identity.mutationReservationToken
+      || dispatch.generation !== identity.generation)) {
+      return false;
+    }
     this.retryingThreads.delete(threadId);
     this.endedSuppressionThreads.delete(threadId);
     this.turnRetryDispatchByThread.delete(threadId);
+    return true;
   }
 
   /**
@@ -2034,10 +2187,15 @@ export class AgentService {
    * Re-dispatches a turn against a fresh session after a transient failure.
    * Returns true when a retry `sendTurn` was issued and the outer loop should continue.
    */
-  private async runTransientTurnRetry(threadId: string, triggerErr: unknown): Promise<boolean> {
-    const dispatch = this.turnRetryDispatchByThread.get(threadId);
+  private async runTransientTurnRetry(
+    threadId: string,
+    triggerErr: unknown,
+    expectedIdentity?: RetryDispatchIdentity,
+  ): Promise<boolean> {
+    const dispatch = this.getCurrentRetryDispatch(threadId, expectedIdentity);
     if (!dispatch || dispatch.retryInFlight) return false;
     if (!this.turnErrorPolicy.shouldRetry(triggerErr, dispatch.attempt)) return false;
+    const identity = this.retryDispatchIdentity(dispatch);
 
     dispatch.retryInFlight = true;
     this.endedSuppressionThreads.add(threadId);
@@ -2050,6 +2208,7 @@ export class AgentService {
           error: evictErr instanceof Error ? evictErr.message : String(evictErr),
         });
       }
+      if (!this.getCurrentRetryDispatch(threadId, identity)) return false;
       if (dispatch.effectiveProvider === "claude" || dispatch.effectiveProvider === "codex") {
         this.threadControlMcp?.activate({
           sessionId: dispatch.sessionName,
@@ -2067,6 +2226,7 @@ export class AgentService {
           error: clearErr instanceof Error ? clearErr.message : String(clearErr),
         });
       }
+      if (!this.getCurrentRetryDispatch(threadId, identity)) return false;
       logger.warn("Transient send failed; retried against a fresh session", {
         threadId,
         attempt: dispatch.attempt,
@@ -2077,18 +2237,28 @@ export class AgentService {
       this.endedSuppressionThreads.delete(threadId);
       dispatch.sendTurnInFlight = true;
       try {
-        await dispatch.resolvedProvider.sendTurn(dispatch.turnRequest);
+        const sendTurn = this.mutationReservations.runIfOwned(
+          threadId,
+          identity.mutationReservationToken,
+          "activeTurn",
+          () => dispatch.resolvedProvider.sendTurn(dispatch.turnRequest),
+        );
+        if (sendTurn === undefined) return false;
+        await sendTurn;
         dispatch.sendTurnInFlight = false;
         return true;
       } catch (sendErr) {
         dispatch.sendTurnInFlight = false;
+        if (!this.getCurrentRetryDispatch(threadId, identity)) return false;
         if (this.turnErrorPolicy.shouldRetry(sendErr, dispatch.attempt)) {
-          return this.runTransientTurnRetry(threadId, sendErr);
+          return this.runTransientTurnRetry(threadId, sendErr, identity);
         }
         return false;
       }
     } finally {
-      dispatch.retryInFlight = false;
+      if (this.getCurrentRetryDispatch(threadId, identity)) {
+        dispatch.retryInFlight = false;
+      }
     }
   }
 
@@ -2099,12 +2269,14 @@ export class AgentService {
   private scheduleTransientStreamRetry(threadId: string, errorMessage: string): void {
     const dispatch = this.turnRetryDispatchByThread.get(threadId);
     if (!dispatch || dispatch.retryInFlight) return;
+    const identity = this.retryDispatchIdentity(dispatch);
     void (async () => {
+      if (!this.getCurrentRetryDispatch(threadId, identity)) return;
       if (this.turnErrorPolicy.shouldRetry(errorMessage, dispatch.attempt)) {
-        const retried = await this.runTransientTurnRetry(threadId, errorMessage);
+        const retried = await this.runTransientTurnRetry(threadId, errorMessage, identity);
         if (retried) return;
       }
-      await this.giveUpTransientTurnRetry(threadId, errorMessage);
+      await this.giveUpTransientTurnRetry(threadId, errorMessage, identity);
     })().catch((err) => {
       logger.error("Transient stream retry failed", {
         threadId,
@@ -2116,16 +2288,22 @@ export class AgentService {
   /**
    * Surfaces a terminal failure after the retry cap is exhausted.
    */
-  private async giveUpTransientTurnRetry(threadId: string, err: unknown): Promise<void> {
-    const dispatch = this.turnRetryDispatchByThread.get(threadId);
-    const effectiveProvider = dispatch?.effectiveProvider ?? "claude";
-    const pendingRollback = dispatch?.pendingRollback ?? null;
+  private async giveUpTransientTurnRetry(
+    threadId: string,
+    err: unknown,
+    identity?: RetryDispatchIdentity,
+  ): Promise<void> {
+    const dispatch = this.getCurrentRetryDispatch(threadId, identity);
+    if (!dispatch) return;
+    const effectiveProvider = dispatch.effectiveProvider;
+    const pendingRollback = dispatch.pendingRollback;
 
-    this.disarmTurnRetryWindow(threadId);
+    this.disarmTurnRetryWindow(threadId, this.retryDispatchIdentity(dispatch));
     const wasActive = this.activeSessionIds.delete(threadId);
     if (wasActive) {
       this.memoryPressureService.markIdle(threadId);
     }
+    this.releaseMutationReservation(threadId, dispatch.mutationReservationToken);
     // Roll the just-installed command side effect back so a failed send doesn't
     // leave a hidden gate (e.g. a Stop-hook goal) active on the next turn. Runs
     // only here, after the retry budget is spent; transient retries keep it.
@@ -2561,6 +2739,62 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.TurnStarted) {
+          const currentReservation = this.mutationReservations.get(event.threadId);
+          const thread = this.threadRepo.findById(event.threadId);
+          const stoppedThread = !thread
+            || ["paused", "stopped", "completed", "errored", "failed", "interrupted"].includes(thread.status);
+          if (currentReservation?.state === "stopping" || stoppedThread) {
+            logger.warn("Ignoring late TurnStarted for stopped thread", {
+              threadId: event.threadId,
+              reservationState: currentReservation?.state,
+              threadStatus: thread?.status,
+            });
+            if (currentReservation?.state !== "stopping") {
+              try {
+                const providerId = (thread?.provider ?? "claude") as ProviderId;
+                const provider = this.providerRegistry.resolve(providerId);
+                void Promise.resolve(provider.stopSession(`mcode-${event.threadId}`)).catch((error) => {
+                  logger.warn("Failed to stop late auto-resumed turn", {
+                    threadId: event.threadId,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                });
+              } catch (error) {
+                logger.warn("Failed to resolve provider for late auto-resumed turn", {
+                  threadId: event.threadId,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
+            }
+            return;
+          }
+          if (!this.activeMutationReservations.has(event.threadId)) {
+            const reservationToken = this.mutationReservations.reserve(event.threadId, "activeTurn");
+            if (!reservationToken) {
+              logger.warn("Aborting auto-resumed turn because a mutation reservation is owned", {
+                threadId: event.threadId,
+                reservationState: this.mutationReservations.get(event.threadId)?.state,
+              });
+              try {
+                const thread = this.threadRepo.findById(event.threadId);
+                const providerId = (thread?.provider ?? "claude") as ProviderId;
+                const provider = this.providerRegistry.resolve(providerId);
+                void Promise.resolve(provider.stopSession(`mcode-${event.threadId}`)).catch((error) => {
+                  logger.warn("Failed to stop blocked auto-resumed turn", {
+                    threadId: event.threadId,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                });
+              } catch (error) {
+                logger.warn("Failed to resolve provider for blocked auto-resumed turn", {
+                  threadId: event.threadId,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
+              return;
+            }
+            this.activeMutationReservations.set(event.threadId, reservationToken);
+          }
           if (!this.earlyFileTrackingEvents.delete(event)) {
             this.fileTrackingSetupByThread.delete(event.threadId);
             this.fileTrackingActivityByThread.delete(event.threadId);
@@ -2657,6 +2891,7 @@ export class AgentService {
           // broadcasting turn.persisted against the wrong (user) message id.
           this.disarmTurnRetryWindow(event.threadId);
           void this.finalizeTerminalTurn(event.threadId, "errored", "error");
+          this.releaseMutationReservation(event.threadId);
           // Turn-scoped cleanup of any one-shot handoff Read grant when the
           // first Turn errors out before completing normally.
           this.scopedPreGrant.clear(event.threadId);
@@ -3230,5 +3465,9 @@ ${userMessage}`;
       }
     }
     this.activeSessionIds.clear();
+    for (const [threadId, token] of this.activeMutationReservations) {
+      this.mutationReservations.release(threadId, token);
+    }
+    this.activeMutationReservations.clear();
   }
 }

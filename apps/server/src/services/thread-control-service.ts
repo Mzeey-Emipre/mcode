@@ -14,6 +14,10 @@ import {
   type ThreadControlError,
   type ThreadGetInput,
   type ThreadGetResult,
+  type ThreadSendInput,
+  type ThreadSendResult,
+  type ThreadStopInput,
+  type ThreadStopResult,
   type ThreadObservedState,
   type ThreadReadMessage,
   type ThreadSearchInput,
@@ -27,6 +31,8 @@ import {
   type WorktreeListResult,
   ThreadCreateBatchInputSchema,
   ThreadGetInputSchema,
+  ThreadSendInputSchema,
+  ThreadStopInputSchema,
   ThreadSearchInputSchema,
   ThreadWaitInputSchema,
   THREAD_GET_TRANSCRIPT_MAX_BYTES,
@@ -49,10 +55,16 @@ import { MessageRepo, type ThreadControlMessageRecord } from "../repositories/me
 import {
   ThreadControlApprovalRepo,
   type RecoverableThreadCreateApproval,
+  type PendingThreadSendApproval,
+  type PendingThreadStopApproval,
 } from "../repositories/thread-control-approval-repo.js";
 import { ThreadControlAuditRepo } from "../repositories/thread-control-audit-repo.js";
 import { ProviderRegistry } from "../providers/provider-registry.js";
 import { AgentService } from "./agent-service.js";
+import {
+  ThreadControlMutationReservationService,
+  type ThreadMutationReservationState,
+} from "./thread-control-mutation-reservation-service.js";
 import { GitService } from "./git-service.js";
 import { ModelCacheService } from "./model-cache-service.js";
 import { SettingsService } from "./settings-service.js";
@@ -72,6 +84,7 @@ export interface ThreadControlGitDiscovery {
 export class ThreadControlService {
   private capacityTail: Promise<void> = Promise.resolve();
   private readonly externalReservations = new Map<string, number>();
+  private readonly mutationReservations: ThreadControlMutationReservationService;
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaces: WorkspaceRepo,
@@ -86,7 +99,10 @@ export class ThreadControlService {
     @inject(ThreadControlApprovalRepo) private readonly approvals: ThreadControlApprovalRepo,
     @inject(ThreadControlAuditRepo) private readonly audit: ThreadControlAuditRepo,
     @inject("MessageRepo", { isOptional: true }) private readonly messages?: MessageRepo,
-  ) {}
+    @inject(ThreadControlMutationReservationService) mutationReservations?: ThreadControlMutationReservationService,
+  ) {
+    this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
+  }
 
   /** Search only registered workspaces; authority is intentionally not tool input. */
   workspaceSearch(_authority: InternalThreadControlAuthority, input: WorkspaceSearchInput): WorkspaceSearchResult {
@@ -289,10 +305,247 @@ export class ThreadControlService {
     return { results };
   }
 
+  /** Send one cross-thread message through the shared agent turn gate. */
+  async threadSend(
+    authority: ThreadControlAuthority,
+    input: ThreadSendInput,
+  ): Promise<ThreadSendResult> {
+    const validated = ThreadSendInputSchema().parse(input);
+    const target = this.findMutableThread(authority, validated.threadId, "send");
+    if (!target) {
+      this.auditMutation(authority, "thread_send", "not_found", validated.threadId);
+      return { status: "rejected", threadId: validated.threadId, error: this.error("not_found", "Thread not found", false) };
+    }
+    const observed = this.observedState(target);
+    if (observed.status === "running" || observed.status === "waiting_for_approval") {
+      const error = this.error("thread_busy", "Thread is already running", true);
+      this.auditMutation(authority, "thread_send", "thread_busy", target.id, target.workspace_id);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+    }
+    if (observed.status === "completed" || observed.status === "failed" || observed.status === "stopped") {
+      const error = this.error("conflict", "Thread is terminal", false);
+      this.auditMutation(authority, "thread_send", "conflict", target.id, target.workspace_id);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+    }
+    const execution = await this.resolveSendExecution(authority, target, validated);
+    if ("error" in execution) {
+      this.auditMutation(authority, "thread_send", execution.error.code, target.id, target.workspace_id);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error: execution.error };
+    }
+    if (execution.value.permissionMode === "supervised") {
+      const reservationToken = this.mutationReservations.reserve(target.id, "pendingApproval");
+      if (!reservationToken) {
+        const error = this.error("thread_busy", "Thread mutation is already pending", true);
+        this.auditMutation(authority, "thread_send", "thread_busy", target.id, target.workspace_id);
+        return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+      }
+      let approvalId: string;
+      try {
+        approvalId = this.approvals.createSend({
+          approvalId: reservationToken,
+          threadId: target.id,
+          workspaceId: target.workspace_id,
+          message: validated.message,
+          execution: execution.value,
+          turnId: randomUUID(),
+          callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
+          ...(authority.type === "internal"
+            ? {
+                sourceThreadId: authority.sourceThreadId,
+                sourceTurnId: authority.sourceTurnId,
+                sourceProviderId: authority.sourceProviderId,
+              }
+            : {}),
+        });
+      } catch (error) {
+        this.mutationReservations.release(target.id, reservationToken);
+        this.auditMutation(authority, "thread_send", "internal_error", target.id, target.workspace_id);
+        return {
+          status: "rejected",
+          workspaceId: target.workspace_id,
+          threadId: target.id,
+          error: this.error("internal_error", "Thread send approval could not be created", true),
+        };
+      }
+      if (approvalId !== reservationToken && !this.mutationReservations.replaceToken(target.id, reservationToken, approvalId)) {
+        this.mutationReservations.release(target.id, reservationToken);
+        this.auditMutation(authority, "thread_send", "internal_error", target.id, target.workspace_id);
+        return {
+          status: "rejected",
+          workspaceId: target.workspace_id,
+          threadId: target.id,
+          error: this.error("internal_error", "Thread send reservation could not be retained", true),
+        };
+      }
+      broadcast("permission.request", {
+        requestId: approvalId,
+        threadId: target.id,
+        toolName: "thread_send",
+        title: "Send a message to another thread",
+        input: { threadId: target.id, message: validated.message, execution: execution.value },
+      });
+      this.auditMutation(authority, "thread_send", "pending_approval", target.id, target.workspace_id, approvalId);
+      return {
+        status: "pending_approval",
+        workspaceId: target.workspace_id,
+        threadId: target.id,
+        approvalId,
+        state: { status: "waiting_for_approval", approvalId },
+      };
+    }
+    const reservationToken = this.mutationReservations.reserve(target.id, "activeTurn");
+    if (!reservationToken) {
+      const error = this.error("thread_busy", "Thread mutation is already pending", true);
+      this.auditMutation(authority, "thread_send", "thread_busy", target.id, target.workspace_id);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+    }
+    const turnId = randomUUID();
+    try {
+      await this.startTurn(target.id, validated.message, execution.value, turnId, authority.type === "internal" ? {
+        sourceThreadId: authority.sourceThreadId,
+        sourceTurnId: authority.sourceTurnId,
+        sourceProviderId: authority.sourceProviderId,
+      } : undefined, reservationToken);
+    } catch (error) {
+      this.mutationReservations.release(target.id, reservationToken);
+      const busy = error instanceof Error && /already has an active agent session/.test(error.message);
+      const controlError = busy
+        ? this.error("thread_busy", "Thread is already running", true)
+        : this.error("internal_error", "Thread send failed", true);
+      this.auditMutation(authority, "thread_send", controlError.code, target.id, target.workspace_id);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error: controlError };
+    }
+    this.auditMutation(authority, "thread_send", "accepted", target.id, target.workspace_id);
+    return {
+      status: "accepted",
+      workspaceId: target.workspace_id,
+      threadId: target.id,
+      turnId,
+      execution: execution.value,
+      state: { status: "starting" },
+    };
+  }
+
+  /** Stop one cross-thread target, using durable approval when supervised. */
+  async threadStop(
+    authority: ThreadControlAuthority,
+    input: ThreadStopInput,
+  ): Promise<ThreadStopResult> {
+    const validated = ThreadStopInputSchema().parse(input);
+    const target = this.findMutableThread(authority, validated.threadId, "stop");
+    if (!target) {
+      this.auditMutation(authority, "thread_stop", "not_found", validated.threadId);
+      return { status: "rejected", threadId: validated.threadId, error: this.error("not_found", "Thread not found", false) };
+    }
+    const observed = this.observedState(target);
+    if (observed.status === "stopped") {
+      this.auditMutation(authority, "thread_stop", "accepted", target.id, target.workspace_id);
+      return { status: "accepted", workspaceId: target.workspace_id, threadId: target.id, state: { status: "stopped" } };
+    }
+    if (observed.status === "waiting_for_approval") {
+      this.auditMutation(authority, "thread_stop", "thread_busy", target.id, target.workspace_id);
+      return {
+        status: "rejected",
+        workspaceId: target.workspace_id,
+        threadId: target.id,
+        error: this.error("thread_busy", "Thread mutation is already pending", true),
+      };
+    }
+    if (observed.status === "completed" || observed.status === "failed") {
+      const error = this.error("conflict", "Thread is terminal", false);
+      this.auditMutation(authority, "thread_stop", "conflict", target.id, target.workspace_id);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+    }
+    const execution: ResolvedExecution = {
+      providerId: target.provider || this.settings.get().model.defaults.provider,
+      modelId: target.model || this.settings.get().model.defaults.id,
+      permissionMode: authority.type === "internal" ? authority.permissionMode : "supervised",
+      interactionMode: "build",
+    };
+    if (execution.permissionMode === "supervised") {
+      const reservationToken = this.mutationReservations.reserve(target.id, "pendingApproval");
+      if (!reservationToken) {
+        const error = this.error("thread_busy", "Thread mutation is already pending", true);
+        this.auditMutation(authority, "thread_stop", "thread_busy", target.id, target.workspace_id);
+        return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+      }
+      let approvalId: string;
+      try {
+        approvalId = this.approvals.createStop({
+          approvalId: reservationToken,
+          threadId: target.id,
+          workspaceId: target.workspace_id,
+          execution,
+          turnId: randomUUID(),
+          callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
+          ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
+        });
+      } catch {
+        this.mutationReservations.release(target.id, reservationToken);
+        this.auditMutation(authority, "thread_stop", "internal_error", target.id, target.workspace_id);
+        return {
+          status: "rejected",
+          workspaceId: target.workspace_id,
+          threadId: target.id,
+          error: this.error("internal_error", "Thread stop approval could not be created", true),
+        };
+      }
+      if (approvalId !== reservationToken && !this.mutationReservations.replaceToken(target.id, reservationToken, approvalId)) {
+        this.mutationReservations.release(target.id, reservationToken);
+        this.auditMutation(authority, "thread_stop", "internal_error", target.id, target.workspace_id);
+        return {
+          status: "rejected",
+          workspaceId: target.workspace_id,
+          threadId: target.id,
+          error: this.error("internal_error", "Thread stop reservation could not be retained", true),
+        };
+      }
+      broadcast("permission.request", {
+        requestId: approvalId,
+        threadId: target.id,
+        toolName: "thread_stop",
+        title: "Stop another thread",
+        input: { threadId: target.id },
+      });
+      this.auditMutation(authority, "thread_stop", "pending_approval", target.id, target.workspace_id, approvalId);
+      return { status: "pending_approval", workspaceId: target.workspace_id, threadId: target.id, approvalId, state: { status: "waiting_for_approval", approvalId } };
+    }
+    const existingReservation = this.mutationReservations.get(target.id);
+    const reservationToken = existingReservation?.state === "activeTurn"
+      ? existingReservation.token
+      : this.mutationReservations.reserve(target.id, "stopping");
+    if (!reservationToken) {
+      const error = this.error("thread_busy", "Thread mutation is already pending", true);
+      this.auditMutation(authority, "thread_stop", "thread_busy", target.id, target.workspace_id);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+    }
+    if (existingReservation?.state === "activeTurn"
+      && !this.mutationReservations.transition(target.id, reservationToken, "activeTurn", "stopping")) {
+      const error = this.error("thread_busy", "Thread mutation is already pending", true);
+      this.auditMutation(authority, "thread_stop", "thread_busy", target.id, target.workspace_id);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+    }
+    try {
+      await this.stopTarget(target.id);
+      this.mutationReservations.release(target.id, reservationToken);
+    } catch {
+      this.mutationReservations.release(target.id, reservationToken);
+      this.auditMutation(authority, "thread_stop", "internal_error", target.id, target.workspace_id);
+      const error = this.error("internal_error", "Thread stop failed", true);
+      return { status: "rejected", workspaceId: target.workspace_id, threadId: target.id, error };
+    }
+    this.auditMutation(authority, "thread_stop", "accepted", target.id, target.workspace_id);
+    return { status: "accepted", workspaceId: target.workspace_id, threadId: target.id, state: { status: "stopped" } };
+  }
+
   /** Resolve a durable delegated-thread approval before provider permission handlers. */
   async respondToApproval(requestId: string, decision: PermissionDecision): Promise<boolean> {
     const pending = this.approvals.claim(requestId);
     if (!pending) return false;
+
+    if ("operation" in pending && (pending.operation === "thread_send" || pending.operation === "thread_stop")) {
+      return this.respondToMutationApproval(pending, decision);
+    }
 
     if (decision === "deny" || decision === "cancelled") {
       this.approvals.settle(requestId, "rejected");
@@ -351,6 +604,24 @@ export class ThreadControlService {
 
   /** Restore stranded approvals without replaying an ambiguous external side effect. */
   async recoverApprovals(): Promise<void> {
+    const pendingApprovals = this.approvals.listPending();
+    for (const approval of pendingApprovals) {
+      if ("invalid" in approval) {
+        logger.error("Thread-control pending approval payload is invalid during recovery", {
+          approvalId: approval.approvalId,
+          threadId: approval.threadId,
+        });
+        this.failRecovery(approval);
+        continue;
+      }
+      if (!("operation" in approval) || (approval.operation !== "thread_send" && approval.operation !== "thread_stop")) continue;
+      if (!this.mutationReservations.rehydrate(approval.threadId, approval.approvalId)) {
+        logger.error("Thread-control pending approval reservation conflict", {
+          approvalId: approval.approvalId,
+          threadId: approval.threadId,
+        });
+      }
+    }
     for (const approval of this.approvals.listProcessing()) {
       try {
         await this.recoverApproval(approval);
@@ -492,6 +763,21 @@ export class ThreadControlService {
       this.failRecovery(approval);
       return;
     }
+    if ("operation" in approval && (approval.operation === "thread_send" || approval.operation === "thread_stop")) {
+      if (approval.operationPhase === "pre_dispatch" && this.approvals.requeueDispatch(approval.approvalId)) {
+        const rehydrated = this.mutationReservations.rehydrate(approval.threadId, approval.approvalId);
+        if (!rehydrated) {
+          logger.error("Thread-control processing approval reservation conflict", {
+            approvalId: approval.approvalId,
+            threadId: approval.threadId,
+          });
+        }
+        this.writeRecoveryAudit(approval, "recovery-requeued");
+      } else {
+        this.failRecovery(approval);
+      }
+      return;
+    }
     if (approval.operationPhase === "pre_provision") {
       if (!this.approvals.requeue(approval.approvalId)) {
         this.failRecovery(approval);
@@ -526,7 +812,26 @@ export class ThreadControlService {
 
   /** Return durable thread-control approvals for frontend rehydration. */
   listPendingApprovals(threadId: string): PermissionRequest[] {
-    return this.approvals.listPendingByThread(threadId).map((approval) => ({
+    return this.approvals.listPendingByThread(threadId).map((approval) => {
+      if ("operation" in approval && approval.operation === "thread_send") {
+        return {
+          requestId: approval.approvalId,
+          threadId: approval.threadId,
+          toolName: "thread_send",
+          title: "Send a message to another thread",
+          input: { threadId: approval.threadId, message: approval.message, execution: approval.execution },
+        };
+      }
+      if ("operation" in approval && approval.operation === "thread_stop") {
+        return {
+          requestId: approval.approvalId,
+          threadId: approval.threadId,
+          toolName: "thread_stop",
+          title: "Stop another thread",
+          input: { threadId: approval.threadId },
+        };
+      }
+      return {
       requestId: approval.approvalId,
       threadId: approval.threadId,
       toolName: "thread_create_batch",
@@ -536,7 +841,8 @@ export class ThreadControlService {
         placement: approval.placement,
         execution: approval.execution,
       },
-    }));
+      };
+    });
   }
 
   private async createOne(
@@ -866,6 +1172,8 @@ export class ThreadControlService {
     prompt: string,
     execution: ResolvedExecution,
     sourceTurnId: string,
+    origin?: { sourceThreadId: string; sourceTurnId: string; sourceProviderId: string },
+    mutationReservationToken?: string,
   ): Promise<void> {
     await this.agentService.sendMessage({
       threadId,
@@ -875,7 +1183,155 @@ export class ThreadControlService {
       permissionMode: execution.permissionMode,
       interactionMode: execution.interactionMode,
       sourceTurnId,
+      ...(origin
+        ? {
+            sourceThreadId: origin.sourceThreadId,
+            originSourceTurnId: origin.sourceTurnId,
+            sourceProviderId: origin.sourceProviderId,
+          }
+        : {}),
+      ...(mutationReservationToken ? { mutationReservationToken } : {}),
     });
+  }
+
+  private async respondToMutationApproval(
+    pending: PendingThreadSendApproval | PendingThreadStopApproval,
+    decision: PermissionDecision,
+  ): Promise<boolean> {
+    const operation = pending.operation;
+    if (operation === "thread_send") {
+      const provenance = [pending.sourceThreadId, pending.sourceTurnId, pending.sourceProviderId];
+      const hasAnyProvenance = provenance.some((value) => value !== undefined);
+      const hasCompleteProvenance = provenance.every((value) => typeof value === "string" && value.length > 0);
+      if (hasAnyProvenance && !hasCompleteProvenance) {
+        this.approvals.settle(pending.approvalId, "failed");
+        this.mutationReservations.release(pending.threadId, pending.approvalId);
+        this.writeAudit({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation, outcome: "resumed-failed" }, { approvalId: pending.approvalId, threadId: pending.threadId });
+        broadcast("permission.resolved", { requestId: pending.approvalId, decision });
+        return true;
+      }
+    }
+    if (decision === "deny" || decision === "cancelled") {
+      this.approvals.settle(pending.approvalId, "rejected");
+      this.mutationReservations.release(pending.threadId, pending.approvalId);
+      this.writeAudit({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation, outcome: "denied" }, { approvalId: pending.approvalId, threadId: pending.threadId });
+      broadcast("permission.resolved", { requestId: pending.approvalId, decision });
+      return true;
+    }
+    try {
+      const nextState: ThreadMutationReservationState = operation === "thread_send" ? "activeTurn" : "stopping";
+      if (!this.mutationReservations.transition(pending.threadId, pending.approvalId, "pendingApproval", nextState)) {
+        throw new Error("Thread mutation reservation is no longer available");
+      }
+      this.requirePhase(pending.approvalId, "dispatching");
+      if (operation === "thread_send") {
+        await this.startTurn(
+          pending.threadId,
+          pending.message,
+          pending.execution,
+          pending.turnId,
+          pending.sourceThreadId && pending.sourceTurnId && pending.sourceProviderId
+            ? { sourceThreadId: pending.sourceThreadId, sourceTurnId: pending.sourceTurnId, sourceProviderId: pending.sourceProviderId }
+            : undefined,
+          pending.approvalId,
+        );
+      } else {
+        await this.stopTarget(pending.threadId);
+        this.mutationReservations.release(pending.threadId, pending.approvalId);
+      }
+      this.requirePhase(pending.approvalId, "dispatched");
+      this.approvals.settle(pending.approvalId, "approved");
+      this.writeAudit({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation, outcome: "resumed-approved" }, { approvalId: pending.approvalId, threadId: pending.threadId });
+      broadcast("permission.resolved", { requestId: pending.approvalId, decision });
+      return true;
+    } catch (error) {
+      logger.error("Thread-control mutation approval failed", { approvalId: pending.approvalId, threadId: pending.threadId, error: String(error) });
+      this.approvals.settle(pending.approvalId, "failed");
+      this.mutationReservations.release(pending.threadId, pending.approvalId);
+      this.writeAudit({ callerId: pending.callerId, sourceThreadId: pending.sourceThreadId, workspaceId: pending.workspaceId, threadId: pending.threadId, operation, outcome: "resumed-failed" }, { approvalId: pending.approvalId, threadId: pending.threadId });
+      broadcast("permission.resolved", { requestId: pending.approvalId, decision });
+      return true;
+    }
+  }
+
+  private findMutableThread(
+    authority: ThreadControlAuthority,
+    threadId: string,
+    operation: "send" | "stop",
+  ) {
+    const thread = this.threads.findById(threadId);
+    if (!thread || thread.deleted_at != null || !this.workspaces.findById(thread.workspace_id)) return null;
+    if (authority.type === "internal") return thread.id === authority.sourceThreadId ? null : thread;
+    if (!authority.allowedWorkspaceIds.includes(thread.workspace_id)) return null;
+    const projectScope = operation === "send" ? "threads:send-project" : "threads:stop-project";
+    const ownedScope = operation === "send" ? "threads:send-owned" : "threads:stop-owned";
+    if (authority.scopes.includes(projectScope)) return thread;
+    if (!authority.scopes.includes(ownedScope)) return null;
+    return this.threads.findById(threadId, { createdByIntegrationId: authority.integrationId });
+  }
+
+  private async resolveSendExecution(
+    authority: ThreadControlAuthority,
+    target: { provider: string; model: string | null; interaction_mode?: string | null; permission_mode?: string | null },
+    input: ThreadSendInput,
+  ): Promise<{ value: ResolvedExecution } | { error: ThreadControlError }> {
+    if (authority.type === "external" && input.permissionMode === "full" && !authority.scopes.includes("execution:full")) {
+      return { error: this.error("forbidden", "Full execution is not permitted", false) };
+    }
+    const providerId = target.provider || this.settings.get().model.defaults.provider;
+    try {
+      this.providers.resolve(providerId as ProviderId);
+    } catch {
+      return { error: this.error("invalid_provider", "Provider is not available", false) };
+    }
+    const modelId = target.model || this.settings.get().model.defaults.id;
+    try {
+      const available = await this.models.listModels(providerId);
+      if (!available.some((model) => model.id === modelId && model.policy?.state !== "disabled")) {
+        return { error: this.error("invalid_model", "Model is not available for the selected provider", false) };
+      }
+    } catch {
+      return { error: this.error("internal_error", "Provider model discovery failed", true) };
+    }
+    const permissionMode = authority.type === "internal"
+      ? authority.permissionMode
+      : input.permissionMode ?? (
+          !authority.scopes.includes("execution:full")
+            ? "supervised"
+            : this.settings.get().agent.defaults.permission
+        );
+    return {
+      value: {
+        providerId,
+        modelId,
+        permissionMode,
+        interactionMode: input.interactionMode ?? (target.interaction_mode === "plan" ? "plan" : "build"),
+      },
+    };
+  }
+
+  private async stopTarget(threadId: string): Promise<void> {
+    await this.agentService.stopSession(threadId);
+    this.threads.updateStatus(threadId, "interrupted");
+    broadcast("thread.status", { threadId, status: "interrupted" });
+  }
+
+  private auditMutation(
+    authority: ThreadControlAuthority,
+    operation: "thread_send" | "thread_stop",
+    outcome: string,
+    threadId?: string,
+    workspaceId?: string,
+    approvalId?: string,
+  ): void {
+    this.writeAudit({
+      callerId: authority.type === "internal" ? authority.userId : authority.integrationId,
+      ...(authority.type === "internal" ? { sourceThreadId: authority.sourceThreadId } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(threadId ? { threadId } : {}),
+      operation,
+      outcome,
+    }, { ...(threadId ? { threadId } : {}), ...(approvalId ? { approvalId } : {}) });
   }
 
   private requirePhase(approvalId: string, phase: "pre_provision" | "provisioning" | "provisioned" | "dispatching" | "dispatched"): void {
@@ -884,7 +1340,7 @@ export class ThreadControlService {
     }
   }
 
-  private failRecovery(approval: Pick<RecoverableThreadCreateApproval, "approvalId" | "threadId" | "workspaceId" | "callerId" | "sourceThreadId">): void {
+  private failRecovery(approval: RecoverableThreadCreateApproval): void {
     const identity = { approvalId: approval.approvalId, threadId: approval.threadId };
     try {
       if (!this.approvals.settle(approval.approvalId, "failed")) {
@@ -893,23 +1349,25 @@ export class ThreadControlService {
     } catch {
       logger.error("Could not fail recovered approval", identity);
     }
-    try {
-      if (!this.threads.updateStatus(approval.threadId, "errored")) {
+    if (approval.operation === "thread_create_batch") {
+      try {
+        if (!this.threads.updateStatus(approval.threadId, "errored")) {
+          logger.error("Could not mark recovered thread errored", identity);
+        }
+      } catch {
         logger.error("Could not mark recovered thread errored", identity);
       }
-    } catch {
-      logger.error("Could not mark recovered thread errored", identity);
     }
     this.writeRecoveryAudit(approval, "recovery-failed");
-    broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
+    if (approval.operation === "thread_create_batch") broadcast("thread.status", { threadId: approval.threadId, status: "errored" });
   }
 
   private writeRecoveryAudit(
-    approval: Pick<RecoverableThreadCreateApproval, "approvalId" | "threadId" | "workspaceId" | "callerId" | "sourceThreadId">,
+    approval: RecoverableThreadCreateApproval,
     outcome: "recovery-failed" | "recovery-requeued",
   ): void {
     this.writeAudit(
-      { callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: "thread_create_batch", outcome },
+      { callerId: approval.callerId, sourceThreadId: approval.sourceThreadId, workspaceId: approval.workspaceId, threadId: approval.threadId, operation: approval.operation ?? "unknown", outcome },
       { approvalId: approval.approvalId, threadId: approval.threadId },
     );
   }

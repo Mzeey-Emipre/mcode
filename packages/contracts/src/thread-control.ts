@@ -16,6 +16,8 @@ export const THREAD_CREATE_BATCH_MAX_ITEMS = 20;
 export const THREAD_CREATE_TITLE_MAX_LENGTH = 256;
 /** Maximum characters accepted for a delegated thread's initial prompt. */
 export const THREAD_CREATE_PROMPT_MAX_LENGTH = 100_000;
+/** Maximum characters accepted for a cross-thread follow-up message. */
+export const THREAD_SEND_MESSAGE_MAX_LENGTH = THREAD_CREATE_PROMPT_MAX_LENGTH;
 /** Maximum characters accepted for provider and model identifiers. */
 export const THREAD_CREATE_EXECUTION_ID_MAX_LENGTH = 128;
 /** Maximum characters accepted for a Git base ref or branch name. */
@@ -379,6 +381,73 @@ export const ThreadGetResultSchema = lazySchema(() => z.discriminatedUnion("stat
 ]));
 /** Internal thread_get result. */
 export type ThreadGetResult = z.infer<ReturnType<typeof ThreadGetResultSchema>>;
+
+/** Input accepted by the internal thread_send tool. */
+export const ThreadSendInputSchema = lazySchema(() => z.object({
+  threadId: opaqueId,
+  message: z.string().min(1).max(THREAD_SEND_MESSAGE_MAX_LENGTH),
+  interactionMode: InteractionModeSchema.optional(),
+  permissionMode: PermissionModeSchema.optional(),
+}).strict());
+/** Internal thread_send input. */
+export type ThreadSendInput = z.infer<ReturnType<typeof ThreadSendInputSchema>>;
+
+/** Result emitted by the internal thread_send tool. */
+export const ThreadSendResultSchema = lazySchema(() => z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("accepted"),
+    workspaceId: opaqueId,
+    threadId: opaqueId,
+    turnId: opaqueId,
+    execution: ResolvedExecutionSchema(),
+    state: z.object({ status: z.enum(["starting", "running"]) }).strict(),
+  }).strict(),
+  z.object({
+    status: z.literal("pending_approval"),
+    workspaceId: opaqueId,
+    threadId: opaqueId,
+    approvalId: opaqueId,
+    state: z.object({ status: z.literal("waiting_for_approval"), approvalId: opaqueId }).strict(),
+  }).strict(),
+  z.object({
+    status: z.literal("rejected"),
+    workspaceId: opaqueId.optional(),
+    threadId: opaqueId,
+    error: ThreadControlErrorSchema(),
+  }).strict(),
+]));
+/** Internal thread_send result. */
+export type ThreadSendResult = z.infer<ReturnType<typeof ThreadSendResultSchema>>;
+
+/** Input accepted by the internal thread_stop tool. */
+export const ThreadStopInputSchema = lazySchema(() => z.object({ threadId: opaqueId }).strict());
+/** Internal thread_stop input. */
+export type ThreadStopInput = z.infer<ReturnType<typeof ThreadStopInputSchema>>;
+
+/** Result emitted by the internal thread_stop tool. */
+export const ThreadStopResultSchema = lazySchema(() => z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("accepted"),
+    workspaceId: opaqueId,
+    threadId: opaqueId,
+    state: z.object({ status: z.literal("stopped") }).strict(),
+  }).strict(),
+  z.object({
+    status: z.literal("pending_approval"),
+    workspaceId: opaqueId,
+    threadId: opaqueId,
+    approvalId: opaqueId,
+    state: z.object({ status: z.literal("waiting_for_approval"), approvalId: opaqueId }).strict(),
+  }).strict(),
+  z.object({
+    status: z.literal("rejected"),
+    workspaceId: opaqueId.optional(),
+    threadId: opaqueId,
+    error: ThreadControlErrorSchema(),
+  }).strict(),
+]));
+/** Internal thread_stop result. */
+export type ThreadStopResult = z.infer<ReturnType<typeof ThreadStopResultSchema>>;
 
 /** Boundary accepted by thread_wait. */
 export const ThreadWaitUntilSchema = z.enum(["attention_or_terminal", "terminal"]);
