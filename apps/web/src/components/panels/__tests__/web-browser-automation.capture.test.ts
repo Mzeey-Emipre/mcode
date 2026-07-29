@@ -72,6 +72,24 @@ describe("web browser automation capture mechanics", () => {
     }
   });
 
+  it("reports bounded DOM clone truncation while preserving PNG output", async () => {
+    const iframe = iframeFixture();
+    iframe.contentDocument!.body.innerHTML = Array.from(
+      { length: 1_001 },
+      (_, index) => `<div>Node ${index}</div>`,
+    ).join("");
+    const result = await captureVisibleWebScreenshot({ iframe, maxWidth: 100, deadline: Date.now() + 1_000 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.mediaType).toBe("image/png");
+      expect(result.value.dataBase64.length).toBeGreaterThan(0);
+      expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalled();
+      expect(result.value.width).toBe(100);
+      expect(result.value.truncation).toMatchObject({ truncated: true, reason: "entry-limit" });
+      if (result.value.truncation.truncated) expect(result.value.truncation.originalCount).toBeGreaterThan(result.value.width);
+    }
+  });
+
   it("returns stable timeout and cancellation failures", async () => {
     const iframe = iframeFixture();
     const timedOut = await captureVisibleWebScreenshot({ iframe, maxWidth: 100, deadline: Date.now() - 1 });

@@ -281,11 +281,21 @@ export async function captureVisibleWebScreenshot(input: WebCaptureInput): Promi
     }
     const dataBase64 = encoded.slice("data:image/png;base64,".length);
     if (encodedBytes(dataBase64) > MAX_CAPTURE_DATA_BYTES) return failure("RESULT_TOO_LARGE");
+    const widthTruncated = currentWidth < requestedWidth;
+    const truncation = clone.value.truncated || widthTruncated
+      ? {
+          truncated: true as const,
+          originalCount: Math.max(
+            currentWidth + 1,
+            widthTruncated ? requestedWidth : 0,
+            clone.value.truncated ? clone.value.originalCount : 0,
+          ),
+          reason: "entry-limit" as const,
+        }
+      : { truncated: false as const };
     return { ok: true, value: {
       mediaType: "image/png", dataBase64, width: currentWidth, height: currentHeight,
-      truncation: currentWidth < requestedWidth
-        ? { truncated: true, originalCount: requestedWidth, reason: "entry-limit" }
-        : { truncated: false },
+      truncation,
     } };
   } catch { return failure("INTERNAL_ERROR"); }
 }
