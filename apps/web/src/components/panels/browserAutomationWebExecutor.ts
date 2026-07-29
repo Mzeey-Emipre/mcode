@@ -85,7 +85,21 @@ function findIframe(dispatch: BrowserAutomationHostDispatch): WebIframe | null {
     }
     return !node;
   });
-  return (visible ?? candidates[0] ?? null) as WebIframe | null;
+  return (visible ?? null) as WebIframe | null;
+}
+
+const CREDENTIAL_AUTOCOMPLETE_TOKENS = new Set([
+  "current-password",
+  "new-password",
+  "username",
+  "one-time-code",
+  "webauthn",
+]);
+
+function isCredentialValue(element: Element): boolean {
+  if (element.getAttribute("type")?.toLowerCase() === "password") return true;
+  const autocomplete = element.getAttribute("autocomplete")?.toLowerCase().split(/\s+/) ?? [];
+  return autocomplete.some((token) => CREDENTIAL_AUTOCOMPLETE_TOKENS.has(token));
 }
 
 function checkAbort(dispatch: BrowserAutomationHostDispatch, signal: AbortSignal): BrowserAutomationResponse | null {
@@ -271,7 +285,7 @@ function collectBoundedSnapshot(document: Document): BoundedSnapshotData {
           role: element.getAttribute("role")?.slice(0, 128) || element.tagName.toLowerCase(),
           accessibleName: typeof accessibleName === "string" ? accessibleName : accessibleName.text,
           ...(("value" in element && typeof (element as HTMLInputElement).value === "string" &&
-            element.getAttribute("type") !== "password" && element.getAttribute("autocomplete") !== "current-password")
+            !isCredentialValue(element))
             ? { value: (element as HTMLInputElement).value.slice(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT) }
             : {}),
           disabled: "disabled" in element && (element as HTMLButtonElement).disabled === true,

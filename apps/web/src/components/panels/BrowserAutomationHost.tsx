@@ -735,13 +735,15 @@ export function BrowserAutomationHost() {
         }
         if (!tabId) throw new Error("Browser tab could not be created or restored");
         const selectedTab = existingSet?.tabs.find((tab) => tab.id === tabId);
-        if (!selectedTab?.url) {
+        const requestedWebUrl = !bridge ? request.args.url : undefined;
+        const initialUrl = requestedWebUrl ?? selectedTab?.url ?? "about:blank";
+        if (!selectedTab?.url || requestedWebUrl) {
           usePreviewTabsStore.getState().updateTabChrome(request.threadId, tabId, {
             title: null,
-            url: "about:blank",
+            url: initialUrl,
             favicon: null,
           });
-          diff.setPreviewUrlForThread(request.threadId, "about:blank");
+          diff.setPreviewUrlForThread(request.threadId, initialUrl);
         }
         if (controller.signal.aborted) {
           throw controller.signal.reason;

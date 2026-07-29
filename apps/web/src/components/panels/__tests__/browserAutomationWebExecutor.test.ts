@@ -117,6 +117,37 @@ describe("web browser automation executor", () => {
     target.remove();
   });
 
+  it("does not expose credential autofill values while retaining ordinary input values", async () => {
+    const target = iframe();
+    target.contentDocument!.body.innerHTML = [
+      `<input value="ordinary">`,
+      `<input autocomplete="new-password" value="secret-new">`,
+      `<input autocomplete="username" value="secret-user">`,
+      `<input type="password" value="secret-password">`,
+    ].join("");
+    const result = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
+    expect(result).toMatchObject({ ok: true, result: { snapshot: {
+      elements: [
+        { role: "input", value: "ordinary" },
+        { role: "input" },
+        { role: "input" },
+        { role: "input" },
+      ],
+    } } });
+    const elements = (result as { result?: { snapshot?: { elements?: Array<{ value?: string }> } } }).result?.snapshot?.elements ?? [];
+    expect(elements.map((element) => element.value)).toEqual(["ordinary", undefined, undefined, undefined]);
+    target.remove();
+  });
+
+  it("fails closed when the matching iframe is hidden", async () => {
+    const target = iframe();
+    target.parentElement?.setAttribute("aria-hidden", "true");
+    const result = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
+    expect(result).toMatchObject({ ok: false, error: { code: "TAB_UNAVAILABLE" } });
+    target.parentElement?.removeAttribute("aria-hidden");
+    target.remove();
+  });
+
   it("rejects cross-origin navigation and DOM access with a typed error", async () => {
     const target = iframe();
     const rejected = await executeWebBrowserDispatch(dispatch("navigate", { url: "https://other.example/" }), new AbortController().signal);
