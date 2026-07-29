@@ -38,6 +38,20 @@ const CACHED_SNAPSHOT: ProviderCatalogSnapshot = {
   }],
 };
 
+const PLUGIN_ENTRY = {
+  kind: "plugin" as const,
+  identity: {
+    providerId: "codex" as const,
+    kind: "plugin" as const,
+    nativeId: "browser@openai-bundled",
+  },
+  name: "Browser",
+  description: "Control the in-app browser",
+  mentionPath: "plugin://browser@openai-bundled",
+  marketplaceName: "OpenAI",
+  capabilities: ["browser"],
+};
+
 describe("useFileAutocomplete async lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -174,6 +188,29 @@ describe("useFileAutocomplete async lifecycle", () => {
       "reviewer",
       "scout",
     ]);
+  });
+
+  it("exposes matching provider plugins in the mention picker", async () => {
+    const pluginSnapshot = { ...CACHED_SNAPSHOT, entries: [PLUGIN_ENTRY] };
+    getProviderCatalog.mockResolvedValueOnce(pluginSnapshot);
+    const { result } = renderHook(() => useFileAutocomplete({
+      workspaceId: "workspace-1",
+      providerId: "codex",
+    }));
+
+    await act(async () => {
+      await result.current.handleInputChange("@bro", 4);
+    });
+
+    expect(result.current.suggestions).toContainEqual({
+      id: "plugin:codex:browser@openai-bundled",
+      kind: "plugin",
+      group: "Plugins",
+      label: "Browser",
+      name: "Browser",
+      path: "plugin://browser@openai-bundled",
+      description: "Control the in-app browser",
+    });
   });
 
   it("fences a pending workspace refresh when the selected worktree cwd changes", async () => {

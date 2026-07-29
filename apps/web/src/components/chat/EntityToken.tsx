@@ -109,19 +109,24 @@ export function EntityToken({
   ...props
 }: EntityTokenProps) {
   const isCommandInvocation = kind === "command" || invocation;
-  const displayLabel = isCommandInvocation ? label.replace(/^\/+/, "") : label;
+  const isCapabilityReference = isCommandInvocation || kind === "plugin";
+  const displayLabel = isCommandInvocation
+    ? label.replace(/^\/+/, "")
+    : kind === "plugin"
+      ? label.replace(/^@+/, "")
+      : label;
 
   return (
     <span
       data-entity-token={kind}
       className={cn(
         "mx-px inline-flex max-w-full items-center gap-1 align-[-0.2em] font-sans text-[length:inherit] font-medium leading-none",
-        isCommandInvocation
+        isCapabilityReference
           ? "text-primary"
           : tone === "user"
             ? "h-5 rounded-md bg-background/45 px-1.5 text-accent-foreground ring-1 ring-inset ring-foreground/10"
             : "h-5 rounded-md bg-muted/70 px-1.5 text-foreground ring-1 ring-inset ring-border/70",
-        tone === "composer" && !isCommandInvocation && "bg-muted/80",
+        tone === "composer" && !isCapabilityReference && "bg-muted/80",
         className,
       )}
       {...props}
@@ -132,8 +137,8 @@ export function EntityToken({
         commandName={isCommandInvocation ? displayLabel : undefined}
         className={cn(
           "flex size-3.5 items-center justify-center text-muted-foreground",
-          isCommandInvocation && "text-current",
-          tone === "user" && !isCommandInvocation && "text-accent-foreground/60",
+          isCapabilityReference && "text-current",
+          tone === "user" && !isCapabilityReference && "text-accent-foreground/60",
           kind === "mcode" && tone !== "user" && "text-primary/80",
         )}
       />

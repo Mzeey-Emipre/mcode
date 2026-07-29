@@ -28,3 +28,35 @@ describe("EntityToken command invocations", () => {
     expect(container.querySelector('[data-entity-token="skill"]')).toHaveClass("text-[length:inherit]");
   });
 });
+
+describe("EntityToken capability references", () => {
+  it("renders rich plugin mentions as frameless inline references", () => {
+    const { container } = render(
+      <EntityToken kind="plugin" label="@impeccable" tone="composer" />,
+    );
+
+    const token = container.querySelector('[data-entity-token="plugin"]');
+
+    expect(token).toHaveClass("text-primary");
+    expect(token).not.toHaveClass("h-5", "rounded-md", "px-1.5", "bg-muted/80");
+    expect(token).toHaveTextContent("impeccable");
+    expect(token?.querySelector(".lucide-plug")).toBeInTheDocument();
+  });
+
+  it("keeps file and agent mentions as padded chips", () => {
+    const { container } = render(
+      <div>
+        <EntityToken kind="file" label="@index.ts" tone="composer" filePath="index.ts" />
+        <EntityToken kind="agent" label="@worker" tone="composer" />
+      </div>,
+    );
+
+    for (const kind of ["file", "agent"]) {
+      expect(container.querySelector(`[data-entity-token="${kind}"]`)).toHaveClass(
+        "h-5",
+        "rounded-md",
+        "px-1.5",
+      );
+    }
+  });
+});

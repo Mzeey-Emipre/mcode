@@ -101,7 +101,7 @@ function MentionedUserText({
   }
 
   if (cursor < text.length) nodes.push(text.slice(cursor));
-  return <span className="whitespace-pre-wrap">{nodes}</span>;
+  return <p className="mb-2 whitespace-pre-wrap leading-relaxed">{nodes}</p>;
 }
 
 /**
