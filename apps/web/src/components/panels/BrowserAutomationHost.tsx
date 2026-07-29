@@ -27,6 +27,11 @@ import {
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
+import {
+  executeWebInteraction,
+  observeWebHumanInput,
+  resolveSameOriginFrame,
+} from "./webBrowserInteractionExecutor";
 import { PreviewPanel, WEB_RUNTIME_PREVIEW_TAB_ID } from "./PreviewPanel";
 import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
 import { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
@@ -40,6 +45,11 @@ const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
 const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
 
 export { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
+
+function escapeWebSelector(value: string): string {
+  const escape = (globalThis as { CSS?: { escape?: (input: string) => string } }).CSS?.escape;
+  return escape ? escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
+}
 
 function webTargetIdentity(
   worktreeIdentity: string,
@@ -352,6 +362,8 @@ export function BrowserAutomationHost() {
   const registrationEpochRef = useRef(0);
   const inFlightRef = useRef(new Map<string, BrowserAutomationHostDispatch>());
   const requestAbortRef = useRef(new Map<string, AbortController>());
+  const webAbortRef = useRef(new Map<string, AbortController>());
+  const webObserverRef = useRef(new Map<string, () => void>());
   const bootstrapPendingRef = useRef(new Set<string>());
   const bootstrapAbortRef = useRef(new Map<string, AbortController>());
   const bootstrapRequestRef = useRef(new Map<string, BrowserAutomationRequest>());
@@ -375,6 +387,7 @@ export function BrowserAutomationHost() {
   ): void => {
     if (cancelledRef.current.has(key)) return;
     cancelledRef.current.add(key);
+    webAbortRef.current.get(key)?.abort(new Error(`Browser operation was cancelled: ${reason}`));
     recorderRef.current.cancel(dispatch);
     void window.desktopBridge?.preview?.automation?.cancel(dispatch.request.requestId);
     const lease = leaseOverride ?? leaseRef.current;
@@ -439,7 +452,8 @@ export function BrowserAutomationHost() {
       } : {}),
       capabilities: BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
-          const available = operation === "status" || operation === "open" || operation === "navigate" || operation === "snapshot";
+          const available = operation === "click" || operation === "type" ||
+            operation === "status" || operation === "open" || operation === "navigate" || operation === "snapshot";
           return available
             ? { operation, available: true }
             : { operation, available: false, unavailableReason: WEB_AUTOMATION_UNAVAILABLE_REASON };
@@ -585,7 +599,8 @@ export function BrowserAutomationHost() {
 
   useEffect(() => {
     const bridge = window.desktopBridge?.preview?.automation;
-    if (!bridge && !isBrowserAutomationWebRuntimeEnabled()) return;
+    const webAutomationEnabled = isBrowserAutomationWebRuntimeEnabled();
+    if (!bridge && !webAutomationEnabled) return;
     const unsubscribeRequest = pushEmitter.on("browserAutomation.request", (input) => {
       const payload = input as { hostId?: unknown; generation?: unknown; dispatch?: unknown };
       const lease = leaseRef.current;
@@ -604,14 +619,73 @@ export function BrowserAutomationHost() {
       store.setActiveRequest({ dispatch, startedAt: Date.now() });
       const controller = new AbortController();
       requestAbortRef.current.set(key, controller);
-      void executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal).then((response) => {
-        if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
-        return getTransport().respondToBrowserAutomationRequest(
+      const webDispatch = !bridge && webAutomationEnabled &&
+        (dispatch.request.operation === "click" || dispatch.request.operation === "type");
+      const operationAbort = webDispatch ? new AbortController() : null;
+      if (operationAbort) webAbortRef.current.set(key, operationAbort);
+      const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+      const liveTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
+      const currentEpoch = useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
+      const staleAtStart = !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration || currentEpoch !== dispatch.request.expectedControlEpoch;
+      const cancelForHuman = () => {
+        if (!operationAbort || cancelledRef.current.has(key)) return;
+        cancelledRef.current.add(key);
+        operationAbort.abort(new Error("Browser operation was interrupted by human input"));
+        const nextEpoch = (useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch) + 1;
+        useBrowserAutomationStore.getState().setControllerForTarget(
+          dispatch.target.threadId,
+          dispatch.target.tabId,
+          { tabId: dispatch.target.tabId, controller: "human", controlEpoch: nextEpoch },
+        );
+        void getTransport().cancelBrowserAutomationRequest(
           lease.hostId,
           lease.generation,
-          response,
-        );
+          dispatch.request.requestId,
+          dispatch.request.sequence,
+          "human-interrupted",
+        ).catch(() => undefined);
+      };
+      const executeWeb = async (): Promise<BrowserAutomationResponse> => {
+        if (staleAtStart) {
+          return failureResponse(dispatch.request, !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration ? "STALE_TARGET_GENERATION" : "STALE_CONTROL_EPOCH", "Browser operation is stale");
+        }
+        if (!operationAbort) return failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser target is unavailable");
+        const selector = `iframe[data-thread-id="${escapeWebSelector(dispatch.target.threadId)}"][data-tab-id="${escapeWebSelector(dispatch.target.tabId)}"]`;
+        const targetDocument = resolveSameOriginFrame(document.querySelector<HTMLIFrameElement>(selector));
+        if (!targetDocument) return failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser target is unavailable");
+        webObserverRef.current.set(key, observeWebHumanInput(targetDocument.document, cancelForHuman));
+        return executeWebInteraction(targetDocument.document, dispatch, {
+          signal: operationAbort.signal,
+          deadline: dispatch.request.deadline,
+          expectedControlEpoch: dispatch.request.expectedControlEpoch,
+          targetGeneration: dispatch.target.targetGeneration,
+          getControlEpoch: () => useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch,
+          getTargetGeneration: () => useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision ?? 0,
+        });
+      };
+      const operation = webDispatch
+        ? executeWeb()
+        : bridge
+          ? executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal)
+          : Promise.resolve(failureResponse(dispatch.request, "UNSUPPORTED_OPERATION", WEB_AUTOMATION_UNAVAILABLE_REASON));
+      void operation.then((response) => {
+        if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
+        return webDispatch
+          ? getTransport().respondToBrowserAutomationRequest(
+            lease.hostId,
+            lease.generation,
+            response,
+            dispatch.target,
+          )
+          : getTransport().respondToBrowserAutomationRequest(
+            lease.hostId,
+            lease.generation,
+            response,
+          );
       }).catch(() => undefined).finally(() => {
+        webObserverRef.current.get(key)?.();
+        webObserverRef.current.delete(key);
+        webAbortRef.current.delete(key);
         if (inFlightRef.current.get(key) === dispatch) inFlightRef.current.delete(key);
         requestAbortRef.current.delete(key);
         cancelledRef.current.delete(key);
@@ -640,6 +714,7 @@ export function BrowserAutomationHost() {
       }
       if (!inFlightRef.current.has(key) || cancelledRef.current.has(key)) return;
       cancelledRef.current.add(key);
+      webAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
       recorderRef.current.cancel(inFlightRef.current.get(key)!);
       requestAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
       if (bridge) void bridge.cancel(payload.requestId);
@@ -943,6 +1018,10 @@ export function BrowserAutomationHost() {
     inFlightRef.current.clear();
     cancelledRef.current.clear();
     recorderRef.current.dispose();
+    for (const abort of webAbortRef.current.values()) abort.abort(new Error("Browser host was replaced"));
+    for (const dispose of webObserverRef.current.values()) dispose();
+    webAbortRef.current.clear();
+    webObserverRef.current.clear();
   }, []);
 
   return backgroundScopes.map((scope) => (
