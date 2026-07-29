@@ -1,11 +1,10 @@
 /** Runs a JavaScript CLI with the workspace Electron runtime and SQLite binding. */
 
 import { spawn } from "child_process";
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
-import { tmpdir } from "os";
 import { killPidTree, killProcessTree } from "./kill-process-tree.mjs";
 
 /** Maximum time one Electron CLI invocation may run before its owned process tree is killed. */
@@ -57,8 +56,9 @@ function resolveWorkspaceCli(args) {
 }
 
 /**
- * Runs Electron asynchronously and forwards captured output after the child exits.
- * Detached Windows runs use files so descendants cannot keep the wrapper open.
+ * Runs Electron asynchronously while inheriting the caller's output handles.
+ * Keeping Windows children attached preserves ownership until their descendants
+ * have been terminated by the wrapper's scoped process-tree kill.
  *
  * @param {string} electronPath
  * @param {string[]} args
@@ -68,44 +68,22 @@ function resolveWorkspaceCli(args) {
 export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = ELECTRON_PROCESS_TIMEOUT_MS }) {
   return new Promise((resolveProcess) => {
     const isWindows = process.platform === "win32";
-    const useDetachedFiles = isWindows && args[0] !== "--workspace-cli";
-    const outputDir = useDetachedFiles ? mkdtempSync(join(tmpdir(), "mcode-electron-node-")) : null;
-    const stdoutFd = outputDir ? openSync(join(outputDir, "stdout"), "w") : null;
-    const stderrFd = outputDir ? openSync(join(outputDir, "stderr"), "w") : null;
     const child = spawn(electronPath, args, {
       cwd,
       env,
       shell: false,
-      detached: useDetachedFiles || !isWindows,
+      detached: !isWindows,
       windowsHide: true,
-      stdio: ["ignore", stdoutFd ?? "inherit", stderrFd ?? "inherit"],
+      stdio: ["ignore", "inherit", "inherit"],
     });
-    if (useDetachedFiles) child.unref();
     let settled = false;
     let timeoutHandle;
     let forcedSettlementHandle;
     let spawnError;
     let timedOut = false;
-    let outputClosed = false;
 
     const recordError = (error) => {
       spawnError ??= error instanceof Error ? error : new Error(String(error));
-    };
-
-    const flushOutput = () => {
-      if (!outputDir || stdoutFd === null || stderrFd === null || outputClosed) return;
-      outputClosed = true;
-      try { closeSync(stdoutFd); } catch (error) { recordError(error); }
-      try { closeSync(stderrFd); } catch (error) { recordError(error); }
-      try {
-        const stdout = readFileSync(join(outputDir, "stdout"));
-        if (stdout.length > 0) process.stdout.write(stdout);
-      } catch (error) { recordError(error); }
-      try {
-        const stderr = readFileSync(join(outputDir, "stderr"));
-        if (stderr.length > 0) process.stderr.write(stderr);
-      } catch (error) { recordError(error); }
-      try { rmSync(outputDir, { recursive: true, force: true }); } catch (error) { recordError(error); }
     };
 
     const signalHandlers = new Map();
@@ -117,7 +95,6 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
     const settle = (status, signal) => {
       if (settled) return;
       settled = true;
-      flushOutput();
       removeSignalHandlers();
       clearTimeout(timeoutHandle);
       clearTimeout(forcedSettlementHandle);
