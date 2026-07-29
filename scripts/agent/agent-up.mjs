@@ -9,7 +9,6 @@ import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { rebuildServerDevBundle } from "../build-server-dev-bundle.mjs";
 import {
   buildPortsContract,
   buildRuntimeStateEnv,
@@ -30,6 +29,12 @@ const desktopRoot = resolve(rootDir, "apps", "desktop");
 const serverCjs = resolve(desktopRoot, "dist", "server", "server.cjs");
 let agentUpTestHooks = {};
 
+/** Resolves the explicit web-automation opt-in for the Vite child process. */
+export function isWebAutomationEnabled(env = process.env) {
+  const normalized = env.MCODE_WEB_AUTOMATION?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
 /**
  * Installs process-local hooks for focused agentUp tests.
  *
@@ -38,7 +43,7 @@ let agentUpTestHooks = {};
  *   seedFixtureRepo: typeof seedFixtureRepo,
  *   computeAvailablePorts: typeof computeAvailablePorts,
  *   getElectronBinary: typeof getElectronBinary,
- *   rebuildServerDevBundle: typeof rebuildServerDevBundle,
+ *   rebuildServerDevBundle: () => Promise<void>,
  *   spawnLogged: typeof spawnLogged,
  * }>} hooks
  * @returns {() => void}
@@ -93,7 +98,8 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
   }
   const electronBinding = getElectronBinding();
 
-  const rebuildRuntimeServerBundle = agentUpTestHooks.rebuildServerDevBundle ?? rebuildServerDevBundle;
+  const rebuildRuntimeServerBundle = agentUpTestHooks.rebuildServerDevBundle ??
+    (await import("../build-server-dev-bundle.mjs")).rebuildServerDevBundle;
   await rebuildRuntimeServerBundle();
 
   const startedPidFiles = [];
@@ -140,6 +146,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
           VITE_MCODE_SINGLE_INSTANCE: "true",
           VITE_MCODE_WORKTREE_IDENTITY: repoRoot,
           VITE_MCODE_RUNTIME_CONTRACT: paths.portsFile,
+          VITE_MCODE_WEB_AUTOMATION: isWebAutomationEnabled() ? "1" : "0",
         },
       },
       resolve(paths.logsDir, "web.log"),

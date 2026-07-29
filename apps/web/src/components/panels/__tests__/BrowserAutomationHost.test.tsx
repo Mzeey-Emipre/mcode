@@ -55,7 +55,7 @@ vi.mock("../PreviewPanel", () => ({
   ),
 }));
 
-import { BrowserAutomationHost } from "../BrowserAutomationHost";
+import { BrowserAutomationHost, isBrowserAutomationWebRuntimeEnabled } from "../BrowserAutomationHost";
 import { BrowserAutomationRecorder } from "../browserAutomationRecorder";
 
 function deferred<T>() {
@@ -205,6 +205,12 @@ describe("BrowserAutomationHost", () => {
     );
   });
 
+  it("keeps web automation disabled by default and recognizes explicit opt-in", () => {
+    expect(isBrowserAutomationWebRuntimeEnabled({})).toBe(false);
+    expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "0" })).toBe(false);
+    expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "1" })).toBe(true);
+  });
+
   afterEach(() => {
     delete window.desktopBridge;
   });
@@ -216,6 +222,7 @@ describe("BrowserAutomationHost", () => {
 
     await act(async () => Promise.resolve());
     expect(harness.transport.registerBrowserAutomationHost).not.toHaveBeenCalled();
+    expect(useBrowserAutomationStore.getState().status).toBe("disabled");
     expect(view.container).toBeEmptyDOMElement();
     view.unmount();
   });

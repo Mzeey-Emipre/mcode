@@ -30,6 +30,9 @@ export const BROWSER_AUTOMATION_MAX_PENDING_REQUESTS = 32;
 /** Maximum text characters accepted by a type operation. */
 export const BROWSER_AUTOMATION_MAX_TYPED_TEXT_CHARS = 16_384;
 
+/** Explicit opt-in environment flag for registration by the pure web runtime. */
+export const BROWSER_AUTOMATION_WEB_DEV_FLAG = "MCODE_WEB_AUTOMATION" as const;
+
 const ID_MAX = 256;
 const SHORT_TEXT_MAX = 1_024;
 const SELECTOR_MAX = 4_096;
@@ -572,6 +575,27 @@ export type BrowserAutomationControllerState = z.infer<
   ReturnType<typeof BrowserAutomationControllerStateSchema>
 >;
 
+/** Runtime that owns one browser automation host connection. */
+export const BrowserAutomationHostRuntimeSchema = z.enum(["electron", "web"]);
+/** Browser automation host runtime discriminator. */
+export type BrowserAutomationHostRuntime = z.infer<typeof BrowserAutomationHostRuntimeSchema>;
+
+/** Provider-neutral identity for one bounded web target registration. */
+export const BrowserAutomationTargetIdentitySchema = lazySchema(() =>
+  z.object({
+    worktreeIdentity: idSchema,
+    connectionId: idSchema,
+    workspaceId: idSchema,
+    threadId: idSchema,
+    tabId: idSchema,
+    generation: z.number().int().positive(),
+  }).strict(),
+);
+/** Provider-neutral identity for one bounded web target registration. */
+export type BrowserAutomationTargetIdentity = z.infer<
+  ReturnType<typeof BrowserAutomationTargetIdentitySchema>
+>;
+
 /** One operation capability advertised by a connected browser host. */
 export const BrowserAutomationHostCapabilitySchema = lazySchema(() =>
   z
@@ -603,9 +627,11 @@ export const BrowserAutomationHostRegistrationSchema = lazySchema(() =>
     .object({
       contractVersion: z.literal(BROWSER_AUTOMATION_CONTRACT_VERSION),
       hostId: idSchema,
+      runtime: BrowserAutomationHostRuntimeSchema.default("electron"),
       desktopInstanceId: idSchema,
       worktreeIdentity: idSchema,
       workspaceIds: z.array(idSchema).min(1).max(32),
+      targetIdentity: BrowserAutomationTargetIdentitySchema().optional(),
       capabilities: z
         .array(BrowserAutomationHostCapabilitySchema())
         .min(1)

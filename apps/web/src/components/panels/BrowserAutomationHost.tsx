@@ -10,6 +10,7 @@ import {
   type BrowserAutomationOperation,
   type BrowserAutomationResponse,
   type BrowserAutomationRequest,
+  type BrowserAutomationTargetIdentity,
 } from "@mcode/contracts";
 import { getTransport, pushEmitter } from "@/transport";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -31,6 +32,30 @@ import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
 ]);
+
+const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
+
+/** Resolves explicit web-runtime browser automation opt-in. */
+export function isBrowserAutomationWebRuntimeEnabled(
+  env: Pick<ImportMetaEnv, "VITE_MCODE_WEB_AUTOMATION"> = import.meta.env,
+): boolean {
+  return env.VITE_MCODE_WEB_AUTOMATION === "1";
+}
+
+function webTargetIdentity(
+  worktreeIdentity: string,
+  connectionId: string,
+  target: { workspaceId: string; threadId: string; tabId: string; revision: number },
+): BrowserAutomationTargetIdentity {
+  return {
+    worktreeIdentity,
+    connectionId,
+    workspaceId: target.workspaceId,
+    threadId: target.threadId,
+    tabId: target.tabId,
+    generation: Math.max(1, target.revision),
+  };
+}
 
 function recordingAvailable(): boolean {
   const mediaRecorder = globalThis.MediaRecorder;
@@ -327,21 +352,42 @@ export function BrowserAutomationHost() {
   }, []);
 
   useEffect(() => {
-    if (!stableHostId || !window.desktopBridge?.preview?.automation) return;
+    const desktopAutomation = window.desktopBridge?.preview?.automation;
+    const webAutomationEnabled = isBrowserAutomationWebRuntimeEnabled();
+    if (!desktopAutomation && !webAutomationEnabled) {
+      useBrowserAutomationStore.getState().setStatus("disabled");
+      useBrowserAutomationStore.getState().setRegistered(false);
+      return;
+    }
+    if (!stableHostId) {
+      useBrowserAutomationStore.getState().setStatus("unavailable");
+      return;
+    }
     if (connectionStatus !== "connected" || workspaceIds.length === 0) {
       leaseRef.current = null;
       useBrowserAutomationStore.getState().setRegistered(false);
+      useBrowserAutomationStore.getState().setStatus("unavailable");
       return;
     }
     const epoch = ++registrationEpochRef.current;
     const transport = getTransport();
+    const liveTargetSnapshot = useBrowserAutomationStore.getState().liveTargets;
+    const activeTarget = [...liveTargetSnapshot.values()].find((target) => target.workspaceId === activeWorkspaceId);
+    const worktreeIdentity = import.meta.env.VITE_MCODE_WORKTREE_IDENTITY?.trim() || "web-runtime";
     void transport.registerBrowserAutomationHost({
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
       hostId: stableHostId,
+      runtime: desktopAutomation ? "electron" : "web",
       desktopInstanceId: "pending-desktop",
-      worktreeIdentity: "pending-worktree",
+      worktreeIdentity: desktopAutomation ? "pending-worktree" : worktreeIdentity,
       workspaceIds,
+      ...(activeTarget && !desktopAutomation && webAutomationEnabled ? {
+        targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
+      } : {}),
       capabilities: BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
+        if (!desktopAutomation) {
+          return { operation, available: false, unavailableReason: WEB_AUTOMATION_UNAVAILABLE_REASON };
+        }
         const recordingUnavailable =
           (operation === "recordingStart" || operation === "recordingStop") &&
           !recordingAvailable();
@@ -363,10 +409,12 @@ export function BrowserAutomationHost() {
       };
       shutdownLeaseRef.current = leaseRef.current;
       useBrowserAutomationStore.getState().setRegistered(true);
+      useBrowserAutomationStore.getState().setStatus("registered");
     }).catch(() => {
       if (registrationEpochRef.current === epoch) {
         leaseRef.current = null;
         useBrowserAutomationStore.getState().setRegistered(false);
+        useBrowserAutomationStore.getState().setStatus("unavailable");
       }
     });
     return () => {
@@ -374,6 +422,7 @@ export function BrowserAutomationHost() {
         registrationEpochRef.current += 1;
         leaseRef.current = null;
         useBrowserAutomationStore.getState().setRegistered(false);
+        useBrowserAutomationStore.getState().setStatus("unavailable");
       }
     };
   }, [connectionStatus, stableHostId, workspaceSignature]);
@@ -383,7 +432,26 @@ export function BrowserAutomationHost() {
     if (!lease || connectionStatus !== "connected") return;
     let cancelled = false;
     const bridge = window.desktopBridge?.preview?.automation;
-    if (!bridge) return;
+    if (!bridge && !isBrowserAutomationWebRuntimeEnabled()) return;
+    if (!bridge) {
+      const targets = [...liveTargets.values()].slice(0, 64).map((candidate) => ({
+        desktopInstanceId: lease.desktopInstanceId,
+        windowId: 1,
+        connectionGeneration: lease.generation,
+        threadId: candidate.threadId,
+        tabId: candidate.tabId,
+        targetGeneration: Math.max(1, candidate.revision),
+        active: candidate.threadId === useWorkspaceStore.getState().activeThreadId,
+        focused: candidate.threadId === useWorkspaceStore.getState().activeThreadId,
+        lastUsedAt: candidate.lastUsedAt,
+      } satisfies BrowserAutomationHostDispatchTarget));
+      void getTransport().updateBrowserAutomationHostTargets(
+        lease.hostId,
+        lease.generation,
+        targets,
+      ).catch(() => undefined);
+      return;
+    }
     const targets = [...liveTargets.values()].slice(0, 64);
     void Promise.all(targets.map(async (candidate) => {
       const described = await bridge.describeTarget({

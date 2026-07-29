@@ -406,6 +406,9 @@ export {
   BrowserAutomationResultSchema,
   BrowserAutomationErrorSchema,
   BrowserAutomationResponseSchema,
+  BROWSER_AUTOMATION_WEB_DEV_FLAG,
+  BrowserAutomationHostRuntimeSchema,
+  BrowserAutomationTargetIdentitySchema,
 } from "./models/browser-automation.js";
 export type {
   BrowserAutomationOperation,
@@ -425,6 +428,8 @@ export type {
   BrowserAutomationErrorCode,
   BrowserAutomationError,
   BrowserAutomationResponse,
+  BrowserAutomationHostRuntime,
+  BrowserAutomationTargetIdentity,
 } from "./models/browser-automation.js";
 
 // Events

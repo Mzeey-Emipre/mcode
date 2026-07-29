@@ -65,6 +65,8 @@ export interface BrowserAutomationHostConnectionAuthorization {
   desktopInstanceId: string;
   worktreeIdentity: string;
   allowedWorkspaceIds: readonly string[];
+  /** Whether this connection may register the development-only web runtime. */
+  allowWebRuntime?: boolean;
 }
 
 /** Options controlling browser host routing, timing, and delivery. */
@@ -205,6 +207,12 @@ export class BrowserAutomationBroker {
     authorization: BrowserAutomationHostConnectionAuthorization | null,
   ): { generation: number; desktopInstanceId: string } {
     const registration = BrowserAutomationHostRegistrationSchema().parse(input);
+    if (registration.runtime === "web" && authorization?.allowWebRuntime !== true) {
+      throw new Error("Browser automation web host registration is disabled");
+    }
+    if (registration.runtime !== "web" && registration.targetIdentity) {
+      throw new Error("Browser automation target identity is reserved for web hosts");
+    }
     if (
       !authorization ||
       registration.workspaceIds.some((workspaceId) => !authorization.allowedWorkspaceIds.includes(workspaceId))
@@ -216,6 +224,25 @@ export class BrowserAutomationBroker {
       desktopInstanceId: authorization.desktopInstanceId,
       worktreeIdentity: authorization.worktreeIdentity,
     };
+    if (
+      trustedRegistration.targetIdentity &&
+      trustedRegistration.targetIdentity.worktreeIdentity !== trustedRegistration.worktreeIdentity
+    ) {
+      throw new Error("Browser automation target identity does not match its authorized worktree");
+    }
+    if (
+      trustedRegistration.targetIdentity &&
+      trustedRegistration.targetIdentity.connectionId !== registration.desktopInstanceId &&
+      trustedRegistration.targetIdentity.connectionId !== "pending-desktop"
+    ) {
+      throw new Error("Browser automation target identity does not match its connection");
+    }
+    if (
+      trustedRegistration.targetIdentity &&
+      !trustedRegistration.workspaceIds.includes(trustedRegistration.targetIdentity.workspaceId)
+    ) {
+      throw new Error("Browser automation target identity workspace is not authorized");
+    }
     this.disconnect(socket);
     if (this.hostsBySocket.size >= this.maxHosts) {
       throw new Error("Browser automation host capacity is exhausted");
