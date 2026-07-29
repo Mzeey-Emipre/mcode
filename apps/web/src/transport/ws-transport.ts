@@ -54,7 +54,7 @@ import type {
   CreateAndSendInput,
 } from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
-import type { PaginatedMessages, ConversationPage, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
+import type { PaginatedMessages, ConversationPage, ConversationTail, SetThreadSubscriptionsInput, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
   decodeTerminalDataFrame,
@@ -637,6 +637,8 @@ export function createWsTransport(
     listRunning: () => rpc<string[]>("agent.listRunning", {}),
     subscribeThread: (threadId) => rpc<void>("push.subscribeThread", { threadId }),
     unsubscribeThread: (threadId) => rpc<void>("push.unsubscribeThread", { threadId }),
+    setThreadSubscriptions: (input: SetThreadSubscriptionsInput) =>
+      rpc<void>("push.setThreadSubscriptions", input),
     getThreadGoal: (threadId) =>
       rpc<GoalLookupResult>("thread.goal.get", { threadId }),
     clearThreadGoal: (threadId) =>
@@ -656,6 +658,8 @@ export function createWsTransport(
       rpc<PaginatedMessages>("message.list", { threadId, limit, ...(before != null ? { before } : {}) }),
     loadConversationPage: (threadId, limit, before?) =>
       rpc<ConversationPage>("conversation.page", { threadId, limit, ...(before != null ? { before } : {}) }),
+    loadConversationTail: (threadId, limit) =>
+      rpc<ConversationTail>("conversation.tail", { threadId, limit }),
 
     // Config
     discoverConfig: (workspacePath) =>

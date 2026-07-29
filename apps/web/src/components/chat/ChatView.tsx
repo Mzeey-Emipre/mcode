@@ -489,6 +489,7 @@ export function ChatView() {
   const subscriptionRetryAttemptRef = useRef(0);
   const subscriptionRetryExhaustedRef = useRef(false);
   const subscriptionTargetSignatureRef = useRef("");
+  const atomicSubscriptionRequestRef = useRef<{ epoch: number; signature: string } | null>(null);
   const subscriptionMountedRef = useRef(true);
   const [subscriptionReconcileVersion, setSubscriptionReconcileVersion] = useState(0);
 
@@ -522,6 +523,49 @@ export function ChatView() {
     if (connectionStatus !== "connected" || subscriptionRetryExhaustedRef.current) return;
 
     const epoch = subscriptionEpochRef.current;
+    const setThreadSubscriptions = getTransport().setThreadSubscriptions;
+    if (setThreadSubscriptions) {
+      const sortedThreadIds = Array.from(desired).sort();
+      const confirmed = confirmedThreadIdsRef.current;
+      const alreadyApplied = confirmed.size === desired.size
+        && Array.from(confirmed).every((threadId) => desired.has(threadId));
+      const pending = atomicSubscriptionRequestRef.current;
+      if (alreadyApplied || (pending?.epoch === epoch && pending.signature === targetSignature)) return;
+      atomicSubscriptionRequestRef.current = { epoch, signature: targetSignature };
+      void setThreadSubscriptions({ threadIds: sortedThreadIds }).then(() => {
+        if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
+        confirmedThreadIdsRef.current = new Set(desiredThreadIdsRef.current);
+        subscriptionRetryAttemptRef.current = 0;
+        subscriptionRetryExhaustedRef.current = false;
+        if (subscriptionTargetSignatureRef.current !== targetSignature) {
+          setSubscriptionReconcileVersion((version) => version + 1);
+        }
+      }).catch(() => {
+        if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
+        if (subscriptionRetryAttemptRef.current >= THREAD_SUBSCRIPTION_MAX_RETRIES) {
+          subscriptionRetryExhaustedRef.current = true;
+          return;
+        }
+        const delay = Math.min(
+          THREAD_SUBSCRIPTION_RETRY_BASE_MS * (2 ** subscriptionRetryAttemptRef.current),
+          THREAD_SUBSCRIPTION_RETRY_MAX_MS,
+        );
+        subscriptionRetryAttemptRef.current += 1;
+        subscriptionRetryTimerRef.current = setTimeout(() => {
+          subscriptionRetryTimerRef.current = null;
+          if (subscriptionMountedRef.current) {
+            setSubscriptionReconcileVersion((version) => version + 1);
+          }
+        }, delay);
+      }).finally(() => {
+        if (atomicSubscriptionRequestRef.current?.epoch === epoch
+          && atomicSubscriptionRequestRef.current.signature === targetSignature) {
+          atomicSubscriptionRequestRef.current = null;
+        }
+      });
+      return;
+    }
+
     const operations: Promise<boolean>[] = [];
     const startChange = (threadId: string, action: ThreadSubscriptionAction) => {
       const change = Symbol();
@@ -608,8 +652,13 @@ export function ChatView() {
         ...confirmedThreadIdsRef.current,
         ...desiredThreadIdsRef.current,
       ]);
-      for (const threadId of threadIds) {
-        void getTransport().unsubscribeThread(threadId).catch(() => {});
+      const setThreadSubscriptions = getTransport().setThreadSubscriptions;
+      if (setThreadSubscriptions) {
+        void setThreadSubscriptions({ threadIds: [] }).catch(() => {});
+      } else {
+        for (const threadId of threadIds) {
+          void getTransport().unsubscribeThread(threadId).catch(() => {});
+        }
       }
       confirmedThreadIdsRef.current.clear();
       desiredThreadIdsRef.current.clear();

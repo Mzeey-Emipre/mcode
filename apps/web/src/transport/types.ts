@@ -38,6 +38,8 @@ import type {
   PermissionRequest,
   CreateAndSendResult,
   ConversationPage,
+  ConversationTail,
+  SetThreadSubscriptionsInput,
   GoalLookupResult,
   PullRequestCapabilitiesRequest,
   PullRequestCapabilitiesResult,
@@ -127,7 +129,7 @@ export type {
   CreateAndSendInput,
 } from "@mcode/contracts";
 
-export type { PaginatedMessages, ConversationPage, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
+export type { PaginatedMessages, ConversationPage, ConversationTail, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
@@ -291,6 +293,8 @@ export interface McodeTransport {
   subscribeThread(threadId: string): Promise<void>;
   /** Remove this client connection's push subscription for a thread. */
   unsubscribeThread(threadId: string): Promise<void>;
+  /** Replace this connection's complete push subscription set atomically. */
+  setThreadSubscriptions?(input: SetThreadSubscriptionsInput): Promise<void>;
   /** Fetch the current active goal for a thread without starting provider work. */
   getThreadGoal(threadId: string): Promise<GoalLookupResult>;
   /** Clear the current active goal for a thread without sending a chat message. */
@@ -341,6 +345,8 @@ export interface McodeTransport {
   getMessages(threadId: string, limit: number, before?: number): Promise<PaginatedMessages>;
   /** Fetch persisted messages and grouped narrative for one thread page. */
   loadConversationPage(threadId: string, limit: number, before?: number): Promise<ConversationPage>;
+  /** Fetch only the bounded tail needed for first paint. */
+  loadConversationTail?(threadId: string, limit: number): Promise<ConversationTail>;
 
   // Config
   discoverConfig(workspacePath: string): Promise<Record<string, unknown>>;
