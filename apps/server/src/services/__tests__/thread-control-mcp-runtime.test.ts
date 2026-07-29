@@ -49,9 +49,10 @@ describe("InternalThreadControlMcpRuntime", () => {
     expect(await status(`http://127.0.0.1:${port}/%`)).toBe(401);
 
     const sessions = (instance as unknown as {
-      httpSessions: Map<string, { transport: { close: () => Promise<void> } }>;
+      httpSessions: Map<string, { clients: Map<string, { transport: { close: () => Promise<void> } }> }>;
     }).httpSessions;
-    vi.spyOn(sessions.get("session")!.transport, "close").mockRejectedValueOnce(new Error("transport close failed"));
+    const transport = { close: vi.fn().mockRejectedValueOnce(new Error("transport close failed")) };
+    sessions.get("session")!.clients.set("test-client", { transport });
     await expect(instance.close("session")).resolves.toBeUndefined();
     expect(authority.authorize(lease.credential, "call")).toBeUndefined();
 
@@ -85,7 +86,7 @@ describe("InternalThreadControlMcpRuntime", () => {
     expect(authority.credential("session")).toBeUndefined();
   });
 
-  it("completes an authenticated MCP HTTP handshake and lists internal tools", async () => {
+  it("supports concurrent and reconnecting authenticated MCP clients", async () => {
     const { runtime: instance, authority } = runtime();
     authority.activate({
       sessionId: "session",
@@ -96,20 +97,43 @@ describe("InternalThreadControlMcpRuntime", () => {
     });
     const connection = await instance.createHttpConnection("session");
     expect(connection).toBeDefined();
-    const client = new Client({ name: "mcode-runtime-test", version: "0.1.0" });
-    const transport = new StreamableHTTPClientTransport(new URL(connection!.url), {
-      requestInit: { headers: connection!.headers },
-    });
+    const createClient = () => {
+      const client = new Client({ name: "mcode-runtime-test", version: "0.1.0" });
+      const transport = new StreamableHTTPClientTransport(new URL(connection!.url), {
+        requestInit: { headers: connection!.headers },
+      });
+      return { client, transport };
+    };
+    const first = createClient();
+    const second = createClient();
+    const reconnect = createClient();
 
     try {
-      await client.connect(transport);
-      const listed = await client.listTools();
-      expect(listed.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      await Promise.all([first.client.connect(first.transport), second.client.connect(second.transport)]);
+      const [firstTools, secondTools] = await Promise.all([first.client.listTools(), second.client.listTools()]);
+      for (const listed of [firstTools, secondTools]) {
+        expect(listed.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+          "workspace_search",
+          "thread_create_batch",
+        ]));
+      }
+      await first.client.close();
+      await reconnect.client.connect(reconnect.transport);
+      const reconnectedTools = await reconnect.client.listTools();
+      expect(reconnectedTools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
         "workspace_search",
         "thread_create_batch",
       ]));
+      const unknownSession = await fetch(connection!.url, {
+        method: "POST",
+        headers: { ...connection!.headers, "mcp-session-id": "unknown-session" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      });
+      expect(unknownSession.status).toBe(404);
     } finally {
-      await client.close().catch(() => undefined);
+      await first.client.close().catch(() => undefined);
+      await second.client.close().catch(() => undefined);
+      await reconnect.client.close().catch(() => undefined);
       await instance.close("session");
     }
   });

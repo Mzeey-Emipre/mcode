@@ -1,4 +1,5 @@
-import { createServer, type Server } from "node:http";
+import { randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { inject, injectable } from "tsyringe";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -12,6 +13,16 @@ import { ThreadControlService } from "./thread-control-service.js";
 
 const CODEX_MCP_TOKEN_ENV = "MCODE_INTERNAL_THREAD_CONTROL_TOKEN";
 const CODEX_MCP_NAME = "mcode_internal_thread_control";
+const MAX_HTTP_CLIENT_SESSIONS = 4;
+
+type HttpClientSession = { server: McpServer; transport: StreamableHTTPServerTransport };
+
+type HttpProviderSession = {
+  credential: string;
+  clients: Map<string, HttpClientSession>;
+  pending: Set<StreamableHTTPServerTransport>;
+  closed: boolean;
+};
 
 /** Authenticated HTTP MCP connection details for one pooled provider session. */
 export interface InternalThreadControlMcpHttpConnection {
@@ -24,7 +35,7 @@ export interface InternalThreadControlMcpHttpConnection {
 @injectable()
 export class InternalThreadControlMcpRuntime {
   private readonly transport;
-  private readonly httpSessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
+  private readonly httpSessions = new Map<string, HttpProviderSession>();
   private httpServer: Server | undefined;
   private httpPort: number | undefined;
   private httpServerStartup: Promise<void> | undefined;
@@ -54,7 +65,13 @@ export class InternalThreadControlMcpRuntime {
       const entry = this.httpSessions.get(sessionId);
       this.httpSessions.delete(sessionId);
       if (entry) {
-        await entry.transport.close().catch(() => undefined);
+        entry.closed = true;
+        await Promise.all([
+          ...Array.from(entry.clients.values(), ({ transport }) => transport.close().catch(() => undefined)),
+          ...Array.from(entry.pending, (transport) => transport.close().catch(() => undefined)),
+        ]);
+        entry.clients.clear();
+        entry.pending.clear();
       }
       await this.closeHttpServerWhenIdle();
     });
@@ -76,16 +93,17 @@ export class InternalThreadControlMcpRuntime {
         await this.closeHttpServerWhenIdle();
         return undefined;
       }
-      if (!this.httpSessions.has(sessionId)) {
-        const server = this.transport.createServer(credential);
-        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => sessionId });
-        await server.connect(transport);
-        if (credential !== this.authority.credential(sessionId)) {
-          await transport.close().catch(() => undefined);
-          await this.closeHttpServerWhenIdle();
-          return undefined;
-        }
-        this.httpSessions.set(sessionId, { server, transport });
+      const entry = this.httpSessions.get(sessionId);
+      if (entry && entry.credential !== credential) {
+        return undefined;
+      }
+      if (!entry) {
+        this.httpSessions.set(sessionId, {
+          credential,
+          clients: new Map(),
+          pending: new Set(),
+          closed: false,
+        });
       }
       return {
         name: CODEX_MCP_NAME,
@@ -150,13 +168,9 @@ export class InternalThreadControlMcpRuntime {
 
   private async startHttpServer(): Promise<void> {
     const server = createServer((request, response) => {
-      const encodedSessionId = request.url?.slice(1);
+      const encodedSessionId = request.url?.split("?", 1)[0]?.slice(1);
       if (!encodedSessionId) {
         response.writeHead(404).end();
-        return;
-      }
-      if (request.method !== "POST") {
-        response.writeHead(request.method === "GET" ? 405 : 404).end();
         return;
       }
       let sessionId: string;
@@ -168,11 +182,37 @@ export class InternalThreadControlMcpRuntime {
       }
       const entry = this.httpSessions.get(sessionId);
       const credential = entry && this.authority.credential(sessionId);
-      if (!entry || !credential || !constantTimeCredentialEqual(request.headers.authorization ?? "", `Bearer ${credential}`)) {
+      if (!entry || entry.closed || !credential || !constantTimeCredentialEqual(request.headers.authorization ?? "", `Bearer ${credential}`)) {
         response.writeHead(401).end();
         return;
       }
-      void entry.transport.handleRequest(request, response).catch(() => {
+      const clientSession = readClientSessionHeader(request);
+      if (clientSession.invalid) {
+        response.writeHead(404).end();
+        return;
+      }
+      if (request.method === "GET" && !clientSession.value) {
+        response.writeHead(405).end();
+        return;
+      }
+      if (request.method === "POST" && !clientSession.value) {
+        void this.handleHttpInitialize(sessionId, entry, request, response);
+        return;
+      }
+      if (request.method !== "POST" && request.method !== "GET" && request.method !== "DELETE") {
+        response.writeHead(404).end();
+        return;
+      }
+      if (!clientSession.value) {
+        response.writeHead(404).end();
+        return;
+      }
+      const client = entry.clients.get(clientSession.value);
+      if (!client) {
+        response.writeHead(404).end();
+        return;
+      }
+      void client.transport.handleRequest(request, response).catch(() => {
         if (!response.headersSent) response.writeHead(500);
         response.end();
       });
@@ -192,4 +232,54 @@ export class InternalThreadControlMcpRuntime {
     this.httpServer = server;
     this.httpPort = address.port;
   }
+
+  private async handleHttpInitialize(
+    sessionId: string,
+    entry: HttpProviderSession,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    if (entry.clients.size + entry.pending.size >= MAX_HTTP_CLIENT_SESSIONS) {
+      response.writeHead(429).end();
+      return;
+    }
+    const server = this.transport.createServer(entry.credential);
+    let transport!: StreamableHTTPServerTransport;
+    let registered = false;
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (clientSessionId) => {
+        entry.pending.delete(transport);
+        if (entry.closed || this.httpSessions.get(sessionId) !== entry) {
+          void transport.close().catch(() => undefined);
+          return;
+        }
+        entry.clients.set(clientSessionId, { server, transport });
+        registered = true;
+      },
+      onsessionclosed: (clientSessionId) => {
+        if (entry.clients.get(clientSessionId)?.transport === transport) {
+          entry.clients.delete(clientSessionId);
+        }
+      },
+    });
+    entry.pending.add(transport);
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(request, response);
+    } catch {
+      if (!response.headersSent) response.writeHead(500);
+      response.end();
+    } finally {
+      entry.pending.delete(transport);
+      if (!registered) await transport.close().catch(() => undefined);
+    }
+  }
+}
+
+function readClientSessionHeader(request: IncomingMessage): { value?: string; invalid: boolean } {
+  const header = request.headers["mcp-session-id"];
+  if (header === undefined) return { invalid: false };
+  if (typeof header !== "string" || header.length === 0 || header.length > 256) return { invalid: true };
+  return { value: header, invalid: false };
 }
