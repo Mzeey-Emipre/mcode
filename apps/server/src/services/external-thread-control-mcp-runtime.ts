@@ -15,9 +15,10 @@ const MAX_BODY_BYTES = 256 * 1_024;
 @injectable()
 export class ExternalThreadControlMcpRuntime {
   private readonly session: ExternalThreadControlMcpSession;
-  private readonly server: McpServer;
-  private transport: StreamableHTTPServerTransport | undefined;
-  private connecting: Promise<void> | undefined;
+  private readonly activeRequests = new Set<{
+    server: McpServer;
+    transport: StreamableHTTPServerTransport;
+  }>();
   private listenPort = Number.parseInt(process.env.MCODE_PORT ?? "19400", 10);
 
   constructor(
@@ -25,7 +26,6 @@ export class ExternalThreadControlMcpRuntime {
     @inject(ExternalThreadControlPairingService) private readonly pairings: ExternalThreadControlPairingService,
   ) {
     this.session = createExternalThreadControlMcpSession({ pairingService: pairings, service });
-    this.server = this.session.createServer();
   }
 
   /** Return loopback endpoint URL for pairing-management responses. */
@@ -86,8 +86,18 @@ export class ExternalThreadControlMcpRuntime {
       response.writeHead(400).end("Parse error");
       return;
     }
-    await this.ensureConnected();
-    await this.session.contextStorage.run(context, () => this.transport!.handleRequest(request, response, parsedBody));
+    const server = this.session.createServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const activeRequest = { server, transport };
+    this.activeRequests.add(activeRequest);
+    try {
+      await server.connect(transport);
+      await this.session.contextStorage.run(context, () => transport.handleRequest(request, response, parsedBody));
+    } finally {
+      this.activeRequests.delete(activeRequest);
+      await transport.close().catch(() => undefined);
+      await server.close().catch(() => undefined);
+    }
   }
 
   /** Reconcile uncertain external work before accepting new deliveries after restart. */
@@ -97,25 +107,12 @@ export class ExternalThreadControlMcpRuntime {
 
   /** Close MCP transport during server shutdown. */
   async close(): Promise<void> {
-    await this.transport?.close().catch(() => undefined);
-    await this.server.close().catch(() => undefined);
-    this.transport = undefined;
-  }
-
-  private async ensureConnected(): Promise<void> {
-    if (this.transport) return;
-    if (this.connecting) return this.connecting;
-    const connecting = (async () => {
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      await this.server.connect(transport);
-      this.transport = transport;
-    })();
-    this.connecting = connecting;
-    try {
-      await connecting;
-    } finally {
-      if (this.connecting === connecting) this.connecting = undefined;
-    }
+    const activeRequests = [...this.activeRequests];
+    await Promise.all(activeRequests.map(async ({ server, transport }) => {
+      await transport.close().catch(() => undefined);
+      await server.close().catch(() => undefined);
+    }));
+    this.activeRequests.clear();
   }
 }
 

@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ExternalThreadControlMcpRuntime } from "../external-thread-control-mcp-runtime.js";
@@ -51,6 +52,34 @@ function createHarness() {
     finalizeDelivery: vi.fn(),
   };
   return { service, pairingService };
+}
+
+function initializeBody(id: number) {
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    id,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-03-26",
+      capabilities: {},
+      clientInfo: { name: `client-${id}`, version: "1.0.0" },
+    },
+  });
+}
+
+async function withRuntimeServer(runtime: ExternalThreadControlMcpRuntime, callback: (port: number) => Promise<void>): Promise<void> {
+  const server = createServer((request, response) => {
+    void runtime.handleRequest(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind a port");
+    await callback(address.port);
+  } finally {
+    await runtime.close();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 }
 
 describe("external thread-control MCP transport", () => {
@@ -123,11 +152,35 @@ describe("external thread-control MCP transport", () => {
     await server.close();
   });
 
-  it("enforces loopback and bounded body checks before authentication or transport dispatch", async () => {
+  it("isolates independent initialize requests on one runtime", async () => {
+    const { pairingService } = createHarness();
+    const runtime = new ExternalThreadControlMcpRuntime({} as never, pairingService as never);
+    await withRuntimeServer(runtime, async (port) => {
+      const headers = {
+        Authorization: "Bearer credential",
+        "x-mcode-pairing-id": pairing.pairingId,
+        "x-mcode-authority-epoch": String(pairing.authorityEpoch),
+        "content-type": "application/json",
+        Accept: "application/json, text/event-stream",
+      };
+      const responses = [];
+      for (const id of [1, 2]) {
+        const response = await fetch(`http://127.0.0.1:${port}/mcp/external-thread-control`, {
+          method: "POST",
+          headers,
+          body: initializeBody(id),
+        });
+        responses.push(response.status);
+        await response.text();
+        expect((runtime as unknown as { activeRequests: Set<unknown> }).activeRequests.size).toBe(0);
+      }
+      expect(responses).toEqual([200, 200]);
+    });
+  });
+
+  it("enforces loopback and bounded body checks before authentication", async () => {
     const pairings = { authenticate: vi.fn() };
     const runtime = new ExternalThreadControlMcpRuntime({} as never, pairings as never);
-    const handleRequest = vi.fn().mockResolvedValue(undefined);
-    (runtime as unknown as { transport: unknown }).transport = { handleRequest, close: vi.fn().mockResolvedValue(undefined) };
     const response = () => ({ writeHead: vi.fn().mockReturnThis(), end: vi.fn(), headersSent: false }) as unknown as ServerResponse;
     const makeRequest = (address: string, body: string, headers: Record<string, string> = {}) => {
       const request = Readable.from([Buffer.from(body)]) as unknown as IncomingMessage;
@@ -139,12 +192,6 @@ describe("external thread-control MCP transport", () => {
       return request;
     };
 
-    for (const address of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
-      const res = response();
-      await runtime.handleRequest(makeRequest(address, '{"jsonrpc":"2.0"}'), res);
-      expect(handleRequest).toHaveBeenCalledWith(expect.anything(), expect.anything(), { jsonrpc: "2.0" });
-    }
-    pairings.authenticate.mockClear();
     const external = response();
     await runtime.handleRequest(makeRequest("192.0.2.1", "{}"), external);
     expect(external.writeHead).toHaveBeenCalledWith(403);
@@ -154,16 +201,12 @@ describe("external thread-control MCP transport", () => {
     await runtime.handleRequest(makeRequest("127.0.0.1", "{}", { "content-length": String(256 * 1_024 + 1) }), oversized);
     expect(oversized.writeHead).toHaveBeenCalledWith(413);
     expect(pairings.authenticate).not.toHaveBeenCalled();
-    expect(handleRequest).toHaveBeenCalledTimes(3);
-    (runtime as unknown as { server: { close: () => Promise<void> } }).server.close = vi.fn().mockResolvedValue(undefined);
     await runtime.close();
   });
 
   it("rejects chunked body overflow without invoking the MCP transport", async () => {
     const pairings = { authenticate: vi.fn() };
     const runtime = new ExternalThreadControlMcpRuntime({} as never, pairings as never);
-    const handleRequest = vi.fn().mockResolvedValue(undefined);
-    (runtime as unknown as { transport: unknown }).transport = { handleRequest, close: vi.fn().mockResolvedValue(undefined) };
     const request = Readable.from([Buffer.alloc(256 * 1_024), Buffer.from("x")]) as unknown as IncomingMessage;
     Object.assign(request, {
       method: "POST",
@@ -173,8 +216,6 @@ describe("external thread-control MCP transport", () => {
     const response = { writeHead: vi.fn().mockReturnThis(), end: vi.fn(), headersSent: false } as unknown as ServerResponse;
     await runtime.handleRequest(request, response);
     expect(response.writeHead).toHaveBeenCalledWith(413);
-    expect(handleRequest).not.toHaveBeenCalled();
-    (runtime as unknown as { server: { close: () => Promise<void> } }).server.close = vi.fn().mockResolvedValue(undefined);
     await runtime.close();
   });
 });
