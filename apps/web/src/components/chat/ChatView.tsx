@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
+import { ConversationHoldOverlay } from "./ConversationHoldOverlay";
 import { Composer } from "./Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
 import { HeaderActions } from "./HeaderActions";
@@ -34,6 +35,11 @@ import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
 import { Button } from "@/components/ui/button";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
+import {
+  recordFirstMessageVisible,
+  recordThreadHoldEnd,
+  recordThreadHoldStart,
+} from "@/lib/thread-switch-telemetry";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -336,6 +342,52 @@ export function ChatView() {
   const setPendingPrefill = useComposerDraftStore((s) => s.setPendingPrefill);
 
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
+  const targetPaintable = hydratedThreadId === activeThreadId
+    && (messageCount > 0 || isAgentRunning);
+  const previousActiveThreadIdRef = useRef<string | null>(activeThreadId);
+  const [heldOutgoingThreadId, setHeldOutgoingThreadId] = useState<string | null>(null);
+  const previousThreadId = previousActiveThreadIdRef.current;
+  const immediateHeldOutgoingThreadId =
+    !targetPaintable
+    && previousThreadId
+    && previousThreadId !== activeThreadId
+    && readThreadRecord(previousThreadId).messages.length > 0
+      ? previousThreadId
+      : null;
+  const displayHoldThreadId = targetPaintable
+    ? null
+    : immediateHeldOutgoingThreadId ?? heldOutgoingThreadId;
+
+  useEffect(() => {
+    const outgoingThreadId = previousActiveThreadIdRef.current;
+    previousActiveThreadIdRef.current = activeThreadId;
+    if (
+      targetPaintable
+      || !activeThreadId
+      || !outgoingThreadId
+      || outgoingThreadId === activeThreadId
+      || readThreadRecord(outgoingThreadId).messages.length === 0
+    ) {
+      setHeldOutgoingThreadId(null);
+      return;
+    }
+
+    setHeldOutgoingThreadId(outgoingThreadId);
+    recordThreadHoldStart(activeThreadId);
+    const timeout = setTimeout(() => {
+      setHeldOutgoingThreadId((heldThreadId) => {
+        if (heldThreadId === outgoingThreadId) recordThreadHoldEnd(activeThreadId);
+        return heldThreadId === outgoingThreadId ? null : heldThreadId;
+      });
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [activeThreadId, targetPaintable]);
+
+  useEffect(() => {
+    if (!activeThreadId || !targetPaintable) return;
+    if (heldOutgoingThreadId) recordThreadHoldEnd(activeThreadId);
+    recordFirstMessageVisible(activeThreadId);
+  }, [activeThreadId, heldOutgoingThreadId, targetPaintable]);
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = useActiveWorkspaceThread((t) => t);
@@ -774,7 +826,9 @@ export function ChatView() {
 
   const hasMessages = messageCount > 0;
   const conversationLoading = hydratedThreadId !== activeThreadId || historyLoading;
-  const showEmptyState = !hasMessages && !isAgentRunning && !conversationLoading;
+  const showHold = displayHoldThreadId !== null && !targetPaintable;
+  const showTransition = conversationLoading && !targetPaintable && !showHold && !isAgentRunning;
+  const showEmptyState = !hasMessages && !isAgentRunning && !conversationLoading && !showHold;
   const showFullConversationError = showConversationError && !hasMessages && !isAgentRunning;
   const showConversationErrorBanner = showConversationError && (hasMessages || isAgentRunning);
 
@@ -865,7 +919,18 @@ export function ChatView() {
         className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200"
         style={{ paddingRight: overviewPaddingRight }}
       >
-        {conversationLoading && !hasMessages && !isAgentRunning ? (
+        {showHold ? (
+          <div className="relative h-full" aria-busy="true">
+            <div className="pointer-events-none h-full" inert>
+              <MessageList
+                displayThreadId={displayHoldThreadId}
+                onBranch={handleBranch}
+                onReply={handleReply}
+              />
+            </div>
+            <ConversationHoldOverlay targetTitle={activeThread.title || "Conversation"} />
+          </div>
+        ) : showTransition ? (
           <ConversationTransitionState
             threadId={activeThread.id}
             threadTitle={activeThread.title || "Conversation"}

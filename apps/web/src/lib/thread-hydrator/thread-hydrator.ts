@@ -555,7 +555,7 @@ export class ThreadHydrator {
     const background = this.backgroundHydrates.get(threadId);
     if (background) {
       if (!hasResidentLayer) {
-        this.prepareActiveLoad(threadId);
+        this.selectInFlightLayer(threadId, false);
       }
       await background;
 

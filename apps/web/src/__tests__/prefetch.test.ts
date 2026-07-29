@@ -34,6 +34,7 @@ describe("prefetch", () => {
   let schedulePrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").schedulePrefetch;
   let cancelPrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").cancelPrefetch;
   let prefetchOnPointerDown: typeof import("@/lib/thread-hydrator/prefetch-scheduler").prefetchOnPointerDown;
+  let isPrefetchPending: typeof import("@/lib/thread-hydrator/prefetch-scheduler").isPrefetchPending;
   let resetPrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").__resetPrefetchForTests;
 
   beforeEach(async () => {
@@ -57,6 +58,7 @@ describe("prefetch", () => {
     schedulePrefetch = mod.schedulePrefetch;
     cancelPrefetch = mod.cancelPrefetch;
     prefetchOnPointerDown = mod.prefetchOnPointerDown;
+    isPrefetchPending = mod.isPrefetchPending;
     resetPrefetch = mod.__resetPrefetchForTests;
   });
 
@@ -151,6 +153,24 @@ describe("prefetch", () => {
 
     vi.advanceTimersByTime(100);
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports pointer-down prefetch work until it settles", async () => {
+    let resolvePage!: (value: {
+      messages: ReturnType<typeof createMockMessage>[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    vi.mocked(mockTransport.loadConversationPage).mockImplementationOnce(
+      () => new Promise((resolve) => { resolvePage = resolve; }),
+    );
+
+    prefetchOnPointerDown("t1");
+    expect(isPrefetchPending("t1")).toBe(true);
+
+    resolvePage({ messages: [], hasMore: false, narrativeByMessage: {} });
+    await vi.runAllTimersAsync();
+    expect(isPrefetchPending("t1")).toBe(false);
   });
 
   it("debounces rapid successive calls", () => {
