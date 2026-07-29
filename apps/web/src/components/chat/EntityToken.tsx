@@ -110,7 +110,11 @@ export function EntityToken({
 }: EntityTokenProps) {
   const isCommandInvocation = kind === "command" || invocation;
   const isCapabilityReference = isCommandInvocation || kind === "plugin";
-  const displayLabel = isCommandInvocation ? label.replace(/^\/+/, "") : label;
+  const displayLabel = isCommandInvocation
+    ? label.replace(/^\/+/, "")
+    : kind === "plugin"
+      ? label.replace(/^@+/, "")
+      : label;
 
   return (
     <span

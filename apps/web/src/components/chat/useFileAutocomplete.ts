@@ -4,7 +4,11 @@ import {
   providerCatalogCacheKey,
   useProviderCatalogStore,
 } from "@/stores/providerCatalogStore";
-import type { ProviderCatalogRequest, SelectableProviderAgent } from "@mcode/contracts";
+import type {
+  ProviderCatalogRequest,
+  ProviderPluginCapability,
+  SelectableProviderAgent,
+} from "@mcode/contracts";
 
 interface UseFileAutocompleteOptions {
   workspaceId?: string;
@@ -30,6 +34,15 @@ export type MentionSuggestion =
       group: "Files";
       label: string;
       path: string;
+    }
+  | {
+      id: string;
+      kind: "plugin";
+      group: "Plugins";
+      label: string;
+      name: string;
+      path: string;
+      description?: string;
     };
 
 interface UseFileAutocompleteResult {
@@ -105,6 +118,12 @@ export function useFileAutocomplete({
   ));
   const catalogAgents = useMemo(
     () => (catalogSnapshot?.selectableAgents ?? []).map(toAgentSuggestion),
+    [catalogSnapshot],
+  );
+  const catalogPlugins = useMemo(
+    () => (catalogSnapshot?.entries ?? [])
+      .filter((entry): entry is ProviderPluginCapability => entry.kind === "plugin")
+      .map(toPluginSuggestion),
     [catalogSnapshot],
   );
 
@@ -223,7 +242,7 @@ export function useFileAutocomplete({
       setTriggerStart(atPos);
 
       const cachedFiles = fileListCache.get(requestScope) ?? allFiles;
-      setSuggestions(filterMentionSuggestions(cachedFiles, catalogAgents, q));
+      setSuggestions(filterMentionSuggestions(cachedFiles, catalogAgents, catalogPlugins, q));
       setIsOpen(true);
 
       const shouldRefreshAgents = catalogRequest !== null
@@ -242,6 +261,11 @@ export function useFileAutocomplete({
       const agents = loadedCatalog
         ? loadedCatalog.selectableAgents.map(toAgentSuggestion)
         : catalogAgents;
+      const plugins = loadedCatalog
+        ? loadedCatalog.entries
+          .filter((entry): entry is ProviderPluginCapability => entry.kind === "plugin")
+          .map(toPluginSuggestion)
+        : catalogPlugins;
 
       if (
         requestEpochRef.current !== requestEpoch ||
@@ -250,16 +274,16 @@ export function useFileAutocomplete({
         return;
       }
 
-      setSuggestions(filterMentionSuggestions(files, agents, q));
+      setSuggestions(filterMentionSuggestions(files, agents, plugins, q));
       setIsOpen(true);
     },
-    [allFiles, catalogAgents, catalogKey, catalogRequest, loadFiles, threadId, workspaceId],
+    [allFiles, catalogAgents, catalogKey, catalogPlugins, catalogRequest, loadFiles, threadId, workspaceId],
   );
 
   useEffect(() => {
     if (!isOpen) return;
-    setSuggestions(filterMentionSuggestions(allFiles, catalogAgents, query));
-  }, [allFiles, catalogAgents, isOpen, query]);
+    setSuggestions(filterMentionSuggestions(allFiles, catalogAgents, catalogPlugins, query));
+  }, [allFiles, catalogAgents, catalogPlugins, isOpen, query]);
 
   const selectSuggestion = useCallback((suggestion: MentionSuggestion): MentionSuggestion => {
     requestEpochRef.current += 1;
@@ -303,9 +327,22 @@ function toAgentSuggestion(agent: SelectableProviderAgent): MentionSuggestion {
   };
 }
 
+function toPluginSuggestion(plugin: ProviderPluginCapability): MentionSuggestion {
+  return {
+    id: `plugin:${plugin.identity.providerId}:${plugin.identity.nativeId}`,
+    kind: "plugin",
+    group: "Plugins",
+    label: plugin.name,
+    name: plugin.name,
+    path: plugin.mentionPath,
+    ...(plugin.description ? { description: plugin.description } : {}),
+  };
+}
+
 function filterMentionSuggestions(
   files: readonly string[],
   agents: readonly MentionSuggestion[],
+  plugins: readonly MentionSuggestion[],
   query: string,
 ): MentionSuggestion[] {
   const fileSuggestions: MentionSuggestion[] = files.map((filePath) => ({
@@ -316,10 +353,10 @@ function filterMentionSuggestions(
     path: filePath,
   }));
   if (query.length === 0) {
-    return [...agents.slice(0, 20), ...fileSuggestions.slice(0, 80)];
+    return [...agents.slice(0, 20), ...plugins.slice(0, 20), ...fileSuggestions.slice(0, 80)];
   }
-  return [...agents, ...fileSuggestions].filter((suggestion) => {
-    const haystack = suggestion.kind === "agent"
+  return [...agents, ...plugins, ...fileSuggestions].filter((suggestion) => {
+    const haystack = suggestion.kind === "agent" || suggestion.kind === "plugin"
       ? `${suggestion.label} ${suggestion.description ?? ""}`.toLowerCase()
       : suggestion.path.toLowerCase();
     return haystack.includes(query);

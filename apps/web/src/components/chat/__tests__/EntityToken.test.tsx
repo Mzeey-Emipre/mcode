@@ -39,7 +39,7 @@ describe("EntityToken capability references", () => {
 
     expect(token).toHaveClass("text-primary");
     expect(token).not.toHaveClass("h-5", "rounded-md", "px-1.5", "bg-muted/80");
-    expect(token).toHaveTextContent("@impeccable");
+    expect(token).toHaveTextContent("impeccable");
     expect(token?.querySelector(".lucide-plug")).toBeInTheDocument();
   });
 
