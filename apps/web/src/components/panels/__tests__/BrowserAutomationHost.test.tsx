@@ -33,6 +33,10 @@ const harness = vi.hoisted(() => {
   };
 });
 
+const webExecutor = vi.hoisted(() => ({
+  executeWebBrowserDispatch: vi.fn(),
+}));
+
 vi.mock("@/transport", () => ({
   getTransport: () => harness.transport,
   pushEmitter: {
@@ -46,6 +50,7 @@ vi.mock("@/transport", () => ({
 }));
 
 vi.mock("../PreviewPanel", () => ({
+  WEB_RUNTIME_PREVIEW_TAB_ID: "web-preview",
   PreviewPanel: ({ threadId, automationOnly }: { readonly threadId: string; readonly automationOnly?: boolean }) => (
     <div
       data-testid="automation-preview-panel"
@@ -54,6 +59,8 @@ vi.mock("../PreviewPanel", () => ({
     />
   ),
 }));
+
+vi.mock("../browserAutomationWebExecutor", () => webExecutor);
 
 import { BrowserAutomationHost, isBrowserAutomationWebRuntimeEnabled } from "../BrowserAutomationHost";
 import { BrowserAutomationRecorder } from "../browserAutomationRecorder";
@@ -231,8 +238,32 @@ describe("BrowserAutomationHost", () => {
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "1" })).toBe(true);
   });
 
+  it("carries an initial web open URL into the visible preview state", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    expect(window.desktopBridge).toBeUndefined();
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", "web-preview");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 31).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openRequest = {
+      ...dispatch(1, 31).request,
+      operation: "open" as const,
+      args: { url: `${window.location.origin}/fixture`, activate: true },
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
+    expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(`${window.location.origin}/fixture`);
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ operation: "open", args: openRequest.args }),
+    }), expect.any(AbortSignal));
+    view.unmount();
+  });
+
   afterEach(() => {
     delete window.desktopBridge;
+    vi.unstubAllEnvs();
   });
 
   it("stays inactive when a partial desktop bridge omits preview automation", async () => {

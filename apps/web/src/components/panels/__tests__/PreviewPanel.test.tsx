@@ -8,7 +8,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getDefaultSettings } from "@mcode/contracts";
+import {
+  BROWSER_AUTOMATION_CONTRACT_VERSION,
+  getDefaultSettings,
+  type BrowserAutomationHostDispatch,
+} from "@mcode/contracts";
 
 const {
   mockUsePreviewBridge,
@@ -84,6 +88,7 @@ import {
   PreviewPanel,
   shouldRenderWebviewPreview,
 } from "../PreviewPanel";
+import { executeWebBrowserDispatch } from "../browserAutomationWebExecutor";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import {
@@ -94,6 +99,7 @@ import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useDiffStore } from "@/stores/diffStore";
+import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -290,6 +296,60 @@ describe("PreviewPanel: unavailable state", () => {
       window.location.origin + "/fixture",
     );
     expect(screen.queryByTestId("web-runtime-cross-origin")).not.toBeInTheDocument();
+  });
+
+  it("publishes the web preview target identity used by the executor", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
+    expect(iframe).toHaveAttribute("data-thread-id", "thread-1");
+    expect(iframe).toHaveAttribute("data-tab-id", "web-preview");
+    expect(useBrowserAutomationStore.getState().liveTargets.get(
+      JSON.stringify(["thread-1", "web-preview"]),
+    )).toMatchObject({ workspaceId: "workspace-1", threadId: "thread-1", tabId: "web-preview" });
+    const page = document.implementation.createHTMLDocument("Fixture");
+    page.body.innerHTML = "<main>Visible fixture</main>";
+    Object.defineProperty(iframe, "contentDocument", { configurable: true, value: page });
+    const result = await executeWebBrowserDispatch({
+      scope: {
+        workspaceId: "workspace-1",
+        threadId: "thread-1",
+        providerSessionId: "session-1",
+        providerInstanceId: "instance-1",
+      },
+      connection: {
+        desktopInstanceId: "web",
+        windowId: 1,
+        connectionGeneration: 1,
+        targetGeneration: 1,
+      },
+      request: {
+        contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+        workspaceId: "workspace-1",
+        threadId: "thread-1",
+        providerSessionId: "session-1",
+        providerInstanceId: "instance-1",
+        requestId: "request-preview",
+        sequence: 1,
+        deadline: Date.now() + 1_000,
+        expectedControlEpoch: 0,
+        operation: "snapshot",
+        args: { includeScreenshot: false },
+      },
+      target: {
+        desktopInstanceId: "web",
+        windowId: 1,
+        connectionGeneration: 1,
+        threadId: "thread-1",
+        tabId: "web-preview",
+        targetGeneration: 1,
+        active: true,
+        focused: true,
+        lastUsedAt: Date.now(),
+      },
+    } satisfies BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(result).toMatchObject({ ok: true, result: { operation: "snapshot" } });
   });
 
   it("switches thread URL and iframe synchronously without stale preview state", () => {
