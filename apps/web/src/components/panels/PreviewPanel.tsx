@@ -1536,22 +1536,36 @@ function WebRuntimePreview({ threadId }: { readonly threadId: string }) {
   const storedUrl = useDiffStore((state) => state.previewUrlByThread[threadId] ?? "");
   const [inputUrl, setInputUrl] = useState(storedUrl);
   const [src, setSrc] = useState<string | null>(() => normalizeWebPreviewUrl(storedUrl));
+  const [crossOriginObserved, setCrossOriginObserved] = useState(false);
   const enabled = isBrowserAutomationWebRuntimeEnabled();
-  const state = resolveWebPreviewState(src, enabled);
+  const requestedState = resolveWebPreviewState(src, enabled);
+  const state = crossOriginObserved ? "cross-origin" : requestedState;
 
   useEffect(() => {
     setInputUrl(storedUrl);
     setSrc(normalizeWebPreviewUrl(storedUrl));
+    setCrossOriginObserved(false);
   }, [storedUrl]);
 
   const navigate = (): void => {
     const next = normalizeWebPreviewUrl(inputUrl);
     if (!next) {
       setSrc(null);
+      setCrossOriginObserved(false);
       return;
     }
     setSrc(next);
+    setCrossOriginObserved(false);
     useDiffStore.getState().setPreviewUrlForThread(threadId, next);
+  };
+
+  const onIframeLoad = (event: React.SyntheticEvent<HTMLIFrameElement>): void => {
+    try {
+      const actualOrigin = event.currentTarget.contentWindow?.location.origin;
+      setCrossOriginObserved(actualOrigin !== window.location.origin);
+    } catch {
+      setCrossOriginObserved(true);
+    }
   };
 
   return (
@@ -1568,6 +1582,7 @@ function WebRuntimePreview({ threadId }: { readonly threadId: string }) {
             data-testid="web-runtime-preview-iframe"
             className="h-full w-full border-0"
             referrerPolicy="no-referrer"
+            onLoad={onIframeLoad}
           />
         ) : state === "cross-origin" && src ? (
           <>
@@ -1577,6 +1592,7 @@ function WebRuntimePreview({ threadId }: { readonly threadId: string }) {
               data-testid="web-runtime-preview-iframe"
               className="h-full w-full border-0"
               referrerPolicy="no-referrer"
+              onLoad={onIframeLoad}
             />
             <div data-testid="web-runtime-cross-origin" className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-amber-500/40 bg-background/95 px-3 py-2 text-xs text-amber-700 shadow-sm">
               Cross-origin preview is visible, but web automation and DOM access are unsupported.
@@ -2357,7 +2373,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   const hasDesktopPreview = !!window.desktopBridge?.preview;
   const webRuntimeEnabled = isBrowserAutomationWebRuntimeEnabled();
   if (!hasDesktopPreview && webRuntimeEnabled) {
-    return <WebRuntimePreview threadId={threadId} />;
+    return <WebRuntimePreview key={threadId} threadId={threadId} />;
   }
   if (!hasDesktopPreview) {
     return (

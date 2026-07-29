@@ -292,11 +292,43 @@ describe("PreviewPanel: unavailable state", () => {
     expect(screen.queryByTestId("web-runtime-cross-origin")).not.toBeInTheDocument();
   });
 
+  it("switches thread URL and iframe synchronously without stale preview state", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({
+      previewUrlByThread: {
+        "thread-1": window.location.origin + "/first",
+        "thread-2": window.location.origin + "/second",
+      },
+    });
+    const view = render(<PreviewPanel threadId="thread-1" />);
+    view.rerender(<PreviewPanel threadId="thread-2" />);
+    expect(screen.getByLabelText("Preview URL")).toHaveValue(window.location.origin + "/second");
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toHaveAttribute(
+      "src",
+      window.location.origin + "/second",
+    );
+  });
+
   it("keeps a cross-origin page visible while identifying DOM automation as unsupported", () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     useDiffStore.setState({ previewUrlByThread: { "thread-1": "https://example.com/fixture" } });
     render(<PreviewPanel threadId="thread-1" />);
     expect(screen.getByTestId("web-runtime-preview-iframe")).toBeInTheDocument();
+    expect(screen.getByTestId("web-runtime-cross-origin")).toHaveTextContent(
+      "automation and DOM access are unsupported",
+    );
+  });
+
+  it("marks a same-origin requested page unsupported after cross-origin iframe navigation", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
+    render(<PreviewPanel threadId="thread-1" />);
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
+    Object.defineProperty(iframe, "contentWindow", {
+      configurable: true,
+      value: { location: { origin: "https://example.com" } },
+    });
+    fireEvent.load(iframe);
     expect(screen.getByTestId("web-runtime-cross-origin")).toHaveTextContent(
       "automation and DOM access are unsupported",
     );
