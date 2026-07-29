@@ -14,27 +14,27 @@ AI agent orchestration desktop app. Run coding sessions across multiple provider
 
 ## Quick Start
 
-**Prerequisites:** [Bun](https://bun.sh/), [Git](https://git-scm.com/), and Node.js 24.18.0.
-The exact Node.js version in [`.node-version`](.node-version) prevents native
-module ABI mismatches. Before installing dependencies, use your Node version
-manager to install and select that version. Version managers that support
-`.node-version` can select it automatically.
+**Prerequisites:** [Bun](https://bun.sh/) and [Git](https://git-scm.com/).
+Bun runs repository installation, scripts, and tests. Electron supplies the
+Node.js runtime for the backend and native modules, while Chromium renders the
+frontend.
 
 You also need at least one supported provider CLI installed:
 
 | Provider | Install | Min version |
 |----------|---------|-------------|
-| [Claude Code](https://claude.ai/download) | `npm i -g @anthropic-ai/claude-code` | — |
-| [Codex](https://github.com/openai/codex) | `npm i -g @openai/codex` | 0.37.0 |
-| [GitHub Copilot](https://github.com/github/copilot) | `npm i -g @github/copilot` | — |
+| [Claude Code](https://claude.ai/download) | `bun add --global @anthropic-ai/claude-code` | — |
+| [Codex](https://github.com/openai/codex) | `bun add --global @openai/codex` | 0.37.0 |
+| [GitHub Copilot](https://github.com/github/copilot) | `bun add --global @github/copilot` | — |
 
 Provider CLIs do not need to be on your system PATH. You can set a custom binary path per provider in **Settings > Providers**.
 
 ```bash
 git clone https://github.com/Mzeey-Emipre/mcode.git
 cd mcode
-bash scripts/setup-env.sh
+bun run setup
 bun install
+bun run doctor
 bun run dev:desktop
 ```
 

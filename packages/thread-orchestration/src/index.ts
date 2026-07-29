@@ -26,6 +26,10 @@ export type ExternalThreadControlScope =
 /** Server-owned authority for a paired external thread-control integration. */
 export interface ExternalThreadControlAuthority {
   type: "external";
+  /** Durable pairing identity derived by the authenticated external adapter. */
+  pairingId?: string;
+  /** Monotonic authority epoch; stale epochs cannot dispatch. */
+  authorityEpoch?: number;
   integrationId: string;
   allowedWorkspaceIds: readonly string[];
   scopes: readonly ExternalThreadControlScope[];

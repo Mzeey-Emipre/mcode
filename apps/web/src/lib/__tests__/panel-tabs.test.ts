@@ -13,7 +13,7 @@ function ids(types: readonly { id: PanelTabTypeId }[]): PanelTabTypeId[] {
 }
 
 describe("PANEL_TAB_TYPES catalog", () => {
-  it("declares the six revamp tab types in prototype order", () => {
+  it("declares the seven revamp tab types in prototype order", () => {
     expect(ids(PANEL_TAB_TYPES)).toEqual([
       "preview",
       "terminal",
@@ -21,6 +21,7 @@ describe("PANEL_TAB_TYPES catalog", () => {
       "changes",
       "tasks",
       "subagents",
+      "coordination",
     ]);
   });
 
@@ -29,16 +30,16 @@ describe("PANEL_TAB_TYPES catalog", () => {
     expect(comingSoon).toEqual(["files"]);
   });
 
-  it("marks Plan and Subagents as thread-only (Review is dual-scope)", () => {
+  it("marks coordination tools as thread-only (Review is dual-scope)", () => {
     const threadOnly = PANEL_TAB_TYPES.filter((t) => t.needsThread).map((t) => t.id);
-    expect(threadOnly).toEqual(["tasks", "subagents"]);
+    expect(threadOnly).toEqual(["tasks", "subagents", "coordination"]);
   });
 
   it("gives every shortcut-enabled type a commandId", () => {
     for (const type of PANEL_TAB_TYPES) {
       if (type.comingSoon) {
         expect(type.commandId).toBeUndefined();
-      } else if (type.id !== "subagents") {
+      } else if (type.id !== "subagents" && type.id !== "coordination") {
         expect(type.commandId).toBeTruthy();
       }
     }
@@ -77,6 +78,7 @@ describe("shownTabTypes — scope filter", () => {
       "changes",
       "tasks",
       "subagents",
+      "coordination",
     ]);
   });
 });
@@ -92,7 +94,7 @@ describe("shownTabTypes — cardinality filter", () => {
 
   it("keeps Terminal creatable after other singleton tools are open", () => {
     expect(
-      ids(shownTabTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents"])),
+      ids(shownTabTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents", "coordination"])),
     ).toEqual(["terminal", "files"]);
   });
 
@@ -124,6 +126,7 @@ describe("creatableTypes — coming-soon exclusion", () => {
       "changes",
       "tasks",
       "subagents",
+      "coordination",
     ]);
   });
 
@@ -146,7 +149,7 @@ describe("creatableTypes — combined scope + cardinality", () => {
 
   it("keeps Terminal creatable when every singleton tool is open", () => {
     expect(
-      ids(creatableTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents"])),
+      ids(creatableTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents", "coordination"])),
     ).toEqual(["terminal"]);
   });
 
@@ -172,6 +175,7 @@ describe("creatableTypes / shownTabTypes — purity", () => {
       "terminal",
       "changes",
       "subagents",
+      "coordination",
     ]);
   });
 });

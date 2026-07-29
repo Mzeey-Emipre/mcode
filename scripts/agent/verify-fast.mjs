@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /** Compatibility entry point for the former fast gate. */
 import { pathToFileURL } from "node:url";
 import { resolve as resolvePath } from "node:path";

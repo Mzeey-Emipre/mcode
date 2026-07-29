@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Deletes the historical rolling `nightly` GitHub release and its 49 stale
  * assets, leaving per-build nightly releases (v*-nightly.*) untouched.
  *
  * Usage:
- *   GH_TOKEN=$(gh auth token) node scripts/agent/one-time-cleanup-rolling-nightly.mjs --confirm
+ *   GH_TOKEN=$(gh auth token) bun scripts/agent/one-time-cleanup-rolling-nightly.mjs --confirm
  *
  * Without --confirm, prints what would be deleted but takes no action.
  */

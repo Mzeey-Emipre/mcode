@@ -5,8 +5,8 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "start": "bun src/index.ts",
-    "test": "node ../../scripts/run-electron-node.mjs --workspace-cli vitest vitest.mjs run",
+    "start": "bun ../../scripts/dev-web.mjs --server-only",
+    "test": "bun ../../scripts/run-electron-node.mjs --workspace-cli vitest vitest.mjs run",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

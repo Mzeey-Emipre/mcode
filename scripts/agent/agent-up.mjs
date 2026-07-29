@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Starts a self-contained per-worktree runtime for automation agents.
  */
@@ -64,7 +64,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
   mkdirSync(paths.playwrightScratchDir, { recursive: true });
   mkdirSync(paths.electronDir, { recursive: true });
   const stopRuntimePids = agentUpTestHooks.stopRecordedRuntimePids ?? stopRecordedRuntimePids;
-  stopRuntimePids(repoRoot);
+  await stopRuntimePids(repoRoot);
 
   const seedRuntimeFixtureRepo = agentUpTestHooks.seedFixtureRepo ?? seedFixtureRepo;
   const computeRuntimePorts = agentUpTestHooks.computeAvailablePorts ?? computeAvailablePorts;
@@ -152,7 +152,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
     }
     return contract;
   } catch (error) {
-    cleanupStartedProcesses(startedPidFiles, repoRoot);
+    await cleanupStartedProcesses(startedPidFiles, repoRoot);
     throw error;
   }
 }
@@ -283,12 +283,12 @@ async function waitForHttpOk(url, label, timeoutMs = 30_000) {
  * @param {string[]} pidFiles
  * @param {string} repoRoot
  */
-function cleanupStartedProcesses(pidFiles, repoRoot) {
+async function cleanupStartedProcesses(pidFiles, repoRoot) {
   const paths = getRuntimePaths(repoRoot);
   rmSync(paths.portsFile, { force: true });
   for (const pidFile of [...pidFiles].reverse()) {
     try {
-      stopRecordedPidFile(pidFile, { repoRoot });
+      await stopRecordedPidFile(pidFile, { repoRoot });
     } catch {
       // Startup is already failing; preserve the original error.
     }

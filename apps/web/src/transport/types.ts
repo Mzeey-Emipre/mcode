@@ -69,6 +69,12 @@ import type {
   PullRequestMergeResult,
   SendMessageInput,
   CreateAndSendInput,
+  ThreadControlIdentity,
+  ThreadControlReadResult,
+  ThreadControlUserSendInput,
+  ThreadControlUserStopInput,
+  ThreadSendResult,
+  ThreadStopResult,
 } from "@mcode/contracts";
 
 // Re-export shared types from the contracts package (single source of truth).
@@ -289,6 +295,15 @@ export interface McodeTransport {
   getThreadGoal(threadId: string): Promise<GoalLookupResult>;
   /** Clear the current active goal for a thread without sending a chat message. */
   clearThreadGoal(threadId: string): Promise<GoalLookupResult>;
+  /** Read one canonical persisted coordination projection. */
+  readThreadControl(
+    identity: ThreadControlIdentity,
+    messageLimit?: number,
+  ): Promise<ThreadControlReadResult>;
+  /** Send a user-owned follow-up from a source thread to a destination thread. */
+  sendThreadControl(input: ThreadControlUserSendInput): Promise<ThreadSendResult>;
+  /** Stop a destination thread from a source thread. */
+  stopThreadControl(input: ThreadControlUserStopInput): Promise<ThreadStopResult>;
 
   // Thread mutations
   updateThreadTitle(threadId: string, title: string): Promise<boolean>;

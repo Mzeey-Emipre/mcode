@@ -13,6 +13,11 @@ vi.mock("./ResizableRightPanel", () => ({
   ),
 }));
 vi.mock("./SubagentsPanel", () => ({ SubagentsPanel: () => <div /> }));
+vi.mock("./CoordinationPanel", () => ({
+  CoordinationPanel: ({ workspaceId, threadId }: { workspaceId: string; threadId: string }) => (
+    <div data-testid="coordination-panel-integration">{workspaceId}:{threadId}</div>
+  ),
+}));
 vi.mock("./plan", () => ({ PlanPanel: () => <div /> }));
 vi.mock("@/components/diff", () => ({ DiffPanel: () => <div /> }));
 vi.mock("@/components/panels/PreviewPanel", () => ({ PreviewPanel: () => <div /> }));
@@ -28,7 +33,7 @@ vi.mock("@/lib/right-panel-layout", () => ({ toggleRightPanelAdaptive: vi.fn() }
 vi.mock("@/transport", () => ({ getTransport: () => ({ terminalKill: vi.fn() }) }));
 
 import { RightPanel } from "./RightPanel";
-import { useDiffStore } from "@/stores/diffStore";
+import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -57,5 +62,23 @@ describe("RightPanel", () => {
       "The result of getSnapshot should be cached",
     );
     error.mockRestore();
+  });
+
+  it("renders coordination content for an open active thread tab", () => {
+    useWorkspaceStore.setState({ activeWorkspaceId: "workspace-1", activeThreadId: "thread-1" });
+    useDiffStore.setState({
+      rightPanelFallbackByWorkspace: {
+        "workspace-1": createRightPanelState({
+          visible: true,
+          width: 400,
+          openTabs: ["coordination"],
+          activeTab: "coordination",
+        }),
+      },
+    });
+
+    render(<RightPanel />);
+
+    expect(screen.getByTestId("coordination-panel-integration")).toHaveTextContent("workspace-1:thread-1");
   });
 });

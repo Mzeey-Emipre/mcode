@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Copy the project's Codex prompts (.codex/prompts/*.md) into the user's
  * Codex CLI prompt directory (~/.codex/prompts/) so they appear in Codex's
@@ -13,9 +13,9 @@
  * avoid colliding with other projects' prompts.
  *
  * Usage:
- *   node scripts/agent/install-codex-prompts.mjs           # safe install
- *   node scripts/agent/install-codex-prompts.mjs --force   # overwrite
- *   node scripts/agent/install-codex-prompts.mjs --no-prefix
+ *   bun scripts/agent/install-codex-prompts.mjs           # safe install
+ *   bun scripts/agent/install-codex-prompts.mjs --force   # overwrite
+ *   bun scripts/agent/install-codex-prompts.mjs --no-prefix
  *     # install without the `mcode-` prefix (collision risk)
  */
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";

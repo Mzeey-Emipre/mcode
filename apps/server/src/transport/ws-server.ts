@@ -17,6 +17,7 @@ import { extractToken, buildAuthCookie } from "./auth";
 import { createReadStream, existsSync } from "fs";
 import { join } from "path";
 import { getMcodeDir } from "@mcode/shared";
+import { EXTERNAL_THREAD_CONTROL_MCP_PATH } from "../services/external-thread-control-mcp-runtime.js";
 
 /** Constant-time string comparison to prevent timing attacks on token validation. */
 function safeTokenEqual(a: string, b: string): boolean {
@@ -104,6 +105,17 @@ export function createWsServer(deps: WsServerDeps): {
   wss: WebSocketServer;
 } {
   const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    const requestPath = req.url?.split("?", 1)[0];
+    if (requestPath === EXTERNAL_THREAD_CONTROL_MCP_PATH && deps.externalThreadControlMcpRuntime) {
+      void deps.externalThreadControlMcpRuntime.handleRequest(req, res).catch((error: unknown) => {
+        logger.error("External thread-control MCP request failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!res.headersSent) res.writeHead(500);
+        res.end();
+      });
+      return;
+    }
     const token = extractToken(req);
 
     if (req.method === "GET" && req.url?.startsWith("/health")) {

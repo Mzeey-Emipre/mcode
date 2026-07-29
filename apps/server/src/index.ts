@@ -22,6 +22,8 @@ import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
 import { AgentService } from "./services/agent-service";
 import { ThreadControlService } from "./services/thread-control-service";
+import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
+import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
 import { NarrativeStore } from "./services/narrative-store";
 import { GitService } from "./services/git-service";
 import { GithubService } from "./services/github-service";
@@ -216,6 +218,8 @@ const workspaceService = container.resolve(WorkspaceService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
 const threadControlService = container.resolve(ThreadControlService);
+const externalThreadControlPairingService = container.resolve(ExternalThreadControlPairingService);
+const externalThreadControlMcpRuntime = container.resolve(ExternalThreadControlMcpRuntime);
 const gitService = container.resolve(GitService);
 const githubService = container.resolve(GithubService);
 const pullRequestService = container.resolve(PullRequestService);
@@ -606,6 +610,8 @@ const { httpServer, wss } = createWsServer({
   threadService,
   agentService,
   threadControlService,
+  externalThreadControlPairingService,
+  externalThreadControlMcpRuntime,
   gitService,
   githubService,
   pullRequestService,
@@ -665,6 +671,7 @@ function listen(port: number, attempt = 1): void {
     }
   });
   httpServer.listen(port, HOST, () => {
+    externalThreadControlMcpRuntime.setPort(port);
     logger.info(`Mcode server listening on ${HOST}:${port}`);
 
     // Write lock file so other instances can discover this server
@@ -733,6 +740,7 @@ reapOrphanedPtys(pidRegistry, logger);
 async function bootstrapServer(): Promise<void> {
   try {
     await threadControlService.recoverApprovals();
+    externalThreadControlMcpRuntime.reconcileOnStartup();
   } catch (err) {
     logger.error("Thread-control approval recovery failed; refusing to accept work", {
       error: err instanceof Error ? err.message : String(err),
@@ -770,6 +778,8 @@ async function shutdown(): Promise<void> {
 
   // Close IPC push server
   await ipcServer.close();
+
+  await externalThreadControlMcpRuntime.close();
 
   // Clean up IPC socket file on non-Windows
   if (process.platform !== "win32") {

@@ -55,10 +55,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version-file: ".node-version"
-          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
 
       - name: Generate cleanup token
         id: cleanup-token
@@ -80,7 +77,7 @@ jobs:
             echo "Release Please outputs do not identify the same stable release."
             exit 1
           fi
-          node scripts/agent/cleanup-superseded-nightlies.mjs \
+          bun scripts/agent/cleanup-superseded-nightlies.mjs \
             --repo "${{ github.repository }}" \
             --stable-tag "$STABLE_TAG" \
             --apply
