@@ -38,6 +38,10 @@ describe("InternalThreadControlMcpRuntime", () => {
     ]);
 
     expect(first?.configOverrides).toEqual(second?.configOverrides);
+    const connection = await instance.createHttpConnection("session");
+    expect(connection?.name).toBe("mcode_internal_thread_control");
+    expect(connection?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/session$/);
+    expect(connection?.headers.Authorization).toMatch(/^Bearer /);
     const port = first?.configOverrides[0].match(/127\.0\.0\.1:(\d+)/)?.[1];
     expect(port).toBeDefined();
     expect(await status(`http://127.0.0.1:${port}/%`)).toBe(401);
@@ -58,6 +62,25 @@ describe("InternalThreadControlMcpRuntime", () => {
     });
     await expect(instance.createCodexConfiguration("session")).resolves.toBeDefined();
     await instance.close("session");
+  });
+
+  it("releases the shared HTTP session when the pooled provider closes", async () => {
+    const { runtime: instance, authority } = runtime();
+    authority.activate({
+      sessionId: "session",
+      sourceThreadId: "thread",
+      sourceTurnId: "turn",
+      sourceProviderId: "cursor",
+      permissionMode: "full",
+    });
+    await expect(instance.createHttpConnection("session")).resolves.toBeDefined();
+    const sessions = (instance as unknown as {
+      httpSessions: Map<string, unknown>;
+    }).httpSessions;
+    expect(sessions.has("session")).toBe(true);
+    await instance.close("session");
+    expect(sessions.has("session")).toBe(false);
+    expect(authority.credential("session")).toBeUndefined();
   });
 
   it("does not retain a loopback listener when close wins during startup", async () => {

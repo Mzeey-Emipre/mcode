@@ -155,6 +155,7 @@ const BUILTIN_MODE_NAMES = new Set<"interactive" | "plan" | "autopilot">(
  * substitute: set true while a turn runs, false when it settles.
  */
 interface CopilotSessionState {
+  sessionId: string;
   session: CopilotSession;
   lastUsedAt: number;
   /**
@@ -888,20 +889,25 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       ...(userInstructions && { systemMessage: { content: userInstructions } }),
     };
 
-    if (resumeFrom) {
-      try {
-        session = await client.resumeSession(resumeFrom, sessionBase);
-        logger.info("Resumed Copilot session", { sessionId, sdkSessionId: resumeFrom });
-      } catch (err) {
-        logger.warn("CopilotProvider: resume failed, starting fresh session", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        this.sdkSessionIds.delete(sessionId);
+    try {
+      if (resumeFrom) {
+        try {
+          session = await client.resumeSession(resumeFrom, sessionBase);
+          logger.info("Resumed Copilot session", { sessionId, sdkSessionId: resumeFrom });
+        } catch (err) {
+          logger.warn("CopilotProvider: resume failed, starting fresh session", {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          this.sdkSessionIds.delete(sessionId);
+          session = await client.createSession(sessionBase);
+        }
+      } else {
         session = await client.createSession(sessionBase);
       }
-    } else {
-      session = await client.createSession(sessionBase);
+    } catch (err) {
+      await this.threadControlMcp?.close(sessionId);
+      throw err;
     }
 
     // Route to the appropriate Copilot SDK API based on the selected sub-agent.
@@ -929,6 +935,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     }
 
     const state: CopilotSessionState = {
+      sessionId,
       session,
       lastUsedAt: Date.now(),
       turnActive: false,
@@ -976,6 +983,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    await this.threadControlMcp?.close(state.sessionId);
   }
 
   /**

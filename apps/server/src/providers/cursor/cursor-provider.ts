@@ -454,6 +454,7 @@ export class CursorProvider
       await this.openLogicalSession(state, resumeFrom !== undefined);
     } catch (err) {
       this.liveSessionIds.delete(sessionId);
+      await this.threadControlMcp?.close(sessionId);
       try {
         state.child.kill();
       } catch {
@@ -488,9 +489,10 @@ export class CursorProvider
    * for this session (so orphaned approval cards clear) and drop it from the
    * live-id mirror. The child process is killed by the runtime's hard kill.
    */
-  close(state: CursorSessionState): void {
+  async close(state: CursorSessionState): Promise<void> {
     this.cancelPendingForThread(state.mcodeSessionId);
     this.liveSessionIds.delete(state.mcodeSessionId);
+    await this.threadControlMcp?.close(state.mcodeSessionId);
   }
 
   /** A pooled session must be discarded before reuse if the child died or the cwd/permission mode changed. */
