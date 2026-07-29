@@ -401,6 +401,16 @@ describe("PreviewPanel: unavailable state", () => {
       "Web preview automation is disabled",
     );
   });
+
+  it("renders the deterministic same-origin fixture when web automation is enabled", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.queryByTestId("preview-panel-unavailable")).not.toBeInTheDocument();
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toHaveAttribute(
+      "src",
+      `${window.location.origin}/browser-automation-fixture.html`,
+    );
+  });
 });
 
 describe("PreviewPanel: full panel state", () => {
