@@ -67,6 +67,8 @@ interface SubagentRow {
   readonly hasExplicitIdentity: boolean;
   /** Stable delegated-task description. */
   readonly task: string;
+  /** Epoch milliseconds when the delegated Agent started. */
+  readonly startedAt: number;
   /** Latest provider-supplied activity or terminal result summary. */
   readonly activity: string;
   /** Epoch milliseconds for stable row ordering. */
@@ -308,6 +310,7 @@ export function projectSubagents(
           providerAgentKey,
           ...subagentIdentity(agent),
           task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
+          startedAt,
           activity: latestActivity,
           activityAt: activityTimestamp(latestCall),
           elapsedSeconds: Math.max(0, Math.floor(agent.elapsedSeconds ?? (now - startedAt) / 1_000)),
@@ -326,6 +329,7 @@ export function projectSubagents(
         providerAgentKey,
         ...subagentIdentity(agent),
         task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
+        startedAt,
         activity: terminalLiveActivity(agent, latestActivity),
         activityAt: completedAt,
         elapsedSeconds: Math.max(0, Math.floor(agent.elapsedSeconds ?? (agent.durationMs ?? completedAt - startedAt) / 1_000)),
@@ -392,6 +396,7 @@ export function projectSubagents(
         providerAgentKey: nonEmptyString(record.provider_agent_key),
         ...hydratedIdentity(record),
         task,
+        startedAt,
         activity: boundedDisplayText(nonEmptyString(record.output_summary) ?? task, MAX_ACTIVITY_LENGTH),
         activityAt: record.status === "running" ? startedAt : completedAt,
         elapsedSeconds: elapsedSeconds(startedAt, record.status === "running" ? now : completedAt),
@@ -473,6 +478,7 @@ export function projectSubagents(
       identity: representative.row.identity,
       hasExplicitIdentity: representative.row.hasExplicitIdentity,
       task: representative.row.task,
+      startedAt: representative.row.startedAt,
       activity: representative.row.activity,
       activityAt: representative.row.activityAt,
       elapsedSeconds: members.reduce((total, { row }) => total + row.elapsedSeconds, 0),

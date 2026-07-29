@@ -14,9 +14,14 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@/stores/thread-selectors", () => ({
-  useThreadRecord: (threadId: string, selector: (record: unknown) => unknown) => selector(
-    state.records[threadId] ?? { toolCalls: [], narrativeByMessage: {} },
-  ),
+  useThreadRecord: (threadId: string, selector: (record: unknown) => unknown) => selector({
+    answeredPlanMessageIds: new Set(),
+    ...(state.records[threadId] ?? { toolCalls: [], narrativeByMessage: {} }),
+  }),
+}));
+
+vi.mock("../../chat/MarkdownContent", () => ({
+  default: ({ content }: { content: string }) => <span>{content}</span>,
 }));
 
 import { SubagentsPanel } from "../SubagentsPanel";
@@ -147,7 +152,8 @@ describe("SubagentsPanel", () => {
     const row = screen.getByRole("button", { name: /Open Implementation worker details/ });
     fireEvent.click(row);
     expect(screen.getByRole("region", { name: /Implementation worker subagent details/ })).toBeInTheDocument();
-    expect(screen.queryByText("Build the roster")).not.toBeInTheDocument();
+    const callerTask = await screen.findByText("Build the roster");
+    expect(callerTask.closest("[data-message-role='user']")).toBeInTheDocument();
     expect(screen.queryByText("Delegated task")).not.toBeInTheDocument();
     expect(screen.queryByText("Activity")).not.toBeInTheDocument();
     expect(screen.queryByText("Result")).not.toBeInTheDocument();
@@ -156,6 +162,10 @@ describe("SubagentsPanel", () => {
     expect(screen.queryByTestId("subagent-lifecycle-dot")).not.toBeInTheDocument();
     expect(screen.getByText("**Done**")).toBeInTheDocument();
     expect(screen.getByTestId("subagent-response-text")).toHaveClass("text-sm", "text-foreground");
+    expect(screen.queryByRole("button", { name: "Reply to this message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fork from this message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
     await waitFor(() => {
@@ -189,8 +199,9 @@ describe("SubagentsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
 
     expect(screen.getByRole("group", { name: /Running, \d+s elapsed/ })).toBeInTheDocument();
-    expect(screen.getByTestId("subagent-response-byline")).toHaveTextContent("GPT-5.6 Sol · High");
+    expect(screen.getByTestId("subagent-header-metadata")).toHaveTextContent("GPT-5.6 Sol · High");
     expect(screen.queryByTestId("subagent-response-text")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-response-byline")).not.toBeInTheDocument();
   });
 
   it("shows explicit metadata, exact footer counts, and opens attributed workspace diffs", () => {
@@ -229,12 +240,13 @@ describe("SubagentsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
 
     const response = screen.getByTestId("subagent-response-text");
-    const byline = screen.getByTestId("subagent-response-byline");
+    const headerMetadata = screen.getByTestId("subagent-header-metadata");
     const footer = screen.getByText("1 step").closest("div")!;
-    expect(byline).toHaveTextContent("GPT-5.6 Sol · High");
-    expect(byline).toHaveClass("text-right", "font-mono", "tabular-nums");
-    expect(response.compareDocumentPosition(byline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(byline.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(headerMetadata).toHaveTextContent("GPT-5.6 Sol · High");
+    expect(headerMetadata.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByTestId("subagent-response-byline")).not.toBeInTheDocument();
+    expect(screen.getByText("7.0s")).toBeInTheDocument();
+    expect(footer).toContainElement(screen.getByText("7.0s"));
     expect(screen.getByText("1 step")).toBeInTheDocument();
     expect(screen.getByText("1 file changed")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "View all diffs" }));
