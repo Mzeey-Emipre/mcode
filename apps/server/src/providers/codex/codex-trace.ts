@@ -30,7 +30,7 @@ function previewDiagnostic(s: string): string {
     .replace(/\b(token|api[_-]?key|secret|password|authorization)\s*[:=]\s*["']?[^\s,;}"']+/gi, "$1=[redacted]")
     .replace(/\beyJ[A-Za-z0-9_-]{20,}\b/g, "[redacted]")
     .replace(/\b[A-Fa-f0-9]{32,}\b/g, "[redacted]");
-  return previewText(redacted, 96);
+  return previewText(redacted, 256);
 }
 
 /** Pulls correlation ids from notification params when present (Codex app-server payloads). */

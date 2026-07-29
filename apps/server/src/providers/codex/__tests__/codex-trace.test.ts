@@ -91,4 +91,15 @@ describe("codex-trace", () => {
       failureReasonPreview: undefined,
     });
   });
+
+  it("retains a bounded diagnostic preview", () => {
+    const summary = summarizeCodexNotificationParams("mcpServer/startupStatus/updated", {
+      name: "mcode_internal_thread_control",
+      status: "failed",
+      failureReason: "x".repeat(400),
+    });
+
+    expect(String(summary.failureReasonPreview)).toHaveLength(257);
+    expect(String(summary.failureReasonPreview).endsWith("…")).toBe(true);
+  });
 });
