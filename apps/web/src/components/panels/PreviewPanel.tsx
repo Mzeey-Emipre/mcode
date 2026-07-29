@@ -1517,6 +1517,7 @@ export const PREVIEW_WEBVIEW_FALLBACK_TAB_ID =
 
 /** Stable tab id used by the single web-runtime preview target. */
 export const WEB_RUNTIME_PREVIEW_TAB_ID = "web-preview";
+const WEB_AUTOMATION_FIXTURE_URL = "/browser-automation-fixture.html";
 
 /** Returns whether the webview renderer should own the preview surface. */
 export function shouldRenderWebviewPreview(
@@ -1543,8 +1544,9 @@ function WebRuntimePreview({
   readonly workspaceId?: string | null;
 }) {
   const storedUrl = useDiffStore((state) => state.previewUrlByThread[threadId] ?? "");
+  const fixtureUrl = `${window.location.origin}${WEB_AUTOMATION_FIXTURE_URL}`;
   const [inputUrl, setInputUrl] = useState(storedUrl);
-  const [src, setSrc] = useState<string | null>(() => normalizeWebPreviewUrl(storedUrl));
+  const [src, setSrc] = useState<string | null>(() => normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
   const [crossOriginObserved, setCrossOriginObserved] = useState(false);
   const enabled = isBrowserAutomationWebRuntimeEnabled();
   const requestedState = resolveWebPreviewState(src, enabled);
@@ -1566,9 +1568,9 @@ function WebRuntimePreview({
 
   useEffect(() => {
     setInputUrl(storedUrl);
-    setSrc(normalizeWebPreviewUrl(storedUrl));
+    setSrc(normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
     setCrossOriginObserved(false);
-  }, [storedUrl]);
+  }, [fixtureUrl, storedUrl]);
 
   const navigate = (): void => {
     const next = normalizeWebPreviewUrl(inputUrl);

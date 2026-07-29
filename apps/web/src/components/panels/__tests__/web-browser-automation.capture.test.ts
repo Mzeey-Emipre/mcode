@@ -217,6 +217,38 @@ describe("web browser automation capture mechanics", () => {
     }
   });
 
+  it("reports truncation and bounded original counts for oversized root child lists", async () => {
+    const iframe = iframeFixture();
+    iframe.contentDocument!.body.innerHTML = Array.from(
+      { length: 1_001 },
+      (_, index) => `<button>Root ${index}</button>`,
+    ).join("");
+    const result = await captureVisibleWebSnapshot({ iframe, maxWidth: 100, deadline: Date.now() + 1_000, includeScreenshot: false });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.visibleTextTruncation).toMatchObject({ truncated: true });
+      expect(result.value.elementsTruncation).toMatchObject({ truncated: true });
+      if (result.value.visibleTextTruncation.truncated) expect(result.value.visibleTextTruncation.originalCount).toBeGreaterThan(1_000);
+      if (result.value.elementsTruncation.truncated) expect(result.value.elementsTruncation.originalCount).toBeGreaterThan(1_000);
+    }
+  });
+
+  it("reports truncation and bounded original counts for oversized nested child lists", async () => {
+    const iframe = iframeFixture();
+    iframe.contentDocument!.body.innerHTML = `<div id="nested">${Array.from(
+      { length: 1_001 },
+      (_, index) => `<button>Nested ${index}</button>`,
+    ).join("")}</div>`;
+    const result = await captureVisibleWebSnapshot({ iframe, maxWidth: 100, deadline: Date.now() + 1_000, includeScreenshot: false });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.visibleTextTruncation).toMatchObject({ truncated: true });
+      expect(result.value.elementsTruncation).toMatchObject({ truncated: true });
+      if (result.value.visibleTextTruncation.truncated) expect(result.value.visibleTextTruncation.originalCount).toBeGreaterThan(1_000);
+      if (result.value.elementsTruncation.truncated) expect(result.value.elementsTruncation.originalCount).toBeGreaterThan(1_000);
+    }
+  });
+
   it("rejects stale target generations and releases replaced registrations", () => {
     const iframe = document.createElement("iframe");
     const identity = { worktreeIdentity: "worktree", connectionId: "pending-desktop", workspaceId: "workspace", threadId: "thread", tabId: "tab", generation: 2 } as const;

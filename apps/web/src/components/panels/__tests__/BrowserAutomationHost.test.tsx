@@ -1194,6 +1194,62 @@ describe("BrowserAutomationHost", () => {
     vi.unstubAllGlobals();
   });
 
+  it("sanitizes the mounted web status location before responding", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const iframe = document.createElement("iframe");
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "tab-1";
+    const targetDocument = {
+      location: { href: "https://user:password@example.com/sessions/eyJabcdefghijk.abcdefghijklmnop?secret=query#fragment" },
+      body: document.createElement("body"),
+    } as unknown as Document;
+    Object.defineProperty(iframe, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
+    Object.defineProperty(iframe, "contentDocument", { configurable: true, value: targetDocument });
+    document.body.appendChild(iframe);
+    const statusResponse = successResponse(dispatch(1, 20).request);
+    if (!statusResponse.ok || statusResponse.result.operation !== "status") throw new Error("Expected status response");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue({
+      ...statusResponse,
+      result: { ...statusResponse.result, url: targetDocument.location.href },
+    });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: dispatch(1, 20) }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
+    const sent = harness.transport.respondToBrowserAutomationRequest.mock.calls.at(-1)?.[2];
+    expect(sent.result.url).toMatch(/^https:\/\/example\.com\//);
+    expect(sent.result.url).not.toMatch(/user|password|eyJabcdefghijk|secret|fragment/);
+    view.unmount();
+  });
+
+  it("returns typed cross-origin status failure for an inaccessible mounted web target", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const iframe = document.createElement("iframe");
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "tab-1";
+    iframe.src = "https://evil.example/";
+    Object.defineProperty(iframe, "contentWindow", { configurable: true, value: { location: { origin: "https://evil.example" } } });
+    Object.defineProperty(iframe, "contentDocument", { configurable: true, value: { body: document.createElement("body") } });
+    document.body.appendChild(iframe);
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue({
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: dispatch(1, 20).request.requestId,
+      sequence: 20,
+      ok: false,
+      error: { code: "CROSS_ORIGIN", message: "Visible preview is cross-origin", retryable: false },
+    });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: dispatch(1, 20) }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
+    expect(harness.transport.respondToBrowserAutomationRequest.mock.calls.at(-1)?.[2]).toMatchObject({ ok: false, error: { code: "CROSS_ORIGIN" } });
+    view.unmount();
+  });
+
   it("disposes exact target recording on human takeover even after start settled", async () => {
     const disposeTarget = vi.spyOn(BrowserAutomationRecorder.prototype, "disposeTarget");
     const view = render(<BrowserAutomationHost />);

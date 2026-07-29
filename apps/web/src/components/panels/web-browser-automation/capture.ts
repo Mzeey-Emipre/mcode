@@ -290,8 +290,35 @@ export async function captureVisibleWebScreenshot(input: WebCaptureInput): Promi
   } catch { return failure("INTERNAL_ERROR"); }
 }
 
+/** Remove credentials, query, fragment, and token-shaped path segments from a URL. */
+export function sanitizeWebLocation(value: string): string {
+  try {
+    const parsed = new URL(value, window.location.href);
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    let redactNext = false;
+    parsed.pathname = parsed.pathname.split("/").map((segment) => {
+      let decoded = segment;
+      try { decoded = decodeURIComponent(segment); } catch { /* Keep malformed path segments unchanged. */ }
+      const redact = redactNext || SECRET_NAME.test(decoded) || SECRET_SHAPED.test(decoded);
+      redactNext = SECRET_NAME.test(decoded);
+      return redact ? "[redacted]" : segment;
+    }).join("/");
+    return parsed.toString();
+  } catch { return "about:blank"; }
+}
+
 function safeLocation(document: Document): string {
-  try { const parsed = new URL(document.location.href); parsed.search = ""; parsed.hash = ""; return parsed.toString(); } catch { return "about:blank"; }
+  try { return sanitizeWebLocation(document.location?.href ?? "about:blank"); } catch { return "about:blank"; }
+}
+
+/** Return the mounted preview document location after same-origin validation and redaction. */
+export function captureVisibleWebLocation(iframe: HTMLIFrameElement): WebCaptureResult<string> {
+  const origin = sameOrigin(iframe);
+  if (!origin.ok) return origin;
+  return { ok: true, value: safeLocation(origin.value) };
 }
 function collectVisibleText(
   document: Document,
@@ -299,10 +326,12 @@ function collectVisibleText(
 ): WebCaptureResult<{ readonly text: string; readonly truncated: boolean; readonly originalCount: number }> {
   const root = document.body ?? document.documentElement;
   const stack: Array<{ readonly node: Node; readonly sensitive: boolean }> = [];
-  for (let index = Math.min(root.childNodes.length, MAX_DOM_NODES) - 1; index >= 0; index -= 1) stack.push({ node: root.childNodes[index]!, sensitive: false });
+  const rootChildCount = root.childNodes.length;
+  const rootChildLimit = Math.min(rootChildCount, MAX_DOM_NODES);
   let text = "";
-  let originalCount = 0;
-  let truncated = false;
+  let originalCount = rootChildCount > rootChildLimit ? rootChildCount : 0;
+  let truncated = rootChildCount > rootChildLimit;
+  for (let index = rootChildLimit - 1; index >= 0; index -= 1) stack.push({ node: root.childNodes[index]!, sensitive: false });
   let visited = 0;
   while (stack.length > 0) {
     const stop = cancelledOrTimedOut(input);
@@ -315,7 +344,13 @@ function collectVisibleText(
       if (!isVisibleElement(document, element)) continue;
       const sensitive = current.sensitive || isSensitiveElement(element);
       if (sensitive) continue;
-      for (let index = Math.min(element.childNodes.length, MAX_DOM_NODES) - 1; index >= 0; index -= 1) stack.push({ node: element.childNodes[index]!, sensitive });
+      const childCount = element.childNodes.length;
+      const childLimit = Math.min(childCount, MAX_DOM_NODES);
+      if (childCount > childLimit) {
+        truncated = true;
+        originalCount = Math.max(originalCount, childCount);
+      }
+      for (let index = childLimit - 1; index >= 0; index -= 1) stack.push({ node: element.childNodes[index]!, sensitive });
       if (stack.length > MAX_DOM_NODES) { stack.length = MAX_DOM_NODES; truncated = true; }
       continue;
     }
@@ -340,10 +375,13 @@ function collectElements(
   const items: BrowserAutomationElement[] = [];
   const root = document.body ?? document.documentElement;
   const stack: Node[] = [];
-  for (let childIndex = Math.min(root.childNodes.length, MAX_DOM_NODES) - 1; childIndex >= 0; childIndex -= 1) stack.push(root.childNodes[childIndex]!);
+  const rootChildCount = root.childNodes.length;
+  const rootChildLimit = Math.min(rootChildCount, MAX_DOM_NODES);
   let index = 0;
   let interactiveCount = 0;
-  let truncated = false;
+  let originalCount = rootChildCount > rootChildLimit ? rootChildCount : 0;
+  let truncated = rootChildCount > rootChildLimit;
+  for (let childIndex = rootChildLimit - 1; childIndex >= 0; childIndex -= 1) stack.push(root.childNodes[childIndex]!);
   while (stack.length > 0) {
     const stop = cancelledOrTimedOut(input);
     if (stop) return failure(stop);
@@ -360,7 +398,13 @@ function collectElements(
       if (["input", "textarea", "select", "button", "a"].includes(element.tagName.toLowerCase())) interactiveCount += 1;
       continue;
     }
-    for (let childIndex = Math.min(element.childNodes.length, MAX_DOM_NODES) - 1; childIndex >= 0; childIndex -= 1) stack.push(element.childNodes[childIndex]!);
+    const childCount = element.childNodes.length;
+    const childLimit = Math.min(childCount, MAX_DOM_NODES);
+    if (childCount > childLimit) {
+      truncated = true;
+      originalCount = Math.max(originalCount, childCount);
+    }
+    for (let childIndex = childLimit - 1; childIndex >= 0; childIndex -= 1) stack.push(element.childNodes[childIndex]!);
     if (stack.length > MAX_DOM_NODES) { stack.length = MAX_DOM_NODES; truncated = true; }
     const tag = element.tagName.toLowerCase();
     if (!["button", "a", "input", "textarea", "select"].includes(tag)) {
@@ -377,7 +421,7 @@ function collectElements(
     }
     items.push({ semanticId: element.id || `web-${index + 1}`, role: element.getAttribute("role") || element.tagName.toLowerCase(), accessibleName: sanitizeText(element.getAttribute("aria-label") || element.textContent || ""), ...(isSensitiveElement(element) ? {} : { value: sanitizeText((element as HTMLInputElement).value || "") }), disabled: (element as HTMLButtonElement).disabled === true, bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
   }
-  return { ok: true, value: { items, truncated, originalCount: truncated ? Math.max(BROWSER_AUTOMATION_MAX_ELEMENTS + 1, interactiveCount) : interactiveCount } };
+  return { ok: true, value: { items, truncated, originalCount: truncated ? Math.max(BROWSER_AUTOMATION_MAX_ELEMENTS + 1, interactiveCount, originalCount) : interactiveCount } };
 }
 
 /** Capture bounded, redacted semantic data from the same-origin iframe. */
