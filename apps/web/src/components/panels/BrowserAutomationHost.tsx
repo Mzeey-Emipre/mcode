@@ -576,7 +576,8 @@ export function BrowserAutomationHost() {
       capabilities: BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
           const available = operation === "click" || operation === "type" ||
-            operation === "status" || operation === "open" || operation === "navigate" || operation === "snapshot";
+            operation === "status" || operation === "open" || operation === "navigate" ||
+            operation === "snapshot" || operation === "screenshot";
           return available
             ? { operation, available: true }
             : { operation, available: false, unavailableReason: WEB_AUTOMATION_UNAVAILABLE_REASON };
