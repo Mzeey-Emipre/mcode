@@ -671,7 +671,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
           source: "not-found",
           entry: null,
           version: null,
-          message: formatCopilotUpgradeMessage(resolution.version),
+          message: formatCopilotUpgradeMessage(resolution?.version ?? null),
         };
         this.lastCliPath = configuredCliPath;
         logger.warn("CopilotProvider: CLI too old for SDK", { message: this.lastResolution.message });
