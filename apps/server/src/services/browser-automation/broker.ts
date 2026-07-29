@@ -96,8 +96,30 @@ function failure(
   };
 }
 
+function assignmentKeyParts(
+  providerId: string,
+  providerSessionId: string,
+  worktreeIdentity: string,
+  workspaceId: string,
+  threadId: string,
+): string {
+  return JSON.stringify([
+    providerId,
+    providerSessionId,
+    worktreeIdentity,
+    workspaceId,
+    threadId,
+  ]);
+}
+
 function assignmentKey(claims: BrowserAutomationCredentialClaims): string {
-  return JSON.stringify([claims.providerId, claims.providerSessionId, claims.threadId]);
+  return assignmentKeyParts(
+    claims.providerId,
+    claims.providerSessionId,
+    claims.worktreeIdentity,
+    claims.workspaceId,
+    claims.threadId,
+  );
 }
 
 function pendingKey(host: RegisteredHost, requestId: string, sequence: number): string {
@@ -106,6 +128,18 @@ function pendingKey(host: RegisteredHost, requestId: string, sequence: number): 
 
 function targetKey(target: Pick<BrowserAutomationHostDispatchTarget, "threadId" | "tabId">): string {
   return JSON.stringify([target.threadId, target.tabId]);
+}
+
+function targetsMatch(
+  left: BrowserAutomationHostDispatchTarget,
+  right: BrowserAutomationHostDispatchTarget,
+): boolean {
+  return left.desktopInstanceId === right.desktopInstanceId &&
+    left.windowId === right.windowId &&
+    left.connectionGeneration === right.connectionGeneration &&
+    left.threadId === right.threadId &&
+    left.tabId === right.tabId &&
+    left.targetGeneration === right.targetGeneration;
 }
 
 function incrementBounded(value: number, amount = 1): number {
@@ -244,13 +278,20 @@ export class BrowserAutomationBroker {
       throw new Error("Browser automation target identity workspace is not authorized");
     }
     this.disconnect(socket);
-    if (this.hostsBySocket.size >= this.maxHosts) {
-      throw new Error("Browser automation host capacity is exhausted");
-    }
-    for (const host of this.hostsBySocket.values()) {
-      if (host.registration.hostId === trustedRegistration.hostId) {
+    const existingOwner = [...this.hostsBySocket.values()].find(
+      (host) => host.registration.hostId === trustedRegistration.hostId,
+    );
+    if (existingOwner) {
+      if (
+        existingOwner.registration.desktopInstanceId !== trustedRegistration.desktopInstanceId ||
+        existingOwner.registration.worktreeIdentity !== trustedRegistration.worktreeIdentity
+      ) {
         throw new Error("Browser automation host ID is already registered");
       }
+      this.disconnect(existingOwner.socket);
+    }
+    if (this.hostsBySocket.size >= this.maxHosts) {
+      throw new Error("Browser automation host capacity is exhausted");
     }
     const generation = this.nextGeneration++;
     const host: RegisteredHost = {
@@ -376,11 +417,18 @@ export class BrowserAutomationBroker {
         this.settle(key, pending, failure(pending.request, "INVALID_REQUEST", targetError, false));
         return;
       }
-    } else if (responseTarget && pending.target && targetKey(responseTarget) !== targetKey(pending.target)) {
+    } else if (responseTarget && pending.target && !targetsMatch(responseTarget, pending.target)) {
       this.settle(
         key,
         pending,
-        failure(pending.request, "INVALID_REQUEST", "Browser response target does not match its request", false),
+        failure(
+          pending.request,
+          targetKey(responseTarget) === targetKey(pending.target)
+            ? "STALE_TARGET_GENERATION"
+            : "INVALID_REQUEST",
+          "Browser response target does not match its request",
+          false,
+        ),
       );
       return;
     }
@@ -586,6 +634,20 @@ export class BrowserAutomationBroker {
         );
       }
     }
+  }
+
+  /** Settles all pending work and releases every broker-owned lifecycle resource. */
+  shutdown(): void {
+    for (const socket of [...this.hostsBySocket.keys()]) this.disconnect(socket);
+    this.assignments.clear();
+    for (const pending of [...this.pending.values()]) {
+      this.settle(
+        pendingKey(pending.host, pending.request.requestId, pending.request.sequence),
+        pending,
+        failure(pending.request, "HOST_UNAVAILABLE", "Browser automation broker shut down", true),
+      );
+    }
+    this.pending.clear();
   }
 
   /** Returns bounded broker counts for status and tests. */
@@ -841,7 +903,13 @@ export class BrowserAutomationBroker {
     }
     while (this.assignments.size >= this.maxAssignments) this.evictOldestAssignment();
     this.assignments.set(
-      JSON.stringify([pending.providerId, pending.request.providerSessionId, pending.request.threadId]),
+      assignmentKeyParts(
+        pending.providerId,
+        pending.request.providerSessionId,
+        host.registration.worktreeIdentity,
+        pending.request.workspaceId,
+        pending.request.threadId,
+      ),
       { host, targetKey: key, lastUsedAt: this.now() },
     );
     pending.target = target;

@@ -2,6 +2,7 @@ import type {
   BrowserAutomationControllerState,
   BrowserAutomationHostDispatch,
 } from "@mcode/contracts";
+import { BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
 import { create } from "zustand";
 
 /** Maximum number of inactive, non-busy Browser targets retained warm. */
@@ -138,6 +139,11 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const activeRequests = new Map(state.activeRequests);
       const { requestId, sequence } = request.dispatch.request;
       activeRequests.set(browserAutomationRequestKey(requestId, sequence), request);
+      while (activeRequests.size > BROWSER_AUTOMATION_MAX_PENDING_REQUESTS) {
+        const oldest = activeRequests.keys().next().value as string | undefined;
+        if (!oldest) break;
+        activeRequests.delete(oldest);
+      }
       return { activeRequests };
     }),
   clearActiveRequest: (requestId, sequence) =>
@@ -150,7 +156,7 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
     }),
   setRegistered: (registered) => set({ registered }),
   setStatus: (status) => set({ status }),
-  setHostedScopeIds: (hostedScopeIds) => set({ hostedScopeIds: new Set(hostedScopeIds) }),
+  setHostedScopeIds: (hostedScopeIds) => set({ hostedScopeIds: new Set([...hostedScopeIds].slice(0, 5)) }),
   setViewport: (threadId, tabId, width, height) =>
     set((state) => {
       const key = browserAutomationTargetKey(threadId, tabId);

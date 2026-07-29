@@ -256,6 +256,41 @@ describe("BrowserAutomationBroker", () => {
     await expect(pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE" } });
   });
 
+  it("replaces a reconnecting owner deterministically and cancels its old work", async () => {
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: () => true }));
+    const firstSocket = socket("first");
+    const firstGeneration = register(broker, firstSocket, "first", "workspace-a");
+    updateTargets(broker, firstSocket, "first", firstGeneration, ["thread-a"]);
+    const scope = claims("thread-a", "workspace-a");
+    const pending = broker.execute(scope, request(scope));
+
+    const replacementSocket = socket("replacement");
+    const replacementGeneration = broker.registerHost(
+      replacementSocket,
+      registration("first", "workspace-a"),
+      authorization("first"),
+    ).generation;
+
+    await expect(pending).resolves.toMatchObject({ error: { code: "HOST_UNAVAILABLE" } });
+    expect(broker.status()).toEqual({ hosts: 1, pending: 0, assignments: 0 });
+    expect(() => broker.heartbeat(firstSocket, "first", firstGeneration)).toThrow("stale or invalid");
+    updateTargets(broker, replacementSocket, "first", replacementGeneration, ["thread-a"]);
+  });
+
+  it("settles all pending work during broker shutdown", async () => {
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: () => true }));
+    const hostSocket = socket("first");
+    const generation = register(broker, hostSocket, "first", "workspace-a");
+    updateTargets(broker, hostSocket, "first", generation, ["thread-a"]);
+    const scope = claims("thread-a", "workspace-a");
+    const pending = broker.execute(scope, request(scope));
+
+    broker.shutdown();
+
+    await expect(pending).resolves.toMatchObject({ error: { code: "HOST_UNAVAILABLE" } });
+    expect(broker.status()).toEqual({ hosts: 0, pending: 0, assignments: 0 });
+  });
+
   it("requires trusted targets and rejects self-asserted workspace or stale target generations", async () => {
     const broker = new BrowserAutomationBroker(options({ now: () => 10, send: () => true }));
     const hostSocket = socket("first");
