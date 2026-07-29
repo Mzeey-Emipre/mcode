@@ -3,6 +3,7 @@ import {
   createAdjacentPrefetchScheduler,
   type AdjacentPrefetchThread,
 } from "../adjacent-prefetch";
+import { enqueueBackgroundPrefetch } from "../prefetch-scheduler";
 
 function deferred() {
   let resolve!: () => void;
@@ -97,5 +98,32 @@ describe("adjacent prefetch scheduler", () => {
 
     third.resolve();
     fourth.resolve();
+  });
+
+  it("shares its two slots with pointer and hover prefetch work", async () => {
+    const hover = deferred();
+    const firstAdjacent = deferred();
+    const secondAdjacent = deferred();
+    const prefetch = vi
+      .fn()
+      .mockImplementationOnce(() => firstAdjacent.promise)
+      .mockImplementationOnce(() => secondAdjacent.promise);
+    enqueueBackgroundPrefetch("hover", () => hover.promise);
+    const scheduler = createAdjacentPrefetchScheduler({ prefetch });
+
+    scheduler.activate("t2", [thread("t1"), thread("t2"), thread("t3")]);
+    expect(prefetch).toHaveBeenCalledTimes(1);
+    expect(prefetch).toHaveBeenCalledWith("t1");
+
+    hover.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(prefetch).toHaveBeenCalledTimes(2);
+    expect(prefetch).toHaveBeenLastCalledWith("t3");
+
+    firstAdjacent.resolve();
+    secondAdjacent.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
   });
 });

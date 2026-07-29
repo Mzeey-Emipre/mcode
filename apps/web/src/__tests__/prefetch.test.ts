@@ -165,4 +165,43 @@ describe("prefetch", () => {
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
     expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t3", 100);
   });
+
+  it("keeps rapid unique pointer prefetches within two shared slots", async () => {
+    const resolvers = new Map<string, (value: {
+      messages: ReturnType<typeof createMockMessage>[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void>();
+    vi.mocked(mockTransport.loadConversationPage).mockImplementation(
+      (threadId) =>
+        new Promise((resolve) => {
+          resolvers.set(threadId, resolve);
+        }),
+    );
+
+    prefetchOnPointerDown("t1");
+    prefetchOnPointerDown("t2");
+    prefetchOnPointerDown("t3");
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(2);
+
+    const page = (threadId: string) => ({
+      messages: [
+        createMockMessage({
+          id: `${threadId}-message`,
+          thread_id: threadId,
+          sequence: 1,
+        }),
+      ],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+    resolvers.get("t1")?.(page("t1"));
+    await vi.runAllTimersAsync();
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(3);
+
+    resolvers.get("t2")?.(page("t2"));
+    resolvers.get("t3")?.(page("t3"));
+    await vi.runAllTimersAsync();
+  });
 });

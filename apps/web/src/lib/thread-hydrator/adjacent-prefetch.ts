@@ -1,3 +1,5 @@
+import { enqueueBackgroundPrefetch } from "./prefetch-scheduler";
+
 /** A thread row supplied in the sorted sidebar order. */
 export interface AdjacentPrefetchThread {
   id: string;
@@ -19,39 +21,24 @@ export interface AdjacentPrefetchController {
   cancel(): void;
 }
 
-const MAX_CONCURRENT_PREFETCHES = 2;
-
 function isEligible(thread: AdjacentPrefetchThread): boolean {
   return !thread.clientPreparing && !thread.clientError;
 }
 
 /**
- * Creates a bounded scheduler for the previous and next eligible sidebar rows.
+ * Creates a scheduler for the previous and next eligible sidebar rows using
+ * the shared two-request speculative prefetch budget.
  * In-flight work is allowed to settle, while queued work from an old activation
  * is discarded before the next activation can claim a slot.
  */
 export function createAdjacentPrefetchScheduler(
   deps: AdjacentPrefetchDeps,
 ): AdjacentPrefetchController {
-  let queue: string[] = [];
-  const active = new Set<string>();
-
-  const pump = () => {
-    while (active.size < MAX_CONCURRENT_PREFETCHES && queue.length > 0) {
-      const threadId = queue.shift();
-      if (!threadId || active.has(threadId)) continue;
-      active.add(threadId);
-      void deps.prefetch(threadId)
-        .catch(() => undefined)
-        .finally(() => {
-          active.delete(threadId);
-          pump();
-        });
-    }
-  };
+  let queuedCancels: Array<() => void> = [];
 
   const cancel = () => {
-    queue = [];
+    queuedCancels.forEach((cancelRequest) => cancelRequest());
+    queuedCancels = [];
   };
 
   return {
@@ -75,11 +62,17 @@ export function createAdjacentPrefetchScheduler(
           break;
         }
       }
-      queue = neighbors.filter(
+      const uniqueNeighbors = neighbors.filter(
         (threadId, index) =>
           threadId !== selectedThreadId && neighbors.indexOf(threadId) === index,
       );
-      pump();
+      queuedCancels = uniqueNeighbors.map((threadId) =>
+        enqueueBackgroundPrefetch(
+          threadId,
+          () => deps.prefetch(threadId),
+          "background",
+        ),
+      );
     },
     cancel,
   };
