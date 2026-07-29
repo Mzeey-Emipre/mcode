@@ -53,6 +53,129 @@ describe("web browser interaction executor", () => {
     expect(clicked).toHaveBeenCalledOnce();
   });
 
+  it("cancels click during the scheduling frame before dispatching events", async () => {
+    document.body.innerHTML = '<button id="save">Save</button>';
+    const button = document.querySelector("button") as HTMLButtonElement;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    const clicked = vi.fn();
+    button.addEventListener("click", clicked);
+    const pending: Array<FrameRequestCallback> = [];
+    Object.defineProperty(document.defaultView, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        pending.push(callback);
+        return pending.length;
+      },
+    });
+    const controller = new AbortController();
+    const operation = executeWebInteraction(
+      document,
+      dispatch("click", { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 }),
+      guard(controller.signal),
+    );
+    await Promise.resolve();
+    controller.abort();
+    pending.shift()?.(performance.now());
+    const result = await operation;
+    delete (document.defaultView as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+    expect(result).toMatchObject({ ok: false, error: { code: "OPERATION_CANCELLED" } });
+    expect(clicked).not.toHaveBeenCalled();
+  });
+
+  it("cancels type during the scheduling frame before focus or value mutation", async () => {
+    document.body.innerHTML = '<input id="email" />';
+    const input = document.querySelector("input") as HTMLInputElement;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const focus = vi.spyOn(input, "focus");
+    const pending: Array<FrameRequestCallback> = [];
+    Object.defineProperty(document.defaultView, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        pending.push(callback);
+        return pending.length;
+      },
+    });
+    const controller = new AbortController();
+    const operation = executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: "#email" }, text: "typed", clear: true, submit: false, timeoutMs: 1000 }),
+      guard(controller.signal),
+    );
+    await Promise.resolve();
+    controller.abort();
+    pending.shift()?.(performance.now());
+    const result = await operation;
+    delete (document.defaultView as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+    expect(result).toMatchObject({ ok: false, error: { code: "OPERATION_CANCELLED" } });
+    expect(focus).not.toHaveBeenCalled();
+    expect(input.value).toBe("");
+  });
+
+  it("does not treat executor-generated pointer events as human takeover", async () => {
+    document.body.innerHTML = '<button id="save">Save</button>';
+    const button = document.querySelector("button") as HTMLButtonElement;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    const onHumanInput = vi.fn();
+    const dispose = observeWebHumanInput(document, onHumanInput, () => true);
+    const result = await executeWebInteraction(
+      document,
+      dispatch("click", { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 }),
+      guard(),
+    );
+    dispose();
+    expect(result.ok).toBe(true);
+    expect(onHumanInput).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale work after the scheduling frame without mutating the target", async () => {
+    document.body.innerHTML = '<input id="email" />';
+    const input = document.querySelector("input") as HTMLInputElement;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const pending: Array<FrameRequestCallback> = [];
+    Object.defineProperty(document.defaultView, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        pending.push(callback);
+        return pending.length;
+      },
+    });
+    let generation = 1;
+    const operationGuard = guard();
+    operationGuard.getTargetGeneration = () => generation;
+    const operation = executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: "#email" }, text: "typed", clear: true, submit: false, timeoutMs: 1000 }),
+      operationGuard,
+    );
+    await Promise.resolve();
+    generation = 2;
+    pending.shift()?.(performance.now());
+    const result = await operation;
+    delete (document.defaultView as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+    expect(result).toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION" } });
+    expect(input.value).toBe("");
+  });
+
+  it("fails on the request deadline when the scheduling frame never fires", async () => {
+    document.body.innerHTML = '<button id="save">Save</button>';
+    const button = document.querySelector("button") as HTMLButtonElement;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    Object.defineProperty(document.defaultView, "requestAnimationFrame", {
+      configurable: true,
+      value: () => 1,
+    });
+    const operationGuard = guard();
+    operationGuard.deadline = Date.now() + 20;
+    const operation = executeWebInteraction(
+      document,
+      dispatch("click", { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 20 }),
+      operationGuard,
+    );
+    const result = await operation;
+    delete (document.defaultView as { requestAnimationFrame?: unknown }).requestAnimationFrame;
+    expect(result).toMatchObject({ ok: false, error: { code: "DEADLINE_EXCEEDED" } });
+  });
+
   it("uses iframe-realm controls and event constructors for click, type, and submit", async () => {
     const frame = document.createElement("iframe");
     document.body.append(frame);

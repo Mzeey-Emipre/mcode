@@ -131,6 +131,46 @@ function guardMutation(guard: WebInteractionGuard): void {
   if (guard.getControlEpoch() !== guard.expectedControlEpoch) throw new Error("Browser control epoch is stale");
 }
 
+function waitForInteractionFrame(ownerDocument: Document, guard: WebInteractionGuard): Promise<void> {
+  guardMutation(guard);
+  const view = ownerDocument.defaultView;
+  if (!view || typeof view.requestAnimationFrame !== "function") {
+    return Promise.resolve().then(() => guardMutation(guard));
+  }
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let frameId: number | null = null;
+    let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      guard.signal.removeEventListener("abort", onAbort);
+      if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+      if (frameId !== null && typeof view.cancelAnimationFrame === "function") view.cancelAnimationFrame(frameId);
+      if (error === undefined) resolve();
+      else reject(error);
+    };
+    const onAbort = () => finish(new Error("Browser operation was cancelled"));
+    guard.signal.addEventListener("abort", onAbort, { once: true });
+    deadlineTimer = setTimeout(() => finish(new Error("Browser operation deadline exceeded")), Math.max(0, guard.deadline - Date.now()));
+    try {
+      const scheduledFrame = view.requestAnimationFrame(() => {
+        try {
+          guardMutation(guard);
+          finish();
+        } catch (cause) {
+          finish(cause);
+        }
+      });
+      frameId = scheduledFrame;
+      if (settled && typeof view.cancelAnimationFrame === "function") view.cancelAnimationFrame(scheduledFrame);
+    } catch (cause) {
+      finish(cause);
+    }
+    if (guard.signal.aborted) onAbort();
+  });
+}
+
 function response(dispatch: BrowserAutomationHostDispatch, result: BrowserAutomationResult): BrowserAutomationResponse {
   return { contractVersion: dispatch.request.contractVersion, requestId: dispatch.request.requestId, sequence: dispatch.request.sequence, ok: true, result };
 }
@@ -294,6 +334,7 @@ export async function executeWebInteraction(
       const editable = element.isContentEditable ||
         ((tagName === "input" || tagName === "textarea") && isNativeControl(element, ownerDocument));
       if (!editable) return errorResponse(dispatch, "TARGET_NOT_FOUND", "Browser type target is not editable");
+      await waitForInteractionFrame(ownerDocument, guard);
       guardMutation(guard);
       element.focus();
       if (args.clear) {
@@ -329,6 +370,7 @@ export async function executeWebInteraction(
       return response(dispatch, { operation: "type", ...pageMetadata(ownerDocument), controlEpoch: guard.expectedControlEpoch });
     }
     const args = dispatch.request.args;
+    await waitForInteractionFrame(ownerDocument, guard);
     guardMutation(guard);
     const view = ownerDocument.defaultView;
     if (!view || typeof view.MouseEvent !== "function") {
