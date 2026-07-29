@@ -1,7 +1,7 @@
 /** Runs a JavaScript CLI with the workspace Electron runtime and SQLite binding. */
 
 import { spawn } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
@@ -56,8 +56,9 @@ function resolveWorkspaceCli(args) {
 }
 
 /**
- * Runs Electron asynchronously so Bun can drain both child output pipes while the
- * Electron process starts and exits.
+ * Runs Electron asynchronously while inheriting the caller's output handles.
+ * Keeping Windows children attached preserves ownership until their descendants
+ * have been terminated by the wrapper's scoped process-tree kill.
  *
  * @param {string} electronPath
  * @param {string[]} args
@@ -73,18 +74,17 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
       shell: false,
       detached: !isWindows,
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "inherit", "inherit"],
     });
     let settled = false;
     let timeoutHandle;
     let forcedSettlementHandle;
     let spawnError;
     let timedOut = false;
-    let exitStatus;
-    let exitSignal;
 
-    child.stdout.pipe(process.stdout, { end: false });
-    child.stderr.pipe(process.stderr, { end: false });
+    const recordError = (error) => {
+      spawnError ??= error instanceof Error ? error : new Error(String(error));
+    };
 
     const signalHandlers = new Map();
     const removeSignalHandlers = () => {
@@ -130,20 +130,16 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
       settle(1, null);
     });
     child.once("exit", (status, signal) => {
-      exitStatus = status;
-      exitSignal = signal;
-    });
-    child.once("close", (status, signal) => {
       settle(
-        timedOut ? 1 : exitStatus ?? status,
-        timedOut ? "SIGTERM" : exitSignal ?? signal,
+        timedOut ? 1 : status,
+        timedOut ? "SIGTERM" : signal,
       );
     });
 
     timeoutHandle = setTimeout(() => {
       timedOut = true;
       Promise.resolve(killProcessTree(child, { useProcessGroup: !isWindows }))
-        .catch(() => undefined)
+        .catch(recordError)
         .finally(() => {
           if (settled) return;
           try {
@@ -157,13 +153,17 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
           }
           try {
             child.kill();
-          } catch {
-            // The forced settlement below still closes the adapter if the child race is unusual.
-          }
+          } catch (error) { recordError(error); }
           forcedSettlementHandle = setTimeout(() => settle(1, "SIGTERM"), 1_000);
         });
     }, timeoutMs);
   });
+}
+
+function resolveElectronBinary() {
+  const electronDir = dirname(electronRequire.resolve("electron/package.json"));
+  const executable = readFileSync(join(electronDir, "path.txt"), "utf8").trim();
+  return resolve(electronDir, "dist", executable);
 }
 
 const invokedScript = process.argv[1] ? resolve(process.argv[1]) : null;
@@ -180,7 +180,7 @@ if (isMain) {
     throw new Error("Expected a JavaScript CLI entry and its arguments.");
   }
 
-  const result = await runElectronProcess(electronRequire("electron"), resolveWorkspaceCli(cliArgs), {
+  const result = await runElectronProcess(resolveElectronBinary(), resolveWorkspaceCli(cliArgs), {
     cwd: process.cwd(),
     env: {
       ...process.env,

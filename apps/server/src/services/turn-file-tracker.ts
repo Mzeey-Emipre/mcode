@@ -4,6 +4,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { FileEffect, TurnFileEffectSummary } from "@mcode/contracts";
 import { MAX_TURN_FILE_EFFECTS } from "@mcode/contracts";
+import { normalizeFilesystemPath } from "./path-identity.js";
 
 const MAX_FILE_BYTES = 1_048_576;
 const MAX_EVIDENCE_TEXT_BYTES = 1_048_576;
@@ -109,7 +110,7 @@ export class TurnFileTracker {
 
   /** Start a fresh tracker scope for an agent turn. */
   beginTurn(threadId: string, cwd: string, baselineRef: string | null): number {
-    const canonicalRoot = realpathSync.native(cwd);
+    const canonicalRoot = normalizeFilesystemPath(realpathSync.native(cwd));
     const generation = this.nextGeneration++;
     const generations = this.turns.get(threadId) ?? new Map<number, TurnState>();
     generations.set(generation, {
@@ -570,7 +571,7 @@ function resolveCandidatePathSynchronously(
     : "external";
   return {
     path: canonical,
-    displayPath: scope === "workspace" ? relativePath : canonical,
+    displayPath: scope === "workspace" ? relativePath : absolute,
     scope,
   };
 }
@@ -581,7 +582,7 @@ function canonicalizePotentialPathSynchronously(absolutePath: string): string | 
   for (let depth = 0; depth < 64; depth += 1) {
     try {
       const existing = realpathSync.native(cursor);
-      return resolve(existing, ...missing);
+      return normalizeFilesystemPath(resolve(existing, ...missing));
     } catch {
       const parent = dirname(cursor);
       if (parent === cursor) return null;
@@ -606,7 +607,7 @@ async function resolveCandidatePath(
     : "external";
   return {
     path: canonical,
-    displayPath: scope === "workspace" ? relativePath : canonical,
+    displayPath: scope === "workspace" ? relativePath : absolute,
     scope,
   };
 }
@@ -617,7 +618,7 @@ async function canonicalizePotentialPath(absolutePath: string): Promise<string |
   for (let depth = 0; depth < 64; depth += 1) {
     try {
       const existing = await realpath(cursor);
-      return resolve(existing, ...missing);
+      return normalizeFilesystemPath(resolve(existing, ...missing));
     } catch {
       const parent = dirname(cursor);
       if (parent === cursor) return null;
