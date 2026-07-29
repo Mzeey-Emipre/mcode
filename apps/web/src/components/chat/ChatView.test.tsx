@@ -599,6 +599,53 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     }, { timeout: 3000 });
   });
 
+  it("does not let stale atomic failures consume the current target retry budget", async () => {
+    const requests: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+    const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve, reject) => {
+      requests.push({ resolve, reject });
+    }));
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2", status: "active" });
+    const thread3 = makeThread({ id: "thread-3", title: "Thread 3", status: "active" });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: "thread-1",
+      threads: [makeThread(), thread2, thread3],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      runningThreadIds: new Set([thread2.id]),
+    });
+    rerender(<ChatView />);
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(2));
+
+    chatViewThreadMockRef.current = defaultThreadState({
+      runningThreadIds: new Set([thread3.id]),
+    });
+    rerender(<ChatView />);
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(3));
+
+    requests[0]?.reject(new Error("stale D1 failure"));
+    requests[1]?.reject(new Error("stale D2 failure"));
+    requests[2]?.reject(new Error("current D3 failure"));
+
+    for (let requestIndex = 3; requestIndex < 7; requestIndex += 1) {
+      await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(requestIndex + 1), {
+        timeout: 3000,
+      });
+      requests[requestIndex]?.reject(new Error(`current retry ${requestIndex - 2} failure`));
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1_700));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(7);
+  }, 10_000);
+
   it("reconciles the complete atomic set after reconnecting", async () => {
     const setThreadSubscriptions = enableAtomicSubscriptionTransport();
     const { rerender } = render(<ChatView />);

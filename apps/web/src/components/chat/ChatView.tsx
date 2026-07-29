@@ -489,7 +489,8 @@ export function ChatView() {
   const subscriptionRetryAttemptRef = useRef(0);
   const subscriptionRetryExhaustedRef = useRef(false);
   const subscriptionTargetSignatureRef = useRef("");
-  const atomicSubscriptionRequestRef = useRef<{ epoch: number; signature: string } | null>(null);
+  const atomicSubscriptionRequestIdRef = useRef(0);
+  const atomicSubscriptionRequestRef = useRef<{ epoch: number; signature: string; id: number } | null>(null);
   const subscriptionMountedRef = useRef(true);
   const [subscriptionReconcileVersion, setSubscriptionReconcileVersion] = useState(0);
 
@@ -532,21 +533,28 @@ export function ChatView() {
         && Array.from(confirmed).every((threadId) => desired.has(threadId));
       const pending = atomicSubscriptionRequestRef.current;
       if (alreadyApplied || (pending?.epoch === epoch && pending.signature === targetSignature)) return;
-      atomicSubscriptionRequestRef.current = { epoch, signature: targetSignature };
+      const requestId = atomicSubscriptionRequestIdRef.current + 1;
+      atomicSubscriptionRequestIdRef.current = requestId;
+      atomicSubscriptionRequestRef.current = { epoch, signature: targetSignature, id: requestId };
       void setThreadSubscriptions({ threadIds: sortedThreadIds }).then(() => {
         if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
         confirmedThreadIdsRef.current = sentThreadIds;
-        subscriptionRetryAttemptRef.current = 0;
-        subscriptionRetryExhaustedRef.current = false;
         const latestDesired = desiredThreadIdsRef.current;
         const responseIsCurrent = subscriptionTargetSignatureRef.current === targetSignature
           && latestDesired.size === sentThreadIds.size
           && Array.from(latestDesired).every((threadId) => sentThreadIds.has(threadId));
+        if (responseIsCurrent) {
+          subscriptionRetryAttemptRef.current = 0;
+          subscriptionRetryExhaustedRef.current = false;
+        }
         if (!responseIsCurrent) {
           setSubscriptionReconcileVersion((version) => version + 1);
         }
       }).catch(() => {
         if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
+        const currentRequest = atomicSubscriptionRequestRef.current;
+        if (currentRequest?.epoch !== epoch || currentRequest.id !== requestId) return;
+        if (subscriptionTargetSignatureRef.current !== targetSignature) return;
         if (subscriptionRetryAttemptRef.current >= THREAD_SUBSCRIPTION_MAX_RETRIES) {
           subscriptionRetryExhaustedRef.current = true;
           return;
@@ -564,7 +572,7 @@ export function ChatView() {
         }, delay);
       }).finally(() => {
         if (atomicSubscriptionRequestRef.current?.epoch === epoch
-          && atomicSubscriptionRequestRef.current.signature === targetSignature) {
+          && atomicSubscriptionRequestRef.current.id === requestId) {
           atomicSubscriptionRequestRef.current = null;
         }
       });
