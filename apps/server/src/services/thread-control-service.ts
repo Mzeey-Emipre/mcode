@@ -51,6 +51,7 @@ import {
 } from "@mcode/contracts";
 import type {
   ExternalThreadControlAuthority,
+  InternalThreadControlAuthority,
   ThreadControlAuthority,
 } from "@mcode/thread-orchestration";
 export type {
