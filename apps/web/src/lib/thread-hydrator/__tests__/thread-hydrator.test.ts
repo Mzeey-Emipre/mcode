@@ -1470,6 +1470,9 @@ describe("ThreadHydrator", () => {
     await Promise.resolve();
 
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_A);
+    expect(readActiveThreadField((record) => record.loading)).toBe(true);
+    expect(getTestThreadLoadEpoch(THREAD_A)).toBe(0);
 
     resolvePage({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
     await Promise.all([background, active]);

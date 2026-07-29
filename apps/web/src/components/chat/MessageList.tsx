@@ -10,7 +10,7 @@ import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/rea
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { recordThreadPositioned } from "@/lib/thread-switch-telemetry";
 import { useThreadStore } from "@/stores/threadStore";
-import { useActiveThreadRecord } from "@/stores/thread-selectors";
+import { useThreadRecord } from "@/stores/thread-selectors";
 import { getThreadRecord, getHandoffStatus } from "@/stores/thread-record";
 import { MessageBubble } from "./MessageBubble";
 import { ToolCallCard } from "./ToolCallCard";
@@ -227,6 +227,8 @@ export function ScrollToBottomButton({ hasNewContent, onScrollToBottom }: Scroll
 
 /** Props for {@link MessageList}. */
 interface MessageListProps {
+  /** Thread whose resident transcript is rendered while the selected thread hydrates. */
+  displayThreadId?: string;
   /** Called when the user clicks the branch icon on a message. */
   onBranch?: (messageId: string) => void;
   /** Called when the user clicks the reply button or selects text in a message. */
@@ -234,7 +236,7 @@ interface MessageListProps {
 }
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
-export function MessageList({ onBranch, onReply }: MessageListProps) {
+export function MessageList({ displayThreadId, onBranch, onReply }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
   const turnExpandRef = useRef<Map<string, boolean>>(new Map());
@@ -316,21 +318,20 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   /** Latest virtualizer instance for scroll-time sticky visibility checks. */
   const virtualizerRef = useRef<StickyVisibilityVirtualizer | null>(null);
 
-  const messages = useActiveThreadRecord((r) => r.messages);
-  const loading = useActiveThreadRecord((r) => r.loading);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
-  const currentThreadId = useThreadStore((s) => s.currentThreadId);
+  const renderedThreadId = displayThreadId ?? activeThreadId;
+  const messages = useThreadRecord(renderedThreadId, (r) => r.messages);
+  const loading = useThreadRecord(renderedThreadId, (r) => r.loading);
   const isAgentRunning = useThreadStore((s) =>
-    currentThreadId ? s.runningThreadIds.has(currentThreadId) : false,
+    renderedThreadId ? s.runningThreadIds.has(renderedThreadId) : false,
   );
-  const agentStartTime = useActiveThreadRecord((r) => r.agentStartTime);
-  const streamingText = useActiveThreadRecord((r) => r.streaming);
-  const toolCallsRaw = useActiveThreadRecord((r) => r.toolCalls);
+  const agentStartTime = useThreadRecord(renderedThreadId, (r) => r.agentStartTime);
+  const streamingText = useThreadRecord(renderedThreadId, (r) => r.streaming);
+  const toolCallsRaw = useThreadRecord(renderedThreadId, (r) => r.toolCalls);
   const persistedFilesChanged = useThreadStore(
     useShallow((s) => {
-      const id = s.currentThreadId;
-      if (!id) return EMPTY_FILES_CHANGED;
-      const rec = getThreadRecord(s.records, id);
+      if (!renderedThreadId) return EMPTY_FILES_CHANGED;
+      const rec = getThreadRecord(s.records, renderedThreadId);
       if (rec.messages.length === 0) return EMPTY_FILES_CHANGED;
       const out: Record<string, string[]> = {};
       for (const m of rec.messages) {
@@ -340,27 +341,27 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       return out;
     }),
   );
-  const latestTurnWithChanges = useActiveThreadRecord((r) => r.latestTurnWithChanges);
-  const hasMore = useActiveThreadRecord((r) => r.hasMoreMessages);
+  const latestTurnWithChanges = useThreadRecord(renderedThreadId, (r) => r.latestTurnWithChanges);
+  const hasMore = useThreadRecord(renderedThreadId, (r) => r.hasMoreMessages);
   const handoffStatus = useThreadStore((s) =>
-    currentThreadId ? getHandoffStatus(getThreadRecord(s.records, currentThreadId)) : undefined,
+    renderedThreadId ? getHandoffStatus(getThreadRecord(s.records, renderedThreadId)) : undefined,
   );
-  const isLoadingMore = useActiveThreadRecord((r) => r.isLoadingMore);
+  const isLoadingMore = useThreadRecord(renderedThreadId, (r) => r.isLoadingMore);
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
-  const renderedThreadId = messages[0]?.thread_id ?? null;
-  const permissions = useActiveThreadRecord((r) => r.permissions);
-  const hooks = useActiveThreadRecord((r) => r.hooks);
-  const thoughtSegments = useActiveThreadRecord((r) => r.thoughtSegments);
-  const persistedNarrativeByMessage = useActiveThreadRecord((r) => r.narrativeByMessage);
+  const transcriptThreadId = messages[0]?.thread_id ?? null;
+  const permissions = useThreadRecord(renderedThreadId, (r) => r.permissions);
+  const hooks = useThreadRecord(renderedThreadId, (r) => r.hooks);
+  const thoughtSegments = useThreadRecord(renderedThreadId, (r) => r.thoughtSegments);
+  const persistedNarrativeByMessage = useThreadRecord(renderedThreadId, (r) => r.narrativeByMessage);
   const loadNarrativeForMessage = useThreadStore((s) => s.loadNarrativeForMessage);
-  const currentTurnMessageId = useActiveThreadRecord((r) => r.currentTurnMessageId);
-  const currentTurnResponseKey = useActiveThreadRecord((r) => r.currentTurnResponseKey);
-  const assistantResponseKeys = useActiveThreadRecord((r) => r.assistantResponseKeys);
+  const currentTurnMessageId = useThreadRecord(renderedThreadId, (r) => r.currentTurnMessageId);
+  const currentTurnResponseKey = useThreadRecord(renderedThreadId, (r) => r.currentTurnResponseKey);
+  const assistantResponseKeys = useThreadRecord(renderedThreadId, (r) => r.assistantResponseKeys);
   const currentTurnMessageIdByThread = useMemo(
-    () => (currentThreadId && currentTurnMessageId
-      ? { [currentThreadId]: currentTurnMessageId }
+    () => (renderedThreadId && currentTurnMessageId
+      ? { [renderedThreadId]: currentTurnMessageId }
       : EMPTY_TURN_MAP),
-    [currentThreadId, currentTurnMessageId],
+    [renderedThreadId, currentTurnMessageId],
   );
 
   const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
@@ -370,10 +371,10 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   }, [isPositioned]);
 
   useLayoutEffect(() => {
-    if (!isPositioned || !activeThreadId) return;
-    if (renderedThreadId && renderedThreadId !== activeThreadId) return;
+    if (!isPositioned || !activeThreadId || renderedThreadId !== activeThreadId) return;
+    if (transcriptThreadId && transcriptThreadId !== activeThreadId) return;
     recordThreadPositioned(activeThreadId);
-  }, [activeThreadId, isPositioned, renderedThreadId]);
+  }, [activeThreadId, isPositioned, renderedThreadId, transcriptThreadId]);
 
   /** Syncs sticky preview visibility with the current scroll position. */
   const syncStickyUserMessageVisibility = useCallback(() => {
@@ -439,7 +440,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       !olderHistoryRequestedRef.current ||
       !el ||
       el.scrollTop >= PAGINATION_THRESHOLD ||
-      !activeThreadId ||
+      !renderedThreadId ||
+      renderedThreadId !== activeThreadId ||
       !hasMore ||
       isLoadingMore
     ) {
@@ -461,8 +463,8 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     } else {
       pendingHistoryAnchorRef.current = null;
     }
-    void loadOlderMessages(activeThreadId);
-  }, [activeThreadId, hasMore, isLoadingMore, loadOlderMessages]);
+    void loadOlderMessages(renderedThreadId);
+  }, [activeThreadId, renderedThreadId, hasMore, isLoadingMore, loadOlderMessages]);
 
   /** Clears tail pin when the user scrolls content upward (wheel / trackpad). */
   const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
@@ -530,15 +532,15 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     isScrolledUpRef.current = scrolledUp;
     setShowScrollBtn(scrolledUp);
     if (
-      activeThreadId
-      && renderedThreadId === activeThreadId
+      renderedThreadId
+      && transcriptThreadId === renderedThreadId
       && !suppressPassiveAutoBottomScrollRef.current
     ) {
       const viewportTop = el.getBoundingClientRect().top;
       const anchor = [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
         .find((node) => node.getBoundingClientRect().bottom > viewportTop + 2);
       rememberScrollTop(
-        activeThreadId,
+        renderedThreadId,
         el.scrollTop,
         !awayFromTail,
         anchor
@@ -560,7 +562,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     loadOlderHistoryWhenRequested();
 
     prevScrollTopRef.current = el.scrollTop;
-  }, [activeThreadId, loadOlderHistoryWhenRequested, renderedThreadId, syncStickyUserMessageVisibility]);
+  }, [renderedThreadId, loadOlderHistoryWhenRequested, transcriptThreadId, syncStickyUserMessageVisibility]);
 
   useEffect(() => {
     for (const message of messages) {
@@ -572,7 +574,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
 
   const stableItems = useMemo(
     () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges, {
-      threadId: currentThreadId ?? "",
+      threadId: renderedThreadId ?? "",
       messageId: currentTurnMessageId || undefined,
       responseKey: currentTurnResponseKey || undefined,
       responseKeysByMessageId: assistantResponseKeys,
@@ -581,7 +583,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       messages,
       persistedFilesChanged,
       latestTurnWithChanges,
-      currentThreadId,
+      renderedThreadId,
       currentTurnMessageId,
       currentTurnResponseKey,
       assistantResponseKeys,
@@ -603,7 +605,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       .reverse()
       .find((message) => message.role === "assistant" && !isGoalStatusNotice(message.content));
     const committedAssistantBody =
-      currentThreadId && !isAgentRunning && lastAssistantAnswer
+      renderedThreadId && !isAgentRunning && lastAssistantAnswer
         ? lastAssistantAnswer.content
         : undefined;
     return volatileItemsBuilderRef.current!(
@@ -614,9 +616,9 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       permissions,
       hooks,
       thoughtSegments,
-      currentThreadId
+      renderedThreadId
         ? {
-            threadId: currentThreadId,
+            threadId: renderedThreadId,
             messageId: currentTurnMessageId || undefined,
             responseKey: currentTurnResponseKey || undefined,
             responseKeysByMessageId: assistantResponseKeys,
@@ -633,7 +635,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     hooks,
     thoughtSegments,
     messages,
-    currentThreadId,
+    renderedThreadId,
     currentTurnMessageId,
     currentTurnResponseKey,
     assistantResponseKeys,
@@ -1000,10 +1002,10 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
   // restoration useLayoutEffect reads it.
   useLayoutEffect(() => {
     const prevId = prevActiveThreadIdRef.current;
-    const isThreadSwitch = !!prevId && prevId !== activeThreadId;
-    prevActiveThreadIdRef.current = activeThreadId ?? null;
+    const isThreadSwitch = !!prevId && prevId !== renderedThreadId;
+    prevActiveThreadIdRef.current = renderedThreadId ?? null;
 
-    if (!activeThreadId) return;
+    if (!renderedThreadId) return;
 
     if (isThreadSwitch) {
       // Reset thread-scoped refs and affordance state so the prepend-detection
@@ -1033,7 +1035,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       prevStickyTopInsetRef.current = MESSAGE_LIST_TOP_PADDING_PX;
     }
 
-    if (loading) {
+    if (loading && messages.length === 0) {
       // Cache miss: full reset path. Hide until messages are positioned at bottom,
       // and clear stale measurements so previous-thread heights don't bleed in.
       isInitialLoadRef.current = true;
@@ -1045,6 +1047,11 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       return;
     }
 
+    if (loading && messages.length > 0) {
+      // A tail commit is already paintable even while background history continues.
+      setIsPositioned(true);
+    }
+
     // Cache hit: keep the virtualizer's measurement cache (those rows have the
     // same item keys and dimensions — re-estimating would defeat the optimization).
     // With a remembered offset, restore it in a later effect. On thread switch
@@ -1053,7 +1060,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     // still runs when `loading` flips true→false on the same thread; the
     // `isThreadSwitch` guard on the bottom branch avoids clobbering initial load.
     const rememberedPosition = isThreadSwitch || prevId === null
-      ? recallScrollPosition(activeThreadId)
+      ? recallScrollPosition(renderedThreadId)
       : undefined;
     if (rememberedPosition) {
       isInitialLoadRef.current = false;
@@ -1072,7 +1079,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       pendingScrollRestoreRef.current = null;
       positionAtBottom({ measureFirst: true, revealEarly: true });
     }
-  }, [activeThreadId, loading, virtualizer, positionAtBottom, items.length]);
+  }, [renderedThreadId, loading, messages.length, virtualizer, positionAtBottom, items.length]);
 
   // Stabilize scroll position when older messages are prepended.
   // Detects real prepends by comparing the first message ID before and after
@@ -1190,7 +1197,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     // to be briefly visible. When items load, items.length will change and trigger
     // another effect pass where loading is false.
     if (loading) return;
-    if (renderedThreadId && activeThreadId && renderedThreadId !== activeThreadId) return;
+    if (transcriptThreadId && transcriptThreadId !== renderedThreadId) return;
     beginSuppressPassiveAutoBottomScroll();
     const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
     const withinTail =
@@ -1256,7 +1263,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       requestAnimationFrame(settleReadingAnchor);
     };
     requestAnimationFrame(settleReadingAnchor);
-  }, [activeThreadId, items.length, loading, renderedThreadId, beginSuppressPassiveAutoBottomScroll, scheduleEndSuppressPassiveAutoBottomScroll]);
+  }, [renderedThreadId, items.length, loading, transcriptThreadId, beginSuppressPassiveAutoBottomScroll, scheduleEndSuppressPassiveAutoBottomScroll]);
 
   // Discrete events (new message, tool call) -> scroll if at bottom, else highlight button
   useLayoutEffect(() => {
@@ -1276,7 +1283,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       return;
     }
     scrollToBottom(false);
-  }, [activeThreadId, messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
+  }, [renderedThreadId, messages.length, toolCalls.length, isAgentRunning, scrollToBottom]);
 
   // Streaming deltas -> scroll before paint when following the tail, else highlight button.
   useLayoutEffect(() => {
@@ -1296,7 +1303,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
       return;
     }
     scrollToBottom(false);
-  }, [streamingText, activeThreadId, scrollToBottom]);
+  }, [streamingText, renderedThreadId, scrollToBottom]);
 
   // Capture text selections in message bubbles and activate reply mode for the selected text.
   // Only triggers when Ctrl (or Cmd on Mac) is held during mouseup so casual
@@ -1354,7 +1361,7 @@ export function MessageList({ onBranch, onReply }: MessageListProps) {
     });
     ro.observe(inner);
     return () => ro.disconnect();
-  }, [activeThreadId, loading]);
+  }, [renderedThreadId, loading]);
 
   const stickyReservedTop =
     showStickyUserMessage && isPositioned

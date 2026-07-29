@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Thread } from "@/transport/types";
@@ -66,10 +66,14 @@ vi.mock("@/stores/thread-selectors", async () => {
   return {
     useActiveThreadRecord: (selector: (r: typeof emptyRecord) => unknown) =>
       selector((chatViewThreadMockRef.current?.activeRecord as typeof emptyRecord | undefined) ?? emptyRecord),
-    useThreadRecord: (_threadId: string, selector: (r: typeof emptyRecord) => unknown) =>
-      selector((chatViewThreadMockRef.current?.activeRecord as typeof emptyRecord | undefined) ?? emptyRecord),
-    readThreadRecord: () =>
-      (chatViewThreadMockRef.current?.activeRecord as typeof emptyRecord | undefined) ?? emptyRecord,
+    useThreadRecord: (threadId: string, selector: (r: typeof emptyRecord) => unknown) =>
+      selector((chatViewThreadMockRef.current?.records as Map<string, typeof emptyRecord> | undefined)?.get(threadId)
+        ?? (chatViewThreadMockRef.current?.activeRecord as typeof emptyRecord | undefined)
+        ?? emptyRecord),
+    readThreadRecord: (threadId: string) =>
+      (chatViewThreadMockRef.current?.records as Map<string, typeof emptyRecord> | undefined)?.get(threadId)
+        ?? (chatViewThreadMockRef.current?.activeRecord as typeof emptyRecord | undefined)
+        ?? emptyRecord,
   };
 });
 
@@ -89,7 +93,9 @@ vi.mock("./Composer", () => ({
 }));
 
 vi.mock("./MessageList", () => ({
-  MessageList: () => <div data-testid="message-list" />,
+  MessageList: ({ displayThreadId }: { displayThreadId?: string }) => (
+    <div data-testid="message-list" data-display-thread-id={displayThreadId} />
+  ),
 }));
 
 vi.mock("./HeaderActions", () => ({
@@ -226,9 +232,10 @@ function defaultThreadState(overrides: Partial<{
   currentThreadId: string | null;
   runningThreadIds: Set<string>;
   activeRecord: ReturnType<typeof createEmptyThreadRecord>;
+  records: Map<string, ReturnType<typeof createEmptyThreadRecord>>;
 }> = {}) {
   return {
-    records: new Map(),
+    records: overrides.records ?? new Map(),
     currentThreadId: overrides.currentThreadId ?? "thread-1",
     runningThreadIds: overrides.runningThreadIds ?? new Set<string>(),
     activeRecord: overrides.activeRecord ?? createEmptyThreadRecord(),
@@ -356,6 +363,102 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.getByTestId("conversation-transition-shell")).toHaveAttribute("data-thread-id", "thread-2");
     expect(screen.queryByTestId("conversation-loading")).not.toBeInTheDocument();
     expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
+  });
+
+  it("holds the outgoing transcript while a selected cold thread hydrates", () => {
+    const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2" });
+    const outgoingRecord = {
+      ...createEmptyThreadRecord(),
+      messages: [createMockMessage({ id: "thread-1-message", thread_id: thread1.id })],
+    };
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread1.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread1.id,
+      activeRecord: outgoingRecord,
+      records: new Map([[thread1.id, outgoingRecord]]),
+    });
+
+    const { rerender } = render(<ChatView />);
+
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread2.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread2.id,
+      activeRecord: createEmptyThreadRecord(),
+      records: new Map([[thread1.id, outgoingRecord]]),
+    });
+    act(() => rerender(<ChatView />));
+
+    expect(screen.getByTestId("chat-header-title")).toHaveTextContent("Thread 2");
+    expect(screen.getByTestId("message-list")).toHaveAttribute("data-display-thread-id", thread1.id);
+    expect(screen.getByTestId("message-list").parentElement).toHaveAttribute("inert");
+    expect(screen.getByTestId("conversation-hold-overlay")).toHaveTextContent("Thread 2");
+
+    const targetRecord = {
+      ...createEmptyThreadRecord(),
+      messages: [createMockMessage({ id: "thread-2-message", thread_id: thread2.id })],
+    };
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread2.id,
+      activeRecord: targetRecord,
+      records: new Map([[thread1.id, outgoingRecord], [thread2.id, targetRecord]]),
+    });
+    act(() => rerender(<ChatView />));
+
+    expect(screen.queryByTestId("conversation-hold-overlay")).not.toBeInTheDocument();
+    expect(screen.getByTestId("message-list")).not.toHaveAttribute("data-display-thread-id");
+  });
+
+  it("drops a stale hold when rapid switching reaches another cold thread", () => {
+    const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2" });
+    const thread3 = makeThread({ id: "thread-3", title: "Thread 3" });
+    const outgoingRecord = {
+      ...createEmptyThreadRecord(),
+      messages: [createMockMessage({ id: "thread-1-message", thread_id: thread1.id })],
+    };
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread1.id,
+      threads: [thread1, thread2, thread3],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread1.id,
+      activeRecord: outgoingRecord,
+      records: new Map([[thread1.id, outgoingRecord]]),
+    });
+    const { rerender } = render(<ChatView />);
+
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread2.id,
+      threads: [thread1, thread2, thread3],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread2.id,
+      activeRecord: createEmptyThreadRecord(),
+      records: new Map([[thread1.id, outgoingRecord]]),
+    });
+    act(() => rerender(<ChatView />));
+
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread3.id,
+      threads: [thread1, thread2, thread3],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread2.id,
+      activeRecord: createEmptyThreadRecord(),
+      records: new Map([[thread1.id, outgoingRecord]]),
+    });
+    act(() => rerender(<ChatView />));
+
+    expect(screen.queryByTestId("conversation-hold-overlay")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
+    expect(screen.getByTestId("conversation-transition-shell")).toHaveAttribute("data-thread-id", thread3.id);
   });
 
   it("renders a full-stage hydration error when no transcript is available", () => {

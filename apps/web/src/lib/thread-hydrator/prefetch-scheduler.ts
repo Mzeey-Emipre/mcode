@@ -30,6 +30,12 @@ let hoverRequestCancel: (() => void) | null = null;
 /** Debounce delay before triggering prefetch on hover (ms). */
 const HOVER_DEBOUNCE_MS = 50;
 
+/** Returns whether speculative prefetch work remains queued or running for a thread. */
+export function isPrefetchPending(threadId: string): boolean {
+  const request = requests.get(threadId);
+  return request !== undefined && request.consumers > 0;
+}
+
 /** Enqueue one shared background prefetch, deduplicating requests by thread. */
 export function enqueueBackgroundPrefetch(
   threadId: string,

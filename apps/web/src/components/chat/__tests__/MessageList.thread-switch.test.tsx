@@ -110,8 +110,8 @@ vi.mock("@/stores/threadStore", () => ({
 }));
 
 vi.mock("@/stores/thread-selectors", () => ({
-  useActiveThreadRecord: vi.fn((selector: (r: ReturnType<typeof buildMockRecord>) => unknown) =>
-    selector(buildMockRecord()),
+  useThreadRecord: vi.fn((threadId: string, selector: (r: ReturnType<typeof buildMockRecord>) => unknown) =>
+    selector(buildMockRecord(threadId)),
   ),
 }));
 
@@ -174,7 +174,7 @@ describe("MessageList thread switch", () => {
       role: "assistant",
       content: "Thread A final response",
     }];
-    const { queryByText, rerender } = render(<MessageList />);
+    const { queryByText, rerender } = render(<MessageList displayThreadId="thread-A" />);
 
     expect(queryByText("Thread A final response")).not.toBeNull();
     expect(queryByText("Thinking")).toBeNull();
@@ -203,7 +203,7 @@ describe("MessageList thread switch", () => {
       role: "user",
       content: "Thread A request",
     }];
-    const { container, rerender } = render(<MessageList />);
+    const { container, rerender } = render(<MessageList displayThreadId="thread-A" />);
 
     expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
 
@@ -453,9 +453,28 @@ describe("MessageList thread switch", () => {
     measureSpy.mockClear();
     loadingValue = true;             // cache miss ⇒ loading flips to true
     activeThreadIdValue = "thread-B";
+    messagesValue = [];
     rerender(<MessageList />);
 
     expect(measureSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reveals a committed tail while background history is still loading", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [{ id: "m-a", sequence: 1, thread_id: "thread-A" }];
+    const { rerender, container } = render(<MessageList />);
+
+    loadingValue = true;
+    activeThreadIdValue = "thread-B";
+    messagesValue = [];
+    act(() => rerender(<MessageList />));
+
+    messagesValue = [{ id: "m-b", sequence: 1, thread_id: "thread-B" }];
+    act(() => rerender(<MessageList />));
+
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    expect(scrollEl.style.opacity).toBe("1");
   });
 
   it("calls scrollToIndex with auto when cache-miss hydrate completes", () => {
