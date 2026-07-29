@@ -81,6 +81,8 @@ import { ThreadControlApprovalRepo } from "./repositories/thread-control-approva
 import { ThreadControlAuditRepo } from "./repositories/thread-control-audit-repo";
 import { InternalThreadControlMcpAuthority } from "./services/thread-control-mcp-authority";
 import { InternalThreadControlMcpRuntime } from "./services/thread-control-mcp-runtime";
+import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
+import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
 import { UtilityCompletionService } from "./services/utility-completion-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
@@ -354,6 +356,8 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(ThreadControlService, { useClass: ThreadControlService }, { lifecycle: Lifecycle.Singleton });
   container.register(InternalThreadControlMcpAuthority, { useClass: InternalThreadControlMcpAuthority }, { lifecycle: Lifecycle.Singleton });
   container.register(InternalThreadControlMcpRuntime, { useClass: InternalThreadControlMcpRuntime }, { lifecycle: Lifecycle.Singleton });
+  container.register(ExternalThreadControlPairingService, { useClass: ExternalThreadControlPairingService }, { lifecycle: Lifecycle.Singleton });
+  container.register(ExternalThreadControlMcpRuntime, { useClass: ExternalThreadControlMcpRuntime }, { lifecycle: Lifecycle.Singleton });
   container.register(
     ThreadTeardownService,
     { useClass: ThreadTeardownService },

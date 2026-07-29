@@ -158,6 +158,54 @@ export const threadControlAudit = sqliteTable(
   (table) => [index("idx_thread_control_audit_thread").on(table.threadId, table.createdAt)],
 );
 
+/** Durable credentials and server-owned policy for paired external MCP clients. */
+export const externalThreadControlPairings = sqliteTable(
+  "external_thread_control_pairings",
+  {
+    pairingId: text("pairing_id").primaryKey().notNull(),
+    integrationId: text("integration_id").notNull(),
+    credentialHash: text("credential_hash").notNull().unique(),
+    workspaceIdsJson: text("workspace_ids_json").notNull().default("[]"),
+    scopesJson: text("scopes_json").notNull().default("[]"),
+    callsPerMinute: integer("calls_per_minute").notNull(),
+    maxActiveThreads: integer("max_active_threads").notNull(),
+    status: text("status").notNull().default("active"),
+    authorityEpoch: integer("authority_epoch").notNull(),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    updatedAt: text("updated_at").notNull().default(timestampDefault),
+    replacedByPairingId: text("replaced_by_pairing_id"),
+    replacesPairingId: text("replaces_pairing_id"),
+  },
+  (table) => [
+    index("idx_external_thread_control_pairings_integration").on(table.integrationId, table.status),
+    uniqueIndex("idx_external_thread_control_active_integration").on(table.integrationId).where(sql`status = 'active'`),
+  ],
+);
+
+/** Durable replay outcomes and reservations for external MCP deliveries. */
+export const externalThreadControlDeliveries = sqliteTable(
+  "external_thread_control_deliveries",
+  {
+    pairingId: text("pairing_id").notNull(),
+    authorityEpoch: integer("authority_epoch").notNull(),
+    deliveryId: text("delivery_id").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    status: text("status").notNull().default("in_flight"),
+    resultJson: text("result_json"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    updatedAt: text("updated_at").notNull().default(timestampDefault),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_external_thread_control_delivery_identity").on(
+      table.pairingId,
+      table.authorityEpoch,
+      table.deliveryId,
+    ),
+    index("idx_external_thread_control_delivery_retention").on(table.pairingId, table.status, table.expiresAt),
+  ],
+);
+
 export const pullRequestReviewLinks = sqliteTable(
   "pull_request_review_links",
   {

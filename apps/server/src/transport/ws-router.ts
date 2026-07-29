@@ -97,6 +97,8 @@ import type { ThreadTeardownService } from "../services/thread-teardown-service.
 import type { PullRequestService } from "../services/pull-requests/pull-request-service.js";
 import type { PullRequestMutationService } from "../services/pull-requests/pull-request-mutation-service.js";
 import type { ReviewWorktreeService } from "../services/pull-requests/review-worktree-service.js";
+import type { ExternalThreadControlPairingService } from "../services/external-thread-control-pairing-service.js";
+import type { ExternalThreadControlMcpRuntime } from "../services/external-thread-control-mcp-runtime.js";
 
 const DEFAULT_PULL_REQUEST_CONNECTION = {};
 
@@ -211,6 +213,10 @@ export interface RouterDeps {
   pullRequestMutationService: PullRequestMutationService;
   /** Creates and restores local Review worktrees linked to pull requests. */
   reviewWorktreeService: ReviewWorktreeService;
+  /** Durable paired external MCP authority management. */
+  externalThreadControlPairingService?: ExternalThreadControlPairingService;
+  /** Existing HTTP server's loopback external MCP adapter. */
+  externalThreadControlMcpRuntime?: ExternalThreadControlMcpRuntime;
 }
 
 /**
@@ -381,6 +387,34 @@ async function dispatch(
   context: { client?: WebSocket },
 ): Promise<unknown> {
   switch (method) {
+    case "threadControl.pairing.create": {
+      const pairings = deps.externalThreadControlPairingService;
+      if (!pairings) throw new Error("External thread-control pairing service unavailable");
+      const pairing = pairings.create(params);
+      return {
+        ...pairing,
+        externalMcpEndpoint: deps.externalThreadControlMcpRuntime?.endpoint() ?? pairing.externalMcpEndpoint,
+      };
+    }
+    case "threadControl.pairing.revoke": {
+      const pairings = deps.externalThreadControlPairingService;
+      if (!pairings) throw new Error("External thread-control pairing service unavailable");
+      const pairing = pairings.revoke(params.pairingId);
+      return {
+        ...pairing,
+        externalMcpEndpoint: deps.externalThreadControlMcpRuntime?.endpoint() ?? "/mcp/external-thread-control",
+      };
+    }
+    case "threadControl.pairing.replace": {
+      const pairings = deps.externalThreadControlPairingService;
+      if (!pairings) throw new Error("External thread-control pairing service unavailable");
+      const { pairingId, ...input } = params;
+      const pairing = pairings.replace(pairingId, input);
+      return {
+        ...pairing,
+        externalMcpEndpoint: deps.externalThreadControlMcpRuntime?.endpoint() ?? pairing.externalMcpEndpoint,
+      };
+    }
     case "push.subscribeThread":
       if (context.client) {
         subscribeClientToThread(context.client, params.threadId);

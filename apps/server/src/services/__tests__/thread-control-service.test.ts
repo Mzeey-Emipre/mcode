@@ -771,6 +771,27 @@ describe("ThreadControlService", () => {
     expect(agentService.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("restricts external Project discovery and worktree listing to selected scopes", async () => {
+    const service = createService();
+    const externalAuthority = {
+      type: "external" as const,
+      integrationId: "integration-a",
+      allowedWorkspaceIds: [workspace.id],
+      scopes: ["projects:read", "worktrees:read"] as const,
+      limits: { callsPerMinute: 10, maxActiveThreads: 10 },
+    };
+    const discovered = service.workspaceSearch(externalAuthority, { query: "", limit: 20 });
+    expect(discovered.workspaces).toEqual([{ workspaceId: workspace.id, name: workspace.name }]);
+    await expect(service.worktreeList(externalAuthority, { workspaceId: workspace.id })).resolves.toMatchObject({
+      status: "found",
+      workspaceId: workspace.id,
+    });
+    await expect(service.worktreeList({ ...externalAuthority, scopes: ["projects:read"] }, { workspaceId: workspace.id })).resolves.toEqual({
+      status: "rejected",
+      error: expect.objectContaining({ code: "not_found" }),
+    });
+  });
+
   it("audits denied reads without recording the unreadable target", async () => {
     const service = createService();
 
