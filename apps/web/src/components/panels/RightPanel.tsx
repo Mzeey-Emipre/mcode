@@ -34,6 +34,7 @@ import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
 import { SubagentsPanel } from "./SubagentsPanel";
+import { CoordinationPanel } from "./CoordinationPanel";
 
 const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
 
@@ -375,6 +376,16 @@ export function RightPanel() {
           {subagentsActive && activeThreadId && (
             <SubagentsPanel key={activeThreadId} threadId={activeThreadId} />
           )}
+          {activeTab === "coordination" &&
+            openTabs.includes("coordination") &&
+            activeThreadId &&
+            activeWorkspaceId && (
+              <CoordinationPanel
+                key={activeThreadId}
+                workspaceId={activeWorkspaceId}
+                threadId={activeThreadId}
+              />
+            )}
           <div
             className={
               changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"

@@ -290,6 +290,12 @@ export function createWsTransport(
           .catch(() => {});
       });
 
+      // Rehydrate every retained coordination projection from canonical server
+      // state after reconnect; in-flight reads are epoch-checked by the store.
+      import("@/stores/threadControlStore").then(({ useThreadControlStore }) => {
+        void useThreadControlStore.getState().rehydrate();
+      });
+
       // Reattach active terminals after reconnect.
       // Deferred import avoids a circular dependency at module evaluation time.
       import("@/stores/terminalStore").then(async ({ useTerminalStore }) => {
@@ -635,6 +641,15 @@ export function createWsTransport(
       rpc<GoalLookupResult>("thread.goal.get", { threadId }),
     clearThreadGoal: (threadId) =>
       rpc<GoalLookupResult>("thread.goal.clear", { threadId }),
+    readThreadControl: (identity, messageLimit) =>
+      rpc<import("@mcode/contracts").ThreadControlReadResult>("thread.control.read", {
+        identity,
+        ...(messageLimit !== undefined ? { messageLimit } : {}),
+      }),
+    sendThreadControl: (input) =>
+      rpc<import("@mcode/contracts").ThreadSendResult>("thread.control.send", input),
+    stopThreadControl: (input) =>
+      rpc<import("@mcode/contracts").ThreadStopResult>("thread.control.stop", input),
 
     // Messages
     getMessages: (threadId, limit, before?) =>

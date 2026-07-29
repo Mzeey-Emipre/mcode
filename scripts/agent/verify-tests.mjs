@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Runs Mcode's verification gates and records durable receipts for Stop hooks.
  */
@@ -30,7 +30,6 @@ import {
   sep,
 } from "node:path";
 import { pathToFileURL } from "node:url";
-import { validateNodeRuntime } from "../node-runtime.mjs";
 
 const isWindows = process.platform === "win32";
 /** Maximum child output retained in memory for one phase. */
@@ -62,7 +61,6 @@ const CODE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs",
 ]);
 const ROOT_VERIFICATION_FILES = new Set([
-  ".node-version",
   "package.json",
   "bun.lock",
   "bun.lockb",
@@ -74,7 +72,6 @@ const ROOT_VERIFICATION_FILES = new Set([
   "scripts/vitest-test-dir.ts",
 ]);
 const IDENTITY_CONFIG_FILES = [
-  ".node-version",
   "package.json",
   "bun.lock",
   "bun.lockb",
@@ -312,24 +309,24 @@ export function pathEntriesMatch(left, right, { platform = process.platform } = 
     : normalizedLeft === normalizedRight;
 }
 
-/** Places the validated Node.js executable directory first in PATH for child phases. */
-export function withValidatedNodePath(
+/** Places the Bun executable directory first in PATH for child phases. */
+export function withBunPath(
   env = process.env,
   execPath = process.execPath,
   options = {},
 ) {
   const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
   const currentPath = env[pathKey] ?? "";
-  const nodeDirectory = dirname(execPath);
+  const bunDirectory = dirname(execPath);
   const entries = currentPath.split(delimiter).filter(Boolean);
   const remaining = entries.filter(
-    (entry) => !pathEntriesMatch(entry, nodeDirectory, options),
+    (entry) => !pathEntriesMatch(entry, bunDirectory, options),
   );
   const normalized = { ...env };
   for (const key of Object.keys(normalized)) {
     if (key !== pathKey && key.toLowerCase() === "path") delete normalized[key];
   }
-  normalized[pathKey] = [nodeDirectory, ...remaining].join(delimiter);
+  normalized[pathKey] = [bunDirectory, ...remaining].join(delimiter);
   return normalized;
 }
 
@@ -345,7 +342,7 @@ export function runPhase({
   logPath,
 }) {
   return new Promise((resolve) => {
-    const phaseEnv = withValidatedNodePath(env);
+    const phaseEnv = withBunPath(env, process.execPath);
     const startedAt = Date.now();
     let tail = Buffer.alloc(0);
     let settled = false;
@@ -585,11 +582,11 @@ export function calculateVerificationIdentities({
     const content = createHash("sha256");
     hashPart(content, "schema", VERIFICATION_SCHEMA_VERSION);
     hashPart(content, "platform", `${process.platform}/${process.arch}`);
-    hashPart(content, "node", `${process.execPath}\0${process.version}`);
-    hashPart(content, "bun", execFileSync("bun", ["--version"], {
+    hashPart(content, "bun-runtime", `${process.execPath}\0${process.version}`);
+    hashPart(content, "bun", execFileSync(process.execPath, ["--version"], {
       cwd,
       encoding: "utf8",
-      env,
+      env: withBunPath(env, process.execPath),
       stdio: ["ignore", "pipe", "pipe"],
     }).trim());
     for (const file of files) hashEffectivePath(content, cwd, file);
@@ -755,16 +752,7 @@ export function inspectVerificationReceipt({
   gate = "changed",
   env = process.env,
   printer = console.log,
-  runtime = {},
 } = {}) {
-  if (!validateNodeRuntime({ ...runtime, printer }).ok) {
-    return {
-      code: 1,
-      approved: false,
-      runtimeMismatch: true,
-      reason: "Verification blocked by the Node runtime check.",
-    };
-  }
   const changedFiles = getChangedFiles({ cwd });
   if (changedFiles !== null && changedFiles.length === 0) {
     const message = "Verification receipt not required: no relevant changes.";
@@ -796,11 +784,7 @@ export async function runVerification({
   printer = console.log,
   timeoutMs = DEFAULT_PHASE_TIMEOUT_MS,
   env = process.env,
-  runtime = {},
 } = {}) {
-  if (!validateNodeRuntime({ ...runtime, printer }).ok) {
-    return { code: 1, runtimeMismatch: true };
-  }
   const changedFiles = getChangedFiles({ cwd });
   const identities = calculateVerificationIdentities({ cwd, env, changedFiles });
   if (!identities) {
@@ -862,7 +846,6 @@ export async function runVerification({
 }
 
 async function main() {
-  if (!validateNodeRuntime().ok) process.exit(1);
   const gate = process.argv.includes("--full") ? "full" : "changed";
   if (process.argv.includes("--check-receipt")) {
     const result = inspectVerificationReceipt({ gate, printer: () => {} });

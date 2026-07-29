@@ -61,11 +61,13 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 function buildService({
   assertUsable = vi.fn(),
   resolveProvider = vi.fn(),
+  threadStatus = "idle",
 }: {
   assertUsable?: ReturnType<typeof vi.fn>;
   resolveProvider?: ReturnType<typeof vi.fn>;
+  threadStatus?: Thread["status"] | "idle" | "stopped";
 } = {}): AgentService {
-  const thread = makeThread();
+  const thread = threadStatus === "idle" ? makeThread() : makeThread({ status: threadStatus as Thread["status"] });
 
   const threadRepo = {
     findById: vi.fn(() => thread),
@@ -231,5 +233,41 @@ describe("AgentService.sendMessage — provider availability gate", () => {
       reason: "disabled",
       configuredPath: undefined,
     });
+  });
+
+  it.each(["completed", "errored", "interrupted", "stopped"] as const)("rejects composer sends to %s threads before persistence", async (threadStatus) => {
+    const assertUsable = vi.fn();
+    const svc = buildService({ threadStatus, assertUsable });
+
+    await expect(svc.sendMessage({
+      threadId: THREAD_ID,
+      content: "Must not append",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "codex",
+    })).rejects.toThrow("terminal thread");
+
+    expect(assertUsable).not.toHaveBeenCalled();
+  });
+
+  it("rejects incomplete cross-thread provenance before provider side effects", async () => {
+    const assertUsable = vi.fn();
+    const resolveProvider = vi.fn();
+    const svc = buildService({ assertUsable, resolveProvider });
+
+    await expect(svc.sendMessage({
+      threadId: THREAD_ID,
+      content: "Must retain the real source tuple",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "codex",
+      sourceThreadId: "source-thread",
+      sourceProviderId: "claude",
+    })).rejects.toThrow("complete thread provenance tuple");
+
+    expect(assertUsable).not.toHaveBeenCalled();
+    expect(resolveProvider).not.toHaveBeenCalled();
   });
 });

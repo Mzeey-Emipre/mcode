@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Seeds the deterministic agent runtime fixture git repository.
  */

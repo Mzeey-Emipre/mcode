@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /** Inspects the changed-file receipt and maps a block to Cursor exit code 2. */
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";

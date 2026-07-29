@@ -20,6 +20,7 @@ import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePlanStore } from "@/stores/planStore";
 import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
 import { emitPtyData, emitPtyExit } from "@/components/terminal/ptyDataRegistry";
+import { useThreadControlStore } from "@/stores/threadControlStore";
 
 /** Unsubscribe handles for all push listeners. */
 let unsubs: (() => void)[] = [];
@@ -199,6 +200,7 @@ export function startPushListeners(): void {
 
       const isTerminal =
         status === "paused" || status === "interrupted" || status === "errored";
+      void useThreadControlStore.getState().refreshByThreadId(threadId);
       if (!isTerminal) return;
       useThreadStore.setState((state) => {
         const calls = getThreadRecord(state.records, threadId).toolCalls;
@@ -219,6 +221,16 @@ export function startPushListeners(): void {
           records: patchThreadRecord(state.records, threadId, { toolCalls: next }),
         };
       });
+    }),
+  );
+
+  // Coordination writes use a dedicated invalidation channel so the panel
+  // always re-reads persisted lineage, provenance, lifecycle, and approvals.
+  unsubs.push(
+    pushEmitter.on("thread.controlChanged", (data) => {
+      const parsed = WS_CHANNELS["thread.controlChanged"].safeParse(data);
+      if (!parsed.success) return;
+      void useThreadControlStore.getState().refreshByThreadId(parsed.data.threadId, parsed.data.workspaceId);
     }),
   );
 
@@ -540,6 +552,10 @@ export function startPushListeners(): void {
       const request = data as PermissionRequest;
       if (!request.requestId || !request.threadId) return;
       useThreadStore.getState().addPermissionRequest(request);
+      void useThreadControlStore.getState().refreshByThreadId(request.threadId);
+      if (request.sourceThreadId) {
+        void useThreadControlStore.getState().refreshByThreadId(request.sourceThreadId);
+      }
     }),
   );
 
@@ -550,6 +566,7 @@ export function startPushListeners(): void {
         requestId: string;
         decision: PermissionDecision;
       };
+      void useThreadControlStore.getState().rehydrate();
       if (!requestId) return;
       useThreadStore.getState().resolvePermissionRequest(requestId, decision);
     }),

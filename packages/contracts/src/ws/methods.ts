@@ -39,6 +39,14 @@ import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/per
 import { GoalLookupResultSchema, GoalObjectiveSchema } from "../models/goal.js";
 import { PreviewAnnotationBundleSchema } from "../models/browser-preview.js";
 import {
+  ThreadControlReadInputSchema,
+  ThreadControlReadResultSchema,
+  ThreadControlUserSendInputSchema,
+  ThreadControlUserStopInputSchema,
+  ThreadSendResultSchema,
+  ThreadStopResultSchema,
+} from "../thread-control.js";
+import {
   PullRequestCapabilitiesRequestSchema,
   PullRequestCapabilitiesResultSchema,
   PullRequestListRequestSchema,
@@ -68,6 +76,45 @@ import {
   PullRequestMergeRequestSchema,
   PullRequestMergeResultSchema,
 } from "../pull-requests.js";
+
+const ExternalThreadControlScopeSchema = z.enum([
+  "projects:read",
+  "worktrees:read",
+  "threads:create",
+  "threads:read-owned",
+  "threads:read-project",
+  "threads:send-owned",
+  "threads:send-project",
+  "threads:stop-owned",
+  "threads:stop-project",
+  "worktrees:create",
+  "execution:full",
+]);
+
+const ExternalThreadControlPairingInputSchema = z.object({
+  integrationId: z.string().trim().min(1).max(128),
+  workspaceIds: z.array(z.string().trim().min(1).max(128)).max(100).default([]),
+  scopes: z.array(ExternalThreadControlScopeSchema).max(11).default([]),
+  callsPerMinute: z.number().int().positive().max(10_000).default(60),
+  maxActiveThreads: z.number().int().positive().max(1_000).default(5),
+}).strict();
+
+const ExternalThreadControlPairingResultSchema = z.object({
+  pairingId: z.string().min(1),
+  integrationId: z.string().min(1),
+  credential: z.string().min(1).optional(),
+  workspaceIds: z.array(z.string().min(1)),
+  scopes: z.array(ExternalThreadControlScopeSchema),
+  callsPerMinute: z.number().int().positive(),
+  maxActiveThreads: z.number().int().positive(),
+  status: z.enum(["active", "revoked"]),
+  authorityEpoch: z.number().int().positive(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  replacedByPairingId: z.string().min(1).optional(),
+  replacesPairingId: z.string().min(1).optional(),
+  externalMcpEndpoint: z.string().url().or(z.string().startsWith("/")),
+}).strict();
 
 /** Maximum recap input messages accepted by recap.generate. */
 export const RECAP_MAX_MESSAGES = 80;
@@ -379,6 +426,21 @@ export const WS_METHODS = lazySchema(() => ({
       })),
     }),
   },
+  /** Read the canonical persisted coordination projection for one Project/Thread identity. */
+  "thread.control.read": {
+    params: ThreadControlReadInputSchema(),
+    result: ThreadControlReadResultSchema(),
+  },
+  /** Send a user-owned follow-up from one source thread to another thread. */
+  "thread.control.send": {
+    params: ThreadControlUserSendInputSchema(),
+    result: ThreadSendResultSchema(),
+  },
+  /** Stop a destination thread from the owning source thread. */
+  "thread.control.stop": {
+    params: ThreadControlUserStopInputSchema(),
+    result: ThreadStopResultSchema(),
+  },
   "git.listBranches": {
     params: z.object({ workspaceId: z.string() }),
     result: z.array(GitBranchSchema),
@@ -534,6 +596,28 @@ export const WS_METHODS = lazySchema(() => ({
   "agent.createAndSend": {
     params: CreateAndSendSchema(),
     result: CreateAndSendResultSchema(),
+  },
+  /** Create one external thread-control pairing and return its credential once. */
+  "threadControl.pairing.create": {
+    params: ExternalThreadControlPairingInputSchema,
+    result: ExternalThreadControlPairingResultSchema,
+  },
+  /** Revoke an external thread-control pairing and all authority derived from it. */
+  "threadControl.pairing.revoke": {
+    params: z.object({ pairingId: z.string().trim().min(1).max(128) }).strict(),
+    result: ExternalThreadControlPairingResultSchema,
+  },
+  /** Replace one pairing atomically, returning the successor credential once. */
+  "threadControl.pairing.replace": {
+    params: z.object({
+      pairingId: z.string().trim().min(1).max(128),
+      integrationId: z.string().trim().min(1).max(128),
+      workspaceIds: z.array(z.string().trim().min(1).max(128)).max(100).default([]),
+      scopes: z.array(ExternalThreadControlScopeSchema).max(11).default([]),
+      callsPerMinute: z.number().int().positive().max(10_000).default(60),
+      maxActiveThreads: z.number().int().positive().max(1_000).default(5),
+    }).strict(),
+    result: ExternalThreadControlPairingResultSchema,
   },
   "agent.stop": {
     params: z.object({ threadId: z.string() }),

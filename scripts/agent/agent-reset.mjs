@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Rebuilds the disposable agent runtime database after stopping runtime processes.
  */

@@ -25,6 +25,7 @@ import {
   writePortsFile,
 } from "../runtime-contract.mjs";
 import { resolveDevSingleInstanceFlag } from "../single-instance-flag.mjs";
+import { stopRecordedPidFile } from "../runtime-processes.mjs";
 
 test("agentDown posts shutdown with seedLogin.authHeader and cleans only .dev/pids", async () => {
   const repo = makeRepo();
@@ -57,7 +58,7 @@ test("agentDown posts shutdown with seedLogin.authHeader and cleans only .dev/pi
     const outsidePid = join(paths.devDir, "web.pid");
     writeFileSync(outsidePid, "999997\n");
 
-    await agentDown(repo);
+    await agentDown(repo, { stop: async () => {} });
 
     assert.equal(fetchCalls.length, 1);
     assert.equal(fetchCalls[0].url, "http://127.0.0.1:41123/shutdown");
@@ -88,7 +89,7 @@ test("agentDown still cleans PID files when ports.json is malformed", async () =
     writeFileSync(paths.portsFile, "{not json");
     writeFileSync(join(paths.pidsDir, "server.pid"), "999998\n");
 
-    await agentDown(repo);
+    await agentDown(repo, { stop: async () => {} });
 
     assert.equal(existsSync(join(paths.pidsDir, "server.pid")), false);
   } finally {
@@ -102,6 +103,9 @@ test("agentUp removes stale PID files before launching server and web processes"
   const repo = makeRepo();
   let spawnAttempted = false;
   const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async (receivedRepo) => {
+      rmSync(join(getRuntimePaths(receivedRepo).pidsDir, "server.pid"), { force: true });
+    },
     seedFixtureRepo: () => join(repo, ".dev", "fixture-repo"),
     computeAvailablePorts: async () => ({ serverPort: 41_223, webPort: 41_224 }),
     getElectronBinary: () => process.execPath,
@@ -158,6 +162,139 @@ test("agentReset deletes only .dev/db between shutdown and restart", async () =>
   }
 });
 
+test("PID records remain until owned termination completes", async () => {
+  const repo = makeRepo();
+  let releaseTermination;
+  let terminationStarted = false;
+  const termination = new Promise((resolve) => {
+    releaseTermination = resolve;
+  });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "999998\n");
+
+    const stopping = stopRecordedPidFile(pidFile, {
+      repoRoot: repo,
+      stop: async () => {
+        terminationStarted = true;
+        await termination;
+      },
+    });
+
+    await waitUntil(() => terminationStarted, {
+      timeoutMs: 5_000,
+      intervalMs: 5,
+      message: "owned termination did not start",
+    });
+    assert.equal(existsSync(pidFile), true);
+
+    releaseTermination();
+    await stopping;
+    assert.equal(existsSync(pidFile), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("PID records remain when owned termination fails", async () => {
+  const repo = makeRepo();
+  try {
+    const paths = getRuntimePaths(repo);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "999998\n");
+
+    await assert.rejects(
+      () => stopRecordedPidFile(pidFile, {
+        repoRoot: repo,
+        stop: async () => {
+          throw new Error("permission denied");
+        },
+      }),
+      /permission denied/,
+    );
+    assert.equal(existsSync(pidFile), true);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentDown waits for owned termination before returning", async () => {
+  const repo = makeRepo();
+  let releaseTermination;
+  let terminationStarted = false;
+  const termination = new Promise((resolve) => {
+    releaseTermination = resolve;
+  });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "999998\n");
+
+    const stopping = agentDown(repo, {
+      stop: async () => {
+        terminationStarted = true;
+        await termination;
+      },
+    });
+
+    await waitUntil(() => terminationStarted, {
+      timeoutMs: 5_000,
+      intervalMs: 5,
+      message: "owned shutdown did not start",
+    });
+    assert.equal(existsSync(pidFile), true);
+
+    releaseTermination();
+    await stopping;
+    assert.equal(existsSync(pidFile), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentReset does not start replacement before shutdown completes", async () => {
+  const repo = makeRepo();
+  let releaseShutdown;
+  let shutdownStarted = false;
+  const shutdown = new Promise((resolve) => {
+    releaseShutdown = resolve;
+  });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    mkdirSync(paths.dbDir, { recursive: true });
+    writeFileSync(join(paths.dbDir, "app.sqlite"), "keep\n");
+
+    const resetting = agentReset(repo, {
+      down: async () => {
+        shutdownStarted = true;
+        await shutdown;
+      },
+      up: async () => {
+        assert.equal(existsSync(paths.dbDir), false);
+      },
+    });
+
+    await waitUntil(() => shutdownStarted, {
+      timeoutMs: 5_000,
+      intervalMs: 5,
+      message: "shutdown did not start",
+    });
+    assert.equal(existsSync(paths.dbDir), true);
+
+    releaseShutdown();
+    await resetting;
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("dev web single-instance flag preserves explicit false legacy mode", () => {
   assert.equal(resolveDevSingleInstanceFlag("false"), false);
   assert.equal(resolveDevSingleInstanceFlag("0"), false);
@@ -165,7 +302,7 @@ test("dev web single-instance flag preserves explicit false legacy mode", () => 
   assert.equal(resolveDevSingleInstanceFlag("off"), false);
 });
 
-test("dev:server SIGTERM stops the Electron server without a Vite reference error", async () => {
+test("dev:server SIGTERM stops the Electron server without a Vite reference error", { timeout: 75_000 }, async () => {
   const child = spawn(process.execPath, ["scripts/dev-web.mjs", "--server-only"], {
     cwd: resolve(process.cwd()),
     stdio: ["ignore", "pipe", "pipe"],
@@ -194,29 +331,79 @@ test("dev:server SIGTERM stops the Electron server without a Vite reference erro
   }
 });
 
+test("server stop polling does not treat a self-caused probe timeout as stopped", { timeout: 2_000 }, async () => {
+  const originalFetch = globalThis.fetch;
+  let probes = 0;
+  globalThis.fetch = async (_url, { signal }) => {
+    probes += 1;
+    await new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        const error = new Error("probe timed out");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    });
+  };
+
+  try {
+    await assert.rejects(
+      () => waitForServerStop(41_999, { timeoutMs: 120, intervalMs: 5, probeTimeoutMs: 20 }),
+      /dev:server still responds on port 41999 after SIGTERM/,
+    );
+    assert.ok(probes >= 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 /** Waits for dev-web to report the server-only health port. */
 async function waitForServerPort(readOutput) {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
+  return waitUntil(() => {
     const match = /Server ready on port (\d+)/.exec(readOutput());
     if (match) return Number(match[1]);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
-  }
-  throw new Error(`dev:server did not become ready: ${readOutput()}`);
+    return false;
+  }, {
+    timeoutMs: 30_000,
+    intervalMs: 100,
+    message: () => `dev:server did not become ready: ${readOutput()}`,
+  });
 }
 
 /** Waits for the server-only child to release its health endpoint. */
-async function waitForServerStop(port) {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
+async function waitForServerStop(
+  port,
+  { timeoutMs = 5_000, intervalMs = 100, probeTimeoutMs = 1_000 } = {},
+) {
+  return waitUntil(async () => {
+    const controller = new AbortController();
+    const probeTimer = setTimeout(() => controller.abort(), probeTimeoutMs);
     try {
-      await fetch(`http://127.0.0.1:${port}/health`);
-    } catch {
-      return;
+      await fetch(`http://127.0.0.1:${port}/health`, { signal: controller.signal });
+      return false;
+    } catch (error) {
+      if (controller.signal.aborted) return false;
+      return error?.code === "ECONNREFUSED"
+        || error?.cause?.code === "ECONNREFUSED"
+        || /unable to connect/i.test(error?.message ?? "");
+    } finally {
+      clearTimeout(probeTimer);
     }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }, {
+    timeoutMs,
+    intervalMs,
+    message: () => `dev:server still responds on port ${port} after SIGTERM`,
+  });
+}
+
+/** Polls a bounded condition and returns its first truthy value. */
+async function waitUntil(predicate, { timeoutMs, intervalMs, message }) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await predicate();
+    if (value) return value;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
   }
-  throw new Error(`dev:server still responds on port ${port} after SIGTERM`);
+  throw new Error(typeof message === "function" ? message() : message);
 }
 
 /**

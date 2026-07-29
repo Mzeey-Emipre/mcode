@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Safely reset MCODE_DATA_DIR (dev only).
  * Deletes and recreates the data directory. The app re-creates the database on next startup.

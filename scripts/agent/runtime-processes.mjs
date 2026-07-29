@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Manages runtime process PID files under the `.dev` directory.
  */
@@ -34,9 +34,9 @@ export function parsePidFile(pidFilePath) {
  * Sends a signal to the PID recorded in one runtime PID file and removes it.
  *
  * @param {string} pidFilePath
- * @param {{ repoRoot?: string, signal?: NodeJS.Signals }} [options]
+ * @param {{ repoRoot?: string, signal?: NodeJS.Signals, stop?: typeof stopPid }} [options]
  */
-export function stopRecordedPidFile(pidFilePath, options = {}) {
+export async function stopRecordedPidFile(pidFilePath, options = {}) {
   const repoRoot = options.repoRoot ?? resolveRepoRoot();
   const { devDir } = getRuntimePaths(repoRoot);
   const resolvedPidFile = resolve(pidFilePath);
@@ -46,7 +46,8 @@ export function stopRecordedPidFile(pidFilePath, options = {}) {
   }
 
   const pid = parsePidFile(resolvedPidFile);
-  stopPid(pid, options.signal ?? "SIGTERM");
+  const stop = options.stop ?? stopPid;
+  await stop(pid, options.signal ?? "SIGTERM");
   rmSync(resolvedPidFile);
 }
 
@@ -60,5 +61,5 @@ export function stopPid(pid, signal = "SIGTERM") {
   if (!Number.isSafeInteger(pid) || pid <= 0) {
     throw new Error(`Invalid PID: ${pid}`);
   }
-  killPidTree(pid, signal);
+  return killPidTree(pid, signal, { useProcessGroup: process.platform !== "win32" });
 }
