@@ -83,6 +83,7 @@ import {
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
 const USAGE_WARMUP_TIMEOUT_MS = 10_000;
+const CODEX_MCP_STARTUP_TIMEOUT_MS = 10_000;
 const USAGE_WARMUP_RETRY_MS = 60_000;
 const CODEX_MIN_VERSION = "0.37.0";
 
@@ -236,6 +237,44 @@ function transientHandoffError(message: string): Error & { code: string } {
   const err = new Error(message) as Error & { code: string };
   err.code = "ETIMEDOUT";
   return err;
+}
+
+function observeCodexInternalMcpStartup(server: CodexAppServer): {
+  promise: Promise<void>;
+  cancel: () => void;
+} {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let resolvePromise!: () => void;
+  let rejectPromise!: (error: Error) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  const finish = (error?: Error): void => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    server.off("notification", onNotification);
+    if (error) rejectPromise(error);
+    else resolvePromise();
+  };
+  const onNotification = (notification: unknown): void => {
+    const value = notification as { method?: unknown; params?: Record<string, unknown> };
+    if (value.method !== "mcpServer/startupStatus/updated") return;
+    if (value.params?.name !== "mcode_internal_thread_control") return;
+    const status = typeof value.params.status === "string" ? value.params.status : "";
+    if (status === "ready") finish();
+    else if (status === "failed" || status === "error") {
+      finish(new Error(`Codex internal MCP startup failed (${status})`));
+    }
+  };
+  server.on("notification", onNotification);
+  timer = setTimeout(
+    () => finish(new Error("Codex internal MCP startup timed out")),
+    CODEX_MCP_STARTUP_TIMEOUT_MS,
+  );
+  return { promise, cancel: () => finish(new Error("Codex internal MCP startup cancelled")) };
 }
 
 /**
@@ -1095,6 +1134,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     });
 
     this.attachFatalDrain(sessionId, server);
+    const internalMcpStartup = internalMcp ? observeCodexInternalMcpStartup(server) : undefined;
 
     server.on("exit", () => {
       if (!server.isAlive) {
@@ -1104,14 +1144,21 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     // Propagates start failures to the runtime, which surfaces them to the
     // `acquire` caller in `sendTurn` (emits Error/Ended there).
-    await server.start();
+    try {
+      await server.start();
+    } catch (error) {
+      internalMcpStartup?.cancel();
+      throw error;
+    }
     if (internalMcp) {
       try {
         const effectiveConfig = await server.readConfig(cwd);
         if (!hasCodexInternalThreadControlMcp(effectiveConfig)) {
           throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
         }
+        await internalMcpStartup!.promise;
       } catch (error) {
+        internalMcpStartup?.cancel();
         await server.kill().catch(() => undefined);
         throw error;
       }

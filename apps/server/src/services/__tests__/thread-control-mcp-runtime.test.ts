@@ -1,6 +1,8 @@
 import "reflect-metadata";
 import { request, type Server } from "node:http";
 import { describe, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InternalThreadControlMcpAuthority } from "../thread-control-mcp-authority.js";
 import { InternalThreadControlMcpRuntime } from "../thread-control-mcp-runtime.js";
 
@@ -81,6 +83,35 @@ describe("InternalThreadControlMcpRuntime", () => {
     await instance.close("session");
     expect(sessions.has("session")).toBe(false);
     expect(authority.credential("session")).toBeUndefined();
+  });
+
+  it("completes an authenticated MCP HTTP handshake and lists internal tools", async () => {
+    const { runtime: instance, authority } = runtime();
+    authority.activate({
+      sessionId: "session",
+      sourceThreadId: "thread",
+      sourceTurnId: "turn",
+      sourceProviderId: "codex",
+      permissionMode: "full",
+    });
+    const connection = await instance.createHttpConnection("session");
+    expect(connection).toBeDefined();
+    const client = new Client({ name: "mcode-runtime-test", version: "0.1.0" });
+    const transport = new StreamableHTTPClientTransport(new URL(connection!.url), {
+      requestInit: { headers: connection!.headers },
+    });
+
+    try {
+      await client.connect(transport);
+      const listed = await client.listTools();
+      expect(listed.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+        "workspace_search",
+        "thread_create_batch",
+      ]));
+    } finally {
+      await client.close().catch(() => undefined);
+      await instance.close("session");
+    }
   });
 
   it("does not retain a loopback listener when close wins during startup", async () => {

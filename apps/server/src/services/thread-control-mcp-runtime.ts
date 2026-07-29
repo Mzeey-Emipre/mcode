@@ -151,8 +151,12 @@ export class InternalThreadControlMcpRuntime {
   private async startHttpServer(): Promise<void> {
     const server = createServer((request, response) => {
       const encodedSessionId = request.url?.slice(1);
-      if (!encodedSessionId || request.method !== "POST") {
+      if (!encodedSessionId) {
         response.writeHead(404).end();
+        return;
+      }
+      if (request.method !== "POST") {
+        response.writeHead(request.method === "GET" ? 405 : 404).end();
         return;
       }
       let sessionId: string;
