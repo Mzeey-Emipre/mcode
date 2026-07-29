@@ -275,10 +275,11 @@ function waitForWebPreviewIframe(
   expectedUrl: string,
   deadline: number,
   signal: AbortSignal,
+  onNavigationLoad?: (iframe: HTMLIFrameElement) => void,
 ): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason);
   const ready = webPreviewIframe(threadId, tabId, expectedUrl);
-  if (ready?.contentDocument?.readyState === "complete") return Promise.resolve();
+  if (ready?.contentDocument?.readyState === "complete" && !onNavigationLoad) return Promise.resolve();
   return new Promise((resolve, reject) => {
     let settled = false;
     let observedIframe: HTMLIFrameElement | null = null;
@@ -292,14 +293,17 @@ function waitForWebPreviewIframe(
     const observeReady = () => {
       const iframe = webPreviewIframe(threadId, tabId, expectedUrl);
       if (!iframe) return;
-      if (iframe.contentDocument?.readyState === "complete") {
+      if (iframe.contentDocument?.readyState === "complete" && !onNavigationLoad) {
         finish();
         return;
       }
       if (observedIframe === iframe) return;
       if (observedIframe && onLoad) observedIframe.removeEventListener("load", onLoad);
       observedIframe = iframe;
-      onLoad = () => finish();
+      onLoad = () => {
+        onNavigationLoad?.(iframe);
+        finish();
+      };
       iframe.addEventListener("load", onLoad, { once: true });
     };
     const observer = new MutationObserver(() => {
@@ -340,6 +344,14 @@ interface HostLease {
   readonly generation: number;
   readonly desktopInstanceId: string;
   readonly epoch: number;
+}
+
+interface WebNavigationExpectation {
+  readonly targetKey: string;
+  readonly expectedUrl: string;
+  readonly initialRevision: number;
+  loadObserved: boolean;
+  acceptedRevision?: number;
 }
 
 interface BackgroundBrowserScope {
@@ -452,6 +464,7 @@ export function BrowserAutomationHost() {
   const requestAbortRef = useRef(new Map<string, AbortController>());
   const webAbortRef = useRef(new Map<string, AbortController>());
   const webObserverRef = useRef(new Map<string, () => void>());
+  const webNavigationRef = useRef(new Map<string, WebNavigationExpectation>());
   const bootstrapPendingRef = useRef(new Set<string>());
   const bootstrapAbortRef = useRef(new Map<string, AbortController>());
   const bootstrapRequestRef = useRef(new Map<string, BrowserAutomationRequest>());
@@ -666,6 +679,20 @@ export function BrowserAutomationHost() {
       if (previousRevision === undefined || previousRevision === target.revision) continue;
       for (const [requestKey, dispatch] of inFlightRef.current) {
         if (browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId) !== key) continue;
+        const navigation = webNavigationRef.current.get(requestKey);
+        const expectedNavigation = dispatch.request.operation === "open" &&
+          navigation?.targetKey === key &&
+          navigation.expectedUrl === normalizeWebPreviewUrl(
+            dispatch.request.args.url ?? "",
+          ) &&
+          navigation.loadObserved &&
+          navigation.acceptedRevision === undefined &&
+          dispatch.target.targetGeneration === navigation.initialRevision &&
+          target.revision === navigation.initialRevision + 1;
+        if (expectedNavigation) {
+          navigation.acceptedRevision = target.revision;
+          continue;
+        }
         webAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
         requestAbortRef.current.get(requestKey)?.abort(new Error("Browser document was replaced"));
       }
@@ -776,7 +803,20 @@ export function BrowserAutomationHost() {
         if (!requestedUrl || !isSameOriginWebPreviewUrl(requestedUrl)) {
           return executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal);
         }
-        if (!webPreviewIframe(dispatch.target.threadId, dispatch.target.tabId, requestedUrl)) {
+        const currentTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
+        if (!currentTarget || currentTarget.revision !== dispatch.target.targetGeneration) {
+          return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
+        }
+        const currentIframe = webPreviewIframe(dispatch.target.threadId, dispatch.target.tabId, requestedUrl);
+        if (!currentIframe) {
+          webNavigationRef.current.set(key, {
+            targetKey,
+            expectedUrl: requestedUrl,
+            initialRevision: currentTarget.revision,
+            loadObserved: false,
+          });
+        }
+        if (!currentIframe) {
           useDiffStore.getState().setPreviewUrlForThread(dispatch.target.threadId, requestedUrl);
         }
         await waitForWebPreviewIframe(
@@ -785,10 +825,24 @@ export function BrowserAutomationHost() {
           requestedUrl,
           dispatch.request.deadline,
           controller.signal,
+          !currentIframe
+          ? () => {
+              const navigation = webNavigationRef.current.get(key);
+              if (navigation?.targetKey === targetKey && navigation.expectedUrl === requestedUrl) {
+                navigation.loadObserved = true;
+              }
+            }
+            : undefined,
         );
         const latestStore = useBrowserAutomationStore.getState();
         const latestTarget = latestStore.liveTargets.get(targetKey);
-        if (!latestTarget || latestTarget.revision !== dispatch.target.targetGeneration) {
+        const navigation = webNavigationRef.current.get(key);
+        const expectedRevision = navigation?.acceptedRevision ?? (
+          navigation?.loadObserved && navigation.initialRevision === dispatch.target.targetGeneration
+            ? navigation.initialRevision + 1
+            : dispatch.target.targetGeneration
+        );
+        if (!latestTarget || latestTarget.revision !== expectedRevision) {
           return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
         }
         const latestEpoch = latestStore.controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
@@ -814,7 +868,13 @@ export function BrowserAutomationHost() {
       const guardedOperation = operation.then((response) => {
         if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
           const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
-          if (!latestTarget || latestTarget.revision !== dispatch.target.targetGeneration) {
+          const navigation = webNavigationRef.current.get(key);
+          const expectedRevision = navigation?.acceptedRevision ?? (
+            navigation?.loadObserved && navigation.initialRevision === dispatch.target.targetGeneration
+              ? navigation.initialRevision + 1
+              : dispatch.target.targetGeneration
+          );
+          if (!latestTarget || latestTarget.revision !== expectedRevision) {
             return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
           }
         }
@@ -822,7 +882,13 @@ export function BrowserAutomationHost() {
       }).catch((cause: unknown) => {
         if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
           const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
-          if (!latestTarget || latestTarget.revision !== dispatch.target.targetGeneration) {
+          const navigation = webNavigationRef.current.get(key);
+          const expectedRevision = navigation?.acceptedRevision ?? (
+            navigation?.loadObserved && navigation.initialRevision === dispatch.target.targetGeneration
+              ? navigation.initialRevision + 1
+              : dispatch.target.targetGeneration
+          );
+          if (!latestTarget || latestTarget.revision !== expectedRevision) {
             return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
           }
         }
@@ -846,6 +912,7 @@ export function BrowserAutomationHost() {
         webObserverRef.current.get(key)?.();
         webObserverRef.current.delete(key);
         webAbortRef.current.delete(key);
+        webNavigationRef.current.delete(key);
         if (inFlightRef.current.get(key) === dispatch) inFlightRef.current.delete(key);
         requestAbortRef.current.delete(key);
         cancelledRef.current.delete(key);
@@ -1198,6 +1265,7 @@ export function BrowserAutomationHost() {
     bootstrapPendingRef.current.clear();
     inFlightRef.current.clear();
     cancelledRef.current.clear();
+    webNavigationRef.current.clear();
     recorderRef.current.dispose();
     for (const abort of webAbortRef.current.values()) abort.abort(new Error("Browser host was replaced"));
     for (const dispose of webObserverRef.current.values()) dispose();

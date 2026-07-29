@@ -369,13 +369,97 @@ describe("BrowserAutomationHost", () => {
     iframe.dataset.threadId = "thread-1";
     iframe.dataset.tabId = "web-preview";
     document.body.append(iframe);
-    window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
+    window.setTimeout(() => {
+      iframe.dispatchEvent(new Event("load"));
+      useBrowserAutomationStore.getState().refreshTarget("thread-1", "web-preview");
+    }, 0);
     await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ request: expect.objectContaining({ args: { activate: true } }) }),
       expect.any(AbortSignal),
     ));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     iframe.remove();
+    view.unmount();
+  });
+
+  it("accepts the expected target revision advanced by a same-origin open load", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 38).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openDispatch = dispatch(1, 38, { tabId: "tab-1", targetGeneration: 1 });
+    openDispatch.request = {
+      ...openDispatch.request,
+      operation: "open",
+      args: { url: `${window.location.origin}/revision-open`, activate: true },
+    } as never;
+    const expectedUrl = `${window.location.origin}/revision-open`;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
+    await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(expectedUrl));
+    expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
+
+    const iframe = document.createElement("iframe");
+    iframe.src = expectedUrl;
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "tab-1";
+    Object.defineProperty(iframe, "contentWindow", {
+      configurable: true,
+      value: { location: { origin: window.location.origin } },
+    });
+    document.body.append(iframe);
+    window.setTimeout(() => {
+      iframe.dispatchEvent(new Event("load"));
+      useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1");
+    }, 0);
+
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: true }),
+    );
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ args: { activate: true } }) }),
+      expect.any(AbortSignal),
+    );
+    iframe.remove();
+    view.unmount();
+  });
+
+  it("rejects an unrelated iframe replacement during a same-origin open", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 39).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openDispatch = dispatch(1, 39, { tabId: "tab-1", targetGeneration: 1 });
+    openDispatch.request = {
+      ...openDispatch.request,
+      operation: "open",
+      args: { url: `${window.location.origin}/replacement-open`, activate: true },
+    } as never;
+    const expectedUrl = `${window.location.origin}/replacement-open`;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
+    await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(expectedUrl));
+
+    const replacement = document.createElement("iframe");
+    replacement.src = `${window.location.origin}/unrelated-replacement`;
+    replacement.dataset.threadId = "thread-1";
+    replacement.dataset.tabId = "tab-1";
+    document.body.append(replacement);
+    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "STALE_TARGET_GENERATION" }) }),
+    );
+    expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
+    replacement.remove();
     view.unmount();
   });
 
