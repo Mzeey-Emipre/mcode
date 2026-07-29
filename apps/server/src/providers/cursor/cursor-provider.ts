@@ -23,9 +23,14 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
+  type McpServer,
 } from "@agentclientprotocol/sdk";
 
 import { SettingsService } from "../../services/settings-service.js";
+import {
+  InternalThreadControlMcpRuntime,
+  type InternalThreadControlMcpHttpConnection,
+} from "../../services/thread-control-mcp-runtime.js";
 import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
@@ -120,6 +125,18 @@ interface CursorSideChannelTransport {
   dispose(): Promise<void> | void;
 }
 
+/** Builds the ACP HTTP MCP configuration for one provider session. */
+export function buildCursorInternalMcpServers(
+  connection: InternalThreadControlMcpHttpConnection,
+): McpServer[] {
+  return [{
+    type: "http",
+    name: connection.name,
+    url: connection.url,
+    headers: Object.entries(connection.headers).map(([name, value]) => ({ name, value })),
+  }];
+}
+
 /**
  * Factory that opens a throwaway ACP transport wired to a non-emitting client.
  * Defaulted to the real `cursor-agent acp` spawn and overridable in tests so the
@@ -165,6 +182,7 @@ interface CursorAcpSessionEntry {
   cursorModelAppliedPair: { acpSessionId: string; modelId: string } | null;
   /** Set immediately before issuing ACP cancel while a prompt is in flight (explicit Stop vs noisy upstream errors). */
   pendingUserStopAbort: boolean;
+  supportsHttpMcp: boolean;
 }
 
 /**
@@ -222,6 +240,8 @@ export class CursorProvider
     @inject(SkillService) private readonly skillService: SkillService,
     @inject(EnvService) private readonly envService: EnvService,
     @inject("JobObject") private readonly jobObject: JobObject,
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
     super();
     this.runtime = new SessionRuntime<CursorSessionState>(this, {
@@ -449,6 +469,7 @@ export class CursorProvider
       await this.openLogicalSession(state, resumeFrom !== undefined);
     } catch (err) {
       this.liveSessionIds.delete(sessionId);
+      await this.threadControlMcp?.close(sessionId);
       try {
         state.child.kill();
       } catch {
@@ -483,9 +504,10 @@ export class CursorProvider
    * for this session (so orphaned approval cards clear) and drop it from the
    * live-id mirror. The child process is killed by the runtime's hard kill.
    */
-  close(state: CursorSessionState): void {
+  async close(state: CursorSessionState): Promise<void> {
     this.cancelPendingForThread(state.mcodeSessionId);
     this.liveSessionIds.delete(state.mcodeSessionId);
+    await this.threadControlMcp?.close(state.mcodeSessionId);
   }
 
   /** A pooled session must be discarded before reuse if the child died or the cwd/permission mode changed. */
@@ -564,6 +586,7 @@ export class CursorProvider
       stderrTailLines: [],
       cursorModelAppliedPair: null,
       pendingUserStopAbort: false,
+      supportsHttpMcp: false,
     };
 
     entry.connection = new ClientSideConnection(
@@ -599,7 +622,8 @@ export class CursorProvider
       void this.runtime.stop(mcodeSessionId);
     });
 
-    await this.acpHandshake(connection, threadId);
+    const supportsHttpMcp = await this.acpHandshake(connection, threadId);
+    entry.supportsHttpMcp = supportsHttpMcp;
 
     return entry as CursorAcpSessionEntry;
   }
@@ -609,7 +633,7 @@ export class CursorProvider
    * fresh connection. Shared by the pooled session spawn and the throwaway
    * side-channel transport.
    */
-  private async acpHandshake(connection: ClientSideConnection, threadId: string): Promise<void> {
+  private async acpHandshake(connection: ClientSideConnection, threadId: string): Promise<boolean> {
     const initResult = await connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientInfo: { name: "mcode", title: "Mcode", version: "0.0.1" },
@@ -629,6 +653,7 @@ export class CursorProvider
         });
       });
     }
+    return initResult.agentCapabilities?.mcpCapabilities?.http === true;
   }
 
   private buildAcpClient(entry: CursorAcpSessionEntry): Client {
@@ -847,13 +872,19 @@ export class CursorProvider
     if (entry.acpSessionId) return;
 
     const stored = this.sdkSessionIds.get(entry.mcodeSessionId);
+    if (!entry.supportsHttpMcp) {
+      throw new Error("Cursor ACP does not advertise HTTP MCP support; internal thread-control MCP is unavailable");
+    }
+    const internalMcp = await this.threadControlMcp?.createHttpConnection(entry.mcodeSessionId);
+    if (!internalMcp) throw new Error("Cursor internal thread-control MCP connection unavailable");
+    const mcpServers = buildCursorInternalMcpServers(internalMcp);
     let acpId: string;
 
     if (resume && stored) {
       try {
         await entry.connection.loadSession({
           cwd: entry.cwd,
-          mcpServers: [],
+          mcpServers,
           sessionId: stored,
         });
         acpId = stored;
@@ -864,14 +895,14 @@ export class CursorProvider
         });
         const created = await entry.connection.newSession({
           cwd: entry.cwd,
-          mcpServers: [],
+          mcpServers,
         });
         acpId = created.sessionId;
       }
     } else {
       const created = await entry.connection.newSession({
         cwd: entry.cwd,
-        mcpServers: [],
+        mcpServers,
       });
       acpId = created.sessionId;
     }

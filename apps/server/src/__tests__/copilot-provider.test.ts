@@ -42,6 +42,7 @@ const { mockExecFile, mockClient, MockCopilotClient } = vi.hoisted(() => {
     getState: vi.fn().mockReturnValue("connected"),
     listModels: vi.fn().mockResolvedValue([]),
     createSession: vi.fn(),
+    resumeSession: vi.fn(),
   };
   // Must use a regular function (not arrow) so it can be called with `new`.
   // Returning an object from a constructor makes `new` use that object.
@@ -115,6 +116,18 @@ function makeSettingsService(cliPath = "") {
   };
 }
 
+/** Supplies the MCP connection required by provider send-turn fixtures. */
+function makeThreadControlMcp() {
+  return {
+    createHttpConnection: vi.fn().mockResolvedValue({
+      name: "mcode_internal_thread_control",
+      url: "http://127.0.0.1:43123/session",
+      headers: { Authorization: "Bearer fixture" },
+    }),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe("CopilotProvider bootstrap", () => {
   let origElectron: string | undefined;
 
@@ -173,19 +186,24 @@ describe("CopilotProvider bootstrap", () => {
       // which should not be called when not in Electron
       expect(which).not.toHaveBeenCalled();
       const ctorCall = MockCopilotClient.mock.calls[0]?.[0] ?? {};
-      expect(ctorCall.cliPath).toBe("/global/@github/copilot/index.js");
+      expect(ctorCall.cliPath).toBeUndefined();
+      expect(resolveCopilotCliMock).not.toHaveBeenCalled();
     });
 
-    it("passes the resolver's index.js entry to the SDK as cliPath", async () => {
+    it("passes an explicitly configured CLI entry to the SDK as cliPath", async () => {
       resolveCopilotCliMock.mockReturnValueOnce({
-        source: "npm-global",
-        entry: "/global/@github/copilot/index.js",
+        source: "configured",
+        entry: "/configured/copilot.js",
         version: "1.0.24",
       });
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
       await provider.listModels();
       const ctorCall = MockCopilotClient.mock.calls[0]?.[0];
-      expect(ctorCall?.cliPath).toBe("/global/@github/copilot/index.js");
+      expect(resolveCopilotCliMock).toHaveBeenCalledWith(
+        { configuredPath: "/configured/copilot.js" },
+        expect.anything(),
+      );
+      expect(ctorCall?.cliPath).toBe("/configured/copilot.js");
     });
   });
 
@@ -240,7 +258,7 @@ describe("CopilotProvider bootstrap", () => {
         new Error("CLI server exited with code 1"),
       );
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
 
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
@@ -268,7 +286,7 @@ describe("CopilotProvider bootstrap", () => {
         new Error("Could not find @github/copilot"),
       );
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
 
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
@@ -297,7 +315,7 @@ describe("CopilotProvider bootstrap", () => {
         message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
       });
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
 
@@ -325,7 +343,7 @@ describe("CopilotProvider bootstrap", () => {
         message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
       });
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
       await expect(provider.listModels()).resolves.toEqual([]);
     });
 
@@ -337,7 +355,7 @@ describe("CopilotProvider bootstrap", () => {
         message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
       });
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
       await expect(provider.complete("hello", "gpt-4o", "/tmp")).rejects.toThrow(
         "npm install -g @github/copilot",
       );
@@ -376,7 +394,7 @@ async function runWithMockSession(
     mockSession.fire("session.idle");
   });
 
-  const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+  const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
   const events: AgentEvent[] = [];
   provider.on("event", (e: AgentEvent) => events.push(e));
 
@@ -608,6 +626,45 @@ describe("CopilotProvider.complete()", () => {
       "network error",
     );
     expect(mockSession.disconnect).toHaveBeenCalled();
+  });
+});
+
+describe("CopilotProvider.runSideChannelQuery()", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.start.mockResolvedValue(undefined);
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, result?: { stdout: string }) => void) => {
+        cb(null, { stdout: "gho_faketoken\n" });
+      },
+    );
+  });
+
+  it("creates a fresh MCP-free session instead of resuming the parent", async () => {
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+    mockSession.send.mockImplementation(async () => {
+      mockSession.fire("assistant.message", { content: "isolated answer" });
+      mockSession.fire("session.idle");
+    });
+
+    const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+    const result = await provider.runSideChannelQuery({
+      parentThreadId: "thread-1",
+      parentSdkSessionId: "parent-sdk-session",
+      prompt: "summarize",
+      conversationHistory: "prior context",
+      cwd: "/tmp",
+    });
+
+    expect(result).toBe("isolated answer");
+    expect(mockClient.resumeSession).not.toHaveBeenCalled();
+    expect(mockClient.createSession).toHaveBeenCalledTimes(1);
+    expect(mockClient.createSession.mock.calls[0]?.[0]).not.toHaveProperty("mcpServers");
+    expect(mockSession.send).toHaveBeenCalledWith({
+      prompt: expect.stringContaining("prior context"),
+    });
   });
 });
 

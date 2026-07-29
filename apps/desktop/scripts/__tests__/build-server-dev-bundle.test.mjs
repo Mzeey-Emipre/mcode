@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, stat, access } from "node:fs/promises";
+import { mkdtemp, rm, stat, lstat, access } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -14,6 +14,11 @@ import {
   findClaudeSdkCliPath,
   resolveClaudeSdkCliSources,
   resolvePackagedServerDir,
+  copilotSdkPlatformPackageName,
+  copyCopilotSdkNextTo,
+  copyCopilotSdkToDir,
+  findCopilotSdkPath,
+  resolveCopilotSdkSources,
 } from "../../../../scripts/build-server-dev-bundle.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../../..");
@@ -167,5 +172,42 @@ describe("copyClaudeSdkCliNextTo", () => {
     copyClaudeSdkCliNextTo(serverCjs, serverRoot);
     const secondMtime = (await stat(binDst)).mtimeMs;
     expect(secondMtime).toBe(firstMtime);
+  });
+});
+
+describe("Copilot SDK staging", () => {
+  it("resolves the SDK package and target platform dependency from the SDK graph", () => {
+    const sources = resolveCopilotSdkSources(serverRoot, process.platform, process.arch);
+    expect(sources.copilotPackageDir).toMatch(/[\\/]@github[\\/]copilot$/);
+    expect(sources.platformPackageDir.endsWith(`copilot-${process.platform}-${process.arch}`)).toBe(true);
+    expect(sources.platformPkg).toBe(copilotSdkPlatformPackageName(process.platform, process.arch));
+  });
+
+  it("stages both complete package trees for dev and packaged destinations", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "copilot-sdk-stage-"));
+    try {
+      const serverCjs = path.join(tmpDir, "server.cjs");
+      const dev = copyCopilotSdkNextTo(serverCjs, serverRoot);
+      expect(findCopilotSdkPath(serverCjs, process.platform, process.arch)).toBe(dev.copilotDst + path.sep + "index.js");
+      expect((await lstat(dev.copilotDst)).isSymbolicLink()).toBe(false);
+      expect((await lstat(dev.platformDst)).isSymbolicLink()).toBe(false);
+
+      const packagedDir = path.join(tmpDir, "resources", "app.asar.unpacked", "dist", "server");
+      const packaged = copyCopilotSdkToDir({
+        destServerDir: packagedDir,
+        serverPackageRoot: serverRoot,
+        platform: process.platform,
+        arch: process.arch,
+      });
+      expect(packaged.copilotDst).toContain(path.join("node_modules", "@github", "copilot"));
+      expect(findCopilotSdkPath(path.join(packagedDir, "server.cjs"), process.platform, process.arch)).toBe(
+        path.join(packaged.copilotDst, "index.js"),
+      );
+      expect((await lstat(packaged.copilotDst)).isSymbolicLink()).toBe(false);
+      expect((await lstat(packaged.platformDst)).isSymbolicLink()).toBe(false);
+      await access(path.join(packaged.platformDst, process.platform === "win32" ? "copilot.exe" : "copilot"), constants.R_OK);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });

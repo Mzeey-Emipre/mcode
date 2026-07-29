@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Thread, IProviderRegistry } from "@mcode/contracts";
-import { AgentService } from "../agent-service.js";
+import { AgentService, usesInternalThreadControlMcp } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
 import { ProviderAvailabilityService } from "../provider-availability-service.js";
@@ -269,5 +269,15 @@ describe("AgentService.sendMessage — provider availability gate", () => {
 
     expect(assertUsable).not.toHaveBeenCalled();
     expect(resolveProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentService internal MCP provider allowlist", () => {
+  it.each(["claude", "codex", "cursor", "copilot"])("includes %s for initial and retry activation", (provider) => {
+    expect(usesInternalThreadControlMcp(provider)).toBe(true);
+  });
+
+  it("excludes unsupported providers", () => {
+    expect(usesInternalThreadControlMcp("unknown")).toBe(false);
   });
 });
