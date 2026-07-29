@@ -11,4 +11,3 @@ export function openThreadCoordinationPanel(): boolean {
   showRightPanelAdaptive(activeWorkspaceId, activeThreadId);
   return true;
 }
-

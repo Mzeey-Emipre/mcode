@@ -136,14 +136,16 @@ function RelationCard({
         <ProviderIcon providerId={destination.providerId} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <button
+            <Button
               type="button"
-              className="min-w-0 truncate text-left text-sm font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              variant="link"
+              size="sm"
+              className="min-w-0 truncate px-0 text-left text-sm font-medium"
               onClick={() => void navigateToThread(destination)}
               aria-label={`Open destination Project and thread ${destination.title}`}
             >
               {destination.title}
-            </button>
+            </Button>
             <Badge variant="outline" className="shrink-0 text-[11px]" aria-label={`Status: ${destinationState}`}>
               {destinationState}
             </Badge>
@@ -196,18 +198,16 @@ function RelationCard({
 
 function OriginRow({
   message,
-  sourceById,
 }: {
   readonly message: ThreadControlProjection["messages"][number];
-  readonly sourceById: ReadonlyMap<string, ThreadControlThreadRef>;
 }) {
   if (message.role !== "user") return null;
   const origin = message.origin;
-  const source = origin.type === "thread" ? sourceById.get(origin.sourceThreadId) : null;
+  const source = origin.type === "thread" ? origin.sourceThread : null;
   const label = origin.type === "composer"
     ? "From composer"
     : origin.type === "thread"
-      ? `From ${threadName(source)} (thread origin)`
+      ? `From ${origin.sourceWorkspaceName} / ${threadName(source)} (thread origin)`
       : "Legacy origin";
   return (
     <div className="border-b border-border/40 px-4 py-2.5" data-testid="coordination-message-origin">
@@ -215,9 +215,9 @@ function OriginRow({
         {origin.type === "thread" && <ProviderIcon providerId={origin.sourceProviderId} />}
         <span>{label}</span>
         {source && (
-          <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => void navigateToThread(source)}>
+          <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={() => void navigateToThread(source)}>
             Open source
-          </button>
+          </Button>
         )}
       </div>
       <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-foreground">{message.content}</p>
@@ -236,13 +236,6 @@ export function CoordinationPanel({ workspaceId, threadId }: { readonly workspac
   useEffect(() => {
     void load(identity);
   }, [identity, load]);
-
-  const sourceById = useMemo(() => {
-    const refs = new Map<string, ThreadControlThreadRef>();
-    if (projection?.relation?.source) refs.set(projection.relation.source.threadId, projection.relation.source);
-    for (const relation of projection?.children ?? []) refs.set(relation.destination.threadId, relation.destination);
-    return refs;
-  }, [projection]);
 
   const refresh = useCallback(() => { void load(identity, { force: true }); }, [identity, load]);
 
@@ -327,7 +320,7 @@ export function CoordinationPanel({ workspaceId, threadId }: { readonly workspac
           {projection.messages.filter((message) => message.role === "user").length === 0 ? (
             <p className="px-4 py-3 text-sm text-muted-foreground">No user messages yet.</p>
           ) : projection.messages.map((message) => (
-            <OriginRow key={message.messageId} message={message} sourceById={sourceById} />
+            <OriginRow key={message.messageId} message={message} />
           ))}
         </section>
       </ScrollArea>

@@ -19,6 +19,7 @@ interface ProjectionEntry {
   loading: boolean;
   error: string | null;
   epoch: number;
+  refreshQueued?: boolean;
 }
 
 interface ThreadControlState {
@@ -49,27 +50,51 @@ export const useThreadControlStore = create<ThreadControlState>((set, get) => ({
   load: async (identity, options) => {
     const key = threadControlKey(identity);
     const current = get().entries[key];
-    if (current?.loading || (current?.projection && !options?.force)) return;
+    if (current?.loading) {
+      if (options?.force) {
+        set((state) => ({
+          entries: {
+            ...state.entries,
+            [key]: { ...current, refreshQueued: true },
+          },
+        }));
+      }
+      return;
+    }
+    if (current?.projection && !options?.force) return;
     const epoch = ++nextRequestEpoch;
     set((state) => ({
       entries: boundedEntries({
         ...state.entries,
-        [key]: { projection: current?.projection ?? null, loading: true, error: null, epoch },
+        [key]: { projection: current?.projection ?? null, loading: true, error: null, epoch, refreshQueued: false },
       }, key),
     }));
+    const runQueuedRefresh = (): void => {
+      const latest = get().entries[key];
+      if (!latest?.refreshQueued) return;
+      set((state) => ({
+        entries: {
+          ...state.entries,
+          [key]: { ...latest, refreshQueued: false },
+        },
+      }));
+      void get().load(identity, { force: true });
+    };
     try {
       const result = await getTransport().readThreadControl(identity);
       const latest = get().entries[key];
       if (!latest || latest.epoch !== epoch) return;
       if (result.status === "found" && threadControlKey(result.projection.identity) === key) {
-        set((state) => ({ entries: { ...state.entries, [key]: { projection: result.projection, loading: false, error: null, epoch } } }));
+        set((state) => ({ entries: { ...state.entries, [key]: { projection: result.projection, loading: false, error: null, epoch, refreshQueued: latest.refreshQueued } } }));
       } else if (result.status === "rejected") {
-        set((state) => ({ entries: { ...state.entries, [key]: { projection: null, loading: false, error: result.error.message, epoch } } }));
+        set((state) => ({ entries: { ...state.entries, [key]: { projection: null, loading: false, error: result.error.message, epoch, refreshQueued: latest.refreshQueued } } }));
       }
+      runQueuedRefresh();
     } catch (error) {
       const latest = get().entries[key];
       if (!latest || latest.epoch !== epoch) return;
       set((state) => ({ entries: { ...state.entries, [key]: { ...latest, loading: false, error: error instanceof Error ? error.message : String(error) } } }));
+      runQueuedRefresh();
     }
   },
   rehydrate: async () => {

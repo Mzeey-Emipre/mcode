@@ -46,6 +46,8 @@ import {
   ThreadWaitInputSchema,
   THREAD_GET_TRANSCRIPT_MAX_BYTES,
   THREAD_SEARCH_LIMIT_MAX,
+  THREAD_CREATE_TITLE_MAX_LENGTH,
+  WORKSPACE_SEARCH_QUERY_MAX_LENGTH,
 } from "@mcode/contracts";
 import type {
   ExternalThreadControlAuthority,
@@ -233,7 +235,7 @@ export class ThreadControlService {
       sourceTurnId: randomUUID(),
       sourceToolCallId: "ui-thread-control",
       sourceProviderId: source.provider || "unknown",
-      permissionMode: source.permission_mode === "supervised" ? "supervised" : "full",
+      permissionMode: this.resolveInternalPermissionMode(source.permission_mode),
     };
     const result = await this.threadSend(authority, {
       threadId: validated.target.threadId,
@@ -263,7 +265,7 @@ export class ThreadControlService {
       sourceTurnId: randomUUID(),
       sourceToolCallId: "ui-thread-control",
       sourceProviderId: source.provider || "unknown",
-      permissionMode: source.permission_mode === "supervised" ? "supervised" : "full",
+      permissionMode: this.resolveInternalPermissionMode(source.permission_mode),
     };
     const result = await this.threadStop(authority, { threadId: validated.target.threadId });
     this.broadcastControlState(validated.target.workspaceId, validated.target.threadId);
@@ -917,13 +919,24 @@ export class ThreadControlService {
     if (message.role === "system") {
       return { messageId: message.id, role: "system", content: message.content, createdAt: message.timestamp };
     }
+    const sourceThread = message.sourceThreadId ? this.threads.findById(message.sourceThreadId) : null;
+    const sourceWorkspace = sourceThread ? this.workspaces.findById(sourceThread.workspace_id) : null;
+    const sourceRef = sourceThread ? this.threadRef(sourceThread, this.observedState(sourceThread)) : null;
+    const boundedSourceRef = sourceRef
+      ? { ...sourceRef, title: sourceRef.title.slice(0, THREAD_CREATE_TITLE_MAX_LENGTH) }
+      : null;
+    const sourceWorkspaceName = sourceWorkspace?.name.trim().slice(0, WORKSPACE_SEARCH_QUERY_MAX_LENGTH) || "Untitled Project";
     const origin = message.originType === "thread"
       && message.sourceThreadId && message.sourceTurnId && message.sourceProviderId
+      && boundedSourceRef && sourceWorkspace
       ? {
           type: "thread" as const,
           sourceThreadId: message.sourceThreadId,
           sourceTurnId: message.sourceTurnId,
           sourceProviderId: message.sourceProviderId,
+          sourceWorkspaceId: sourceWorkspace.id,
+          sourceWorkspaceName,
+          sourceThread: boundedSourceRef,
         }
       : message.originType === "composer"
         ? { type: "composer" as const }
@@ -1519,6 +1532,12 @@ export class ThreadControlService {
         interactionMode: input.interactionMode ?? (target.interaction_mode === "plan" ? "plan" : "build"),
       },
     };
+  }
+
+  private resolveInternalPermissionMode(permissionMode: string | null | undefined): "full" | "supervised" {
+    if (permissionMode === "supervised") return "supervised";
+    if (permissionMode === "full") return "full";
+    return this.settings.get().agent.defaults.permission === "supervised" ? "supervised" : "full";
   }
 
   private async stopTarget(threadId: string): Promise<void> {

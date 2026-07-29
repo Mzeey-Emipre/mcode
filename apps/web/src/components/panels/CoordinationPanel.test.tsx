@@ -9,6 +9,11 @@ const { respondToPermissionMock, readThreadControlMock } = vi.hoisted(() => ({
   respondToPermissionMock: vi.fn(async () => undefined),
   readThreadControlMock: vi.fn(),
 }));
+const { setActiveWorkspaceMock, loadThreadsMock, setActiveThreadMock } = vi.hoisted(() => ({
+  setActiveWorkspaceMock: vi.fn(),
+  loadThreadsMock: vi.fn(async () => undefined),
+  setActiveThreadMock: vi.fn(),
+}));
 
 vi.mock("@/transport", () => ({
   getTransport: () => ({
@@ -17,6 +22,15 @@ vi.mock("@/transport", () => ({
     sendThreadControl: vi.fn(),
     stopThreadControl: vi.fn(),
   }),
+}));
+vi.mock("@/stores/workspaceStore", () => ({
+  useWorkspaceStore: { getState: () => ({
+    activeWorkspaceId: null,
+    threads: [],
+    setActiveWorkspace: setActiveWorkspaceMock,
+    loadThreads: loadThreadsMock,
+    setActiveThread: setActiveThreadMock,
+  }) },
 }));
 
 const IDENTITY = { workspaceId: "workspace-1", threadId: "thread-1" };
@@ -41,6 +55,18 @@ const projection: ThreadControlProjection = {
       sourceThreadId: "source-thread",
       sourceTurnId: "turn-1",
       sourceProviderId: "claude",
+      sourceWorkspaceId: "workspace-2",
+      sourceWorkspaceName: "Source Project",
+      sourceThread: {
+        workspaceId: "workspace-2",
+        threadId: "source-thread",
+        title: "Source",
+        providerId: "claude",
+        modelId: "claude-sonnet",
+        createdAt: "2026-07-29T00:00:00.000Z",
+        updatedAt: "2026-07-29T00:00:00.000Z",
+        state: { status: "running" },
+      },
     },
   }],
   hasMoreMessages: false,
@@ -116,11 +142,29 @@ describe("CoordinationPanel", () => {
 
     expect(screen.getByRole("region", { name: "Thread coordination" })).toBeInTheDocument();
     expect(screen.getByLabelText("Current thread status: Waiting for approval (approval-1)")).toBeInTheDocument();
-    expect(screen.getByText("From Source (thread origin)")).toBeInTheDocument();
+    expect(screen.getByText("From Source Project / Source (thread origin)")).toBeInTheDocument();
     expect(screen.getByLabelText("Status: Completed")).toBeInTheDocument();
     expect(screen.getByText("Owned by thread-1")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Allow" }));
     expect(respondToPermissionMock).toHaveBeenCalledWith("approval-1", "allow");
+  });
+
+  it("navigates historical origin from persisted source identity without a relation", async () => {
+    const user = userEvent.setup();
+    const historical = { ...projection, relation: null, children: [] };
+    useThreadControlStore.setState({
+      entries: {
+        [threadControlKey(IDENTITY)]: { projection: historical, loading: false, error: null, epoch: 1 },
+      },
+    });
+
+    render(<CoordinationPanel workspaceId={IDENTITY.workspaceId} threadId={IDENTITY.threadId} />);
+
+    expect(screen.getByText("From Source Project / Source (thread origin)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open source" }));
+    expect(setActiveWorkspaceMock).toHaveBeenCalledWith("workspace-2", undefined, false);
+    expect(loadThreadsMock).toHaveBeenCalledWith("workspace-2");
+    expect(setActiveThreadMock).toHaveBeenCalledWith("source-thread");
   });
 });

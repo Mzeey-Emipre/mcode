@@ -113,7 +113,22 @@ describe("user-facing coordination schemas", () => {
         role: "user" as const,
         content: "Delegate this",
         createdAt: "2026-07-29T00:00:00.000Z",
-        origin: { type: "thread" as const, sourceThreadId: "source-thread", sourceTurnId: "turn-1", sourceProviderId: "claude" },
+        origin: {
+          type: "thread" as const,
+          sourceThreadId: "source-thread",
+          sourceTurnId: "turn-1",
+          sourceProviderId: "claude",
+          sourceWorkspaceId: "workspace-2",
+          sourceWorkspaceName: "Source Project",
+          sourceThread: {
+            ...thread,
+            workspaceId: "workspace-2",
+            threadId: "source-thread",
+            title: "Source",
+            createdAt: "2026-07-29T00:00:00.000Z",
+            updatedAt: "2026-07-29T00:00:00.000Z",
+          },
+        },
       }],
       hasMoreMessages: false,
       relation: {

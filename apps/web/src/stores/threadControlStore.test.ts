@@ -17,7 +17,7 @@ vi.mock("@/transport", () => ({
 
 const IDENTITY: ThreadControlIdentity = { workspaceId: "workspace:1", threadId: "thread:1" };
 
-function projection(status: "running" | "completed"): ThreadControlProjection {
+function projection(status: "running" | "completed", updatedAt = "2026-07-29T00:00:00.000Z"): ThreadControlProjection {
   return {
     identity: IDENTITY,
     thread: {
@@ -27,7 +27,7 @@ function projection(status: "running" | "completed"): ThreadControlProjection {
       modelId: "gpt-5.6-sol",
       state: { status },
       createdAt: "2026-07-29T00:00:00.000Z",
-      updatedAt: "2026-07-29T00:00:00.000Z",
+      updatedAt,
     },
     messages: [],
     hasMoreMessages: false,
@@ -70,5 +70,27 @@ describe("thread control projection store", () => {
     await pending;
 
     expect(getThreadControlEntry(IDENTITY)?.projection?.thread.state).toEqual({ status: "completed" });
+  });
+
+  it("queues a forced refresh when invalidation arrives during hydrate", async () => {
+    let resolveOld!: (result: ThreadControlReadResult) => void;
+    let resolveFresh!: (result: ThreadControlReadResult) => void;
+    const oldRequest = new Promise<ThreadControlReadResult>((resolve) => { resolveOld = resolve; });
+    const freshRequest = new Promise<ThreadControlReadResult>((resolve) => { resolveFresh = resolve; });
+    readThreadControlMock.mockReturnValueOnce(oldRequest).mockReturnValueOnce(freshRequest);
+
+    const firstLoad = useThreadControlStore.getState().load(IDENTITY);
+    await Promise.resolve();
+    await useThreadControlStore.getState().refreshByThreadId(IDENTITY.threadId, IDENTITY.workspaceId);
+    resolveOld({ status: "found", projection: projection("running", "2026-07-29T00:00:00.000Z") });
+    await Promise.resolve();
+    expect(readThreadControlMock).toHaveBeenCalledTimes(2);
+    resolveFresh({ status: "found", projection: projection("completed", "2026-07-29T00:01:00.000Z") });
+    await Promise.all([firstLoad, Promise.resolve()]);
+
+    expect(getThreadControlEntry(IDENTITY)?.projection?.thread).toMatchObject({
+      state: { status: "completed" },
+      updatedAt: "2026-07-29T00:01:00.000Z",
+    });
   });
 });
