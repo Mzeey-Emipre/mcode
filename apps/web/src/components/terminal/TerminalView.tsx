@@ -944,7 +944,7 @@ export const TerminalView = memo(function TerminalView({
   return (
     <div
       ref={containerRef}
-      className="h-full min-h-0 w-full px-5 py-6"
+      className="h-full min-h-0 w-full p-3"
       data-terminal-hydrated={hydrated}
       data-testid="terminal-render-content"
       style={{
