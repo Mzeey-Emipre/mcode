@@ -51,7 +51,6 @@ import {
 } from "@mcode/contracts";
 import type {
   ExternalThreadControlAuthority,
-  InternalThreadControlAuthority,
   ThreadControlAuthority,
 } from "@mcode/thread-orchestration";
 export type {
@@ -116,11 +115,18 @@ export class ThreadControlService {
     this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
   }
 
-  /** Search only registered workspaces; authority is intentionally not tool input. */
-  workspaceSearch(_authority: InternalThreadControlAuthority, input: WorkspaceSearchInput): WorkspaceSearchResult {
+  /** Search registered workspaces within the caller's server-owned authority. */
+  workspaceSearch(authority: ThreadControlAuthority, input: WorkspaceSearchInput): WorkspaceSearchResult {
     const query = input.query?.trim() ?? "";
+    const searchLimit = authority.type === "external"
+      ? Math.max(input.limit, authority.allowedWorkspaceIds.length)
+      : input.limit;
+    const workspaces = this.workspaces.search(query, searchLimit)
+      .filter((workspace) => authority.type === "internal"
+        ? true
+        : authority.scopes.includes("projects:read") && authority.allowedWorkspaceIds.includes(workspace.id));
     return {
-      workspaces: this.workspaces.search(query, input.limit).map((workspace) => ({
+      workspaces: workspaces.map((workspace) => ({
         workspaceId: workspace.id,
         name: workspace.name,
         ...(workspace.last_opened_at ? { lastUsedAt: new Date(workspace.last_opened_at).toISOString() } : {}),
@@ -336,9 +342,10 @@ export class ThreadControlService {
   }
 
   /** Revalidate workspace registration and return only opaque worktree identities. */
-  async worktreeList(authority: InternalThreadControlAuthority, input: WorktreeListInput): Promise<WorktreeListResult> {
-    void authority;
-    if (!this.workspaces.findById(input.workspaceId)) {
+  async worktreeList(authority: ThreadControlAuthority, input: WorktreeListInput): Promise<WorktreeListResult> {
+    if (!this.workspaces.findById(input.workspaceId)
+      || (authority.type === "external" && (!authority.allowedWorkspaceIds.includes(input.workspaceId)
+        || !authority.scopes.includes("worktrees:read")))) {
       return { status: "rejected", error: this.error("not_found", "Workspace not found", false) };
     }
     const discovered = await this.git.listWorktrees(input.workspaceId);
