@@ -1124,6 +1124,43 @@ describe("ThreadHydrator", () => {
     expect(getTestActiveMessages()).toEqual([msgB]);
   });
 
+  it("uses the bounded tail loader only for active first-paint fetches", async () => {
+    const tailLoader = vi.fn().mockResolvedValue({ messages: [msgA], hasMore: false });
+    mockTransport.loadConversationTail = tailLoader;
+
+    try {
+      resetThreadStoreForTests({
+        currentThreadId: THREAD_B,
+        records: new Map<string, ThreadRecord>([
+          [THREAD_B, { ...createEmptyThreadRecord(), messages: [msgB] }],
+        ]),
+      });
+
+      await hydrator.hydrate(THREAD_A, "background");
+
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(
+        THREAD_A,
+        BACKGROUND_PREFETCH_LIMIT,
+      );
+      expect(tailLoader).not.toHaveBeenCalled();
+
+      clearRecordCache();
+      resetThreadStoreForTests({ currentThreadId: null, records: new Map() });
+      hydrator = createStoreHydrator();
+
+      await hydrator.hydrate(THREAD_A, "active");
+
+      expect(tailLoader).toHaveBeenCalledWith(THREAD_A, MESSAGE_FETCH_SIZE);
+      expect(mockTransport.loadConversationPage).toHaveBeenNthCalledWith(
+        2,
+        THREAD_A,
+        MESSAGE_FETCH_SIZE,
+      );
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
   it("does not let a background prefetch replace an inactive WebSocket update", async () => {
     const staleMessage = createMockMessage({
       id: "stale-prefetch-message",

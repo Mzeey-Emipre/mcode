@@ -866,7 +866,7 @@ export class ThreadHydrator {
       const tailLoader = this.transport().loadConversationTail;
       const usedTail = tailLoader != null && requestedLimit <= MESSAGE_FETCH_SIZE;
       let pageResult: ConversationPage;
-      if (tailLoader) {
+      if (usedTail && tailLoader) {
         const tail = await tailLoader(threadId, Math.min(requestedLimit, MESSAGE_FETCH_SIZE));
         pageResult = {
           messages: normalizeTailMessages(tail),
