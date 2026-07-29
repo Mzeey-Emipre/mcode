@@ -271,6 +271,30 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
+  it("routes normal web status and open requests through the web executor", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 32).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const statusDispatch = dispatch(1, 32);
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: statusDispatch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    const openDispatch = dispatch(1, 33);
+    openDispatch.request = {
+      ...openDispatch.request,
+      operation: "open",
+      args: { url: `${window.location.origin}/normal-open`, activate: true },
+    } as never;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledTimes(2));
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(statusDispatch, expect.any(AbortSignal));
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(openDispatch, expect.any(AbortSignal));
+    expect(harness.transport.respondToBrowserAutomationRequest.mock.calls.every(([, , response]) => response.ok)).toBe(true);
+    view.unmount();
+  });
+
   afterEach(() => {
     delete window.desktopBridge;
     vi.unstubAllEnvs();

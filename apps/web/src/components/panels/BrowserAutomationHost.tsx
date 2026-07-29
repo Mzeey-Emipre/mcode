@@ -621,6 +621,7 @@ export function BrowserAutomationHost() {
       requestAbortRef.current.set(key, controller);
       const webDispatch = !bridge && webAutomationEnabled &&
         (dispatch.request.operation === "click" || dispatch.request.operation === "type");
+      const webExecutorDispatch = !bridge && webAutomationEnabled;
       const operationAbort = webDispatch ? new AbortController() : null;
       if (operationAbort) webAbortRef.current.set(key, operationAbort);
       const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
@@ -665,7 +666,7 @@ export function BrowserAutomationHost() {
       };
       const operation = webDispatch
         ? executeWeb()
-        : bridge
+        : bridge || webExecutorDispatch
           ? executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal)
           : Promise.resolve(failureResponse(dispatch.request, "UNSUPPORTED_OPERATION", WEB_AUTOMATION_UNAVAILABLE_REASON));
       void operation.then((response) => {
