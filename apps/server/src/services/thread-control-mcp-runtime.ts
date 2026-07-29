@@ -78,7 +78,7 @@ export class InternalThreadControlMcpRuntime {
       }
       if (!this.httpSessions.has(sessionId)) {
         const server = this.transport.createServer(credential);
-        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => sessionId });
         await server.connect(transport);
         if (credential !== this.authority.credential(sessionId)) {
           await transport.close().catch(() => undefined);
