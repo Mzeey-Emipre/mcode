@@ -173,19 +173,24 @@ describe("CopilotProvider bootstrap", () => {
       // which should not be called when not in Electron
       expect(which).not.toHaveBeenCalled();
       const ctorCall = MockCopilotClient.mock.calls[0]?.[0] ?? {};
-      expect(ctorCall.cliPath).toBe("/global/@github/copilot/index.js");
+      expect(ctorCall.cliPath).toBeUndefined();
+      expect(resolveCopilotCliMock).not.toHaveBeenCalled();
     });
 
-    it("passes the resolver's index.js entry to the SDK as cliPath", async () => {
+    it("passes an explicitly configured CLI entry to the SDK as cliPath", async () => {
       resolveCopilotCliMock.mockReturnValueOnce({
-        source: "npm-global",
-        entry: "/global/@github/copilot/index.js",
+        source: "configured",
+        entry: "/configured/copilot.js",
         version: "1.0.24",
       });
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
       await provider.listModels();
       const ctorCall = MockCopilotClient.mock.calls[0]?.[0];
-      expect(ctorCall?.cliPath).toBe("/global/@github/copilot/index.js");
+      expect(resolveCopilotCliMock).toHaveBeenCalledWith(
+        { configuredPath: "/configured/copilot.js" },
+        expect.anything(),
+      );
+      expect(ctorCall?.cliPath).toBe("/configured/copilot.js");
     });
   });
 
@@ -297,7 +302,7 @@ describe("CopilotProvider bootstrap", () => {
         message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
       });
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
 
@@ -325,7 +330,7 @@ describe("CopilotProvider bootstrap", () => {
         message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
       });
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
       await expect(provider.listModels()).resolves.toEqual([]);
     });
 
@@ -337,7 +342,7 @@ describe("CopilotProvider bootstrap", () => {
         message: "GitHub Copilot CLI not found. Install it with: npm install -g @github/copilot",
       });
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+      const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
       await expect(provider.complete("hello", "gpt-4o", "/tmp")).rejects.toThrow(
         "npm install -g @github/copilot",
       );

@@ -539,7 +539,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
   private async doRefreshClient(): Promise<void> {
     const settings = await this.settingsService.get();
-    const configuredCliPath = settings.provider.cli.copilot || undefined;
+    const configuredCliPath = settings.provider.cli.copilot?.trim() || undefined;
     const state = this.client?.getState();
 
     // Reuse the existing client only when it is healthy. A "disconnected" or
@@ -570,35 +570,40 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     } = {};
 
     opts.env = { ...this.envService.getEnv() };
-    // Pin the CLI version the resolver selected; without this the launcher can
-    // delegate to a newer build in ~/.copilot/pkg that breaks the SDK contract.
+    // Keep the SDK-managed or explicitly configured CLI from auto-updating during a session.
     opts.cliArgs = ["--no-auto-update"];
 
-    // Ordered resolution: configured path > npm-global index.js > PATH/shim follow.
-    const resolution = resolveCopilotCli(
-      { configuredPath: configuredCliPath },
-      createNodeResolverIO(this.envService.getEnv(), process.platform),
-    );
-    this.lastResolution = resolution;
-    if (resolution.source === "not-found") {
-      // Leave this.client null; sendTurn/listModels translate lastResolution
-      // into a user-facing error via the existing error seam.
-      logger.warn("CopilotProvider: CLI not found", { message: resolution.message });
-      this.lastCliPath = configuredCliPath;
-      return;
+    let resolution: CopilotCliResolution | undefined;
+    if (configuredCliPath) {
+      resolution = resolveCopilotCli(
+        { configuredPath: configuredCliPath },
+        createNodeResolverIO(this.envService.getEnv(), process.platform),
+      );
+      this.lastResolution = resolution;
+      if (resolution.source === "not-found") {
+        // Leave this.client null; sendTurn/listModels translate lastResolution
+        // into a user-facing error via the existing error seam.
+        logger.warn("CopilotProvider: CLI not found", { message: resolution.message });
+        this.lastCliPath = configuredCliPath;
+        return;
+      }
+      opts.cliPath = resolution.entry;
+      logger.info("CopilotProvider: resolved configured CLI", {
+        source: resolution.source,
+        version: resolution.version ?? "unknown",
+      });
+    } else {
+      // The SDK bundles a compatible CLI. Leaving cliPath unset is intentional:
+      // overriding it with a global install can mix incompatible SDK/CLI versions.
+      this.lastResolution = null;
     }
-    opts.cliPath = resolution.entry;
-    logger.info("CopilotProvider: resolved CLI", {
-      source: resolution.source,
-      version: resolution.version ?? "unknown",
-    });
 
     // Electron fix: resolve the real node binary path once. The SDK's
     // getNodeExecPath() reads process.execPath to spawn .js CLI files,
     // but in Electron that returns electron.exe which cannot host the
     // CLI's server mode. We temporarily override process.execPath during
     // client.start() and also prepend node's directory to PATH.
-    if (process.versions.electron && resolution.source !== "configured") {
+    if (process.versions.electron && !configuredCliPath) {
       if (this.cachedNodePath === undefined) {
         this.cachedNodePath = await which("node", { nothrow: true });
         if (!this.cachedNodePath) {
@@ -646,7 +651,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // In Electron that returns electron.exe, causing the CLI to exit immediately.
     // Temporarily override process.execPath with the real node binary.
     const needsElectronExecPathOverride =
-      process.versions.electron && resolution.source !== "configured" && this.cachedNodePath;
+      process.versions.electron && !configuredCliPath && this.cachedNodePath;
     try {
       if (needsElectronExecPathOverride) {
         const origExecPath = process.execPath;
