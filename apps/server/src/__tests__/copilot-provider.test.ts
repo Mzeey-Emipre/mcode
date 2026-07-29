@@ -42,6 +42,7 @@ const { mockExecFile, mockClient, MockCopilotClient } = vi.hoisted(() => {
     getState: vi.fn().mockReturnValue("connected"),
     listModels: vi.fn().mockResolvedValue([]),
     createSession: vi.fn(),
+    resumeSession: vi.fn(),
   };
   // Must use a regular function (not arrow) so it can be called with `new`.
   // Returning an object from a constructor makes `new` use that object.
@@ -613,6 +614,45 @@ describe("CopilotProvider.complete()", () => {
       "network error",
     );
     expect(mockSession.disconnect).toHaveBeenCalled();
+  });
+});
+
+describe("CopilotProvider.runSideChannelQuery()", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.start.mockResolvedValue(undefined);
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, result?: { stdout: string }) => void) => {
+        cb(null, { stdout: "gho_faketoken\n" });
+      },
+    );
+  });
+
+  it("creates a fresh MCP-free session instead of resuming the parent", async () => {
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+    mockSession.send.mockImplementation(async () => {
+      mockSession.fire("assistant.message", { content: "isolated answer" });
+      mockSession.fire("session.idle");
+    });
+
+    const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService());
+    const result = await provider.runSideChannelQuery({
+      parentThreadId: "thread-1",
+      parentSdkSessionId: "parent-sdk-session",
+      prompt: "summarize",
+      conversationHistory: "prior context",
+      cwd: "/tmp",
+    });
+
+    expect(result).toBe("isolated answer");
+    expect(mockClient.resumeSession).not.toHaveBeenCalled();
+    expect(mockClient.createSession).toHaveBeenCalledTimes(1);
+    expect(mockClient.createSession.mock.calls[0]?.[0]).not.toHaveProperty("mcpServers");
+    expect(mockSession.send).toHaveBeenCalledWith({
+      prompt: expect.stringContaining("prior context"),
+    });
   });
 });
 

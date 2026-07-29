@@ -337,7 +337,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     conversationHistory?: string;
     cwd: string;
   }): Promise<string> {
-    const { parentThreadId, parentSdkSessionId, prompt, abortSignal, conversationHistory, cwd } = args;
+    const { parentThreadId, prompt, abortSignal, conversationHistory, cwd } = args;
     if (abortSignal?.aborted) throw transientHandoffError("Copilot side-channel query aborted before start");
 
     await this.refreshClient();
@@ -357,19 +357,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     };
 
     let session: CopilotSession;
-    let usingSessionlessHistory = false;
+    const usingSessionlessHistory = Boolean(conversationHistory);
     try {
-      session = parentSdkSessionId
-        ? await client.resumeSession(parentSdkSessionId, sessionBase)
-        : await client.createSession(sessionBase);
-    } catch (err) {
-      if (!conversationHistory) {
-        throw transientHandoffError(
-          `Copilot side-channel could not resume parent thread ${parentThreadId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      usingSessionlessHistory = true;
       session = await client.createSession(sessionBase);
+    } catch (err) {
+      throw transientHandoffError(
+        `Copilot side-channel could not create isolated session for parent thread ${parentThreadId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     const sideChannelPrompt = usingSessionlessHistory && conversationHistory
