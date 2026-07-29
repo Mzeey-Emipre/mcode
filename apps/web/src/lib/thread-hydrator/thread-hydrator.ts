@@ -960,6 +960,9 @@ export class ThreadHydrator {
                 : {}),
             loading: false,
             isLoadingMore: false,
+            // Reserve the auxiliary freshness window with the conversation commit.
+            // The fanout itself is deferred so the first paint is not blocked.
+            lastHydratedAt: Date.now(),
             settings: this.deps.getWorkspaceThreadSettings(threadId),
           }),
         };
