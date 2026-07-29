@@ -143,6 +143,58 @@ describe("BrowserAutomationBroker", () => {
     await expect(secondPending).resolves.toMatchObject({ ok: true });
   });
 
+  it("preserves a web host CROSS_ORIGIN response across the broker boundary", async () => {
+    const deliveries: any[] = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        if (channel === "browserAutomation.request") deliveries.push(data);
+        return true;
+      },
+    }));
+    const hostSocket = socket("web");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("web", "workspace-a"),
+      runtime: "web",
+      targetIdentity: {
+        worktreeIdentity: "worktree-a",
+        connectionId: "desktop-web",
+        workspaceId: "workspace-a",
+        threadId: "thread-a",
+        tabId: "tab-thread-a",
+        generation: 1,
+      },
+      capabilities: [{ operation: "snapshot", available: true }],
+    }, {
+      ...authorization("web"),
+      allowWebRuntime: true,
+    }).generation;
+    updateTargets(broker, hostSocket, "web", generation, ["thread-a"]);
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      allowedOperations: ["snapshot" as const],
+    };
+    const pending = broker.execute(scope, {
+      ...request(scope),
+      operation: "snapshot",
+      args: { includeScreenshot: false, timeoutMs: 1_000 },
+    });
+    const delivery = deliveries[0]!;
+    const crossOrigin = {
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: delivery.dispatch.request.requestId,
+      sequence: delivery.dispatch.request.sequence,
+      ok: false as const,
+      error: {
+        code: "CROSS_ORIGIN" as const,
+        message: "Visible preview is cross-origin",
+        retryable: false,
+      },
+    };
+    broker.respond(hostSocket, "web", generation, crossOrigin);
+    await expect(pending).resolves.toEqual(crossOrigin);
+  });
+
   it("keeps externally supplied identifiers collision-proof", async () => {
     const deliveries: any[] = [];
     const broker = new BrowserAutomationBroker(options({

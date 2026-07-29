@@ -80,6 +80,7 @@ describe("PreviewWebview", () => {
 
   it("does not call Electron navigation methods before dom-ready", async () => {
     const observed: { handle: PreviewWebviewHandle | null } = { handle: null };
+    window.desktopBridge = { preview: {} } as unknown as NonNullable<typeof window.desktopBridge>;
 
     function Probe() {
       const ref = useRef<PreviewWebviewHandle>(null);

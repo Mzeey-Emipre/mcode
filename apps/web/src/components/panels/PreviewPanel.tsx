@@ -1757,6 +1757,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     (s) => s.settings.preview.rendering.engine,
   );
   const showWebviewPreview = shouldRenderWebviewPreview(previewRenderingEngine);
+  const webRuntime = typeof window.desktopBridge?.preview !== "object";
 
   const bridge = usePreviewBridge({
     threadId,
@@ -1842,7 +1843,9 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
                 url: activeWebviewSrc,
               },
             ]
-          : [];
+          : webRuntime
+            ? [{ id: PREVIEW_WEBVIEW_FALLBACK_TAB_ID, url: "about:blank" }]
+            : [];
     const warmIds = selectWarmBrowserTabIds(sourceTabs, threadId, activeWebviewTabId);
     return sourceTabs
       .filter((tab) => warmIds.has(tab.id))
@@ -1858,6 +1861,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     tabs.tabSet,
     threadId,
     webviewSrcByTab,
+    webRuntime,
   ]);
   const activeAutomationController = automationControllers.get(
     browserAutomationTargetKey(threadId, activeWebviewTabId),
@@ -2717,6 +2721,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
                     : "pointer-events-none -z-10 opacity-0",
                 )}
                 onPageStatus={(status) => {
+                  if (webRuntime) setTrackedWebviewSrc(tab.id, status.url);
                   usePreviewTabsStore.getState().updateTabChrome(threadId, tab.id, {
                     title: status.title,
                     url: status.url,

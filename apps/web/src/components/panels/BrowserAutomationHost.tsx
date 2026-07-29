@@ -7,6 +7,7 @@ import {
   BrowserAutomationRequestSchema,
   type BrowserAutomationHostDispatch,
   type BrowserAutomationHostDispatchTarget,
+  type BrowserAutomationErrorCode,
   type BrowserAutomationOperation,
   type BrowserAutomationResponse,
   type BrowserAutomationRequest,
@@ -29,6 +30,7 @@ import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
 import { PreviewPanel } from "./PreviewPanel";
 import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
 import { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
+import { executeWebBrowserDispatch } from "./browserAutomationWebExecutor";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
@@ -62,7 +64,7 @@ function recordingAvailable(): boolean {
 
 function failureResponse(
   request: BrowserAutomationRequest,
-  code: "INVALID_REQUEST" | "TAB_UNAVAILABLE" | "INTERNAL_ERROR",
+  code: BrowserAutomationErrorCode,
   message: string,
 ): BrowserAutomationResponse {
   return {
@@ -80,10 +82,12 @@ async function afterBrowserLayout(): Promise<void> {
 }
 
 async function executeBrowserDispatch(
-  bridge: PreviewAutomationBridge,
+  bridge: PreviewAutomationBridge | undefined,
   recorder: BrowserAutomationRecorder,
   dispatch: BrowserAutomationHostDispatch,
+  signal: AbortSignal,
 ): Promise<BrowserAutomationResponse> {
+  if (!bridge) return executeWebBrowserDispatch(dispatch, signal);
   const rendererOwned = dispatch.request.operation === "resize" ||
     dispatch.request.operation === "recordingStart" ||
     dispatch.request.operation === "recordingStop";
@@ -321,6 +325,7 @@ export function BrowserAutomationHost() {
   const recorderRef = useRef(new BrowserAutomationRecorder());
   const registrationEpochRef = useRef(0);
   const inFlightRef = useRef(new Map<string, BrowserAutomationHostDispatch>());
+  const requestAbortRef = useRef(new Map<string, AbortController>());
   const bootstrapPendingRef = useRef(new Set<string>());
   const bootstrapAbortRef = useRef(new Map<string, AbortController>());
   const bootstrapRequestRef = useRef(new Map<string, BrowserAutomationRequest>());
@@ -408,7 +413,10 @@ export function BrowserAutomationHost() {
       } : {}),
       capabilities: BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
-          return { operation, available: false, unavailableReason: WEB_AUTOMATION_UNAVAILABLE_REASON };
+          const available = operation === "status" || operation === "open" || operation === "navigate" || operation === "snapshot";
+          return available
+            ? { operation, available: true }
+            : { operation, available: false, unavailableReason: WEB_AUTOMATION_UNAVAILABLE_REASON };
         }
         const recordingUnavailable =
           (operation === "recordingStart" || operation === "recordingStop") &&
@@ -551,7 +559,7 @@ export function BrowserAutomationHost() {
 
   useEffect(() => {
     const bridge = window.desktopBridge?.preview?.automation;
-    if (!bridge) return;
+    if (!bridge && !isBrowserAutomationWebRuntimeEnabled()) return;
     const unsubscribeRequest = pushEmitter.on("browserAutomation.request", (input) => {
       const payload = input as { hostId?: unknown; generation?: unknown; dispatch?: unknown };
       const lease = leaseRef.current;
@@ -568,7 +576,9 @@ export function BrowserAutomationHost() {
       inFlightRef.current.set(key, dispatch);
       const store = useBrowserAutomationStore.getState();
       store.setActiveRequest({ dispatch, startedAt: Date.now() });
-      void executeBrowserDispatch(bridge, recorderRef.current, dispatch).then((response) => {
+      const controller = new AbortController();
+      requestAbortRef.current.set(key, controller);
+      void executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal).then((response) => {
         if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
         return getTransport().respondToBrowserAutomationRequest(
           lease.hostId,
@@ -577,6 +587,7 @@ export function BrowserAutomationHost() {
         );
       }).catch(() => undefined).finally(() => {
         if (inFlightRef.current.get(key) === dispatch) inFlightRef.current.delete(key);
+        requestAbortRef.current.delete(key);
         cancelledRef.current.delete(key);
         useBrowserAutomationStore.getState().clearActiveRequest(
           dispatch.request.requestId,
@@ -604,7 +615,8 @@ export function BrowserAutomationHost() {
       if (!inFlightRef.current.has(key) || cancelledRef.current.has(key)) return;
       cancelledRef.current.add(key);
       recorderRef.current.cancel(inFlightRef.current.get(key)!);
-      void bridge.cancel(payload.requestId);
+      requestAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
+      if (bridge) void bridge.cancel(payload.requestId);
     });
     return () => {
       unsubscribeRequest();
@@ -614,7 +626,7 @@ export function BrowserAutomationHost() {
 
   useEffect(() => {
     const bridge = window.desktopBridge?.preview?.automation;
-    if (!bridge) return;
+    if (!bridge && !isBrowserAutomationWebRuntimeEnabled()) return;
     return pushEmitter.on("browserAutomation.bootstrap", (input) => {
       const payload = input as { hostId?: unknown; generation?: unknown; request?: unknown };
       const lease = leaseRef.current;
@@ -713,7 +725,8 @@ export function BrowserAutomationHost() {
           usePreviewTabsStore.getState().setTabSet(request.threadId, listed.data);
         }
         const existingSet = usePreviewTabsStore.getState().tabSetByScope[request.threadId];
-        let tabId = existingSet?.activeTabId || existingSet?.tabs[0]?.id || null;
+        let tabId = existingSet?.activeTabId || existingSet?.tabs[0]?.id ||
+          (!bridge ? "web-preview" : null);
         if (!tabId) {
           tabId = await usePreviewTabsStore.getState().createPage(request.threadId, {
             focusOmnibox: ownsVisibleContext && request.args.activate,
@@ -735,7 +748,22 @@ export function BrowserAutomationHost() {
         }
         await waitForLiveTarget(request.threadId, tabId, request.deadline, controller.signal);
         ensureActive();
-        const described = await bridge.describeTarget({ threadId: request.threadId, tabId });
+        const described = bridge
+          ? await bridge.describeTarget({ threadId: request.threadId, tabId })
+          : {
+              ok: true as const,
+              target: {
+                windowId: 1,
+                threadId: request.threadId,
+                tabId,
+                targetGeneration: useBrowserAutomationStore.getState().liveTargets.get(
+                  browserAutomationTargetKey(request.threadId, tabId),
+                )?.revision ?? 1,
+                active: true,
+                focused: true,
+                lastUsedAt: Date.now(),
+              },
+            };
         if (!described.ok) throw new Error("Browser target could not be described");
         ensureActive();
         const target: BrowserAutomationHostDispatchTarget = {
@@ -760,7 +788,8 @@ export function BrowserAutomationHost() {
           target,
         });
         inFlightRef.current.set(key, dispatch);
-        const response = await executeBrowserDispatch(bridge, recorderRef.current, dispatch);
+        requestAbortRef.current.set(key, controller);
+        const response = await executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal);
         await restoreBackgroundContext();
         if (leaseRef.current === lease && !cancelledRef.current.has(key)) {
           await getTransport().respondToBrowserAutomationRequest(
@@ -788,6 +817,7 @@ export function BrowserAutomationHost() {
         bootstrapPendingRef.current.delete(key);
         bootstrapRequestRef.current.delete(key);
         inFlightRef.current.delete(key);
+        requestAbortRef.current.delete(key);
         cancelledRef.current.delete(key);
       });
     });

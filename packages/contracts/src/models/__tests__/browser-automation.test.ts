@@ -665,4 +665,16 @@ describe("browser automation boundaries", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("accepts the typed cross-origin failure used by web Preview", () => {
+    expect(
+      BrowserAutomationResponseSchema().safeParse({
+        contractVersion: 1,
+        requestId: "request-1",
+        sequence: 0,
+        ok: false,
+        error: { code: "CROSS_ORIGIN", message: "Visible preview is cross-origin", retryable: false },
+      }).success,
+    ).toBe(true);
+  });
 });
