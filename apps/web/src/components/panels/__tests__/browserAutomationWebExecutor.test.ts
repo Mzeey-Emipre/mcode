@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationHostDispatch } from "@mcode/contracts";
+import { captureVisibleWebScreenshot } from "../web-browser-automation/capture";
 import { executeWebBrowserDispatch } from "../browserAutomationWebExecutor";
+
+vi.mock("../web-browser-automation/capture", () => ({ captureVisibleWebScreenshot: vi.fn() }));
 
 function dispatch(operation: BrowserAutomationHostDispatch["request"]["operation"], args: Record<string, unknown> = {}, deadline = Date.now() + 1_000): BrowserAutomationHostDispatch {
   return {
@@ -166,6 +169,33 @@ describe("web browser automation executor", () => {
     expect(cancelled).toMatchObject({ ok: false, error: { code: "OPERATION_CANCELLED" } });
     const expired = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }, Date.now() - 1), new AbortController().signal);
     expect(expired).toMatchObject({ ok: false, error: { code: "DEADLINE_EXCEEDED" } });
+    target.remove();
+  });
+
+  it("captures a bounded screenshot from the visible iframe", async () => {
+    const target = iframe();
+    vi.mocked(captureVisibleWebScreenshot).mockResolvedValueOnce({
+      ok: true,
+      value: {
+        mediaType: "image/png",
+        dataBase64: "AAAA",
+        width: 320,
+        height: 180,
+        truncation: { truncated: false },
+      },
+    });
+    const request = dispatch("screenshot", { maxWidth: 320 });
+    const result = await executeWebBrowserDispatch(request, new AbortController().signal);
+    expect(result).toMatchObject({
+      ok: true,
+      result: { operation: "screenshot", screenshot: { mediaType: "image/png", width: 320, height: 180 } },
+    });
+    expect(captureVisibleWebScreenshot).toHaveBeenCalledWith({
+      iframe: target,
+      maxWidth: 320,
+      deadline: request.request.deadline,
+      signal: expect.any(AbortSignal),
+    });
     target.remove();
   });
 });
