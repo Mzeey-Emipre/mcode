@@ -197,6 +197,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Reports whether Codex effective configuration registered the internal MCP server. */
+export function hasCodexInternalThreadControlMcp(effectiveConfig: unknown): boolean {
+  if (!isRecord(effectiveConfig) || !isRecord(effectiveConfig.config)) return false;
+  const mcpServers = effectiveConfig.config.mcp_servers;
+  return (
+    mcpServers !== null &&
+    typeof mcpServers === "object" &&
+    Object.prototype.hasOwnProperty.call(mcpServers, "mcode_internal_thread_control")
+  );
+}
+
 function codexResetDate(resetsAt: number | undefined): string | undefined {
   if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) return undefined;
   const resetDate = new Date(resetsAt * 1000);
@@ -1097,12 +1108,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     if (internalMcp) {
       try {
         const effectiveConfig = await server.readConfig(cwd);
-        const mcpServers = effectiveConfig.config.mcp_servers;
-        const registered =
-          mcpServers !== null &&
-          typeof mcpServers === "object" &&
-          Object.prototype.hasOwnProperty.call(mcpServers, "mcode_internal_thread_control");
-        if (!registered) {
+        if (!hasCodexInternalThreadControlMcp(effectiveConfig)) {
           throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
         }
       } catch (error) {

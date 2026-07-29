@@ -50,10 +50,25 @@ import type {
   CompletionOptions,
 } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
+import type { InternalThreadControlMcpHttpConnection } from "../../services/thread-control-mcp-runtime.js";
 
 /** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
+
+/** Builds the Copilot SDK's remote HTTP MCP configuration for one provider session. */
+export function buildCopilotInternalMcpServers(
+  connection: InternalThreadControlMcpHttpConnection,
+): Record<string, { type: "http"; url: string; headers: Record<string, string>; tools: ["*"] }> {
+  return {
+    [connection.name]: {
+      type: "http",
+      url: connection.url,
+      headers: connection.headers,
+      tools: ["*"],
+    },
+  };
+}
 
 function transientHandoffError(message: string): Error & { code: string } {
   const err = new Error(message) as Error & { code: string };
@@ -876,14 +891,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       model: staged?.model || undefined,
       workingDirectory: cwd,
       enableConfigDiscovery: true,
-      mcpServers: {
-        [internalMcp.name]: {
-          type: "http" as const,
-          url: internalMcp.url,
-          headers: internalMcp.headers,
-          tools: ["*"],
-        },
-      },
+      mcpServers: buildCopilotInternalMcpServers(internalMcp),
       ...(customAgents.length > 0 && { customAgents }),
       ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
       ...(userInstructions && { systemMessage: { content: userInstructions } }),
@@ -910,44 +918,57 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       throw err;
     }
 
-    // Route to the appropriate Copilot SDK API based on the selected sub-agent.
-    // Built-in modes use session.rpc.mode.set(); custom YAML agents use session.rpc.agent.select().
-    if (copilotAgent) {
-      if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
-        await session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
-        logger.info("CopilotProvider: set built-in mode", { sessionId, mode: copilotAgent });
-      } else {
-        await session.rpc.agent.select({ name: copilotAgent });
-        logger.info("CopilotProvider: selected custom agent", { sessionId, agent: copilotAgent });
+    try {
+      // Route to the appropriate Copilot SDK API based on the selected sub-agent.
+      // Built-in modes use session.rpc.mode.set(); custom YAML agents use session.rpc.agent.select().
+      if (copilotAgent) {
+        if (BUILTIN_MODE_NAMES.has(copilotAgent as "interactive" | "plan" | "autopilot")) {
+          await session.rpc.mode.set({ mode: copilotAgent as "interactive" | "plan" | "autopilot" });
+          logger.info("CopilotProvider: set built-in mode", { sessionId, mode: copilotAgent });
+        } else {
+          await session.rpc.agent.select({ name: copilotAgent });
+          logger.info("CopilotProvider: selected custom agent", { sessionId, agent: copilotAgent });
+        }
       }
+
+      // Capture the SDK session ID for future resume and notify the service layer
+      const sdkId = session.sessionId;
+      if (sdkId && !this.sdkSessionIds.has(sessionId)) {
+        this.sdkSessionIds.set(sessionId, sdkId);
+        logger.info("Captured Copilot SDK session ID", { sessionId, sdkId });
+        this.emit("event", {
+          type: "system",
+          threadId,
+          subtype: "sdk_session_id:" + sdkId,
+        } satisfies AgentEvent);
+      }
+
+      const state: CopilotSessionState = {
+        sessionId,
+        session,
+        lastUsedAt: Date.now(),
+        turnActive: false,
+      };
+
+      if (this.pendingStops.has(sessionId)) {
+        logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
+        session.disconnect().catch(() => {});
+        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      }
+
+      return { state, pids: [] };
+    } catch (err) {
+      this.sdkSessionIds.delete(sessionId);
+      try {
+        await session.disconnect();
+      } catch (disconnectError) {
+        logger.debug("CopilotProvider: pre-return cleanup disconnect failed", {
+          error: disconnectError instanceof Error ? disconnectError.message : String(disconnectError),
+        });
+      }
+      await this.threadControlMcp?.close(sessionId);
+      throw err;
     }
-
-    // Capture the SDK session ID for future resume and notify the service layer
-    const sdkId = session.sessionId;
-    if (sdkId && !this.sdkSessionIds.has(sessionId)) {
-      this.sdkSessionIds.set(sessionId, sdkId);
-      logger.info("Captured Copilot SDK session ID", { sessionId, sdkId });
-      this.emit("event", {
-        type: "system",
-        threadId,
-        subtype: "sdk_session_id:" + sdkId,
-      } satisfies AgentEvent);
-    }
-
-    const state: CopilotSessionState = {
-      sessionId,
-      session,
-      lastUsedAt: Date.now(),
-      turnActive: false,
-    };
-
-    if (this.pendingStops.has(sessionId)) {
-      logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
-      session.disconnect().catch(() => {});
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
-    }
-
-    return { state, pids: [] };
   }
 
   /**

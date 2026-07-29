@@ -27,7 +27,10 @@ import {
 } from "@agentclientprotocol/sdk";
 
 import { SettingsService } from "../../services/settings-service.js";
-import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
+import {
+  InternalThreadControlMcpRuntime,
+  type InternalThreadControlMcpHttpConnection,
+} from "../../services/thread-control-mcp-runtime.js";
 import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
@@ -120,6 +123,18 @@ interface CursorSideChannelTransport {
   loadSession(args: { cwd: string; mcpServers: never[]; sessionId: string }): Promise<unknown>;
   prompt(args: { sessionId: string; prompt: { type: "text"; text: string }[] }): Promise<unknown>;
   dispose(): Promise<void> | void;
+}
+
+/** Builds the ACP HTTP MCP configuration for one provider session. */
+export function buildCursorInternalMcpServers(
+  connection: InternalThreadControlMcpHttpConnection,
+): McpServer[] {
+  return [{
+    type: "http",
+    name: connection.name,
+    url: connection.url,
+    headers: Object.entries(connection.headers).map(([name, value]) => ({ name, value })),
+  }];
 }
 
 /**
@@ -862,12 +877,7 @@ export class CursorProvider
     }
     const internalMcp = await this.threadControlMcp?.createHttpConnection(entry.mcodeSessionId);
     if (!internalMcp) throw new Error("Cursor internal thread-control MCP connection unavailable");
-    const mcpServers: McpServer[] = [{
-      type: "http",
-      name: internalMcp.name,
-      url: internalMcp.url,
-      headers: Object.entries(internalMcp.headers).map(([name, value]) => ({ name, value })),
-    }];
+    const mcpServers = buildCursorInternalMcpServers(internalMcp);
     let acpId: string;
 
     if (resume && stored) {
