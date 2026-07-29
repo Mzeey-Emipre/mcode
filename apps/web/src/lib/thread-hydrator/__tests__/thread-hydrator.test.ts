@@ -576,6 +576,24 @@ describe("ThreadHydrator", () => {
     expect(mockTransport.getThreadTasks).not.toHaveBeenCalled();
   });
 
+  it("retains auxiliary freshness when an inactive thread is restored from cache", async () => {
+    await hydrator.hydrate(THREAD_A, "active");
+    await vi.waitFor(() => {
+      expect(mockTransport.listPendingPermissions).toHaveBeenCalledWith(THREAD_A);
+    });
+    expect(getCachedRecord(THREAD_A)?.lastHydratedAt).toBeGreaterThan(0);
+
+    vi.clearAllMocks();
+    await hydrator.hydrate(THREAD_B, "active");
+    vi.clearAllMocks();
+
+    await hydrator.hydrate(THREAD_A, "active");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockTransport.listPendingPermissions).not.toHaveBeenCalled();
+    expect(mockTransport.getThreadTasks).not.toHaveBeenCalled();
+  });
+
   it("re-fans out auxiliary data once the TTL window elapses", async () => {
     await hydrator.hydrate(THREAD_A, "active");
     useThreadStore.setState((s) => ({

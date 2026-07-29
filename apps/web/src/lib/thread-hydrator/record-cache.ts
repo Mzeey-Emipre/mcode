@@ -32,6 +32,8 @@ export interface ConversationCacheState {
   narrativeByMessage: ThreadRecord["narrativeByMessage"];
   answeredPlanMessageIds: ThreadRecord["answeredPlanMessageIds"];
   assistantResponseKeys: ThreadRecord["assistantResponseKeys"];
+  /** Auxiliary hydration freshness retained with the inactive conversation. */
+  lastHydratedAt?: ThreadRecord["lastHydratedAt"];
   /** Latest settled snapshot projection. Never populated from a live turn. */
   settledFileEffectSummary: ThreadRecord["fileEffectSummary"] | null;
 }
@@ -49,6 +51,7 @@ export function projectConversationCacheState(record: ThreadRecord): Conversatio
     narrativeByMessage: record.narrativeByMessage,
     answeredPlanMessageIds: record.answeredPlanMessageIds,
     assistantResponseKeys: record.assistantResponseKeys,
+    lastHydratedAt: record.lastHydratedAt,
     settledFileEffectSummary: record.fileEffectTurnId.length === 0
       ? record.fileEffectSummary
       : null,

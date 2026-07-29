@@ -9,7 +9,11 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore, MESSAGE_FETCH_SIZE } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { clearRecordCache } from "@/lib/thread-hydrator/record-cache";
+import {
+  cacheRecord,
+  clearRecordCache,
+  getCachedRecord,
+} from "@/lib/thread-hydrator/record-cache";
 import { mockTransport, createMockMessage, createMockThread } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({
@@ -144,6 +148,9 @@ describe("loadMessages (cache-hit) - hydration staleness gate", () => {
         [THREAD_ID, { ...createEmptyThreadRecord(), lastHydratedAt: Date.now() - 5000 }],
       ]),
     });
+    const cached = getCachedRecord(THREAD_ID);
+    expect(cached).toBeDefined();
+    cacheRecord(THREAD_ID, { ...cached!, lastHydratedAt: Date.now() - 5000 });
     vi.clearAllMocks();
 
     await activateTestConversation(THREAD_ID);
