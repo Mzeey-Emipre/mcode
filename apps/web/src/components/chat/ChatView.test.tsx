@@ -10,11 +10,13 @@ const {
   chatViewWorkspaceMockRef,
   chatViewThreadMockRef,
   chatViewConnectionStatusRef,
+  chatViewGetTransportMock,
   chatViewTransportMock,
 } = vi.hoisted(() => ({
   chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
   chatViewThreadMockRef: { current: null as Record<string, unknown> | null },
   chatViewConnectionStatusRef: { current: "connected" as "connected" | "reconnecting" | "authFailed" },
+  chatViewGetTransportMock: vi.fn(),
   chatViewTransportMock: {
     subscribeThread: vi.fn(),
     unsubscribeThread: vi.fn(),
@@ -78,7 +80,7 @@ vi.mock("@/stores/composerDraftStore", () => ({
 }));
 
 vi.mock("@/transport", () => ({
-  getTransport: () => chatViewTransportMock,
+  getTransport: chatViewGetTransportMock,
 }));
 
 // Composer and MessageList have deep dependencies; stub them out.
@@ -167,7 +169,7 @@ function defaultWorkspaceState(overrides: Partial<{
   return {
     workspaces: [WORKSPACE],
     activeWorkspaceId: "ws-1",
-    activeThreadId: overrides.activeThreadId ?? thread.id,
+    activeThreadId: overrides.activeThreadId !== undefined ? overrides.activeThreadId : thread.id,
     pendingNewThread: false,
     threads: overrides.threads ?? [thread],
     loadWorkspaces: vi.fn(),
@@ -244,6 +246,8 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewTransportMock.unsubscribeThread.mockResolvedValue(undefined);
     chatViewTransportMock.subscribeThread.mockClear();
     chatViewTransportMock.unsubscribeThread.mockClear();
+    chatViewGetTransportMock.mockReset();
+    chatViewGetTransportMock.mockReturnValue(chatViewTransportMock);
     disableAtomicSubscriptionTransport();
     setupWorkspaceMock(defaultWorkspaceState());
     chatViewThreadMockRef.current = defaultThreadState();
@@ -666,5 +670,16 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
       expect(setThreadSubscriptions).toHaveBeenLastCalledWith({ threadIds: ["thread-1"] });
     });
+  });
+
+  it("does not resolve transport while unmounting without subscriptions", () => {
+    chatViewConnectionStatusRef.current = "reconnecting";
+    setupWorkspaceMock({ ...defaultWorkspaceState(), activeThreadId: null, threads: [] });
+    chatViewThreadMockRef.current = defaultThreadState();
+
+    const { unmount } = render(<ChatView />);
+    unmount();
+
+    expect(chatViewGetTransportMock).not.toHaveBeenCalled();
   });
 });

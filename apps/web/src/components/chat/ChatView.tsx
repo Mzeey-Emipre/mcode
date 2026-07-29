@@ -665,12 +665,14 @@ export function ChatView() {
         ...confirmedThreadIdsRef.current,
         ...desiredThreadIdsRef.current,
       ]);
-      const setThreadSubscriptions = getTransport().setThreadSubscriptions;
-      if (setThreadSubscriptions) {
-        void setThreadSubscriptions({ threadIds: [] }).catch(() => {});
-      } else {
-        for (const threadId of threadIds) {
-          void getTransport().unsubscribeThread(threadId).catch(() => {});
+      if (threadIds.size > 0) {
+        const setThreadSubscriptions = getTransport().setThreadSubscriptions;
+        if (setThreadSubscriptions) {
+          void setThreadSubscriptions({ threadIds: [] }).catch(() => {});
+        } else {
+          for (const threadId of threadIds) {
+            void getTransport().unsubscribeThread(threadId).catch(() => {});
+          }
         }
       }
       confirmedThreadIdsRef.current.clear();
