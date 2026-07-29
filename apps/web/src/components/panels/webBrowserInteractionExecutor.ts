@@ -6,6 +6,12 @@ import type {
 } from "@mcode/contracts";
 
 const MAX_TARGET_SCAN = 1_024;
+const MAX_METADATA_CHARS = 2_048;
+const SECRET_KEY = /^(?:access[_-]?token|api[_-]?key|auth|authorization|bearer|client[_-]?secret|code|cookie|credential|id[_-]?token|jwt|password|private[_-]?key|refresh[_-]?token|secret|session|session[_-]?id|signature|token)$/i;
+const SECRET_TEXT = /\b(?:access[_-]?token|api[_-]?key|authorization|bearer|cookie|credential|password|refresh[_-]?token|secret|session[_-]?id|token)\b\s*[:=]\s*([^\s,;]+)/gi;
+const BEARER_TEXT = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
+const JWT_TEXT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
+const URL_TEXT = /\bhttps?:\/\/[^\s"'<>]+/gi;
 const executorEvents = new WeakSet<Event>();
 
 /** Current host-owned identity used to reject stale work before a mutation. */
@@ -128,7 +134,75 @@ function response(dispatch: BrowserAutomationHostDispatch, result: BrowserAutoma
 }
 
 function pageMetadata(ownerDocument: Document): { readonly url: string; readonly title: string } {
-  return { url: ownerDocument.location.href.slice(0, 4_096), title: ownerDocument.title.slice(0, 4_096) };
+  return {
+    url: redactBrowserLocation(ownerDocument.location.href),
+    title: redactBrowserText(ownerDocument.title),
+  };
+}
+
+/** Redact credential-shaped text before exposing page metadata to the broker. */
+export function redactBrowserText(value: unknown): string {
+  return String(value ?? "")
+    .replace(URL_TEXT, (candidate) => redactBrowserLocation(candidate))
+    .replace(BEARER_TEXT, "Bearer [REDACTED]")
+    .replace(JWT_TEXT, "[REDACTED]")
+    .replace(SECRET_TEXT, (match, captured: string) => match.replace(captured, "[REDACTED]"))
+    .slice(0, MAX_METADATA_CHARS);
+}
+
+/** Redact credentials and secret query values from a bounded page location. */
+export function redactBrowserLocation(value: unknown): string {
+  const raw = String(value ?? "").slice(0, 8_192);
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      url.username = "";
+      url.password = "";
+      for (const key of [...url.searchParams.keys()]) {
+        if (SECRET_KEY.test(key)) url.searchParams.set(key, "[REDACTED]");
+      }
+      if (url.hash.length > 1) {
+        const fragment = new URLSearchParams(url.hash.slice(1));
+        let changed = false;
+        for (const key of [...fragment.keys()]) {
+          if (!SECRET_KEY.test(key)) continue;
+          fragment.set(key, "[REDACTED]");
+          changed = true;
+        }
+        if (changed) url.hash = fragment.toString();
+      }
+      return url.toString().slice(0, MAX_METADATA_CHARS);
+    }
+    if (raw === "about:blank") return raw;
+    return `${url.protocol}[REDACTED]`;
+  } catch {
+    return "about:blank";
+  }
+}
+
+function isNativeSubmitControl(element: HTMLElement, ownerDocument: Document): element is HTMLInputElement {
+  if (!isNativeControl(element, ownerDocument) || element.localName.toLowerCase() !== "input") return false;
+  const type = (element.getAttribute("type") ?? "text").toLowerCase();
+  return !["button", "checkbox", "color", "date", "datetime-local", "file", "hidden", "image", "month", "radio", "range", "reset", "submit", "time", "week"].includes(type);
+}
+
+function dispatchEnter(ownerDocument: Document, element: HTMLElement): boolean {
+  const view = ownerDocument.defaultView;
+  if (!view || typeof view.KeyboardEvent !== "function") throw new Error("Browser iframe event constructors are unavailable");
+  const init = { key: "Enter", code: "Enter", bubbles: true, cancelable: true, composed: true } as const;
+  const keydown = new view.KeyboardEvent("keydown", init);
+  markExecutorEvent(keydown);
+  const keydownAllowed = element.dispatchEvent(keydown);
+  let keypressAllowed = true;
+  if (keydownAllowed && !keydown.defaultPrevented) {
+    const keypress = new view.KeyboardEvent("keypress", init);
+    markExecutorEvent(keypress);
+    keypressAllowed = element.dispatchEvent(keypress);
+  }
+  const keyup = new view.KeyboardEvent("keyup", init);
+  markExecutorEvent(keyup);
+  element.dispatchEvent(keyup);
+  return keydownAllowed && !keydown.defaultPrevented && keypressAllowed;
 }
 
 function errorResponse(dispatch: BrowserAutomationHostDispatch, code: Extract<BrowserAutomationResponse, { ok: false }>["error"]["code"], message: string): BrowserAutomationResponse {
@@ -203,9 +277,12 @@ export async function executeWebInteraction(
       element.dispatchEvent(inputEvent);
       if (args.submit) {
         guardMutation(guard);
-        const keyEvent = new view.KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, composed: true });
-        markExecutorEvent(keyEvent);
-        element.dispatchEvent(keyEvent);
+        const defaultAllowed = dispatchEnter(ownerDocument, element);
+        if (defaultAllowed && isNativeSubmitControl(element, ownerDocument)) {
+          guardMutation(guard);
+          const form = (element as HTMLInputElement).form;
+          if (form && typeof form.requestSubmit === "function") form.requestSubmit();
+        }
       }
       guardMutation(guard);
       return response(dispatch, { operation: "type", ...pageMetadata(ownerDocument), controlEpoch: guard.expectedControlEpoch });

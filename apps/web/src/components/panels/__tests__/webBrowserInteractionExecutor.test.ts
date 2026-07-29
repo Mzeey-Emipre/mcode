@@ -3,6 +3,8 @@ import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationHostDispatch
 import {
   executeWebInteraction,
   observeWebHumanInput,
+  redactBrowserLocation,
+  redactBrowserText,
   resolveWebTarget,
 } from "../webBrowserInteractionExecutor";
 
@@ -94,6 +96,110 @@ describe("web browser interaction executor", () => {
     expect(typed).toHaveBeenCalledWith(true);
     expect(submitted).toHaveBeenCalledWith(true);
     expect(input.value).toBe("typed");
+  });
+
+  it("submits a native single-line form control once when Enter is not prevented", async () => {
+    document.body.innerHTML = '<form id="form"><input id="email" /></form>';
+    const form = document.querySelector("form")!;
+    const input = document.querySelector("input") as HTMLInputElement;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const submitted = vi.fn((event: SubmitEvent) => event.preventDefault());
+    form.addEventListener("submit", submitted);
+
+    const result = await executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: "#email" }, text: "typed", clear: true, submit: true, timeoutMs: 1000 }),
+      guard(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(submitted).toHaveBeenCalledOnce();
+  });
+
+  it("does not submit when Enter is prevented and keeps textarea Enter native", async () => {
+    document.body.innerHTML = '<form id="form"><input id="email" /><textarea id="notes"></textarea></form>';
+    const form = document.querySelector("form")!;
+    const input = document.querySelector("input") as HTMLInputElement;
+    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    vi.spyOn(textarea, "getBoundingClientRect").mockReturnValue({ width: 120, height: 40 } as DOMRect);
+    const submitted = vi.fn((event: SubmitEvent) => event.preventDefault());
+    form.addEventListener("submit", submitted);
+    input.addEventListener("keydown", (event) => event.preventDefault());
+
+    await executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: "#email" }, text: "typed", clear: true, submit: true, timeoutMs: 1000 }),
+      guard(),
+    );
+    await executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: "#notes" }, text: "line", clear: true, submit: true, timeoutMs: 1000 }),
+      guard(),
+    );
+
+    expect(submitted).not.toHaveBeenCalled();
+    expect(textarea.value).toBe("line");
+  });
+
+  it("does not submit when the synthetic keypress is prevented", async () => {
+    document.body.innerHTML = '<form id="form"><input id="email" /></form>';
+    const form = document.querySelector("form")!;
+    const input = document.querySelector("input") as HTMLInputElement;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const submitted = vi.fn((event: SubmitEvent) => event.preventDefault());
+    form.addEventListener("submit", submitted);
+    input.addEventListener("keypress", (event) => event.preventDefault());
+
+    await executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: "#email" }, text: "typed", clear: true, submit: true, timeoutMs: 1000 }),
+      guard(),
+    );
+
+    expect(submitted).not.toHaveBeenCalled();
+  });
+
+  it("rechecks target generation after Enter handlers before submitting", async () => {
+    document.body.innerHTML = '<form id="form"><input id="email" /></form>';
+    const form = document.querySelector("form")!;
+    const input = document.querySelector("input") as HTMLInputElement;
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
+    const submitted = vi.fn((event: SubmitEvent) => event.preventDefault());
+    form.addEventListener("submit", submitted);
+    let generation = 1;
+    const operationGuard = guard();
+    operationGuard.getTargetGeneration = () => generation;
+    input.addEventListener("keydown", () => {
+      generation = 2;
+    });
+
+    const result = await executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: "#email" }, text: "typed", clear: true, submit: true, timeoutMs: 1000 }),
+      operationGuard,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION" } });
+    expect(submitted).not.toHaveBeenCalled();
+  });
+
+  it("redacts credential-shaped URL and title metadata while preserving useful identity", async () => {
+    document.body.innerHTML = '<button id="save">Save</button>';
+    const button = document.querySelector("button")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    Object.defineProperty(document, "title", { configurable: true, value: "Dashboard token: eyJheader.payloadxx.signaturexx" });
+
+    const result = await executeWebInteraction(
+      document,
+      dispatch("click", { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 }),
+      guard(),
+    );
+
+    expect(result).toMatchObject({ ok: true, result: { title: "Dashboard token: [REDACTED]" } });
+    expect(redactBrowserLocation("https://user:pass@example.test/path?view=home&token=secret#next=ok&access_token=hidden")).toBe("https://example.test/path?view=home&token=%5BREDACTED%5D#next=ok&access_token=%5BREDACTED%5D");
+    expect(redactBrowserText("Bearer abc.def password: secret")).toBe("Bearer [REDACTED] password: [REDACTED]");
+    expect(JSON.stringify(result)).not.toContain("eyJheader.payloadxx.signaturexx");
   });
 
   it("types into editable controls and never echoes typed text in failures", async () => {
