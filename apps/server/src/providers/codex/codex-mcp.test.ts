@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import { describe, expect, it } from "vitest";
 import { hasCodexInternalThreadControlMcp } from "./codex-provider.js";
 

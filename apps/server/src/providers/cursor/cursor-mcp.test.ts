@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import { describe, expect, it } from "vitest";
 import { buildCursorInternalMcpServers } from "./cursor-provider.js";
 
