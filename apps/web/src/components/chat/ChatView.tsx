@@ -13,7 +13,6 @@ import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -35,7 +34,6 @@ import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
 import { Button } from "@/components/ui/button";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
-import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -274,25 +272,25 @@ const THREAD_SUBSCRIPTION_MAX_RETRIES = 4;
 
 type ThreadSubscriptionAction = "subscribe" | "unsubscribe";
 
-/** Keeps the conversation surface occupied while the latest persisted tail loads. */
-function ConversationLoadingState() {
+/** Keeps a cold switch target visible without rendering stale transcript content. */
+function ConversationTransitionState({
+  threadId,
+  threadTitle,
+}: {
+  threadId: string;
+  threadTitle: string;
+}) {
   return (
     <div
-      data-testid="conversation-loading"
+      data-testid="conversation-transition-shell"
+      data-thread-id={threadId}
       role="status"
-      aria-label="Loading conversation"
-      className="flex h-full items-end px-4 pb-6 sm:px-8"
+      aria-label={`Loading ${threadTitle}`}
+      className="flex h-full items-center justify-center px-4"
     >
-      <div className={`${PRIMARY_CONTENT_RAIL_CLASS} w-full space-y-5 motion-safe:animate-pulse`}>
-        <div className="ml-auto space-y-2">
-          <Skeleton className="ml-auto h-3 w-2/5 rounded bg-muted/55" />
-          <Skeleton className="ml-auto h-3 w-3/5 rounded bg-muted/40" />
-        </div>
-        <div className="space-y-2">
-          <Skeleton className="h-3 w-1/4 rounded bg-muted/55" />
-          <Skeleton className="h-3 w-4/5 rounded bg-muted/40" />
-          <Skeleton className="h-3 w-3/5 rounded bg-muted/40" />
-        </div>
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner size={16} />
+        <span>{threadTitle}</span>
       </div>
     </div>
   );
@@ -789,7 +787,10 @@ export function ChatView() {
         style={{ paddingRight: overviewPaddingRight }}
       >
         {conversationLoading && !hasMessages && !isAgentRunning ? (
-          <ConversationLoadingState />
+          <ConversationTransitionState
+            threadId={activeThread.id}
+            threadTitle={activeThread.title || "Conversation"}
+          />
         ) : showFullConversationError ? (
           <ConversationErrorState error={sessionError ?? ""} />
         ) : showEmptyState ? (

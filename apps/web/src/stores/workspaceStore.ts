@@ -351,8 +351,15 @@ interface WorkspaceState {
 
 /** Zustand store for workspace, thread, branch, and PR state management. */
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
+  let activationQueued = false;
   const reconcileSelectedConversation = () => {
-    void getConversationResidency().activate(get().activeThreadId, get().threads);
+    if (activationQueued) return;
+    activationQueued = true;
+    queueMicrotask(() => {
+      activationQueued = false;
+      const { activeThreadId, threads } = get();
+      void getConversationResidency().activate(activeThreadId, threads);
+    });
   };
 
   const applyOptimisticSuccess = (

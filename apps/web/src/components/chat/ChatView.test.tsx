@@ -308,13 +308,20 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.queryByTestId("chat-header-title-input")).not.toBeInTheDocument();
   });
 
-  it("swaps the thread shell before persisted history resolves", () => {
-    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: "thread-2" });
+  it("shows the selected thread shell before persisted history resolves", () => {
+    const selectedThread = makeThread({ id: "thread-2", title: "Thread 2" });
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: selectedThread.id,
+      threads: [selectedThread],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: "thread-1" });
 
     render(<ChatView />);
 
-    expect(screen.getByTestId("chat-header-title")).toHaveTextContent("My Thread");
-    expect(screen.getByTestId("conversation-loading")).toBeVisible();
+    expect(screen.getByTestId("chat-header-title")).toHaveTextContent("Thread 2");
+    expect(screen.getByTestId("conversation-transition-shell")).toHaveTextContent("Thread 2");
+    expect(screen.getByTestId("conversation-transition-shell")).toHaveAttribute("data-thread-id", "thread-2");
+    expect(screen.queryByTestId("conversation-loading")).not.toBeInTheDocument();
     expect(screen.queryByTestId("message-list")).not.toBeInTheDocument();
   });
 
