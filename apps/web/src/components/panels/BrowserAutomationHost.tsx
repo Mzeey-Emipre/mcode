@@ -27,7 +27,7 @@ import {
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
-import { PreviewPanel } from "./PreviewPanel";
+import { PreviewPanel, WEB_RUNTIME_PREVIEW_TAB_ID } from "./PreviewPanel";
 import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
 import { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
 import { executeWebBrowserDispatch } from "./browserAutomationWebExecutor";
@@ -726,7 +726,7 @@ export function BrowserAutomationHost() {
         }
         const existingSet = usePreviewTabsStore.getState().tabSetByScope[request.threadId];
         let tabId = existingSet?.activeTabId || existingSet?.tabs[0]?.id ||
-          (!bridge ? "web-preview" : null);
+          (!bridge ? WEB_RUNTIME_PREVIEW_TAB_ID : null);
         if (!tabId) {
           tabId = await usePreviewTabsStore.getState().createPage(request.threadId, {
             focusOmnibox: ownsVisibleContext && request.args.activate,

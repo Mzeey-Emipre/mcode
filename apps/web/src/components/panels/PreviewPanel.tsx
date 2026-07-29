@@ -1515,6 +1515,9 @@ function draftFromSaved(
 export const PREVIEW_WEBVIEW_FALLBACK_TAB_ID =
   "__mcode_webview_active_fallback__";
 
+/** Stable tab id used by the single web-runtime preview target. */
+export const WEB_RUNTIME_PREVIEW_TAB_ID = "web-preview";
+
 /** Returns whether the webview renderer should own the preview surface. */
 export function shouldRenderWebviewPreview(
   _engine: string | undefined,
@@ -1532,7 +1535,13 @@ export interface PreviewPanelProps {
 }
 
 /** Visible same-origin iframe surface used by the worktree-local web runtime. */
-function WebRuntimePreview({ threadId }: { readonly threadId: string }) {
+function WebRuntimePreview({
+  threadId,
+  workspaceId,
+}: {
+  readonly threadId: string;
+  readonly workspaceId?: string | null;
+}) {
   const storedUrl = useDiffStore((state) => state.previewUrlByThread[threadId] ?? "");
   const [inputUrl, setInputUrl] = useState(storedUrl);
   const [src, setSrc] = useState<string | null>(() => normalizeWebPreviewUrl(storedUrl));
@@ -1540,6 +1549,20 @@ function WebRuntimePreview({ threadId }: { readonly threadId: string }) {
   const enabled = isBrowserAutomationWebRuntimeEnabled();
   const requestedState = resolveWebPreviewState(src, enabled);
   const state = crossOriginObserved ? "cross-origin" : requestedState;
+
+  useEffect(() => {
+    useBrowserAutomationStore.getState().registerTarget(
+      workspaceId ?? threadId,
+      threadId,
+      WEB_RUNTIME_PREVIEW_TAB_ID,
+    );
+    return () => {
+      useBrowserAutomationStore.getState().unregisterTarget(
+        threadId,
+        WEB_RUNTIME_PREVIEW_TAB_ID,
+      );
+    };
+  }, [threadId, workspaceId]);
 
   useEffect(() => {
     setInputUrl(storedUrl);
@@ -1580,6 +1603,8 @@ function WebRuntimePreview({ threadId }: { readonly threadId: string }) {
             title="Web browser preview"
             src={src}
             data-testid="web-runtime-preview-iframe"
+            data-thread-id={threadId}
+            data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
             className="h-full w-full border-0"
             referrerPolicy="no-referrer"
             onLoad={onIframeLoad}
@@ -1590,6 +1615,8 @@ function WebRuntimePreview({ threadId }: { readonly threadId: string }) {
               title="Cross-origin web preview"
               src={src}
               data-testid="web-runtime-preview-iframe"
+              data-thread-id={threadId}
+              data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
               className="h-full w-full border-0"
               referrerPolicy="no-referrer"
               onLoad={onIframeLoad}
@@ -2377,7 +2404,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   const hasDesktopPreview = !!window.desktopBridge?.preview;
   const webRuntimeEnabled = isBrowserAutomationWebRuntimeEnabled();
   if (!hasDesktopPreview && webRuntimeEnabled) {
-    return <WebRuntimePreview key={threadId} threadId={threadId} />;
+    return <WebRuntimePreview key={threadId} threadId={threadId} workspaceId={workspaceId} />;
   }
   if (!hasDesktopPreview) {
     return (
