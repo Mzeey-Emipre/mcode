@@ -440,6 +440,19 @@ describe("diffStore", () => {
       ]);
       expect(panel.activeTabId).toBe("terminal:pty-2");
     });
+
+    it("replaces a pending terminal singleton with its PTY-backed instance", () => {
+      const { addRightPanelTerminalTab, setRightPanelTab, getRightPanel } =
+        useDiffStore.getState();
+      setRightPanelTab("ws-1", "thread-1", "terminal");
+
+      addRightPanelTerminalTab("ws-1", "thread-1", "pty-1");
+
+      expect(getRightPanel("ws-1", "thread-1")).toMatchObject({
+        tabInstances: [{ id: "terminal:pty-1", type: "terminal" }],
+        activeTabId: "terminal:pty-1",
+      });
+    });
     it("preserves an explicit canonical null over a stale compatibility active tab", () => {
       const panel = createRightPanelState({
         visible: true,

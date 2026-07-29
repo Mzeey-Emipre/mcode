@@ -33,6 +33,7 @@ type XtermModules = {
 };
 
 let xtermModulesPromise: Promise<XtermModules> | null = null;
+const TERMINAL_BACKGROUND = "#0a0a0f";
 
 /**
  * Loads the xterm core and fit addon once and caches the result so view
@@ -340,7 +341,7 @@ export const TerminalView = memo(function TerminalView({
         fontSize: 13,
         fontFamily: "monospace",
         theme: {
-          background: "#0a0a0f",
+          background: TERMINAL_BACKGROUND,
           foreground: "#e4e4e7",
           cursor: "#e4e4e7",
         },
@@ -943,9 +944,13 @@ export const TerminalView = memo(function TerminalView({
   return (
     <div
       ref={containerRef}
-      className="h-full min-h-0 w-full"
+      className="h-full min-h-0 w-full p-3"
       data-terminal-hydrated={hydrated}
-      style={{ visibility: shown && hydrated ? "visible" : "hidden" }}
+      data-testid="terminal-render-content"
+      style={{
+        backgroundColor: TERMINAL_BACKGROUND,
+        visibility: shown && hydrated ? "visible" : "hidden",
+      }}
     />
   );
 });

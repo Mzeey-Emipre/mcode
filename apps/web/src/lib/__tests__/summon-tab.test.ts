@@ -58,13 +58,17 @@ describe("summonTab", () => {
       expect(panel().openTabs).toContain("preview");
     });
 
-    it("requests the first PTY when no terminal tab exists", () => {
+    it("activates the terminal tab before requesting the first PTY", () => {
       summonTab("preview");
       expect(panel().openTabs).toEqual(["preview"]);
 
       summonTab("terminal");
       expect(createTerminalForScope).toHaveBeenCalledWith(TID);
-      expect(panel().visible).toBe(true);
+      expect(panel()).toMatchObject({
+        visible: true,
+        activeTab: "terminal",
+        openTabs: ["preview", "terminal"],
+      });
     });
 
     it("focuses an open-but-inactive tab without hiding the panel", () => {

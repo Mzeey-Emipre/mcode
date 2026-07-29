@@ -407,7 +407,7 @@ export function RightPanel() {
             aria-hidden={!terminalActive}
             inert={!terminalActive ? true : undefined}
           >
-            <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden p-2" />
+            <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden" />
           </div>
         </div>
       </div>
