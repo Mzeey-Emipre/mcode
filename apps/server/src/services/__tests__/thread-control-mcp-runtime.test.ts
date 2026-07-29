@@ -4,16 +4,20 @@ import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InternalThreadControlMcpAuthority } from "../thread-control-mcp-authority.js";
-import { InternalThreadControlMcpRuntime } from "../thread-control-mcp-runtime.js";
+import {
+  INTERNAL_MCP_REQUEST_TIMEOUT_MS,
+  MAX_INTERNAL_MCP_REQUEST_BODY_BYTES,
+  InternalThreadControlMcpRuntime,
+} from "../thread-control-mcp-runtime.js";
 
-function status(url: string): Promise<number> {
+function status(url: string, options: { headers?: Record<string, string>; body?: Buffer } = {}): Promise<number> {
   return new Promise((resolve, reject) => {
-    const outgoing = request(url, { method: "POST" }, (response) => {
+    const outgoing = request(url, { method: "POST", headers: options.headers }, (response) => {
       response.resume();
       response.once("end", () => resolve(response.statusCode ?? 0));
     });
     outgoing.once("error", reject);
-    outgoing.end();
+    outgoing.end(options.body);
   });
 }
 
@@ -169,5 +173,50 @@ describe("InternalThreadControlMcpRuntime", () => {
     expect(server.close).toHaveBeenCalledOnce();
     expect(state.httpServer).toBeUndefined();
     expect(state.httpSessions).toHaveLength(0);
+  });
+
+  it("rejects oversized declared and streamed request bodies before MCP dispatch", async () => {
+    const { runtime: instance, authority } = runtime();
+    const lease = authority.activate({
+      sessionId: "bounded",
+      sourceThreadId: "thread",
+      sourceTurnId: "turn",
+      sourceProviderId: "codex",
+      permissionMode: "full",
+    });
+    const connection = await instance.createHttpConnection("bounded");
+    const oversized = await status(connection!.url, {
+      headers: {
+        ...connection!.headers,
+        "content-length": String(MAX_INTERNAL_MCP_REQUEST_BODY_BYTES + 1),
+      },
+    });
+    expect(oversized).toBe(413);
+
+    const streamed = await new Promise<number>((resolve, reject) => {
+      const outgoing = request(connection!.url, {
+        method: "POST",
+        headers: {
+          ...connection!.headers,
+          Accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+          "transfer-encoding": "chunked",
+        },
+      }, (response) => {
+        response.resume();
+        response.once("end", () => resolve(response.statusCode ?? 0));
+      });
+      outgoing.once("error", (error) => reject(error));
+      outgoing.write(Buffer.alloc(MAX_INTERNAL_MCP_REQUEST_BODY_BYTES, 0x20));
+      outgoing.end(Buffer.from("{}"));
+    });
+    expect(streamed).toBe(413);
+
+    const state = instance as unknown as { httpServer: Server & { requestTimeout: number; headersTimeout: number; timeout: number } };
+    expect(state.httpServer.requestTimeout).toBe(INTERNAL_MCP_REQUEST_TIMEOUT_MS);
+    expect(state.httpServer.headersTimeout).toBe(INTERNAL_MCP_REQUEST_TIMEOUT_MS);
+    expect(state.httpServer.timeout).toBe(INTERNAL_MCP_REQUEST_TIMEOUT_MS);
+    expect(authority.credential("bounded")).toBe(lease.credential);
+    await instance.close("bounded");
   });
 });

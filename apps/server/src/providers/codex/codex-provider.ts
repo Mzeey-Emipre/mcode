@@ -1063,7 +1063,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // still runs locally), so this guard is defensive and keeps the wiring
     // obvious in logs.
     const supervised = approvalPolicy === "on-request";
-    const internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
+    let internalMcp: Awaited<ReturnType<InternalThreadControlMcpRuntime["createCodexConfiguration"]>>;
+    try {
+      internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
+    } catch (error) {
+      await this.threadControlMcp?.close(sessionId);
+      throw error;
+    }
 
     const server = new CodexAppServer({
       cliPath,
@@ -1148,6 +1154,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       await server.start();
     } catch (error) {
       internalMcpStartup?.cancel();
+      await this.threadControlMcp?.close(sessionId);
       throw error;
     }
     if (internalMcp) {
@@ -1159,6 +1166,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         await internalMcpStartup!.promise;
       } catch (error) {
         internalMcpStartup?.cancel();
+        await this.threadControlMcp?.close(sessionId);
         await server.kill().catch(() => undefined);
         throw error;
       }
@@ -1310,7 +1318,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     conversationHistory?: string;
     cwd: string;
   }): Promise<string> {
-    const { parentThreadId, parentSdkSessionId, prompt, abortSignal, conversationHistory, cwd } = args;
+    const { parentThreadId, prompt, abortSignal, conversationHistory, cwd } = args;
     if (abortSignal?.aborted) throw transientHandoffError("Codex side-channel query aborted before start");
 
     const settings = await this.settingsService.get();
@@ -1330,7 +1338,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       // No approvalHandler is registered here, so side-channel tool requests
       // are denied while the handoff prompt still runs in the parent session.
       approvalPolicy: "on-request",
-      resumeThreadId: parentSdkSessionId || undefined,
+      // Side-channel work must never resume the MCP-enabled parent session.
+      // Conversation history is supplied explicitly when available.
+      resumeThreadId: undefined,
       jobObject: this.jobObject,
       getSpawnEnv: () => this.envService.getEnv(),
     });
@@ -1358,11 +1368,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     try {
       await server.start();
-      if (server.resumeFailed && !conversationHistory) {
-        throw transientHandoffError(`Codex side-channel could not resume parent thread ${parentThreadId}`);
-      }
 
-      const sideChannelPrompt = server.resumeFailed && conversationHistory
+      const sideChannelPrompt = conversationHistory
         ? `Conversation history up to the fork point:\n\n${conversationHistory}\n\n---\n\n${prompt}`
         : prompt;
 
