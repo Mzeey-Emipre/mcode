@@ -271,6 +271,11 @@ const THREAD_SUBSCRIPTION_RETRY_MAX_MS = 1_600;
 const THREAD_SUBSCRIPTION_MAX_RETRIES = 4;
 
 type ThreadSubscriptionAction = "subscribe" | "unsubscribe";
+type AtomicSubscriptionRequest = {
+  epoch: number;
+  signature: string;
+  id: number;
+};
 
 /** Keeps a cold switch target visible without rendering stale transcript content. */
 function ConversationTransitionState({
@@ -490,7 +495,8 @@ export function ChatView() {
   const subscriptionRetryExhaustedRef = useRef(false);
   const subscriptionTargetSignatureRef = useRef("");
   const atomicSubscriptionRequestIdRef = useRef(0);
-  const atomicSubscriptionRequestRef = useRef<{ epoch: number; signature: string; id: number } | null>(null);
+  const atomicSubscriptionRequestRef = useRef<AtomicSubscriptionRequest | null>(null);
+  const pendingAtomicThreadIdsRef = useRef<Map<number, string[]>>(new Map());
   const subscriptionMountedRef = useRef(true);
   const [subscriptionReconcileVersion, setSubscriptionReconcileVersion] = useState(0);
 
@@ -535,7 +541,12 @@ export function ChatView() {
       if (alreadyApplied || (pending?.epoch === epoch && pending.signature === targetSignature)) return;
       const requestId = atomicSubscriptionRequestIdRef.current + 1;
       atomicSubscriptionRequestIdRef.current = requestId;
-      atomicSubscriptionRequestRef.current = { epoch, signature: targetSignature, id: requestId };
+      atomicSubscriptionRequestRef.current = {
+        epoch,
+        signature: targetSignature,
+        id: requestId,
+      };
+      pendingAtomicThreadIdsRef.current.set(requestId, sortedThreadIds);
       void setThreadSubscriptions({ threadIds: sortedThreadIds }).then(() => {
         if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
         confirmedThreadIdsRef.current = sentThreadIds;
@@ -571,6 +582,7 @@ export function ChatView() {
           }
         }, delay);
       }).finally(() => {
+        pendingAtomicThreadIdsRef.current.delete(requestId);
         if (atomicSubscriptionRequestRef.current?.epoch === epoch
           && atomicSubscriptionRequestRef.current.id === requestId) {
           atomicSubscriptionRequestRef.current = null;
@@ -656,6 +668,7 @@ export function ChatView() {
     subscriptionMountedRef.current = true;
     return () => {
       subscriptionMountedRef.current = false;
+      const pendingAtomicThreadIds = Array.from(pendingAtomicThreadIdsRef.current.values()).flat();
       subscriptionEpochRef.current += 1;
       if (subscriptionRetryTimerRef.current !== null) {
         clearTimeout(subscriptionRetryTimerRef.current);
@@ -664,6 +677,7 @@ export function ChatView() {
       const threadIds = new Set([
         ...confirmedThreadIdsRef.current,
         ...desiredThreadIdsRef.current,
+        ...pendingAtomicThreadIds,
       ]);
       if (threadIds.size > 0) {
         const setThreadSubscriptions = getTransport().setThreadSubscriptions;
@@ -678,6 +692,7 @@ export function ChatView() {
       confirmedThreadIdsRef.current.clear();
       desiredThreadIdsRef.current.clear();
       pendingThreadChangesRef.current.clear();
+      pendingAtomicThreadIdsRef.current.clear();
     };
   }, []);
 

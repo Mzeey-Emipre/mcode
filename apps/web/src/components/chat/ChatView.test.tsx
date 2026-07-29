@@ -546,6 +546,32 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
   });
 
+  it("clears a pending atomic set on unmount without retrying after it settles", async () => {
+    const requests: Array<{ resolve: () => void }> = [];
+    const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve) => {
+      requests.push({ resolve });
+    }));
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const { rerender, unmount } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: ["thread-1"] }));
+
+    setupWorkspaceMock({ ...defaultWorkspaceState(), activeThreadId: null, threads: [] });
+    rerender(<ChatView />);
+    unmount();
+
+    expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: [] });
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+
+    requests[0]?.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+  });
+
   it("reconciles a newer atomic target after an older response and failed replacement", async () => {
     const requests: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
     const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve, reject) => {
