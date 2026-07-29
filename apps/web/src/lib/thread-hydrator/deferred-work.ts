@@ -22,7 +22,6 @@ export function scheduleDeferredWork(
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let frame: number | undefined;
-  let deadline: ReturnType<typeof setTimeout> | undefined;
   const run = () => {
     if (cancelled) return;
     cancelled = true;
@@ -40,7 +39,7 @@ export function scheduleDeferredWork(
     : undefined;
   if (delayMs === 0 && raf) frame = raf(run);
   else timer = setTimeout(run, delayMs);
-  deadline = setTimeout(run, maxDelayMs);
+  const deadline: ReturnType<typeof setTimeout> = setTimeout(run, maxDelayMs);
   return {
     cancel() {
       if (cancelled) return;
