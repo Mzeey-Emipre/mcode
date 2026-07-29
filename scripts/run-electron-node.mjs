@@ -56,8 +56,9 @@ function resolveWorkspaceCli(args) {
 }
 
 /**
- * Runs Electron asynchronously so Bun can drain both child output pipes while the
- * Electron process starts and exits.
+ * Runs Electron asynchronously while inheriting the caller's output handles.
+ * Inherited handles prevent Electron descendants from keeping adapter-owned
+ * stdio pipes open after the root process exits.
  *
  * @param {string} electronPath
  * @param {string[]} args
@@ -73,7 +74,7 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
       shell: false,
       detached: !isWindows,
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "inherit", "inherit"],
     });
     let settled = false;
     let timeoutHandle;
@@ -82,9 +83,6 @@ export function runElectronProcess(electronPath, args, { cwd, env, timeoutMs = E
     let timedOut = false;
     let exitStatus;
     let exitSignal;
-
-    child.stdout.pipe(process.stdout, { end: false });
-    child.stderr.pipe(process.stderr, { end: false });
 
     const signalHandlers = new Map();
     const removeSignalHandlers = () => {

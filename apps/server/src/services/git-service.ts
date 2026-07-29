@@ -18,6 +18,7 @@ import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl
 const MAX_REVIEW_COMPARISON_FILES = 10_000;
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index.js";
+import { normalizePathForComparison } from "./path-identity.js";
 
 /** Normalized configured remote used for repository-identity matching. */
 export interface NormalizedGitRemote {
@@ -341,13 +342,8 @@ function assertSafeReviewBranch(value: string, label: string): void {
   }
 }
 
-function normalizePathForComparison(value: string): string {
-  const normalized = resolve(value).replace(/\\/g, "/").replace(/\/+$/, "");
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
 function isPathWithin(basePath: string, candidatePath: string): boolean {
-  const rel = relative(resolve(basePath), resolve(candidatePath));
+  const rel = relative(normalizePathForComparison(basePath), normalizePathForComparison(candidatePath));
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
