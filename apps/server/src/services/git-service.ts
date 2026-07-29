@@ -10,7 +10,7 @@ import { injectable, inject } from "tsyringe";
 import { createHash } from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
 import { rm, rmdir, realpath } from "fs/promises";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, realpathSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl, ReviewComparison, ReviewFileChange } from "@mcode/contracts";
@@ -1717,7 +1717,7 @@ export class GitService {
     if (!branch.worktreePath || !existsSync(branch.worktreePath)) return null;
     let canonicalPath: string;
     try {
-      canonicalPath = await realpath(branch.worktreePath);
+      canonicalPath = realpathSync(branch.worktreePath);
     } catch {
       return null;
     }
