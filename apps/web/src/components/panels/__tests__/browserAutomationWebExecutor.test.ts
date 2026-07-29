@@ -57,6 +57,16 @@ describe("web browser automation executor", () => {
     target.remove();
   });
 
+  it("uses DOM ids as snapshot semantic ids", async () => {
+    const target = iframe();
+    target.contentDocument!.body.innerHTML = `<button id="save-button">Save</button>`;
+    const result = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
+    expect(result).toMatchObject({ ok: true, result: { snapshot: {
+      elements: [{ semanticId: "save-button", role: "button", accessibleName: "Save" }],
+    } } });
+    target.remove();
+  });
+
   it("scans hostile oversized DOM without whole-document query materialization", async () => {
     const target = iframe();
     const page = target.contentDocument!;

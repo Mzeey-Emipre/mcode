@@ -283,7 +283,7 @@ function collectBoundedSnapshot(document: Document): BoundedSnapshotData {
         const accessibleName = element.getAttribute("aria-label")?.slice(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT) || boundedElementText(element, WEB_SNAPSHOT_MAX_ELEMENT_TEXT, budget);
         if (typeof accessibleName !== "string" && accessibleName.budgetExhausted) scanLimitReached = true;
         elements.push({
-          semanticId: `element-${elements.length + 1}`,
+          semanticId: element.id || `element-${elements.length + 1}`,
           role: element.getAttribute("role")?.slice(0, 128) || element.tagName.toLowerCase(),
           accessibleName: typeof accessibleName === "string" ? accessibleName : accessibleName.text,
           ...(("value" in element && typeof (element as HTMLInputElement).value === "string" &&
