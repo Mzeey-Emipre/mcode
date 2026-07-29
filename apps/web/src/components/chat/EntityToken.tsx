@@ -103,13 +103,12 @@ export function EntityToken({
   kind,
   label,
   filePath,
-  tone = "assistant",
+  tone: _tone = "assistant",
   invocation = false,
   className,
   ...props
 }: EntityTokenProps) {
   const isCommandInvocation = kind === "command" || invocation;
-  const isCapabilityReference = isCommandInvocation || kind === "plugin";
   const displayLabel = isCommandInvocation
     ? label.replace(/^\/+/, "")
     : kind === "plugin"
@@ -121,12 +120,7 @@ export function EntityToken({
       data-entity-token={kind}
       className={cn(
         "mx-px inline-flex max-w-full items-center gap-1 align-[-0.2em] font-sans text-[length:inherit] font-medium leading-none",
-        isCapabilityReference
-          ? "text-primary"
-          : tone === "user"
-            ? "h-5 rounded-md bg-background/45 px-1.5 text-accent-foreground ring-1 ring-inset ring-foreground/10"
-            : "h-5 rounded-md bg-muted/70 px-1.5 text-foreground ring-1 ring-inset ring-border/70",
-        tone === "composer" && !isCapabilityReference && "bg-muted/80",
+        "text-primary",
         className,
       )}
       {...props}
@@ -135,12 +129,7 @@ export function EntityToken({
         kind={kind}
         filePath={filePath}
         commandName={isCommandInvocation ? displayLabel : undefined}
-        className={cn(
-          "flex size-3.5 items-center justify-center text-muted-foreground",
-          isCapabilityReference && "text-current",
-          tone === "user" && !isCapabilityReference && "text-accent-foreground/60",
-          kind === "mcode" && tone !== "user" && "text-primary/80",
-        )}
+        className="flex size-3.5 items-center justify-center text-current"
       />
       <span className="min-w-0 truncate">{displayLabel}</span>
     </span>
