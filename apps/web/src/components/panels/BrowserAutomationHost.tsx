@@ -31,6 +31,7 @@ import { PreviewPanel, WEB_RUNTIME_PREVIEW_TAB_ID } from "./PreviewPanel";
 import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
 import { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
 import { executeWebBrowserDispatch } from "./browserAutomationWebExecutor";
+import { captureVisibleWebLocation, sanitizeWebLocation } from "./web-browser-automation/capture";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
@@ -81,13 +82,38 @@ async function afterBrowserLayout(): Promise<void> {
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+function mountedWebIframe(dispatch: BrowserAutomationHostDispatch): HTMLIFrameElement | null {
+  for (const iframe of document.querySelectorAll<HTMLIFrameElement>("iframe")) {
+    if (iframe.dataset.threadId === dispatch.target.threadId && iframe.dataset.tabId === dispatch.target.tabId) return iframe;
+  }
+  return null;
+}
+
 async function executeBrowserDispatch(
   bridge: PreviewAutomationBridge | undefined,
   recorder: BrowserAutomationRecorder,
   dispatch: BrowserAutomationHostDispatch,
   signal: AbortSignal,
 ): Promise<BrowserAutomationResponse> {
-  if (!bridge) return executeWebBrowserDispatch(dispatch, signal);
+  if (!bridge) {
+    const response = await executeWebBrowserDispatch(dispatch, signal);
+    if (dispatch.request.operation !== "status" || !response.ok || response.result.operation !== "status") return response;
+    const iframe = mountedWebIframe(dispatch);
+    if (iframe) {
+      try {
+        const frameUrl = iframe.src ? new URL(iframe.src, window.location.href) : null;
+        if (frameUrl && frameUrl.origin !== window.location.origin) {
+          return failureResponse(dispatch.request, "CROSS_ORIGIN", "Visible preview is cross-origin");
+        }
+      } catch {
+        return failureResponse(dispatch.request, "CROSS_ORIGIN", "Visible preview is cross-origin");
+      }
+      const location = captureVisibleWebLocation(iframe);
+      if (!location.ok) return failureResponse(dispatch.request, location.code, "Visible preview is cross-origin");
+      return { ...response, result: { ...response.result, url: location.value } };
+    }
+    return { ...response, result: { ...response.result, url: sanitizeWebLocation(response.result.url) } };
+  }
   const rendererOwned = dispatch.request.operation === "resize" ||
     dispatch.request.operation === "recordingStart" ||
     dispatch.request.operation === "recordingStop";
