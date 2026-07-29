@@ -24,6 +24,15 @@ function previewText(s: string, max = 72): string {
   return `${t.slice(0, max)}…`;
 }
 
+function previewDiagnostic(s: string): string {
+  const redacted = s
+    .replace(/\bBearer\s+[^\s,;}]+/gi, "Bearer [redacted]")
+    .replace(/\b(token|api[_-]?key|secret|password|authorization)\s*[:=]\s*["']?[^\s,;}"']+/gi, "$1=[redacted]")
+    .replace(/\beyJ[A-Za-z0-9_-]{20,}\b/g, "[redacted]")
+    .replace(/\b[A-Fa-f0-9]{32,}\b/g, "[redacted]");
+  return previewText(redacted, 96);
+}
+
 /** Pulls correlation ids from notification params when present (Codex app-server payloads). */
 function traceCorrelationIds(
   params: Record<string, unknown> | undefined,
@@ -106,6 +115,17 @@ export function summarizeCodexNotificationParams(
       ...ids,
       turnId: typeof turn?.id === "string" ? turn.id : undefined,
       status: typeof turn?.status === "string" ? turn.status : undefined,
+    };
+  }
+
+  if (method === "mcpServer/startupStatus/updated") {
+    return {
+      ...ids,
+      name: typeof params.name === "string" ? params.name : undefined,
+      status: typeof params.status === "string" ? params.status : undefined,
+      errorPreview: typeof params.error === "string" ? previewDiagnostic(params.error) : undefined,
+      failureReasonPreview:
+        typeof params.failureReason === "string" ? previewDiagnostic(params.failureReason) : undefined,
     };
   }
 
