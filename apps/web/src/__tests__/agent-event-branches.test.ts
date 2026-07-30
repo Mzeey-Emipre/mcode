@@ -95,6 +95,51 @@ describe("handleAgentEvent branches", () => {
     expect(calls[0].isComplete).toBe(false);
   });
 
+  it("background textDelta keeps streaming state without growing narrative state", async () => {
+    const backgroundThreadId = "thread-2";
+    const backgroundToolCall = {
+      id: "background-tool",
+      toolName: "Read",
+      toolInput: { path: "/tmp/background" },
+      output: null,
+      isError: false,
+      isComplete: false,
+    };
+    const backgroundThought = { text: "existing thought", startedAt: 1, endedAt: 2 };
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-1", { ...createEmptyThreadRecord() }],
+        [backgroundThreadId, {
+          ...createEmptyThreadRecord(),
+          streaming: "",
+          thoughtSegments: [backgroundThought],
+          toolCalls: [backgroundToolCall],
+        }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "background text",
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: backgroundToolCall.id,
+      elapsedSeconds: 1,
+    } as AgentEvent);
+    await Promise.resolve();
+    vi.runAllTimers();
+
+    const record = readThreadField(backgroundThreadId, (thread) => thread);
+    expect(record.streaming).toBe("background text");
+    expect(record.thoughtSegments).toEqual([backgroundThought]);
+    expect(record.toolCalls).toEqual([backgroundToolCall]);
+  });
+
   it("session.toolUse ignores duplicate toolCallId (defense in depth)", () => {
     useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "dup", toolName: "Read", toolInput: { path: "/a" } } as AgentEvent);
     useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "dup", toolName: "Read", toolInput: { path: "/b" } } as AgentEvent);

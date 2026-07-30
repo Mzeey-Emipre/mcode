@@ -733,7 +733,12 @@ export function extractPendingPlanQuestions(
 
 /** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
 /** One coalesced `session.textDelta` span for rAF flushing; preserves missing `isFinalResponse` for legacy fallback behavior. */
-type PendingTextChunk = { delta: string; isFinalResponse?: boolean };
+type PendingTextChunk = {
+  delta: string;
+  isFinalResponse?: boolean;
+  /** Background deltas retain the streaming buffer but defer narrative projection until activation. */
+  deferNarrative?: boolean;
+};
 
 export const useThreadStore = create<ThreadState>((set, get) => {
   let textDeltaFlushRaf: number | null = null;
@@ -766,7 +771,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (pendingTextDeltaByThread.size === 0) return;
     const batch = new Map<string, PendingTextChunk[]>();
     for (const [tid, chunks] of pendingTextDeltaByThread) {
-      batch.set(tid, chunks.map((c) => ({ delta: c.delta, isFinalResponse: c.isFinalResponse })));
+      batch.set(tid, chunks.map((c) => ({
+        delta: c.delta,
+        isFinalResponse: c.isFinalResponse,
+        deferNarrative: c.deferNarrative,
+      })));
     }
     pendingTextDeltaByThread.clear();
     set((state) => {
@@ -784,7 +793,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streaming = combined;
           streamingPreview = combined.length > 200 ? combined.slice(-200) : combined;
 
-          if (chunk.isFinalResponse) {
+          if (chunk.deferNarrative || chunk.isFinalResponse) {
             continue;
           }
 
@@ -1767,6 +1776,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    */
   handleAgentEvent: (event) => {
     const { threadId } = event;
+    const currentThreadId = get().currentThreadId;
+    // A null currentThreadId is the pre-hydration state used while the store
+    // is receiving events for its only known conversation. Preserve the
+    // existing projection until a different conversation is selected.
+    const isActiveThread = currentThreadId == null || currentThreadId === threadId;
 
     if (event.type !== "textDelta") {
       flushPendingTextDeltas();
@@ -2317,17 +2331,26 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const rawIsFinalResponse = event.isFinalResponse;
       const isFinalResponse =
         typeof rawIsFinalResponse === "boolean" ? rawIsFinalResponse : undefined;
+      const deferNarrative = !isActiveThread;
       const hadPending = pendingTextDeltaByThread.has(threadId);
       const existing = pendingTextDeltaByThread.get(threadId) ?? [];
       const next = [...existing];
       const tail = next[next.length - 1];
-      if (tail && tail.isFinalResponse === isFinalResponse) {
-        next[next.length - 1] = { delta: tail.delta + delta, isFinalResponse };
+      if (
+        tail
+        && tail.isFinalResponse === isFinalResponse
+        && tail.deferNarrative === deferNarrative
+      ) {
+        next[next.length - 1] = {
+          delta: tail.delta + delta,
+          isFinalResponse,
+          deferNarrative,
+        };
       } else {
-        next.push({ delta, isFinalResponse });
+        next.push({ delta, isFinalResponse, deferNarrative });
       }
       pendingTextDeltaByThread.set(threadId, next);
-      if (!hadPending) {
+      if (!deferNarrative && (!hadPending || existing.some((chunk) => chunk.deferNarrative))) {
         markPriorToolCallsComplete();
       }
       scheduleTextDeltaFlush();
@@ -2350,6 +2373,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Flush any pending text delta chunks first so the open thought we
       // operate on reflects every delta that arrived for this message.
       flushPendingTextDeltas();
+      if (!isActiveThread) return;
       set((state) => {
         const rec = getThreadRecord(state.records, threadId);
         const segments = rec.thoughtSegments;
@@ -2370,6 +2394,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "toolProgress") {
+      if (!isActiveThread) return;
       const toolCallId = (event.toolCallId as string) || "";
       const elapsedSeconds = (event.elapsedSeconds as number) ?? 0;
       if (!toolCallId) return;
@@ -2413,6 +2438,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "hookProgress") {
+      if (!isActiveThread) return;
       const hookName = (event.hookName as string) || "";
       const output = (event.output as string) || "";
       if (!hookName || !output) return;
