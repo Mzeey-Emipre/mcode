@@ -614,6 +614,9 @@ export class CursorProvider
           if (browserStage) this.releaseBrowserLeases(browserStage);
         } else if (browserStage) {
           browserGrant = this.browserAutomationLease.issue(browserStage);
+          if (!browserGrant) {
+            throw new Error("Cursor browser automation lease issuance failed");
+          }
         }
       } else {
         this.releaseBrowserLeases(browserStage, refreshedGrant);

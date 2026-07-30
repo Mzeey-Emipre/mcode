@@ -193,6 +193,41 @@ describe("Cursor browser MCP configuration", () => {
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
   });
 
+  it("fails closed when stale replacement lease stage expires", async () => {
+    let now = 0;
+    const lease = new BrowserAutomationSessionLease({ now: () => now });
+    lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-a" });
+    const previousGrant = lease.issue(browserScope())!;
+    const staged = lease.stage(browserScope());
+    now = staged.expiresAt;
+    const child = { pid: 106, kill: vi.fn() };
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.id = "cursor";
+    provider.settingsService = { get: vi.fn(() => ({})) };
+    provider.browserAutomationLease = lease;
+    provider.pendingPermissions = new Map();
+    provider.pendingBrowserLeases = new Map([["mcode-a", staged]]);
+    provider.pendingBrowserContext = new Map();
+    provider.pendingBrowserGrants = new Map();
+    provider.pendingBrowserGrantContext = new Map();
+    provider.liveSessionIds = new Set();
+    provider.spawnChild = vi.fn().mockResolvedValue({ child, browserHttpMcpSupported: true });
+    provider.openLogicalSession = vi.fn();
+
+    await expect(provider.spawn({
+      sessionId: "mcode-a",
+      threadId: "thread-a",
+      cwd: ".",
+      permissionMode: "default",
+      env: {},
+    })).rejects.toThrow("Cursor browser automation lease issuance failed");
+
+    expect(provider.openLogicalSession).not.toHaveBeenCalled();
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(lease.credentials.authenticate(previousGrant.token)).toBeNull();
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+  });
+
   it("kills child and releases issued lease when logical session setup fails", async () => {
     const lease = configuredLease();
     const staged = lease.stage(browserScope());
