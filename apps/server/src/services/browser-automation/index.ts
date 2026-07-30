@@ -33,3 +33,16 @@ export {
   type BrowserAutomationCredentialRevocation,
   type BrowserAutomationCredentialRevokedListener,
 } from "./access-service.js";
+
+/** Provider-neutral browser session lease exports. */
+export {
+  BrowserAutomationSessionLease,
+  type BrowserAutomationSessionLeaseConfiguration,
+  type BrowserAutomationSessionLeaseGrant,
+  type BrowserAutomationSessionLeaseOptions,
+  type BrowserAutomationSessionLeaseRefreshResult,
+  type BrowserAutomationSessionLeaseReleaseResult,
+  type BrowserAutomationSessionLeaseRequest,
+  type BrowserAutomationSessionLeaseScope,
+  type BrowserAutomationSessionLeaseStage,
+} from "./browser-automation-session-lease.js";
