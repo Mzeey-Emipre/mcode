@@ -26,9 +26,10 @@ export class AppErrorBoundary extends Component<
       info.componentStack,
     );
     try {
-      const report = window.desktopBridge?.reportRendererCrash({
+      const reportRendererCrash = window.desktopBridge?.reportRendererCrash;
+      const report = reportRendererCrash?.({
         errorName,
-        componentStack: info.componentStack,
+        componentStack: info.componentStack ?? "",
       });
       void report?.catch(() => undefined);
     } catch {

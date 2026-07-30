@@ -22,7 +22,14 @@ describe("AppErrorBoundary", () => {
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
     const reportRendererCrash = vi.fn().mockResolvedValue(undefined);
     const previousBridge = window.desktopBridge;
-    window.desktopBridge = { reportRendererCrash } as typeof window.desktopBridge;
+    const testBridge = {
+      reportRendererCrash,
+    } satisfies Pick<NonNullable<typeof window.desktopBridge>, "reportRendererCrash">;
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: testBridge,
+      writable: true,
+    });
 
     render(
       <AppErrorBoundary>
@@ -44,7 +51,11 @@ describe("AppErrorBoundary", () => {
       componentStack: expect.any(String),
     });
 
-    window.desktopBridge = previousBridge;
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: previousBridge,
+      writable: true,
+    });
     diagnostic.mockRestore();
   });
 
