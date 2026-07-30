@@ -17,6 +17,7 @@ import { SettingsService } from "../../services/settings-service.js";
 import { JobObject } from "../../services/job-object.js";
 import { EnvService } from "../../services/env-service.js";
 import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
+import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import { AttachmentService } from "../../services/attachment-service.js";
 import {
@@ -1136,6 +1137,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       throw error;
     }
     const browserGrant = browserAccess ? this.browserAutomationLease.issue(browserAccess.stage) : null;
+    const mcodeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
+      sourceThreadId: threadId,
+      threadControlGranted: Boolean(internalMcp),
+      browserAutomationGranted: Boolean(browserGrant),
+    }));
     const spawnEnv = { ...args.env };
     const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
     if (browserGrant) spawnEnv[browserTokenEnvName] = browserGrant.token;
@@ -1149,6 +1155,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       sandbox,
       approvalPolicy,
       resumeThreadId: attemptResume ? resumeFrom : undefined,
+      developerInstructions: mcodeInstructions,
       approvalHandler: supervised
         ? (req) => this.handleApprovalRequest(sessionId, threadId, req)
         : undefined,

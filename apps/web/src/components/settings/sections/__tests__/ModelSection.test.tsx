@@ -18,7 +18,7 @@ vi.mock("@/stores/settingsStore", () => {
     {
       getState: vi.fn().mockReturnValue({
         settings: {
-          model: {
+        model: {
             defaults: { provider: "claude", id: "claude-opus-4-7", reasoning: "high", fallbackId: "" },
             utility: { provider: "", id: "" },
           },
@@ -192,4 +192,5 @@ describe("ModelSection reasoning options", () => {
 
     expect(screen.getByText("Reasoning effort")).toBeInTheDocument();
   });
+
 });

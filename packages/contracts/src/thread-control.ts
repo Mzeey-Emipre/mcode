@@ -21,6 +21,10 @@ export const THREAD_CREATE_PROMPT_MAX_LENGTH = 100_000;
 export const THREAD_SEND_MESSAGE_MAX_LENGTH = THREAD_CREATE_PROMPT_MAX_LENGTH;
 /** Maximum characters accepted for provider and model identifiers. */
 export const THREAD_CREATE_EXECUTION_ID_MAX_LENGTH = 128;
+/** Maximum provider targets returned by one thread_target_list request. */
+export const THREAD_TARGET_PROVIDER_MAX = 20;
+/** Maximum models returned for one provider target. */
+export const THREAD_TARGET_MODEL_MAX = 100;
 /** Maximum characters accepted for a Git base ref or branch name. */
 export const THREAD_CREATE_GIT_REF_MAX_LENGTH = 250;
 /** Maximum workspaces accepted by one internal thread search filter. */
@@ -125,6 +129,37 @@ export type WorktreeListResult = z.infer<ReturnType<typeof WorktreeListResultSch
 
 const executionId = z.string().trim().min(1).max(THREAD_CREATE_EXECUTION_ID_MAX_LENGTH);
 const gitRef = z.string().trim().min(1).max(THREAD_CREATE_GIT_REF_MAX_LENGTH);
+
+/** Input accepted by the read-only thread_target_list tool. */
+export const ThreadTargetListInputSchema = lazySchema(() => z.object({}).strict());
+/** Read-only thread target discovery input. */
+export type ThreadTargetListInput = z.infer<ReturnType<typeof ThreadTargetListInputSchema>>;
+
+const threadTargetModel = z.object({
+  id: executionId,
+  name: z.string().trim().min(1).max(THREAD_CREATE_TITLE_MAX_LENGTH),
+}).strict();
+
+/** Provider and model target usable for delegated thread creation. */
+export const ThreadTargetProviderSchema = lazySchema(() => z.object({
+  providerId: executionId,
+  name: z.string().trim().min(1).max(THREAD_CREATE_TITLE_MAX_LENGTH),
+  models: z.array(threadTargetModel).min(1).max(THREAD_TARGET_MODEL_MAX),
+  defaultModelId: executionId.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.defaultModelId && !value.models.some((model) => model.id === value.defaultModelId)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["defaultModelId"], message: "defaultModelId must name a listed model" });
+  }
+}));
+/** Provider target returned by thread_target_list. */
+export type ThreadTargetProvider = z.infer<ReturnType<typeof ThreadTargetProviderSchema>>;
+
+/** Result emitted by the read-only thread_target_list tool. */
+export const ThreadTargetListResultSchema = lazySchema(() => z.object({
+  providers: z.array(ThreadTargetProviderSchema()).max(THREAD_TARGET_PROVIDER_MAX),
+}).strict());
+/** Read-only delegated target discovery result. */
+export type ThreadTargetListResult = z.infer<ReturnType<typeof ThreadTargetListResultSchema>>;
 
 /** Placement requested for one delegated thread. */
 export const ThreadPlacementSchema = lazySchema(() =>

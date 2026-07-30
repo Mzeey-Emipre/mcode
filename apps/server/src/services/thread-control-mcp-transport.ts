@@ -15,6 +15,8 @@ import {
   WorkspaceSearchResultSchema,
   WorktreeListInputSchema,
   WorktreeListResultSchema,
+  ThreadTargetListInputSchema,
+  ThreadTargetListResultSchema,
 } from "@mcode/contracts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { InternalThreadControlMcpAuthority } from "./thread-control-mcp-authority.js";
@@ -78,6 +80,10 @@ export function createInternalThreadControlMcpSession(
           await options.service.threadCreateBatch(authority, input),
         );
       }
+      case "thread_target_list": {
+        ThreadTargetListInputSchema().parse(request.arguments);
+        return ThreadTargetListResultSchema().parse(await options.service.threadTargetList(authority));
+      }
       case "thread_search": {
         const input = ThreadSearchInputSchema().parse(request.arguments);
         return ThreadSearchResultSchema().parse(options.service.threadSearch(authority, input));
@@ -127,13 +133,23 @@ export function createInternalThreadControlMcpSession(
         arguments: arguments_,
       })));
       server.registerTool("thread_create_batch", {
-        description: "Create and start one to twenty normal Mcode threads in registered Projects.",
+        description: "Create and start one to twenty normal Mcode threads in registered Projects. providerId/modelId select the delegated target; discover named targets with thread_target_list first.",
         inputSchema: ThreadCreateBatchInputSchema(),
         outputSchema: ThreadCreateBatchResultSchema(),
       }, async (arguments_, extra) => createToolResult(await dispatch({
         bearerCredential,
         requestId: extra.requestId,
         toolName: "thread_create_batch",
+        arguments: arguments_,
+      })));
+      server.registerTool("thread_target_list", {
+        description: "List provider and model targets currently usable for delegated threads.",
+        inputSchema: ThreadTargetListInputSchema(),
+        outputSchema: ThreadTargetListResultSchema(),
+      }, async (arguments_, extra) => createToolResult(await dispatch({
+        bearerCredential,
+        requestId: extra.requestId,
+        toolName: "thread_target_list",
         arguments: arguments_,
       })));
       server.registerTool("thread_search", {

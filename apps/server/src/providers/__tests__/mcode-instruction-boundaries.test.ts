@@ -1,0 +1,59 @@
+import "reflect-metadata";
+import { describe, expect, it } from "vitest";
+import {
+  addCodexDeveloperInstructions,
+} from "../codex/codex-app-server.js";
+import { mergeClaudeMcpServers } from "../claude/claude-provider.js";
+import {
+  appendCursorMcodeInstructions,
+  carryCursorMcodeSentState,
+} from "../cursor/cursor-provider.js";
+import { composeCopilotSystemMessage } from "../copilot/copilot-provider.js";
+
+describe("provider-native Mcode instruction boundaries", () => {
+  it("adds Codex instructions to both start and resume payload shapes", () => {
+    const instructions = "mcode runtime";
+    expect(addCodexDeveloperInstructions({ cwd: "/repo" }, instructions)).toEqual({
+      cwd: "/repo",
+      developerInstructions: instructions,
+    });
+    expect(addCodexDeveloperInstructions({ threadId: "thread-1" }, instructions)).toEqual({
+      threadId: "thread-1",
+      developerInstructions: instructions,
+    });
+  });
+
+  it("keeps Claude internal and Browser MCP grants in one effective map", () => {
+    const internal = { type: "sdk", instance: {} };
+    const merged = mergeClaudeMcpServers(
+      { mcode_internal_thread_control: internal },
+      { mcpUrl: "http://127.0.0.1:1/mcp", token: "token" },
+    );
+    expect(merged.mcode_internal_thread_control).toBe(internal);
+    expect(merged["mcode-browser"]).toMatchObject({ type: "http", url: "http://127.0.0.1:1/mcp" });
+    expect(mergeClaudeMcpServers({}, null)).toEqual({});
+  });
+
+  it("delivers Cursor guidance once across accepted and unaccepted attempts", () => {
+    const runtime = "mcode runtime";
+    const first = appendCursorMcodeInstructions("user rules", runtime, false);
+    expect(first).toEqual({ instructionMarkdown: "user rules\n\nmcode runtime", included: true });
+
+    const unacceptedRetry = appendCursorMcodeInstructions(first.instructionMarkdown, runtime, false);
+    expect(unacceptedRetry).toEqual(first);
+
+    const acceptedLater = appendCursorMcodeInstructions(first.instructionMarkdown, runtime, true);
+    expect(acceptedLater).toEqual({ instructionMarkdown: first.instructionMarkdown, included: false });
+    expect(carryCursorMcodeSentState(true, true)).toBe(true);
+    expect(carryCursorMcodeSentState(false, true)).toBe(false);
+  });
+
+  it("preserves Copilot user instructions while appending runtime guidance", () => {
+    expect(composeCopilotSystemMessage("user rules", "mcode runtime")).toEqual({
+      content: "user rules\n\nmcode runtime",
+    });
+    expect(composeCopilotSystemMessage(undefined, "mcode runtime")).toEqual({
+      content: "mcode runtime",
+    });
+  });
+});

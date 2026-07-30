@@ -66,6 +66,7 @@ import {
   ProviderAvailabilityService,
   defaultResolver,
 } from "./services/provider-availability-service";
+import { DelegationTargetResolver } from "./services/delegation-target-resolver";
 import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
 import { JobObject } from "./services/job-object.js";
@@ -512,6 +513,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     ModelCacheService,
     { useClass: ModelCacheService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    DelegationTargetResolver,
+    { useClass: DelegationTargetResolver },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

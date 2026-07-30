@@ -31,6 +31,7 @@ import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
+import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
@@ -79,6 +80,18 @@ export function buildCopilotInternalMcpServers(
       headers: connection.headers,
       tools: ["*"],
     },
+  };
+}
+
+/** Preserves existing Copilot user instructions while appending runtime guidance. */
+export function composeCopilotSystemMessage(
+  userInstructions: string | undefined,
+  runtimeInstructions: string,
+): { content: string } {
+  return {
+    content: [userInstructions, runtimeInstructions]
+      .filter((value): value is string => Boolean(value && value.trim()))
+      .join("\n\n"),
   };
 }
 
@@ -982,6 +995,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     const skillDirs = userSkillDirectories();
     const internalMcp = await this.threadControlMcp?.createHttpConnection(sessionId);
     if (!internalMcp) throw new Error("Copilot internal thread-control MCP connection unavailable");
+    const runtimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
+      sourceThreadId: threadId,
+      threadControlGranted: true,
+      browserAutomationGranted: Boolean(browserGrant),
+    }));
     const sessionBase = {
       onPermissionRequest: approveAll,
       model: staged?.model || undefined,
@@ -989,7 +1007,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       enableConfigDiscovery: true,
       ...(customAgents.length > 0 && { customAgents }),
       ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
-      ...(userInstructions && { systemMessage: { content: userInstructions } }),
+      systemMessage: composeCopilotSystemMessage(userInstructions, runtimeInstructions),
       mcpServers: {
         ...buildCopilotInternalMcpServers(internalMcp),
         ...(browserGrant ? {

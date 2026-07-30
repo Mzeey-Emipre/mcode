@@ -186,6 +186,7 @@ export function ModelSection() {
     void fetchModels(utilityEffectiveId, { force: true });
   }, [utilityProvider, utilityEffectiveId, utilityDynamicCliPath, fetchModels]);
 
+
   const mergedCatalogModels = useMemo(
     () => pickProviderModelsForSettings(activeProvider?.models ?? [], dynamicModels),
     [activeProvider, dynamicModels],
@@ -300,6 +301,7 @@ export function ModelSection() {
     ],
     [modelsForUtilityPicker],
   );
+
 
   // Gate on provider so Copilot models that share IDs with Codex models
   // don't accidentally take the Codex reasoning branch.

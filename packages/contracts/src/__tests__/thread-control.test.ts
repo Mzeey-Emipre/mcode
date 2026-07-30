@@ -19,9 +19,26 @@ import {
   WorkspaceSearchInputSchema,
   WorktreeListInputSchema,
   WorktreeListResultSchema,
+  ThreadTargetListInputSchema,
+  ThreadTargetListResultSchema,
 } from "../thread-control.js";
 
 describe("thread control discovery schemas", () => {
+  it("accepts secret-free provider target discovery and validates defaults", () => {
+    expect(ThreadTargetListInputSchema().parse({})).toEqual({});
+    const result = ThreadTargetListResultSchema().parse({
+      providers: [{
+        providerId: "codex",
+        name: "Codex",
+        models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+        defaultModelId: "gpt-5.6-sol",
+      }],
+    });
+    expect(result.providers[0].models[0]).toEqual({ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" });
+    expect(ThreadTargetListResultSchema().safeParse({
+      providers: [{ providerId: "codex", name: "Codex", models: [{ id: "gpt", name: "GPT" }], defaultModelId: "missing" }],
+    }).success).toBe(false);
+  });
   it("bounds and defaults workspace search without accepting authority fields", () => {
     expect(WorkspaceSearchInputSchema().parse({})).toEqual({ limit: WORKSPACE_SEARCH_LIMIT_DEFAULT });
     expect(WorkspaceSearchInputSchema().safeParse({ limit: 51 }).success).toBe(false);

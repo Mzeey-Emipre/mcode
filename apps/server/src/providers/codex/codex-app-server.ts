@@ -100,6 +100,16 @@ export interface CodexAppServerOptions {
   configOverrides?: readonly string[];
   /** Completes the handshake after initialization without creating a thread. */
   catalogOnly?: boolean;
+  /** Capability-derived Mcode runtime guidance appended to native instructions. */
+  developerInstructions?: string;
+}
+
+/** Adds optional developer instructions to a native Codex thread payload. */
+export function addCodexDeveloperInstructions<T extends ThreadStartParams | ThreadResumeParams>(
+  params: T,
+  developerInstructions?: string,
+): T {
+  return developerInstructions ? { ...params, developerInstructions } : params;
 }
 
 /**
@@ -1136,7 +1146,7 @@ export class CodexAppServer extends EventEmitter {
 
   /** Runs the JSON-RPC handshake sequence in order. */
   private async runHandshake(): Promise<void> {
-    const { workingDirectory, model, sandbox, approvalPolicy, resumeThreadId } =
+    const { workingDirectory, model, sandbox, approvalPolicy, resumeThreadId, developerInstructions } =
       this.options;
 
     // Step 1: initialize (cold-start tolerant: raised budget + one retry)
@@ -1168,13 +1178,14 @@ export class CodexAppServer extends EventEmitter {
         // resumed thread picks up the current user settings.
         const resumeResult = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
           "thread/resume",
-          {
+          addCodexDeveloperInstructions({
             threadId: resumeThreadId,
             ...(model && { model }),
             ...(sandbox && { sandbox }),
             ...(approvalPolicy && { approvalPolicy }),
             ...(workingDirectory && { cwd: workingDirectory }),
-          },
+            ...(developerInstructions && { developerInstructions }),
+          }, developerInstructions),
           THREAD_HANDSHAKE_TIMEOUT_MS,
         );
         // Accept both flat `threadId` and nested `thread.id` shapes,
@@ -1202,6 +1213,7 @@ export class CodexAppServer extends EventEmitter {
         ...(model && { model }),
         ...(sandbox && { sandbox }),
         ...(approvalPolicy && { approvalPolicy }),
+        ...(developerInstructions && { developerInstructions }),
       };
 
       // Some codex app-server versions carry the threadId in the `thread/started`
@@ -1232,7 +1244,7 @@ export class CodexAppServer extends EventEmitter {
       try {
         startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
           "thread/start",
-          startParams,
+          addCodexDeveloperInstructions(startParams, developerInstructions),
           THREAD_HANDSHAKE_TIMEOUT_MS,
         );
         logger.debug("Codex thread/start response", { result: startResult });
