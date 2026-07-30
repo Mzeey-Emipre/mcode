@@ -528,7 +528,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions }
   >();
   /** Browser scope staged only until a fresh main app-server process starts. */
-  private pendingBrowserAccess = new Map<string, BrowserAutomationSessionLeaseStage>();
+  private pendingBrowserAccess = new Map<string, {
+    stage: BrowserAutomationSessionLeaseStage;
+    workspaceId: string;
+    permissionCapability: "observe" | "interact" | "privileged";
+  }>();
 
   constructor(
     @inject(SettingsService) private readonly settingsService: SettingsService,
@@ -995,7 +999,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       permissionCapability: browserPermissionCapability,
       })
       : undefined;
-    if (browserStage) this.pendingBrowserAccess.set(sessionId, browserStage);
+    if (browserStage) {
+      this.pendingBrowserAccess.set(sessionId, {
+        stage: browserStage,
+        workspaceId: req.workspaceId,
+        permissionCapability: browserPermissionCapability,
+      });
+    }
 
     let state: CodexSessionState;
     try {
@@ -1011,7 +1021,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       this.pendingSpawnTurns.delete(sessionId);
       const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
       this.pendingBrowserAccess.delete(sessionId);
-      if (stagedBrowser) this.browserAutomationLease.release(stagedBrowser.leaseId);
+      if (stagedBrowser) this.browserAutomationLease.release(stagedBrowser.stage.leaseId);
       const errorMessage = e instanceof Error ? e.message : String(e);
       logger.error("CodexAppServer start failed", { sessionId, error: errorMessage });
       this.emitTurnFailure(threadId, errorMessage);
@@ -1020,7 +1030,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     this.runtime.recordUsage(sessionId);
     const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
     this.pendingBrowserAccess.delete(sessionId);
-    if (state === existing && stagedBrowser) this.browserAutomationLease.release(stagedBrowser.leaseId);
+    if (state === existing && stagedBrowser) this.browserAutomationLease.release(stagedBrowser.stage.leaseId);
 
     // A stop requested before the session finished spawning: tear it down now.
     if (this.pendingStops.delete(sessionId)) {
@@ -1063,8 +1073,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // still runs locally), so this guard is defensive and keeps the wiring
     // obvious in logs.
     const supervised = approvalPolicy === "on-request";
-    const browserScope = this.pendingBrowserAccess.get(sessionId);
-    const browserGrant = browserScope ? this.browserAutomationLease.issue(browserScope) : null;
+    const browserAccess = this.pendingBrowserAccess.get(sessionId);
+    const browserGrant = browserAccess ? this.browserAutomationLease.issue(browserAccess.stage) : null;
     const spawnEnv = { ...args.env };
     const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
     if (browserGrant) spawnEnv[browserTokenEnvName] = browserGrant.token;
@@ -1208,8 +1218,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       sandboxMode: sandbox,
       runTurnSeq: 0,
       pendingTurnId: null,
-      workspaceId: browserScope?.workspaceId ?? "unknown-workspace",
-      browserPermissionCapability: browserScope?.permissionCapability ?? "interact",
+      workspaceId: browserAccess?.workspaceId ?? "unknown-workspace",
+      browserPermissionCapability: browserAccess?.permissionCapability ?? "interact",
       ...(browserGrant && {
         browserCredential: {
           credentialId: browserGrant.credentialId,
@@ -1822,7 +1832,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       this.pendingSpawnTurns.delete(sessionId);
       const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
       this.pendingBrowserAccess.delete(sessionId);
-      if (stagedBrowser) this.browserAutomationLease.release(stagedBrowser.leaseId);
+      if (stagedBrowser) this.browserAutomationLease.release(stagedBrowser.stage.leaseId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
     }
   }
