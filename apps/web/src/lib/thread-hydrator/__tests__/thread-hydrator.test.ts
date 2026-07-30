@@ -768,7 +768,7 @@ describe("ThreadHydrator", () => {
     expect(getTestActiveMessages()).toEqual([msgA]);
     expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
     expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
-    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_A, BACKGROUND_PREFETCH_LIMIT);
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
     expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
     expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
   });

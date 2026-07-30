@@ -338,12 +338,20 @@ export function ChatView() {
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const hydratedThreadId = useThreadStore((s) => s.currentThreadId);
   const messageCount = useActiveThreadRecord((r) => r.messages.length);
+  const hasResidentContent = useActiveThreadRecord((r) =>
+    r.messages.length > 0
+    || r.streaming.length > 0
+    || r.streamingPreview.length > 0
+    || r.toolCalls.length > 0
+    || r.thoughtSegments.length > 0
+    || r.hooks.length > 0,
+  );
   const historyLoading = useActiveThreadRecord((r) => r.loading);
   const setPendingPrefill = useComposerDraftStore((s) => s.setPendingPrefill);
 
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
   const targetPaintable = hydratedThreadId === activeThreadId
-    && (messageCount > 0 || isAgentRunning);
+    && (messageCount > 0 || (isAgentRunning && hasResidentContent));
   const previousActiveThreadIdRef = useRef<string | null>(activeThreadId);
   const [heldOutgoingThreadId, setHeldOutgoingThreadId] = useState<string | null>(null);
   const previousThreadId = previousActiveThreadIdRef.current;

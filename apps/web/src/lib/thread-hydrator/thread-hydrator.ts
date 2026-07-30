@@ -477,6 +477,17 @@ export class ThreadHydrator {
 
     if (hasResidentContent) {
       this.activateResidentLayer(threadId);
+      if (this.deps.getState().runningThreadIds.has(threadId)) {
+        const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
+        this.synchronizeConversation(threadId);
+        void this.refreshThreadGoal(threadId, expectedEpoch);
+        this.scheduleAuxiliaryHydration(threadId, expectedEpoch, {
+          freshnessTtlMs: HYDRATION_TTL_MS,
+          force: opts?.force ?? true,
+          commitFileChangesToStore: true,
+        });
+        return;
+      }
     }
 
     const hydrate = this.fetchActiveReusingBackground(threadId, opts, hasResidentContent).finally(() => {
@@ -836,10 +847,6 @@ export class ThreadHydrator {
         records: patchThreadRecord(state.records, threadId, {
           loading: true,
           error: null,
-          messages: [],
-          persistedToolCallCounts: {},
-          persistedFilesChanged: {},
-          latestTurnWithChanges: null,
           isLoadingMore: false,
           loadEpoch: current.loadEpoch + 1,
           settings: this.deps.getWorkspaceThreadSettings(threadId),

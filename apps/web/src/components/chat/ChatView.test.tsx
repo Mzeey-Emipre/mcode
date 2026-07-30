@@ -415,6 +415,41 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.getByTestId("message-list")).not.toHaveAttribute("data-display-thread-id");
   });
 
+  it("holds the outgoing transcript for an empty running target", () => {
+    const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2", status: "active" });
+    const outgoingRecord = {
+      ...createEmptyThreadRecord(),
+      messages: [createMockMessage({ id: "thread-1-message", thread_id: thread1.id })],
+    };
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread1.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread1.id,
+      activeRecord: outgoingRecord,
+      records: new Map([[thread1.id, outgoingRecord]]),
+    });
+
+    const { rerender } = render(<ChatView />);
+
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread2.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread2.id,
+      runningThreadIds: new Set([thread2.id]),
+      activeRecord: createEmptyThreadRecord(),
+      records: new Map([[thread1.id, outgoingRecord]]),
+    });
+    act(() => rerender(<ChatView />));
+
+    expect(screen.getByTestId("message-list")).toHaveAttribute("data-display-thread-id", thread1.id);
+    expect(screen.getByTestId("conversation-hold-overlay")).toBeInTheDocument();
+  });
+
   it("drops a stale hold when rapid switching reaches another cold thread", () => {
     const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
     const thread2 = makeThread({ id: "thread-2", title: "Thread 2" });
