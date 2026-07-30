@@ -710,6 +710,26 @@ describe("ServerManager", () => {
     expect(unlinkSync).not.toHaveBeenCalled();
   });
 
+  it("preserves a foreign port-band lock without probing or stopping it", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValue(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), port: 19500 }),
+      );
+    const killSpy = vi.spyOn(process, "kill");
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
   it("refuses to force-kill a live process it does not own", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
@@ -764,6 +784,71 @@ describe("ServerManager", () => {
       });
       killSpy.mockRestore();
       dateSpy.mockRestore();
+    }
+  });
+
+  it("kills the owned POSIX process group and treats ESRCH as success", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    (manager as unknown as { serverProcess: unknown }).serverProcess =
+      refs.mockChildProcess;
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
+      if (pid < 0) {
+        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        throw error;
+      }
+      return true as never;
+    });
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
+      expect(unlinkSync).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("does not unlink a lock replaced while shutdown was in progress", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    const replacement = JSON.stringify({
+      ...JSON.parse(LOCK_FILE_JSON),
+      authToken: "replacement-token",
+    });
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValueOnce(LOCK_FILE_JSON)
+      .mockReturnValueOnce(replacement);
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementationOnce(() => true as never)
+      .mockImplementationOnce(() => {
+        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        throw error;
+      });
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
     }
   });
 

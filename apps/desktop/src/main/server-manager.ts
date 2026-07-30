@@ -218,14 +218,22 @@ function lockFilePath(): string {
 
 /** Terminate a server and all provider subprocesses that it owns. */
 function forceKillServerProcessTree(pid: number): void {
-  if (process.platform === "win32") {
-    execFileSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
-      stdio: "ignore",
-      timeout: 5_000,
-    });
-    return;
+  try {
+    if (process.platform === "win32") {
+      execFileSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
+        stdio: "ignore",
+        timeout: 5_000,
+      });
+      return;
+    }
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    const message =
+      error instanceof Error ? error.message : String(error ?? "");
+    if (code === "ESRCH" || message.includes("ESRCH")) return;
+    throw error;
   }
-  process.kill(pid, "SIGKILL");
 }
 
 /** Lock file schema written by the server on startup. */
@@ -265,6 +273,17 @@ function isProcessAlive(pid: number): boolean {
       error instanceof Error ? error.message : String(error ?? "");
     return code !== "ESRCH" && !message.includes("ESRCH");
   }
+}
+
+function sameServerLockIdentity(left: ServerLock, right: ServerLock): boolean {
+  return (
+    left.port === right.port &&
+    left.authToken === right.authToken &&
+    left.pid === right.pid &&
+    left.startedAt === right.startedAt &&
+    left.version === right.version &&
+    left.ipcPath === right.ipcPath
+  );
 }
 
 /**
@@ -656,9 +675,9 @@ export class ServerManager {
     const lockPath = lockFilePath();
     if (!existsSync(lockPath)) return;
 
-    let lock: ServerLock;
+    let parsedLock: unknown;
     try {
-      lock = JSON.parse(readFileSync(lockPath, "utf-8"));
+      parsedLock = JSON.parse(readFileSync(lockPath, "utf-8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT")
         return;
@@ -667,15 +686,24 @@ export class ServerManager {
       });
     }
 
-    if (!isServerLock(lock)) {
-      throw new Error(`Invalid server lock file ${lockPath}`);
+    // Validate lock port before any probe or process action. Foreign port bands
+    // belong to another desktop mode and must remain untouched.
+    const parsedPort =
+      typeof parsedLock === "object" && parsedLock !== null
+        ? (parsedLock as { port?: unknown }).port
+        : undefined;
+    if (
+      typeof parsedPort === "number" &&
+      Number.isFinite(parsedPort) &&
+      (parsedPort < PORT_MIN || parsedPort >= PORT_MAX)
+    ) {
+      return;
     }
 
-    // Validate lock port is within this mode's range to prevent sending
-    // auth tokens to arbitrary localhost ports from a crafted lock file.
-    if (lock.port < PORT_MIN || lock.port >= PORT_MAX) {
-      throw new Error(`Server lock port ${lock.port} outside allowed range`);
+    if (!isServerLock(parsedLock)) {
+      throw new Error(`Invalid server lock file ${lockPath}`);
     }
+    const lock = parsedLock;
 
     const ownsServerProcess = this.serverProcess?.pid === lock.pid;
 
@@ -713,6 +741,15 @@ export class ServerManager {
           cause: error,
         });
       }
+    }
+
+    try {
+      const currentLock = JSON.parse(readFileSync(lockPath, "utf-8"));
+      if (!isServerLock(currentLock) || !sameServerLockIdentity(lock, currentLock)) {
+        return;
+      }
+    } catch {
+      return;
     }
 
     try {
