@@ -575,37 +575,35 @@ export class CursorProvider
     const { sessionId, threadId, cwd, permissionMode, resumeFrom } = args;
     const pm: "full" | "default" = permissionMode === "full" ? "full" : "default";
     const settings = this.settingsService.get();
-    const state = await this.spawnChild(sessionId, threadId, cwd, pm, settings);
     const browserStage = this.pendingBrowserLeases.get(sessionId);
     const refreshedGrant = this.pendingBrowserGrants.get(sessionId);
     let browserGrant: BrowserAutomationSessionLeaseGrant | null = null;
-    if (state.browserHttpMcpSupported) {
-      if (refreshedGrant) {
-        browserGrant = refreshedGrant;
+    let state: CursorAcpSessionEntry | undefined;
+    try {
+      state = await this.spawnChild(sessionId, threadId, cwd, pm, settings);
+      if (state.browserHttpMcpSupported) {
+        if (refreshedGrant) {
+          browserGrant = refreshedGrant;
+          this.pendingBrowserGrants.delete(sessionId);
+          this.pendingBrowserGrantContext.delete(sessionId);
+          if (browserStage) this.releaseBrowserLeases(browserStage);
+        } else if (browserStage) {
+          browserGrant = this.browserAutomationLease.issue(browserStage);
+        }
+      } else {
+        this.releaseBrowserLeases(browserStage, refreshedGrant);
         this.pendingBrowserGrants.delete(sessionId);
         this.pendingBrowserGrantContext.delete(sessionId);
-        if (browserStage) this.releaseBrowserLeases(browserStage);
-      } else if (browserStage) {
-        browserGrant = this.browserAutomationLease.issue(browserStage);
       }
-    } else {
-      this.releaseBrowserLeases(browserStage, refreshedGrant);
-      this.pendingBrowserGrants.delete(sessionId);
-      this.pendingBrowserGrantContext.delete(sessionId);
-    }
-    if (browserStage && !state.browserHttpMcpSupported) {
-      logger.info("Cursor ACP does not advertise HTTP MCP; browser automation is unavailable", {
-        threadId,
-      });
-    }
-    const mcpServers = buildCursorBrowserMcpServers(browserGrant);
+      if (browserStage && !state.browserHttpMcpSupported) {
+        logger.info("Cursor ACP does not advertise HTTP MCP; browser automation is unavailable", {
+          threadId,
+        });
+      }
+      const mcpServers = buildCursorBrowserMcpServers(browserGrant);
 
-    // Open the logical ACP session up front so reuse paths see a ready
-    // `acpSessionId`. `runTurn`'s own `openLogicalSession` call then early-returns.
-    // If the handshake throws, the runtime never received the child's pid, so
-    // it cannot kill it on `stop`. Tear the child down here before rethrowing
-    // so the subprocess does not leak.
-    try {
+      // Open logical ACP session before runtime registration so every setup
+      // failure tears down child and browser state through one boundary.
       await this.openLogicalSession(state, resumeFrom !== undefined, mcpServers);
       if (browserGrant) {
         state.browserCredential = {
@@ -615,17 +613,7 @@ export class CursorProvider
         };
       }
     } catch (err) {
-      this.releaseBrowserLeases(browserGrant, browserStage, refreshedGrant);
-      this.pendingBrowserLeases.delete(sessionId);
-      this.pendingBrowserContext.delete(sessionId);
-      this.pendingBrowserGrants.delete(sessionId);
-      this.pendingBrowserGrantContext.delete(sessionId);
-      this.liveSessionIds.delete(sessionId);
-      try {
-        state.child.kill();
-      } catch {
-        /* best-effort: the child may already be gone */
-      }
+      this.cleanupSpawnFailure(sessionId, state, browserGrant, browserStage, refreshedGrant);
       throw err;
     }
 
@@ -677,6 +665,24 @@ export class CursorProvider
     }
   }
 
+  private cleanupSpawnFailure(
+    sessionId: string,
+    state: CursorAcpSessionEntry | undefined,
+    ...leases: Array<{ leaseId: string } | null | undefined>
+  ): void {
+    this.releaseBrowserLeases(...leases);
+    this.pendingBrowserLeases.delete(sessionId);
+    this.pendingBrowserContext.delete(sessionId);
+    this.pendingBrowserGrants.delete(sessionId);
+    this.pendingBrowserGrantContext.delete(sessionId);
+    this.liveSessionIds.delete(sessionId);
+    try {
+      state?.child.kill();
+    } catch {
+      /* best-effort: the child may already be gone */
+    }
+  }
+
   /** A pooled session must be discarded before reuse if the child died or the cwd/permission mode changed. */
   isStale(state: CursorSessionState, args: { cwd: string; permissionMode: string }): boolean {
     const dead = state.child.exitCode != null || state.child.signalCode != null;
@@ -725,6 +731,11 @@ export class CursorProvider
     });
 
     if (!child.stdin || !child.stdout) {
+      try {
+        child.kill();
+      } catch {
+        /* best-effort: the child may already be gone */
+      }
       throw new Error("Failed to spawn cursor-agent: stdio pipes unavailable");
     }
 
@@ -792,7 +803,16 @@ export class CursorProvider
       void this.runtime.stop(mcodeSessionId);
     });
 
-    entry.browserHttpMcpSupported = await this.acpHandshake(connection, threadId);
+    try {
+      entry.browserHttpMcpSupported = await this.acpHandshake(connection, threadId);
+    } catch (error) {
+      try {
+        child.kill();
+      } catch {
+        /* best-effort: the child may already be gone */
+      }
+      throw error;
+    }
 
     return entry as CursorAcpSessionEntry;
   }
