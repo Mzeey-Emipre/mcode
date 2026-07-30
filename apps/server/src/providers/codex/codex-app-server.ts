@@ -118,11 +118,12 @@ export async function routeCodexServerRequest(args: {
   if (typeof msg.id !== "number") return;
 
   const method = msg.method ?? "";
+  const diagnosticMethod = boundProtocolIdentifier(method);
   const params = msg.params ?? {};
   const autoApprove = approvalPolicy === "never";
 
   if (autoApprove) {
-    logger.info("Codex serverRequest auto-approved", { id: msg.id, method });
+    logger.info("Codex serverRequest auto-approved", { id: msg.id, method: diagnosticMethod });
     if (method === "item/permissions/requestApproval") {
       sendResponse(msg.id, {
         permissions: {
@@ -146,7 +147,7 @@ export async function routeCodexServerRequest(args: {
     } catch (err) {
       logger.error("Codex approvalHandler rejected; sending safe-deny", {
         id: msg.id,
-        method,
+        method: diagnosticMethod,
         error: String(err),
       });
       sendResponse(msg.id, mapDecisionToCodexResponse(method, "deny", params));
@@ -159,7 +160,7 @@ export async function routeCodexServerRequest(args: {
   // and permissions requests get an empty-permissions turn-scoped response.
   logger.info("Codex serverRequest denied (no approvalHandler and policy is not auto-approve)", {
     id: msg.id,
-    method,
+    method: diagnosticMethod,
   });
   sendResponse(msg.id, mapDecisionToCodexResponse(method, "deny", params));
 }
@@ -239,6 +240,20 @@ const THREAD_HANDSHAKE_TIMEOUT_MS = 30_000;
 const STDERR_TAIL_MAX_LINES = 50;
 /** Maximum UTF-8 bytes retained across non-benign stderr diagnostics. */
 const STDERR_TAIL_MAX_BYTES = 16 * 1024;
+/** Maximum code points retained for protocol identifiers in diagnostics. */
+const MAX_PROTOCOL_IDENTIFIER_LENGTH = 256;
+
+/** Bounds an untrusted protocol identifier before retaining it in diagnostics. */
+function boundProtocolIdentifier(value: string): string {
+  let bounded = "";
+  let length = 0;
+  for (const character of value) {
+    if (length >= MAX_PROTOCOL_IDENTIFIER_LENGTH) break;
+    bounded += character;
+    length += 1;
+  }
+  return bounded;
+}
 
 /** Decoded child-process exit details used in user-facing and structured diagnostics. */
 interface ExitDiagnostics {
@@ -772,7 +787,8 @@ export class CodexAppServer extends EventEmitter {
 
     this.rpc.on("notification", (notification) => {
       const method = (notification as { method?: string }).method ?? "";
-      this.lastActivity = { method, timestamp: Date.now() };
+      const diagnosticMethod = boundProtocolIdentifier(method);
+      this.lastActivity = { method: diagnosticMethod, timestamp: Date.now() };
       if (method === "account/rateLimits/updated" || method === "account/updated") {
         this.emit("activity");
         this.emit("notification", notification);
@@ -798,7 +814,7 @@ export class CodexAppServer extends EventEmitter {
           this.emit("threadIdChanged", newThreadId);
         }
         this.emit("activity");
-        logger.debug("Codex lifecycle notification", { method });
+        logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
         return;
       }
 
@@ -806,7 +822,7 @@ export class CodexAppServer extends EventEmitter {
         const params = (notification as { params?: Record<string, unknown> }).params;
         const turn = params?.turn as { id?: string } | undefined;
         const turnId = turn?.id ?? (typeof params?.turnId === "string" ? params.turnId : undefined);
-        if (turnId) this.activeTurnId = turnId;
+        if (turnId) this.activeTurnId = boundProtocolIdentifier(turnId);
       } else if (method === "turn/completed") {
         this.activeTurnId = null;
       }
@@ -818,7 +834,7 @@ export class CodexAppServer extends EventEmitter {
         // Swallowed from the mapper, but still proof of life: thread/status
         // and similar lifecycle traffic must reset turn-level watchdogs.
         this.emit("activity");
-        logger.debug("Codex lifecycle notification", { method });
+        logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
         return;
       }
       this.emit("notification", notification);
@@ -831,7 +847,7 @@ export class CodexAppServer extends EventEmitter {
     this.rpc.on("serverRequest", (msg: unknown) => {
       const request = msg as { id?: number; method?: string; params?: Record<string, unknown> };
       this.lastActivity = {
-        method: typeof request.method === "string" ? request.method : "",
+        method: typeof request.method === "string" ? boundProtocolIdentifier(request.method) : "",
         timestamp: Date.now(),
       };
       this.activeRequestId = typeof request.id === "number" ? request.id : null;
@@ -955,8 +971,11 @@ export class CodexAppServer extends EventEmitter {
     }, 60000);
     const turnId = result?.turnId ?? result?.turn?.id ?? null;
     if (turnId) {
-      this.activeTurnId = turnId;
-      logger.debug("Codex turn/start acknowledged", { threadId: this.threadId, turnId });
+      this.activeTurnId = boundProtocolIdentifier(turnId);
+      logger.debug("Codex turn/start acknowledged", {
+        threadId: this.threadId,
+        turnId: boundProtocolIdentifier(turnId),
+      });
     }
     return turnId;
   }

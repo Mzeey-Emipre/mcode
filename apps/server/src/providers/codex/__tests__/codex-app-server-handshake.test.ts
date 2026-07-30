@@ -534,6 +534,30 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     expect(JSON.stringify(breadcrumb)).not.toContain("response payload");
   }, 10_000);
 
+  it("bounds oversized protocol identifiers in crash breadcrumbs", async () => {
+    const { child } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-bounded-identifiers" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const oversizedTurnId = "turn-" + "x".repeat(1024);
+    const oversizedMethod = "method/" + "y".repeat(1024);
+
+    await server.start();
+    child.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { turnId: oversizedTurnId },
+    }) + "\n");
+    child.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: oversizedMethod, params: {} }) + "\n");
+    child.emit("exit", 2, null);
+
+    const breadcrumb = server.lastTransportBreadcrumb;
+    expect(breadcrumb?.activeTurnId).toBe("turn-" + "x".repeat(251));
+    expect(breadcrumb?.lastActivity?.method).toBe("method/" + "y".repeat(249));
+    expect(breadcrumb?.activeTurnId).toHaveLength(256);
+    expect(breadcrumb?.lastActivity?.method).toHaveLength(256);
+  }, 10_000);
+
   it("reports when unexpected exit has no captured non-benign stderr", async () => {
     const { child, stderr } = harnessFakeServer((req): Record<string, unknown> =>
       req.method === "thread/start" ? { result: { thread: { id: "thread-no-stderr" } } } : { result: {} },

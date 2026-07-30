@@ -7,7 +7,10 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { CodexProvider } from "../codex-provider.js";
+import { CodexAppServer } from "../codex-app-server.js";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
+import { AgentEventType } from "@mcode/contracts";
+import { logger } from "@mcode/shared";
 import { stubEnvService } from "../../../__tests__/stub-env-service.js";
 
 /**
@@ -208,6 +211,55 @@ describe("CodexProvider permission flow", () => {
     expect(response).toEqual({ decision: "cancel" });
     expect(resolved).toHaveLength(1);
     expect(resolved[0].decision).toBe("cancelled");
+  });
+
+  it("logs fatal breadcrumbs and preserves failure events from the app-server", async () => {
+    const start = vi.spyOn(CodexAppServer.prototype, "start").mockResolvedValue(undefined);
+    try {
+      const events: Array<{ type: AgentEventType; threadId: string; error?: string }> = [];
+      provider.on("event", (event) => events.push(event as never));
+
+      const result = await (provider as unknown as {
+        spawn: (args: {
+          sessionId: string;
+          threadId: string;
+          cwd: string;
+          permissionMode: string;
+          env: Record<string, string>;
+        }) => Promise<{ state: { server: CodexAppServer }; pids: number[] }>;
+      }).spawn({
+        sessionId,
+        threadId,
+        cwd: "/",
+        permissionMode: "workspace-write",
+        env: {},
+      });
+      const breadcrumb = {
+        cause: "unexpected_exit" as const,
+        pid: 4321,
+        activeRequestId: null,
+        activeTurnId: "turn-bounded",
+        lastActivity: { method: "turn/started", timestamp: Date.now() },
+        exit: { code: 2, signal: null },
+        stderrTail: ["crash"],
+      };
+      Object.assign(result.state.server as unknown as { _lastTransportBreadcrumb: unknown }, {
+        _lastTransportBreadcrumb: breadcrumb,
+      });
+
+      result.state.server.emit("fatal", "simulated fatal");
+
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        "CodexAppServer fatal",
+        expect.objectContaining({ sessionId, error: "simulated fatal", breadcrumb }),
+      );
+      expect(events).toEqual([
+        { type: AgentEventType.Error, threadId, error: "simulated fatal" },
+        { type: AgentEventType.Ended, threadId },
+      ]);
+    } finally {
+      start.mockRestore();
+    }
   });
 
   it("runtime eviction spares a session with a turn in flight (busy guard)", async () => {
