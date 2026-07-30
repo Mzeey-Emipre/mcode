@@ -48,19 +48,21 @@ function readPackageVersion(packageDir) {
     .version;
 }
 
-function resolveBunStoreRoot(entryPath) {
+/** Find nearest node_modules directory containing SDK package graph. */
+export function resolveInstallRoot(entryPath) {
   let current = resolve(entryPath);
   while (current !== dirname(current)) {
-    if (basename(current) === ".bun") return current;
+    if (basename(current) === "node_modules") return current;
     current = dirname(current);
   }
-  throw new Error(`[ensure-sdk] Cannot locate Bun store for ${entryPath}`);
+  throw new Error(`[ensure-sdk] Cannot locate install root for ${entryPath}`);
 }
 
-function bunStorePackageDestination(entryPath, packageName) {
+/** Resolve scoped target package beneath SDK entry's nearest node_modules root. */
+export function resolveInstallPackageDestination(entryPath, packageName) {
   const scope = dirname(packageName);
   const name = basename(packageName);
-  return resolve(resolveBunStoreRoot(entryPath), "node_modules", scope, name);
+  return resolve(resolveInstallRoot(entryPath), scope, name);
 }
 
 function packageLockPath(serverPackageRoot) {
@@ -164,7 +166,7 @@ function assertContained(storeRoot, target) {
   const candidate = resolve(target);
   const separator = root.includes("\\") ? "\\" : "/";
   if (candidate === root || !candidate.startsWith(`${root}${separator}`)) {
-    throw new Error(`[ensure-sdk] Destination escapes Bun store: ${target}`);
+    throw new Error(`[ensure-sdk] Destination escapes install root: ${target}`);
   }
 }
 
@@ -245,8 +247,8 @@ export function resolveClaudeTargetPackagePlan(
       arch,
       platformPkg,
       version: readPackageVersion(dirname(sdkEntry)),
-      destination: resolve(dirname(sdkEntry), "..", basename(platformPkg)),
-      bunStoreRoot: resolveBunStoreRoot(sdkEntry),
+      destination: resolveInstallPackageDestination(sdkEntry, platformPkg),
+      installRoot: resolveInstallRoot(sdkEntry),
       executable: platform === "win32" ? "claude.exe" : "claude",
       chmodExecutable: platform !== "win32",
     },
@@ -280,8 +282,8 @@ export function resolveCopilotTargetPackagePlan(
       arch,
       platformPkg,
       version,
-      destination: bunStorePackageDestination(copilotPackageDir, platformPkg),
-      bunStoreRoot: resolveBunStoreRoot(copilotPackageDir),
+      destination: resolveInstallPackageDestination(sdkEntry, platformPkg),
+      installRoot: resolveInstallRoot(sdkEntry),
       executable: platform === "win32" ? "copilot.exe" : "copilot",
       chmodExecutable: platform !== "win32",
     },
@@ -294,7 +296,7 @@ export async function downloadAndExtractPackage({
   packageName,
   version,
   destination,
-  bunStoreRoot,
+  installRoot,
   plan,
   integrity,
   executable,
@@ -302,10 +304,10 @@ export async function downloadAndExtractPackage({
   registry = process.env.npm_config_registry ?? "https://registry.npmjs.org",
 }) {
   assertPackageSpec(packageName, version);
-  const resolvedStoreRoot = resolve(
-    bunStoreRoot ?? resolveBunStoreRoot(destination),
+  const resolvedInstallRoot = resolve(
+    installRoot ?? resolveInstallRoot(destination),
   );
-  assertContained(resolvedStoreRoot, destination);
+  assertContained(resolvedInstallRoot, destination);
   const metadataUrl = buildRegistryMetadataUrl(registry, packageName, version);
   const metadataResponse = await fetch(metadataUrl);
   if (!metadataResponse.ok) {
@@ -331,12 +333,12 @@ export async function downloadAndExtractPackage({
   verifyPackageIntegrity(tarballBytes, integrity ?? plan?.integrity);
 
   const destinationParent = dirname(destination);
-  assertContained(resolvedStoreRoot, destinationParent);
+  assertContained(resolvedInstallRoot, destinationParent);
   mkdirSync(destinationParent, { recursive: true });
   const tempDir = mkdtempSync(
     join(destinationParent, `.${basename(destination)}-tmp-`),
   );
-  assertContained(resolvedStoreRoot, tempDir);
+  assertContained(resolvedInstallRoot, tempDir);
   const tarballPath = join(tempDir, "package.tgz");
   try {
     writeFileSync(tarballPath, tarballBytes);
@@ -373,7 +375,7 @@ export async function downloadAndExtractPackage({
       destinationParent,
       `.${basename(destination)}-backup-${randomUUID()}`,
     );
-    assertContained(resolvedStoreRoot, backupPath);
+    assertContained(resolvedInstallRoot, backupPath);
     let movedExisting = false;
     try {
       if (pathExists(destination)) {
