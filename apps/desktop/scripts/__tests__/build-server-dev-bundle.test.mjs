@@ -104,7 +104,7 @@ describe("resolveClaudeSdkCliSources", () => {
     expect(() =>
       resolveClaudeSdkCliSources(serverRoot, "linux", "s390x"),
     ).toThrow(
-      "not installed - run 'bun install' or node apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs",
+      "not installed - run 'bun install' or node apps/desktop/scripts/ensure-sdk-platform-packages.mjs",
     );
   });
 });
