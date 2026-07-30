@@ -17,12 +17,14 @@ const refs = vi.hoisted(() => {
   };
 
   // Shared existsSync spy used by "fs"/"node:fs" mocks.
-  const existsSyncSpy = vi.fn((path) => String(path).includes("better_sqlite3"));
+  const existsSyncSpy = vi.fn((path) =>
+    String(path).includes("better_sqlite3"),
+  );
 
   // Spy for resolveServerBinary — lets tests override the resolved binary path
   // directly without depending on node:fs mock aliasing behaviour.
-  const resolveServerBinarySpy = vi.fn((input: { isPackaged: boolean; execPath: string }) =>
-    input.execPath,
+  const resolveServerBinarySpy = vi.fn(
+    (input: { isPackaged: boolean; execPath: string }) => input.execPath,
   );
 
   return {
@@ -58,6 +60,8 @@ vi.mock("electron", () => ({
 
 vi.mock("child_process", () => ({
   spawn: vi.fn().mockReturnValue(refs.mockChildProcess),
+  execFileSync: vi.fn(),
+  execSync: vi.fn(),
 }));
 
 vi.mock("@mcode/shared", () => ({
@@ -79,7 +83,9 @@ vi.mock("net", () => ({
 vi.mock("node:fs", () => ({
   existsSync: refs.existsSyncSpy,
   readFileSync: vi.fn(() => {
-    const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+    const err = new Error(
+      "ENOENT: no such file or directory",
+    ) as NodeJS.ErrnoException;
     err.code = "ENOENT";
     throw err;
   }),
@@ -88,12 +94,18 @@ vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   // createWriteStream is used in non-dev mode to route stderr to a log file.
   // Return a minimal writable-stream stub so callers like child.stderr.pipe() work.
-  createWriteStream: vi.fn(() => ({ write: vi.fn(), end: vi.fn(), destroy: vi.fn() })),
+  createWriteStream: vi.fn(() => ({
+    write: vi.fn(),
+    end: vi.fn(),
+    destroy: vi.fn(),
+  })),
 }));
 
 vi.mock("fs/promises", () => ({
   readFile: vi.fn(() => {
-    const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+    const err = new Error(
+      "ENOENT: no such file or directory",
+    ) as NodeJS.ErrnoException;
     err.code = "ENOENT";
     return Promise.reject(err);
   }),
@@ -121,7 +133,9 @@ const LOCK_FILE_JSON = JSON.stringify({
  */
 function setupDefaultReadFileMock() {
   const enoent = () => {
-    const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+    const err = new Error(
+      "ENOENT: no such file or directory",
+    ) as NodeJS.ErrnoException;
     err.code = "ENOENT";
     throw err;
   };
@@ -135,11 +149,21 @@ function setupDefaultReadFileMock() {
 const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
-import { spawn } from "child_process";
-import { existsSync, readFileSync, writeFileSync, createWriteStream, renameSync } from "fs";
+import { execFileSync, spawn } from "child_process";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  createWriteStream,
+  renameSync,
+  unlinkSync,
+} from "fs";
 import { readFile } from "fs/promises";
 import { join } from "path";
-import { SERVER_HEAP_DEFAULT_MB, SERVER_HEAP_LEGACY_DEFAULT_MB } from "@mcode/contracts";
+import {
+  SERVER_HEAP_DEFAULT_MB,
+  SERVER_HEAP_LEGACY_DEFAULT_MB,
+} from "@mcode/contracts";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -150,24 +174,33 @@ describe("ServerManager", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(execFileSync).mockReset();
     refs.resetExitCallback();
     manager = new ServerManager();
 
     // Reset readFileSync fully (clears queued once-returns) then restore
     // the default throwing implementation so it simulates a missing file.
-    vi.mocked(readFileSync).mockReset().mockImplementation(() => {
-      const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
-      err.code = "ENOENT";
-      throw err;
-    });
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockImplementation(() => {
+        const err = new Error(
+          "ENOENT: no such file or directory",
+        ) as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      });
 
     // Reset async readFile (fs/promises) used by readAuthTokenFromLock
     vi.mocked(readFile).mockReset();
 
     // Mock fetch: first call returns healthy (waitForReady); subsequent calls
     // also return ok so tryExistingServer health probes work too.
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
-    vi.mocked(existsSync).mockImplementation((path) => String(path).includes("better_sqlite3"));
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+    vi.mocked(existsSync).mockImplementation((path) =>
+      String(path).includes("better_sqlite3"),
+    );
 
     setupDefaultReadFileMock();
   });
@@ -178,7 +211,9 @@ describe("ServerManager", () => {
     delete process.env.MCODE_SERVER_HEAP_MB;
     refs.setIsPackaged(false);
     delete (process as Record<string, unknown>).resourcesPath;
-    vi.mocked(existsSync).mockImplementation((path) => String(path).includes("better_sqlite3"));
+    vi.mocked(existsSync).mockImplementation((path) =>
+      String(path).includes("better_sqlite3"),
+    );
   });
 
   // -----------------------------------------------------------------------
@@ -323,7 +358,9 @@ describe("ServerManager", () => {
     };
     vi.mocked(readFileSync)
       .mockImplementationOnce(enoent) // tryExistingServer
-      .mockReturnValueOnce(JSON.stringify({ server: { memory: { heapMb: 1024 } } })); // settings.json
+      .mockReturnValueOnce(
+        JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
+      ); // settings.json
     vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
 
     await manager.start();
@@ -343,7 +380,9 @@ describe("ServerManager", () => {
     vi.mocked(readFileSync)
       .mockImplementationOnce(enoent)
       .mockReturnValueOnce(
-        JSON.stringify({ server: { memory: { heapMb: SERVER_HEAP_LEGACY_DEFAULT_MB } } }),
+        JSON.stringify({
+          server: { memory: { heapMb: SERVER_HEAP_LEGACY_DEFAULT_MB } },
+        }),
       );
     vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
 
@@ -365,8 +404,7 @@ describe("ServerManager", () => {
       err.code = "ENOENT";
       throw err;
     };
-    vi.mocked(readFileSync)
-      .mockImplementationOnce(enoent); // tryExistingServer
+    vi.mocked(readFileSync).mockImplementationOnce(enoent); // tryExistingServer
     vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never); // readAuthTokenFromLock
 
     await manager.start();
@@ -387,7 +425,9 @@ describe("ServerManager", () => {
     };
     vi.mocked(readFileSync)
       .mockImplementationOnce(enoent)
-      .mockReturnValueOnce(JSON.stringify({ server: { memory: { heapMb: 1024 } } }));
+      .mockReturnValueOnce(
+        JSON.stringify({ server: { memory: { heapMb: 1024 } } }),
+      );
     vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
 
     await manager.start();
@@ -406,7 +446,14 @@ describe("ServerManager", () => {
 
     const spawnCall = vi.mocked(spawn).mock.calls[0];
     const args = spawnCall[1] as string[];
-    expect(args.some((arg) => arg.includes("dist") && arg.includes("server") && arg.endsWith("server.cjs"))).toBe(true);
+    expect(
+      args.some(
+        (arg) =>
+          arg.includes("dist") &&
+          arg.includes("server") &&
+          arg.endsWith("server.cjs"),
+      ),
+    ).toBe(true);
     expect(args.join(" ")).not.toContain("tsx");
     expect(args.join(" ")).not.toContain("--import");
   });
@@ -428,9 +475,12 @@ describe("ServerManager", () => {
 
       const spawnCall = vi.mocked(spawn).mock.calls[0];
       const options = spawnCall[2] as { env: Record<string, string> };
-      expect(options.env.BETTER_SQLITE3_BINDING).toContain("better_sqlite3.electron.node");
+      expect(options.env.BETTER_SQLITE3_BINDING).toContain(
+        "better_sqlite3.electron.node",
+      );
     } finally {
-      if (previousBinding === undefined) delete process.env.BETTER_SQLITE3_BINDING;
+      if (previousBinding === undefined)
+        delete process.env.BETTER_SQLITE3_BINDING;
       else process.env.BETTER_SQLITE3_BINDING = previousBinding;
     }
   });
@@ -526,7 +576,9 @@ describe("ServerManager", () => {
       configurable: true,
       writable: true,
     });
-    vi.mocked(existsSync).mockImplementation((p) => String(p).includes("better_sqlite3.node"));
+    vi.mocked(existsSync).mockImplementation((p) =>
+      String(p).includes("better_sqlite3.node"),
+    );
 
     await manager.start();
 
@@ -546,7 +598,9 @@ describe("ServerManager", () => {
     });
     vi.mocked(existsSync).mockReturnValue(false);
 
-    await expect(manager.start()).rejects.toThrow("Packaged better-sqlite3 binding not found");
+    await expect(manager.start()).rejects.toThrow(
+      "Packaged better-sqlite3 binding not found",
+    );
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -560,7 +614,9 @@ describe("ServerManager", () => {
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
 
     // process.kill returns normally (server is alive) then throws (server dead)
-    const killSpy = vi.spyOn(process, "kill").mockImplementationOnce(() => true as never); // alive check
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementationOnce(() => true as never); // alive check
     // Second kill(0) throws to break poll loop
     killSpy.mockImplementationOnce(() => {
       throw new Error("ESRCH");
@@ -585,7 +641,9 @@ describe("ServerManager", () => {
   it("stopServerHeldByLock matches forceReplace shutdown behavior", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
-    const killSpy = vi.spyOn(process, "kill").mockImplementationOnce(() => true as never);
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementationOnce(() => true as never);
     killSpy.mockImplementationOnce(() => {
       throw new Error("ESRCH");
     });
@@ -605,6 +663,310 @@ describe("ServerManager", () => {
     killSpy.mockRestore();
   });
 
+  it("rejects a lock with an invalid PID before probing or stopping it", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValue(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 0 }),
+      );
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+
+    try {
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "Invalid server lock file",
+      );
+
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it("rejects malformed lock JSON and preserves the lock file", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue("{ malformed");
+
+    await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+      "Unable to read server lock file",
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(unlinkSync).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unreadable lock and preserves the lock file", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    const denied = Object.assign(new Error("EACCES"), { code: "EACCES" });
+    vi.mocked(readFileSync).mockReset().mockImplementation(() => {
+      throw denied;
+    });
+
+    await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+      "Unable to read server lock file",
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(unlinkSync).not.toHaveBeenCalled();
+  });
+
+  it("preserves a foreign port-band lock without probing or stopping it", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValue(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), port: 19500 }),
+      );
+    const killSpy = vi.spyOn(process, "kill");
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it("refuses to force-kill a live process it does not own", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "refusing to terminate unrelated process",
+      );
+      expect(execFileSync).not.toHaveBeenCalled();
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("keeps the lock and reports Windows tree-kill failure", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(execFileSync).mockImplementation(() => {
+      throw new Error("taskkill failed");
+    });
+    (manager as unknown as { serverProcess: unknown }).serverProcess =
+      refs.mockChildProcess;
+    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
+      JSON.parse(LOCK_FILE_JSON);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "win32",
+      configurable: true,
+    });
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "Failed to terminate server process tree 12345",
+      );
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("kills the owned POSIX process group and treats ESRCH as success", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    (manager as unknown as { serverProcess: unknown }).serverProcess =
+      refs.mockChildProcess;
+    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
+      JSON.parse(LOCK_FILE_JSON);
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
+      if (pid < 0) {
+        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        throw error;
+      }
+      return true as never;
+    });
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
+      expect(unlinkSync).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("kills an owned POSIX process group after its leader exits", async () => {
+    await manager.start();
+    refs.getExitCallback()!(1);
+
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(unlinkSync).mockReset();
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    let groupAlive = true;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid > 0) {
+        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        throw error;
+      }
+      if (signal === 0) {
+        if (!groupAlive) {
+          const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+          throw error;
+        }
+        return true as never;
+      }
+      groupAlive = false;
+      return true as never;
+    });
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
+      expect(unlinkSync).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("preserves an unknown lock when its leader is dead but POSIX group remains", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
+      if (pid > 0) {
+        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        throw error;
+      }
+      return true as never;
+    });
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "refusing to terminate unrelated process",
+      );
+      expect(killSpy).not.toHaveBeenCalledWith(-12345, "SIGKILL");
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("does not unlink a lock replaced while shutdown was in progress", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    const replacement = JSON.stringify({
+      ...JSON.parse(LOCK_FILE_JSON),
+      authToken: "replacement-token",
+    });
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValueOnce(LOCK_FILE_JSON)
+      .mockReturnValueOnce(replacement);
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementationOnce(() => true as never)
+      .mockImplementationOnce(() => {
+        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        throw error;
+      });
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it("does not signal a replacement lock after the owned child exits", async () => {
+    await manager.start();
+    refs.getExitCallback()!(1);
+
+    const replacement = JSON.stringify({
+      ...JSON.parse(LOCK_FILE_JSON),
+      authToken: "replacement-token",
+    });
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(replacement);
+    vi.mocked(unlinkSync).mockReset();
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
   it("forceReplace polls PID until process exits", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
@@ -612,11 +974,16 @@ describe("ServerManager", () => {
     // process.kill sequence during poll loop and force-kill check:
     // call 1 = alive (poll continues), call 2 = alive (poll continues),
     // call 3 = throws ESRCH (poll breaks), subsequent = throws (dead)
-    const killSpy = vi.spyOn(process, "kill")
-      .mockImplementation(() => { throw new Error("ESRCH"); }) // default: dead
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation(() => {
+        throw new Error("ESRCH");
+      }) // default: dead
       .mockImplementationOnce(() => true as never) // poll: alive
       .mockImplementationOnce(() => true as never) // poll: alive
-      .mockImplementationOnce(() => { throw new Error("ESRCH"); }); // poll: dead, breaks loop
+      .mockImplementationOnce(() => {
+        throw new Error("ESRCH");
+      }); // poll: dead, breaks loop
 
     try {
       await manager.forceReplace();
@@ -641,21 +1008,40 @@ describe("ServerManager", () => {
   it("forceReplace force-kills server if it does not exit within timeout", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    (manager as unknown as { serverProcess: unknown }).serverProcess =
+      refs.mockChildProcess;
+    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
+      JSON.parse(LOCK_FILE_JSON);
 
     // Always report alive so we hit the SIGKILL fallback.
     // Mock Date.now to fast-forward past the 10s deadline.
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true as never);
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation(() => true as never);
     let now = 1000;
     const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
       now += 5000; // jump 5s each call to exceed 10s deadline quickly
       return now;
     });
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "win32",
+      configurable: true,
+    });
 
     try {
       await manager.forceReplace();
 
-      expect(killSpy).toHaveBeenCalledWith(12345, "SIGKILL");
+      expect(execFileSync).toHaveBeenCalledWith(
+        "taskkill",
+        ["/T", "/F", "/PID", "12345"],
+        expect.objectContaining({ stdio: "ignore" }),
+      );
     } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
@@ -686,8 +1072,10 @@ describe("ServerManager", () => {
   });
 
   it("rotates the previous stderr log before opening a new one", async () => {
-    vi.mocked(existsSync).mockImplementation((path) =>
-      String(path).endsWith("server-stderr.log") || String(path).includes("better_sqlite3"),
+    vi.mocked(existsSync).mockImplementation(
+      (path) =>
+        String(path).endsWith("server-stderr.log") ||
+        String(path).includes("better_sqlite3"),
     );
 
     await manager.start();
@@ -723,5 +1111,34 @@ describe("ServerManager", () => {
     expect(result.port).toBe(19600);
     expect(result.authToken).toBe("test-auth-token");
     expect(manager.reusedExisting).toBe(true);
+  });
+
+  it("does not probe or reuse an existing server with an invalid PID", async () => {
+    const enoent = () => {
+      const err = new Error(
+        "ENOENT: no such file or directory",
+      ) as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    };
+    vi.mocked(readFileSync)
+      .mockReset()
+      .mockReturnValueOnce(
+        JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 0 }),
+      )
+      .mockImplementationOnce(enoent);
+    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation(() => true as never);
+
+    try {
+      await manager.start();
+
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
   });
 });

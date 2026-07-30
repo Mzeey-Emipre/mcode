@@ -8,7 +8,12 @@
  */
 
 import { app } from "electron";
-import { execSync, spawn, type ChildProcess } from "child_process";
+import {
+  execFileSync,
+  execSync,
+  spawn,
+  type ChildProcess,
+} from "child_process";
 import { createRequire } from "module";
 import {
   createWriteStream,
@@ -32,7 +37,8 @@ import { resolveServerBinary } from "./server-binary-resolver.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 
 /** Use snapshot-provided schema when available (V8 snapshot pre-initializes Zod). */
-const SettingsSchema = globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? BundledSettingsSchema;
+const SettingsSchema =
+  globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? BundledSettingsSchema;
 
 /**
  * Resolve the server entry point and working directory based on whether the
@@ -62,15 +68,32 @@ function getServerPaths(): {
       "better_sqlite3.node",
     );
     if (!existsSync(nativeBindingPath)) {
-      throw new Error(`Packaged better-sqlite3 binding not found: ${nativeBindingPath}`);
+      throw new Error(
+        `Packaged better-sqlite3 binding not found: ${nativeBindingPath}`,
+      );
     }
-    return { entry: serverBundle, cwd: dirname(serverBundle), nativeBindingPath };
+    return {
+      entry: serverBundle,
+      cwd: dirname(serverBundle),
+      nativeBindingPath,
+    };
   }
 
   /** Matches both `src/main/` (Vitest) and bundled `dist/main/` (`__dirname`). */
-  const serverBundle = resolve(__dirname, "..", "..", "dist", "server", "server.cjs");
-  const desktopRequire = createRequire(resolve(__dirname, "..", "..", "package.json"));
-  const betterSqliteDir = dirname(desktopRequire.resolve("better-sqlite3/package.json"));
+  const serverBundle = resolve(
+    __dirname,
+    "..",
+    "..",
+    "dist",
+    "server",
+    "server.cjs",
+  );
+  const desktopRequire = createRequire(
+    resolve(__dirname, "..", "..", "package.json"),
+  );
+  const betterSqliteDir = dirname(
+    desktopRequire.resolve("better-sqlite3/package.json"),
+  );
   const nativeBindingPath = resolve(
     betterSqliteDir,
     "build",
@@ -78,7 +101,9 @@ function getServerPaths(): {
     "better_sqlite3.electron.node",
   );
   if (!existsSync(nativeBindingPath)) {
-    throw new Error(`Workspace Electron better-sqlite3 binding not found: ${nativeBindingPath}`);
+    throw new Error(
+      `Workspace Electron better-sqlite3 binding not found: ${nativeBindingPath}`,
+    );
   }
   return { entry: serverBundle, cwd: dirname(serverBundle), nativeBindingPath };
 }
@@ -119,7 +144,10 @@ function rotateServerLog(): void {
     }
     renameSync(SERVER_LOG_PATH, SERVER_ROTATED_LOG_PATH);
   } catch (err) {
-    console.warn("[server-manager] Failed to rotate previous server stderr log", err);
+    console.warn(
+      "[server-manager] Failed to rotate previous server stderr log",
+      err,
+    );
   }
 }
 
@@ -153,7 +181,9 @@ function readServerHeapMb(): number {
     if (result.success) {
       return result.data.server.memory.heapMb;
     }
-    console.warn("[server-manager] settings.json parse failed, using default heap");
+    console.warn(
+      "[server-manager] settings.json parse failed, using default heap",
+    );
   } catch {
     // File missing or unreadable, fall through to default
   }
@@ -186,6 +216,26 @@ function lockFilePath(): string {
   return join(getMcodeDir(), "server.lock");
 }
 
+/** Terminate a server and all provider subprocesses that it owns. */
+function forceKillServerProcessTree(pid: number): void {
+  try {
+    if (process.platform === "win32") {
+      execFileSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
+        stdio: "ignore",
+        timeout: 5_000,
+      });
+      return;
+    }
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    const message =
+      error instanceof Error ? error.message : String(error ?? "");
+    if (code === "ESRCH" || message.includes("ESRCH")) return;
+    throw error;
+  }
+}
+
 /** Lock file schema written by the server on startup. */
 interface ServerLock {
   port: number;
@@ -196,25 +246,111 @@ interface ServerLock {
   ipcPath: string;
 }
 
+interface OwnedServerIdentity {
+  pid: number;
+  startedAt: string;
+  authToken: string;
+}
+
+function isServerLock(value: unknown): value is ServerLock {
+  if (!value || typeof value !== "object") return false;
+  const lock = value as Partial<ServerLock>;
+  const pid = lock.pid;
+  return (
+    typeof lock.port === "number" &&
+    Number.isFinite(lock.port) &&
+    typeof lock.authToken === "string" &&
+    typeof pid === "number" &&
+    Number.isSafeInteger(pid) &&
+    pid > 0 &&
+    typeof lock.startedAt === "string" &&
+    typeof lock.version === "string" &&
+    typeof lock.ipcPath === "string"
+  );
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    const message =
+      error instanceof Error ? error.message : String(error ?? "");
+    return code !== "ESRCH" && !message.includes("ESRCH");
+  }
+}
+
+/** Check whether a detached POSIX process group still exists. */
+function isProcessGroupAlive(pid: number): boolean {
+  if (process.platform === "win32") return isProcessAlive(pid);
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    const message =
+      error instanceof Error ? error.message : String(error ?? "");
+    return code !== "ESRCH" && !message.includes("ESRCH");
+  }
+}
+
+function sameServerLockIdentity(left: ServerLock, right: ServerLock): boolean {
+  return (
+    left.port === right.port &&
+    left.authToken === right.authToken &&
+    left.pid === right.pid &&
+    left.startedAt === right.startedAt &&
+    left.version === right.version &&
+    left.ipcPath === right.ipcPath
+  );
+}
+
+function sameOwnedServerIdentity(
+  lock: ServerLock,
+  identity: OwnedServerIdentity,
+): boolean {
+  return (
+    lock.pid === identity.pid &&
+    lock.startedAt === identity.startedAt &&
+    lock.authToken === identity.authToken
+  );
+}
+
 /**
  * Check if an existing server is running by reading the lock file and
  * probing its health endpoint. Returns the lock info if healthy, null otherwise.
  */
-async function tryExistingServer(portMin: number, portMax: number): Promise<ServerLock | null> {
+async function tryExistingServer(
+  portMin: number,
+  portMax: number,
+): Promise<ServerLock | null> {
   const lockPath = lockFilePath();
   try {
     const raw = readFileSync(lockPath, "utf-8");
     const lock: ServerLock = JSON.parse(raw);
 
     // Validate the lock file has the expected shape
-    if (typeof lock.port !== "number" || typeof lock.authToken !== "string" || !lock.port) {
+    if (
+      typeof lock.port !== "number" ||
+      typeof lock.authToken !== "string" ||
+      !lock.port
+    ) {
       return null;
     }
 
     // Only reuse a server whose port falls within this mode's range.
     // Prevents dev instances from hijacking a packaged-app server (or vice versa).
     if (lock.port < portMin || lock.port >= portMax) {
-      console.log(`[server-manager] Ignored existing server on port ${lock.port} (outside ${portMin}-${portMax})`);
+      console.log(
+        `[server-manager] Ignored existing server on port ${lock.port} (outside ${portMin}-${portMax})`,
+      );
+      return null;
+    }
+    if (!Number.isSafeInteger(lock.pid) || lock.pid <= 0) {
+      console.log(
+        `[server-manager] Ignored existing server with invalid PID ${lock.pid}`,
+      );
       return null;
     }
 
@@ -222,15 +358,23 @@ async function tryExistingServer(portMin: number, portMax: number): Promise<Serv
     try {
       process.kill(lock.pid, 0); // throws if process doesn't exist
     } catch {
-      console.log(`[server-manager] Stale lock file: PID ${lock.pid} not alive`);
-      try { unlinkSync(lockPath); } catch { /* ok */ }
+      console.log(
+        `[server-manager] Stale lock file: PID ${lock.pid} not alive`,
+      );
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        /* ok */
+      }
       return null;
     }
 
     // Probe the health endpoint to confirm the server is alive
     const res = await fetch(`http://localhost:${lock.port}/health`);
     if (res.ok) {
-      console.log(`[server-manager] Found existing server on port ${lock.port} (pid ${lock.pid})`);
+      console.log(
+        `[server-manager] Found existing server on port ${lock.port} (pid ${lock.pid})`,
+      );
       return lock;
     }
   } catch {
@@ -248,6 +392,7 @@ async function tryExistingServer(portMin: number, portMax: number): Promise<Serv
  */
 export class ServerManager {
   private serverProcess: ChildProcess | null = null;
+  private ownedServerIdentity: OwnedServerIdentity | null = null;
   private _port = 0;
   private _authToken = "";
   private _ipcPath = "";
@@ -291,14 +436,20 @@ export class ServerManager {
     const existing = await tryExistingServer(PORT_MIN, PORT_MAX);
     if (existing) {
       if (existing.version && existing.version !== app.getVersion()) {
-        console.log(`[server-manager] Version mismatch: running=${existing.version}, expected=${app.getVersion()}, replacing`);
+        console.log(
+          `[server-manager] Version mismatch: running=${existing.version}, expected=${app.getVersion()}, replacing`,
+        );
         await this.forceReplace();
         // Fall through to spawn new server
       } else {
+        const ownsExistingServer =
+          this.ownedServerIdentity !== null &&
+          sameOwnedServerIdentity(existing, this.ownedServerIdentity);
+        if (!ownsExistingServer) this.ownedServerIdentity = null;
         this._port = existing.port;
         this._authToken = existing.authToken;
         this._ipcPath = existing.ipcPath ?? "";
-        this._reusedExisting = true;
+        this._reusedExisting = !ownsExistingServer;
         return { port: this._port, authToken: this._authToken };
       }
     }
@@ -310,16 +461,22 @@ export class ServerManager {
       writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-        console.log("[server-manager] Startup lock held by another process, waiting for server");
+        console.log(
+          "[server-manager] Startup lock held by another process, waiting for server",
+        );
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 200));
           const existingNow = await tryExistingServer(PORT_MIN, PORT_MAX);
           if (existingNow) {
+            const ownsExistingServer =
+              this.ownedServerIdentity !== null &&
+              sameOwnedServerIdentity(existingNow, this.ownedServerIdentity);
+            if (!ownsExistingServer) this.ownedServerIdentity = null;
             this._port = existingNow.port;
             this._authToken = existingNow.authToken;
             this._ipcPath = existingNow.ipcPath ?? "";
-            this._reusedExisting = true;
+            this._reusedExisting = !ownsExistingServer;
             return { port: this._port, authToken: this._authToken };
           }
         }
@@ -328,7 +485,11 @@ export class ServerManager {
           writeFileSync(sentinelPath, String(process.pid), { flag: "wx" });
         } catch {
           // Another process grabbed it first - retry the whole start flow
-          try { unlinkSync(sentinelPath); } catch { /* ok */ }
+          try {
+            unlinkSync(sentinelPath);
+          } catch {
+            /* ok */
+          }
         }
       }
     }
@@ -339,11 +500,15 @@ export class ServerManager {
       const lockPath = lockFilePath();
       if (existsSync(lockPath)) {
         try {
-          const oldLock: ServerLock = JSON.parse(readFileSync(lockPath, "utf-8"));
+          const oldLock: ServerLock = JSON.parse(
+            readFileSync(lockPath, "utf-8"),
+          );
           if (oldLock.port >= PORT_MIN && oldLock.port < PORT_MAX) {
             preferredPort = oldLock.port;
           }
-        } catch { /* corrupt lock, ignore */ }
+        } catch {
+          /* corrupt lock, ignore */
+        }
       }
 
       this._port = preferredPort
@@ -353,7 +518,9 @@ export class ServerManager {
         : await findAvailablePort(PORT_MIN, PORT_MAX);
 
       const heapMb = readServerHeapMb();
-      console.log(`[server-manager] Server configured: --max-old-space-size=${heapMb}`);
+      console.log(
+        `[server-manager] Server configured: --max-old-space-size=${heapMb}`,
+      );
 
       const { entry, cwd, nativeBindingPath } = getServerPaths();
 
@@ -414,7 +581,9 @@ export class ServerManager {
       // Electron binary directory so the dynamic linker finds them.
       if (process.platform === "linux" && app.isPackaged) {
         const electronDir = dirname(process.execPath);
-        env.LD_LIBRARY_PATH = [electronDir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":");
+        env.LD_LIBRARY_PATH = [electronDir, process.env.LD_LIBRARY_PATH]
+          .filter(Boolean)
+          .join(":");
       }
 
       // V8 flags go in the args array for child_process.spawn.
@@ -455,7 +624,9 @@ export class ServerManager {
           cwd,
           env,
           detached: true,
-          stdio: isDesktopDev() ? "inherit" : ["ignore", "ignore", stderrStream ? "pipe" : "ignore"],
+          stdio: isDesktopDev()
+            ? "inherit"
+            : ["ignore", "ignore", stderrStream ? "pipe" : "ignore"],
         });
       } catch (err) {
         stderrStream?.destroy();
@@ -487,7 +658,11 @@ export class ServerManager {
       return { port: this._port, authToken: this._authToken };
     } finally {
       // Release startup lock whether spawn succeeded or failed
-      try { unlinkSync(sentinelPath); } catch { /* ok */ }
+      try {
+        unlinkSync(sentinelPath);
+      } catch {
+        /* ok */
+      }
     }
   }
 
@@ -538,22 +713,48 @@ export class ServerManager {
    */
   async stopServerHeldByLock(): Promise<void> {
     const lockPath = lockFilePath();
-    if (!existsSync(lockPath)) return;
+    if (!existsSync(lockPath)) {
+      this.ownedServerIdentity = null;
+      return;
+    }
 
-    let lock: ServerLock;
+    let parsedLock: unknown;
     try {
-      lock = JSON.parse(readFileSync(lockPath, "utf-8"));
-    } catch {
+      parsedLock = JSON.parse(readFileSync(lockPath, "utf-8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT")
+        return;
+      throw new Error(`Unable to read server lock file ${lockPath}`, {
+        cause: error,
+      });
+    }
+
+    // Validate lock port before any probe or process action. Foreign port bands
+    // belong to another desktop mode and must remain untouched.
+    const parsedPort =
+      typeof parsedLock === "object" && parsedLock !== null
+        ? (parsedLock as { port?: unknown }).port
+        : undefined;
+    if (
+      typeof parsedPort === "number" &&
+      Number.isFinite(parsedPort) &&
+      (parsedPort < PORT_MIN || parsedPort >= PORT_MAX)
+    ) {
       return;
     }
 
-    // Validate lock port is within this mode's range to prevent sending
-    // auth tokens to arbitrary localhost ports from a crafted lock file.
-    if (lock.port < PORT_MIN || lock.port >= PORT_MAX) {
-      console.warn(`[server-manager] stopServerHeldByLock: port ${lock.port} outside allowed range, skipping`);
-      try { unlinkSync(lockPath); } catch { /* ok */ }
+    if (!isServerLock(parsedLock)) {
+      throw new Error(`Invalid server lock file ${lockPath}`);
+    }
+    const lock = parsedLock;
+
+    const ownedIdentity = this.ownedServerIdentity;
+    if (ownedIdentity && !sameOwnedServerIdentity(lock, ownedIdentity)) {
+      this.ownedServerIdentity = null;
       return;
     }
+
+    const ownsServerProcess = ownedIdentity !== null;
 
     try {
       await fetch(`http://localhost:${lock.port}/shutdown`, {
@@ -564,24 +765,78 @@ export class ServerManager {
           "X-Mcode-Shutdown-Reason": "desktop-update-exit",
         },
       });
-    } catch { /* server may already be down or hung */ }
+    } catch {
+      /* server may already be down or hung */
+    }
 
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
+      if (!isProcessAlive(lock.pid) && !isProcessGroupAlive(lock.pid)) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    const processAlive = isProcessAlive(lock.pid);
+    const processGroupAlive = isProcessGroupAlive(lock.pid);
+
+    if (processAlive || processGroupAlive) {
+      if (!ownsServerProcess) {
+        throw new Error(
+          `Server process ${lock.pid} still running after graceful shutdown; refusing to terminate unrelated process`,
+        );
+      }
+      let currentLock: unknown;
       try {
-        process.kill(lock.pid, 0);
-        await new Promise((r) => setTimeout(r, 200));
+        currentLock = JSON.parse(readFileSync(lockPath, "utf-8"));
       } catch {
-        break;
+        return;
+      }
+      if (
+        !isServerLock(currentLock) ||
+        (ownedIdentity && !sameOwnedServerIdentity(currentLock, ownedIdentity))
+      ) {
+        this.ownedServerIdentity = null;
+        return;
+      }
+      try {
+        forceKillServerProcessTree(lock.pid);
+      } catch (error) {
+        throw new Error(`Failed to terminate server process tree ${lock.pid}`, {
+          cause: error,
+        });
+      }
+
+      if (process.platform !== "win32") {
+        const forceKillDeadline = Date.now() + 10_000;
+        while (
+          Date.now() < forceKillDeadline &&
+          isProcessGroupAlive(lock.pid)
+        ) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        if (isProcessGroupAlive(lock.pid)) {
+          throw new Error(
+            `Server process tree ${lock.pid} still running after termination`,
+          );
+        }
       }
     }
 
     try {
-      process.kill(lock.pid, 0);
-      process.kill(lock.pid, "SIGKILL");
-    } catch { /* already dead */ }
+      const currentLock = JSON.parse(readFileSync(lockPath, "utf-8"));
+      if (!isServerLock(currentLock) || !sameServerLockIdentity(lock, currentLock)) {
+        this.ownedServerIdentity = null;
+        return;
+      }
+    } catch {
+      return;
+    }
 
-    try { unlinkSync(lockPath); } catch { /* ok */ }
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      /* ok */
+    }
+    this.ownedServerIdentity = null;
   }
 
   /**
@@ -602,9 +857,16 @@ export class ServerManager {
     for (let i = 0; i < maxAttempts; i++) {
       try {
         const raw = await readFile(lockFilePath(), "utf-8");
-        const lock: ServerLock = JSON.parse(raw);
-        if (lock.authToken) {
+        const lock: unknown = JSON.parse(raw);
+        if (isServerLock(lock) && lock.authToken) {
           this._ipcPath = lock.ipcPath ?? "";
+          if (this.serverProcess?.pid === lock.pid) {
+            this.ownedServerIdentity = {
+              pid: lock.pid,
+              startedAt: lock.startedAt,
+              authToken: lock.authToken,
+            };
+          }
           return lock.authToken;
         }
       } catch {
@@ -629,7 +891,9 @@ export class ServerManager {
         const logExcerpt = this.readServerLogTail();
         throw new Error(
           "Server process exited before becoming ready." +
-            (logExcerpt ? `\n\nServer log:\n${logExcerpt}` : "\nNo server log available."),
+            (logExcerpt
+              ? `\n\nServer log:\n${logExcerpt}`
+              : "\nNo server log available."),
         );
       }
 

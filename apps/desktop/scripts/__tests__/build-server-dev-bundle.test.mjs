@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, stat, lstat, access } from "node:fs/promises";
+import { mkdtemp, rm, stat, lstat, access, readFile, writeFile, utimes } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -192,6 +192,22 @@ describe("Copilot SDK staging", () => {
       expect((await lstat(dev.copilotDst)).isSymbolicLink()).toBe(false);
       expect((await lstat(dev.platformDst)).isSymbolicLink()).toBe(false);
 
+      const stagedIndex = path.join(dev.copilotDst, "index.js");
+      const originalIndex = await readFile(stagedIndex);
+      const preservedMtime = new Date("2001-01-01T00:00:00.000Z");
+      await utimes(stagedIndex, preservedMtime, preservedMtime);
+      const preservedMtimeMs = (await stat(stagedIndex)).mtimeMs;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      copyCopilotSdkNextTo(serverCjs, serverRoot);
+      expect((await stat(stagedIndex)).mtimeMs).toBe(preservedMtimeMs);
+
+      const changedIndex = Buffer.from(originalIndex);
+      changedIndex[0] ^= 1;
+      await writeFile(stagedIndex, changedIndex);
+      await utimes(stagedIndex, preservedMtime, preservedMtime);
+      copyCopilotSdkNextTo(serverCjs, serverRoot);
+      expect(await readFile(stagedIndex)).toEqual(originalIndex);
+
       const packagedDir = path.join(tmpDir, "resources", "app.asar.unpacked", "dist", "server");
       const packaged = copyCopilotSdkToDir({
         destServerDir: packagedDir,
@@ -209,5 +225,5 @@ describe("Copilot SDK staging", () => {
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

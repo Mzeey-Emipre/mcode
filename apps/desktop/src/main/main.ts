@@ -48,6 +48,7 @@ import {
   initAutoUpdater,
   installUpdate,
   cleanupAutoUpdater,
+  createBeforeInstallHook,
   setBeforeInstallHook,
 } from "./auto-updater.js";
 import { setupSpellcheck } from "./spellcheck.js";
@@ -1051,7 +1052,9 @@ app.whenReady().then(async () => {
 
     // Stop the detached server before any quitAndInstall so the NSIS
     // installer does not hit locked files under the install directory.
-    setBeforeInstallHook(() => serverManager.forceReplace());
+    setBeforeInstallHook(
+      createBeforeInstallHook(() => serverManager.forceReplace()),
+    );
 
     // Recover once the server process exits unexpectedly.
     serverManager.onUnexpectedExit = (code) => {
@@ -1131,25 +1134,6 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
-
-// When autoInstallOnAppQuit is true, electron-updater runs the installer
-// during the quit sequence. Stop the server first so the installer can
-// replace files without hitting locks from the detached process.
-let isQuittingForUpdate = false;
-app.on("before-quit", async (e) => {
-  if (isQuittingForUpdate) return; // re-entrant guard after we call app.quit()
-  const status = getUpdateStatus();
-  if (status.state === "downloaded") {
-    e.preventDefault();
-    isQuittingForUpdate = true;
-    try {
-      await serverManager.forceReplace();
-    } catch (err) {
-      console.error("[main] Failed to stop server before update install:", err);
-    }
     app.quit();
   }
 });
