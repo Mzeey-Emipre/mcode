@@ -2,7 +2,6 @@ import "reflect-metadata";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   BrowserAutomationSessionLease,
-  type BrowserAutomationSessionLeaseGrant,
   type BrowserAutomationSessionLeaseScope,
 } from "../../../services/browser-automation/browser-automation-session-lease.js";
 import { ClaudeProvider } from "../claude-provider.js";
@@ -47,8 +46,7 @@ function makeProvider(lease: BrowserAutomationSessionLease) {
     hasFiredToolThisTurn: false,
     workspaceId: "workspace-1",
     browserPermissionCapability: "interact" as const,
-    browserLease: undefined as BrowserAutomationSessionLeaseGrant | undefined,
-  };
+  } as unknown as Parameters<ClaudeProvider["close"]>[0];
   let spawnedState: unknown;
   const runtime = {
     get: vi.fn(() => existingState),

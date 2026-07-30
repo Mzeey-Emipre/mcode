@@ -168,6 +168,72 @@ describe("CodexProvider first turn on new session", () => {
     expect(lease.credentials.size()).toBe(0);
   });
 
+  it("releases staged browser access when internal MCP configuration fails", async () => {
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = makeProvider(undefined, lease);
+    (provider as any).threadControlMcp = {
+      createCodexConfiguration: vi.fn().mockRejectedValue(new Error("MCP config failed")),
+    };
+
+    await provider.sendTurn({
+      sessionId: "mcode-browser-config-failure",
+      workspaceId: "workspace-test",
+      threadId: "browser-config-failure",
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+    expect(appServers).toHaveLength(0);
+  });
+
+  it("releases the previous staged browser access for overlapping sends", async () => {
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = makeProvider(undefined, lease);
+    let rejectAcquire!: (error: Error) => void;
+    const acquirePromise = new Promise<never>((_, reject) => {
+      rejectAcquire = reject;
+    });
+    (provider as any).runtime.acquire = vi.fn(() => acquirePromise);
+    const release = vi.spyOn(lease, "release");
+    const request = {
+      sessionId: "mcode-overlapping-browser-stage",
+      workspaceId: "workspace-test",
+      threadId: "overlapping-browser-stage",
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "supervised" as const,
+    };
+
+    const firstSend = provider.sendTurn(request);
+    await vi.waitFor(() => expect(lease.status()).toEqual({ active: 0, pending: 1 }));
+    const firstStage = (provider as any).pendingBrowserAccess.get(request.sessionId).stage.leaseId;
+
+    const secondSend = provider.sendTurn({ ...request, message: "inspect again" });
+    await vi.waitFor(() => expect(release).toHaveBeenCalledWith(firstStage));
+    expect(lease.status()).toEqual({ active: 0, pending: 1 });
+    expect((provider as any).pendingBrowserAccess.get(request.sessionId).stage.leaseId).not.toBe(firstStage);
+
+    rejectAcquire(new Error("acquire failed"));
+    await Promise.all([firstSend, secondSend]);
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+  });
+
   it("releases staged browser access when stopped before runtime acquisition", async () => {
     const lease = new BrowserAutomationSessionLease();
     lease.configure({

@@ -1000,6 +1000,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       })
       : undefined;
     if (browserStage) {
+      const previousBrowserAccess = this.pendingBrowserAccess.get(sessionId);
+      if (previousBrowserAccess) {
+        this.browserAutomationLease.release(previousBrowserAccess.stage.leaseId);
+      }
       this.pendingBrowserAccess.set(sessionId, {
         stage: browserStage,
         workspaceId: req.workspaceId,
@@ -1074,11 +1078,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // obvious in logs.
     const supervised = approvalPolicy === "on-request";
     const browserAccess = this.pendingBrowserAccess.get(sessionId);
+    const internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
     const browserGrant = browserAccess ? this.browserAutomationLease.issue(browserAccess.stage) : null;
     const spawnEnv = { ...args.env };
     const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
     if (browserGrant) spawnEnv[browserTokenEnvName] = browserGrant.token;
-    const internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
 
     const server = new CodexAppServer({
       cliPath,
