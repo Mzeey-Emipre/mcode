@@ -218,10 +218,9 @@ export class BrowserAutomationSessionLease {
     const configuration = this.configuration;
     if (!configuration) return null;
     try {
-      const grant = this.issueCredential(leaseId, pending);
       const previousLeaseId = this.sessionToLease.get(pending.sessionKey);
       if (previousLeaseId && previousLeaseId !== leaseId) this.release(previousLeaseId);
-      return grant;
+      return this.issueCredential(leaseId, pending);
     } catch (error) {
       this.active.delete(leaseId);
       throw error;
@@ -233,15 +232,14 @@ export class BrowserAutomationSessionLease {
     const lease = this.active.get(leaseId);
     if (!lease) return { ok: false, leaseId, reason: "not-found" };
     if (!this.configuration) return { ok: false, leaseId, reason: "unconfigured" };
+    const previousCredentialId = lease.credentialId;
     try {
+      this.credentials.revoke(previousCredentialId);
       const grant = this.issueCredential(leaseId, {
         scope: lease.scope,
         sessionKey: lease.sessionKey,
         expiresAt: this.now(),
       });
-      const previousCredentialId = lease.credentialId;
-      lease.credentialId = grant.credentialId;
-      this.credentials.revoke(previousCredentialId);
       return { ok: true, grant };
     } catch {
       return { ok: false, leaseId, reason: "issuance-failed" };

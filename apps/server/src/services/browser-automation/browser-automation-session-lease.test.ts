@@ -73,10 +73,10 @@ describe("BrowserAutomationSessionLease", () => {
     let now = 100;
     const registry = new BrowserAutomationCredentialRegistry({ idleTtlMs: 10, absoluteTtlMs: 100, now: () => now });
     const lease = configuredLease({ credentials: registry, pendingTtlMs: 5, now: () => now });
+    const grant = lease.issue(scope({ mcodeSessionId: "mcode-live" }))!;
     const pending = lease.stage(scope());
     now = 106;
     expect(lease.issue(pending)).toBeNull();
-    const grant = lease.issue(scope({ mcodeSessionId: "mcode-live" }))!;
     now = 111;
     expect(registry.size()).toBe(0);
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
