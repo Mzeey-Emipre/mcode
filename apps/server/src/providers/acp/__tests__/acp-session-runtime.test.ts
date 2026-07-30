@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import type { Client, ClientSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
-import { AcpSessionRuntime } from "./acp-session-runtime.js";
+import { AcpSessionRuntime } from "../acp-session-runtime.js";
 
 function fakeChild() {
   const child = new EventEmitter() as ChildProcess;
@@ -146,10 +146,11 @@ describe("AcpSessionRuntime", () => {
     vi.useFakeTimers();
     try {
       const child = fakeChild();
+      let resolveNewSession!: (value: { sessionId: string }) => void;
       const connection = {
         initialize: vi.fn(async () => ({ agentCapabilities: { loadSession: true }, authMethods: [] })),
         loadSession: vi.fn(() => new Promise<never>(() => {})),
-        newSession: vi.fn(async () => ({ sessionId: "fresh-after-timeout" })),
+        newSession: vi.fn(() => new Promise<{ sessionId: string }>((resolve) => { resolveNewSession = resolve; })),
       } as unknown as ClientSideConnection;
       const runtime = await AcpSessionRuntime.start({
         spawnSpec: { command: "fake", args: [], cwd: ".", env: {} },
@@ -160,8 +161,9 @@ describe("AcpSessionRuntime", () => {
 
       await runtime.initialize();
       const opening = runtime.openSession({ resumeFrom: "stalled", cwd: ".", mcpServers: [] });
-      await vi.advanceTimersByTimeAsync(50);
+      vi.advanceTimersByTime(50);
       expect(runtime.state.sessionId).toBe("");
+      resolveNewSession({ sessionId: "fresh-after-timeout" });
       await expect(opening).resolves.toEqual({ sessionId: "fresh-after-timeout", reloaded: false });
       expect(connection.newSession).toHaveBeenCalledTimes(1);
     } finally {
