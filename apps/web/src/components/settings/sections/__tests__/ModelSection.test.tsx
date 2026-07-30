@@ -1,5 +1,16 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = () => {};
+}
 
 // vi.hoisted ensures these refs are available inside the vi.mock factory below.
 const { mockSettingsSelector, mockPmState } = vi.hoisted(() => ({
@@ -18,9 +29,10 @@ vi.mock("@/stores/settingsStore", () => {
     {
       getState: vi.fn().mockReturnValue({
         settings: {
-          model: {
+        model: {
             defaults: { provider: "claude", id: "claude-opus-4-7", reasoning: "high", fallbackId: "" },
             utility: { provider: "", id: "" },
+            providerDefaults: {},
           },
           provider: { cli: { codex: "", claude: "", copilot: "", cursor: "" } },
           diffSummary: { enabled: false },
@@ -58,12 +70,13 @@ vi.mock("@/components/ui/tooltip", () => ({
 import { ModelSection } from "../ModelSection";
 
 /** Builds the full settings state shape required by ModelSection. */
-function makeState(provider: string, modelId: string, reasoning = "high") {
+function makeState(provider: string, modelId: string, reasoning = "high", providerDefaults: Record<string, string> = {}) {
   return {
     settings: {
       model: {
         defaults: { provider, id: modelId, reasoning, fallbackId: "" },
         utility: { provider: "", id: "" },
+        providerDefaults,
       },
       provider: { cli: { codex: "", claude: "", copilot: "", cursor: "" } },
       diffSummary: { enabled: false },
@@ -110,6 +123,7 @@ describe("ModelSection reasoning options", () => {
     for (const name of [
       "Providers",
       "Model defaults",
+      "Delegated thread defaults",
       "Utility model",
       "AI features",
     ]) {
@@ -191,5 +205,33 @@ describe("ModelSection reasoning options", () => {
     renderWithModel("claude", "claude-sonnet-4-6");
 
     expect(screen.getByText("Reasoning effort")).toBeInTheDocument();
+  });
+
+  it("switches the delegated provider without changing the global default", () => {
+    const state = makeState("claude", "claude-opus-4-7");
+    mockSettingsSelector.mockImplementation((selector: (s: unknown) => unknown) => selector(state));
+    render(<ModelSection />);
+
+    fireEvent.click(screen.getByTestId("settings-delegated-provider-trigger"));
+    fireEvent.click(screen.getByTestId("settings-provider-option-codex"));
+
+    expect(screen.getByTestId("settings-delegated-provider-trigger")).toHaveTextContent("Codex");
+    expect(state.update).not.toHaveBeenCalled();
+  });
+
+  it("shows a saved delegated override and emits a provider-keyed update", () => {
+    const state = makeState("claude", "claude-opus-4-7", "high", { claude: "claude-opus-4-6" });
+    mockSettingsSelector.mockImplementation((selector: (s: unknown) => unknown) => selector(state));
+    render(<ModelSection />);
+
+    expect(screen.getByTestId("settings-delegated-model-trigger")).not.toHaveTextContent("No override");
+    fireEvent.click(screen.getByTestId("settings-delegated-model-trigger"));
+    const option = screen.getAllByRole("option").find((item) => item.textContent?.trim() !== "No override");
+    expect(option).toBeDefined();
+    fireEvent.click(option!);
+
+    expect(state.update).toHaveBeenCalledWith({
+      model: { providerDefaults: { claude: expect.any(String) } },
+    });
   });
 });

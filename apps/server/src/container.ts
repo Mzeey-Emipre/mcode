@@ -520,6 +520,9 @@ export function setupContainer(mcodeDir: string): typeof container {
     { useClass: DelegationTargetResolver },
     { lifecycle: Lifecycle.Singleton },
   );
+  container.register("DelegationTargetResolver", {
+    useFactory: (c) => c.resolve(DelegationTargetResolver),
+  });
   container.register(
     WorkspaceEnricher,
     { useClass: WorkspaceEnricher },
