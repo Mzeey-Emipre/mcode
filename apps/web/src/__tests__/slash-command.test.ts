@@ -333,6 +333,11 @@ describe("selection + text replacement", () => {
 
     const guideCommand = result.current.items.find((item) => item.name === "mcode-guide");
     expect(guideCommand).toBeDefined();
+    expect(guideCommand).toMatchObject({
+      namespace: "mcode",
+      capabilityKind: "mcode",
+      id: "builtin:mcode:mcode-guide",
+    });
 
     let inserted = "";
     await act(async () => {

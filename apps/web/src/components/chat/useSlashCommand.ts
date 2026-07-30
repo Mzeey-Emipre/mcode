@@ -53,11 +53,11 @@ const MAX_SLASH_COMMAND_ITEMS = 100;
 
 const BUILTIN_COMMANDS: Command[] = [
   {
-    id: "builtin:command:mcode-guide",
+    id: "builtin:mcode:mcode-guide",
     name: "mcode-guide",
     description: "Read the Mcode thread-control and Browser operating guide",
-    namespace: "command",
-    capabilityKind: "providerCommand",
+    namespace: "mcode",
+    capabilityKind: "mcode",
     nativeId: "mcode-guide",
   },
   {
