@@ -31,12 +31,14 @@ import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
 import {
-  BrowserAutomationAccessService,
   browserAutomationPermissionCapability,
-  type BrowserAutomationAccessRequest,
-  type BrowserAutomationAccessGrant,
   type BrowserAutomationCredentialMetadata,
 } from "../../services/browser-automation/access-service.js";
+import {
+  BrowserAutomationSessionLease,
+  type BrowserAutomationSessionLeaseGrant,
+  type BrowserAutomationSessionLeaseStage,
+} from "../../services/browser-automation/browser-automation-session-lease.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
@@ -176,7 +178,7 @@ interface CursorAcpSessionEntry {
   /** Whether this ACP version advertised HTTP MCP session support. */
   browserHttpMcpSupported: boolean;
   /** Non-secret browser credential lifecycle metadata for this main session. */
-  browserCredential?: BrowserAutomationCredentialMetadata;
+  browserCredential?: BrowserAutomationCredentialMetadata & { leaseId: string };
   /** Workspace fixed to this provider process at spawn. */
   workspaceId: string;
   /** Browser permission class fixed to this provider process at spawn. */
@@ -193,9 +195,11 @@ interface CursorAcpSessionEntry {
  */
 type CursorSessionState = CursorAcpSessionEntry;
 
+type CursorBrowserContext = Pick<CursorAcpSessionEntry, "workspaceId" | "browserPermissionCapability">;
+
 /** Builds the ACP HTTP MCP descriptor for one short-lived browser grant. */
 export function buildCursorBrowserMcpServers(
-  grant: BrowserAutomationAccessGrant | null,
+  grant: Pick<BrowserAutomationSessionLeaseGrant, "mcpUrl" | "token"> | null,
 ): McpServer[] {
   return grant
     ? [{
@@ -253,16 +257,22 @@ export class CursorProvider
    * in `spawn`, pruned in `close`.
    */
   private liveSessionIds = new Set<string>();
-  /** Browser scope staged only until a fresh normal ACP session opens. */
-  private pendingBrowserAccess = new Map<string, BrowserAutomationAccessRequest>();
+  /** Browser lease staged only until a fresh normal ACP session opens. */
+  private pendingBrowserLeases = new Map<string, BrowserAutomationSessionLeaseStage>();
+  /** Non-secret provider state needed while a staged lease is being opened. */
+  private pendingBrowserContext = new Map<string, CursorBrowserContext>();
+  /** Refreshed browser grant carried across a provider restart. */
+  private pendingBrowserGrants = new Map<string, BrowserAutomationSessionLeaseGrant>();
+  /** Context captured with a refreshed grant so a changed request cannot reuse it. */
+  private pendingBrowserGrantContext = new Map<string, CursorBrowserContext>();
 
   constructor(
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject(SkillService) private readonly skillService: SkillService,
     @inject(EnvService) private readonly envService: EnvService,
     @inject("JobObject") private readonly jobObject: JobObject,
-    @inject(BrowserAutomationAccessService)
-    private readonly browserAutomationAccess: BrowserAutomationAccessService = new BrowserAutomationAccessService(),
+    @inject(BrowserAutomationSessionLease)
+    private readonly browserAutomationLease: BrowserAutomationSessionLease = new BrowserAutomationSessionLease(),
   ) {
     super();
     this.runtime = new SessionRuntime<CursorSessionState>(this, {
@@ -311,6 +321,10 @@ export class CursorProvider
       permissionMode,
       req.interactionMode,
     );
+    const browserContext: CursorBrowserContext = {
+      workspaceId: req.workspaceId,
+      browserPermissionCapability,
+    };
 
     // interactionMode absorbs the retired setPlanQuestionMode: a plan-mode Turn
     // suppresses Cursor's native auto-answer of ask_question; build clears it.
@@ -322,23 +336,61 @@ export class CursorProvider
     }
 
     const existing = this.runtime.get(sessionId);
-    if (
-      existing &&
-      this.browserAutomationAccess.isConfigured() &&
-      (existing.workspaceId !== req.workspaceId ||
-        existing.browserPermissionCapability !== browserPermissionCapability ||
-        (existing.browserCredential && existing.browserCredential.expiresAt <= Date.now()))
-    ) {
-      await this.runtime.stop(sessionId);
+    const pendingGrant = this.pendingBrowserGrants.get(sessionId);
+    const pendingGrantContext = this.pendingBrowserGrantContext.get(sessionId);
+    if (pendingGrant && (!pendingGrantContext || !this.sameBrowserContext(pendingGrantContext, browserContext))) {
+      this.releaseBrowserLeases(pendingGrant);
+      this.pendingBrowserGrants.delete(sessionId);
+      this.pendingBrowserGrantContext.delete(sessionId);
     }
-    this.pendingBrowserAccess.set(sessionId, {
-      providerId: this.id,
-      providerSessionId: req.resumeFrom ?? sessionId,
-      mcodeSessionId: sessionId,
-      threadId: req.threadId,
-      workspaceId: req.workspaceId,
-      permissionCapability: browserPermissionCapability,
-    });
+    let browserStage: BrowserAutomationSessionLeaseStage | undefined;
+    if (existing) {
+      const browserContextChanged =
+        existing.workspaceId !== req.workspaceId ||
+        existing.browserPermissionCapability !== browserPermissionCapability;
+      const browserExpired = existing.browserCredential !== undefined &&
+        existing.browserCredential.expiresAt <= Date.now();
+      if (browserContextChanged || browserExpired) {
+        if (!browserContextChanged && browserExpired && existing.browserCredential) {
+          const refreshed = this.browserAutomationLease.refresh(existing.browserCredential.leaseId);
+          if (refreshed.ok) {
+            this.pendingBrowserGrants.set(sessionId, refreshed.grant);
+            this.pendingBrowserGrantContext.set(sessionId, browserContext);
+            existing.browserCredential = undefined;
+          }
+        }
+        await this.runtime.stop(sessionId);
+      }
+    }
+    if (!this.runtime.get(sessionId)) {
+      if (this.pendingBrowserGrants.has(sessionId)) {
+        const staleStage = this.pendingBrowserLeases.get(sessionId);
+        this.releaseBrowserLeases(staleStage);
+        this.pendingBrowserLeases.delete(sessionId);
+        this.pendingBrowserContext.delete(sessionId);
+      } else {
+        browserStage = this.pendingBrowserLeases.get(sessionId);
+        const stagedContext = this.pendingBrowserContext.get(sessionId);
+        if (browserStage && (!stagedContext || !this.sameBrowserContext(stagedContext, browserContext))) {
+          this.releaseBrowserLeases(browserStage);
+          this.pendingBrowserLeases.delete(sessionId);
+          this.pendingBrowserContext.delete(sessionId);
+          browserStage = undefined;
+        }
+      }
+      if (!browserStage && !this.pendingBrowserGrants.has(sessionId)) {
+        browserStage = this.browserAutomationLease.stage({
+          providerId: this.id,
+          providerSessionId: req.resumeFrom ?? sessionId,
+          mcodeSessionId: sessionId,
+          threadId: req.threadId,
+          workspaceId: req.workspaceId,
+          permissionCapability: browserPermissionCapability,
+        });
+        this.pendingBrowserLeases.set(sessionId, browserStage);
+        this.pendingBrowserContext.set(sessionId, browserContext);
+      }
+    }
 
     let entry: CursorSessionState;
     try {
@@ -353,14 +405,22 @@ export class CursorProvider
         resumeFrom: resume ? this.sdkSessionIds.get(sessionId) : undefined,
       });
     } catch (err) {
-      this.pendingBrowserAccess.delete(sessionId);
+      this.releaseBrowserLeases(browserStage);
+      this.pendingBrowserLeases.delete(sessionId);
+      this.pendingBrowserContext.delete(sessionId);
+      const refreshed = this.pendingBrowserGrants.get(sessionId);
+      this.releaseBrowserLeases(refreshed);
+      this.pendingBrowserGrants.delete(sessionId);
+      this.pendingBrowserGrantContext.delete(sessionId);
       const errMsg = err instanceof Error ? err.message : String(err);
       logger.error("Cursor ACP spawn failed", { sessionId, error: errMsg });
       this.emit("event", { type: AgentEventType.Error, threadId, error: errMsg } satisfies AgentEvent);
       this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
-    this.pendingBrowserAccess.delete(sessionId);
+    this.pendingBrowserLeases.delete(sessionId);
+    this.pendingBrowserContext.delete(sessionId);
+    if (browserStage && entry === existing) this.releaseBrowserLeases(browserStage);
 
     // A stop requested before the session finished spawning: tear it down now.
     if (this.pendingStops.delete(sessionId)) {
@@ -432,7 +492,17 @@ export class CursorProvider
     this.planQuestionModeThreads.clear();
     this.sdkSessionIds.clear();
     this.liveSessionIds.clear();
-    this.pendingBrowserAccess.clear();
+    for (const stage of this.pendingBrowserLeases.values()) {
+      this.browserAutomationLease.release(stage.leaseId);
+    }
+    for (const grant of this.pendingBrowserGrants.values()) {
+      this.browserAutomationLease.release(grant.leaseId);
+    }
+    this.pendingBrowserLeases.clear();
+    this.pendingBrowserContext.clear();
+    this.pendingBrowserGrants.clear();
+    this.pendingBrowserGrantContext.clear();
+    this.browserAutomationLease.shutdown();
     logger.info("CursorProvider shutdown complete");
   }
 
@@ -506,15 +576,24 @@ export class CursorProvider
     const pm: "full" | "default" = permissionMode === "full" ? "full" : "default";
     const settings = this.settingsService.get();
     const state = await this.spawnChild(sessionId, threadId, cwd, pm, settings);
-    const browserScope = this.pendingBrowserAccess.get(sessionId);
-    const browserGrant = state.browserHttpMcpSupported && browserScope
-      ? this.browserAutomationAccess.issue(browserScope)
-      : null;
-    if (
-      browserScope &&
-      this.browserAutomationAccess.isConfigured() &&
-      !state.browserHttpMcpSupported
-    ) {
+    const browserStage = this.pendingBrowserLeases.get(sessionId);
+    const refreshedGrant = this.pendingBrowserGrants.get(sessionId);
+    let browserGrant: BrowserAutomationSessionLeaseGrant | null = null;
+    if (state.browserHttpMcpSupported) {
+      if (refreshedGrant) {
+        browserGrant = refreshedGrant;
+        this.pendingBrowserGrants.delete(sessionId);
+        this.pendingBrowserGrantContext.delete(sessionId);
+        if (browserStage) this.releaseBrowserLeases(browserStage);
+      } else if (browserStage) {
+        browserGrant = this.browserAutomationLease.issue(browserStage);
+      }
+    } else {
+      this.releaseBrowserLeases(browserStage, refreshedGrant);
+      this.pendingBrowserGrants.delete(sessionId);
+      this.pendingBrowserGrantContext.delete(sessionId);
+    }
+    if (browserStage && !state.browserHttpMcpSupported) {
       logger.info("Cursor ACP does not advertise HTTP MCP; browser automation is unavailable", {
         threadId,
       });
@@ -532,10 +611,15 @@ export class CursorProvider
         state.browserCredential = {
           credentialId: browserGrant.credentialId,
           expiresAt: browserGrant.expiresAt,
+          leaseId: browserGrant.leaseId,
         };
       }
     } catch (err) {
-      if (browserGrant) this.browserAutomationAccess.revokeCredential(browserGrant.credentialId);
+      this.releaseBrowserLeases(browserGrant, browserStage, refreshedGrant);
+      this.pendingBrowserLeases.delete(sessionId);
+      this.pendingBrowserContext.delete(sessionId);
+      this.pendingBrowserGrants.delete(sessionId);
+      this.pendingBrowserGrantContext.delete(sessionId);
       this.liveSessionIds.delete(sessionId);
       try {
         state.child.kill();
@@ -574,8 +658,22 @@ export class CursorProvider
   close(state: CursorSessionState): void {
     this.cancelPendingForThread(state.mcodeSessionId);
     this.liveSessionIds.delete(state.mcodeSessionId);
-    if (state.browserCredential) {
-      this.browserAutomationAccess.revokeCredential(state.browserCredential.credentialId);
+    if (!this.pendingBrowserGrants.has(state.mcodeSessionId)) {
+      this.browserAutomationLease.releaseSession(this.id, state.mcodeSessionId);
+    }
+  }
+
+  private sameBrowserContext(left: CursorBrowserContext, right: CursorBrowserContext): boolean {
+    return left.workspaceId === right.workspaceId &&
+      left.browserPermissionCapability === right.browserPermissionCapability;
+  }
+
+  private releaseBrowserLeases(...leases: Array<{ leaseId: string } | null | undefined>): void {
+    const released = new Set<string>();
+    for (const lease of leases) {
+      if (!lease || released.has(lease.leaseId)) continue;
+      released.add(lease.leaseId);
+      this.browserAutomationLease.release(lease.leaseId);
     }
   }
 
@@ -640,9 +738,9 @@ export class CursorProvider
     const entry: Omit<CursorAcpSessionEntry, "connection"> & {
       connection?: CursorAcpSessionEntry["connection"];
     } = {
-      workspaceId: this.pendingBrowserAccess.get(mcodeSessionId)?.workspaceId ?? "unknown-workspace",
+      workspaceId: this.pendingBrowserContext.get(mcodeSessionId)?.workspaceId ?? "unknown-workspace",
       browserPermissionCapability:
-        this.pendingBrowserAccess.get(mcodeSessionId)?.permissionCapability ?? "interact",
+        this.pendingBrowserContext.get(mcodeSessionId)?.browserPermissionCapability ?? "interact",
       browserHttpMcpSupported: false,
       mcodeSessionId,
       threadId,
@@ -1020,13 +1118,40 @@ export class CursorProvider
     const sessionId = dead.mcodeSessionId;
     this.logAcpChildDisconnect(dead, "ACP connection closed");
     await this.runtime.stop(sessionId);
-    const fresh = await this.runtime.acquire({
-      sessionId,
-      threadId: dead.threadId,
-      cwd: dead.cwd,
-      permissionMode: dead.permissionMode,
-      resumeFrom: this.sdkSessionIds.get(sessionId),
-    });
+    const browserStage = dead.browserHttpMcpSupported
+      ? this.browserAutomationLease.stage({
+        providerId: this.id,
+        providerSessionId: this.sdkSessionIds.get(sessionId) ?? sessionId,
+        mcodeSessionId: sessionId,
+        threadId: dead.threadId,
+        workspaceId: dead.workspaceId,
+        permissionCapability: dead.browserPermissionCapability,
+      })
+      : undefined;
+    if (browserStage) {
+      this.pendingBrowserLeases.set(sessionId, browserStage);
+      this.pendingBrowserContext.set(sessionId, {
+        workspaceId: dead.workspaceId,
+        browserPermissionCapability: dead.browserPermissionCapability,
+      });
+    }
+    let fresh: CursorAcpSessionEntry;
+    try {
+      fresh = await this.runtime.acquire({
+        sessionId,
+        threadId: dead.threadId,
+        cwd: dead.cwd,
+        permissionMode: dead.permissionMode,
+        resumeFrom: this.sdkSessionIds.get(sessionId),
+      });
+    } catch (error) {
+      if (browserStage) this.browserAutomationLease.release(browserStage.leaseId);
+      this.pendingBrowserLeases.delete(sessionId);
+      this.pendingBrowserContext.delete(sessionId);
+      throw error;
+    }
+    this.pendingBrowserLeases.delete(sessionId);
+    this.pendingBrowserContext.delete(sessionId);
     fresh.stickyHeavyInstructionsSent = dead.stickyHeavyInstructionsSent;
     fresh.cursorPromptOrdinal = dead.cursorPromptOrdinal;
     fresh.lastUsedAt = Date.now();
