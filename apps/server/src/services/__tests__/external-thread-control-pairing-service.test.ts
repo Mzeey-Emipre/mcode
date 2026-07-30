@@ -239,11 +239,12 @@ describe("external thread-control pairing service", () => {
     const service = new ExternalThreadControlPairingService(db as unknown as Database.Database);
     const secret = service.create(input());
     const authority = authenticate(service, secret.credential);
+    const retainedUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     for (let index = 0; index < 10_000; index += 1) {
       db.deliveries.push({
         pairing_id: authority.pairing.pairingId, authority_epoch: authority.pairing.authorityEpoch, delivery_id: `delivery-${index}`,
         fingerprint: "fingerprint", status: "in_flight", result_json: null,
-        created_at: "2026-07-29T00:00:00.000Z", updated_at: "2026-07-29T00:00:00.000Z", expires_at: "2026-07-30T00:00:00.000Z",
+        created_at: "2026-07-29T00:00:00.000Z", updated_at: "2026-07-29T00:00:00.000Z", expires_at: retainedUntil,
       });
     }
     expect(() => service.beginDelivery(authority, "delivery-new", "fingerprint")).toThrowError("External replay retention is full");
