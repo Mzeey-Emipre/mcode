@@ -157,7 +157,14 @@ export const SetThreadSubscriptionsSchema = lazySchema(() =>
     cursors: z.record(
       ThreadSubscriptionIdSchema,
       z.union([z.number().int().nonnegative(), AgentEventCursorSchema]),
-    ).optional(),
+    ).superRefine((cursors, context) => {
+      if (Object.keys(cursors).length > MAX_THREAD_SUBSCRIPTIONS) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `cursors must contain at most ${MAX_THREAD_SUBSCRIPTIONS} entries`,
+        });
+      }
+    }).optional(),
   }),
 );
 

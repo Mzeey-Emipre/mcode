@@ -323,6 +323,56 @@ describe("ThreadHydrator", () => {
     expect(readActiveThreadField((record) => record.fileEffectSummary)).toEqual(liveSummary);
   });
 
+  it("discards resident running snapshots after a newer activation epoch wins", async () => {
+    let resolveSnapshots!: (value: Array<{
+      message_id: string;
+      files_changed: string[];
+      thread_id: string;
+      created_at: string;
+    }>) => void;
+    useWorkspaceStore.setState({
+      threads: [
+        createMockThread({ id: THREAD_A, has_file_changes: true }),
+        createMockThread({ id: THREAD_B, has_file_changes: false }),
+      ],
+    });
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_B,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map([
+        [THREAD_A, { ...makeCachedRecord(), loadEpoch: 2 }],
+        [THREAD_B, { ...createEmptyThreadRecord(), messages: [msgB] }],
+      ]),
+    });
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveSnapshots = resolve;
+      }),
+    );
+
+    await hydrator.hydrate(THREAD_A, "active");
+    await vi.waitFor(() => {
+      expect(mockTransport.listSnapshots).toHaveBeenCalledWith(THREAD_A);
+    });
+
+    useThreadStore.setState((state) => ({
+      records: patchThreadRecord(state.records, THREAD_A, (record) => ({
+        loadEpoch: record.loadEpoch + 1,
+      })),
+    }));
+    resolveSnapshots([{
+      message_id: "stale-turn",
+      files_changed: ["src/stale.ts"],
+      thread_id: THREAD_A,
+      created_at: "2026-01-01T00:00:00Z",
+    }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(readActiveThreadField((record) => record.persistedFilesChanged)).toEqual({});
+    expect(getCachedRecord(THREAD_A)?.persistedFilesChanged).toEqual({});
+  });
+
   it("keeps prefetched earlier history out of live state until pagination", async () => {
     const history = Array.from({ length: 100 }, (_, index) => createMockMessage({
       id: `a-${index + 1}`,

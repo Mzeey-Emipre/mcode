@@ -551,6 +551,7 @@ export class ThreadHydrator {
           freshnessTtlMs: HYDRATION_TTL_MS,
           force: opts?.force ?? true,
           commitFileChangesToStore: true,
+          expectedLoadEpoch: expectedEpoch,
         });
         return;
       }

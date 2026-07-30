@@ -990,14 +990,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS || bytes + eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
       promoteDeferredNarrativeEvents(threadId);
       if (eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
-        const prior = deferredNarrativeEventsByThread.get(threadId);
         deferredNarrativeEventsByThread.set(threadId, {
           generation,
           events: [event],
           bytes: eventBytes,
         });
         promoteDeferredNarrativeEvents(threadId);
-        if (prior) deferredNarrativeEventsByThread.delete(threadId);
         return;
       }
     }
