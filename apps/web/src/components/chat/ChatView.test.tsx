@@ -12,6 +12,8 @@ const {
   chatViewConnectionStatusRef,
   chatViewGetTransportMock,
   chatViewTransportMock,
+  chatViewThreadStoreSetStateMock,
+  chatViewResidencyMock,
 } = vi.hoisted(() => ({
   chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
   chatViewThreadMockRef: { current: null as Record<string, unknown> | null },
@@ -21,6 +23,11 @@ const {
     subscribeThread: vi.fn(),
     unsubscribeThread: vi.fn(),
     setThreadSubscriptions: vi.fn(),
+  },
+  chatViewThreadStoreSetStateMock: vi.fn(),
+  chatViewResidencyMock: {
+    invalidateConversation: vi.fn(),
+    refresh: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -45,14 +52,18 @@ vi.mock("@/stores/workspaceStore", () => ({
   ),
 }));
 
-vi.mock("@/stores/threadStore", () => ({
-  useThreadStore: vi.fn((selector: (s: unknown) => unknown) => {
-    if (!chatViewThreadMockRef.current) {
-      throw new Error("ChatView tests: set chatViewThreadMockRef before render");
-    }
-    return selector(chatViewThreadMockRef.current);
-  }),
-}));
+vi.mock("@/stores/threadStore", () => {
+  const useThreadStore = Object.assign(
+    vi.fn((selector: (s: unknown) => unknown) => {
+      if (!chatViewThreadMockRef.current) {
+        throw new Error("ChatView tests: set chatViewThreadMockRef before render");
+      }
+      return selector(chatViewThreadMockRef.current);
+    }),
+    { setState: chatViewThreadStoreSetStateMock },
+  );
+  return { useThreadStore };
+});
 
 vi.mock("@/stores/connectionStore", () => ({
   useConnectionStore: vi.fn((selector: (s: unknown) => unknown) =>
@@ -87,6 +98,10 @@ vi.mock("@/transport", () => ({
   getTransport: chatViewGetTransportMock,
 }));
 
+vi.mock("@/stores/conversation-residency", () => ({
+  getConversationResidency: () => chatViewResidencyMock,
+}));
+
 // Composer and MessageList have deep dependencies; stub them out.
 vi.mock("./Composer", () => ({
   Composer: () => <div data-testid="composer" />,
@@ -114,6 +129,10 @@ vi.mock("./CliErrorBanner", () => ({
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { createMockMessage } from "@/__tests__/mocks/transport";
+import {
+  __resetThreadSwitchTelemetryForTests,
+  getThreadSwitchTelemetryCounters,
+} from "@/lib/thread-switch-telemetry";
 import { ChatView } from "./ChatView";
 
 /** Build a minimal Thread fixture. */
@@ -255,6 +274,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewTransportMock.unsubscribeThread.mockClear();
     chatViewGetTransportMock.mockReset();
     chatViewGetTransportMock.mockReturnValue(chatViewTransportMock);
+    chatViewThreadStoreSetStateMock.mockClear();
+    chatViewResidencyMock.invalidateConversation.mockClear();
+    chatViewResidencyMock.refresh.mockClear();
+    __resetThreadSwitchTelemetryForTests();
     disableAtomicSubscriptionTransport();
     setupWorkspaceMock(defaultWorkspaceState());
     chatViewThreadMockRef.current = defaultThreadState();
@@ -690,6 +713,16 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
   });
 
+  it("does not record telemetry for an already-applied empty atomic subscription set", () => {
+    enableAtomicSubscriptionTransport();
+    setupWorkspaceMock(defaultWorkspaceState({ activeThreadId: null, threads: [] }));
+    chatViewThreadMockRef.current = defaultThreadState({ currentThreadId: null });
+
+    render(<ChatView />);
+
+    expect(getThreadSwitchTelemetryCounters().subscriptionsSkipped).toBe(0);
+  });
+
   it("keeps the active thread first while bounding running subscriptions", async () => {
     const setThreadSubscriptions = enableAtomicSubscriptionTransport();
     const activeThreadId = "thread-active";
@@ -759,6 +792,31 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     requests[0]?.resolve();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores stale atomic hydration responses before mutating cursor or residency state", async () => {
+    const requests: Array<(result: { hydrationRequiredThreadIds: string[] }) => void> = [];
+    const setThreadSubscriptions = vi.fn(
+      () => new Promise<{ hydrationRequiredThreadIds: string[] }>((resolve) => {
+        requests.push(resolve);
+      }),
+    );
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+    chatViewConnectionStatusRef.current = "reconnecting";
+    rerender(<ChatView />);
+    requests[0]?.({ hydrationRequiredThreadIds: ["thread-1"] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(chatViewThreadStoreSetStateMock).not.toHaveBeenCalled();
+    expect(chatViewResidencyMock.invalidateConversation).not.toHaveBeenCalled();
+    expect(chatViewResidencyMock.refresh).not.toHaveBeenCalled();
   });
 
   it("reconciles a newer atomic target after an older response and failed replacement", async () => {

@@ -93,4 +93,28 @@ describe("thread switch telemetry", () => {
       subscriptionsSkipped: 1,
     });
   });
+
+  it("gives repeated events unique marks and evicts only the oldest mark", () => {
+    recordThreadSelection("thread-a");
+    for (let index = 0; index < 65; index++) {
+      recordSubscriptionSkipped("thread-a");
+    }
+
+    const eventNames = names("mcode:thread-switch:subscription-skipped:");
+    expect(eventNames).toHaveLength(64);
+    expect(new Set(eventNames).size).toBe(64);
+    expect(performance.getEntriesByName("mcode:thread-switch:subscription-skipped:1:1")).toHaveLength(0);
+    expect(performance.getEntriesByName("mcode:thread-switch:subscription-skipped:1:2")).toHaveLength(1);
+  });
+
+  it("resets event IDs with telemetry state", () => {
+    recordThreadSelection("thread-a");
+    recordSubscriptionSkipped("thread-a");
+    __resetThreadSwitchTelemetryForTests();
+
+    recordThreadSelection("thread-a");
+    recordSubscriptionSkipped("thread-a");
+
+    expect(performance.getEntriesByName("mcode:thread-switch:subscription-skipped:1:1")).toHaveLength(1);
+  });
 });

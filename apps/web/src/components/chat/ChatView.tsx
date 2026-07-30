@@ -605,7 +605,8 @@ export function ChatView() {
         && Array.from(confirmed).every((threadId) => desired.has(threadId));
       const pending = atomicSubscriptionRequestRef.current;
       if (alreadyApplied) {
-        recordSubscriptionSkipped(activeThreadId ?? sortedThreadIds[0] ?? "");
+        const telemetryThreadId = activeThreadId ?? sortedThreadIds[0];
+        if (telemetryThreadId) recordSubscriptionSkipped(telemetryThreadId);
         return;
       }
       if (pending?.epoch === epoch && pending.signature === targetSignature) return;
@@ -636,6 +637,7 @@ export function ChatView() {
         ? { threadIds: sortedThreadIds, cursors }
         : { threadIds: sortedThreadIds };
       void setThreadSubscriptions(input).then((result) => {
+        if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
         if (result?.hydrationRequiredThreadIds?.length) {
           const residency = getConversationResidency();
           for (const threadId of result.hydrationRequiredThreadIds) {
@@ -663,7 +665,6 @@ export function ChatView() {
             }
           }
         }
-        if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
         confirmedThreadIdsRef.current = sentThreadIds;
         const latestDesired = desiredThreadIdsRef.current;
         const responseIsCurrent = subscriptionTargetSignatureRef.current === targetSignature

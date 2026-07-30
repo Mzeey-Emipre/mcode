@@ -80,9 +80,10 @@ function recordEvent(
 ): void {
   if (!isEnabled()) return;
   counters[event] = Math.min(MAX_EVENT_COUNT, counters[event] + 1);
-  const switchId = latestByThread.get(threadId) ?? latestSelectionId ?? ++nextEventId;
-  const name = `${MARK_PREFIX}:${markName}:${switchId}`;
-  mark(name, { threadId, switchId, count: counters[event] });
+  const eventId = ++nextEventId;
+  const switchId = latestByThread.get(threadId) ?? latestSelectionId ?? eventId;
+  const name = `${MARK_PREFIX}:${markName}:${switchId}:${eventId}`;
+  mark(name, { threadId, switchId, eventId, count: counters[event] });
   eventMarks.push(name);
   while (eventMarks.length > MAX_RETAINED_EVENT_MARKS) {
     const oldest = eventMarks.shift();
@@ -203,7 +204,7 @@ export function recordThreadPositioned(threadId: string): void {
   });
 }
 
-/** Clear telemetry state and browser entries. Intended for unit tests only. */
+/** Reset thread-switch telemetry state and browser entries for unit tests. */
 export function __resetThreadSwitchTelemetryForTests(): void {
   if (isEnabled()) {
     for (const record of records.values()) clearRecord(record);
