@@ -547,6 +547,8 @@ describe("BrowserAutomationHost", () => {
     delete window.desktopBridge;
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     const screenshotRequest = dispatch(1, 41);
+    const requestId = screenshotRequest.request.requestId;
+    const sequence = screenshotRequest.request.sequence;
     screenshotRequest.request = {
       ...screenshotRequest.request,
       operation: "screenshot",
@@ -554,8 +556,8 @@ describe("BrowserAutomationHost", () => {
     } as never;
     webExecutor.executeWebBrowserDispatch.mockResolvedValue({
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-      requestId: screenshotRequest.request.requestId,
-      sequence: screenshotRequest.request.sequence,
+      requestId,
+      sequence,
       ok: true,
       result: {
         operation: "screenshot",
