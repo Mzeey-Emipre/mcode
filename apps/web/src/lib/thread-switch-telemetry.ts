@@ -16,7 +16,7 @@ interface ThreadSwitchRecord {
   positionedMark?: string;
 }
 
-/** Bounded counters for running-thread switch pressure signals. */
+/** Bounded dev-only counters for running-thread switch pressure signals. */
 export interface ThreadSwitchTelemetryCounters {
   runningResidentHits: number;
   runningFetchRequired: number;
@@ -91,27 +91,27 @@ function recordEvent(
   }
 }
 
-/** Record that a running thread activated from its resident transcript. */
+/** Record a dev-only hit when a running thread activates from its resident transcript. */
 export function recordRunningResidentHit(threadId: string): void {
   recordEvent(threadId, "runningResidentHits", "running-resident-hit");
 }
 
-/** Record that a running thread activation required a network fetch. */
+/** Record a dev-only fetch when activating a running thread requires network data. */
 export function recordRunningFetchRequired(threadId: string): void {
   recordEvent(threadId, "runningFetchRequired", "running-fetch-required");
 }
 
-/** Record a dropped background event without retaining production state. */
+/** Record a dev-only background event drop without retaining event state. */
 export function recordBackgroundEventDropped(threadId: string): void {
   recordEvent(threadId, "backgroundEventsDropped", "background-event-dropped");
 }
 
-/** Record a skipped subscription callback without retaining production state. */
+/** Record a dev-only skipped subscription callback without retaining event state. */
 export function recordSubscriptionSkipped(threadId: string): void {
   recordEvent(threadId, "subscriptionsSkipped", "subscription-skipped");
 }
 
-/** Read bounded dev counters for diagnostics and tests. */
+/** Return a snapshot of bounded dev-only counters for diagnostics and tests. */
 export function getThreadSwitchTelemetryCounters(): ThreadSwitchTelemetryCounters {
   return { ...counters };
 }
