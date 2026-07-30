@@ -350,13 +350,36 @@ export class CursorProvider
         existing.browserPermissionCapability !== browserPermissionCapability;
       const browserExpired = existing.browserCredential !== undefined &&
         existing.browserCredential.expiresAt <= Date.now();
-      if (browserContextChanged || browserExpired) {
+      const acquireWillReplace = this.isStale(existing, { cwd, permissionMode });
+      if (browserContextChanged || browserExpired || acquireWillReplace) {
         if (!browserContextChanged && browserExpired && existing.browserCredential) {
           const refreshed = this.browserAutomationLease.refresh(existing.browserCredential.leaseId);
           if (refreshed.ok) {
             this.pendingBrowserGrants.set(sessionId, refreshed.grant);
             this.pendingBrowserGrantContext.set(sessionId, browserContext);
             existing.browserCredential = undefined;
+          }
+        }
+        if (acquireWillReplace && !this.pendingBrowserGrants.has(sessionId)) {
+          browserStage = this.pendingBrowserLeases.get(sessionId);
+          const stagedContext = this.pendingBrowserContext.get(sessionId);
+          if (browserStage && (!stagedContext || !this.sameBrowserContext(stagedContext, browserContext))) {
+            this.releaseBrowserLeases(browserStage);
+            this.pendingBrowserLeases.delete(sessionId);
+            this.pendingBrowserContext.delete(sessionId);
+            browserStage = undefined;
+          }
+          if (!browserStage) {
+            browserStage = this.browserAutomationLease.stage({
+              providerId: this.id,
+              providerSessionId: req.resumeFrom ?? sessionId,
+              mcodeSessionId: sessionId,
+              threadId: req.threadId,
+              workspaceId: req.workspaceId,
+              permissionCapability: browserPermissionCapability,
+            });
+            this.pendingBrowserLeases.set(sessionId, browserStage);
+            this.pendingBrowserContext.set(sessionId, browserContext);
           }
         }
         await this.runtime.stop(sessionId);
@@ -648,7 +671,7 @@ export class CursorProvider
   close(state: CursorSessionState): void {
     this.cancelPendingForThread(state.mcodeSessionId);
     this.liveSessionIds.delete(state.mcodeSessionId);
-    if (!this.pendingBrowserGrants.has(state.mcodeSessionId)) {
+    if (!this.pendingBrowserGrants.has(state.mcodeSessionId) && !this.pendingBrowserLeases.has(state.mcodeSessionId)) {
       this.browserAutomationLease.releaseSession(this.id, state.mcodeSessionId);
     }
   }

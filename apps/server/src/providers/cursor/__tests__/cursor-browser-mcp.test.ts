@@ -64,6 +64,7 @@ describe("Cursor browser MCP configuration", () => {
     provider.id = "cursor";
     provider.browserAutomationLease = lease;
     provider.pendingPermissions = new Map();
+    provider.pendingBrowserLeases = new Map();
     provider.pendingBrowserGrants = new Map();
     provider.liveSessionIds = new Set(["mcode-a"]);
 
@@ -195,6 +196,82 @@ describe("Cursor browser MCP configuration", () => {
 
     expect(lease.credentials.authenticate(grant.token)?.mcodeSessionId).toBe("mcode-a");
     lease.release(grant.leaseId);
+  });
+
+  it("propagates MCP grant when a stale pooled session is replaced", async () => {
+    const lease = configuredLease();
+    const previousGrant = lease.issue(browserScope())!;
+    const provider = Object.create(CursorProvider.prototype) as any;
+    const existing = {
+      child: { exitCode: 1, signalCode: null },
+      workspaceId: "workspace-a",
+      browserPermissionCapability: "interact",
+      browserCredential: {
+        credentialId: previousGrant.credentialId,
+        expiresAt: previousGrant.expiresAt,
+        leaseId: previousGrant.leaseId,
+      },
+      mcodeSessionId: "mcode-a",
+      threadId: "thread-a",
+      cwd: ".",
+      permissionMode: "default",
+      turnChain: Promise.resolve(),
+      lastUsedAt: Date.now(),
+      activeTurnState: null,
+    };
+    const replacement = {
+      ...existing,
+      child: { pid: 105, kill: vi.fn() },
+      browserCredential: undefined,
+      browserHttpMcpSupported: true,
+    };
+    let mcpServers: unknown;
+    provider.id = "cursor";
+    provider.browserAutomationLease = lease;
+    provider.settingsService = { get: vi.fn(() => ({})) };
+    provider.pendingPermissions = new Map();
+    provider.pendingBrowserLeases = new Map();
+    provider.pendingBrowserContext = new Map();
+    provider.pendingBrowserGrants = new Map();
+    provider.pendingBrowserGrantContext = new Map();
+    provider.pendingStops = new Set();
+    provider.liveSessionIds = new Set(["mcode-a"]);
+    provider.planQuestionModeThreads = new Set();
+    provider.spawnChild = vi.fn().mockResolvedValue(replacement);
+    provider.openLogicalSession = vi.fn(async (_state: unknown, _resume: boolean, servers: unknown) => {
+      mcpServers = servers;
+    });
+    provider.runTurn = vi.fn().mockResolvedValue(undefined);
+    provider.runtime = {
+      get: vi.fn().mockReturnValueOnce(existing).mockReturnValue(undefined),
+      stop: vi.fn(async () => provider.close(existing)),
+      acquire: vi.fn(async (args: any) => (await provider.spawn({ ...args, env: {} })).state),
+      recordUsage: vi.fn(),
+    };
+
+    await provider.sendTurn({
+      sessionId: "mcode-a",
+      threadId: "thread-a",
+      workspaceId: "workspace-a",
+      cwd: ".",
+      message: "hello",
+      model: "auto",
+      permissionMode: "default",
+      interactionMode: "build",
+    });
+
+    expect(mcpServers).toEqual([{
+      type: "http",
+      name: "mcode-browser",
+      url: "http://127.0.0.1:19400/mcp",
+      headers: [{
+        name: "Authorization",
+        value: expect.stringMatching(/^Bearer /),
+      }],
+    }]);
+    const authorization = (mcpServers as any[])[0].headers[0].value as string;
+    expect(lease.credentials.authenticate(authorization.slice("Bearer ".length))?.mcodeSessionId).toBe("mcode-a");
+    expect(lease.credentials.authenticate(previousGrant.token)).toBeNull();
   });
 
   it("releases staged and refreshed leases during shutdown", () => {
