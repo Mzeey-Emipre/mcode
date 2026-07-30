@@ -204,6 +204,8 @@ interface CursorAcpSessionEntry {
   /** Capability-derived Mcode guidance sent once on first normal prompt. */
   mcodeRuntimeInstructions: string;
   mcodeRuntimeInstructionsSent: boolean;
+  /** True when this ACP logical session successfully reloaded stored state. */
+  mcodeLogicalSessionReloaded: boolean;
 }
 
 /**
@@ -255,6 +257,14 @@ export function appendCursorMcodeInstructions(
       .join("\n\n"),
     included: true,
   };
+}
+
+/** Carries one-time guidance state only across a successful stored-session reload. */
+export function carryCursorMcodeSentState(
+  logicalSessionReloaded: boolean,
+  sent: boolean,
+): boolean {
+  return logicalSessionReloaded && sent;
 }
 
 /** Cursor ACP (Agent Communication Protocol) adapter implementing IAgentProvider via a MCP subprocess per session. */
@@ -678,7 +688,11 @@ export class CursorProvider
 
       // Open logical ACP session before runtime registration so every setup
       // failure tears down child and browser state through one boundary.
-      await this.openLogicalSession(state, resumeFrom !== undefined, mcpServers);
+      state.mcodeLogicalSessionReloaded = await this.openLogicalSession(
+        state,
+        resumeFrom !== undefined,
+        mcpServers,
+      );
       state.mcodeRuntimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
         sourceThreadId: threadId,
         threadControlGranted: true,
@@ -854,6 +868,7 @@ export class CursorProvider
       supportsHttpMcp: false,
       mcodeRuntimeInstructions: "",
       mcodeRuntimeInstructionsSent: false,
+      mcodeLogicalSessionReloaded: false,
     };
 
     entry.connection = new ClientSideConnection(
@@ -1149,8 +1164,8 @@ export class CursorProvider
     entry: CursorAcpSessionEntry,
     resume: boolean,
     mcpServers: McpServer[] = [],
-  ): Promise<void> {
-    if (entry.acpSessionId) return;
+  ): Promise<boolean> {
+    if (entry.acpSessionId) return true;
 
     const stored = this.sdkSessionIds.get(entry.mcodeSessionId);
     if (!entry.supportsHttpMcp) {
@@ -1163,6 +1178,7 @@ export class CursorProvider
       ...mcpServers,
     ];
     let acpId: string;
+    let reloadedStoredSession = false;
 
     if (resume && stored) {
       try {
@@ -1172,6 +1188,7 @@ export class CursorProvider
           sessionId: stored,
         });
         acpId = stored;
+        reloadedStoredSession = true;
       } catch (err) {
         logger.info("Cursor ACP loadSession failed; new session", {
           threadId: entry.threadId,
@@ -1198,6 +1215,7 @@ export class CursorProvider
       threadId: entry.threadId,
       subtype: `sdk_session_id:${acpId}`,
     } satisfies AgentEvent);
+    return reloadedStoredSession;
   }
 
   private async applyModel(entry: CursorAcpSessionEntry, model: string): Promise<void> {
@@ -1271,7 +1289,10 @@ export class CursorProvider
     this.pendingBrowserContext.delete(sessionId);
     fresh.stickyHeavyInstructionsSent = dead.stickyHeavyInstructionsSent;
     fresh.cursorPromptOrdinal = dead.cursorPromptOrdinal;
-    fresh.mcodeRuntimeInstructionsSent = dead.mcodeRuntimeInstructionsSent;
+    fresh.mcodeRuntimeInstructionsSent = carryCursorMcodeSentState(
+      fresh.mcodeLogicalSessionReloaded,
+      dead.mcodeRuntimeInstructionsSent,
+    );
     fresh.lastUsedAt = Date.now();
     logger.info("Cursor ACP subprocess respawned after disconnect", {
       threadId: fresh.threadId,

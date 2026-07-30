@@ -4,7 +4,10 @@ import {
   addCodexDeveloperInstructions,
 } from "../codex/codex-app-server.js";
 import { mergeClaudeMcpServers } from "../claude/claude-provider.js";
-import { appendCursorMcodeInstructions } from "../cursor/cursor-provider.js";
+import {
+  appendCursorMcodeInstructions,
+  carryCursorMcodeSentState,
+} from "../cursor/cursor-provider.js";
 import { composeCopilotSystemMessage } from "../copilot/copilot-provider.js";
 
 describe("provider-native Mcode instruction boundaries", () => {
@@ -41,6 +44,8 @@ describe("provider-native Mcode instruction boundaries", () => {
 
     const acceptedLater = appendCursorMcodeInstructions(first.instructionMarkdown, runtime, true);
     expect(acceptedLater).toEqual({ instructionMarkdown: first.instructionMarkdown, included: false });
+    expect(carryCursorMcodeSentState(true, true)).toBe(true);
+    expect(carryCursorMcodeSentState(false, true)).toBe(false);
   });
 
   it("preserves Copilot user instructions while appending runtime guidance", () => {
