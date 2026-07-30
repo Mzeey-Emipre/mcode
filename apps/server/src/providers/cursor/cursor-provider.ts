@@ -617,6 +617,7 @@ export class CursorProvider
         }
       } else {
         this.releaseBrowserLeases(browserStage, refreshedGrant);
+        this.browserAutomationLease.releaseSession(this.id, sessionId);
         this.pendingBrowserGrants.delete(sessionId);
         this.pendingBrowserGrantContext.delete(sessionId);
       }
@@ -696,6 +697,7 @@ export class CursorProvider
     ...leases: Array<{ leaseId: string } | null | undefined>
   ): void {
     this.releaseBrowserLeases(...leases);
+    this.browserAutomationLease.releaseSession(this.id, sessionId);
     this.pendingBrowserLeases.delete(sessionId);
     this.pendingBrowserContext.delete(sessionId);
     this.pendingBrowserGrants.delete(sessionId);

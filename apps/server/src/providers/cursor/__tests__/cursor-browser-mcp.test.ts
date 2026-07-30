@@ -133,6 +133,66 @@ describe("Cursor browser MCP configuration", () => {
     expect(child.kill).not.toHaveBeenCalled();
   });
 
+  it("releases a preserved lease when stale replacement setup fails", async () => {
+    const lease = configuredLease();
+    const previousGrant = lease.issue(browserScope())!;
+    const staged = lease.stage(browserScope());
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.id = "cursor";
+    provider.settingsService = { get: vi.fn(() => ({})) };
+    provider.browserAutomationLease = lease;
+    provider.pendingPermissions = new Map();
+    provider.pendingBrowserLeases = new Map([["mcode-a", staged]]);
+    provider.pendingBrowserContext = new Map();
+    provider.pendingBrowserGrants = new Map();
+    provider.pendingBrowserGrantContext = new Map();
+    provider.liveSessionIds = new Set(["mcode-a"]);
+    provider.close({ mcodeSessionId: "mcode-a" } as never);
+    provider.spawnChild = vi.fn().mockRejectedValue(new Error("replacement failed"));
+
+    await expect(provider.spawn({
+      sessionId: "mcode-a",
+      threadId: "thread-a",
+      cwd: ".",
+      permissionMode: "default",
+      env: {},
+    })).rejects.toThrow("replacement failed");
+
+    expect(lease.credentials.authenticate(previousGrant.token)).toBeNull();
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+  });
+
+  it("releases a preserved lease when stale replacement lacks HTTP MCP", async () => {
+    const lease = configuredLease();
+    const previousGrant = lease.issue(browserScope())!;
+    const staged = lease.stage(browserScope());
+    const child = { pid: 105, kill: vi.fn() };
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.id = "cursor";
+    provider.settingsService = { get: vi.fn(() => ({})) };
+    provider.browserAutomationLease = lease;
+    provider.pendingPermissions = new Map();
+    provider.pendingBrowserLeases = new Map([["mcode-a", staged]]);
+    provider.pendingBrowserContext = new Map();
+    provider.pendingBrowserGrants = new Map();
+    provider.pendingBrowserGrantContext = new Map();
+    provider.liveSessionIds = new Set(["mcode-a"]);
+    provider.close({ mcodeSessionId: "mcode-a" } as never);
+    provider.spawnChild = vi.fn().mockResolvedValue({ child, browserHttpMcpSupported: false });
+    provider.openLogicalSession = vi.fn();
+
+    await provider.spawn({
+      sessionId: "mcode-a",
+      threadId: "thread-a",
+      cwd: ".",
+      permissionMode: "default",
+      env: {},
+    });
+
+    expect(lease.credentials.authenticate(previousGrant.token)).toBeNull();
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+  });
+
   it("kills child and releases issued lease when logical session setup fails", async () => {
     const lease = configuredLease();
     const staged = lease.stage(browserScope());
