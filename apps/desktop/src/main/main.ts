@@ -26,7 +26,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { isAbsolute, join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
-import { getLogPath, getMcodeDir, getRecentLogs } from "@mcode/shared";
+import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
 import {
   getExtension as bundledGetExtension,
   isMcodeWorkspacePreviewUrl,
@@ -138,6 +138,116 @@ function openIfAllowed(url: string): void {
 
 const APP_ID = "com.mzeey.mcode";
 let mainWindow: BrowserWindow | null = null;
+
+/** Channel used by the renderer crash boundary to report local diagnostics. */
+export const RENDERER_CRASH_REPORT_CHANNEL = "renderer:crash-report";
+const RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH = 16 * 1024;
+const RENDERER_CRASH_COMPONENT_FRAME_MAX_COUNT = 32;
+const RENDERER_CRASH_COMPONENT_FRAME_MAX_LENGTH = 128;
+const RENDERER_CRASH_REPORT_LIMIT = 3;
+const RENDERER_CRASH_REPORT_WINDOW_MS = 60_000;
+const RENDERER_CRASH_ERROR_NAMES = new Set([
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+  "AggregateError",
+  "DOMException",
+]);
+const rendererCrashReportTimestamps = new Map<number, number[]>();
+
+/** Safe renderer crash report payload accepted at the desktop IPC boundary. */
+export interface RendererCrashReportPayload {
+  readonly errorName: string;
+  readonly componentStack: string;
+  readonly componentStackTruncated: boolean;
+}
+
+/** Extract bounded React frame names, dropping renderer-controlled locations and text. */
+function normalizeRendererComponentStack(value: string): {
+  componentStack: string;
+  componentStackTruncated: boolean;
+} | null {
+  const framePattern = /^\s*at\s+([A-Za-z_$][A-Za-z0-9_$]*(?:[.$][A-Za-z_$][A-Za-z0-9_$]*){0,7})\s*(?:\(|$)/;
+  const frames: string[] = [];
+  for (const line of value.replace(/\r\n?/g, "\n").split("\n")) {
+    const frameName = framePattern.exec(line)?.[1];
+    if (!frameName || frameName.length > RENDERER_CRASH_COMPONENT_FRAME_MAX_LENGTH) {
+      continue;
+    }
+    frames.push(frameName);
+  }
+  if (frames.length === 0) return null;
+  const componentStackTruncated = frames.length > RENDERER_CRASH_COMPONENT_FRAME_MAX_COUNT;
+  return {
+    componentStack: frames
+      .slice(0, RENDERER_CRASH_COMPONENT_FRAME_MAX_COUNT)
+      .join("\n"),
+    componentStackTruncated,
+  };
+}
+
+/** Validate and normalize untrusted renderer crash diagnostics. */
+export function normalizeRendererCrashReport(
+  payload: unknown,
+): RendererCrashReportPayload | null {
+  if (payload === null || typeof payload !== "object") return null;
+  try {
+    const record = payload as Record<string, unknown>;
+    if (
+      Object.getPrototypeOf(record) !== Object.prototype ||
+      Object.keys(record).length !== 2 ||
+      typeof record.errorName !== "string" ||
+      typeof record.componentStack !== "string"
+    ) {
+      return null;
+    }
+    if (
+      record.componentStack.length > RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH
+    ) {
+      return null;
+    }
+    if (record.componentStack.length > RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH) {
+      return null;
+    }
+    const normalizedStack = normalizeRendererComponentStack(record.componentStack);
+    if (!normalizedStack) return null;
+    return {
+      errorName: RENDERER_CRASH_ERROR_NAMES.has(record.errorName)
+        ? record.errorName
+        : "Error",
+      ...normalizedStack,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Accept an authorized, rate-limited renderer crash report and write safe fields. */
+export function handleRendererCrashReport(
+  event: { sender: { id: number } },
+  payload: unknown,
+  authorizedSender: unknown = mainWindow?.webContents,
+): void {
+  if (event.sender !== authorizedSender) return;
+  const normalized = normalizeRendererCrashReport(payload);
+  if (!normalized) return;
+  const now = Date.now();
+  const recent = (rendererCrashReportTimestamps.get(event.sender.id) ?? []).filter(
+    (timestamp) => now - timestamp < RENDERER_CRASH_REPORT_WINDOW_MS,
+  );
+  if (recent.length >= RENDERER_CRASH_REPORT_LIMIT) return;
+  recent.push(now);
+  rendererCrashReportTimestamps.set(event.sender.id, recent);
+  logger.info("Renderer crash report", {
+    errorName: normalized.errorName,
+    componentStack: normalized.componentStack,
+    componentStackTruncated: normalized.componentStackTruncated,
+  });
+}
 const serverManager = new ServerManager();
 const serverCrashRecovery = new ServerCrashRecovery({
   restart: () => serverManager.restart(),
@@ -505,6 +615,12 @@ function registerIpcHandlers(): void {
   // Recent log lines
   ipcMain.handle("get-recent-logs", (_event, lines: number) => {
     return getRecentLogs(lines);
+  });
+
+  // Renderer crash diagnostics are local-only and accepted only from the main app window.
+  ipcMain.handle(RENDERER_CRASH_REPORT_CHANNEL, (event, payload: unknown) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    handleRendererCrashReport(event, payload, mainWindow.webContents);
   });
 
   /** Ensure a config file exists in the mcode data dir, then open it. */

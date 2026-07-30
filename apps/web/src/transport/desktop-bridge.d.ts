@@ -20,6 +20,12 @@ export type UpdateStatus =
   | { state: "downloaded"; version: string; releaseNotes?: string }
   | { state: "error"; message: string };
 
+/** Safe renderer crash diagnostics sent to the desktop main process. */
+export interface RendererCrashReport {
+  readonly errorName: string;
+  readonly componentStack: string;
+}
+
 /** App version and auto-update controls exposed by the main process. */
 interface AppBridge {
   /** Read the running app version (from package.json at build time). */
@@ -399,6 +405,8 @@ interface DesktopBridge {
   getLogPath(): Promise<string>;
   /** Return recent log lines. */
   getRecentLogs(lines: number): Promise<string>;
+  /** Report safe renderer crash diagnostics to the local desktop logger. */
+  reportRendererCrash?(payload: RendererCrashReport): Promise<void>;
   /** Map a browser File object to its real filesystem path. */
   getPathForFile(file: File): string;
   /** Clear Blink's in-memory resource caches (images, scripts, CSS).
