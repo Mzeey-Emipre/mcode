@@ -77,7 +77,6 @@ import type Database from "better-sqlite3";
 import type { JobObject } from "./services/job-object.js";
 import { resolveWebAutomationFlag } from "./startup-policy.js";
 import {
-  BrowserAutomationAccessService,
   BrowserAutomationBroker,
   BrowserAutomationCredentialRegistry,
   BrowserAutomationMcpHandler,
@@ -222,7 +221,6 @@ applyDevGitCheckoutEnv();
 // Initialize DI container (PtyPidRegistry needs the data dir path at construction time)
 const container = setupContainer(getMcodeDir());
 
-const browserAutomationAccess = container.resolve(BrowserAutomationAccessService);
 const browserAutomationCredentials = container.resolve(BrowserAutomationCredentialRegistry);
 const browserAutomationSessionLease = container.resolve(BrowserAutomationSessionLease);
 const browserAutomationBroker = new BrowserAutomationBroker({});
@@ -708,10 +706,6 @@ function listen(port: number, attempt = 1): void {
     logger.info(`Mcode server listening on ${HOST}:${port}`);
 
     const browserMcpHost = HOST === "::1" ? "[::1]" : "127.0.0.1";
-    browserAutomationAccess.configure({
-      mcpUrl: `http://${browserMcpHost}:${port}/mcp`,
-      worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
-    });
     browserAutomationSessionLease.configure({
       mcpUrl: `http://${browserMcpHost}:${port}/mcp`,
       worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
@@ -839,7 +833,6 @@ async function shutdown(): Promise<void> {
   providerRegistry.shutdown();
   browserAutomationBroker.shutdown();
   browserAutomationSessionLease.shutdown();
-  browserAutomationAccess.shutdown();
 
   // 4. Mark active threads as interrupted
   threadService.markActiveThreadsInterrupted(activeThreadIds);

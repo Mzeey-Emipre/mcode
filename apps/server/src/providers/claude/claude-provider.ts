@@ -48,10 +48,7 @@ import { InternalThreadControlMcpRuntime } from "../../services/thread-control-m
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { listDirectChildren } from "../../services/process-kill.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
-import {
-  BrowserAutomationAccessService,
-  browserAutomationPermissionCapability,
-} from "../../services/browser-automation/access-service.js";
+import { browserAutomationPermissionCapability } from "../../services/browser-automation/access-service.js";
 import {
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseGrant,
@@ -424,8 +421,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     // pipeline-issued handoff grants are visible here.
     @inject(ScopedPreGrantService)
     private readonly scopedPreGrant: ScopedPreGrantService = new ScopedPreGrantService(),
-    @inject(BrowserAutomationAccessService)
-    private readonly browserAutomationAccess: BrowserAutomationAccessService = new BrowserAutomationAccessService(),
     @inject(BrowserAutomationSessionLease)
     private readonly browserAutomationSessionLease: BrowserAutomationSessionLease = new BrowserAutomationSessionLease(),
     @inject(InternalThreadControlMcpRuntime)
@@ -989,7 +984,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       existing.poisoned !== true &&
       existing.permissionMode === permissionMode &&
       existing.contextWindowMode === contextWindowMode &&
-      (!this.browserAutomationAccess.isConfigured() ||
+      (!this.browserAutomationSessionLease.isConfigured() ||
         !browserScope ||
         (existing.workspaceId === browserScope.workspaceId &&
           existing.browserPermissionCapability === browserScope.permissionCapability &&
