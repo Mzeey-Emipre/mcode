@@ -839,15 +839,12 @@ export class CursorProvider
         onExtensionNotification: async () => {},
       },
       clientFactory: (callbacks) => {
-        void callbacks;
         return {
           requestPermission: async (request) => {
             if (!entry) return { outcome: { outcome: "cancelled" } };
             return this.bridgePermission(entry, request);
           },
-          sessionUpdate: async (update) => {
-            if (entry) await this.deliverSessionUpdate(entry, update);
-          },
+          sessionUpdate: callbacks.onSessionUpdate,
           readTextFile: async ({ path: filePath }) => ({
             content: entry ? this.safeReadWorkspaceFile(entry.cwd, filePath) : "",
           }),

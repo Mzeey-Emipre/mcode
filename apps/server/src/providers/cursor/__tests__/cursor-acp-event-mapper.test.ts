@@ -1,10 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
+import { describe, expect, it, vi } from "vitest";
+import type { Client, ClientSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
 import { AgentEventType } from "@mcode/contracts";
+import { AcpSessionRuntime } from "../../acp/acp-session-runtime.js";
 import {
   createCursorAcpTurnState,
   mapCursorAcpSessionNotification,
 } from "../cursor-acp-event-mapper.js";
 import { resolveCursorAssistantMessageContent } from "../cursor-stream-event-mapper.js";
+
+function fakeChild(): ChildProcess {
+  const child = new EventEmitter() as ChildProcess;
+  child.kill = vi.fn(() => true);
+  child.pid = 1234;
+  return child;
+}
 
 describe("mapCursorAcpSessionNotification", () => {
   const threadId = "t1";
@@ -350,5 +361,71 @@ describe("mapCursorAcpSessionNotification", () => {
       state,
     );
     expect(events).toEqual([]);
+  });
+});
+
+describe("Cursor ACP client-factory session-update seam", () => {
+  it("suppresses load replay and maps matching live updates after the response barrier", async () => {
+    const child = fakeChild();
+    const state = createCursorAcpTurnState();
+    const events: unknown[] = [];
+    let client!: Client;
+    let finishLoad!: () => void;
+    const connection = {
+      initialize: vi.fn(async () => ({ agentCapabilities: { loadSession: true }, authMethods: [] })),
+      loadSession: vi.fn(async () => {
+        await client.sessionUpdate({
+          sessionId: "cursor-resume",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "historical" },
+          },
+        } as SessionNotification);
+        await new Promise<void>((resolve) => { finishLoad = resolve; });
+      }),
+      newSession: vi.fn(async () => ({ sessionId: "fresh" })),
+    } as unknown as ClientSideConnection;
+
+    const runtime = await AcpSessionRuntime.start({
+      spawnSpec: { command: "fake", args: [], cwd: ".", env: {} },
+      callbacks: {
+        onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }),
+        onSessionUpdate: async (update) => {
+          events.push(...mapCursorAcpSessionNotification(update, "cursor-thread", state));
+        },
+      },
+      clientFactory: (callbacks) => {
+        client = {
+          requestPermission: callbacks.onPermissionRequest,
+          // This is the production Cursor seam: the factory forwards the
+          // runtime-composed callback instead of bypassing its replay gate.
+          sessionUpdate: callbacks.onSessionUpdate,
+          readTextFile: async () => ({ content: "" }),
+          writeTextFile: async () => ({}),
+          extMethod: async () => ({}),
+          extNotification: async () => {},
+        };
+        return client;
+      },
+      transportFactory: async () => ({ child, connection }),
+      sessionLoadTimeoutMs: 100,
+    });
+
+    await runtime.initialize();
+    const opening = runtime.openSession({ resumeFrom: "cursor-resume", cwd: ".", mcpServers: [] });
+    await Promise.resolve();
+    await client.sessionUpdate({ sessionId: "other", update: {} } as SessionNotification);
+    expect(events).toEqual([]);
+
+    finishLoad();
+    await expect(opening).resolves.toEqual({ sessionId: "cursor-resume", reloaded: true });
+    await client.sessionUpdate({
+      sessionId: "cursor-resume",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "live" },
+      },
+    } as SessionNotification);
+    expect(events).toEqual([{ type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "live" }]);
   });
 });
