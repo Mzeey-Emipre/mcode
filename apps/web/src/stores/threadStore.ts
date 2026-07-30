@@ -880,6 +880,55 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     if (activeThreadId) promoteDeferredNarrativeEvents(activeThreadId);
   };
 
+  const applyDeferredNarrativeEvent = (threadId: string, event: AgentEvent): void => {
+    if (event.type === "textDelta") {
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      if (!delta || event.isFinalResponse === true) return;
+      set((state) => {
+        const record = getThreadRecord(state.records, threadId);
+        return {
+          records: patchThreadRecord(state.records, threadId, {
+            thoughtSegments: appendThoughtSegment(
+              record.thoughtSegments,
+              delta,
+              event.isFinalResponse === false,
+            ),
+          }),
+        };
+      });
+    } else if (event.type === "assistantMessageBoundary") {
+      const isFinalResponse = event.isFinalResponse === true;
+      set((state) => {
+        const record = getThreadRecord(state.records, threadId);
+        const last = record.thoughtSegments[record.thoughtSegments.length - 1];
+        if (!last || last.endedAt !== undefined) return state;
+        const thoughtSegments = isFinalResponse
+          ? record.thoughtSegments.slice(0, -1)
+          : [...record.thoughtSegments.slice(0, -1), { ...last, endedAt: Date.now() }];
+        return { records: patchThreadRecord(state.records, threadId, { thoughtSegments }) };
+      });
+    } else if (event.type === "toolProgress") {
+      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+      if (!toolCallId) return;
+      const elapsedSeconds = typeof event.elapsedSeconds === "number" ? event.elapsedSeconds : 0;
+      const lastActivityAt = Date.now();
+      set((state) => {
+        const current = getThreadRecord(state.records, threadId).toolCalls;
+        let changed = false;
+        const toolCalls = current.map((toolCall) => {
+          if (toolCall.id === toolCallId && !toolCall.isComplete) {
+            changed = true;
+            return { ...toolCall, elapsedSeconds, lastActivityAt };
+          }
+          return toolCall;
+        });
+        return changed
+          ? { records: patchThreadRecord(state.records, threadId, { toolCalls }) }
+          : state;
+      });
+    }
+  };
+
   const promoteDeferredNarrativeEvents = (threadId: string): void => {
     const queued = deferredNarrativeEventsByThread.get(threadId);
     if (!queued || queued.events.length === 0) return;
@@ -891,52 +940,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       return;
     }
     for (const event of queued.events) {
-      if (event.type === "textDelta") {
-        const delta = typeof event.delta === "string" ? event.delta : "";
-        if (!delta || event.isFinalResponse === true) continue;
-        set((state) => {
-          const record = getThreadRecord(state.records, threadId);
-          return {
-            records: patchThreadRecord(state.records, threadId, {
-              thoughtSegments: appendThoughtSegment(
-                record.thoughtSegments,
-                delta,
-                event.isFinalResponse === false,
-              ),
-            }),
-          };
-        });
-      } else if (event.type === "assistantMessageBoundary") {
-        const isFinalResponse = event.isFinalResponse === true;
-        set((state) => {
-          const record = getThreadRecord(state.records, threadId);
-          const last = record.thoughtSegments[record.thoughtSegments.length - 1];
-          if (!last || last.endedAt !== undefined) return state;
-          const thoughtSegments = isFinalResponse
-            ? record.thoughtSegments.slice(0, -1)
-            : [...record.thoughtSegments.slice(0, -1), { ...last, endedAt: Date.now() }];
-          return { records: patchThreadRecord(state.records, threadId, { thoughtSegments }) };
-        });
-      } else if (event.type === "toolProgress") {
-        const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
-        if (!toolCallId) continue;
-        const elapsedSeconds = typeof event.elapsedSeconds === "number" ? event.elapsedSeconds : 0;
-        const lastActivityAt = Date.now();
-        set((state) => {
-          const current = getThreadRecord(state.records, threadId).toolCalls;
-          let changed = false;
-          const toolCalls = current.map((toolCall) => {
-            if (toolCall.id === toolCallId && !toolCall.isComplete) {
-              changed = true;
-              return { ...toolCall, elapsedSeconds, lastActivityAt };
-            }
-            return toolCall;
-          });
-          return changed
-            ? { records: patchThreadRecord(state.records, threadId, { toolCalls }) }
-            : state;
-        });
-      }
+      applyDeferredNarrativeEvent(threadId, event);
     }
     if (!pendingTextDeltaByThread.has(threadId) && !get().runningThreadIds.has(threadId)) {
       deferredNarrativeGenerations.delete(threadId);
@@ -954,6 +958,24 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
     if (event.type === "assistantMessageBoundary") return 48;
     return 64;
+  };
+
+  const splitDeferredNarrativeEvent = (event: AgentEvent): AgentEvent[] => {
+    if (event.type !== "textDelta") return [event];
+    const delta = typeof event.delta === "string" ? event.delta : "";
+    const maxDeltaLength = Math.floor((MAX_DEFERRED_NARRATIVE_BYTES - 32) / 2);
+    if (delta.length <= maxDeltaLength) return [event];
+
+    const chunks: AgentEvent[] = [];
+    for (let offset = 0; offset < delta.length;) {
+      let end = Math.min(delta.length, offset + maxDeltaLength);
+      if (end < delta.length && end > offset && /[\uD800-\uDBFF]/.test(delta[end - 1] ?? "")) {
+        end -= 1;
+      }
+      chunks.push({ ...event, delta: delta.slice(offset, end) });
+      offset = end;
+    }
+    return chunks;
   };
 
   const dropPendingTextDeltas = (threadIds: Iterable<string>) => {
@@ -982,31 +1004,29 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   };
 
   const queueDeferredNarrativeEvent = (threadId: string, event: AgentEvent): void => {
-    const generation = deferredNarrativeGenerations.get(threadId) ?? 0;
-    const queued = deferredNarrativeEventsByThread.get(threadId);
-    const events = queued?.generation === generation ? queued.events : [];
-    const bytes = queued?.generation === generation ? queued.bytes : 0;
-    const eventBytes = deferredNarrativeEventBytes(event);
-    if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS || bytes + eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
-      promoteDeferredNarrativeEvents(threadId);
-      if (eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
-        deferredNarrativeEventsByThread.set(threadId, {
-          generation,
-          events: [event],
-          bytes: eventBytes,
-        });
+    for (const chunk of splitDeferredNarrativeEvent(event)) {
+      const generation = deferredNarrativeGenerations.get(threadId) ?? 0;
+      const queued = deferredNarrativeEventsByThread.get(threadId);
+      const events = queued?.generation === generation ? queued.events : [];
+      const bytes = queued?.generation === generation ? queued.bytes : 0;
+      const eventBytes = deferredNarrativeEventBytes(chunk);
+      if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS || bytes + eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
         promoteDeferredNarrativeEvents(threadId);
-        return;
       }
+
+      const latest = deferredNarrativeEventsByThread.get(threadId);
+      const nextEvents = latest?.generation === generation ? latest.events : [];
+      const nextBytes = latest?.generation === generation ? latest.bytes : 0;
+      if (eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
+        applyDeferredNarrativeEvent(threadId, chunk);
+        continue;
+      }
+      deferredNarrativeEventsByThread.set(threadId, {
+        generation,
+        events: [...nextEvents, chunk],
+        bytes: nextBytes + eventBytes,
+      });
     }
-    const latest = deferredNarrativeEventsByThread.get(threadId);
-    const nextEvents = latest?.generation === generation ? latest.events : [];
-    const nextBytes = latest?.generation === generation ? latest.bytes : 0;
-    deferredNarrativeEventsByThread.set(threadId, {
-      generation,
-      events: [...nextEvents, event],
-      bytes: nextBytes + eventBytes,
-    });
   };
 
   const messageSequenceFor = (threadId: string) =>

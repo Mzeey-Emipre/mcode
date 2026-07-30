@@ -269,6 +269,128 @@ describe("handleAgentEvent branches", () => {
     expect(record.toolCalls).toEqual([backgroundToolCall]);
   });
 
+  it("materializes deferred events at the count cap without reordering or duplication", () => {
+    const backgroundThreadId = "thread-deferred-count-cap";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    const deltas = Array.from({ length: 2049 }, (_, index) => `event-${index}|`);
+    for (const delta of deltas) {
+      useThreadStore.getState().handleAgentEvent({
+        type: "textDelta",
+        threadId: backgroundThreadId,
+        delta,
+      } as AgentEvent);
+    }
+    vi.runAllTimers();
+
+    const materializedBeforeActivation = readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    );
+    expect(materializedBeforeActivation).toBe(deltas.slice(0, 2048).join(""));
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: "missing-tool",
+      elapsedSeconds: 0,
+    } as AgentEvent);
+
+    const materialized = readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    );
+    expect(materialized).toBe(deltas.join(""));
+    expect(materialized.match(/event-/g)).toHaveLength(2049);
+  });
+
+  it("materializes deferred events at the byte cap without losing content", () => {
+    const backgroundThreadId = "thread-deferred-byte-cap";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    const deltas = ["A".repeat(100_000), "B".repeat(100_000)];
+    for (const delta of deltas) {
+      useThreadStore.getState().handleAgentEvent({
+        type: "textDelta",
+        threadId: backgroundThreadId,
+        delta,
+      } as AgentEvent);
+    }
+    vi.runAllTimers();
+
+    expect(readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    )).toBe(deltas[0]);
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: "missing-tool",
+      elapsedSeconds: 0,
+    } as AgentEvent);
+
+    expect(readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    )).toBe(deltas.join(""));
+  });
+
+  it("splits an oversized deferred textDelta into bounded ordered chunks", () => {
+    const backgroundThreadId = "thread-deferred-oversized-delta";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    const maxChunkLength = Math.floor((256 * 1024 - 32) / 2);
+    const delta = "x".repeat(maxChunkLength + 17);
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta,
+    } as AgentEvent);
+    vi.runAllTimers();
+
+    expect(readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    )).toBe(delta.slice(0, maxChunkLength));
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: "missing-tool",
+      elapsedSeconds: 0,
+    } as AgentEvent);
+
+    expect(readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    )).toBe(delta);
+  });
+
   it("promotes deferred text, boundaries, and tool progress once in source order", async () => {
     const backgroundThreadId = "thread-2";
     const backgroundToolCall = {
