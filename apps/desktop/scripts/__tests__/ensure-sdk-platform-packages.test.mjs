@@ -7,6 +7,8 @@ import {
   copilotSdkPlatformPackageName,
   downloadAndExtractPackage,
   packageMetadataUsable,
+  resolveInstallPackageDestination,
+  resolveInstallRoot,
   verifyPackageIntegrity,
   resolveCopilotTargetPackagePlan,
 } from "../../../../apps/desktop/scripts/ensure-sdk-platform-packages.mjs";
@@ -14,14 +16,67 @@ import {
 const repoRoot = path.resolve(import.meta.dirname, "../../../..");
 const serverRoot = path.join(repoRoot, "apps/server");
 
+describe("SDK install layout resolution", () => {
+  it("maps flat node_modules entries to their nearest install root", () => {
+    const entry = path.join(
+      repoRoot,
+      "node_modules",
+      "@anthropic-ai",
+      "claude-agent-sdk",
+      "sdk.mjs",
+    );
+    const installRoot = path.join(repoRoot, "node_modules");
+
+    expect(resolveInstallRoot(entry)).toBe(installRoot);
+    expect(
+      resolveInstallPackageDestination(
+        entry,
+        "@anthropic-ai/claude-agent-sdk-darwin-x64",
+      ),
+    ).toBe(
+      path.join(installRoot, "@anthropic-ai", "claude-agent-sdk-darwin-x64"),
+    );
+  });
+
+  it("maps isolated entries to their package graph node_modules", () => {
+    const entry = path.join(
+      repoRoot,
+      "node_modules",
+      ".bun",
+      "@anthropic-ai+claude-agent-sdk@0.3.212",
+      "node_modules",
+      "@anthropic-ai",
+      "claude-agent-sdk",
+      "sdk.mjs",
+    );
+    const installRoot = path.join(
+      repoRoot,
+      "node_modules",
+      ".bun",
+      "@anthropic-ai+claude-agent-sdk@0.3.212",
+      "node_modules",
+    );
+
+    expect(resolveInstallRoot(entry)).toBe(installRoot);
+    expect(
+      resolveInstallPackageDestination(
+        entry,
+        "@anthropic-ai/claude-agent-sdk-darwin-x64",
+      ),
+    ).toBe(
+      path.join(installRoot, "@anthropic-ai", "claude-agent-sdk-darwin-x64"),
+    );
+  });
+});
+
 describe("Copilot SDK target package preparation", () => {
   it("derives the target package version from installed Copilot metadata", () => {
     const testSource = readFileSync(import.meta.filename, "utf8");
     expect(testSource).not.toMatch(/@github\+copilot@\d+\.\d+\.\d+/);
     const plan = resolveCopilotTargetPackagePlan(serverRoot, "darwin", "x64");
-    const sdkEntry = createRequire(path.join(serverRoot, "package.json")).resolve(
-      "@github/copilot-sdk",
-    );
+    const sdkEntry = createRequire(
+      path.join(serverRoot, "package.json"),
+    ).resolve("@github/copilot-sdk");
     const installed = JSON.parse(
       readFileSync(
         path.resolve(
@@ -40,8 +95,8 @@ describe("Copilot SDK target package preparation", () => {
       copilotSdkPlatformPackageName("darwin", "x64"),
     );
     expect(plan.version).toBe(installed.version);
-    expect(plan.destination).toContain(
-      path.join("node_modules", "@github", "copilot-darwin-x64"),
+    expect(plan.destination).toBe(
+      path.join(resolveInstallRoot(sdkEntry), "@github", "copilot-darwin-x64"),
     );
   });
 });
@@ -98,15 +153,15 @@ describe("target package download safety", () => {
     ).rejects.toThrow("Unsupported package version");
   });
 
-  it("rejects destinations outside the resolved Bun store", async () => {
+  it("rejects destinations outside the resolved install root", async () => {
     await expect(
       downloadAndExtractPackage({
         packageName: "@github/test",
         version: "1.0.0",
         destination: path.join(repoRoot, "outside-store"),
-        bunStoreRoot: path.join(repoRoot, "node_modules/.bun"),
+        installRoot: path.join(repoRoot, "node_modules/.bun"),
       }),
-    ).rejects.toThrow("Destination escapes Bun store");
+    ).rejects.toThrow("Destination escapes install root");
   });
 });
 
