@@ -1596,4 +1596,32 @@ describe("ThreadHydrator", () => {
 
     expect(getTestThreadLoadEpoch(THREAD_A)).toBe(4);
   });
+
+  it("defers background hydration while active hydration is in flight", async () => {
+    let resolveActive!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      (threadId: string) => threadId === THREAD_A
+        ? new Promise((resolve) => {
+            resolveActive = resolve;
+          })
+        : Promise.resolve({ messages: [msgB], hasMore: false, narrativeByMessage: {} }),
+    );
+
+    const active = hydrator.hydrate(THREAD_A, "active");
+    await vi.waitFor(() => {
+      expect(hydrator.isActiveHydrationInFlight()).toBe(true);
+    });
+    const background = hydrator.hydrate(THREAD_B, "background");
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+
+    resolveActive({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
+    await Promise.all([active, background]);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_B, BACKGROUND_PREFETCH_LIMIT);
+    expect(hydrator.isActiveHydrationInFlight()).toBe(false);
+  });
 });

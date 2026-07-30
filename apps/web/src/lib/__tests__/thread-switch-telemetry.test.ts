@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   __resetThreadSwitchTelemetryForTests,
+  getThreadSwitchTelemetryCounters,
+  recordBackgroundEventDropped,
   recordFirstMessageVisible,
+  recordRunningFetchRequired,
+  recordRunningResidentHit,
+  recordSubscriptionSkipped,
   recordThreadCommit,
   recordThreadHoldEnd,
   recordThreadHoldStart,
@@ -68,5 +73,24 @@ describe("thread switch telemetry", () => {
 
     expect(names("mcode:thread-switch:positioned:")).toHaveLength(1);
     expect(performance.getEntriesByType("mark").some((entry) => entry.name.includes(":positioned:2"))).toBe(true);
+  });
+
+  it("records bounded running-switch event marks and counters", () => {
+    recordThreadSelection("thread-a");
+    recordRunningResidentHit("thread-a");
+    recordRunningFetchRequired("thread-a");
+    recordBackgroundEventDropped("thread-a");
+    recordSubscriptionSkipped("thread-a");
+
+    expect(names("mcode:thread-switch:running-resident-hit:")).toHaveLength(1);
+    expect(names("mcode:thread-switch:running-fetch-required:")).toHaveLength(1);
+    expect(names("mcode:thread-switch:background-event-dropped:")).toHaveLength(1);
+    expect(names("mcode:thread-switch:subscription-skipped:")).toHaveLength(1);
+    expect(getThreadSwitchTelemetryCounters()).toEqual({
+      runningResidentHits: 1,
+      runningFetchRequired: 1,
+      backgroundEventsDropped: 1,
+      subscriptionsSkipped: 1,
+    });
   });
 });

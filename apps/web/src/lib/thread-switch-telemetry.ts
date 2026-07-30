@@ -16,10 +16,29 @@ interface ThreadSwitchRecord {
   positionedMark?: string;
 }
 
+/** Bounded counters for running-thread switch pressure signals. */
+export interface ThreadSwitchTelemetryCounters {
+  runningResidentHits: number;
+  runningFetchRequired: number;
+  backgroundEventsDropped: number;
+  subscriptionsSkipped: number;
+}
+
 const records = new Map<number, ThreadSwitchRecord>();
 const latestByThread = new Map<string, number>();
+const eventMarks: string[] = [];
+const counters: ThreadSwitchTelemetryCounters = {
+  runningResidentHits: 0,
+  runningFetchRequired: 0,
+  backgroundEventsDropped: 0,
+  subscriptionsSkipped: 0,
+};
 let nextSwitchId = 0;
 let latestSelectionId: number | null = null;
+let nextEventId = 0;
+
+const MAX_RETAINED_EVENT_MARKS = 64;
+const MAX_EVENT_COUNT = 10_000;
 
 function isEnabled(): boolean {
   return import.meta.env.DEV && typeof performance !== "undefined";
@@ -52,6 +71,48 @@ function retain(record: ThreadSwitchRecord): void {
 
 function mark(name: string, detail: Record<string, string | number>): void {
   performance.mark(name, { detail });
+}
+
+function recordEvent(
+  threadId: string,
+  event: keyof ThreadSwitchTelemetryCounters,
+  markName: string,
+): void {
+  if (!isEnabled()) return;
+  counters[event] = Math.min(MAX_EVENT_COUNT, counters[event] + 1);
+  const switchId = latestByThread.get(threadId) ?? latestSelectionId ?? ++nextEventId;
+  const name = `${MARK_PREFIX}:${markName}:${switchId}`;
+  mark(name, { threadId, switchId, count: counters[event] });
+  eventMarks.push(name);
+  while (eventMarks.length > MAX_RETAINED_EVENT_MARKS) {
+    const oldest = eventMarks.shift();
+    if (oldest) performance.clearMarks(oldest);
+  }
+}
+
+/** Record that a running thread activated from its resident transcript. */
+export function recordRunningResidentHit(threadId: string): void {
+  recordEvent(threadId, "runningResidentHits", "running-resident-hit");
+}
+
+/** Record that a running thread activation required a network fetch. */
+export function recordRunningFetchRequired(threadId: string): void {
+  recordEvent(threadId, "runningFetchRequired", "running-fetch-required");
+}
+
+/** Record a dropped background event without retaining production state. */
+export function recordBackgroundEventDropped(threadId: string): void {
+  recordEvent(threadId, "backgroundEventsDropped", "background-event-dropped");
+}
+
+/** Record a skipped subscription callback without retaining production state. */
+export function recordSubscriptionSkipped(threadId: string): void {
+  recordEvent(threadId, "subscriptionsSkipped", "subscription-skipped");
+}
+
+/** Read bounded dev counters for diagnostics and tests. */
+export function getThreadSwitchTelemetryCounters(): ThreadSwitchTelemetryCounters {
+  return { ...counters };
 }
 
 /** Record a user's thread selection and return its switch identity. */
@@ -149,6 +210,15 @@ export function __resetThreadSwitchTelemetryForTests(): void {
   }
   records.clear();
   latestByThread.clear();
+  for (const name of eventMarks) {
+    if (isEnabled()) performance.clearMarks(name);
+  }
+  eventMarks.length = 0;
+  counters.runningResidentHits = 0;
+  counters.runningFetchRequired = 0;
+  counters.backgroundEventsDropped = 0;
+  counters.subscriptionsSkipped = 0;
   nextSwitchId = 0;
   latestSelectionId = null;
+  nextEventId = 0;
 }

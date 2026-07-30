@@ -29,7 +29,11 @@ import { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
 import type { ConversationPage, ConversationTail } from "@mcode/contracts";
 import { hasRememberedHistoryPosition } from "@/components/chat/scrollPositionMemory";
-import { recordThreadCommit } from "@/lib/thread-switch-telemetry";
+import {
+  recordRunningFetchRequired,
+  recordRunningResidentHit,
+  recordThreadCommit,
+} from "@/lib/thread-switch-telemetry";
 import { scheduleDeferredWork } from "./deferred-work";
 import type { DeferredWorkHandle } from "./deferred-work";
 
@@ -219,6 +223,9 @@ export const HISTORY_PREFETCH_SIZE = BACKGROUND_PREFETCH_LIMIT - MESSAGE_FETCH_S
 /** Auxiliary side-effect refresh TTL (permissions, tasks, plans). */
 export const HYDRATION_TTL_MS = 2000;
 
+/** Maximum time auxiliary work may wait for an active hydration to settle. */
+export const ACTIVE_HYDRATION_MAX_DELAY_MS = 500;
+
 /**
  * Owns the full "load this thread" flow: cache lookup, RPC fetch, record
  * commit, auxiliary fanout, and narrative prefetch.
@@ -230,6 +237,7 @@ export class ThreadHydrator {
   private readonly pendingHistoryPrefetches = new Map<string, PendingHistoryPrefetch>();
   private readonly deferredWork = new Map<string, DeferredWorkHandle>();
   private readonly invalidationGenerations = new Map<string, number>();
+  private readonly activeHydrationWaiters = new Set<() => void>();
 
   constructor(private readonly deps: ThreadHydratorDeps) {
     this.auxiliaryHydrator = new AuxiliaryHydrator({
@@ -263,6 +271,34 @@ export class ThreadHydrator {
       return;
     }
     await this.hydrateActive(threadId, opts);
+  }
+
+  /** Return whether any active transcript hydration is currently in flight. */
+  isActiveHydrationInFlight(): boolean {
+    return this.activeHydrates.size > 0;
+  }
+
+  private notifyActiveHydrationSettled(): void {
+    if (this.isActiveHydrationInFlight()) return;
+    const waiters = [...this.activeHydrationWaiters];
+    this.activeHydrationWaiters.clear();
+    for (const waiter of waiters) waiter();
+  }
+
+  private waitForActiveHydration(maxDelayMs = ACTIVE_HYDRATION_MAX_DELAY_MS): Promise<void> {
+    if (!this.isActiveHydrationInFlight()) return Promise.resolve();
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.activeHydrationWaiters.delete(finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, maxDelayMs);
+      this.activeHydrationWaiters.add(finish);
+    });
   }
 
   private cancelDeferredForThread(threadId: string): void {
@@ -373,6 +409,19 @@ export class ThreadHydrator {
       return;
     }
 
+    await this.waitForActiveHydration();
+    if (hasCachedRecord(threadId)) return;
+    const activeAfterWait = this.activeHydrates.get(threadId);
+    if (activeAfterWait) {
+      await activeAfterWait;
+      return;
+    }
+    const backgroundAfterWait = this.backgroundHydrates.get(threadId);
+    if (backgroundAfterWait) {
+      await backgroundAfterWait;
+      return;
+    }
+
     const hydrate = this.fetchAndCacheBackground(threadId).finally(() => {
       if (this.backgroundHydrates.get(threadId) === hydrate) {
         this.backgroundHydrates.delete(threadId);
@@ -464,6 +513,9 @@ export class ThreadHydrator {
 
     const resident = this.deps.getState().records.get(threadId);
     const hasResidentContent = resident != null && hasResidentLayer(resident);
+    if (hasResidentContent && this.deps.getState().runningThreadIds.has(threadId)) {
+      recordRunningResidentHit(threadId);
+    }
 
     const inFlight = this.activeHydrates.get(threadId);
     if (inFlight) {
@@ -502,10 +554,15 @@ export class ThreadHydrator {
       }
     }
 
+    if (this.deps.getState().runningThreadIds.has(threadId)) {
+      recordRunningFetchRequired(threadId);
+    }
+
     const hydrate = this.fetchActiveReusingBackground(threadId, opts, hasResidentContent).finally(() => {
       if (this.activeHydrates.get(threadId) === hydrate) {
         this.activeHydrates.delete(threadId);
         this.discardInactiveLoadingRecord(threadId);
+        this.notifyActiveHydrationSettled();
       }
       this.pruneInvalidationGeneration(threadId);
     });
@@ -654,7 +711,27 @@ export class ThreadHydrator {
     options: Parameters<AuxiliaryHydrator["hydrate"]>[1],
   ): void {
     this.deferredWork.get(threadId)?.cancel();
-    const handle = scheduleDeferredWork(() => {
+    let cancelled = false;
+    let waitingForActive = false;
+    let waitDeadline: ReturnType<typeof setTimeout> | undefined;
+    let resume: (() => void) | undefined;
+    const startedAt = Date.now();
+    const run = (allowActive = false) => {
+      if (cancelled) return;
+      if (!allowActive && this.isActiveHydrationInFlight()) {
+        if (waitingForActive) return;
+        waitingForActive = true;
+        resume = () => run(false);
+        this.activeHydrationWaiters.add(resume);
+        waitDeadline = setTimeout(
+          () => run(true),
+          Math.max(0, ACTIVE_HYDRATION_MAX_DELAY_MS - (Date.now() - startedAt)),
+        );
+        return;
+      }
+      waitingForActive = false;
+      if (resume) this.activeHydrationWaiters.delete(resume);
+      if (waitDeadline !== undefined) clearTimeout(waitDeadline);
       const state = this.deps.getState();
       const record = getThreadRecord(state.records, threadId);
       if (state.currentThreadId !== threadId || record.loadEpoch !== expectedEpoch) {
@@ -663,7 +740,20 @@ export class ThreadHydrator {
       }
       this.auxiliaryHydrator.hydrate(threadId, options);
       this.deferredWork.delete(threadId);
-    }, { maxDelayMs: 100 });
+    };
+    const initial = scheduleDeferredWork(() => run(), { maxDelayMs: 100 });
+    const handle: DeferredWorkHandle = {
+      cancel: () => {
+        if (cancelled) return;
+        cancelled = true;
+        initial.cancel();
+        if (resume) this.activeHydrationWaiters.delete(resume);
+        if (waitDeadline !== undefined) clearTimeout(waitDeadline);
+      },
+      get cancelled() {
+        return cancelled || initial.cancelled;
+      },
+    };
     this.deferredWork.set(threadId, handle);
   }
 
@@ -1107,7 +1197,12 @@ export class ThreadHydrator {
     if (hasPrefetchedHistoryPage(threadId, before)) return;
     const epoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
     const prefetchKey = `${threadId}:${before}`;
-    const deferred = scheduleDeferredWork(() => {
+    let deferred!: DeferredWorkHandle;
+    let cancelled = false;
+    const start = async () => {
+      if (cancelled) return;
+      await this.waitForActiveHydration();
+      if (cancelled) return;
       const state = this.deps.getState();
       if (state.currentThreadId !== threadId) return;
       if (getThreadRecord(state.records, threadId).loadEpoch !== epoch) return;
@@ -1131,7 +1226,19 @@ export class ThreadHydrator {
         this.deferredWork.delete(prefetchKey);
       });
       this.pendingHistoryPrefetches.set(prefetchKey, prefetch);
+    };
+    const initial = scheduleDeferredWork(() => {
+      if (!cancelled) void start();
     }, { maxDelayMs: 100 });
+    deferred = {
+      cancel: () => {
+        cancelled = true;
+        initial.cancel();
+      },
+      get cancelled() {
+        return cancelled || initial.cancelled;
+      },
+    };
     this.deferredWork.set(prefetchKey, deferred);
   }
 
