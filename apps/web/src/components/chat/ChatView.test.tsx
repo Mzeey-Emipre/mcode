@@ -819,6 +819,60 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(chatViewResidencyMock.refresh).not.toHaveBeenCalled();
   });
 
+  it("ignores same-epoch stale atomic hydration responses after the target changes", async () => {
+    const requests: Array<(result: { hydrationRequiredThreadIds: string[] }) => void> = [];
+    const setThreadSubscriptions = vi.fn(
+      () => new Promise<{ hydrationRequiredThreadIds: string[] }>((resolve) => {
+        requests.push(resolve);
+      }),
+    );
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const thread1 = makeThread({ id: "thread-1", title: "Thread 1" });
+    const thread2 = makeThread({ id: "thread-2", title: "Thread 2", status: "active" });
+    const record = {
+      ...createEmptyThreadRecord(),
+      lastAgentEventEpoch: "epoch-a",
+      lastAgentEventSequence: 7,
+    };
+    setupWorkspaceMock(defaultWorkspaceState({
+      activeThreadId: thread1.id,
+      threads: [thread1, thread2],
+    }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread1.id,
+      activeRecord: record,
+      records: new Map([[thread1.id, record]]),
+    });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: thread1.id,
+      runningThreadIds: new Set([thread2.id]),
+      activeRecord: record,
+      records: new Map([[thread1.id, record]]),
+    });
+    rerender(<ChatView />);
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(2));
+
+    requests[0]?.({ hydrationRequiredThreadIds: [thread1.id] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(chatViewThreadStoreSetStateMock).not.toHaveBeenCalled();
+    expect(chatViewResidencyMock.invalidateConversation).not.toHaveBeenCalled();
+    expect(chatViewResidencyMock.refresh).not.toHaveBeenCalled();
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+
+    requests[1]?.({ hydrationRequiredThreadIds: [] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+  });
+
   it("reconciles a newer atomic target after an older response and failed replacement", async () => {
     const requests: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
     const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve, reject) => {

@@ -636,12 +636,25 @@ export function ChatView() {
       const input = Object.keys(cursors).length > 0
         ? { threadIds: sortedThreadIds, cursors }
         : { threadIds: sortedThreadIds };
+      const isCurrentAtomicResponse = () => {
+        const currentRequest = atomicSubscriptionRequestRef.current;
+        const latestDesired = desiredThreadIdsRef.current;
+        return subscriptionMountedRef.current
+          && subscriptionEpochRef.current === epoch
+          && currentRequest?.epoch === epoch
+          && currentRequest?.id === requestId
+          && currentRequest?.signature === targetSignature
+          && subscriptionTargetSignatureRef.current === targetSignature
+          && latestDesired.size === sentThreadIds.size
+          && Array.from(latestDesired).every((threadId) => sentThreadIds.has(threadId));
+      };
       void setThreadSubscriptions(input).then((result) => {
-        if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
+        if (!isCurrentAtomicResponse()) return;
         if (result?.hydrationRequiredThreadIds?.length) {
           const residency = getConversationResidency();
           for (const threadId of result.hydrationRequiredThreadIds) {
             const expected = cursorAuthority.get(threadId);
+            if (!isCurrentAtomicResponse()) return;
             useThreadStore.setState((state) => {
               const record = state.records.get(threadId);
               if (!record) return state;
@@ -659,24 +672,18 @@ export function ChatView() {
               });
               return { records };
             });
+            if (!isCurrentAtomicResponse()) return;
             residency.invalidateConversation(threadId);
             if (threadId === activeThreadId && runningThreadIds.has(threadId)) {
+              if (!isCurrentAtomicResponse()) return;
               void residency.refresh(threadId, useWorkspaceStore.getState().threads);
             }
           }
         }
+        if (!isCurrentAtomicResponse()) return;
         confirmedThreadIdsRef.current = sentThreadIds;
-        const latestDesired = desiredThreadIdsRef.current;
-        const responseIsCurrent = subscriptionTargetSignatureRef.current === targetSignature
-          && latestDesired.size === sentThreadIds.size
-          && Array.from(latestDesired).every((threadId) => sentThreadIds.has(threadId));
-        if (responseIsCurrent) {
-          subscriptionRetryAttemptRef.current = 0;
-          subscriptionRetryExhaustedRef.current = false;
-        }
-        if (!responseIsCurrent) {
-          setSubscriptionReconcileVersion((version) => version + 1);
-        }
+        subscriptionRetryAttemptRef.current = 0;
+        subscriptionRetryExhaustedRef.current = false;
       }).catch(() => {
         if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
         const currentRequest = atomicSubscriptionRequestRef.current;
