@@ -105,7 +105,7 @@ import which from "which";
 import { CopilotProvider } from "../providers/copilot/copilot-provider.js";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
-import { BrowserAutomationAccessService } from "../services/browser-automation/access-service.js";
+import { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
 
 /** Minimal SettingsService stub. */
 function makeSettingsService(cliPath = "") {
@@ -237,8 +237,8 @@ describe("CopilotProvider bootstrap", () => {
     mockClient.getState.mockReturnValue("connected");
     const mockSession = makeMockSession();
     mockClient.createSession.mockResolvedValue(mockSession);
-    const access = new BrowserAutomationAccessService();
-    access.configure({
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
@@ -246,7 +246,7 @@ describe("CopilotProvider bootstrap", () => {
       makeSettingsService() as any,
       stubJobObject(),
       stubEnvService(),
-      access,
+      lease,
     );
 
     await provider.sendTurn({
@@ -270,7 +270,7 @@ describe("CopilotProvider bootstrap", () => {
     expect(config.mcpServers["mcode-browser"].tools).toHaveLength(17);
     expect(config.mcpServers["mcode-browser"].tools).not.toContain("browser_evaluate");
     await provider.stopSession("mcode-browser-copilot");
-    expect(access.credentials.size()).toBe(0);
+    expect(lease.credentials.size()).toBe(0);
   });
 
   describe("error translation", () => {

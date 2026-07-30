@@ -79,6 +79,7 @@ import { resolveWebAutomationFlag } from "./startup-policy.js";
 import {
   BrowserAutomationAccessService,
   BrowserAutomationBroker,
+  BrowserAutomationCredentialRegistry,
   BrowserAutomationMcpHandler,
   BrowserAutomationSessionLease,
 } from "./services/browser-automation/index.js";
@@ -222,13 +223,14 @@ applyDevGitCheckoutEnv();
 const container = setupContainer(getMcodeDir());
 
 const browserAutomationAccess = container.resolve(BrowserAutomationAccessService);
+const browserAutomationCredentials = container.resolve(BrowserAutomationCredentialRegistry);
 const browserAutomationSessionLease = container.resolve(BrowserAutomationSessionLease);
 const browserAutomationBroker = new BrowserAutomationBroker({});
 const browserAutomationMcpHandler = new BrowserAutomationMcpHandler({
-  credentials: browserAutomationAccess.credentials,
+  credentials: browserAutomationCredentials,
   broker: browserAutomationBroker,
 });
-browserAutomationAccess.onCredentialRevoked((revocation) => {
+browserAutomationCredentials.onRemoved((revocation) => {
   browserAutomationMcpHandler.releaseCredential(revocation.credentialId);
   browserAutomationBroker.releaseProviderSession(
     revocation.providerId,
@@ -836,8 +838,8 @@ async function shutdown(): Promise<void> {
   // 3. Shutdown provider registry
   providerRegistry.shutdown();
   browserAutomationBroker.shutdown();
-  browserAutomationAccess.shutdown();
   browserAutomationSessionLease.shutdown();
+  browserAutomationAccess.shutdown();
 
   // 4. Mark active threads as interrupted
   threadService.markActiveThreadsInterrupted(activeThreadIds);
