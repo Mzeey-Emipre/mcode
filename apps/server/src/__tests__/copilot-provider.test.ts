@@ -265,6 +265,7 @@ describe("CopilotProvider bootstrap", () => {
       stubJobObject(),
       stubEnvService(),
       lease,
+      makeThreadControlMcp() as any,
     );
 
     await provider.sendTurn({
@@ -299,7 +300,13 @@ describe("CopilotProvider bootstrap", () => {
     mockClient.createSession.mockResolvedValueOnce(firstSession).mockResolvedValueOnce(secondSession);
     const lease = new BrowserAutomationSessionLease();
     lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
-    const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), lease);
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      lease,
+      makeThreadControlMcp() as any,
+    );
     const request = {
       sessionId: "mcode-browser-revoked",
       workspaceId: "workspace-test",
@@ -331,7 +338,13 @@ describe("CopilotProvider bootstrap", () => {
     mockClient.createSession.mockRejectedValue(new Error("spawn failed"));
     const lease = new BrowserAutomationSessionLease();
     lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
-    const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), lease);
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      lease,
+      makeThreadControlMcp() as any,
+    );
 
     await expect(provider.sendTurn({
       sessionId: "mcode-browser-spawn-failed",
@@ -353,7 +366,13 @@ describe("CopilotProvider bootstrap", () => {
     mockClient.createSession.mockResolvedValue(makeMockSession());
     const lease = new BrowserAutomationSessionLease();
     lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
-    const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), lease);
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      lease,
+      makeThreadControlMcp() as any,
+    );
     const request = {
       sessionId: "mcode-browser-overlap",
       workspaceId: "workspace-test",
@@ -380,7 +399,13 @@ describe("CopilotProvider bootstrap", () => {
         new Error("CLI server exited with code 1"),
       );
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
+      const provider = new CopilotProvider(
+        makeSettingsService() as any,
+        stubJobObject(),
+        stubEnvService(),
+        undefined,
+        makeThreadControlMcp() as any,
+      );
 
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
@@ -408,7 +433,13 @@ describe("CopilotProvider bootstrap", () => {
         new Error("Could not find @github/copilot"),
       );
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
+      const provider = new CopilotProvider(
+        makeSettingsService() as any,
+        stubJobObject(),
+        stubEnvService(),
+        undefined,
+        makeThreadControlMcp() as any,
+      );
 
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
@@ -516,7 +547,13 @@ async function runWithMockSession(
     mockSession.fire("session.idle");
   });
 
-  const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
+  const provider = new CopilotProvider(
+    makeSettingsService() as any,
+    stubJobObject(),
+    stubEnvService(),
+    undefined,
+    makeThreadControlMcp() as any,
+  );
   const events: AgentEvent[] = [];
   provider.on("event", (e: AgentEvent) => events.push(e));
 
