@@ -5,6 +5,8 @@ import { openMemoryDatabase } from "../../../store/database.js";
 import { ThreadRepo } from "../../../repositories/thread-repo.js";
 import { MessageRepo } from "../../../repositories/message-repo.js";
 import { CursorProvider } from "../cursor-provider.js";
+import { BrowserAutomationSessionLease } from "../../../services/browser-automation/browser-automation-session-lease.js";
+import type { InternalThreadControlMcpRuntime } from "../../../services/thread-control-mcp-runtime.js";
 import type { SettingsService } from "../../../services/settings-service.js";
 import type { SkillService } from "../../../services/skill-service.js";
 import type { EnvService } from "../../../services/env-service.js";
@@ -43,8 +45,22 @@ describe("Cursor clean side-channel fork", () => {
     const skillStub = {} as unknown as SkillService;
     const envStub = { getEnv: () => ({}) } as unknown as EnvService;
     const jobStub = {} as unknown as JobObject;
+    const threadControlStub = {} as InternalThreadControlMcpRuntime;
+    const browserAutomationLease = new BrowserAutomationSessionLease();
 
-    provider = new CursorProvider(settingsStub, skillStub, envStub, jobStub);
+    provider = new CursorProvider(
+      settingsStub,
+      skillStub,
+      envStub,
+      jobStub,
+      threadControlStub,
+      browserAutomationLease,
+    );
+
+    expect((provider as unknown as { threadControlMcp: InternalThreadControlMcpRuntime }).threadControlMcp)
+      .toBe(threadControlStub);
+    expect((provider as unknown as { browserAutomationLease: BrowserAutomationSessionLease }).browserAutomationLease)
+      .toBe(browserAutomationLease);
 
     // Replace the real `cursor-agent acp` spawn with a fake transport that
     // streams a summary chunk back through the client (no subprocess, no
