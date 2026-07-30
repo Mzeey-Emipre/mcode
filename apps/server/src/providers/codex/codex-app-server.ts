@@ -104,6 +104,14 @@ export interface CodexAppServerOptions {
   developerInstructions?: string;
 }
 
+/** Adds optional developer instructions to a native Codex thread payload. */
+export function addCodexDeveloperInstructions<T extends ThreadStartParams | ThreadResumeParams>(
+  params: T,
+  developerInstructions?: string,
+): T {
+  return developerInstructions ? { ...params, developerInstructions } : params;
+}
+
 /**
  * Pure routing logic for a single codex serverRequest. Exported for unit
  * testing so we can assert the full decision table without spawning a child
@@ -1170,14 +1178,14 @@ export class CodexAppServer extends EventEmitter {
         // resumed thread picks up the current user settings.
         const resumeResult = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
           "thread/resume",
-          {
+          addCodexDeveloperInstructions({
             threadId: resumeThreadId,
             ...(model && { model }),
             ...(sandbox && { sandbox }),
             ...(approvalPolicy && { approvalPolicy }),
             ...(workingDirectory && { cwd: workingDirectory }),
             ...(developerInstructions && { developerInstructions }),
-          },
+          }, developerInstructions),
           THREAD_HANDSHAKE_TIMEOUT_MS,
         );
         // Accept both flat `threadId` and nested `thread.id` shapes,
@@ -1236,7 +1244,7 @@ export class CodexAppServer extends EventEmitter {
       try {
         startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
           "thread/start",
-          startParams,
+          addCodexDeveloperInstructions(startParams, developerInstructions),
           THREAD_HANDSHAKE_TIMEOUT_MS,
         );
         logger.debug("Codex thread/start response", { result: startResult });

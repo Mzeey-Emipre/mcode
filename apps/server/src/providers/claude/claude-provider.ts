@@ -46,6 +46,25 @@ import { ScopedPreGrantService } from "../../services/scoped-pre-grant.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
+
+/** Merges exact internal and Browser MCP grants used by one Claude session. */
+export function mergeClaudeMcpServers(
+  base: Record<string, unknown>,
+  browserGrant: { mcpUrl: string; token: string } | null,
+): Record<string, unknown> {
+  return {
+    ...base,
+    ...(browserGrant
+      ? {
+          "mcode-browser": {
+            type: "http" as const,
+            url: browserGrant.mcpUrl,
+            headers: { Authorization: `Bearer ${browserGrant.token}` },
+          },
+        }
+      : {}),
+  };
+}
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { listDirectChildren } from "../../services/process-kill.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
@@ -1131,11 +1150,11 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         type: "preset" as const,
         preset: "claude_code" as const,
       },
-      ...(internalMcpServer && {
-        mcpServers: {
-          mcode_internal_thread_control: { type: "sdk" as const, instance: internalMcpServer },
-        },
-      }),
+      mcpServers: internalMcpServer
+        ? {
+            mcode_internal_thread_control: { type: "sdk" as const, instance: internalMcpServer },
+          }
+        : {},
       // EnterPlanMode is disallowed because Mcode controls plan entry.
       // ExitPlanMode is NOT disallowed: we intercept it in canUseTool.
       // In plan-answer mode we capture the plan; in normal mode we deny
@@ -1486,33 +1505,27 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       this.recentStderr.set(sessionId, next);
     };
 
-    const browserOptions = browserGrant
-      ? {
-          mcpServers: {
-            "mcode-browser": {
-              type: "http" as const,
-              url: browserGrant.mcpUrl,
-              headers: { Authorization: `Bearer ${browserGrant.token}` },
-            },
-          },
-        }
-      : {};
+    const effectiveMcpServers = mergeClaudeMcpServers(
+      (baseOptions.mcpServers ?? {}) as Record<string, unknown>,
+      browserGrant,
+    );
     const runtimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
       sourceThreadId: args.threadId,
-      threadControlGranted: Boolean((baseOptions as { mcpServers?: unknown }).mcpServers),
-      browserAutomationGranted: Boolean(browserGrant),
+      threadControlGranted: Boolean(effectiveMcpServers.mcode_internal_thread_control),
+      browserAutomationGranted: Boolean(effectiveMcpServers["mcode-browser"]),
     }));
     const optionsWithRuntimeInstructions = {
       ...baseOptions,
+      mcpServers: effectiveMcpServers,
       systemPrompt: {
         type: "preset" as const,
         preset: "claude_code" as const,
         append: runtimeInstructions,
       },
     };
-    const options = resume
-      ? { ...optionsWithRuntimeInstructions, ...browserOptions, resume: resumeId, stderr: captureStderr }
-      : { ...optionsWithRuntimeInstructions, ...browserOptions, sessionId: uuid, stderr: captureStderr };
+    const options = (resume
+      ? { ...optionsWithRuntimeInstructions, resume: resumeId, stderr: captureStderr }
+      : { ...optionsWithRuntimeInstructions, sessionId: uuid, stderr: captureStderr }) as unknown as NonNullable<Parameters<typeof sdkQuery>[0]["options"]>;
 
     const queue = createPromptQueue();
 

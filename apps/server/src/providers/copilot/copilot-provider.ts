@@ -83,6 +83,18 @@ export function buildCopilotInternalMcpServers(
   };
 }
 
+/** Preserves existing Copilot user instructions while appending runtime guidance. */
+export function composeCopilotSystemMessage(
+  userInstructions: string | undefined,
+  runtimeInstructions: string,
+): { content: string } {
+  return {
+    content: [userInstructions, runtimeInstructions]
+      .filter((value): value is string => Boolean(value && value.trim()))
+      .join("\n\n"),
+  };
+}
+
 function transientHandoffError(message: string): Error & { code: string } {
   const err = new Error(message) as Error & { code: string };
   err.code = "ETIMEDOUT";
@@ -988,9 +1000,6 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       threadControlGranted: true,
       browserAutomationGranted: Boolean(browserGrant),
     }));
-    const composedInstructions = [userInstructions, runtimeInstructions]
-      .filter((value): value is string => Boolean(value && value.trim()))
-      .join("\n\n");
     const sessionBase = {
       onPermissionRequest: approveAll,
       model: staged?.model || undefined,
@@ -998,7 +1007,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       enableConfigDiscovery: true,
       ...(customAgents.length > 0 && { customAgents }),
       ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
-      systemMessage: { content: composedInstructions },
+      systemMessage: composeCopilotSystemMessage(userInstructions, runtimeInstructions),
       mcpServers: {
         ...buildCopilotInternalMcpServers(internalMcp),
         ...(browserGrant ? {

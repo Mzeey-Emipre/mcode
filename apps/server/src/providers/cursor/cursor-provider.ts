@@ -239,6 +239,24 @@ export function cursorSupportsHttpMcp(initializeResult: {
   return initializeResult.agentCapabilities?.mcpCapabilities?.http === true;
 }
 
+/** Appends Mcode guidance only when not yet delivered to a logical ACP session. */
+export function appendCursorMcodeInstructions(
+  instructionMarkdown: string | undefined,
+  runtimeInstructions: string,
+  sent: boolean,
+): { instructionMarkdown: string | undefined; included: boolean } {
+  if (sent || !runtimeInstructions.trim()) return { instructionMarkdown, included: false };
+  if (instructionMarkdown?.includes(runtimeInstructions)) {
+    return { instructionMarkdown, included: true };
+  }
+  return {
+    instructionMarkdown: [instructionMarkdown, runtimeInstructions]
+      .filter((value): value is string => Boolean(value && value.trim()))
+      .join("\n\n"),
+    included: true,
+  };
+}
+
 /** Cursor ACP (Agent Communication Protocol) adapter implementing IAgentProvider via a MCP subprocess per session. */
 @injectable()
 export class CursorProvider
@@ -1253,6 +1271,7 @@ export class CursorProvider
     this.pendingBrowserContext.delete(sessionId);
     fresh.stickyHeavyInstructionsSent = dead.stickyHeavyInstructionsSent;
     fresh.cursorPromptOrdinal = dead.cursorPromptOrdinal;
+    fresh.mcodeRuntimeInstructionsSent = dead.mcodeRuntimeInstructionsSent;
     fresh.lastUsedAt = Date.now();
     logger.info("Cursor ACP subprocess respawned after disconnect", {
       threadId: fresh.threadId,
@@ -1320,12 +1339,17 @@ export class CursorProvider
         currentEntry.stderrTailLines.length = 0;
 
         let blocks;
+        let mcodeInstructionsIncluded = false;
         if (isContinueRetry) {
+          const continuationInstructions = currentEntry.mcodeRuntimeInstructionsSent
+            ? undefined
+            : currentEntry.mcodeRuntimeInstructions;
           blocks = buildCursorAcpPromptBlocks(
             promptMessage,
             promptAttachments,
-            undefined,
+            continuationInstructions,
           );
+          mcodeInstructionsIncluded = Boolean(continuationInstructions);
         } else {
           if (!instructionMarkdownReady) {
             const guidance = buildCursorAgentGuidanceMarkdown(currentEntry.cwd);
@@ -1353,16 +1377,23 @@ export class CursorProvider
               }
             }
             instructionMarkdownReady = true;
-            if (!currentEntry.mcodeRuntimeInstructionsSent && currentEntry.mcodeRuntimeInstructions) {
-              instructionMarkdown = [instructionMarkdown, currentEntry.mcodeRuntimeInstructions]
-                .filter((value): value is string => Boolean(value && value.trim()))
-                .join("\n\n");
-            }
+            const mcode = appendCursorMcodeInstructions(
+              instructionMarkdown,
+              currentEntry.mcodeRuntimeInstructions,
+              currentEntry.mcodeRuntimeInstructionsSent,
+            );
+            instructionMarkdown = mcode.instructionMarkdown;
+            mcodeInstructionsIncluded = mcode.included;
           }
           blocks = buildCursorAcpPromptBlocks(
             promptMessage,
             promptAttachments,
             instructionMarkdown,
+          );
+          mcodeInstructionsIncluded = Boolean(
+            !currentEntry.mcodeRuntimeInstructionsSent &&
+              currentEntry.mcodeRuntimeInstructions &&
+              instructionMarkdown?.includes(currentEntry.mcodeRuntimeInstructions),
           );
         }
 
@@ -1373,7 +1404,7 @@ export class CursorProvider
             sessionId: currentEntry.acpSessionId,
             prompt: blocks,
           });
-          if (!isContinueRetry) currentEntry.mcodeRuntimeInstructionsSent = true;
+          if (mcodeInstructionsIncluded) currentEntry.mcodeRuntimeInstructionsSent = true;
           break;
         } catch (attemptErr) {
           const raw = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
