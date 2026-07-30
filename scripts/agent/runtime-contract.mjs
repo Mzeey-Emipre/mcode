@@ -124,7 +124,7 @@ export function ensureRuntimeRoot(repoRoot = resolveRepoRoot()) {
  * @returns {number}
  */
 export function computeDeterministicPort(worktreePath, basePort = DEFAULT_PORT_BASE) {
-  const canonical = realpathSync(worktreePath).toLowerCase();
+  const canonical = realpathSync.native(worktreePath).toLowerCase();
   const digest = createHash("sha1").update(canonical).digest("hex");
   const bucket = Number.parseInt(digest.slice(0, 8), 16) % PORT_BUCKET_SIZE;
   return basePort + bucket;

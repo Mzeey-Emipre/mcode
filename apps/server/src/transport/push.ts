@@ -146,6 +146,29 @@ export function broadcast(
   }
 }
 
+/** Sends one validated push event to exactly one connected WebSocket client. */
+export function sendToClient(
+  ws: WebSocket,
+  channel: WsChannelName,
+  data: unknown,
+): boolean {
+  if (!clients.has(ws) || ws.readyState !== ws.OPEN) return false;
+  const schema = WS_CHANNELS[channel];
+  if (!schema) return false;
+  const validation = getTransportPayloadValidator().validatePush(channel, data, schema);
+  if (!validation.ok) return false;
+  try {
+    ws.send(JSON.stringify({ type: "push" as const, channel, data: validation.data }));
+    return true;
+  } catch (error) {
+    logger.warn("Directed push delivery failed", {
+      channel,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
 /**
  * Broadcast a PTY data chunk as a binary WebSocket frame.
  *

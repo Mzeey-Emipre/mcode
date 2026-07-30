@@ -19,6 +19,24 @@ export const TOOL_LABELS: Record<string, string> = {
   Agent: "Delegated task",
   WebSearch: "Searched web",
   WebFetch: "Fetched page",
+  browser_status: "Checked Browser",
+  browser_open: "Opened page",
+  browser_navigate: "Navigated page",
+  browser_resize: "Resized Browser",
+  browser_snapshot: "Inspected page",
+  browser_screenshot: "Captured page",
+  browser_click: "Clicked page",
+  browser_type: "Typed in page",
+  browser_press: "Pressed key in page",
+  browser_scroll: "Scrolled page",
+  browser_wait_for: "Waited for page",
+  browser_console: "Inspected console",
+  browser_network: "Inspected network",
+  browser_accessibility: "Inspected accessibility",
+  browser_performance: "Audited page performance",
+  browser_evaluate: "Evaluated page",
+  browser_recording_start: "Started page recording",
+  browser_recording_stop: "Stopped page recording",
 };
 
 export const TOOL_ICONS: Record<string, IconComponent> = {
@@ -31,6 +49,24 @@ export const TOOL_ICONS: Record<string, IconComponent> = {
   Agent: StackedLayersIcon,
   WebSearch: Globe,
   WebFetch: Globe,
+  browser_status: Globe,
+  browser_open: Globe,
+  browser_navigate: Globe,
+  browser_resize: Globe,
+  browser_snapshot: Globe,
+  browser_screenshot: Globe,
+  browser_click: Globe,
+  browser_type: Globe,
+  browser_press: Globe,
+  browser_scroll: Globe,
+  browser_wait_for: Globe,
+  browser_console: Globe,
+  browser_network: Globe,
+  browser_accessibility: Globe,
+  browser_performance: Globe,
+  browser_evaluate: Globe,
+  browser_recording_start: Globe,
+  browser_recording_stop: Globe,
 };
 
 export const DEFAULT_ICON: IconComponent = Wrench;
@@ -46,7 +82,8 @@ const SHELL_TOOL_ALIASES: Record<string, "Bash"> = {
  * Maps provider-specific shell tool names to the canonical `Bash` label/icon set.
  */
 export function resolveToolName(toolName: string): string {
-  return SHELL_TOOL_ALIASES[toolName] ?? toolName;
+  const browserTool = toolName.match(/(?:^|__)(browser_[a-z_]+)$/)?.[1];
+  return SHELL_TOOL_ALIASES[toolName] ?? browserTool ?? toolName;
 }
 
 /** Returns true when the tool is a shell/command execution (any provider alias). */
@@ -65,6 +102,24 @@ export const TOOL_PHASE_LABELS: Record<string, string> = {
   Agent: "Thinking deeper...",
   WebSearch: "Searching the web...",
   WebFetch: "Fetching a page...",
+  browser_status: "Checking the Browser...",
+  browser_open: "Opening a page...",
+  browser_navigate: "Navigating the page...",
+  browser_resize: "Resizing the Browser...",
+  browser_snapshot: "Inspecting the page...",
+  browser_screenshot: "Capturing the page...",
+  browser_click: "Clicking the page...",
+  browser_type: "Typing in the page...",
+  browser_press: "Pressing a key...",
+  browser_scroll: "Scrolling the page...",
+  browser_wait_for: "Waiting for the page...",
+  browser_console: "Inspecting the console...",
+  browser_network: "Inspecting network activity...",
+  browser_accessibility: "Inspecting accessibility...",
+  browser_performance: "Auditing page performance...",
+  browser_evaluate: "Evaluating the page...",
+  browser_recording_start: "Starting page recording...",
+  browser_recording_stop: "Stopping page recording...",
 };
 
 /** Singular/plural labels for tool summary text generation. */

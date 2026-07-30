@@ -243,8 +243,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     openExternal(): Promise<void> {
       return ipcRenderer.invoke("preview:open-external");
     },
-    openGuestDevTools(): Promise<void> {
-      return ipcRenderer.invoke("preview:open-guest-devtools");
+    openGuestDevTools(target?: { readonly threadId: string; readonly tabId: string }): Promise<void> {
+      return ipcRenderer.invoke("preview:open-guest-devtools", target);
     },
     getNavigationState(): Promise<{
       canGoBack: boolean;
@@ -331,6 +331,41 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       tabId: string;
     }): Promise<unknown> {
       return ipcRenderer.invoke("preview:release-webview", payload);
+    },
+    /** Bounded provider-neutral browser operations. Raw CDP is intentionally not exposed. */
+    automation: {
+      execute(payload: unknown): Promise<unknown> {
+        return ipcRenderer.invoke("preview:automation.execute", payload);
+      },
+      beginRendererOperation(payload: unknown): Promise<unknown> {
+        return ipcRenderer.invoke("preview:automation.begin-renderer-operation", payload);
+      },
+      finishRendererOperation(payload: { leaseId: string; succeeded: boolean }): Promise<boolean> {
+        return ipcRenderer.invoke("preview:automation.finish-renderer-operation", payload);
+      },
+      cancel(requestId: string): Promise<boolean> {
+        return ipcRenderer.invoke("preview:automation.cancel", requestId);
+      },
+      interrupt(target: { threadId: string; tabId: string }): Promise<boolean> {
+        return ipcRenderer.invoke("preview:automation.interrupt", target);
+      },
+      describeTarget(target: { threadId: string; tabId: string }): Promise<unknown> {
+        return ipcRenderer.invoke("preview:automation.describe-target", target);
+      },
+      getMediaSourceId(target: {
+        windowId: number;
+        threadId: string;
+        tabId: string;
+        targetGeneration: number;
+      }): Promise<unknown> {
+        return ipcRenderer.invoke("preview:automation.media-source", target);
+      },
+      onControllerChanged(callback: (state: unknown) => void): () => void {
+        const listener = (_event: unknown, state: unknown) => callback(state);
+        ipcRenderer.send("preview:automation.subscribe");
+        ipcRenderer.on("preview:automation.controller", listener);
+        return () => ipcRenderer.removeListener("preview:automation.controller", listener);
+      },
     },
     /**
      * Phase G design mode: stretch the panel to one of the named viewport

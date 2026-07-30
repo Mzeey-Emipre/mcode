@@ -106,6 +106,7 @@ import which from "which";
 import { CopilotProvider } from "../providers/copilot/copilot-provider.js";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
+import { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
 
 /** Minimal SettingsService stub. */
 function makeSettingsService(cliPath = "") {
@@ -250,6 +251,146 @@ describe("CopilotProvider bootstrap", () => {
     });
   });
 
+  it("configures only permission-compatible visible-browser MCP tools on a normal session", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    const mockSession = makeMockSession();
+    mockClient.createSession.mockResolvedValue(mockSession);
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      lease,
+      makeThreadControlMcp() as any,
+    );
+
+    await provider.sendTurn({
+      sessionId: "mcode-browser-copilot",
+      workspaceId: "workspace-test",
+      threadId: "browser-copilot",
+      message: "inspect the page",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    const config = mockClient.createSession.mock.calls[0]![0];
+    expect(config.mcpServers["mcode-browser"]).toMatchObject({
+      type: "http",
+      url: "http://127.0.0.1:19400/mcp",
+      headers: { Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{40,}$/) },
+    });
+    expect(config.mcpServers["mcode-browser"].tools).toHaveLength(17);
+    expect(config.mcpServers["mcode-browser"].tools).not.toContain("browser_evaluate");
+    expect(lease.status()).toEqual({ active: 1, pending: 0 });
+    await provider.stopSession("mcode-browser-copilot");
+    expect(lease.credentials.size()).toBe(0);
+  });
+
+  it("recreates a pooled session after its browser lease is revoked externally", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    const firstSession = makeMockSession();
+    const secondSession = makeMockSession();
+    mockClient.createSession.mockResolvedValueOnce(firstSession).mockResolvedValueOnce(secondSession);
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      lease,
+      makeThreadControlMcp() as any,
+    );
+    const request = {
+      sessionId: "mcode-browser-revoked",
+      workspaceId: "workspace-test",
+      threadId: "browser-revoked",
+      message: "inspect the page",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "supervised" as const,
+    };
+
+    await provider.sendTurn(request);
+    const authHeader = mockClient.createSession.mock.calls[0]![0].mcpServers["mcode-browser"].headers.Authorization as string;
+    const claims = lease.credentials.authenticate(authHeader.slice("Bearer ".length));
+    expect(claims).not.toBeNull();
+    lease.credentials.revoke(claims!.credentialId);
+
+    await provider.sendTurn({ ...request, message: "inspect again" });
+
+    expect(mockClient.createSession).toHaveBeenCalledTimes(2);
+    expect(firstSession.disconnect).toHaveBeenCalled();
+    expect(lease.status()).toEqual({ active: 1, pending: 0 });
+    await provider.stopSession(request.sessionId);
+  });
+
+  it("releases staged browser access when spawning fails", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.createSession.mockRejectedValue(new Error("spawn failed"));
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      lease,
+      makeThreadControlMcp() as any,
+    );
+
+    await expect(provider.sendTurn({
+      sessionId: "mcode-browser-spawn-failed",
+      workspaceId: "workspace-test",
+      threadId: "browser-spawn-failed",
+      message: "inspect the page",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    })).rejects.toThrow("spawn failed");
+
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+  });
+
+  it("releases exactly one staged handle when sends overlap", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.createSession.mockResolvedValue(makeMockSession());
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      lease,
+      makeThreadControlMcp() as any,
+    );
+    const request = {
+      sessionId: "mcode-browser-overlap",
+      workspaceId: "workspace-test",
+      threadId: "browser-overlap",
+      message: "inspect the page",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "supervised" as const,
+    };
+
+    await Promise.all([provider.sendTurn(request), provider.sendTurn({ ...request, message: "inspect again" })]);
+
+    expect(lease.status()).toEqual({ active: 1, pending: 0 });
+    await provider.stopSession(request.sessionId);
+  });
+
   describe("error translation", () => {
     it("translates CLI server exited to auth instructions", async () => {
       mockClient.start.mockResolvedValue(undefined);
@@ -258,7 +399,13 @@ describe("CopilotProvider bootstrap", () => {
         new Error("CLI server exited with code 1"),
       );
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
+      const provider = new CopilotProvider(
+        makeSettingsService() as any,
+        stubJobObject(),
+        stubEnvService(),
+        undefined,
+        makeThreadControlMcp() as any,
+      );
 
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
@@ -286,7 +433,13 @@ describe("CopilotProvider bootstrap", () => {
         new Error("Could not find @github/copilot"),
       );
 
-      const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
+      const provider = new CopilotProvider(
+        makeSettingsService() as any,
+        stubJobObject(),
+        stubEnvService(),
+        undefined,
+        makeThreadControlMcp() as any,
+      );
 
       const events: AgentEvent[] = [];
       provider.on("event", (e: AgentEvent) => events.push(e));
@@ -394,7 +547,13 @@ async function runWithMockSession(
     mockSession.fire("session.idle");
   });
 
-  const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), makeThreadControlMcp() as any);
+  const provider = new CopilotProvider(
+    makeSettingsService() as any,
+    stubJobObject(),
+    stubEnvService(),
+    undefined,
+    makeThreadControlMcp() as any,
+  );
   const events: AgentEvent[] = [];
   provider.on("event", (e: AgentEvent) => events.push(e));
 
@@ -734,6 +893,57 @@ describe("CopilotProvider assistant.message phase filtering", () => {
     // Response message is still emitted
     const msgEvts = events.filter((e) => e.type === "message");
     expect(msgEvts).toHaveLength(1);
+  });
+});
+
+describe("CopilotProvider tool completion output", () => {
+  it("preserves the provider error message when a tool fails without a result", async () => {
+    const { events } = await runWithMockSession([
+      {
+        name: "tool.execution_complete",
+        data: {
+          toolCallId: "browser-open-1",
+          success: false,
+          error: { message: "Browser target did not attach", code: "TOOL_ERROR" },
+        },
+      },
+    ]);
+
+    const result = events.find((event) => event.type === "toolResult");
+    expect(result).toMatchObject({
+      type: "toolResult",
+      toolCallId: "browser-open-1",
+      output: "Browser target did not attach",
+      isError: true,
+    });
+  });
+
+  it("prefers detailed UI output while retaining concise result fallback", async () => {
+    const { events } = await runWithMockSession([
+      {
+        name: "tool.execution_complete",
+        data: {
+          toolCallId: "browser-snapshot-1",
+          success: true,
+          result: { content: "concise", detailedContent: "complete diagnostics" },
+        },
+      },
+      {
+        name: "tool.execution_complete",
+        data: {
+          toolCallId: "browser-status-1",
+          success: true,
+          result: { content: "status only" },
+        },
+      },
+    ]);
+
+    expect(events.filter((event) => event.type === "toolResult")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toolCallId: "browser-snapshot-1", output: "complete diagnostics" }),
+        expect.objectContaining({ toolCallId: "browser-status-1", output: "status only" }),
+      ]),
+    );
   });
 });
 

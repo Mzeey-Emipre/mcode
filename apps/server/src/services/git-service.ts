@@ -10,7 +10,7 @@ import { injectable, inject } from "tsyringe";
 import { createHash } from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
 import { rm, rmdir, realpath } from "fs/promises";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, realpathSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl, ReviewComparison, ReviewFileChange } from "@mcode/contracts";
@@ -18,6 +18,7 @@ import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl
 const MAX_REVIEW_COMPARISON_FILES = 10_000;
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index.js";
+import { normalizePathForComparison } from "./path-identity.js";
 
 /** Normalized configured remote used for repository-identity matching. */
 export interface NormalizedGitRemote {
@@ -341,13 +342,8 @@ function assertSafeReviewBranch(value: string, label: string): void {
   }
 }
 
-function normalizePathForComparison(value: string): string {
-  const normalized = resolve(value).replace(/\\/g, "/").replace(/\/+$/, "");
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
 function isPathWithin(basePath: string, candidatePath: string): boolean {
-  const rel = relative(resolve(basePath), resolve(candidatePath));
+  const rel = relative(normalizePathForComparison(basePath), normalizePathForComparison(candidatePath));
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
@@ -1721,7 +1717,7 @@ export class GitService {
     if (!branch.worktreePath || !existsSync(branch.worktreePath)) return null;
     let canonicalPath: string;
     try {
-      canonicalPath = await realpath(branch.worktreePath);
+      canonicalPath = realpathSync(branch.worktreePath);
     } catch {
       return null;
     }

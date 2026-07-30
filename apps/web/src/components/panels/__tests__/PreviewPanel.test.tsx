@@ -8,7 +8,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { getDefaultSettings } from "@mcode/contracts";
+import {
+  BROWSER_AUTOMATION_CONTRACT_VERSION,
+  getDefaultSettings,
+  type BrowserAutomationHostDispatch,
+} from "@mcode/contracts";
 
 const {
   mockUsePreviewBridge,
@@ -84,6 +88,7 @@ import {
   PreviewPanel,
   shouldRenderWebviewPreview,
 } from "../PreviewPanel";
+import { executeWebBrowserDispatch } from "../browserAutomationWebExecutor";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import {
@@ -93,6 +98,8 @@ import {
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { useDiffStore } from "@/stores/diffStore";
+import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -264,6 +271,8 @@ describe("PreviewPanel: unavailable state", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
     mockUsePreviewBridge.mockClear();
+    vi.unstubAllEnvs();
+    useDiffStore.setState({ previewUrlByThread: {} });
   });
 
   it("renders the unavailable state when desktopBridge is absent", () => {
@@ -276,6 +285,138 @@ describe("PreviewPanel: unavailable state", () => {
   it("does not render the full panel when desktopBridge is absent", () => {
     render(<PreviewPanel threadId="thread-1" />);
     expect(screen.queryByTestId("preview-panel")).not.toBeInTheDocument();
+  });
+
+  it("renders the enabled same-origin web preview without an Electron bridge", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toHaveAttribute(
+      "src",
+      window.location.origin + "/fixture",
+    );
+    expect(screen.queryByTestId("web-runtime-cross-origin")).not.toBeInTheDocument();
+  });
+
+  it("publishes the web preview target identity used by the executor", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
+    expect(iframe).toHaveAttribute("data-thread-id", "thread-1");
+    expect(iframe).toHaveAttribute("data-tab-id", "web-preview");
+    expect(useBrowserAutomationStore.getState().liveTargets.get(
+      JSON.stringify(["thread-1", "web-preview"]),
+    )).toMatchObject({ workspaceId: "workspace-1", threadId: "thread-1", tabId: "web-preview" });
+    const initialRevision = useBrowserAutomationStore.getState().liveTargets.get(
+      JSON.stringify(["thread-1", "web-preview"]),
+    )!.revision;
+    fireEvent.load(iframe);
+    expect(useBrowserAutomationStore.getState().liveTargets.get(
+      JSON.stringify(["thread-1", "web-preview"]),
+    )!.revision).toBe(initialRevision + 1);
+    const page = document.implementation.createHTMLDocument("Fixture");
+    page.body.innerHTML = "<main>Visible fixture</main>";
+    Object.defineProperty(iframe, "contentDocument", { configurable: true, value: page });
+    const result = await executeWebBrowserDispatch({
+      scope: {
+        workspaceId: "workspace-1",
+        threadId: "thread-1",
+        providerSessionId: "session-1",
+        providerInstanceId: "instance-1",
+      },
+      connection: {
+        desktopInstanceId: "web",
+        windowId: 1,
+        connectionGeneration: 1,
+        targetGeneration: 1,
+      },
+      request: {
+        contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+        workspaceId: "workspace-1",
+        threadId: "thread-1",
+        providerSessionId: "session-1",
+        providerInstanceId: "instance-1",
+        requestId: "request-preview",
+        sequence: 1,
+        deadline: Date.now() + 1_000,
+        expectedControlEpoch: 0,
+        operation: "snapshot",
+        args: { includeScreenshot: false },
+      },
+      target: {
+        desktopInstanceId: "web",
+        windowId: 1,
+        connectionGeneration: 1,
+        threadId: "thread-1",
+        tabId: "web-preview",
+        targetGeneration: 1,
+        active: true,
+        focused: true,
+        lastUsedAt: Date.now(),
+      },
+    } satisfies BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(result).toMatchObject({ ok: true, result: { operation: "snapshot" } });
+  });
+
+  it("switches thread URL and iframe synchronously without stale preview state", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({
+      previewUrlByThread: {
+        "thread-1": window.location.origin + "/first",
+        "thread-2": window.location.origin + "/second",
+      },
+    });
+    const view = render(<PreviewPanel threadId="thread-1" />);
+    view.rerender(<PreviewPanel threadId="thread-2" />);
+    expect(screen.getByLabelText("Preview URL")).toHaveValue(window.location.origin + "/second");
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toHaveAttribute(
+      "src",
+      window.location.origin + "/second",
+    );
+  });
+
+  it("keeps a cross-origin page visible while identifying DOM automation as unsupported", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({ previewUrlByThread: { "thread-1": "https://example.com/fixture" } });
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toBeInTheDocument();
+    expect(screen.getByTestId("web-runtime-cross-origin")).toHaveTextContent(
+      "automation and DOM access are unsupported",
+    );
+  });
+
+  it("marks a same-origin requested page unsupported after cross-origin iframe navigation", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
+    render(<PreviewPanel threadId="thread-1" />);
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
+    Object.defineProperty(iframe, "contentWindow", {
+      configurable: true,
+      value: { location: { origin: "https://example.com" } },
+    });
+    fireEvent.load(iframe);
+    expect(screen.getByTestId("web-runtime-cross-origin")).toHaveTextContent(
+      "automation and DOM access are unsupported",
+    );
+  });
+
+  it("explains that web preview automation is disabled by default", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "0");
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.getByTestId("preview-panel-unavailable")).toHaveTextContent(
+      "Web preview automation is disabled",
+    );
+  });
+
+  it("renders the deterministic same-origin fixture when web automation is enabled", () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    render(<PreviewPanel threadId="thread-1" />);
+    expect(screen.queryByTestId("preview-panel-unavailable")).not.toBeInTheDocument();
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toHaveAttribute(
+      "src",
+      `${window.location.origin}/browser-automation-fixture.html`,
+    );
   });
 });
 
@@ -311,7 +452,7 @@ describe("PreviewPanel: full panel state", () => {
           .mockResolvedValue({ canGoBack: false, canGoForward: false }),
         onPageStatus: vi.fn().mockReturnValue(() => {}),
         cancelCapture: vi.fn().mockResolvedValue(undefined),
-        adoptWebview: vi.fn().mockResolvedValue(undefined),
+        adoptWebview: vi.fn().mockResolvedValue({ ok: true }),
         releaseWebview: vi.fn().mockResolvedValue(undefined),
         design: {
           setAnnotationGuard: vi.fn().mockResolvedValue({ ok: true }),
@@ -340,6 +481,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    useDiffStore.setState({ previewUrlByThread: {} });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
     mockUsePreviewTabs.mockReturnValue({
@@ -480,6 +622,98 @@ describe("PreviewPanel: full panel state", () => {
     expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
       expect.objectContaining({ forceHidden: true }),
     );
+  });
+
+  it("keeps an about:blank live tab stable while the persisted URL is empty", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    mockUsePreviewBridge.mockReturnValue(mockBridgeState({ storedUrl: "" }));
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "blank-tab",
+        tabs: [{
+          id: "blank-tab",
+          threadId: "thread-1",
+          title: null,
+          url: "about:blank",
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        }],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => "about:blank",
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const view = render(<PreviewPanel threadId="thread-1" />);
+      const firstWebview = await screen.findByTestId("preview-webview");
+      expect(firstWebview).toHaveAttribute("data-tab-id", "blank-tab");
+      fireEvent(firstWebview, new Event("did-stop-loading"));
+      view.rerender(<PreviewPanel threadId="thread-1" />);
+      await waitFor(() => expect(screen.getByTestId("preview-webview")).toBe(firstWebview));
+      expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
+        "Maximum update depth exceeded",
+      );
+      view.unmount();
+    } finally {
+      consoleError.mockRestore();
+      restoreWebviewMethods();
+    }
+  });
+
+  it("preserves a page for a title-only event and clears it on authoritative blank navigation", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "https://example.com" }),
+    );
+    useDiffStore.setState({
+      previewUrlByThread: { "thread-1": "https://example.com" },
+    });
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => "about:blank",
+    });
+
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+      const webview = await screen.findByTestId("preview-webview");
+      fireEvent(webview, new Event("did-start-loading"));
+      expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(
+        "https://example.com",
+      );
+
+      const titleEvent = new Event("page-title-updated") as Event & { title?: string };
+      Object.defineProperty(titleEvent, "title", { value: "Example" });
+      fireEvent(webview, titleEvent);
+      expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(
+        "https://example.com",
+      );
+
+      const blankEvent = new Event("did-navigate") as Event & { url?: string };
+      Object.defineProperty(blankEvent, "url", { value: "about:blank" });
+      fireEvent(webview, blankEvent);
+      await waitFor(() => {
+        expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe("");
+      });
+    } finally {
+      restoreWebviewMethods();
+    }
   });
 
   it("keeps warm webview pages mounted while switching the active tab", () => {

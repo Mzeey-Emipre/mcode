@@ -52,6 +52,7 @@ async function startSession(
 ): Promise<PoolEntry> {
   await provider.sendTurn({
     sessionId,
+    workspaceId: "workspace-test",
     threadId,
     message: "hey",
     cwd: process.cwd(),
@@ -222,6 +223,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
 
     await provider.sendTurn({
       sessionId: "mcode-subagent-metadata-race",
+      workspaceId: "workspace-test",
       threadId: "subagent-metadata-race",
       message: "next turn",
       cwd: process.cwd(),

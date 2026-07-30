@@ -18,13 +18,13 @@ import { registerTabHandlers } from "./preview-tabs.js";
 import { getPerfCounters } from "./preview-perf.js";
 import { registerWebviewAdoptHandlers } from "./preview-webview-adopt.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
+import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
 
 /** Registers all preview:* IPC handlers. Call once at app startup. */
 export function registerPreviewBrowserHandlers(): void {
   const previewPartition = session.fromPartition("persist:mcode-preview");
-  previewPartition.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === "clipboard-sanitized-write");
-  });
+  previewPartition.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  previewPartition.on("will-download", (event) => event.preventDefault());
 
   registerNavigationHandlers();
   registerCaptureHandlers();
@@ -34,5 +34,6 @@ export function registerPreviewBrowserHandlers(): void {
   registerTabHandlers();
   registerWebviewAdoptHandlers();
   registerDesignModeHandlers();
+  registerBrowserAutomationHandlers();
   ipcMain.handle("preview:get-perf-counters", () => getPerfCounters());
 }

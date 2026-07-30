@@ -35,6 +35,7 @@ import { ToastContainer } from "@/components/Toast";
 import type { SettingsSection } from "@/components/settings/settings-nav";
 import { TerminalPoolHost } from "@/components/terminal/TerminalPoolHost";
 import { TerminalPoolSlotProvider } from "@/components/terminal/TerminalPoolSlotContext";
+import { BrowserAutomationHost } from "@/components/panels/BrowserAutomationHost";
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
 import {
   useNavigationHistoryStore,
@@ -730,6 +731,7 @@ export function App() {
           </div>
         </div>
         <TerminalPoolHost />
+        <BrowserAutomationHost />
         <Suspense fallback={null}>
           <LazyCommandPalette />
         </Suspense>

@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, win32 } from "node:path";
 
 import {
   buildPortsContract,
@@ -82,6 +82,9 @@ test("deterministic ports derive from canonical lowercase realpath modulo 1000",
     const first = computeDeterministicPort(repo);
     const second = computeDeterministicPort(canonical.toUpperCase());
     assert.equal(first, second);
+    if (process.platform === "win32") {
+      assert.equal(first, computeDeterministicPort(win32.toNamespacedPath(canonical)));
+    }
     assert.ok(first >= 41_000 && first < 42_000);
   } finally {
     rmSync(repo, { recursive: true, force: true });

@@ -14,10 +14,10 @@
  * Mirrors dpcode's `attachWebview` / `webContents.fromId` flow.
  */
 
-import { BrowserWindow, ipcMain, webContents as electronWebContents } from "electron";
+import { BrowserWindow, ipcMain, session as electronSession, webContents as electronWebContents } from "electron";
 import type { WebContents } from "electron";
 import { logger } from "@mcode/shared";
-import { ensureThreadTabSet, getSession } from "./preview-session.js";
+import { getSession } from "./preview-session.js";
 
 /** Per-window registry of adopted WebContents keyed by (threadId, tabId). */
 interface AdoptedRecord {
@@ -31,25 +31,17 @@ interface AdoptedRecord {
 const adoptedByWindow = new Map<number, Map<string, AdoptedRecord>>();
 
 function key(threadId: string, tabId: string): string {
-  return `${threadId}:${tabId}`;
+  return JSON.stringify([threadId, tabId]);
 }
 
-/**
- * Look up the adopted WebContents for a given (threadId, tabId) across any
- * window. Returns null when nothing is adopted (i.e. tab is BrowserView-backed
- * or doesn't exist).
- */
-export function findAdoptedWebContents(
+/** Looks up an adopted guest inside one exact BrowserWindow identity. */
+export function findAdoptedWebContentsForWindow(
+  windowId: number,
   threadId: string,
   tabId: string,
 ): WebContents | null {
-  for (const win of BrowserWindow.getAllWindows()) {
-    const inner = adoptedByWindow.get(win.id);
-    if (!inner) continue;
-    const rec = inner.get(key(threadId, tabId));
-    if (rec && !rec.webContents.isDestroyed()) return rec.webContents;
-  }
-  return null;
+  const record = adoptedByWindow.get(windowId)?.get(key(threadId, tabId));
+  return record && !record.webContents.isDestroyed() ? record.webContents : null;
 }
 
 function dropAdoption(windowId: number, threadId: string, tabId: string): void {
@@ -76,7 +68,7 @@ export type AdoptResult =
   | { ok: true }
   | { ok: false; error: string };
 
-/** Register the four adopt-related IPC channels. Call once at app startup. */
+/** Registers the renderer-owned webview adopt and release IPC channels. */
 export function registerWebviewAdoptHandlers(): void {
   ipcMain.handle(
     "preview:adopt-webview",
@@ -84,36 +76,32 @@ export function registerWebviewAdoptHandlers(): void {
       const win = BrowserWindow.fromWebContents(event.sender);
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
 
-      const wcId = Number(payload?.webContentsId);
-      const tid = String(payload?.threadId ?? "").trim();
-      const tabId = String(payload?.tabId ?? "").trim();
-      if (!Number.isFinite(wcId) || wcId <= 0)
+      const wcId = payload?.webContentsId;
+      const tid = typeof payload?.threadId === "string" ? payload.threadId.trim() : "";
+      const tabId = typeof payload?.tabId === "string" ? payload.tabId.trim() : "";
+      if (!Number.isSafeInteger(wcId) || wcId <= 0)
         return { ok: false, error: "invalid-webcontents-id" };
-      if (!tid) return { ok: false, error: "invalid-thread-id" };
-      if (!tabId) return { ok: false, error: "invalid-tab-id" };
+      if (!tid || tid.length > 256) return { ok: false, error: "invalid-thread-id" };
+      if (!tabId || tabId.length > 256) return { ok: false, error: "invalid-tab-id" };
 
       const wc = electronWebContents.fromId(wcId);
       if (!wc || wc.isDestroyed()) {
         return { ok: false, error: "webcontents-not-found" };
       }
+      if (wc.getType() !== "webview") {
+        return { ok: false, error: "invalid-webcontents-type" };
+      }
+      if (wc.hostWebContents !== event.sender) {
+        return { ok: false, error: "webcontents-owner-mismatch" };
+      }
+      if (wc.session !== electronSession.fromPartition("persist:mcode-preview")) {
+        return { ok: false, error: "invalid-webcontents-partition" };
+      }
+      wc.setWindowOpenHandler(() => ({ action: "deny" }));
 
       const s = getSession(win);
-      // Ensure the (threadId, tabId) exists in the session's tab set so the
-      // host bridge's tab lookup paths see it.
-      const set = ensureThreadTabSet(s, tid);
-      let tab = set.tabs.find((t) => t.id === tabId);
-      if (!tab) {
-        tab = {
-          id: tabId,
-          threadId: tid,
-          view: null,
-          resumeUrl: wc.getURL() || null,
-          title: wc.getTitle() || null,
-          faviconUrl: null,
-          lastActiveAt: Date.now(),
-        };
-        set.tabs.push(tab);
-      }
+      const tab = s.tabsByThread.get(tid)?.tabs.find((candidate) => candidate.id === tabId);
+      if (!tab || tab.threadId !== tid) return { ok: false, error: "target-slot-not-found" };
 
       // Drop a prior adoption for the same slot first; this may delete the
       // inner Map from `adoptedByWindow` if it leaves it empty, so we
@@ -152,10 +140,10 @@ export function registerWebviewAdoptHandlers(): void {
     (event, payload: { threadId?: string; tabId?: string }): AdoptResult => {
       const win = BrowserWindow.fromWebContents(event.sender);
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const tid = String(payload?.threadId ?? "").trim();
-      const tabId = String(payload?.tabId ?? "").trim();
-      if (!tid) return { ok: false, error: "invalid-thread-id" };
-      if (!tabId) return { ok: false, error: "invalid-tab-id" };
+      const tid = typeof payload?.threadId === "string" ? payload.threadId.trim() : "";
+      const tabId = typeof payload?.tabId === "string" ? payload.tabId.trim() : "";
+      if (!tid || tid.length > 256) return { ok: false, error: "invalid-thread-id" };
+      if (!tabId || tabId.length > 256) return { ok: false, error: "invalid-tab-id" };
       dropAdoption(win.id, tid, tabId);
       return { ok: true };
     },

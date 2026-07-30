@@ -15,12 +15,19 @@ interface FakeWebContents {
   isDestroyed: () => boolean;
   getURL: () => string;
   getTitle: () => string;
+  getType: () => string;
+  hostWebContents: unknown;
+  session: object;
+  setWindowOpenHandler: ReturnType<typeof vi.fn>;
   once: (event: string, cb: (...args: unknown[]) => void) => void;
   removeListener: (event: string, cb: (...args: unknown[]) => void) => void;
   emit: (event: string) => void;
 }
 
-function makeFakeWebContents(id: number): FakeWebContents {
+function makeFakeWebContents(
+  id: number,
+  overrides: Partial<Pick<FakeWebContents, "getType" | "hostWebContents" | "session">> = {},
+): FakeWebContents {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   return {
     id,
@@ -37,6 +44,10 @@ function makeFakeWebContents(id: number): FakeWebContents {
     getTitle() {
       return this.title;
     },
+    getType: overrides.getType ?? (() => "webview"),
+    hostWebContents: overrides.hostWebContents ?? allWindows[0]?.webContents,
+    session: overrides.session ?? previewPartition,
+    setWindowOpenHandler: vi.fn(),
     once(event, cb) {
       let bag = listeners.get(event);
       if (!bag) {
@@ -68,6 +79,7 @@ function makeFakeWebContents(id: number): FakeWebContents {
 }
 
 const fakeWebContentsRegistry = new Map<number, FakeWebContents>();
+const previewPartition = {};
 
 function makeWindow(id: number) {
   return {
@@ -81,13 +93,16 @@ const allWindows: Array<ReturnType<typeof makeWindow>> = [];
 
 vi.mock("electron", () => ({
   BrowserWindow: {
-    fromWebContents: vi.fn(() => allWindows[0]),
+    fromWebContents: vi.fn((sender: unknown) => allWindows.find((window) => window.webContents === sender) ?? null),
     getAllWindows: vi.fn(() => allWindows),
   },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       ipcHandlers[channel] = handler;
     }),
+  },
+  session: {
+    fromPartition: vi.fn((partition: string) => partition === "persist:mcode-preview" ? previewPartition : {}),
   },
   webContents: {
     fromId: vi.fn((id: number) => fakeWebContentsRegistry.get(id) ?? null),
@@ -100,19 +115,36 @@ vi.mock("@mcode/shared", () => ({
 
 import {
   _resetAdoptionRegistryForTests,
-  findAdoptedWebContents,
+  findAdoptedWebContentsForWindow,
   registerWebviewAdoptHandlers,
 } from "../preview/preview-webview-adopt.js";
+import { getSession, sessions } from "../preview/preview-session.js";
 
 beforeEach(() => {
   fakeWebContentsRegistry.clear();
   allWindows.length = 0;
   allWindows.push(makeWindow(1));
+  const session = getSession(allWindows[0] as never);
+  session.tabsByThread.clear();
+  session.tabsByThread.set("thread-A", {
+    threadId: "thread-A",
+    activeTabId: "tab-1",
+    tabs: [{
+      id: "tab-1",
+      threadId: "thread-A",
+      view: null,
+      resumeUrl: null,
+      title: null,
+      faviconUrl: null,
+      lastActiveAt: 0,
+    }],
+  });
   _resetAdoptionRegistryForTests();
 });
 
 afterEach(() => {
   _resetAdoptionRegistryForTests();
+  sessions.clear();
 });
 
 describe("preview-webview-adopt", () => {
@@ -139,7 +171,7 @@ describe("preview-webview-adopt", () => {
     });
     expect(result).toEqual({ ok: true });
 
-    const located = findAdoptedWebContents("thread-A", "tab-1");
+    const located = findAdoptedWebContentsForWindow(1, "thread-A", "tab-1");
     expect(located).toBe(wc);
   });
 
@@ -165,6 +197,27 @@ describe("preview-webview-adopt", () => {
         tabId: "",
       }),
     ).toMatchObject({ ok: false });
+    expect(
+      ipcHandlers["preview:adopt-webview"]!(fakeEvent(), {
+        webContentsId: Number.MAX_SAFE_INTEGER + 1,
+        threadId: "t",
+        tabId: "x",
+      }),
+    ).toEqual({ ok: false, error: "invalid-webcontents-id" });
+    expect(
+      ipcHandlers["preview:adopt-webview"]!(fakeEvent(), {
+        webContentsId: 1.5,
+        threadId: "t",
+        tabId: "x",
+      }),
+    ).toEqual({ ok: false, error: "invalid-webcontents-id" });
+    expect(
+      ipcHandlers["preview:adopt-webview"]!(fakeEvent(), {
+        webContentsId: 1,
+        threadId: "t".repeat(257),
+        tabId: "x",
+      }),
+    ).toEqual({ ok: false, error: "invalid-thread-id" });
   });
 
   it("returns webcontents-not-found when fromId returns nothing", () => {
@@ -176,6 +229,90 @@ describe("preview-webview-adopt", () => {
     expect(result).toMatchObject({ ok: false, error: "webcontents-not-found" });
   });
 
+  it.each([
+    [
+      "a non-webview WebContents",
+      { getType: () => "window" },
+      "invalid-webcontents-type",
+    ],
+    [
+      "a webview hosted by another sender",
+      { hostWebContents: { id: "other-window" } },
+      "webcontents-owner-mismatch",
+    ],
+    [
+      "a webview in another partition",
+      { session: {} },
+      "invalid-webcontents-partition",
+    ],
+  ])("rejects %s", (_label, overrides, expectedError) => {
+    const wc = makeFakeWebContents(43, overrides);
+    fakeWebContentsRegistry.set(43, wc);
+
+    const result = ipcHandlers["preview:adopt-webview"]!(fakeEvent(), {
+      webContentsId: 43,
+      threadId: "thread-A",
+      tabId: "tab-1",
+    });
+
+    expect(result).toEqual({ ok: false, error: expectedError });
+    expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1")).toBeNull();
+  });
+
+  it.each([
+    ["wrong-thread", "tab-1"],
+    ["thread-A", "wrong-tab"],
+  ])("rejects an adoption for a missing exact slot (%s/%s)", (threadId, tabId) => {
+    const wc = makeFakeWebContents(44);
+    fakeWebContentsRegistry.set(44, wc);
+    expect(ipcHandlers["preview:adopt-webview"]!(fakeEvent(), {
+      webContentsId: 44,
+      threadId,
+      tabId,
+    })).toEqual({ ok: false, error: "target-slot-not-found" });
+  });
+
+  it("keeps colliding thread and tab ids isolated by BrowserWindow", () => {
+    const secondWindow = makeWindow(2);
+    allWindows.push(secondWindow);
+    const secondSession = getSession(secondWindow as never);
+    secondSession.tabsByThread.set("thread-A", {
+      threadId: "thread-A",
+      activeTabId: "tab-1",
+      tabs: [{ id: "tab-1", threadId: "thread-A", view: null, resumeUrl: null, title: null, faviconUrl: null, lastActiveAt: 0 }],
+    });
+    const first = makeFakeWebContents(45);
+    const second = makeFakeWebContents(46, { hostWebContents: secondWindow.webContents });
+    fakeWebContentsRegistry.set(45, first);
+    fakeWebContentsRegistry.set(46, second);
+    ipcHandlers["preview:adopt-webview"]!({ sender: allWindows[0]!.webContents }, { webContentsId: 45, threadId: "thread-A", tabId: "tab-1" });
+    ipcHandlers["preview:adopt-webview"]!({ sender: secondWindow.webContents }, { webContentsId: 46, threadId: "thread-A", tabId: "tab-1" });
+    expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1")).toBe(first);
+    expect(findAdoptedWebContentsForWindow(2, "thread-A", "tab-1")).toBe(second);
+  });
+
+  it("keeps adversarial colon-delimited ids in distinct slots", () => {
+    const session = getSession(allWindows[0] as never);
+    session.tabsByThread.set("a:b", {
+      threadId: "a:b",
+      activeTabId: "c",
+      tabs: [{ id: "c", threadId: "a:b", view: null, resumeUrl: null, title: null, faviconUrl: null, lastActiveAt: 0 }],
+    });
+    session.tabsByThread.set("a", {
+      threadId: "a",
+      activeTabId: "b:c",
+      tabs: [{ id: "b:c", threadId: "a", view: null, resumeUrl: null, title: null, faviconUrl: null, lastActiveAt: 0 }],
+    });
+    const first = makeFakeWebContents(47);
+    const second = makeFakeWebContents(48);
+    fakeWebContentsRegistry.set(47, first);
+    fakeWebContentsRegistry.set(48, second);
+    ipcHandlers["preview:adopt-webview"]!(fakeEvent(), { webContentsId: 47, threadId: "a:b", tabId: "c" });
+    ipcHandlers["preview:adopt-webview"]!(fakeEvent(), { webContentsId: 48, threadId: "a", tabId: "b:c" });
+    expect(findAdoptedWebContentsForWindow(1, "a:b", "c")).toBe(first);
+    expect(findAdoptedWebContentsForWindow(1, "a", "b:c")).toBe(second);
+  });
+
   it("drops the registration when the adopted WebContents emits 'destroyed'", () => {
     const wc = makeFakeWebContents(7);
     fakeWebContentsRegistry.set(7, wc);
@@ -185,11 +322,11 @@ describe("preview-webview-adopt", () => {
       threadId: "thread-A",
       tabId: "tab-1",
     });
-    expect(findAdoptedWebContents("thread-A", "tab-1")).toBe(wc);
+    expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1")).toBe(wc);
 
     wc.destroyed = true;
     wc.emit("destroyed");
-    expect(findAdoptedWebContents("thread-A", "tab-1")).toBeNull();
+    expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1")).toBeNull();
   });
 
   it("preview:release-webview drops the slot", () => {
@@ -200,14 +337,14 @@ describe("preview-webview-adopt", () => {
       threadId: "thread-A",
       tabId: "tab-1",
     });
-    expect(findAdoptedWebContents("thread-A", "tab-1")).toBe(wc);
+    expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1")).toBe(wc);
 
     const released = ipcHandlers["preview:release-webview"]!(fakeEvent(), {
       threadId: "thread-A",
       tabId: "tab-1",
     });
     expect(released).toEqual({ ok: true });
-    expect(findAdoptedWebContents("thread-A", "tab-1")).toBeNull();
+    expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1")).toBeNull();
   });
 
   it("re-adopting the same slot replaces the prior registration", () => {
@@ -227,6 +364,6 @@ describe("preview-webview-adopt", () => {
       tabId: "tab-1",
     });
 
-    expect(findAdoptedWebContents("thread-A", "tab-1")).toBe(wc2);
+    expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1")).toBe(wc2);
   });
 });

@@ -50,6 +50,9 @@ import type {
   PullRequestCloseResult,
   PullRequestMergeRequest,
   PullRequestMergeResult,
+  BrowserAutomationHostRegistration,
+  BrowserAutomationHostDispatchTarget,
+  BrowserAutomationResponse,
   SendMessageInput,
   CreateAndSendInput,
 } from "@mcode/contracts";
@@ -523,6 +526,45 @@ export function createWsTransport(
 
   return {
     waitForConnection,
+    registerBrowserAutomationHost: (registration: BrowserAutomationHostRegistration) =>
+      rpc<{ generation: number; desktopInstanceId: string }>(
+        "browserAutomation.host.register",
+        { registration },
+      ),
+    updateBrowserAutomationHostTargets: (
+      hostId: string,
+      generation: number,
+      targets: readonly BrowserAutomationHostDispatchTarget[],
+    ) => rpc<void>("browserAutomation.host.updateTargets", { hostId, generation, targets }),
+    respondToBrowserAutomationRequest: (
+      hostId: string,
+      generation: number,
+      response: BrowserAutomationResponse,
+      target?: BrowserAutomationHostDispatchTarget,
+    ) => rpc<void>("browserAutomation.host.respond", {
+      hostId,
+      generation,
+      response,
+      ...(target ? { target } : {}),
+    }),
+    heartbeatBrowserAutomationHost: (
+      hostId: string,
+      generation: number,
+      observedAt: number,
+    ) => rpc<void>("browserAutomation.host.heartbeat", { hostId, generation, observedAt }),
+    cancelBrowserAutomationRequest: (
+      hostId: string,
+      generation: number,
+      requestId: string,
+      sequence: number,
+      reason: "human-interrupted" | "user-stopped" | "host-shutdown",
+    ) => rpc<void>("browserAutomation.host.cancel", {
+      hostId,
+      generation,
+      requestId,
+      sequence,
+      reason,
+    }),
     // Workspace
     listWorkspaces: () => rpc<Workspace[]>("workspace.list", {}),
     createWorkspace: (name, path) => rpc<Workspace>("workspace.create", { name, path }),

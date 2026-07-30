@@ -1,5 +1,9 @@
 import type { AttachmentMeta, OpenInApp } from "./types";
 import type {
+  BrowserAutomationControllerState,
+  BrowserAutomationHostDispatch,
+  BrowserAutomationHostDispatchTarget,
+  BrowserAutomationResponse,
   BrowserPerfCounters,
   BrowserTabSet,
   McodeBrowserCapture,
@@ -142,7 +146,7 @@ interface PreviewBridge {
   setZoom(factor: number): Promise<number>;
   openExternal(): Promise<void>;
   /** Open Chrome DevTools attached to the guest WebContents (the embedded site, not the host shell). */
-  openGuestDevTools(): Promise<void>;
+  openGuestDevTools(target?: { readonly threadId: string; readonly tabId: string }): Promise<void>;
   /**
    * Subscribe to keyboard chords forwarded from the guest WebContents so the
    * host's keybinding manager can fire app commands while the user is focused
@@ -195,8 +199,53 @@ interface PreviewBridge {
     threadId: string;
     tabId: string;
   }): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Bounded provider-neutral operations for adopted visible Browser tabs. */
+  automation: PreviewAutomationBridge;
   /** Phase G: design-mode surface. */
   design: PreviewDesignBridge;
+}
+
+/** Narrow renderer bridge for the desktop browser automation control kernel. */
+export interface PreviewAutomationBridge {
+  /** Execute one canonical broker dispatch against its exact adopted target. */
+  execute(payload: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse>;
+  /** Acquire serialized desktop control before renderer-owned work begins. */
+  beginRendererOperation(payload: BrowserAutomationHostDispatch): Promise<
+    | { ok: true; leaseId: string }
+    | { ok: false; response: BrowserAutomationResponse }
+  >;
+  /** Release a renderer operation lease after local work settles. */
+  finishRendererOperation(payload: { leaseId: string; succeeded: boolean }): Promise<boolean>;
+  /** Cancel one request by its bounded correlation id. */
+  cancel(requestId: string): Promise<boolean>;
+  /** Resolve a short-lived tab-capture source for one exact adopted target. */
+  getMediaSourceId(target: {
+    windowId: number;
+    threadId: string;
+    tabId: string;
+    targetGeneration: number;
+  }): Promise<
+    | { ok: true; mediaSourceId: string; expiresAt: number }
+    | { ok: false; error: string }
+  >;
+  /** Transfer one exact tab from agent control to the human. */
+  interrupt(target: { threadId: string; tabId: string }): Promise<boolean>;
+  /** Resolve desktop-main target identity without exposing WebContents. */
+  describeTarget(target: {
+    threadId: string;
+    tabId: string;
+  }): Promise<
+    | {
+        ok: true;
+        target: Omit<
+          BrowserAutomationHostDispatchTarget,
+          "desktopInstanceId" | "connectionGeneration"
+        >;
+      }
+    | { ok: false; error: string }
+  >;
+  /** Subscribe to controller transitions for adopted tabs in this window. */
+  onControllerChanged(callback: (state: BrowserAutomationControllerState) => void): () => void;
 }
 
 /** Built-in viewport presets exposed by Phase G. */

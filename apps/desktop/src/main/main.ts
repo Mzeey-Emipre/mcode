@@ -55,13 +55,19 @@ import {
   registerPreviewBrowserHandlers,
   disposePreviewForWindow,
 } from "./preview/index.js";
+import { disposeBrowserAutomationForWindow } from "./browser-automation/index.js";
 import {
   startBrowserUseBridge,
   disposeBrowserUseBridge,
 } from "./browser-use/index.js";
+import { shouldStartLegacyBrowserUseBridge } from "./browser-use/rollout.js";
 import { resolveMcodeWorkspacePreviewUrl } from "./preview/preview-local-file.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldPrintVersion } from "./cli-args.js";
+import {
+  hardenPreviewWebviewAttachment,
+  resolvePreviewGuestPreloadPath,
+} from "./preview/preview-webview-security.js";
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/
@@ -310,6 +316,7 @@ function createWindow(): void {
 
   mainWindow.on("close", () => {
     disposePreviewForWindow(mainWindow!);
+    disposeBrowserAutomationForWindow(mainWindow!.id);
   });
 
   // Intercept target="_blank" and window.open() calls.
@@ -319,21 +326,15 @@ function createWindow(): void {
     return { action: "deny" };
   });
 
-  // Harden every <webview> the renderer attaches: strip node integration,
-  // force the preview partition, and remove any preload script the renderer
-  // tries to inject. These guarantees are essential because webviewTag is on.
-  mainWindow.webContents.on(
-    "will-attach-webview",
-    (_event, webPreferences, params) => {
-      webPreferences.nodeIntegration = false;
-      webPreferences.contextIsolation = true;
-      webPreferences.sandbox = true;
-      webPreferences.devTools = false;
-      delete (webPreferences as { preload?: string }).preload;
-      delete (webPreferences as { preloadURL?: string }).preloadURL;
-      params.partition = "persist:mcode-preview";
-    },
-  );
+  // Harden every <webview> and replace any renderer-supplied preload with the
+  // fixed takeover bridge bundled with the desktop application.
+  mainWindow.webContents.on("will-attach-webview", (_event, webPreferences, params) => {
+    hardenPreviewWebviewAttachment(
+      webPreferences,
+      params,
+      resolvePreviewGuestPreloadPath(__dirname),
+    );
+  });
 
   // Prevent the main window from navigating away from the app.
   mainWindow.webContents.on("will-navigate", (event, url) => {
@@ -915,13 +916,14 @@ app.whenReady().then(async () => {
     }
     configureApplicationMenu();
 
-    // Boot the Codex browser-use pipe BEFORE the server child spawns so the
-    // server inherits MCODE_BROWSER_USE_PIPE_PATH and can pass it to every
-    // child it spawns later (Codex provider, terminals, automation tools).
-    // Failures here are non-fatal: the bridge module logs and returns null.
-    const pipePathEarly = await startBrowserUseBridge();
-    if (pipePathEarly) {
-      process.env["MCODE_BROWSER_USE_PIPE_PATH"] = pipePathEarly;
+    // The typed browser MCP gateway is the default. Keep the raw pipe only as
+    // an explicit rollback path while providers migrate to the scoped contract.
+    delete process.env["MCODE_BROWSER_USE_PIPE_PATH"];
+    if (shouldStartLegacyBrowserUseBridge()) {
+      const pipePathEarly = await startBrowserUseBridge();
+      if (pipePathEarly) {
+        process.env["MCODE_BROWSER_USE_PIPE_PATH"] = pipePathEarly;
+      }
     }
 
     // Start the server child process

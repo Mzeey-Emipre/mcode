@@ -41,10 +41,46 @@ describe("PreviewWebview", () => {
   afterEach(() => {
     prototype.canGoBack = originalCanGoBack;
     prototype.canGoForward = originalCanGoForward;
+    delete window.desktopBridge;
+  });
+
+  it("transfers exact tab control only for the trusted guest input channel", () => {
+    const interrupt = vi.fn().mockResolvedValue(true);
+    window.desktopBridge = {
+      preview: { automation: { interrupt } },
+    } as unknown as NonNullable<typeof window.desktopBridge>;
+    render(
+      <PreviewWebview
+        workspaceId="workspace-1"
+        threadId="thread-1"
+        tabId="tab-1"
+        src="https://example.com"
+      />,
+    );
+    const webview = screen.getByTestId("preview-webview");
+    webview.dispatchEvent(Object.assign(new Event("ipc-message"), {
+      channel: "mcode:browser-human-input",
+      args: [{ kind: "pointer" }],
+    }));
+    webview.dispatchEvent(Object.assign(new Event("ipc-message"), {
+      channel: "mcode:browser-human-input",
+      args: [{ kind: "synthetic" }],
+    }));
+    webview.dispatchEvent(Object.assign(new Event("ipc-message"), {
+      channel: "mcode:browser-human-input",
+      args: [{ kind: "focus" }],
+    }));
+    webview.dispatchEvent(Object.assign(new Event("ipc-message"), {
+      channel: "untrusted-channel",
+      args: [{ kind: "pointer" }],
+    }));
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(interrupt).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
   });
 
   it("does not call Electron navigation methods before dom-ready", async () => {
     const observed: { handle: PreviewWebviewHandle | null } = { handle: null };
+    window.desktopBridge = { preview: {} } as unknown as NonNullable<typeof window.desktopBridge>;
 
     function Probe() {
       const ref = useRef<PreviewWebviewHandle>(null);
@@ -78,5 +114,20 @@ describe("PreviewWebview", () => {
     expect(observed.handle?.canGoForward()).toBe(false);
     expect(canGoBack).toHaveBeenCalled();
     expect(canGoForward).toHaveBeenCalled();
+  });
+
+  it("applies an exact renderer-owned design viewport to the visible webview", () => {
+    render(
+      <PreviewWebview
+        threadId="thread-1"
+        tabId="tab-1"
+        src="https://example.com"
+        viewport={{ width: 1024, height: 768 }}
+      />,
+    );
+    expect(screen.getByTestId("preview-webview")).toHaveStyle({
+      width: "1024px",
+      height: "768px",
+    });
   });
 });

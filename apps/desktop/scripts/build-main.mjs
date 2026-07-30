@@ -1,9 +1,10 @@
 /**
  * Build script for the Electron desktop app.
  *
- * 1. Builds main + preload with esbuild:
+ * 1. Builds main + renderer preload + fixed guest preload with esbuild:
  *    - Main:    src/main/main.ts    -> dist/main/main.cjs
  *    - Preload: src/main/preload.ts -> dist/preload/preload.cjs
+ *    - Guest:   src/main/preview/preview-guest-preload.ts -> dist/preload/preview-guest-preload.cjs
  * 2. Builds the web renderer with Vite into dist/renderer.
  *
  * Both esbuild targets use CJS output (.cjs) because package.json has "type": "module".
@@ -11,7 +12,7 @@
  */
 
 import { build } from "esbuild";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { cpSync, existsSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -51,9 +52,15 @@ await Promise.all([
     outfile: "dist/preload/preload.cjs",
     external: ["electron"],
   }),
+  build({
+    ...shared,
+    entryPoints: ["src/main/preview/preview-guest-preload.ts"],
+    outfile: "dist/preload/preview-guest-preload.cjs",
+    external: ["electron"],
+  }),
 ]);
 
-console.log("Build complete: dist/main/main.cjs, dist/preload/preload.cjs");
+console.log("Build complete: main, renderer preload, and fixed preview guest preload");
 
 // Step 2: Bundle the server into dist/server/server.cjs
 // Phase 2a: swc compiles TypeScript to ESM JS, preserving decorator metadata
@@ -107,7 +114,7 @@ console.log("Staged SDK native CLI binary -> dist/server/node_modules");
 const rendererOutDir = resolve(desktopRoot, "dist", "renderer");
 
 console.log("Building renderer...");
-execSync(`npx vite build --outDir ${rendererOutDir}`, {
+execFileSync("bun", ["run", "build", "--", "--outDir", rendererOutDir], {
   cwd: webRoot,
   stdio: "inherit",
   env: { ...process.env, ELECTRON_BUILD: "1" },

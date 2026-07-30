@@ -6,6 +6,13 @@ import {
   useRef,
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
+import {
+  interruptBrowserAutomationTarget,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
+
+const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
+const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
 
 /**
  * Renderer-hosted Electron `<webview>` that the host process can adopt by
@@ -18,10 +25,13 @@ import type { PreviewPageStatus } from "@mcode/contracts";
  * tabs that don't request a webview keep the BrowserView path unchanged.
  */
 export interface PreviewWebviewProps {
+  /** Workspace that authorizes this visible target. Defaults to the threadless scope id. */
+  readonly workspaceId?: string;
   readonly threadId: string;
   readonly tabId: string;
   readonly src: string;
   readonly className?: string;
+  readonly viewport?: { readonly width: number; readonly height: number };
   readonly onPageStatus?: (status: PreviewPageStatus) => void;
   readonly onNavigationStateChange?: (state: {
     canGoBack: boolean;
@@ -48,6 +58,12 @@ interface ElectronWebviewElement {
   removeEventListener(type: string, listener: (ev: Event) => void): void;
 }
 
+type PreviewElement = ElectronWebviewElement | HTMLIFrameElement;
+
+function isIframeElement(element: PreviewElement | null): element is HTMLIFrameElement {
+  return typeof HTMLIFrameElement !== "undefined" && element instanceof HTMLIFrameElement;
+}
+
 /** Imperative controls for a live renderer-hosted preview webview. */
 export interface PreviewWebviewHandle {
   navigate(url: string): void;
@@ -69,6 +85,8 @@ type WebviewEvent = Event & {
   readonly validatedURL?: string;
   readonly errorCode?: number;
   readonly errorDescription?: string;
+  readonly channel?: string;
+  readonly args?: readonly unknown[];
 };
 
 function realUrl(url: string | null | undefined): string | null {
@@ -88,21 +106,24 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
   function PreviewWebview(
     {
       threadId,
+      workspaceId = threadId,
       tabId,
       src,
       className,
+      viewport,
       onPageStatus,
       onNavigationStateChange,
     },
     forwardedRef,
   ) {
-  const ref = useRef<ElectronWebviewElement | null>(null);
+  const ref = useRef<PreviewElement | null>(null);
   const domReadyRef = useRef(false);
   const pendingReloadRef = useRef(false);
   const faviconRef = useRef<string | null>(null);
 
   const readUrl = useCallback((): string | null => {
     const el = ref.current;
+    if (el && isIframeElement(el)) return realUrl(el.src);
     try {
       return realUrl(el?.getURL?.() ?? el?.src ?? null);
     } catch {
@@ -111,6 +132,14 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
   }, []);
 
   const readTitle = useCallback((): string | null => {
+    if (ref.current && isIframeElement(ref.current)) {
+      try {
+        const title = ref.current.contentDocument?.title ?? null;
+        return title && title.trim().length > 0 ? title : null;
+      } catch {
+        return null;
+      }
+    }
     try {
       const title = ref.current?.getTitle?.() ?? null;
       return title && title.trim().length > 0 ? title : null;
@@ -125,9 +154,13 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       onNavigationStateChange?.({ canGoBack: false, canGoForward: false });
       return;
     }
+    if (isIframeElement(el)) {
+      onNavigationStateChange?.({ canGoBack: false, canGoForward: false });
+      return;
+    }
     onNavigationStateChange?.({
-      canGoBack: !!el?.canGoBack?.(),
-      canGoForward: !!el?.canGoForward?.(),
+      canGoBack: !!el.canGoBack?.(),
+      canGoForward: !!el.canGoForward?.(),
     });
   }, [onNavigationStateChange]);
 
@@ -147,6 +180,11 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       navigate(url: string) {
         const el = ref.current;
         if (!el) return;
+        if (isIframeElement(el)) {
+          el.src = url;
+          onPageStatus?.({ url, title: null, favicon: null, phase: "loading" });
+          return;
+        }
         if (el.loadURL) {
           void el.loadURL(url).catch((error: unknown) => {
             if (isExpectedNavigationAbort(error)) return;
@@ -173,42 +211,52 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           return;
         }
         pendingReloadRef.current = false;
-        ref.current?.reload?.();
+        if (ref.current && isIframeElement(ref.current)) {
+          ref.current.contentWindow?.location.reload();
+        } else ref.current?.reload?.();
       },
       forceReload() {
         if (!domReadyRef.current) return;
         const el = ref.current;
-        if (el?.reloadIgnoringCache) {
+        if (isIframeElement(el)) {
+          el.contentWindow?.location.reload();
+        } else if (el?.reloadIgnoringCache) {
           el.reloadIgnoringCache();
         } else {
           el?.reload?.();
         }
       },
       goBack() {
-        if (domReadyRef.current && ref.current?.canGoBack?.()) ref.current.goBack?.();
+        if (!domReadyRef.current || !ref.current) return;
+        if (isIframeElement(ref.current)) ref.current.contentWindow?.history.back();
+        else if (ref.current.canGoBack?.()) ref.current.goBack?.();
       },
       goForward() {
-        if (domReadyRef.current && ref.current?.canGoForward?.()) ref.current.goForward?.();
+        if (!domReadyRef.current || !ref.current) return;
+        if (isIframeElement(ref.current)) ref.current.contentWindow?.history.forward();
+        else if (ref.current.canGoForward?.()) ref.current.goForward?.();
       },
       canGoBack() {
         if (!domReadyRef.current) return false;
-        return !!ref.current?.canGoBack?.();
+        return isIframeElement(ref.current) ? false : !!ref.current?.canGoBack?.();
       },
       canGoForward() {
         if (!domReadyRef.current) return false;
-        return !!ref.current?.canGoForward?.();
+        return isIframeElement(ref.current) ? false : !!ref.current?.canGoForward?.();
       },
       getUrl() {
         return readUrl() ?? "";
       },
       async getZoom() {
-        if (!domReadyRef.current) return 1;
-        return (await Promise.resolve(ref.current?.getZoomFactor?.())) ?? 1;
+        const el = ref.current;
+        if (!domReadyRef.current || !el || isIframeElement(el)) return 1;
+        return (await Promise.resolve(el.getZoomFactor?.())) ?? 1;
       },
       async setZoom(factor: number) {
-        if (!domReadyRef.current) return factor;
-        await Promise.resolve(ref.current?.setZoomFactor?.(factor));
-        return (await Promise.resolve(ref.current?.getZoomFactor?.())) ?? factor;
+        const el = ref.current;
+        if (!domReadyRef.current || !el || isIframeElement(el)) return factor;
+        await Promise.resolve(el.setZoomFactor?.(factor));
+        return (await Promise.resolve(el.getZoomFactor?.())) ?? factor;
       },
     }),
     [emitNavigationState, onPageStatus, readUrl],
@@ -217,6 +265,18 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    if (isIframeElement(el)) {
+      domReadyRef.current = true;
+      useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
+      const onLoad = () => {
+        emitStatus("loaded");
+      };
+      el.addEventListener("load", onLoad);
+      return () => {
+        el.removeEventListener("load", onLoad);
+        useBrowserAutomationStore.getState().unregisterTarget(threadId, tabId);
+      };
+    }
     if (!window.desktopBridge?.preview?.adoptWebview) return;
 
     let cancelled = false;
@@ -229,6 +289,9 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
             webContentsId: wcId,
             threadId,
             tabId,
+          }).then((result) => {
+            if (cancelled || !result.ok) return;
+            useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
           });
         }
       } catch {
@@ -244,17 +307,21 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       } catch {
         /* webview gone */
       }
+      useBrowserAutomationStore.getState().unregisterTarget(threadId, tabId);
       void window.desktopBridge?.preview?.releaseWebview?.({ threadId, tabId });
     };
-  }, [threadId, tabId]);
+  }, [threadId, tabId, workspaceId]);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
 
+    if (isIframeElement(el)) return;
+
     const onStart = () => emitStatus("loading");
     const onDomReady = () => {
       domReadyRef.current = true;
+      useBrowserAutomationStore.getState().refreshTarget(threadId, tabId);
       if (pendingReloadRef.current) {
         pendingReloadRef.current = false;
         el.reload?.();
@@ -299,7 +366,14 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       });
       emitNavigationState();
     };
-
+    const onIpcMessage = (ev: WebviewEvent) => {
+      if (ev.channel !== PREVIEW_GUEST_HUMAN_INPUT_CHANNEL) return;
+      const message = ev.args?.[0];
+      if (!message || typeof message !== "object" || Array.isArray(message)) return;
+      const kind = (message as { kind?: unknown }).kind;
+      if (typeof kind !== "string" || !HUMAN_INPUT_KINDS.has(kind)) return;
+      interruptBrowserAutomationTarget(threadId, tabId, "human-interrupted");
+    };
     el.addEventListener("did-start-loading", onStart);
     el.addEventListener("dom-ready", onDomReady);
     el.addEventListener("did-stop-loading", onStop);
@@ -308,6 +382,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     el.addEventListener("page-title-updated", onTitle);
     el.addEventListener("page-favicon-updated", onFavicon);
     el.addEventListener("did-fail-load", onFail);
+    el.addEventListener("ipc-message", onIpcMessage);
     return () => {
       el.removeEventListener("did-start-loading", onStart);
       el.removeEventListener("dom-ready", onDomReady);
@@ -317,14 +392,15 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       el.removeEventListener("page-title-updated", onTitle);
       el.removeEventListener("page-favicon-updated", onFavicon);
       el.removeEventListener("did-fail-load", onFail);
+      el.removeEventListener("ipc-message", onIpcMessage);
     };
-  }, [emitNavigationState, emitStatus, onPageStatus, readTitle, readUrl]);
+  }, [emitNavigationState, emitStatus, onPageStatus, readTitle, readUrl, tabId, threadId]);
 
   // Use createElement via React JSX since <webview> is a custom Chromium
   // element; React 19 will pass unknown attributes through unchanged.
   // We cast to any here only because @types/react does not know about <webview>.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Tag = "webview" as any;
+  const Tag = (!window.desktopBridge?.preview ? "iframe" : "webview") as any;
   return (
     <Tag
       ref={ref}
@@ -333,11 +409,12 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       data-thread-id={threadId}
       data-tab-id={tabId}
       partition="persist:mcode-preview"
+      title="Preview"
       className={className}
       style={{
         display: "inline-flex",
-        width: "100%",
-        height: "100%",
+        width: viewport?.width ?? "100%",
+        height: viewport?.height ?? "100%",
         minWidth: 0,
         minHeight: 0,
       }}

@@ -73,6 +73,17 @@ import {
 } from "@/components/chat/FileTagPopup";
 import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
 import { useWorkspaceThread } from "@/stores/workspace-selectors";
+import {
+  browserAutomationTargetKey,
+  interruptBrowserAutomationTarget,
+  selectWarmBrowserTabIds,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
+import {
+  isBrowserAutomationWebRuntimeEnabled,
+  normalizeWebPreviewUrl,
+  resolveWebPreviewState,
+} from "./browserAutomationRuntime";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -1504,6 +1515,10 @@ function draftFromSaved(
 export const PREVIEW_WEBVIEW_FALLBACK_TAB_ID =
   "__mcode_webview_active_fallback__";
 
+/** Stable tab id used by the single web-runtime preview target. */
+export const WEB_RUNTIME_PREVIEW_TAB_ID = "web-preview";
+const WEB_AUTOMATION_FIXTURE_URL = "/browser-automation-fixture.html";
+
 /** Returns whether the webview renderer should own the preview surface. */
 export function shouldRenderWebviewPreview(
   _engine: string | undefined,
@@ -1516,6 +1531,116 @@ export interface PreviewPanelProps {
   readonly threadId: string;
   /** Active workspace id; scopes spill files under the Mcode app data dir (not the project tree). */
   readonly workspaceId?: string | null;
+  /** Mount only renderer-owned automation webviews, without native preview events. */
+  readonly automationOnly?: boolean;
+}
+
+/** Visible same-origin iframe surface used by the worktree-local web runtime. */
+function WebRuntimePreview({
+  threadId,
+  workspaceId,
+}: {
+  readonly threadId: string;
+  readonly workspaceId?: string | null;
+}) {
+  const storedUrl = useDiffStore((state) => state.previewUrlByThread[threadId] ?? "");
+  const fixtureUrl = `${window.location.origin}${WEB_AUTOMATION_FIXTURE_URL}`;
+  const [inputUrl, setInputUrl] = useState(storedUrl);
+  const [src, setSrc] = useState<string | null>(() => normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
+  const [crossOriginObserved, setCrossOriginObserved] = useState(false);
+  const enabled = isBrowserAutomationWebRuntimeEnabled();
+  const requestedState = resolveWebPreviewState(src, enabled);
+  const state = crossOriginObserved ? "cross-origin" : requestedState;
+
+  useEffect(() => {
+    useBrowserAutomationStore.getState().registerTarget(
+      workspaceId ?? threadId,
+      threadId,
+      WEB_RUNTIME_PREVIEW_TAB_ID,
+    );
+    return () => {
+      useBrowserAutomationStore.getState().unregisterTarget(
+        threadId,
+        WEB_RUNTIME_PREVIEW_TAB_ID,
+      );
+    };
+  }, [threadId, workspaceId]);
+
+  useEffect(() => {
+    setInputUrl(storedUrl);
+    setSrc(normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
+    setCrossOriginObserved(false);
+  }, [fixtureUrl, storedUrl]);
+
+  const navigate = (): void => {
+    const next = normalizeWebPreviewUrl(inputUrl);
+    if (!next) {
+      setSrc(null);
+      setCrossOriginObserved(false);
+      return;
+    }
+    setSrc(next);
+    setCrossOriginObserved(false);
+    useDiffStore.getState().setPreviewUrlForThread(threadId, next);
+  };
+
+  const onIframeLoad = (event: React.SyntheticEvent<HTMLIFrameElement>): void => {
+    useBrowserAutomationStore.getState().refreshTarget(
+      threadId,
+      WEB_RUNTIME_PREVIEW_TAB_ID,
+    );
+    try {
+      const actualOrigin = event.currentTarget.contentWindow?.location.origin;
+      setCrossOriginObserved(actualOrigin !== window.location.origin);
+    } catch {
+      setCrossOriginObserved(true);
+    }
+  };
+
+  return (
+    <div data-testid="web-runtime-preview" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <form className="flex items-center gap-2 border-b border-border/60 px-2 py-1.5" onSubmit={(event) => { event.preventDefault(); navigate(); }}>
+        <Input aria-label="Preview URL" value={inputUrl} onChange={(event) => setInputUrl(event.target.value)} placeholder="Enter an http(s) URL" />
+        <Button type="submit" size="sm">Open</Button>
+      </form>
+      <div className="relative min-h-0 min-w-0 flex-1 bg-muted/10">
+        {state === "same-origin" && src ? (
+          <iframe
+            title="Web browser preview"
+            src={src}
+            data-testid="web-runtime-preview-iframe"
+            data-thread-id={threadId}
+            data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
+            className="h-full w-full border-0"
+            referrerPolicy="no-referrer"
+            onLoad={onIframeLoad}
+          />
+        ) : state === "cross-origin" && src ? (
+          <>
+            <iframe
+              title="Cross-origin web preview"
+              src={src}
+              data-testid="web-runtime-preview-iframe"
+              data-thread-id={threadId}
+              data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
+              className="h-full w-full border-0"
+              referrerPolicy="no-referrer"
+              onLoad={onIframeLoad}
+            />
+            <div data-testid="web-runtime-cross-origin" className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-amber-500/40 bg-background/95 px-3 py-2 text-xs text-amber-700 shadow-sm">
+              Cross-origin preview is visible, but web automation and DOM access are unsupported.
+            </div>
+          </>
+        ) : (
+          <div data-testid={`web-runtime-${state}`} className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+            {state === "disabled"
+              ? "Web preview automation is disabled. Set MCODE_WEB_AUTOMATION=1 and restart agent:up to enable it."
+              : "Web preview is unavailable until an HTTP(S) same-origin target is loaded."}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -1528,7 +1653,7 @@ export interface PreviewPanelProps {
  * would hide in-surface overlays. In web-only builds without
  * `desktopBridge.preview`, renders an explanatory empty state.
  */
-export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
+export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
 
@@ -1665,18 +1790,22 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     (s) => s.settings.preview.rendering.engine,
   );
   const showWebviewPreview = shouldRenderWebviewPreview(previewRenderingEngine);
+  const webRuntime = typeof window.desktopBridge?.preview !== "object";
 
   const bridge = usePreviewBridge({
     threadId,
     workspaceId,
     surfaceRef,
     forceHidden: showWebviewPreview,
+    automationOnly,
   });
   const [webviewSrcByTab, setWebviewSrcByTab] = useState<Record<string, string | null>>({});
   const webviewSrcRef = useRef<string | null>(null);
   const setTrackedWebviewSrc = useCallback((tabId: string, nextSrc: string | null): void => {
     webviewSrcRef.current = nextSrc;
-    setWebviewSrcByTab((prev) => ({ ...prev, [tabId]: nextSrc }));
+    setWebviewSrcByTab((prev) => (
+      (prev[tabId] ?? null) === nextSrc ? prev : { ...prev, [tabId]: nextSrc }
+    ));
   }, []);
   const [webviewNavError, setWebviewNavError] = useState<string | null>(null);
   const [webviewCanBack, setWebviewCanBack] = useState(false);
@@ -1725,14 +1854,15 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   // "New page" action for the header. Page switching/closing is driven from the
   // activity rail (the page switcher), so this panel no longer renders a strip.
   const tabs = usePreviewTabs(threadId);
+  const automationControllers = useBrowserAutomationStore((state) => state.controllers);
+  const automationActiveRequests = useBrowserAutomationStore((state) => state.activeRequests);
+  const automationViewports = useBrowserAutomationStore((state) => state.viewportByTarget);
   const activeWebviewTabId =
     tabs.tabSet?.activeTabId ?? PREVIEW_WEBVIEW_FALLBACK_TAB_ID;
   const activeWebviewTab = tabs.tabSet?.tabs.find(
     (tab) => tab.id === activeWebviewTabId,
   );
   const activeWebviewTabUrl = activeWebviewTab?.url ?? null;
-  const activeWebviewTabTitle = activeWebviewTab?.title ?? null;
-  const activeWebviewTabFavicon = activeWebviewTab?.faviconUrl ?? null;
   const activeWebviewSrc =
     webviewSrcByTab[activeWebviewTabId] ?? activeWebviewTabUrl;
   const warmWebviewTabs = useMemo(() => {
@@ -1746,14 +1876,42 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                 url: activeWebviewSrc,
               },
             ]
-          : [];
+          : webRuntime
+            ? [{ id: PREVIEW_WEBVIEW_FALLBACK_TAB_ID, url: "about:blank" }]
+            : [];
+    const warmIds = selectWarmBrowserTabIds(sourceTabs, threadId, activeWebviewTabId);
     return sourceTabs
+      .filter((tab) => warmIds.has(tab.id))
       .map((tab) => ({
         id: tab.id,
         src: webviewSrcByTab[tab.id] ?? tab.url ?? null,
       }))
       .filter((tab): tab is { id: string; src: string } => !!tab.src);
-  }, [activeWebviewSrc, activeWebviewTabId, tabs.tabSet, webviewSrcByTab]);
+  }, [
+    activeWebviewSrc,
+    activeWebviewTabId,
+    automationActiveRequests,
+    tabs.tabSet,
+    threadId,
+    webviewSrcByTab,
+    webRuntime,
+  ]);
+  const activeAutomationController = automationControllers.get(
+    browserAutomationTargetKey(threadId, activeWebviewTabId),
+  );
+  const activeAutomationRequest = [...automationActiveRequests.values()].find(
+    ({ dispatch }) =>
+      dispatch.target.threadId === threadId && dispatch.target.tabId === activeWebviewTabId,
+  );
+  const automationPointer = (() => {
+    if (activeAutomationController?.pointer) return activeAutomationController.pointer;
+    const request = activeAutomationRequest?.dispatch.request;
+    if (!request || !("target" in request.args)) return null;
+    const target = request.args.target;
+    return target && "x" in target && "y" in target
+      ? { x: target.x, y: target.y }
+      : null;
+  })();
   const activeWebviewRef = useCallback(
     (): PreviewWebviewHandle | null =>
       webviewRefs.current[activeWebviewTabId] ?? null,
@@ -1768,39 +1926,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     if (!showWebviewPreview) return;
     if (!activeWebviewTabUrl) return;
     const active = activeWebviewRef();
-    const nextUrl = active?.getUrl() || activeWebviewSrc || activeWebviewTabUrl;
     const nextCanBack = active?.canGoBack() ?? false;
     const nextCanFwd = active?.canGoForward() ?? false;
-    setWebviewPageStatus((status) => {
-      if (
-        status.phase === "error" &&
-        (status.url === nextUrl || status.url === activeWebviewTabUrl)
-      ) {
-        return status;
-      }
-      if (
-        status.url === nextUrl &&
-        status.title === activeWebviewTabTitle &&
-        status.favicon === activeWebviewTabFavicon &&
-        status.phase === "loaded" &&
-        status.error === undefined
-      ) {
-        return status;
-      }
-      return {
-        url: nextUrl,
-        title: activeWebviewTabTitle,
-        favicon: activeWebviewTabFavicon,
-        phase: "loaded",
-      };
-    });
     setWebviewCanBack((value) => (value === nextCanBack ? value : nextCanBack));
     setWebviewCanFwd((value) => (value === nextCanFwd ? value : nextCanFwd));
   }, [
     activeWebviewRef,
-    activeWebviewSrc,
-    activeWebviewTabFavicon,
-    activeWebviewTabTitle,
     activeWebviewTabUrl,
     showWebviewPreview,
   ]);
@@ -1810,12 +1941,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
     const stored = bridge.storedUrl.trim();
     if (!stored) {
       setTrackedWebviewSrc(activeWebviewTabId, null);
-      setWebviewPageStatus({
-        url: null,
-        title: null,
-        favicon: null,
-        phase: "loaded",
-      });
+      setWebviewPageStatus((status) => (
+        status.url === null && status.title === null && status.favicon === null &&
+        status.phase === "loaded" && status.error === undefined
+          ? status
+          : { url: null, title: null, favicon: null, phase: "loaded" }
+      ));
       return;
     }
     if (activeWebviewRef()?.getUrl() === stored) return;
@@ -1833,9 +1964,15 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
   const onWebviewPageStatus = useCallback(
     (status: PreviewPageStatus): void => {
       setWebviewPageStatus(status);
-      if (status.url) {
-        useDiffStore.getState().setPreviewUrlForThread(threadId, status.url);
-      }
+      const url = status.url;
+      // Title events can arrive without a readable guest URL. They refine the
+      // current page and must not erase it, while a titleless null status is an
+      // authoritative blank or failed navigation and clears persisted state.
+      if (url === null && (status.title !== null || status.phase === "loading")) return;
+      const persistedUrl = url === null || url.startsWith("about:") || url.startsWith("chrome-error://")
+        ? ""
+        : url;
+      useDiffStore.getState().setPreviewUrlForThread(threadId, persistedUrl);
     },
     [threadId],
   );
@@ -2270,7 +2407,12 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       window.removeEventListener("mcode:preview-design-escape", onDesignEscape);
   }, [designModeActive, handleDesignEscape, threadId]);
 
-  if (!window.desktopBridge?.preview) {
+  const hasDesktopPreview = !!window.desktopBridge?.preview;
+  const webRuntimeEnabled = isBrowserAutomationWebRuntimeEnabled();
+  if (!hasDesktopPreview && webRuntimeEnabled) {
+    return <WebRuntimePreview key={threadId} threadId={threadId} workspaceId={workspaceId} />;
+  }
+  if (!hasDesktopPreview) {
     return (
       <div
         className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground"
@@ -2278,8 +2420,8 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
       >
         <Globe className="size-8 opacity-50" aria-hidden />
         <p className="max-w-xs text-balance">
-          Embedded preview runs in the desktop app. Open Mcode from Electron to
-          browse http and https sites alongside this thread.
+          Web preview automation is disabled. Set MCODE_WEB_AUTOMATION=1 and
+          restart agent:up to enable the same-origin Browser preview.
         </p>
       </div>
     );
@@ -2465,22 +2607,59 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
             captureBusy={capture.captureBusy}
             regionBusy={capture.regionBusy}
             focusRequest={omniboxFocusTick}
-            onNavigate={effectiveNavigate}
-            onGoBack={effectiveGoBack}
-            onGoForward={effectiveGoForward}
-            onReload={effectiveReload}
+            onNavigate={(url) => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveNavigate(url);
+            }}
+            onGoBack={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveGoBack();
+            }}
+            onGoForward={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveGoForward();
+            }}
+            onReload={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveReload();
+            }}
             onOpenExternal={effectiveOpenExternal}
             onToggleDesign={onToggleDesignMode}
             onScreenshot={capture.onAddPictureReference}
-            onNewPage={tabs.newTab}
-            onForceReload={effectiveForceReload}
+            onNewPage={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              tabs.newTab();
+            }}
+            onForceReload={() => {
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              effectiveForceReload();
+            }}
             onRegionCapture={capture.onAddRegionPictureReference}
             onDumpContent={capture.onAddPageContextOnly}
             onClearCookies={bridge.onClearCookies}
             onClearCache={bridge.onClearCache}
             onGetZoom={effectiveGetZoom}
             onSetZoom={effectiveSetZoom}
+            onOpenDevTools={() => {
+              void window.desktopBridge?.preview.openGuestDevTools({
+                threadId,
+                tabId: activeWebviewTabId,
+              });
+            }}
             suppressPreviewForOverlays={!showWebviewPreview}
+            automationController={activeAutomationController ?? null}
+            automationBusy={activeAutomationRequest !== undefined}
+            onHumanFocus={() => {
+              if (activeAutomationController?.controller !== "agent") return;
+              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+            }}
+            onStopAutomation={() =>
+              interruptBrowserAutomationTarget(
+                threadId,
+                activeWebviewTabId,
+                "user-stopped",
+              )
+            }
           />
         )}
       </div>
@@ -2564,8 +2743,10 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                   webviewRefs.current[tab.id] = handle;
                 }}
                 threadId={threadId}
+                workspaceId={workspaceId ?? threadId}
                 tabId={tab.id}
                 src={tab.src}
+                viewport={automationViewports.get(browserAutomationTargetKey(threadId, tab.id))}
                 className={cn(
                   "absolute inset-0 h-full w-full",
                   tab.id === activeWebviewTabId
@@ -2573,6 +2754,7 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
                     : "pointer-events-none -z-10 opacity-0",
                 )}
                 onPageStatus={(status) => {
+                  if (webRuntime) setTrackedWebviewSrc(tab.id, status.url);
                   usePreviewTabsStore.getState().updateTabChrome(threadId, tab.id, {
                     title: status.title,
                     url: status.url,
@@ -2589,6 +2771,14 @@ export function PreviewPanel({ threadId, workspaceId }: PreviewPanelProps) {
               />
             ))}
           </div>
+        ) : null}
+        {activeAutomationController?.controller === "agent" && automationPointer ? (
+          <div
+            data-testid="browser-automation-pointer"
+            className="pointer-events-none absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-amber-500 shadow-sm motion-reduce:transition-none"
+            style={{ left: automationPointer.x, top: automationPointer.y }}
+            aria-hidden
+          />
         ) : null}
         {visiblePageAnnotations.map((annotation) => {
           const targetLabel =

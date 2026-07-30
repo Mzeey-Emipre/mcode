@@ -75,6 +75,13 @@ import type { AgentEvent } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
 import type Database from "better-sqlite3";
 import type { JobObject } from "./services/job-object.js";
+import { resolveWebAutomationFlag } from "./startup-policy.js";
+import {
+  BrowserAutomationBroker,
+  BrowserAutomationCredentialRegistry,
+  BrowserAutomationMcpHandler,
+  BrowserAutomationSessionLease,
+} from "./services/browser-automation/index.js";
 
 // process.title affects `ps`/`top`/`htop` output on Unix and the console window
 // title. On Windows, Task Manager pulls the display name from the binary's
@@ -148,6 +155,7 @@ function resolveSingleInstanceFlag(env: NodeJS.ProcessEnv): boolean {
 }
 
 const SINGLE_INSTANCE = resolveSingleInstanceFlag(process.env);
+const WEB_AUTOMATION_ENABLED = resolveWebAutomationFlag(process.env);
 const INSTANCE_TOKEN = process.env.MCODE_INSTANCE_TOKEN?.trim() || null;
 const WORKTREE_IDENTITY = process.env.MCODE_WORKTREE_IDENTITY?.trim() || null;
 
@@ -212,6 +220,21 @@ applyDevGitCheckoutEnv();
 
 // Initialize DI container (PtyPidRegistry needs the data dir path at construction time)
 const container = setupContainer(getMcodeDir());
+
+const browserAutomationCredentials = container.resolve(BrowserAutomationCredentialRegistry);
+const browserAutomationSessionLease = container.resolve(BrowserAutomationSessionLease);
+const browserAutomationBroker = new BrowserAutomationBroker({});
+const browserAutomationMcpHandler = new BrowserAutomationMcpHandler({
+  credentials: browserAutomationCredentials,
+  broker: browserAutomationBroker,
+});
+browserAutomationCredentials.onRemoved((revocation) => {
+  browserAutomationMcpHandler.releaseCredential(revocation.credentialId);
+  browserAutomationBroker.releaseProviderSession(
+    revocation.providerId,
+    revocation.providerSessionId,
+  );
+});
 
 // Resolve services
 const workspaceService = container.resolve(WorkspaceService);
@@ -649,10 +672,18 @@ const { httpServer, wss } = createWsServer({
   recapService,
   handoffStorage,
   threadTeardownService,
+  browserAutomationBroker,
+  browserAutomationMcpHandler,
   authToken: AUTH_TOKEN,
   singleInstance: SINGLE_INSTANCE,
   instanceToken: INSTANCE_TOKEN,
   worktreeIdentity: WORKTREE_IDENTITY,
+  resolveBrowserAutomationHostAuthorization: () => ({
+    desktopInstanceId: randomUUID(),
+    worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
+    allowedWorkspaceIds: workspaceService.list().map((workspace) => workspace.id),
+    allowWebRuntime: WEB_AUTOMATION_ENABLED,
+  }),
   shutdown: requestShutdown,
 });
 
@@ -673,6 +704,12 @@ function listen(port: number, attempt = 1): void {
   httpServer.listen(port, HOST, () => {
     externalThreadControlMcpRuntime.setPort(port);
     logger.info(`Mcode server listening on ${HOST}:${port}`);
+
+    const browserMcpHost = HOST === "::1" ? "[::1]" : "127.0.0.1";
+    browserAutomationSessionLease.configure({
+      mcpUrl: `http://${browserMcpHost}:${port}/mcp`,
+      worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
+    });
 
     // Write lock file so other instances can discover this server
     try {
@@ -794,6 +831,8 @@ async function shutdown(): Promise<void> {
 
   // 3. Shutdown provider registry
   providerRegistry.shutdown();
+  browserAutomationBroker.shutdown();
+  browserAutomationSessionLease.shutdown();
 
   // 4. Mark active threads as interrupted
   threadService.markActiveThreadsInterrupted(activeThreadIds);

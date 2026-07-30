@@ -951,6 +951,7 @@ export class AgentService {
     this.retryingThreads.add(threadId);
     const baseTurnRequest = {
       sessionId: sessionName,
+      workspaceId: workspace.id,
       threadId,
       message: providerMessage,
       mentions: validatedMentions.length > 0 ? validatedMentions : undefined,

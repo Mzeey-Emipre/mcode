@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,12 +30,15 @@ const mockWebContentsById = new Map<number, ReturnType<typeof makeWebContentsVie
 /** Shared preview partition returned by the Electron session mock. */
 const previewPartition = {
   setPermissionRequestHandler: vi.fn(),
+  on: vi.fn(),
   webRequest: {
     onCompleted: vi.fn(),
   },
   clearStorageData: vi.fn().mockResolvedValue(undefined),
   clearCache: vi.fn().mockResolvedValue(undefined),
 };
+
+let currentEventSender: ReturnType<typeof makeWindow>["webContents"] | null = null;
 
 function makeWebContentsView() {
   const webContents = {
@@ -39,6 +49,8 @@ function makeWebContentsView() {
     // post-navigation URL override this on the specific view.
     getURL: vi.fn().mockReturnValue(""),
     getTitle: vi.fn().mockReturnValue("Example"),
+    getType: vi.fn().mockReturnValue("webview"),
+    hostWebContents: currentEventSender,
     loadURL: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
     canGoBack: vi.fn().mockReturnValue(false),
@@ -49,10 +61,7 @@ function makeWebContentsView() {
     reloadIgnoringCache: vi.fn(),
     insertCSS: vi.fn().mockResolvedValue("css-key"),
     removeInsertedCSS: vi.fn().mockResolvedValue(undefined),
-    session: {
-      clearStorageData: vi.fn().mockResolvedValue(undefined),
-      clearCache: vi.fn().mockResolvedValue(undefined),
-    },
+    session: previewPartition,
     getZoomFactor: vi.fn().mockReturnValue(1),
     setZoomFactor: vi.fn(),
     on: vi.fn(),
@@ -176,6 +185,7 @@ import { sessions } from "../preview/preview-session.js";
 
 /** Simulate an IPC event from a window. */
 function fakeEvent(win: ReturnType<typeof makeWindow>) {
+  currentEventSender = win.webContents;
   (BrowserWindow.fromWebContents as ReturnType<typeof vi.fn>).mockReturnValue(win);
   return { sender: win.webContents } as unknown;
 }
@@ -272,16 +282,21 @@ function firePreviewInput(
   return event;
 }
 
-it("allows sanitized clipboard writes in the preview partition only", () => {
+it("denies clipboard permissions and downloads in the preview partition", () => {
   const handler = previewPartition.setPermissionRequestHandler.mock.calls.at(-1)?.[0];
   expect(handler).toBeTypeOf("function");
   const callback = vi.fn();
 
   handler?.({} as never, "clipboard-sanitized-write", callback);
-  expect(callback).toHaveBeenLastCalledWith(true);
+  expect(callback).toHaveBeenLastCalledWith(false);
 
   handler?.({} as never, "clipboard-read", callback);
   expect(callback).toHaveBeenLastCalledWith(false);
+
+  const downloadHandler = previewPartition.on.mock.calls.find(([event]) => event === "will-download")?.[1];
+  const downloadEvent = { preventDefault: vi.fn() };
+  downloadHandler?.(downloadEvent);
+  expect(downloadEvent.preventDefault).toHaveBeenCalledOnce();
 });
 
 // ---------------------------------------------------------------------------
@@ -917,7 +932,7 @@ describe("preview-browser", () => {
       const view = createdViews[0]!;
       // Should resolve through the symlink target directory's index.html.
       expect(view.webContents.loadURL).toHaveBeenCalledWith(
-        pathToFileURL(join(tempDir, "hasindex", "index.html")).href,
+        pathToFileURL(join(await realpath(linkPath), "index.html")).href,
       );
     });
 

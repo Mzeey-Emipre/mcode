@@ -4,6 +4,7 @@ import {
   addClient,
   broadcast,
   broadcastTerminalData,
+  sendToClient,
   setClientThreadSubscriptions,
   subscribeClientToThread,
   unsubscribeClientFromThread,
@@ -230,5 +231,86 @@ describe("broadcast", () => {
 
     broadcast("thread.status", { threadId: "thread-a", status: "not-a-status" });
     expect(passThrough).toHaveLength(1);
+  });
+});
+
+describe("sendToClient", () => {
+  beforeEach(() => {
+    _resetForTest();
+    resetTransportPayloadValidatorForTest();
+  });
+  afterEach(() => {
+    _resetForTest();
+    resetTransportPayloadValidatorForTest();
+  });
+
+  it("delivers a browser request to one registered socket without broadcasting", () => {
+    const first: Array<{ buf: Buffer; binary: boolean }> = [];
+    const second: Array<{ buf: Buffer; binary: boolean }> = [];
+    const firstSocket = fakeOpenSocket(first);
+    addClient(firstSocket);
+    addClient(fakeOpenSocket(second));
+
+    expect(sendToClient(firstSocket, "browserAutomation.request", {
+      hostId: "host-a",
+      generation: 1,
+      dispatch: {
+        scope: { workspaceId: "workspace-a", threadId: "thread-a", providerSessionId: "provider-a", providerInstanceId: "mcode-a" },
+        connection: { desktopInstanceId: "desktop-a", windowId: 1, connectionGeneration: 1, targetGeneration: 0 },
+        target: {
+          desktopInstanceId: "desktop-a",
+          windowId: 1,
+          connectionGeneration: 1,
+          threadId: "thread-a",
+          tabId: "tab-a",
+          targetGeneration: 0,
+          active: true,
+          focused: true,
+          lastUsedAt: 10,
+        },
+        request: {
+          contractVersion: 1,
+          workspaceId: "workspace-a",
+          threadId: "thread-a",
+          providerSessionId: "provider-a",
+          providerInstanceId: "mcode-a",
+          requestId: "request-a",
+          sequence: 1,
+          deadline: 100,
+          expectedControlEpoch: 0,
+          operation: "status",
+          args: {},
+        },
+      },
+    })).toBe(true);
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(0);
+  });
+
+  it("reports a synchronous socket delivery failure without throwing", () => {
+    const ws = {
+      readyState: 1,
+      OPEN: 1,
+      send: () => { throw new Error("closed during send"); },
+    } as unknown as WebSocket;
+    addClient(ws);
+    expect(sendToClient(ws, "browserAutomation.cancel", {
+      hostId: "host-a",
+      generation: 1,
+      target: {
+        desktopInstanceId: "desktop-a",
+        windowId: 1,
+        connectionGeneration: 1,
+        threadId: "thread-a",
+        tabId: "tab-a",
+        targetGeneration: 0,
+        active: true,
+        focused: true,
+        lastUsedAt: 10,
+      },
+      requestId: "request-a",
+      sequence: 1,
+      reason: "deadline-exceeded",
+    })).toBe(false);
   });
 });

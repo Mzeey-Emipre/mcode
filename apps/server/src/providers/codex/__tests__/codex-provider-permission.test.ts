@@ -264,6 +264,7 @@ describe("CodexProvider permission flow", () => {
     vi.useRealTimers();
     await provider.sendTurn({
       sessionId,
+      workspaceId: "workspace-test",
       threadId,
       message: "hi",
       cwd: "/",

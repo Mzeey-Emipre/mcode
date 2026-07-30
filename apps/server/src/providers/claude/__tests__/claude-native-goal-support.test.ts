@@ -86,6 +86,7 @@ describe("ClaudeProvider native goal support detection", () => {
 
     await claude.sendTurn({
       sessionId: "mcode-thread-1",
+      workspaceId: "workspace-test",
       threadId: "thread-1",
       message: "hello",
       cwd: process.cwd(),

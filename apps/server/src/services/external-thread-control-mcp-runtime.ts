@@ -9,13 +9,16 @@ import { ThreadControlService } from "./thread-control-service.js";
 /** Existing-server loopback path used by paired external MCP clients. */
 export const EXTERNAL_THREAD_CONTROL_MCP_PATH = "/mcp/external-thread-control";
 
+const MAX_BODY_BYTES = 256 * 1_024;
+
 /** Loopback MCP runtime mounted into the existing HTTP server. */
 @injectable()
 export class ExternalThreadControlMcpRuntime {
   private readonly session: ExternalThreadControlMcpSession;
-  private readonly server: McpServer;
-  private transport: StreamableHTTPServerTransport | undefined;
-  private connecting: Promise<void> | undefined;
+  private readonly activeRequests = new Set<{
+    server: McpServer;
+    transport: StreamableHTTPServerTransport;
+  }>();
   private listenPort = Number.parseInt(process.env.MCODE_PORT ?? "19400", 10);
 
   constructor(
@@ -23,7 +26,6 @@ export class ExternalThreadControlMcpRuntime {
     @inject(ExternalThreadControlPairingService) private readonly pairings: ExternalThreadControlPairingService,
   ) {
     this.session = createExternalThreadControlMcpSession({ pairingService: pairings, service });
-    this.server = this.session.createServer();
   }
 
   /** Return loopback endpoint URL for pairing-management responses. */
@@ -38,8 +40,16 @@ export class ExternalThreadControlMcpRuntime {
 
   /** Handle one authenticated loopback request without opening a second listener. */
   async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!isLoopback(request.socket.remoteAddress)) {
+      response.writeHead(403).end("Forbidden");
+      return;
+    }
     if (request.method !== "POST") {
       response.writeHead(404).end();
+      return;
+    }
+    if (contentLengthExceedsLimit(request)) {
+      response.writeHead(413).end("Request body is too large");
       return;
     }
     const credential = bearerCredential(request.headers.authorization);
@@ -59,8 +69,35 @@ export class ExternalThreadControlMcpRuntime {
       response.writeHead(401).end("Unauthorized");
       return;
     }
-    await this.ensureConnected();
-    await this.session.contextStorage.run(context, () => this.transport!.handleRequest(request, response));
+    let body: Buffer;
+    try {
+      body = await readBoundedBody(request);
+    } catch (error) {
+      if (error instanceof RangeError) {
+        response.writeHead(413).end("Request body is too large");
+        return;
+      }
+      throw error;
+    }
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(body.toString("utf8"));
+    } catch {
+      response.writeHead(400).end("Parse error");
+      return;
+    }
+    const server = this.session.createServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const activeRequest = { server, transport };
+    this.activeRequests.add(activeRequest);
+    try {
+      await server.connect(transport);
+      await this.session.contextStorage.run(context, () => transport.handleRequest(request, response, parsedBody));
+    } finally {
+      this.activeRequests.delete(activeRequest);
+      await transport.close().catch(() => undefined);
+      await server.close().catch(() => undefined);
+    }
   }
 
   /** Reconcile uncertain external work before accepting new deliveries after restart. */
@@ -70,26 +107,37 @@ export class ExternalThreadControlMcpRuntime {
 
   /** Close MCP transport during server shutdown. */
   async close(): Promise<void> {
-    await this.transport?.close().catch(() => undefined);
-    await this.server.close().catch(() => undefined);
-    this.transport = undefined;
+    const activeRequests = [...this.activeRequests];
+    await Promise.all(activeRequests.map(async ({ server, transport }) => {
+      await transport.close().catch(() => undefined);
+      await server.close().catch(() => undefined);
+    }));
+    this.activeRequests.clear();
   }
+}
 
-  private async ensureConnected(): Promise<void> {
-    if (this.transport) return;
-    if (this.connecting) return this.connecting;
-    const connecting = (async () => {
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      await this.server.connect(transport);
-      this.transport = transport;
-    })();
-    this.connecting = connecting;
-    try {
-      await connecting;
-    } finally {
-      if (this.connecting === connecting) this.connecting = undefined;
-    }
+function isLoopback(address: string | undefined): boolean {
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
+function contentLengthExceedsLimit(request: IncomingMessage): boolean {
+  const header = request.headers["content-length"];
+  const value = Array.isArray(header) ? header[0] : header;
+  if (value === undefined || !/^\d+$/.test(value)) return false;
+  const length = Number(value);
+  return !Number.isSafeInteger(length) || length > MAX_BODY_BYTES;
+}
+
+async function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.byteLength;
+    if (size > MAX_BODY_BYTES) throw new RangeError("request-too-large");
+    chunks.push(buffer);
   }
+  return Buffer.concat(chunks, size);
 }
 
 function bearerCredential(value: string | undefined): string | undefined {

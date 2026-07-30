@@ -19,7 +19,7 @@ export class TabIdMap {
   private nextId = 1;
 
   private static keyOf(threadId: string, tabId: string): string {
-    return `${threadId}:${tabId}`;
+    return JSON.stringify([threadId, tabId]);
   }
 
   /**

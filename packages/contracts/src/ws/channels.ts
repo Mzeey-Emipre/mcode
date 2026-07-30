@@ -8,12 +8,47 @@ import { ChecksStatusSchema } from "../github.js";
 import { PermissionRequestSchema, PermissionDecisionSchema } from "../models/permission.js";
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
 import { lazySchema } from "../utils/lazySchema.js";
+import {
+  BrowserAutomationHostDispatchTargetSchema,
+  BrowserAutomationHostDispatchSchema,
+  BrowserAutomationRequestSchema,
+} from "../models/browser-automation.js";
 import { TurnFileEffectSummarySchema } from "../models/file-effect.js";
 import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
 import { ThreadObservedStateSchema } from "../thread-control.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
+  /** Directs browser creation to a host when no visible target exists yet. */
+  "browserAutomation.bootstrap": z
+    .object({
+      hostId: z.string().min(1).max(256),
+      generation: z.number().int().positive(),
+      request: BrowserAutomationRequestSchema().refine(
+        (request) => request.operation === "open",
+        "Browser bootstrap only accepts open requests",
+      ),
+    })
+    .strict(),
+  /** Directs one scoped browser operation to a single registered renderer host. */
+  "browserAutomation.request": z
+    .object({
+      hostId: z.string().min(1).max(256),
+      generation: z.number().int().positive(),
+      dispatch: BrowserAutomationHostDispatchSchema(),
+    })
+    .strict(),
+  /** Directs cancellation of one in-flight browser operation to its renderer host. */
+  "browserAutomation.cancel": z
+    .object({
+      hostId: z.string().min(1).max(256),
+      generation: z.number().int().positive(),
+      target: BrowserAutomationHostDispatchTargetSchema().optional(),
+      requestId: z.string().min(1).max(256),
+      sequence: z.number().int().nonnegative(),
+      reason: z.enum(["deadline-exceeded", "client-disconnected", "provider-cancelled", "user-stopped"]),
+    })
+    .strict(),
   "agent.event": AgentEventSchema(),
   /**
    * @deprecated Legacy JSON format retained for backward compatibility.

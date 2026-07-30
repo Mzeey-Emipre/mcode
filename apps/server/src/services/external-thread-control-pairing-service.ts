@@ -106,6 +106,7 @@ interface DeliveryRow {
   fingerprint: string;
   status: DeliveryStatus;
   result_json: string | null;
+  expires_at: string;
 }
 
 /** Owns durable external pairings, credential hashing, replay retention, and rate reservations. */
@@ -309,6 +310,15 @@ export class ExternalThreadControlPairingService {
       this.db.prepare(
         "DELETE FROM external_thread_control_deliveries WHERE status = 'terminal' AND expires_at <= ?",
       ).run(nowIso);
+      this.db.prepare(
+        `UPDATE external_thread_control_deliveries
+         SET status = 'terminal', result_json = ?, updated_at = ?
+         WHERE status = 'in_flight' AND expires_at <= ?`,
+      ).run(
+        JSON.stringify({ status: "rejected", error: { code: "internal_error", message: "External delivery expired before completion", retryable: true } }),
+        nowIso,
+        nowIso,
+      );
       const existing = this.db.prepare(
         "SELECT pairing_id, authority_epoch, delivery_id, fingerprint, status, result_json FROM external_thread_control_deliveries WHERE pairing_id = ? AND authority_epoch = ? AND delivery_id = ?",
       ).get(pairing.pairing.pairingId, pairing.pairing.authorityEpoch, deliveryId) as DeliveryRow | undefined;

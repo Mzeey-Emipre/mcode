@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mcode browser automation fixture</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 32px; background: #171717; color: #f5f5f5; }
+      main { max-width: 640px; margin: 0 auto; }
+      label { display: block; margin-top: 20px; font-weight: 600; }
+      input { display: block; width: 100%; margin-top: 8px; padding: 10px; box-sizing: border-box; }
+      button, a { display: inline-block; margin-top: 20px; padding: 10px 14px; }
+      a { text-decoration: underline; }
+      output { display: block; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Mcode browser automation fixture</h1>
+      <p>Deterministic same-origin page for visible Browser checks.</p>
+      <label for="fixture-name">Named fixture text</label>
+      <input id="fixture-name" name="fixture-name" type="text" value="demo-name" autocomplete="off">
+      <label for="fixture-password">Masked fixture password</label>
+      <input id="fixture-password" name="fixture-password" type="password" value="demo-value" autocomplete="off">
+      <button id="fixture-action-button" name="fixture-action" type="button">Run fixture action</button>
+      <output id="fixture-action-status" aria-live="polite">Action status: pending</output>
+      <a id="fixture-navigation-link" href="browser-automation-fixture.html?destination=complete">Go to same-origin destination</a>
+      <output id="fixture-destination-state" aria-live="polite">Destination state: start</output>
+      <a id="fixture-cross-origin-link" href="https://example.com/" rel="noreferrer">Open cross-origin test target</a>
+    </main>
+    <script>
+      const actionButton = document.getElementById("fixture-action-button");
+      const actionStatus = document.getElementById("fixture-action-status");
+      actionButton.addEventListener("click", () => {
+        actionStatus.textContent = "Action status: complete";
+      });
+
+      const destinationState = document.getElementById("fixture-destination-state");
+      const destination = new URL(window.location.href).searchParams.get("destination");
+      destinationState.textContent = destination
+        ? `Destination state: ${destination}`
+        : "Destination state: start";
+    </script>
+  </body>
+</html>

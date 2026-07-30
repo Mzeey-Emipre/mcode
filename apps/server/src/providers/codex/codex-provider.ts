@@ -19,6 +19,14 @@ import { EnvService } from "../../services/env-service.js";
 import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import { AttachmentService } from "../../services/attachment-service.js";
+import {
+  browserAutomationPermissionCapability,
+  type BrowserAutomationCredentialMetadata,
+} from "../../services/browser-automation/access-service.js";
+import {
+  BrowserAutomationSessionLease,
+  type BrowserAutomationSessionLeaseStage,
+} from "../../services/browser-automation/browser-automation-session-lease.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import type { MemoryPressureLevel } from "../../services/memory-pressure-service.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
@@ -304,6 +312,13 @@ interface CodexSessionState {
   childMetadataFetches: Set<string>;
   /** Clears the in-flight `runTurn` listener when a new turn preempts it. */
   abortPendingTurnWait?: () => void;
+  /** Non-secret browser credential lifecycle metadata for this main session. */
+  browserCredential?: BrowserAutomationCredentialMetadata;
+  browserLeaseId?: string;
+  /** Workspace fixed to the provider process at spawn. */
+  workspaceId: string;
+  /** Browser permission class fixed to the provider process at spawn. */
+  browserPermissionCapability: "observe" | "interact" | "privileged";
 }
 
 /** One pending codex approval bridged into the Phase 1 permission flow. */
@@ -562,6 +577,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     string,
     { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions }
   >();
+  /** Browser scope staged only until a fresh main app-server process starts. */
+  private pendingBrowserAccess = new Map<string, {
+    stage: BrowserAutomationSessionLeaseStage;
+    workspaceId: string;
+    permissionCapability: "observe" | "interact" | "privileged";
+  }>();
 
   constructor(
     @inject(SettingsService) private readonly settingsService: SettingsService,
@@ -569,6 +590,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     @inject(EnvService) private readonly envService: EnvService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(CodexCatalogService) private readonly codexCatalogService: CodexCatalogService,
+    @inject(BrowserAutomationSessionLease)
+    private readonly browserAutomationLease: BrowserAutomationSessionLease = new BrowserAutomationSessionLease(),
     @inject(InternalThreadControlMcpRuntime)
     private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
@@ -933,6 +956,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     }
 
     const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
+    const browserPermissionCapability = browserAutomationPermissionCapability(
+      permissionMode,
+      req.interactionMode,
+    );
 
     const useFastTier =
       codexFastMode !== undefined
@@ -959,7 +986,17 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // resumed thread would inherit the old sandbox. Clearing the stored SDK
     // thread ID and draining the stale session is Codex-specific bookkeeping
     // the runtime cannot do, so handle it here before acquiring.
-    const existing = this.runtime.get(sessionId);
+    let existing = this.runtime.get(sessionId);
+    if (
+      existing &&
+      this.browserAutomationLease.isConfigured() &&
+      (existing.workspaceId !== req.workspaceId ||
+        existing.browserPermissionCapability !== browserPermissionCapability ||
+        (existing.browserCredential && existing.browserCredential.expiresAt <= Date.now()))
+    ) {
+      await this.runtime.stop(sessionId);
+      existing = undefined;
+    }
     if (existing && existing.server.isAlive && existing.sandboxMode !== sandbox) {
       logger.info("Codex session restarted due to permission mode change", {
         sessionId,
@@ -1002,6 +1039,27 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // Stage the per-turn payload so `spawn` can run the first turn of a fresh
     // session; reuse reads it directly below. Keyed by sessionId.
     this.pendingSpawnTurns.set(sessionId, { input, turnOptions });
+    const browserStage = this.browserAutomationLease.isConfigured()
+      ? this.browserAutomationLease.stage({
+      providerId: this.id,
+      providerSessionId: req.resumeFrom ?? sessionId,
+      mcodeSessionId: sessionId,
+      threadId: req.threadId,
+      workspaceId: req.workspaceId,
+      permissionCapability: browserPermissionCapability,
+      })
+      : undefined;
+    if (browserStage) {
+      const previousBrowserAccess = this.pendingBrowserAccess.get(sessionId);
+      if (previousBrowserAccess) {
+        this.browserAutomationLease.release(previousBrowserAccess.stage.leaseId);
+      }
+      this.pendingBrowserAccess.set(sessionId, {
+        stage: browserStage,
+        workspaceId: req.workspaceId,
+        permissionCapability: browserPermissionCapability,
+      });
+    }
 
     let state: CodexSessionState;
     try {
@@ -1015,12 +1073,18 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       });
     } catch (e: unknown) {
       this.pendingSpawnTurns.delete(sessionId);
+      const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
+      this.pendingBrowserAccess.delete(sessionId);
+      if (stagedBrowser) this.browserAutomationLease.release(stagedBrowser.stage.leaseId);
       const errorMessage = e instanceof Error ? e.message : String(e);
       logger.error("CodexAppServer start failed", { sessionId, error: errorMessage });
       this.emitTurnFailure(threadId, errorMessage);
       return;
     }
     this.runtime.recordUsage(sessionId);
+    const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
+    this.pendingBrowserAccess.delete(sessionId);
+    if (state === existing && stagedBrowser) this.browserAutomationLease.release(stagedBrowser.stage.leaseId);
 
     // A stop requested before the session finished spawning: tear it down now.
     if (this.pendingStops.delete(sessionId)) {
@@ -1063,6 +1127,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // still runs locally), so this guard is defensive and keeps the wiring
     // obvious in logs.
     const supervised = approvalPolicy === "on-request";
+    const browserAccess = this.pendingBrowserAccess.get(sessionId);
     let internalMcp: Awaited<ReturnType<InternalThreadControlMcpRuntime["createCodexConfiguration"]>>;
     try {
       internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
@@ -1070,6 +1135,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       await this.threadControlMcp?.close(sessionId);
       throw error;
     }
+    const browserGrant = browserAccess ? this.browserAutomationLease.issue(browserAccess.stage) : null;
+    const spawnEnv = { ...args.env };
+    const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
+    if (browserGrant) spawnEnv[browserTokenEnvName] = browserGrant.token;
 
     const server = new CodexAppServer({
       cliPath,
@@ -1084,8 +1153,16 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         ? (req) => this.handleApprovalRequest(sessionId, threadId, req)
         : undefined,
       jobObject: this.jobObject,
-      getSpawnEnv: () => ({ ...args.env, ...internalMcp?.env }),
-      configOverrides: internalMcp?.configOverrides,
+      getSpawnEnv: () => ({ ...spawnEnv, ...internalMcp?.env }),
+      configOverrides: [
+        ...(internalMcp?.configOverrides ?? []),
+        ...(browserGrant
+          ? [
+              `mcp_servers.mcode-browser.url=${JSON.stringify(browserGrant.mcpUrl)}`,
+              `mcp_servers.mcode-browser.bearer_token_env_var=${JSON.stringify(browserTokenEnvName)}`,
+            ]
+          : []),
+      ],
     });
 
     const mapper = new CodexEventMapper(threadId, undefined, (event) => {
@@ -1153,9 +1230,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     try {
       await server.start();
     } catch (error) {
+      if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
       internalMcpStartup?.cancel();
       await this.threadControlMcp?.close(sessionId);
       throw error;
+    } finally {
+      delete spawnEnv[browserTokenEnvName];
+      this.pendingBrowserAccess.delete(sessionId);
     }
     if (internalMcp) {
       try {
@@ -1166,6 +1247,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         await internalMcpStartup!.promise;
       } catch (error) {
         internalMcpStartup?.cancel();
+        if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
         await this.threadControlMcp?.close(sessionId);
         await server.kill().catch(() => undefined);
         throw error;
@@ -1214,6 +1296,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       sandboxMode: sandbox,
       runTurnSeq: 0,
       pendingTurnId: null,
+      workspaceId: browserAccess?.workspaceId ?? "unknown-workspace",
+      browserPermissionCapability: browserAccess?.permissionCapability ?? "interact",
+      ...(browserGrant && {
+        browserCredential: {
+          credentialId: browserGrant.credentialId,
+          expiresAt: browserGrant.expiresAt,
+        },
+        browserLeaseId: browserGrant.leaseId,
+      }),
       childMetadataFetches: new Set(),
     };
     this.liveSessionIds.add(sessionId);
@@ -1296,6 +1387,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     }
     this.liveSessionIds.delete(state.sessionId);
     this.drainPending((e) => e.sessionId === state.sessionId);
+    if (state.browserLeaseId) this.browserAutomationLease.release(state.browserLeaseId);
+    else if (state.browserCredential) this.browserAutomationLease.revokeCredential(state.browserCredential.credentialId);
     await state.server.kill();
   }
 
@@ -1814,6 +1907,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       this.drainPending((e) => e.sessionId === sessionId);
       this.pendingStops.add(sessionId);
       this.pendingSpawnTurns.delete(sessionId);
+      const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
+      this.pendingBrowserAccess.delete(sessionId);
+      if (stagedBrowser) this.browserAutomationLease.release(stagedBrowser.stage.leaseId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
     }
   }
@@ -1842,6 +1938,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     });
     this.sdkSessionIds.clear();
     this.pendingSpawnTurns.clear();
+    this.pendingBrowserAccess.clear();
     this.liveSessionIds.clear();
     logger.info("CodexProvider shutdown complete");
   }
