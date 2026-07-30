@@ -12,6 +12,9 @@ describe("Mcode capability guide", () => {
     expect(result.guide).toContain("omit branchName");
     expect(result.guide).toContain("no branchName");
     expect(result.guide).toContain("providerId codex");
+    const example = result.guide.slice(result.guide.indexOf("- Example:"), result.guide.indexOf("\n\nMcode Browser"));
+    expect(example).not.toContain("workspace_search");
+    expect(example).not.toContain("worktree_list");
     expect(result.guide).toContain("browser_status");
     expect(result.guide).toContain("expectedControlEpoch");
     expect(result.guide).not.toContain("password");
