@@ -157,9 +157,14 @@ describe("ClaudeProvider browser session lease lifecycle", () => {
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
   });
 
-  it("delegates shutdown and revokes shared leases", () => {
+  it("delegates shutdown without revoking leases owned by other providers", () => {
     const lease = configuredLease();
-    lease.issue(scope);
+    const claudeGrant = lease.issue(scope)!;
+    const nonClaudeGrant = lease.issue({
+      ...scope,
+      providerId: "codex",
+      providerSessionId: "codex-thread-1",
+    })!;
     const provider = new ClaudeProvider(
       { getEnv: () => ({}) } as any,
       { isWindowsJob: false } as any,
@@ -172,6 +177,7 @@ describe("ClaudeProvider browser session lease lifecycle", () => {
     provider.shutdown();
 
     expect(shutdown).toHaveBeenCalledOnce();
-    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+    expect(lease.credentials.authenticate(nonClaudeGrant.token)).not.toBeNull();
+    expect(lease.credentials.authenticate(claudeGrant.token)).not.toBeNull();
   });
 });

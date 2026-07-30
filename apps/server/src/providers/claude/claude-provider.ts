@@ -2822,7 +2822,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     void this.runtime.shutdown().catch((err: unknown) => {
       logger.warn("Claude runtime shutdown failed", { error: String(err) });
     });
-    this.browserAutomationSessionLease.shutdown();
     this.pendingSpawnTurns.clear();
     this.pendingBrowserAccess.clear();
     this.sdkSessionIds.clear();
