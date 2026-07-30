@@ -80,6 +80,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getRecentLogs: (lines: number): Promise<string> =>
     ipcRenderer.invoke("get-recent-logs", lines),
 
+  /** Report safe renderer crash diagnostics to the local desktop logger. */
+  reportRendererCrash: (payload: {
+    errorName: string;
+    componentStack: string;
+  }): Promise<void> => ipcRenderer.invoke("renderer:crash-report", payload),
+
   /** Resolve the native file path for a File object (drag-and-drop). */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 

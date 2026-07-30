@@ -20,6 +20,9 @@ describe("AppErrorBoundary", () => {
 
   it("renders recovery UI and reports a descendant render failure", () => {
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reportRendererCrash = vi.fn().mockResolvedValue(undefined);
+    const previousBridge = window.desktopBridge;
+    window.desktopBridge = { reportRendererCrash } as typeof window.desktopBridge;
 
     render(
       <AppErrorBoundary>
@@ -33,10 +36,15 @@ describe("AppErrorBoundary", () => {
     expect(screen.getByText("Reload the app to continue.")).toBeInTheDocument();
     expect(diagnostic).toHaveBeenCalledWith(
       "[AppErrorBoundary] Caught application render error",
-      expect.any(Error),
-      expect.objectContaining({ componentStack: expect.any(String) }),
+      "Error",
+      expect.any(String),
     );
+    expect(reportRendererCrash).toHaveBeenCalledWith({
+      errorName: "Error",
+      componentStack: expect.any(String),
+    });
 
+    window.desktopBridge = previousBridge;
     diagnostic.mockRestore();
   });
 

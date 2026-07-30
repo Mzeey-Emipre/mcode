@@ -19,7 +19,21 @@ export class AppErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error("[AppErrorBoundary] Caught application render error", error, info);
+    const errorName = typeof error?.name === "string" ? error.name : "Error";
+    console.error(
+      "[AppErrorBoundary] Caught application render error",
+      errorName,
+      info.componentStack,
+    );
+    try {
+      const report = window.desktopBridge?.reportRendererCrash({
+        errorName,
+        componentStack: info.componentStack,
+      });
+      void report?.catch(() => undefined);
+    } catch {
+      // Diagnostics must never interfere with the crash recovery UI.
+    }
   }
 
   render(): ReactNode {
