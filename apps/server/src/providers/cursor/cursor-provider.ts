@@ -840,7 +840,33 @@ export class CursorProvider
       },
       clientFactory: (callbacks) => {
         void callbacks;
-        return this.buildAcpClient(entry);
+        return {
+          requestPermission: async (request) => {
+            if (!entry) return { outcome: { outcome: "cancelled" } };
+            return this.bridgePermission(entry, request);
+          },
+          sessionUpdate: async (update) => {
+            if (entry) await this.deliverSessionUpdate(entry, update);
+          },
+          readTextFile: async ({ path: filePath }) => ({
+            content: entry ? this.safeReadWorkspaceFile(entry.cwd, filePath) : "",
+          }),
+          writeTextFile: async ({ path: filePath, content }) => {
+            if (!entry) throw new Error("Cursor ACP session is not ready");
+            this.safeWriteWorkspaceFile(entry.cwd, filePath, content);
+            return {};
+          },
+          extMethod: async (method, params) => {
+            if (!entry) return {};
+            const client = this.buildAcpClient(entry);
+            return client.extMethod ? (await client.extMethod(method, params)) ?? {} : {};
+          },
+          extNotification: async (method, params) => {
+            if (!entry) return;
+            const client = this.buildAcpClient(entry);
+            if (client.extNotification) await client.extNotification(method, params);
+          },
+        };
       },
       selectAuthMethod: (methods) => methods.find((method) => method.id === "cursor_login")?.id ?? methods[0]?.id,
       ignoreAuthenticationErrors: true,

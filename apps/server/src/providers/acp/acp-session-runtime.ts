@@ -68,7 +68,7 @@ export class AcpSessionRuntime {
     const callbacks: AcpSessionCallbacks = {
       ...options.callbacks,
       onSessionUpdate: async (update) => {
-        if (runtimeRef?.state.sessionId && update.sessionId !== runtimeRef.state.sessionId) return;
+        if (!runtimeRef?.state.sessionId || update.sessionId !== runtimeRef.state.sessionId) return;
         await options.callbacks.onSessionUpdate(update);
       },
     };
@@ -131,7 +131,11 @@ export class AcpSessionRuntime {
   async openSession(input: AcpSessionOpenInput): Promise<{ sessionId: string; reloaded: boolean }> {
     if (this.state.sessionId) return { sessionId: this.state.sessionId, reloaded: true };
     try {
-      if (input.resumeFrom) {
+      const loadSessionSupported =
+        typeof this.state.agentCapabilities === "object" &&
+        this.state.agentCapabilities !== null &&
+        (this.state.agentCapabilities as { loadSession?: boolean }).loadSession === true;
+      if (input.resumeFrom && loadSessionSupported) {
         try {
           await this.state.connection.loadSession({
             cwd: input.cwd,

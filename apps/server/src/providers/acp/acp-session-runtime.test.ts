@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
-import type { ClientSideConnection } from "@agentclientprotocol/sdk";
+import type { Client, ClientSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
 import { AcpSessionRuntime } from "./acp-session-runtime.js";
 
 function fakeChild() {
@@ -16,6 +16,8 @@ describe("AcpSessionRuntime", () => {
     const child = fakeChild();
     const promptResolvers: Array<(value: unknown) => void> = [];
     const calls: string[] = [];
+    const updates: SessionNotification[] = [];
+    let client!: Client;
     const connection = {
       initialize: vi.fn(async () => ({
         agentCapabilities: { loadSession: true },
@@ -35,15 +37,31 @@ describe("AcpSessionRuntime", () => {
       spawnSpec: { command: "fake", args: [], cwd: ".", env: {} },
       callbacks: {
         onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }),
-        onSessionUpdate: async () => {},
+        onSessionUpdate: async (update) => { updates.push(update); },
+      },
+      clientFactory: (handlers) => {
+        client = {
+          requestPermission: handlers.onPermissionRequest,
+          sessionUpdate: handlers.onSessionUpdate,
+          readTextFile: async () => ({ content: "" }),
+          writeTextFile: async () => ({}),
+          extMethod: async () => ({}),
+          extNotification: async () => {},
+        };
+        return client;
       },
       transportFactory: async () => ({ child, connection }),
     });
 
     await runtime.initialize();
+    await client.sessionUpdate({ sessionId: "pre-open", update: {} } as SessionNotification);
+    expect(updates).toHaveLength(0);
     const opened = await runtime.openSession({ resumeFrom: "old", cwd: ".", mcpServers: [] });
     expect(opened).toEqual({ sessionId: "acp-1", reloaded: false });
     expect(calls.slice(0, 3)).toEqual(["auth", "load", "new"]);
+    await client.sessionUpdate({ sessionId: "other", update: {} } as SessionNotification);
+    await client.sessionUpdate({ sessionId: "acp-1", update: {} } as SessionNotification);
+    expect(updates.map((update) => update.sessionId)).toEqual(["acp-1"]);
 
     const first = runtime.prompt({ prompt: [] });
     const second = runtime.prompt({ prompt: [] });
@@ -56,6 +74,24 @@ describe("AcpSessionRuntime", () => {
     await second;
     await runtime.cancel();
     expect(calls).toContain("cancel:acp-1");
+  });
+
+  it("creates a fresh session without calling load when the capability is absent", async () => {
+    const child = fakeChild();
+    const connection = {
+      initialize: vi.fn(async () => ({ agentCapabilities: {}, authMethods: [] })),
+      loadSession: vi.fn(async () => ({ sessionId: "unexpected" })),
+      newSession: vi.fn(async () => ({ sessionId: "fresh" })),
+    } as unknown as ClientSideConnection;
+    const runtime = await AcpSessionRuntime.start({
+      spawnSpec: { command: "fake", args: [], cwd: ".", env: {} },
+      callbacks: { onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }), onSessionUpdate: async () => {} },
+      transportFactory: async () => ({ child, connection }),
+    });
+    await runtime.initialize();
+    await runtime.openSession({ resumeFrom: "old", cwd: ".", mcpServers: [] });
+    expect(connection.loadSession).not.toHaveBeenCalled();
+    expect(connection.newSession).toHaveBeenCalledTimes(1);
   });
 
   it("kills the child when initialization fails", async () => {
