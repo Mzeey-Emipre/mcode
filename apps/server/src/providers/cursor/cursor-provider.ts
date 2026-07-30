@@ -369,7 +369,7 @@ export class CursorProvider
             this.pendingBrowserContext.delete(sessionId);
             browserStage = undefined;
           }
-          if (!browserStage) {
+          if (this.browserAutomationLease.isConfigured() && !browserStage) {
             browserStage = this.browserAutomationLease.stage({
               providerId: this.id,
               providerSessionId: req.resumeFrom ?? sessionId,
@@ -401,7 +401,11 @@ export class CursorProvider
           browserStage = undefined;
         }
       }
-      if (!browserStage && !this.pendingBrowserGrants.has(sessionId)) {
+      if (
+        this.browserAutomationLease.isConfigured() &&
+        !browserStage &&
+        !this.pendingBrowserGrants.has(sessionId)
+      ) {
         browserStage = this.browserAutomationLease.stage({
           providerId: this.id,
           providerSessionId: req.resumeFrom ?? sessionId,
@@ -1168,7 +1172,7 @@ export class CursorProvider
     const sessionId = dead.mcodeSessionId;
     this.logAcpChildDisconnect(dead, "ACP connection closed");
     await this.runtime.stop(sessionId);
-    const browserStage = dead.browserHttpMcpSupported
+    const browserStage = this.browserAutomationLease.isConfigured() && dead.browserHttpMcpSupported
       ? this.browserAutomationLease.stage({
         providerId: this.id,
         providerSessionId: this.sdkSessionIds.get(sessionId) ?? sessionId,

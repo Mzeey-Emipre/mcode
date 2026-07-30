@@ -133,6 +133,54 @@ describe("Cursor browser MCP configuration", () => {
     expect(child.kill).not.toHaveBeenCalled();
   });
 
+  it("continues without MCP when browser lease is unconfigured", async () => {
+    const lease = new BrowserAutomationSessionLease();
+    const child = { pid: 107, kill: vi.fn() };
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.id = "cursor";
+    provider.settingsService = { get: vi.fn(() => ({})) };
+    provider.browserAutomationLease = lease;
+    provider.pendingPermissions = new Map();
+    provider.pendingBrowserLeases = new Map();
+    provider.pendingBrowserContext = new Map();
+    provider.pendingBrowserGrants = new Map();
+    provider.pendingBrowserGrantContext = new Map();
+    provider.pendingStops = new Set();
+    provider.liveSessionIds = new Set();
+    provider.planQuestionModeThreads = new Set();
+    provider.sdkSessionIds = new Map();
+    provider.spawnChild = vi.fn().mockResolvedValue({
+      child,
+      browserHttpMcpSupported: true,
+      turnChain: Promise.resolve(),
+    });
+    let mcpServers: unknown;
+    provider.openLogicalSession = vi.fn(async (_state: unknown, _resume: boolean, servers: unknown) => {
+      mcpServers = servers;
+    });
+    provider.runTurn = vi.fn().mockResolvedValue(undefined);
+    provider.runtime = {
+      get: vi.fn().mockReturnValue(undefined),
+      stop: vi.fn(),
+      acquire: vi.fn(async (args: any) => (await provider.spawn({ ...args, env: {} })).state),
+      recordUsage: vi.fn(),
+    };
+
+    await provider.sendTurn({
+      sessionId: "mcode-a",
+      threadId: "thread-a",
+      workspaceId: "workspace-a",
+      cwd: ".",
+      message: "hello",
+      model: "auto",
+      permissionMode: "default",
+      interactionMode: "build",
+    });
+
+    expect(mcpServers).toEqual([]);
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+  });
+
   it("releases a preserved lease when stale replacement setup fails", async () => {
     const lease = configuredLease();
     const previousGrant = lease.issue(browserScope())!;
