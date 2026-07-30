@@ -128,11 +128,12 @@ export async function routeCodexServerRequest(args: {
   if (typeof msg.id !== "number") return;
 
   const method = msg.method ?? "";
+  const diagnosticMethod = boundProtocolIdentifier(method);
   const params = msg.params ?? {};
   const autoApprove = approvalPolicy === "never";
 
   if (autoApprove) {
-    logger.info("Codex serverRequest auto-approved", { id: msg.id, method });
+    logger.info("Codex serverRequest auto-approved", { id: msg.id, method: diagnosticMethod });
     if (method === "item/permissions/requestApproval") {
       sendResponse(msg.id, {
         permissions: {
@@ -156,7 +157,7 @@ export async function routeCodexServerRequest(args: {
     } catch (err) {
       logger.error("Codex approvalHandler rejected; sending safe-deny", {
         id: msg.id,
-        method,
+        method: diagnosticMethod,
         error: String(err),
       });
       sendResponse(msg.id, mapDecisionToCodexResponse(method, "deny", params));
@@ -169,7 +170,7 @@ export async function routeCodexServerRequest(args: {
   // and permissions requests get an empty-permissions turn-scoped response.
   logger.info("Codex serverRequest denied (no approvalHandler and policy is not auto-approve)", {
     id: msg.id,
-    method,
+    method: diagnosticMethod,
   });
   sendResponse(msg.id, mapDecisionToCodexResponse(method, "deny", params));
 }
@@ -249,6 +250,20 @@ const THREAD_HANDSHAKE_TIMEOUT_MS = 30_000;
 const STDERR_TAIL_MAX_LINES = 50;
 /** Maximum UTF-8 bytes retained across non-benign stderr diagnostics. */
 const STDERR_TAIL_MAX_BYTES = 16 * 1024;
+/** Maximum code points retained for protocol identifiers in diagnostics. */
+const MAX_PROTOCOL_IDENTIFIER_LENGTH = 256;
+
+/** Bounds an untrusted protocol identifier before retaining it in diagnostics. */
+function boundProtocolIdentifier(value: string): string {
+  let bounded = "";
+  let length = 0;
+  for (const character of value) {
+    if (length >= MAX_PROTOCOL_IDENTIFIER_LENGTH) break;
+    bounded += character;
+    length += 1;
+  }
+  return bounded;
+}
 
 /** Decoded child-process exit details used in user-facing and structured diagnostics. */
 interface ExitDiagnostics {
@@ -260,6 +275,24 @@ interface ExitDiagnostics {
   signedInt32?: number;
   /** Hex representation for numeric exit codes. */
   hexCode?: string;
+}
+
+/** Bounded, payload-free context captured at an unexpected app-server exit. */
+export interface CodexTransportBreadcrumb {
+  /** Failure boundary that produced this snapshot. */
+  readonly cause: "unexpected_exit";
+  /** Child PID when Node exposed one. */
+  readonly pid: number | null;
+  /** Latest server-initiated request ID, when one was waiting. */
+  readonly activeRequestId: number | null;
+  /** Latest Codex turn ID observed for this process, when available. */
+  readonly activeTurnId: string | null;
+  /** Last inbound protocol method and wall-clock timestamp. */
+  readonly lastActivity: Readonly<{ method: string; timestamp: number }> | null;
+  /** Raw child exit code and signal. */
+  readonly exit: Readonly<{ code: number | null; signal: string | null }>;
+  /** Bounded, non-benign stderr tail. */
+  readonly stderrTail: readonly string[];
 }
 
 /** Retains a bounded tail of non-benign stderr lines for Codex crash diagnostics. */
@@ -666,6 +699,15 @@ export class CodexAppServer extends EventEmitter {
 
   /** Bounded non-benign stderr tail shared by handshake and exit diagnostics. */
   private readonly stderrTail = new StderrTail();
+  /** Most recent immutable crash context, available without changing fatal listener arity. */
+  private _lastTransportBreadcrumb: CodexTransportBreadcrumb | null = null;
+  /** Most recent immutable crash context, if the child exited unexpectedly. */
+  public get lastTransportBreadcrumb(): CodexTransportBreadcrumb | null {
+    return this._lastTransportBreadcrumb;
+  }
+  private activeRequestId: number | null = null;
+  private activeTurnId: string | null = null;
+  private lastActivity: { method: string; timestamp: number } | null = null;
 
   private readonly options: CodexAppServerOptions;
 
@@ -691,6 +733,7 @@ export class CodexAppServer extends EventEmitter {
    */
   async start(): Promise<void> {
     const { cliPath, workingDirectory } = this.options;
+    this._lastTransportBreadcrumb = null;
 
     // Resolve bare command names to absolute paths so spawn works without shell.
     // On Windows, which() respects PATHEXT (.EXE before .CMD), so native binaries
@@ -754,6 +797,8 @@ export class CodexAppServer extends EventEmitter {
 
     this.rpc.on("notification", (notification) => {
       const method = (notification as { method?: string }).method ?? "";
+      const diagnosticMethod = boundProtocolIdentifier(method);
+      this.lastActivity = { method: diagnosticMethod, timestamp: Date.now() };
       if (method === "account/rateLimits/updated" || method === "account/updated") {
         this.emit("activity");
         this.emit("notification", notification);
@@ -779,8 +824,17 @@ export class CodexAppServer extends EventEmitter {
           this.emit("threadIdChanged", newThreadId);
         }
         this.emit("activity");
-        logger.debug("Codex lifecycle notification", { method });
+        logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
         return;
+      }
+
+      if (method === "turn/started") {
+        const params = (notification as { params?: Record<string, unknown> }).params;
+        const turn = params?.turn as { id?: string } | undefined;
+        const turnId = turn?.id ?? (typeof params?.turnId === "string" ? params.turnId : undefined);
+        if (turnId) this.activeTurnId = boundProtocolIdentifier(turnId);
+      } else if (method === "turn/completed") {
+        this.activeTurnId = null;
       }
 
       if (
@@ -790,7 +844,7 @@ export class CodexAppServer extends EventEmitter {
         // Swallowed from the mapper, but still proof of life: thread/status
         // and similar lifecycle traffic must reset turn-level watchdogs.
         this.emit("activity");
-        logger.debug("Codex lifecycle notification", { method });
+        logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
         return;
       }
       this.emit("notification", notification);
@@ -802,6 +856,11 @@ export class CodexAppServer extends EventEmitter {
     // for policy="never", handler-driven supervised mode, silent-deny fallback).
     this.rpc.on("serverRequest", (msg: unknown) => {
       const request = msg as { id?: number; method?: string; params?: Record<string, unknown> };
+      this.lastActivity = {
+        method: typeof request.method === "string" ? boundProtocolIdentifier(request.method) : "",
+        timestamp: Date.now(),
+      };
+      this.activeRequestId = typeof request.id === "number" ? request.id : null;
       // Let turn-level watchdogs treat an inbound approval request as liveness:
       // the server is healthy, it is just waiting on a user decision.
       this.emit("activity");
@@ -810,6 +869,8 @@ export class CodexAppServer extends EventEmitter {
         approvalPolicy: this.options.approvalPolicy,
         approvalHandler: this.options.approvalHandler,
         sendResponse: (id, result) => this.rpc.sendResponse(id, result),
+      }).finally(() => {
+        if (this.activeRequestId === request.id) this.activeRequestId = null;
       });
     });
 
@@ -920,7 +981,11 @@ export class CodexAppServer extends EventEmitter {
     }, 60000);
     const turnId = result?.turnId ?? result?.turn?.id ?? null;
     if (turnId) {
-      logger.debug("Codex turn/start acknowledged", { threadId: this.threadId, turnId });
+      this.activeTurnId = boundProtocolIdentifier(turnId);
+      logger.debug("Codex turn/start acknowledged", {
+        threadId: this.threadId,
+        turnId: boundProtocolIdentifier(turnId),
+      });
     }
     return turnId;
   }
@@ -1138,7 +1203,17 @@ export class CodexAppServer extends EventEmitter {
         const stderrTail = this.stderrTail.snapshot();
         const latestStderr = this.stderrTail.latest();
         const msg = formatUnexpectedExitMessage(exit, latestStderr);
-        logger.error(msg, { cliPath, exit, stderrTail });
+        const breadcrumb = Object.freeze({
+          cause: "unexpected_exit" as const,
+          pid: this.child.pid ?? null,
+          activeRequestId: this.activeRequestId,
+          activeTurnId: this.activeTurnId,
+          lastActivity: this.lastActivity ? Object.freeze({ ...this.lastActivity }) : null,
+          exit: Object.freeze({ code, signal }),
+          stderrTail: Object.freeze(stderrTail),
+        }) satisfies CodexTransportBreadcrumb;
+        this._lastTransportBreadcrumb = breadcrumb;
+        logger.error(msg, { cliPath, exit, stderrTail, breadcrumb });
         this.emit("fatal", msg);
       }
     });

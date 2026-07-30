@@ -1215,7 +1215,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     });
 
     server.on("fatal", (error: string) => {
-      logger.error("CodexAppServer fatal", { sessionId, error });
+      logger.error("CodexAppServer fatal", { sessionId, error, breadcrumb: server.lastTransportBreadcrumb });
       for (const event of mapper.drainPendingAssistantBoundary(false)) {
         this.emit("event", event);
       }
