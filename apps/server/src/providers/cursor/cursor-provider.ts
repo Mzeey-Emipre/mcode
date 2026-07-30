@@ -486,6 +486,9 @@ export class CursorProvider
   /** Tear down all sessions, cancel pending permissions, and stop the eviction timer. */
   shutdown(): void {
     this.drainAllPendingCancelled();
+    for (const sessionId of this.liveSessionIds) {
+      this.browserAutomationLease.releaseSession(this.id, sessionId);
+    }
     void this.runtime.shutdown().catch((err: unknown) => {
       logger.warn("Cursor runtime shutdown failed", { error: String(err) });
     });
@@ -502,7 +505,6 @@ export class CursorProvider
     this.pendingBrowserContext.clear();
     this.pendingBrowserGrants.clear();
     this.pendingBrowserGrantContext.clear();
-    this.browserAutomationLease.shutdown();
     logger.info("CursorProvider shutdown complete");
   }
 

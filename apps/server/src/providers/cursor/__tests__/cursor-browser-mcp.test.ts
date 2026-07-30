@@ -201,7 +201,13 @@ describe("Cursor browser MCP configuration", () => {
     const lease = configuredLease();
     const staged = lease.stage(browserScope());
     const grant = lease.issue(browserScope({ mcodeSessionId: "mcode-b", providerSessionId: "provider-b" }))!;
+    const unrelatedGrant = lease.issue(browserScope({
+      providerId: "claude",
+      mcodeSessionId: "mcode-other",
+      providerSessionId: "provider-other",
+    }))!;
     const provider = Object.create(CursorProvider.prototype) as any;
+    provider.id = "cursor";
     provider.browserAutomationLease = lease;
     provider.pendingPermissions = new Map();
     provider.pendingBrowserLeases = new Map([["mcode-a", staged satisfies BrowserAutomationSessionLeaseStage]]);
@@ -210,12 +216,13 @@ describe("Cursor browser MCP configuration", () => {
     provider.pendingBrowserGrantContext = new Map();
     provider.planQuestionModeThreads = new Set();
     provider.sdkSessionIds = new Map();
-    provider.liveSessionIds = new Set();
+    provider.liveSessionIds = new Set(["mcode-b"]);
     provider.runtime = { shutdown: vi.fn().mockResolvedValue(undefined) };
 
     provider.shutdown();
 
     expect(lease.credentials.authenticate(grant.token)).toBeNull();
-    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+    expect(lease.credentials.authenticate(unrelatedGrant.token)?.providerId).toBe("claude");
+    expect(lease.status()).toEqual({ active: 1, pending: 0 });
   });
 });
