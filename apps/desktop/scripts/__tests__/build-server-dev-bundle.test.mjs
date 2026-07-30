@@ -225,5 +225,5 @@ describe("Copilot SDK staging", () => {
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

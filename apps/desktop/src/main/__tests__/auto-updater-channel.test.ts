@@ -64,6 +64,7 @@ import {
   isCrossChannelDowngrade,
   isTransientNetworkError,
   cleanupAutoUpdater,
+  createBeforeInstallHook,
   getUpdateStatus,
   initAutoUpdater,
   installUpdate,
@@ -389,6 +390,34 @@ describe("update installation safety", () => {
     expect(updaterMock.quitAndInstall).toHaveBeenCalledTimes(2);
   });
 
+  it("accepts deferred quitAndInstall after before-quit arrives", async () => {
+    updaterMock.quitAndInstall.mockImplementationOnce(() => {
+      setImmediate(() => vi.mocked(app.quit)());
+    });
+
+    await expect(installUpdate()).resolves.toBe(true);
+    expect(updaterMock.quitAndInstall).toHaveBeenCalledOnce();
+    expect(app.quit).toHaveBeenCalledOnce();
+  });
+
+  it("resets manual install guard when quitAndInstall rejects initiation", async () => {
+    updaterMock.quitAndInstall.mockImplementationOnce(() => false);
+
+    await expect(installUpdate()).resolves.toBe(false);
+    expect(getUpdateStatus()).toEqual({
+      state: "error",
+      message:
+        "Update installation blocked: Update installer did not begin application shutdown",
+    });
+
+    updaterMock.listeners.get("update-downloaded")?.({
+      version: "0.2.0",
+      releaseNotes: null,
+    });
+    await expect(installUpdate()).resolves.toBe(true);
+    expect(updaterMock.quitAndInstall).toHaveBeenCalledTimes(2);
+  });
+
   it("resets manual install guard when quitAndInstall returns without before-quit", async () => {
     updaterMock.quitAndInstall.mockImplementationOnce(() => {});
 
@@ -437,8 +466,28 @@ describe("update installation safety", () => {
     );
 
     expect(mainSource).not.toMatch(/app\s*\.\s*on\s*\(\s*["']before-quit["']/);
+    expect(mainSource).toMatch(
+      /setBeforeInstallHook\(\s*createBeforeInstallHook\(\(\)\s*=>\s*serverManager\.forceReplace\(\)\)\s*,?\s*\)/s,
+    );
     expect(updaterMock.appListeners.has("before-quit")).toBe(true);
     expect(updaterMock.appListeners.size).toBe(1);
+  });
+
+  it("builds the updater teardown hook from forceReplace", async () => {
+    const forceReplace = vi.fn().mockResolvedValue(undefined);
+    const hook = createBeforeInstallHook(forceReplace);
+
+    await hook();
+
+    expect(forceReplace).toHaveBeenCalledOnce();
+  });
+
+  it("propagates forceReplace errors through the updater teardown hook", async () => {
+    const failure = new Error("server teardown failed");
+    const forceReplace = vi.fn().mockRejectedValue(failure);
+    const hook = createBeforeInstallHook(forceReplace);
+
+    await expect(hook()).rejects.toBe(failure);
   });
 
   it("keeps successful silent installation behavior", async () => {

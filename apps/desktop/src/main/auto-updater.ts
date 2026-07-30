@@ -347,6 +347,15 @@ let beforeInstallHook: (() => Promise<void>) | null = null;
 let isCompletingStoppedServerQuit = false;
 let installerQuitObserved = false;
 
+/** Build the updater teardown hook from the server replacement dependency. */
+export function createBeforeInstallHook(
+  forceReplace: () => Promise<void>,
+): () => Promise<void> {
+  return async () => {
+    await forceReplace();
+  };
+}
+
 /**
  * Register a callback that runs before every quitAndInstall.
  * Used by main.ts to inject server shutdown so the installer
@@ -381,7 +390,18 @@ async function quitAndInstallSafely(): Promise<boolean> {
   installerQuitObserved = false;
   isCompletingStoppedServerQuit = true;
   try {
-    autoUpdater.quitAndInstall();
+    const initiation = (
+      autoUpdater.quitAndInstall as unknown as () => unknown
+    )();
+    if (initiation === false) {
+      throw new Error("Update installer did not begin application shutdown");
+    }
+    if (
+      initiation &&
+      typeof (initiation as PromiseLike<unknown>).then === "function"
+    ) {
+      await initiation;
+    }
   } catch (err) {
     isCompletingStoppedServerQuit = false;
     const message = err instanceof Error ? err.message : String(err);
@@ -392,6 +412,7 @@ async function quitAndInstallSafely(): Promise<boolean> {
     });
     return false;
   }
+  await new Promise<void>((resolve) => setImmediate(resolve));
   if (!installerQuitObserved) {
     isCompletingStoppedServerQuit = false;
     const message = "Update installer did not begin application shutdown";

@@ -48,6 +48,7 @@ import {
   initAutoUpdater,
   installUpdate,
   cleanupAutoUpdater,
+  createBeforeInstallHook,
   setBeforeInstallHook,
 } from "./auto-updater.js";
 import { setupSpellcheck } from "./spellcheck.js";
@@ -935,7 +936,9 @@ app.whenReady().then(async () => {
 
     // Stop the detached server before any quitAndInstall so the NSIS
     // installer does not hit locked files under the install directory.
-    setBeforeInstallHook(() => serverManager.forceReplace());
+    setBeforeInstallHook(
+      createBeforeInstallHook(() => serverManager.forceReplace()),
+    );
 
     // Recover once the server process exits unexpectedly.
     serverManager.onUnexpectedExit = (code) => {
