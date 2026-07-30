@@ -65,7 +65,7 @@ import { CodexProvider } from "../codex-provider.js";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { stubEnvService } from "../../../__tests__/stub-env-service.js";
-import { BrowserAutomationAccessService } from "../../../services/browser-automation/access-service.js";
+import { BrowserAutomationSessionLease } from "../../../services/browser-automation/browser-automation-session-lease.js";
 
 function makeProvider(
   catalogService: {
@@ -83,7 +83,7 @@ function makeProvider(
     onSkillsChanged: vi.fn(() => () => undefined),
     shutdown: vi.fn(async () => undefined),
   },
-  browserAutomationAccess = new BrowserAutomationAccessService(),
+  browserAutomationLease = new BrowserAutomationSessionLease(),
 ): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
@@ -91,7 +91,7 @@ function makeProvider(
     stubEnvService() as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
     catalogService as never,
-    browserAutomationAccess,
+    browserAutomationLease,
   );
 }
 
@@ -113,12 +113,12 @@ describe("CodexProvider first turn on new session", () => {
   });
 
   it("passes loopback browser MCP config and a child-only bearer token", async () => {
-    const access = new BrowserAutomationAccessService();
-    access.configure({
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
-    const provider = makeProvider(undefined, access);
+    const provider = makeProvider(undefined, lease);
 
     await provider.sendTurn({
       sessionId,
@@ -141,17 +141,17 @@ describe("CodexProvider first turn on new session", () => {
     expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
     await new Promise<void>((resolve) => setImmediate(resolve));
     await provider.stopSession(sessionId);
-    expect(access.credentials.size()).toBe(0);
+    expect(lease.credentials.size()).toBe(0);
   });
 
   it("revokes a browser credential when app-server startup fails", async () => {
-    const access = new BrowserAutomationAccessService();
-    access.configure({
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
     startError.current = new Error("handshake failed");
-    const provider = makeProvider(undefined, access);
+    const provider = makeProvider(undefined, lease);
 
     await provider.sendTurn({
       sessionId: "mcode-browser-spawn-failure",
@@ -165,7 +165,7 @@ describe("CodexProvider first turn on new session", () => {
       permissionMode: "supervised",
     });
 
-    expect(access.credentials.size()).toBe(0);
+    expect(lease.credentials.size()).toBe(0);
   });
 
   it("sent turn/start after spawn when the runtime pool registers on the next tick", async () => {

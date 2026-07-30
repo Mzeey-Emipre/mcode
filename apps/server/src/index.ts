@@ -80,6 +80,7 @@ import {
   BrowserAutomationAccessService,
   BrowserAutomationBroker,
   BrowserAutomationMcpHandler,
+  BrowserAutomationSessionLease,
 } from "./services/browser-automation/index.js";
 
 // process.title affects `ps`/`top`/`htop` output on Unix and the console window
@@ -221,6 +222,7 @@ applyDevGitCheckoutEnv();
 const container = setupContainer(getMcodeDir());
 
 const browserAutomationAccess = container.resolve(BrowserAutomationAccessService);
+const browserAutomationSessionLease = container.resolve(BrowserAutomationSessionLease);
 const browserAutomationBroker = new BrowserAutomationBroker({});
 const browserAutomationMcpHandler = new BrowserAutomationMcpHandler({
   credentials: browserAutomationAccess.credentials,
@@ -708,6 +710,10 @@ function listen(port: number, attempt = 1): void {
       mcpUrl: `http://${browserMcpHost}:${port}/mcp`,
       worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
     });
+    browserAutomationSessionLease.configure({
+      mcpUrl: `http://${browserMcpHost}:${port}/mcp`,
+      worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
+    });
 
     // Write lock file so other instances can discover this server
     try {
@@ -831,6 +837,7 @@ async function shutdown(): Promise<void> {
   providerRegistry.shutdown();
   browserAutomationBroker.shutdown();
   browserAutomationAccess.shutdown();
+  browserAutomationSessionLease.shutdown();
 
   // 4. Mark active threads as interrupted
   threadService.markActiveThreadsInterrupted(activeThreadIds);

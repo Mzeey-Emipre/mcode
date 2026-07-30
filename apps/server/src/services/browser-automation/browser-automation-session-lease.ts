@@ -191,6 +191,11 @@ export class BrowserAutomationSessionLease {
     this.configuration = { ...configuration };
   }
 
+  /** Returns whether the composition root supplied a usable MCP endpoint. */
+  isConfigured(): boolean {
+    return this.configuration !== null;
+  }
+
   /** Stages one bounded scope and returns its opaque lease handle. */
   stage(request: BrowserAutomationSessionLeaseRequest): BrowserAutomationSessionLeaseStage {
     this.cleanupPending();
