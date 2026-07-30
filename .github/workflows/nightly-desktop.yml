@@ -85,7 +85,7 @@ jobs:
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: |
-          version=$(bun <<'NODE'
+          version=$(bun -e "$(cat <<'NODE'
           const fs = require("fs");
           const path = require("path");
           const { pathToFileURL } = require("url");
@@ -108,7 +108,7 @@ jobs:
             process.exit(1);
           });
           NODE
-          )
+          )")
           tag="v${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
@@ -198,7 +198,7 @@ jobs:
         env:
           MCODE_NIGHTLY_VERSION: ${{ needs.setup.outputs.version }}
         run: |
-          bun <<'NODE'
+          bun -e "$(cat <<'NODE'
           const fs = require("fs");
           const version = process.env.MCODE_NIGHTLY_VERSION;
           if (!version) {
@@ -211,6 +211,7 @@ jobs:
           fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
           console.log("Nightly desktop version (from setup):", version);
           NODE
+          )"
 
       - name: Build main & renderer
         run: bun run --cwd apps/desktop build

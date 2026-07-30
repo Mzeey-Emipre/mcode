@@ -15,6 +15,7 @@ const bunCheckoutJobs = new Map([
   ["nightly-desktop.yml", "merge-mac-yml-nightly"],
 ]);
 const directNodeCommandPattern = /(?:^|(?:&&|\|\||;)\s*)node(?:\.exe)?(?=\s|$)/m;
+const directBunStdinPattern = /^\s*bun(?:\.exe)?\s+<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?\s*$/m;
 
 function extractWorkflowJob(source, jobName) {
   const jobStart = source.indexOf(`  ${jobName}:`);
@@ -70,6 +71,22 @@ test("direct Node detection only matches shell command tokens", () => {
   }
 });
 
+test("direct Bun stdin detection rejects unsupported heredocs", () => {
+  for (const fixture of [
+    "run: bun <<'NODE'",
+    "run: |\n  bun <<-NODE\n  console.log('unsupported')",
+    "run: bun.exe <<NODE",
+  ]) {
+    assert.match(extractRunCommands(fixture), directBunStdinPattern, fixture);
+  }
+  for (const fixture of [
+    "run: bun -e \"$(cat <<'NODE'\nconsole.log('supported')\nNODE\n)\"",
+    "run: bun run script.mjs",
+  ]) {
+    assert.doesNotMatch(extractRunCommands(fixture), directBunStdinPattern, fixture);
+  }
+});
+
 test("workflows use Bun runtime and repository commands", () => {
   const workflowFiles = readdirSync(workflowDirectory)
     .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
@@ -85,6 +102,7 @@ test("workflows use Bun runtime and repository commands", () => {
     const source = readFileSync(join(workflowDirectory, file), "utf8");
     assert.doesNotMatch(source, /\.node-version/i, file);
     assert.match(source, /oven-sh\/setup-bun@v2/, file);
+    assert.doesNotMatch(extractRunCommands(source), directBunStdinPattern, file);
 
     const bunCheckoutJob = bunCheckoutJobs.get(file);
     if (bunCheckoutJob) {
