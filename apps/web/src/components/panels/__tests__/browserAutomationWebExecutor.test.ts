@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationHostDispatch } from "@mcode/contracts";
+import { captureVisibleWebScreenshot } from "../web-browser-automation/capture";
 import { executeWebBrowserDispatch } from "../browserAutomationWebExecutor";
+
+vi.mock("../web-browser-automation/capture", () => ({ captureVisibleWebScreenshot: vi.fn() }));
 
 function dispatch(operation: BrowserAutomationHostDispatch["request"]["operation"], args: Record<string, unknown> = {}, deadline = Date.now() + 1_000): BrowserAutomationHostDispatch {
   return {
@@ -51,6 +54,16 @@ describe("web browser automation executor", () => {
     for (let index = 0; index < 205; index += 1) page.body.append(document.createElement("button"));
     const bounded = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
     expect(bounded).toMatchObject({ ok: true, result: { operation: "snapshot", snapshot: { elementsTruncation: { truncated: true, originalCount: 206 } } } });
+    target.remove();
+  });
+
+  it("uses DOM ids as snapshot semantic ids", async () => {
+    const target = iframe();
+    target.contentDocument!.body.innerHTML = `<button id="save-button">Save</button>`;
+    const result = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
+    expect(result).toMatchObject({ ok: true, result: { snapshot: {
+      elements: [{ semanticId: "save-button", role: "button", accessibleName: "Save" }],
+    } } });
     target.remove();
   });
 
@@ -166,6 +179,48 @@ describe("web browser automation executor", () => {
     expect(cancelled).toMatchObject({ ok: false, error: { code: "OPERATION_CANCELLED" } });
     const expired = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }, Date.now() - 1), new AbortController().signal);
     expect(expired).toMatchObject({ ok: false, error: { code: "DEADLINE_EXCEEDED" } });
+    target.remove();
+  });
+
+  it("captures a bounded screenshot from the visible iframe", async () => {
+    const target = iframe();
+    vi.mocked(captureVisibleWebScreenshot).mockResolvedValueOnce({
+      ok: true,
+      value: {
+        mediaType: "image/png",
+        dataBase64: "AAAA",
+        width: 320,
+        height: 180,
+        truncation: { truncated: false },
+      },
+    });
+    const request = dispatch("screenshot", { maxWidth: 320 });
+    const result = await executeWebBrowserDispatch(request, new AbortController().signal);
+    expect(result).toMatchObject({
+      ok: true,
+      result: { operation: "screenshot", screenshot: { mediaType: "image/png", width: 320, height: 180 } },
+    });
+    expect(captureVisibleWebScreenshot).toHaveBeenCalledWith({
+      iframe: target,
+      maxWidth: 320,
+      deadline: request.request.deadline,
+      signal: expect.any(AbortSignal),
+    });
+    target.remove();
+  });
+
+  it("rejects full-page screenshots before capture", async () => {
+    const target = iframe();
+    vi.mocked(captureVisibleWebScreenshot).mockClear();
+    const result = await executeWebBrowserDispatch(
+      dispatch("screenshot", { maxWidth: 320, fullPage: true }),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "UNSUPPORTED_OPERATION" },
+    });
+    expect(captureVisibleWebScreenshot).not.toHaveBeenCalled();
     target.remove();
   });
 });

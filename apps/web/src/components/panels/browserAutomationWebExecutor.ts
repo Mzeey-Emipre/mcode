@@ -2,12 +2,14 @@ import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_ELEMENTS,
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS,
+  BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH,
   type BrowserAutomationHostDispatch,
   type BrowserAutomationResult,
   type BrowserAutomationResponse,
 } from "@mcode/contracts";
+import { captureVisibleWebScreenshot } from "./web-browser-automation/capture";
 
-const WEB_CAPABILITIES = ["status", "open", "navigate", "snapshot"] as const;
+const WEB_CAPABILITIES = ["status", "open", "navigate", "snapshot", "screenshot"] as const;
 const WEB_SNAPSHOT_MAX_SCAN_NODES = 8_192;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT = 1_024;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES = 256;
@@ -60,7 +62,7 @@ function response(
 
 function failure(
   dispatch: BrowserAutomationHostDispatch,
-  code: "CROSS_ORIGIN" | "DEADLINE_EXCEEDED" | "NAVIGATION_FAILED" | "OPERATION_CANCELLED" | "TAB_UNAVAILABLE" | "UNSUPPORTED_OPERATION",
+  code: "CROSS_ORIGIN" | "DEADLINE_EXCEEDED" | "INTERNAL_ERROR" | "NAVIGATION_FAILED" | "OPERATION_CANCELLED" | "RESULT_TOO_LARGE" | "TAB_UNAVAILABLE" | "UNSUPPORTED_OPERATION",
   message: string,
 ): BrowserAutomationResponse {
   return {
@@ -281,7 +283,7 @@ function collectBoundedSnapshot(document: Document): BoundedSnapshotData {
         const accessibleName = element.getAttribute("aria-label")?.slice(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT) || boundedElementText(element, WEB_SNAPSHOT_MAX_ELEMENT_TEXT, budget);
         if (typeof accessibleName !== "string" && accessibleName.budgetExhausted) scanLimitReached = true;
         elements.push({
-          semanticId: `element-${elements.length + 1}`,
+          semanticId: element.id || `element-${elements.length + 1}`,
           role: element.getAttribute("role")?.slice(0, 128) || element.tagName.toLowerCase(),
           accessibleName: typeof accessibleName === "string" ? accessibleName : accessibleName.text,
           ...(("value" in element && typeof (element as HTMLInputElement).value === "string" &&
@@ -387,6 +389,22 @@ function snapshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, si
   });
 }
 
+function screenshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
+  const maxWidth = dispatch.request.operation === "screenshot" && typeof dispatch.request.args.maxWidth === "number"
+    ? dispatch.request.args.maxWidth
+    : BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH;
+  return captureVisibleWebScreenshot({ iframe, maxWidth, deadline: dispatch.request.deadline, signal }).then((result) => {
+    if (!result.ok) {
+      const mapped = result.code === "TIMEOUT" ? "DEADLINE_EXCEEDED"
+        : result.code;
+      return failure(dispatch, mapped, `Web Preview screenshot failed: ${result.code}`);
+    }
+    const cancelled = checkAbort(dispatch, signal);
+    if (cancelled) return cancelled;
+    return response(dispatch, { operation: "screenshot", screenshot: result.value, controlEpoch: dispatch.request.expectedControlEpoch });
+  });
+}
+
 /** Executes the bounded same-origin web Preview operations against its visible iframe. */
 export async function executeWebBrowserDispatch(
   dispatch: BrowserAutomationHostDispatch,
@@ -430,5 +448,11 @@ export async function executeWebBrowserDispatch(
     });
   }
   if (request.operation === "snapshot") return snapshot(dispatch, iframe, signal);
-  return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation supports status, open, navigate, and snapshot");
+  if (request.operation === "screenshot") {
+    if (request.args.fullPage) {
+      return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation does not support full-page screenshots");
+    }
+    return screenshot(dispatch, iframe, signal);
+  }
+  return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation supports status, open, navigate, snapshot, and screenshot");
 }
