@@ -946,6 +946,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   };
 
   const invalidateDeferredNarrativeEvents = (threadId: string): void => {
+    flushPendingTextDeltas();
     deferredNarrativeGenerations.set(
       threadId,
       (deferredNarrativeGenerations.get(threadId) ?? 0) + 1,
@@ -1563,6 +1564,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     conversationResidency.invalidateConversation(threadId);
     clearDequeueTimer(threadId);
     invalidateDeferredNarrativeEvents(threadId);
+    threadHydrator.forgetThread(threadId);
     forgetScrollTop(threadId);
 
     const isCurrentThread = get().currentThreadId === threadId;
@@ -1593,6 +1595,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       conversationResidency.invalidateConversation(threadId);
       clearDequeueTimer(threadId);
       invalidateDeferredNarrativeEvents(threadId);
+      threadHydrator.forgetThread(threadId);
       forgetScrollTop(threadId);
     }
 
@@ -1903,6 +1906,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const startsNewInstance = event.type === "turnStarted";
 
     if (isLifecycleExit || startsNewInstance) {
+      // Lifecycle events can arrive in same frame as final text delta.
+      // Flush first so invalidation cannot discard text needed for persistence.
+      flushPendingTextDeltas();
       invalidateDeferredNarrativeEvents(threadId);
     }
     if (startsNewInstance) {

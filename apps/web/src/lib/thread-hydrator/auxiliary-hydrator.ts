@@ -50,6 +50,8 @@ export interface AuxiliaryHydratorDeps {
  */
 export class AuxiliaryHydrator {
   private readonly permissionSnapshotGenerations = new Map<string, number>();
+  private readonly pendingPermissionHydrations = new Map<string, number>();
+  private readonly permissionGenerationDisposals = new Set<string>();
 
   constructor(private readonly deps: AuxiliaryHydratorDeps) {}
 
@@ -59,6 +61,19 @@ export class AuxiliaryHydrator {
       threadId,
       (this.permissionSnapshotGenerations.get(threadId) ?? 0) + 1,
     );
+  }
+
+  /**
+   * Release generation state after thread deletion without allowing an in-flight
+   * permission snapshot to commit into a newly-created thread with the same ID.
+   */
+  forgetThread(threadId: string): void {
+    this.invalidatePermissions(threadId);
+    if ((this.pendingPermissionHydrations.get(threadId) ?? 0) === 0) {
+      this.permissionSnapshotGenerations.delete(threadId);
+      return;
+    }
+    this.permissionGenerationDisposals.add(threadId);
   }
 
   /**
@@ -100,6 +115,10 @@ export class AuxiliaryHydrator {
     const startedGeneration = this.permissionSnapshotGenerations.get(threadId) ?? 0;
     const startedRunning = startedState.runningThreadIds.has(threadId);
     const startedCurrentThreadId = startedState.currentThreadId;
+    this.pendingPermissionHydrations.set(
+      threadId,
+      (this.pendingPermissionHydrations.get(threadId) ?? 0) + 1,
+    );
 
     void this.transport()
       .listPendingPermissions(threadId)
@@ -139,6 +158,17 @@ export class AuxiliaryHydrator {
       })
       .catch(() => {
         /* non-critical */
+      })
+      .finally(() => {
+        const pending = (this.pendingPermissionHydrations.get(threadId) ?? 1) - 1;
+        if (pending > 0) {
+          this.pendingPermissionHydrations.set(threadId, pending);
+          return;
+        }
+        this.pendingPermissionHydrations.delete(threadId);
+        if (this.permissionGenerationDisposals.delete(threadId)) {
+          this.permissionSnapshotGenerations.delete(threadId);
+        }
       });
   }
 

@@ -83,6 +83,57 @@ describe("handleAgentEvent branches", () => {
     expect(state.runningThreadIds.has("thread-1")).toBe(false);
   });
 
+  it("flushes same-frame textDelta before turnComplete persists assistant content", () => {
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: "thread-1",
+      delta: "final assistant answer",
+      isFinalResponse: true,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "turnComplete",
+      threadId: "thread-1",
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    } as AgentEvent);
+
+    expect(getTestActiveMessages().find((message) => message.role === "assistant")?.content)
+      .toBe("final assistant answer");
+  });
+
+  it("flushes same-frame background textDelta before turnComplete persists content", () => {
+    const backgroundThreadId = "thread-background-complete";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-1", { ...createEmptyThreadRecord() }],
+        [backgroundThreadId, { ...createEmptyThreadRecord() }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "background final answer",
+      isFinalResponse: true,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "turnComplete",
+      threadId: backgroundThreadId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    } as AgentEvent);
+
+    expect(readThreadField(backgroundThreadId, (thread) => thread.messages)
+      .find((message) => message.role === "assistant")?.content)
+      .toBe("background final answer");
+  });
+
   it("session.toolUse adds tool call to toolCallsByThread", () => {
     useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "tc1", toolName: "Read", toolInput: { path: "/foo" } } as AgentEvent);
     vi.runAllTimers();

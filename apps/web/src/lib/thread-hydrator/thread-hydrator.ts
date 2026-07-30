@@ -298,6 +298,11 @@ export class ThreadHydrator {
     this.auxiliaryHydrator.invalidatePermissions(threadId);
   }
 
+  /** Release per-thread generation state after its resident record is deleted. */
+  forgetThread(threadId: string): void {
+    this.auxiliaryHydrator.forgetThread(threadId);
+  }
+
   private pruneInvalidationGeneration(threadId: string): void {
     if (!this.activeHydrates.has(threadId) && !this.backgroundHydrates.has(threadId)) {
       this.invalidationGenerations.delete(threadId);
