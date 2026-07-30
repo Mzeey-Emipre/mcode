@@ -85,8 +85,8 @@ jobs:
         shell: bash
         run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools 2>/dev/null || pip install setuptools 2>/dev/null || true
 
-      - name: Ensure Claude SDK platform package for packaging target
-        run: bun apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs
+      - name: Ensure SDK platform packages for packaging target
+        run: bun apps/desktop/scripts/ensure-sdk-platform-packages.mjs
         env:
           MCODE_TARGET_ARCH: ${{ matrix.target-arch }}
 
