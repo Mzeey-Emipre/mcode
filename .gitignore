@@ -50,6 +50,9 @@ Thumbs.db
 # External Playwright
 .playwright-mcp/
 
+# External source cache
+.opensrc/
+
 # Plans and superpowers (local working docs)
 docs/plans/
 docs/specs/*-plan.md

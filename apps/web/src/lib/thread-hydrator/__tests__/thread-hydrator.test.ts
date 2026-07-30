@@ -576,6 +576,24 @@ describe("ThreadHydrator", () => {
     expect(mockTransport.getThreadTasks).not.toHaveBeenCalled();
   });
 
+  it("retains auxiliary freshness when an inactive thread is restored from cache", async () => {
+    await hydrator.hydrate(THREAD_A, "active");
+    await vi.waitFor(() => {
+      expect(mockTransport.listPendingPermissions).toHaveBeenCalledWith(THREAD_A);
+    });
+    expect(getCachedRecord(THREAD_A)?.lastHydratedAt).toBeGreaterThan(0);
+
+    vi.clearAllMocks();
+    await hydrator.hydrate(THREAD_B, "active");
+    vi.clearAllMocks();
+
+    await hydrator.hydrate(THREAD_A, "active");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockTransport.listPendingPermissions).not.toHaveBeenCalled();
+    expect(mockTransport.getThreadTasks).not.toHaveBeenCalled();
+  });
+
   it("re-fans out auxiliary data once the TTL window elapses", async () => {
     await hydrator.hydrate(THREAD_A, "active");
     useThreadStore.setState((s) => ({
@@ -1124,6 +1142,90 @@ describe("ThreadHydrator", () => {
     expect(getTestActiveMessages()).toEqual([msgB]);
   });
 
+  it("uses the bounded tail loader only for active first-paint fetches", async () => {
+    const tailLoader = vi.fn().mockResolvedValue({ messages: [msgA], hasMore: false });
+    mockTransport.loadConversationTail = tailLoader;
+
+    try {
+      resetThreadStoreForTests({
+        currentThreadId: THREAD_B,
+        records: new Map<string, ThreadRecord>([
+          [THREAD_B, { ...createEmptyThreadRecord(), messages: [msgB] }],
+        ]),
+      });
+
+      await hydrator.hydrate(THREAD_A, "background");
+
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(
+        THREAD_A,
+        BACKGROUND_PREFETCH_LIMIT,
+      );
+      expect(tailLoader).not.toHaveBeenCalled();
+
+      clearRecordCache();
+      resetThreadStoreForTests({ currentThreadId: null, records: new Map() });
+      hydrator = createStoreHydrator();
+
+      await hydrator.hydrate(THREAD_A, "active");
+
+      expect(tailLoader).toHaveBeenCalledWith(THREAD_A, MESSAGE_FETCH_SIZE);
+      expect(mockTransport.loadConversationPage).toHaveBeenNthCalledWith(
+        2,
+        THREAD_A,
+        MESSAGE_FETCH_SIZE,
+      );
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
+  it("does not let an invalidated tail follow-up overwrite newer cached messages", async () => {
+    const staleTail = createMockMessage({
+      id: "stale-tail-message",
+      thread_id: THREAD_A,
+      content: "stale tail",
+      sequence: 1,
+    });
+    const freshCachedMessage = createMockMessage({
+      id: "fresh-cached-message",
+      thread_id: THREAD_A,
+      content: "fresh cached message",
+      sequence: 2,
+    });
+    let resolveFollowup!: (value: {
+      messages: typeof staleTail[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    const tailLoader = vi.fn().mockResolvedValue({
+      messages: [staleTail],
+      hasMore: false,
+    });
+    mockTransport.loadConversationTail = tailLoader;
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveFollowup = resolve;
+      }),
+    );
+
+    try {
+      const hydration = hydrator.hydrate(THREAD_A, "active");
+      await vi.waitFor(() => expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(
+        THREAD_A,
+        MESSAGE_FETCH_SIZE,
+      ));
+
+      hydrator.invalidateConversation(THREAD_A);
+      cacheRecord(THREAD_A, makeCachedRecord([freshCachedMessage]));
+      resolveFollowup({ messages: [staleTail], hasMore: false, narrativeByMessage: {} });
+      await hydration;
+
+      expect(getCachedRecord(THREAD_A)?.messages).toEqual([freshCachedMessage]);
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
   it("does not let a background prefetch replace an inactive WebSocket update", async () => {
     const staleMessage = createMockMessage({
       id: "stale-prefetch-message",
@@ -1368,6 +1470,9 @@ describe("ThreadHydrator", () => {
     await Promise.resolve();
 
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    expect(useThreadStore.getState().currentThreadId).toBe(THREAD_A);
+    expect(readActiveThreadField((record) => record.loading)).toBe(true);
+    expect(getTestThreadLoadEpoch(THREAD_A)).toBe(0);
 
     resolvePage({ messages: [msgA], hasMore: false, narrativeByMessage: {} });
     await Promise.all([background, active]);

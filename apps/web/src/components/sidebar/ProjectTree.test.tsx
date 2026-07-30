@@ -33,6 +33,12 @@ vi.mock("@/stores/workspaceStore", () => ({
   ),
 }));
 
+vi.mock("@/lib/thread-hydrator/prefetch-scheduler", () => ({
+  schedulePrefetch: vi.fn(),
+  cancelPrefetch: vi.fn(),
+  prefetchOnPointerDown: vi.fn(),
+}));
+
 // Mutable holder so individual tests can inject unsettled permission requests
 // and running-thread state into the mocked thread store without re-registering
 // the mock.
@@ -104,6 +110,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 // Import after mocks are registered.
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
+import { prefetchOnPointerDown } from "@/lib/thread-hydrator/prefetch-scheduler";
 import { ProjectTree } from "./ProjectTree";
 
 /** Build a minimal Thread fixture. */
@@ -367,6 +374,20 @@ describe("ProjectTree thread interactions", () => {
     // Navigation must fire on the first click — no debounce.
     expect(setActiveThread).toHaveBeenCalledWith("thread-1");
     expect(setActiveThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefetches on pointerdown before click navigation", () => {
+    const setActiveThread = vi.fn();
+    setupStoreMocks({ setActiveThread });
+
+    render(<ProjectTree />);
+
+    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+    fireEvent.pointerDown(threadButton);
+    expect(prefetchOnPointerDown).toHaveBeenCalledWith("thread-1");
+
+    fireEvent.click(threadButton);
+    expect(setActiveThread).toHaveBeenCalledWith("thread-1");
   });
 
   it("double click enters edit mode after first-click navigation", () => {

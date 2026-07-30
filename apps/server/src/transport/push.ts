@@ -71,6 +71,15 @@ export function unsubscribeClientFromThread(ws: WebSocket, threadId: string): vo
   threadSubscriptions.get(ws)?.delete(threadId);
 }
 
+/** Atomically replace a connected client's complete desired subscription set. */
+export function setClientThreadSubscriptions(
+  ws: WebSocket,
+  threadIds: readonly string[],
+): void {
+  if (!clients.has(ws)) return;
+  threadSubscriptions.set(ws, new Set(threadIds));
+}
+
 /** Get the current number of connected clients. */
 export function clientCount(): number {
   return clients.size;

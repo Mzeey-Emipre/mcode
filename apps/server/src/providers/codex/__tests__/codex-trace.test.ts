@@ -57,4 +57,49 @@ describe("codex-trace", () => {
       parentToolCallId: "parent-9",
     });
   });
+
+  it("summarizes MCP startup status with bounded redacted diagnostics", () => {
+    const s = summarizeCodexNotificationParams("mcpServer/startupStatus/updated", {
+      threadId: "thread-1",
+      name: "mcode_internal_thread_control",
+      status: "failed",
+      failureReason: "Bearer super-secret-credential caused startup failure",
+      error: "authorization=another-secret-value",
+    });
+
+    expect(s).toMatchObject({
+      threadId: "thread-1",
+      name: "mcode_internal_thread_control",
+      status: "failed",
+      errorPreview: "authorization=[redacted]",
+      failureReasonPreview: "Bearer [redacted] caused startup failure",
+    });
+    expect(JSON.stringify(s)).not.toContain("super-secret-credential");
+    expect(JSON.stringify(s)).not.toContain("another-secret-value");
+  });
+
+  it("summarizes ready MCP startup status without diagnostics", () => {
+    expect(
+      summarizeCodexNotificationParams("mcpServer/startupStatus/updated", {
+        name: "mcode_internal_thread_control",
+        status: "ready",
+      }),
+    ).toEqual({
+      name: "mcode_internal_thread_control",
+      status: "ready",
+      errorPreview: undefined,
+      failureReasonPreview: undefined,
+    });
+  });
+
+  it("retains a bounded diagnostic preview", () => {
+    const summary = summarizeCodexNotificationParams("mcpServer/startupStatus/updated", {
+      name: "mcode_internal_thread_control",
+      status: "failed",
+      failureReason: "x".repeat(400),
+    });
+
+    expect(String(summary.failureReasonPreview)).toHaveLength(257);
+    expect(String(summary.failureReasonPreview).endsWith("…")).toBe(true);
+  });
 });

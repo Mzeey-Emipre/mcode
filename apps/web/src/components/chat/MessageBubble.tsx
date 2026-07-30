@@ -101,7 +101,7 @@ function MentionedUserText({
   }
 
   if (cursor < text.length) nodes.push(text.slice(cursor));
-  return <span className="whitespace-pre-wrap">{nodes}</span>;
+  return <p className="mb-2 whitespace-pre-wrap leading-relaxed">{nodes}</p>;
 }
 
 /**
@@ -269,6 +269,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 interface MessageBubbleProps {
   /** The message object to render. */
   message: Message;
+  /** Controls whether user-message actions such as copy, reply, or fork are available. */
+  interactive?: boolean;
   /** Called when the user clicks the branch icon on this message. */
   onBranch?: (messageId: string) => void;
   /** Called when the user clicks the reply button on this message. */
@@ -465,6 +467,7 @@ function QuoteBlock({
 /** Renders a single chat message (system, user, or assistant). Memoized to prevent re-renders when the message ref is unchanged. */
 export const MessageBubble = memo(function MessageBubble({
   message,
+  interactive = true,
   onBranch,
   onReply,
   onScrollToMessage,
@@ -623,9 +626,9 @@ export const MessageBubble = memo(function MessageBubble({
                       src={src}
                       name={img.name}
                       single={imageAttachments.length === 1}
-                      onOpenPreview={() =>
-                        setImagePreview({ items: imageSlides, initialIndex: idx })
-                      }
+                      onOpenPreview={interactive
+                        ? () => setImagePreview({ items: imageSlides, initialIndex: idx })
+                        : undefined}
                     />
                   );
                 })}
@@ -671,7 +674,7 @@ export const MessageBubble = memo(function MessageBubble({
 
           <div className="flex flex-col items-end gap-0.5 pr-1">
             <div className="flex items-center gap-1.5">
-              {onReply && <ReplyButton onClick={() => {
+              {interactive && onReply && <ReplyButton onClick={() => {
                 let fallback = "[Attachment]";
                 if (!userDisplayText.trim()) {
                   const firstAtt = message.attachments?.[0];
@@ -683,8 +686,8 @@ export const MessageBubble = memo(function MessageBubble({
                 }
                 onReply(message.id, userDisplayText.trim() || fallback, "user");
               }} />}
-              {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
-              {userDisplayText.trim() && <CopyButton content={userDisplayText} />}
+              {interactive && onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
+              {interactive && userDisplayText.trim() && <CopyButton content={userDisplayText} />}
             </div>
             <div className="flex items-center gap-2 font-mono text-xs tabular-nums text-muted-foreground/55">
               {userGoal && <GoalReceipt label="Sent as goal" tone="muted" />}

@@ -27,6 +27,10 @@ import {
 } from "@agentclientprotocol/sdk";
 
 import { SettingsService } from "../../services/settings-service.js";
+import {
+  InternalThreadControlMcpRuntime,
+  type InternalThreadControlMcpHttpConnection,
+} from "../../services/thread-control-mcp-runtime.js";
 import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
@@ -130,6 +134,18 @@ interface CursorSideChannelTransport {
   dispose(): Promise<void> | void;
 }
 
+/** Builds the ACP HTTP MCP configuration for one provider session. */
+export function buildCursorInternalMcpServers(
+  connection: InternalThreadControlMcpHttpConnection,
+): McpServer[] {
+  return [{
+    type: "http",
+    name: connection.name,
+    url: connection.url,
+    headers: Object.entries(connection.headers).map(([name, value]) => ({ name, value })),
+  }];
+}
+
 /**
  * Factory that opens a throwaway ACP transport wired to a non-emitting client.
  * Defaulted to the real `cursor-agent acp` spawn and overridable in tests so the
@@ -183,6 +199,7 @@ interface CursorAcpSessionEntry {
   workspaceId: string;
   /** Browser permission class fixed to this provider process at spawn. */
   browserPermissionCapability: "observe" | "interact" | "privileged";
+  supportsHttpMcp: boolean;
 }
 
 /**
@@ -273,6 +290,8 @@ export class CursorProvider
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(BrowserAutomationSessionLease)
     private readonly browserAutomationLease: BrowserAutomationSessionLease = new BrowserAutomationSessionLease(),
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
     super();
     this.runtime = new SessionRuntime<CursorSessionState>(this, {
@@ -647,6 +666,7 @@ export class CursorProvider
       }
     } catch (err) {
       this.cleanupSpawnFailure(sessionId, state, browserGrant, browserStage, refreshedGrant);
+      await this.threadControlMcp?.close(sessionId);
       throw err;
     }
 
@@ -676,12 +696,13 @@ export class CursorProvider
    * for this session (so orphaned approval cards clear) and drop it from the
    * live-id mirror. The child process is killed by the runtime's hard kill.
    */
-  close(state: CursorSessionState): void {
+  async close(state: CursorSessionState): Promise<void> {
     this.cancelPendingForThread(state.mcodeSessionId);
     this.liveSessionIds.delete(state.mcodeSessionId);
     if (!this.pendingBrowserGrants.has(state.mcodeSessionId) && !this.pendingBrowserLeases.has(state.mcodeSessionId)) {
       this.browserAutomationLease.releaseSession(this.id, state.mcodeSessionId);
     }
+    await this.threadControlMcp?.close(state.mcodeSessionId);
   }
 
   private sameBrowserContext(left: CursorBrowserContext, right: CursorBrowserContext): boolean {
@@ -802,6 +823,7 @@ export class CursorProvider
       stderrTailLines: [],
       cursorModelAppliedPair: null,
       pendingUserStopAbort: false,
+      supportsHttpMcp: false,
     };
 
     entry.connection = new ClientSideConnection(
@@ -838,7 +860,9 @@ export class CursorProvider
     });
 
     try {
-      entry.browserHttpMcpSupported = await this.acpHandshake(connection, threadId);
+      const supportsHttpMcp = await this.acpHandshake(connection, threadId);
+      entry.browserHttpMcpSupported = supportsHttpMcp;
+      entry.supportsHttpMcp = supportsHttpMcp;
     } catch (error) {
       try {
         child.kill();
@@ -1099,13 +1123,22 @@ export class CursorProvider
     if (entry.acpSessionId) return;
 
     const stored = this.sdkSessionIds.get(entry.mcodeSessionId);
+    if (!entry.supportsHttpMcp) {
+      throw new Error("Cursor ACP does not advertise HTTP MCP support; internal thread-control MCP is unavailable");
+    }
+    const internalMcp = await this.threadControlMcp?.createHttpConnection(entry.mcodeSessionId);
+    if (!internalMcp) throw new Error("Cursor internal thread-control MCP connection unavailable");
+    const effectiveMcpServers = [
+      ...buildCursorInternalMcpServers(internalMcp),
+      ...mcpServers,
+    ];
     let acpId: string;
 
     if (resume && stored) {
       try {
         await entry.connection.loadSession({
           cwd: entry.cwd,
-          mcpServers,
+          mcpServers: effectiveMcpServers,
           sessionId: stored,
         });
         acpId = stored;
@@ -1116,14 +1149,14 @@ export class CursorProvider
         });
         const created = await entry.connection.newSession({
           cwd: entry.cwd,
-          mcpServers,
+            mcpServers: effectiveMcpServers,
         });
         acpId = created.sessionId;
       }
     } else {
       const created = await entry.connection.newSession({
         cwd: entry.cwd,
-        mcpServers,
+          mcpServers: effectiveMcpServers,
       });
       acpId = created.sessionId;
     }

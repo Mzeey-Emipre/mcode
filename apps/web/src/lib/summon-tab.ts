@@ -44,6 +44,7 @@ export function summonTab(tab: RightPanelTab, onFocus?: () => void): void {
       useTerminalStore.getState().setActiveTerminal(scopeId, latestTerminal.id);
       return;
     }
+    setRightPanelTab(wid, tid, "terminal");
     createTerminalForScope(scopeId);
   };
 

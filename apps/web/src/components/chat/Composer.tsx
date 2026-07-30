@@ -1367,6 +1367,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             path: item.path,
             provider: item.provider,
           }
+        : item.kind === "plugin"
+          ? {
+              id: createMentionId(),
+              kind: "plugin",
+              label: item.label,
+              name: item.name,
+              path: item.path,
+            }
         : {
             id: createMentionId(),
             kind: "file",

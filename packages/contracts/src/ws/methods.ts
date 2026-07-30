@@ -5,6 +5,11 @@ import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, Orchestr
 import { PaginatedMessagesSchema } from "../models/message.js";
 import { MessageMentionsSchema } from "../models/mention.js";
 import { ConversationPageSchema } from "../models/conversation-page.js";
+import {
+  CONVERSATION_TAIL_THREAD_ID_MAX_LENGTH,
+  ConversationTailParamsSchema,
+  ConversationTailSchema,
+} from "../models/conversation-tail.js";
 import { AttachmentMetaSchema } from "../models/attachment.js";
 import { MAX_ATTACHMENTS } from "../models/file-types.js";
 import { ToolCallRecordSchema } from "../models/tool-call-record.js";
@@ -127,6 +132,26 @@ export const RECAP_MAX_MESSAGES = 80;
 export const RECAP_MAX_MESSAGE_CONTENT_CHARS = 4_000;
 /** Maximum characters accepted for the previous recap hint. */
 export const RECAP_MAX_PREVIOUS_RECAP_CHARS = 500;
+
+/** Maximum number of thread subscriptions replaced in one atomic request. */
+export const MAX_THREAD_SUBSCRIPTIONS = 100;
+
+/** Thread identifier schema shared by atomic push subscription updates. */
+const ThreadSubscriptionIdSchema = z.string().trim().min(1).max(CONVERSATION_TAIL_THREAD_ID_MAX_LENGTH);
+
+/** Complete desired push subscription set for one WebSocket connection. */
+export const SetThreadSubscriptionsSchema = lazySchema(() =>
+  z.object({
+    threadIds: z.array(ThreadSubscriptionIdSchema).max(MAX_THREAD_SUBSCRIPTIONS).superRefine((threadIds, context) => {
+      if (new Set(threadIds).size !== threadIds.length) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "threadIds must be unique" });
+      }
+    }),
+  }),
+);
+
+/** Input accepted by `push.setThreadSubscriptions`. */
+export type SetThreadSubscriptionsInput = z.infer<ReturnType<typeof SetThreadSubscriptionsSchema>>;
 
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = lazySchema(() =>
@@ -701,6 +726,10 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ threadId: z.string() }),
     result: z.void(),
   },
+  "push.setThreadSubscriptions": {
+    params: SetThreadSubscriptionsSchema(),
+    result: z.void(),
+  },
   "agent.answerQuestions": {
     params: z.object({
       threadId: z.string(),
@@ -763,6 +792,10 @@ export const WS_METHODS = lazySchema(() => ({
       before: z.number().int().optional(),
     }),
     result: ConversationPageSchema(),
+  },
+  "conversation.tail": {
+    params: ConversationTailParamsSchema(),
+    result: ConversationTailSchema(),
   },
   "file.list": {
     params: z.object({

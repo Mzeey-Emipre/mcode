@@ -90,6 +90,11 @@ function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** Reports whether a provider receives the internal thread-control MCP lease. */
+export function usesInternalThreadControlMcp(provider: string): provider is ProviderId {
+  return ["claude", "codex", "cursor", "copilot"].includes(provider);
+}
+
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
 
 type RetryDispatchIdentity = Readonly<{
@@ -963,7 +968,7 @@ export class AgentService {
       resumeFrom: attemptResumeFrom,
       providerOptions,
     } as TurnRequest;
-    if (effectiveProvider === "claude" || effectiveProvider === "codex") {
+    if (usesInternalThreadControlMcp(effectiveProvider)) {
       this.threadControlMcp?.activate({
         sessionId: sessionName,
         sourceThreadId: threadId,
@@ -2210,7 +2215,7 @@ export class AgentService {
         });
       }
       if (!this.getCurrentRetryDispatch(threadId, identity)) return false;
-      if (dispatch.effectiveProvider === "claude" || dispatch.effectiveProvider === "codex") {
+      if (usesInternalThreadControlMcp(dispatch.effectiveProvider)) {
         this.threadControlMcp?.activate({
           sessionId: dispatch.sessionName,
           sourceThreadId: threadId,

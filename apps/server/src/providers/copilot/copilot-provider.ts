@@ -30,6 +30,7 @@ import {
 import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import { EnvService } from "../../services/env-service.js";
+import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
@@ -61,10 +62,25 @@ import {
   AgentEventType,
   BROWSER_AUTOMATION_OPERATION_METADATA,
 } from "@mcode/contracts";
+import type { InternalThreadControlMcpHttpConnection } from "../../services/thread-control-mcp-runtime.js";
 
 /** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
+
+/** Builds the Copilot SDK's remote HTTP MCP configuration for one provider session. */
+export function buildCopilotInternalMcpServers(
+  connection: InternalThreadControlMcpHttpConnection,
+): Record<string, { type: "http"; url: string; headers: Record<string, string>; tools: ["*"] }> {
+  return {
+    [connection.name]: {
+      type: "http",
+      url: connection.url,
+      headers: connection.headers,
+      tools: ["*"],
+    },
+  };
+}
 
 function transientHandoffError(message: string): Error & { code: string } {
   const err = new Error(message) as Error & { code: string };
@@ -166,6 +182,7 @@ const BUILTIN_MODE_NAMES = new Set<"interactive" | "plan" | "autopilot">(
  * substitute: set true while a turn runs, false when it settles.
  */
 interface CopilotSessionState {
+  sessionId: string;
   session: CopilotSession;
   lastUsedAt: number;
   /**
@@ -236,6 +253,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     @inject(EnvService) private readonly envService: EnvService,
     @inject(BrowserAutomationSessionLease)
     private readonly browserAutomationLease: BrowserAutomationSessionLease = new BrowserAutomationSessionLease(),
+    @inject(InternalThreadControlMcpRuntime)
+    private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
   ) {
     super();
     this.runtime = new SessionRuntime<CopilotSessionState>(this, {
@@ -347,7 +366,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     conversationHistory?: string;
     cwd: string;
   }): Promise<string> {
-    const { parentThreadId, parentSdkSessionId, prompt, abortSignal, conversationHistory, cwd } = args;
+    const { parentThreadId, prompt, abortSignal, conversationHistory, cwd } = args;
     if (abortSignal?.aborted) throw transientHandoffError("Copilot side-channel query aborted before start");
 
     await this.refreshClient();
@@ -367,19 +386,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     };
 
     let session: CopilotSession;
-    let usingSessionlessHistory = false;
+    const usingSessionlessHistory = Boolean(conversationHistory);
     try {
-      session = parentSdkSessionId
-        ? await client.resumeSession(parentSdkSessionId, sessionBase)
-        : await client.createSession(sessionBase);
-    } catch (err) {
-      if (!conversationHistory) {
-        throw transientHandoffError(
-          `Copilot side-channel could not resume parent thread ${parentThreadId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      usingSessionlessHistory = true;
       session = await client.createSession(sessionBase);
+    } catch (err) {
+      throw transientHandoffError(
+        `Copilot side-channel could not create isolated session for parent thread ${parentThreadId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     const sideChannelPrompt = usingSessionlessHistory && conversationHistory
@@ -549,7 +562,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
   private async doRefreshClient(): Promise<void> {
     const settings = await this.settingsService.get();
-    const configuredCliPath = settings.provider.cli.copilot || undefined;
+    const configuredCliPath = settings.provider.cli.copilot?.trim() || undefined;
     const state = this.client?.getState();
 
     // Reuse the existing client only when it is healthy. A "disconnected" or
@@ -580,35 +593,40 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     } = {};
 
     opts.env = { ...this.envService.getEnv() };
-    // Pin the CLI version the resolver selected; without this the launcher can
-    // delegate to a newer build in ~/.copilot/pkg that breaks the SDK contract.
+    // Keep the SDK-managed or explicitly configured CLI from auto-updating during a session.
     opts.cliArgs = ["--no-auto-update"];
 
-    // Ordered resolution: configured path > npm-global index.js > PATH/shim follow.
-    const resolution = resolveCopilotCli(
-      { configuredPath: configuredCliPath },
-      createNodeResolverIO(this.envService.getEnv(), process.platform),
-    );
-    this.lastResolution = resolution;
-    if (resolution.source === "not-found") {
-      // Leave this.client null; sendTurn/listModels translate lastResolution
-      // into a user-facing error via the existing error seam.
-      logger.warn("CopilotProvider: CLI not found", { message: resolution.message });
-      this.lastCliPath = configuredCliPath;
-      return;
+    let resolution: CopilotCliResolution | undefined;
+    if (configuredCliPath) {
+      resolution = resolveCopilotCli(
+        { configuredPath: configuredCliPath },
+        createNodeResolverIO(this.envService.getEnv(), process.platform),
+      );
+      this.lastResolution = resolution;
+      if (resolution.source === "not-found") {
+        // Leave this.client null; sendTurn/listModels translate lastResolution
+        // into a user-facing error via the existing error seam.
+        logger.warn("CopilotProvider: CLI not found", { message: resolution.message });
+        this.lastCliPath = configuredCliPath;
+        return;
+      }
+      opts.cliPath = resolution.entry;
+      logger.info("CopilotProvider: resolved configured CLI", {
+        source: resolution.source,
+        version: resolution.version ?? "unknown",
+      });
+    } else {
+      // The SDK bundles a compatible CLI. Leaving cliPath unset is intentional:
+      // overriding it with a global install can mix incompatible SDK/CLI versions.
+      this.lastResolution = null;
     }
-    opts.cliPath = resolution.entry;
-    logger.info("CopilotProvider: resolved CLI", {
-      source: resolution.source,
-      version: resolution.version ?? "unknown",
-    });
 
     // Electron fix: resolve the real node binary path once. The SDK's
     // getNodeExecPath() reads process.execPath to spawn .js CLI files,
     // but in Electron that returns electron.exe which cannot host the
     // CLI's server mode. We temporarily override process.execPath during
     // client.start() and also prepend node's directory to PATH.
-    if (process.versions.electron && resolution.source !== "configured") {
+    if (process.versions.electron && !configuredCliPath) {
       if (this.cachedNodePath === undefined) {
         this.cachedNodePath = await which("node", { nothrow: true });
         if (!this.cachedNodePath) {
@@ -656,7 +674,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // In Electron that returns electron.exe, causing the CLI to exit immediately.
     // Temporarily override process.execPath with the real node binary.
     const needsElectronExecPathOverride =
-      process.versions.electron && resolution.source !== "configured" && this.cachedNodePath;
+      process.versions.electron && !configuredCliPath && this.cachedNodePath;
     try {
       if (needsElectronExecPathOverride) {
         const origExecPath = process.execPath;
@@ -676,7 +694,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
           source: "not-found",
           entry: null,
           version: null,
-          message: formatCopilotUpgradeMessage(resolution.version),
+          message: formatCopilotUpgradeMessage(resolution?.version ?? null),
         };
         this.lastCliPath = configuredCliPath;
         logger.warn("CopilotProvider: CLI too old for SDK", { message: this.lastResolution.message });
@@ -962,6 +980,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // approved automatically regardless of the thread's permissionMode setting.
     const userInstructions = readUserInstructions();
     const skillDirs = userSkillDirectories();
+    const internalMcp = await this.threadControlMcp?.createHttpConnection(sessionId);
+    if (!internalMcp) throw new Error("Copilot internal thread-control MCP connection unavailable");
     const sessionBase = {
       onPermissionRequest: approveAll,
       model: staged?.model || undefined,
@@ -970,8 +990,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       ...(customAgents.length > 0 && { customAgents }),
       ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
       ...(userInstructions && { systemMessage: { content: userInstructions } }),
-      ...(browserGrant && {
-        mcpServers: {
+      mcpServers: {
+        ...buildCopilotInternalMcpServers(internalMcp),
+        ...(browserGrant ? {
           "mcode-browser": {
             type: "http" as const,
             url: browserGrant.mcpUrl,
@@ -980,8 +1001,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
               (operation) => BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
             ),
           },
-        },
-      }),
+        } : {}),
+      },
     };
 
     try {
@@ -1002,6 +1023,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       }
     } catch (error) {
       if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
+      await this.threadControlMcp?.close(sessionId);
       throw error;
     }
 
@@ -1031,6 +1053,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       }
 
       const state: CopilotSessionState = {
+        sessionId,
         session,
         lastUsedAt: Date.now(),
         turnActive: false,
@@ -1055,6 +1078,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     } catch (error) {
       if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
       await session.disconnect().catch(() => {});
+      await this.threadControlMcp?.close(sessionId);
+      this.sdkSessionIds.delete(sessionId);
       throw error;
     }
   }
@@ -1099,6 +1124,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    await this.threadControlMcp?.close(state.sessionId);
   }
 
   /**

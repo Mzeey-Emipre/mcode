@@ -15,7 +15,11 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { clearRecordCache, getCachedRecord } from "@/lib/thread-hydrator/record-cache";
+import {
+  cacheRecord,
+  clearRecordCache,
+  getCachedRecord,
+} from "@/lib/thread-hydrator/record-cache";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({
@@ -96,6 +100,13 @@ function resetState() {
   });
 
   useTaskStore.setState({ tasksByThread: {} });
+}
+
+/** Age the cache-owned freshness marker so cache-hit equality guards run their RPC handlers. */
+function ageCachedHydration(): void {
+  const cached = getCachedRecord(THREAD_ID);
+  expect(cached).toBeDefined();
+  cacheRecord(THREAD_ID, { ...cached!, lastHydratedAt: Date.now() - 5000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -253,10 +264,8 @@ describe("loadMessages (cache-hit) - listPendingPermissions equality guard", () 
       expect(getCachedRecord(THREAD_ID)).toBeDefined();
     });
     // Switch away so that the next call to loadMessages(THREAD_ID) hits the cache.
-    // Clear `lastHydratedByThread` so the cache-hit staleness gate does not skip
-    // the side-effect refresh under test - these tests exercise the equality
-    // guards inside the RPC handlers, not the gate itself.
     resetThreadStoreForTests({ currentThreadId: "other-thread" });
+    ageCachedHydration();
     vi.clearAllMocks();
     // Re-set mock defaults so the cache-hit refresh calls are controlled.
     (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -335,8 +344,8 @@ describe("loadMessages (cache-hit) - getThreadTasks equality guard", () => {
     await vi.waitFor(() => {
       expect(getCachedRecord(THREAD_ID)).toBeDefined();
     });
-    // See note in the sibling warmCache about clearing `lastHydratedByThread`.
     resetThreadStoreForTests({ currentThreadId: "other-thread" });
+    ageCachedHydration();
     vi.clearAllMocks();
     (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   }

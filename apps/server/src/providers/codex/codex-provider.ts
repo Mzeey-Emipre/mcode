@@ -91,6 +91,7 @@ import {
 const TURN_TIMEOUT_MS = 5 * 60 * 1000;
 const SIDE_CHANNEL_TIMEOUT_MS = 120_000;
 const USAGE_WARMUP_TIMEOUT_MS = 10_000;
+const CODEX_MCP_STARTUP_TIMEOUT_MS = 10_000;
 const USAGE_WARMUP_RETRY_MS = 60_000;
 const CODEX_MIN_VERSION = "0.37.0";
 
@@ -205,6 +206,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Reports whether Codex effective configuration registered the internal MCP server. */
+export function hasCodexInternalThreadControlMcp(effectiveConfig: unknown): boolean {
+  if (!isRecord(effectiveConfig) || !isRecord(effectiveConfig.config)) return false;
+  const mcpServers = effectiveConfig.config.mcp_servers;
+  return (
+    mcpServers !== null &&
+    typeof mcpServers === "object" &&
+    Object.prototype.hasOwnProperty.call(mcpServers, "mcode_internal_thread_control")
+  );
+}
+
 function codexResetDate(resetsAt: number | undefined): string | undefined {
   if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) return undefined;
   const resetDate = new Date(resetsAt * 1000);
@@ -233,6 +245,44 @@ function transientHandoffError(message: string): Error & { code: string } {
   const err = new Error(message) as Error & { code: string };
   err.code = "ETIMEDOUT";
   return err;
+}
+
+function observeCodexInternalMcpStartup(server: CodexAppServer): {
+  promise: Promise<void>;
+  cancel: () => void;
+} {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let resolvePromise!: () => void;
+  let rejectPromise!: (error: Error) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  const finish = (error?: Error): void => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    server.off("notification", onNotification);
+    if (error) rejectPromise(error);
+    else resolvePromise();
+  };
+  const onNotification = (notification: unknown): void => {
+    const value = notification as { method?: unknown; params?: Record<string, unknown> };
+    if (value.method !== "mcpServer/startupStatus/updated") return;
+    if (value.params?.name !== "mcode_internal_thread_control") return;
+    const status = typeof value.params.status === "string" ? value.params.status : "";
+    if (status === "ready") finish();
+    else if (status === "failed" || status === "error") {
+      finish(new Error(`Codex internal MCP startup failed (${status})`));
+    }
+  };
+  server.on("notification", onNotification);
+  timer = setTimeout(
+    () => finish(new Error("Codex internal MCP startup timed out")),
+    CODEX_MCP_STARTUP_TIMEOUT_MS,
+  );
+  return { promise, cancel: () => finish(new Error("Codex internal MCP startup cancelled")) };
 }
 
 /**
@@ -1078,7 +1128,13 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // obvious in logs.
     const supervised = approvalPolicy === "on-request";
     const browserAccess = this.pendingBrowserAccess.get(sessionId);
-    const internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
+    let internalMcp: Awaited<ReturnType<InternalThreadControlMcpRuntime["createCodexConfiguration"]>>;
+    try {
+      internalMcp = await this.threadControlMcp?.createCodexConfiguration(sessionId);
+    } catch (error) {
+      await this.threadControlMcp?.close(sessionId);
+      throw error;
+    }
     const browserGrant = browserAccess ? this.browserAutomationLease.issue(browserAccess.stage) : null;
     const spawnEnv = { ...args.env };
     const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
@@ -1161,6 +1217,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     });
 
     this.attachFatalDrain(sessionId, server);
+    const internalMcpStartup = internalMcp ? observeCodexInternalMcpStartup(server) : undefined;
 
     server.on("exit", () => {
       if (!server.isAlive) {
@@ -1174,10 +1231,27 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       await server.start();
     } catch (error) {
       if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
+      internalMcpStartup?.cancel();
+      await this.threadControlMcp?.close(sessionId);
       throw error;
     } finally {
       delete spawnEnv[browserTokenEnvName];
       this.pendingBrowserAccess.delete(sessionId);
+    }
+    if (internalMcp) {
+      try {
+        const effectiveConfig = await server.readConfig(cwd);
+        if (!hasCodexInternalThreadControlMcp(effectiveConfig)) {
+          throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
+        }
+        await internalMcpStartup!.promise;
+      } catch (error) {
+        internalMcpStartup?.cancel();
+        if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
+        await this.threadControlMcp?.close(sessionId);
+        await server.kill().catch(() => undefined);
+        throw error;
+      }
     }
     this.refreshUsageFromServer(server, threadId);
 
@@ -1337,7 +1411,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     conversationHistory?: string;
     cwd: string;
   }): Promise<string> {
-    const { parentThreadId, parentSdkSessionId, prompt, abortSignal, conversationHistory, cwd } = args;
+    const { parentThreadId, prompt, abortSignal, conversationHistory, cwd } = args;
     if (abortSignal?.aborted) throw transientHandoffError("Codex side-channel query aborted before start");
 
     const settings = await this.settingsService.get();
@@ -1357,7 +1431,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       // No approvalHandler is registered here, so side-channel tool requests
       // are denied while the handoff prompt still runs in the parent session.
       approvalPolicy: "on-request",
-      resumeThreadId: parentSdkSessionId || undefined,
+      // Side-channel work must never resume the MCP-enabled parent session.
+      // Conversation history is supplied explicitly when available.
+      resumeThreadId: undefined,
       jobObject: this.jobObject,
       getSpawnEnv: () => this.envService.getEnv(),
     });
@@ -1385,11 +1461,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     try {
       await server.start();
-      if (server.resumeFailed && !conversationHistory) {
-        throw transientHandoffError(`Codex side-channel could not resume parent thread ${parentThreadId}`);
-      }
 
-      const sideChannelPrompt = server.resumeFailed && conversationHistory
+      const sideChannelPrompt = conversationHistory
         ? `Conversation history up to the fork point:\n\n${conversationHistory}\n\n---\n\n${prompt}`
         : prompt;
 

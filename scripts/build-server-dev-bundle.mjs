@@ -9,7 +9,7 @@
 
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -294,6 +294,80 @@ export function copyClaudeSdkCliNextTo(
   }
 }
 
+/** Return the platform-specific optional package name shipped with Copilot CLI. */
+export function copilotSdkPlatformPackageName(platform, arch) {
+  return `@github/copilot-${platform}-${arch}`;
+}
+
+/**
+ * Resolve the Copilot SDK package and its bundled CLI dependencies from the SDK's own
+ * dependency graph. This avoids relying on the workspace's hoisted or global packages.
+ */
+export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
+  const platformPkg = copilotSdkPlatformPackageName(platform, arch);
+  try {
+    const serverRequire = createRequire(resolve(serverPackageRoot, "package.json"));
+    const sdkEntry = serverRequire.resolve("@github/copilot-sdk");
+    const sdkRequire = createRequire(sdkEntry);
+    const copilotPackageDir = realpathSync(resolve(dirname(sdkEntry), "..", "..", "..", "copilot"));
+    const platformEntry = sdkRequire.resolve(platformPkg);
+    const platformPackageDir = realpathSync(dirname(platformEntry));
+    return { platformPkg, copilotPackageDir, platformPackageDir };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${platformPkg} not installed - run 'bun install' (Copilot SDK dependencies are out of sync): ${detail}`,
+    );
+  }
+}
+
+/** Copy the complete Copilot CLI package tree and target platform package into a server tree. */
+export function copyCopilotSdkToDir({ destServerDir, serverPackageRoot, platform, arch }) {
+  const { platformPkg, copilotPackageDir, platformPackageDir } = resolveCopilotSdkSources(
+    serverPackageRoot,
+    platform,
+    arch,
+  );
+  const githubDir = resolve(destServerDir, "node_modules", "@github");
+  const copilotDst = resolve(githubDir, "copilot");
+  const platformDst = resolve(githubDir, platformPkg.slice("@github/".length));
+  mkdirSync(githubDir, { recursive: true });
+  rmSync(copilotDst, { recursive: true, force: true });
+  rmSync(platformDst, { recursive: true, force: true });
+  cpSync(copilotPackageDir, copilotDst, { recursive: true });
+  cpSync(platformPackageDir, platformDst, { recursive: true });
+  return { platformPkg, copilotDst, platformDst };
+}
+
+/** Stage Copilot's bundled CLI packages beside a bundled `server.cjs` for development. */
+export function copyCopilotSdkNextTo(
+  serverCjsOut,
+  serverPackageRoot,
+  platform = process.platform,
+  arch = process.arch,
+) {
+  return copyCopilotSdkToDir({
+    destServerDir: dirname(serverCjsOut),
+    serverPackageRoot,
+    platform,
+    arch,
+  });
+}
+
+/** Detect a complete staged Copilot package tree beside a bundled server entry. */
+export function findCopilotSdkPath(serverCjsOut, platform, arch) {
+  const serverDir = dirname(serverCjsOut);
+  const platformPkg = copilotSdkPlatformPackageName(platform, arch);
+  const copilotIndex = resolve(serverDir, "node_modules", "@github", "copilot", "index.js");
+  const platformEntry = resolve(
+    serverDir,
+    "node_modules",
+    "@github",
+    platformPkg.slice("@github/".length),
+  );
+  return existsSync(copilotIndex) && existsSync(platformEntry) ? copilotIndex : undefined;
+}
+
 /**
  * Produce `apps/desktop/dist/server/server.cjs` from current server sources.
  *
@@ -328,6 +402,7 @@ export async function rebuildServerDevBundle(options = {}) {
   });
 
   copyClaudeSdkCliNextTo(serverOutFile, serverRoot);
+  copyCopilotSdkNextTo(serverOutFile, serverRoot);
 
   const drizzleSrc = resolve(serverRoot, "drizzle");
   const drizzleDst = resolve(desktopRoot, "dist/server/drizzle");

@@ -1,11 +1,11 @@
 import type { ConversationPage } from "@mcode/contracts";
+import {
+  createAdjacentPrefetchScheduler,
+  type AdjacentPrefetchThread,
+} from "@/lib/thread-hydrator/adjacent-prefetch";
 
 /** A sidebar row that can be activated as a persisted conversation. */
-export interface ConversationResidencyThread {
-  id: string;
-  clientPreparing?: boolean;
-  clientError?: string | null;
-}
+export type ConversationResidencyThread = AdjacentPrefetchThread;
 
 /** Dependency contract for conversation residency behavior. */
 export interface ConversationResidencyDeps {
@@ -25,16 +25,29 @@ export interface ConversationResidencyDeps {
  * Transport, cache freshness, and live-record precedence stay in ThreadHydrator.
  */
 export class ConversationResidency {
-  constructor(private readonly deps: ConversationResidencyDeps) {}
+  private activationGeneration = 0;
+  private readonly adjacentPrefetch;
+
+  constructor(private readonly deps: ConversationResidencyDeps) {
+    this.adjacentPrefetch = createAdjacentPrefetchScheduler({
+      prefetch: deps.prefetchConversation,
+    });
+  }
 
   /** Activate the selected thread when it has a persisted conversation identity. */
   activate(threadId: string | null, threads: readonly ConversationResidencyThread[]): Promise<void> {
+    const activationGeneration = ++this.activationGeneration;
+    this.adjacentPrefetch.cancel();
     const thread = threadId ? threads.find((candidate) => candidate.id === threadId) : undefined;
     if (!thread || thread.clientPreparing || thread.clientError) {
       this.deps.deactivateConversation();
       return Promise.resolve();
     }
-    return this.deps.restoreConversation(thread.id);
+    return this.deps.restoreConversation(thread.id).then(() => {
+      if (activationGeneration === this.activationGeneration) {
+        this.adjacentPrefetch.activate(thread.id, threads);
+      }
+    });
   }
 
   /** Revalidate the selected transcript without clearing its resident rendering. */

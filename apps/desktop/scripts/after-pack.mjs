@@ -3,8 +3,9 @@
  *
  * 1. Built renamed `mcode-server` Electron binary (before fuse flip)
  * 2. Copied Claude Agent SDK native CLI into the asar-unpacked server tree
- * 3. Restored node-pty's Windows ConPTY runtime after the native rebuild
- * 4. Copied browser V8 snapshot (when generated) and flipped security fuses
+ * 3. Copied Copilot SDK's bundled CLI package tree into the asar-unpacked server tree
+ * 4. Restored node-pty's Windows ConPTY runtime after the native rebuild
+ * 5. Copied browser V8 snapshot (when generated) and flipped security fuses
  *
  * This script is invoked automatically by electron-builder via the
  * "afterPack" config in package.json.
@@ -17,6 +18,7 @@ import { fileURLToPath } from "url";
 import { buildServerBinary } from "./build-server-binary.mjs";
 import {
   copyClaudeSdkCliToDir,
+  copyCopilotSdkToDir,
   electronArchToNpm,
   electronPlatformToNpm,
   resolvePackagedServerDir,
@@ -103,6 +105,14 @@ export default async function afterPack(context) {
     arch: npmArch,
   });
   console.log(`[after-pack] Copied Claude SDK CLI (${platformPkg}) to ${binDst}`);
+
+  const { platformPkg: copilotPlatformPkg, copilotDst } = copyCopilotSdkToDir({
+    destServerDir: packagedServerDir,
+    serverPackageRoot,
+    platform: npmPlatform,
+    arch: npmArch,
+  });
+  console.log(`[after-pack] Copied Copilot SDK packages (${copilotPlatformPkg}) to ${copilotDst}`);
 
   if (npmPlatform === "win32") {
     const nodePtyRoot = resolve(

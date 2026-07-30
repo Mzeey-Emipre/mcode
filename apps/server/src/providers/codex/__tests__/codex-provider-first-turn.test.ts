@@ -84,6 +84,7 @@ function makeProvider(
     shutdown: vi.fn(async () => undefined),
   },
   browserAutomationLease = new BrowserAutomationSessionLease(),
+  threadControlMcp: { createCodexConfiguration?: () => Promise<unknown>; close?: (sessionId: string) => Promise<void> } = undefined as never,
 ): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
@@ -92,6 +93,7 @@ function makeProvider(
     { persistGeneratedImageFromPath: vi.fn() } as never,
     catalogService as never,
     browserAutomationLease,
+    threadControlMcp as never,
   );
 }
 
@@ -964,7 +966,9 @@ describe("CodexProvider first turn on new session", () => {
     expect(sideChannelServer.options).toMatchObject({
       sandbox: "read-only",
       approvalPolicy: "on-request",
+      resumeThreadId: undefined,
     });
+    expect(sideChannelServer.options).not.toHaveProperty("configOverrides");
     sideChannelServer.emit("notification", {
       method: "item/agentMessage/delta",
       params: { delta: "# Handoff" },
@@ -975,6 +979,29 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await expect(result).resolves.toBe("# Handoff");
+  });
+
+  it("closes internal MCP authority when spawn setup fails before runtime registration", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
+      createCodexConfiguration: vi.fn().mockRejectedValue(new Error("MCP setup failed")),
+      close,
+    });
+
+    await provider.sendTurn({
+      sessionId: "mcode-mcp-failure",
+      workspaceId: "workspace-mcp-failure",
+      threadId: "mcp-failure",
+      message: "hello",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    expect(close).toHaveBeenCalledWith("mcode-mcp-failure");
+    expect((provider as unknown as { runtime: { get: (sessionId: string) => unknown } }).runtime.get("mcode-mcp-failure")).toBeUndefined();
   });
 
   it("maps side-channel CLI preflight failures to transient errors before creating a server", async () => {

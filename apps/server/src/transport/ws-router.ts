@@ -60,7 +60,12 @@ import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { WorkspaceEnricher } from "../services/workspace-enricher";
 import type { FilesystemBrowser } from "../services/filesystem-browser";
-import { broadcast, subscribeClientToThread, unsubscribeClientFromThread } from "./push";
+import {
+  broadcast,
+  setClientThreadSubscriptions,
+  subscribeClientToThread,
+  unsubscribeClientFromThread,
+} from "./push";
 import { getTransportPayloadValidator } from "./payload-validation.js";
 import {
   ProviderCliMissingError,
@@ -93,7 +98,7 @@ import type { ModelCacheService } from "../services/model-cache-service.js";
 import type { DiffSummaryService } from "../services/diff-summary-service.js";
 import type { RecapService } from "../services/recap-service.js";
 import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
-import { loadConversationPage } from "../services/conversation-page.js";
+import { loadConversationPage, loadConversationTail } from "../services/conversation-page.js";
 import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
 import type { PullRequestService } from "../services/pull-requests/pull-request-service.js";
 import type { PullRequestMutationService } from "../services/pull-requests/pull-request-mutation-service.js";
@@ -484,6 +489,11 @@ async function dispatch(
     case "push.unsubscribeThread":
       if (context.client) {
         unsubscribeClientFromThread(context.client, params.threadId);
+      }
+      return;
+    case "push.setThreadSubscriptions":
+      if (context.client) {
+        setClientThreadSubscriptions(context.client, params.threadIds);
       }
       return;
 
@@ -912,6 +922,11 @@ async function dispatch(
         threadId: params.threadId,
         limit: params.limit,
         before: params.before,
+      });
+    case "conversation.tail":
+      return loadConversationTail(deps, {
+        threadId: params.threadId,
+        limit: params.limit,
       });
 
     // Files
