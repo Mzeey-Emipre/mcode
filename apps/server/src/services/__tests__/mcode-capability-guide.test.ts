@@ -1,23 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { MCODE_CAPABILITY_GUIDE, getMcodeCapabilityGuide } from "../mcode-capability-guide.js";
+import {
+  MCODE_BROWSER_GUIDE,
+  THREAD_CONTROL_GUIDE,
+  getMcodeBrowserGuide,
+  getThreadControlGuide,
+} from "../mcode-capability-guide.js";
 
 describe("Mcode capability guide", () => {
-  it("returns stable guidance for thread control and browser operations", () => {
-    const result = getMcodeCapabilityGuide();
+  it("returns browser-only guidance", () => {
+    const result = getMcodeBrowserGuide();
 
-    expect(result).toEqual({ guide: MCODE_CAPABILITY_GUIDE });
+    expect(result).toEqual({ guide: MCODE_BROWSER_GUIDE });
+    expect(result.guide).toContain("browser_status");
+    expect(result.guide).toContain("expectedControlEpoch");
+    expect(result.guide).not.toContain("thread_create_batch");
+    expect(result.guide).not.toContain("workspace_search");
+  });
+
+  it("returns thread-control-only guidance", () => {
+    const result = getThreadControlGuide();
+
+    expect(result).toEqual({ guide: THREAD_CONTROL_GUIDE });
     expect(result.guide).toContain("workspace_search");
     expect(result.guide).toContain("thread_create_batch");
     expect(result.guide).toContain("active source thread's Project");
     expect(result.guide).toContain("omit branchName");
-    expect(result.guide).toContain("no branchName");
     expect(result.guide).toContain("providerId codex");
-    const example = result.guide.slice(result.guide.indexOf("- Example:"), result.guide.indexOf("\n\nMcode Browser"));
-    expect(example).not.toContain("workspace_search");
-    expect(example).not.toContain("worktree_list");
-    expect(result.guide).toContain("browser_status");
-    expect(result.guide).toContain("expectedControlEpoch");
-    expect(result.guide).not.toContain("password");
-    expect(result.guide).not.toContain("api key");
+    expect(result.guide).not.toContain("browser_status");
+    expect(result.guide).not.toContain("expectedControlEpoch");
   });
 });

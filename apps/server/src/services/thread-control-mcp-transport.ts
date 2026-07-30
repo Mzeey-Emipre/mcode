@@ -19,7 +19,7 @@ import {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { InternalThreadControlMcpAuthority } from "./thread-control-mcp-authority.js";
 import type { ThreadControlService } from "./thread-control-service.js";
-import { getMcodeCapabilityGuide } from "./mcode-capability-guide.js";
+import { getMcodeBrowserGuide, getThreadControlGuide } from "./mcode-capability-guide.js";
 
 /** Incoming request context for the server-internal MCP transport. */
 export interface InternalThreadControlMcpRequest {
@@ -99,11 +99,17 @@ export function createInternalThreadControlMcpSession(
         const input = ThreadWaitInputSchema().parse(request.arguments);
         return ThreadWaitResultSchema().parse(await options.service.threadWait(authority, input, signal));
       }
-      case "mcode_guide": {
+      case "mcode_browser_guide": {
         if (!isEmptyArguments(request.arguments)) {
-          throw new Error("mcode_guide accepts no arguments");
+          throw new Error("mcode_browser_guide accepts no arguments");
         }
-        return getMcodeCapabilityGuide();
+        return getMcodeBrowserGuide();
+      }
+      case "thread_control_guide": {
+        if (!isEmptyArguments(request.arguments)) {
+          throw new Error("thread_control_guide accepts no arguments");
+        }
+        return getThreadControlGuide();
       }
       default:
         throw new InternalThreadControlMcpAuthorizationError();
@@ -114,12 +120,21 @@ export function createInternalThreadControlMcpSession(
     dispatch,
     createServer(bearerCredential) {
       const server = new McpServer({ name: "mcode-internal-thread-control", version: "0.1.0" });
-      server.registerTool("mcode_guide", {
-        description: "Read the Mcode operating guide when a user asks to create, inspect, coordinate, send work to, stop, or wait on Mcode threads, or to use or control the Mcode Browser.",
+      server.registerTool("mcode_browser_guide", {
+        description: "Read the Mcode Browser operating guide.",
       }, async (extra) => createToolResult(await dispatch({
         bearerCredential,
         requestId: extra.requestId,
-        toolName: "mcode_guide",
+        toolName: "mcode_browser_guide",
+        arguments: undefined,
+        signal: extra.signal,
+      })));
+      server.registerTool("thread_control_guide", {
+        description: "Read the Mcode thread-control operating guide.",
+      }, async (extra) => createToolResult(await dispatch({
+        bearerCredential,
+        requestId: extra.requestId,
+        toolName: "thread_control_guide",
         arguments: undefined,
         signal: extra.signal,
       })));

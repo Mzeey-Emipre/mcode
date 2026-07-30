@@ -325,25 +325,40 @@ describe("selection + text replacement", () => {
     expect(result.current.isOpen).toBe(false);
   });
 
-  it("inserts the Mcode capability guide slash command", async () => {
+  it("inserts focused Mcode guide slash commands", async () => {
     const ref = makeAnchor();
     const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
-    await act(async () => { result.current.onInputChange("/mcode-g"); });
+    await act(async () => { result.current.onInputChange("/mcode-b"); });
     await act(async () => {});
 
-    const guideCommand = result.current.items.find((item) => item.name === "mcode-guide");
-    expect(guideCommand).toBeDefined();
-    expect(guideCommand).toMatchObject({
+    const browserCommand = result.current.items.find((item) => item.name === "mcode-browser");
+    expect(browserCommand).toBeDefined();
+    expect(browserCommand).toMatchObject({
       namespace: "mcode",
       capabilityKind: "mcode",
-      id: "builtin:mcode:mcode-guide",
+      id: "builtin:mcode:mcode-browser",
     });
 
     let inserted = "";
     await act(async () => {
-      result.current.onSelect(guideCommand!, (value: string) => { inserted = value; });
+      result.current.onSelect(browserCommand!, (value: string) => { inserted = value; });
     });
-    expect(inserted).toBe("/mcode-guide ");
+    expect(inserted).toBe("/mcode-browser ");
+
+    await act(async () => { result.current.onInputChange("/thread-c"); });
+    await act(async () => {});
+    const threadCommand = result.current.items.find((item) => item.name === "thread-control");
+    expect(threadCommand).toMatchObject({
+      namespace: "mcode",
+      capabilityKind: "mcode",
+      id: "builtin:mcode:thread-control",
+    });
+    await act(async () => {
+      result.current.onSelect(threadCommand!, (value: string) => { inserted = value; });
+    });
+    expect(inserted).toBe("/thread-control ");
+
+    expect(result.current.allCommands.map((item) => item.name)).not.toContain("mcode-guide");
   });
 });
 

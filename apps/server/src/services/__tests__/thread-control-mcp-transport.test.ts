@@ -99,7 +99,8 @@ describe("internal thread-control MCP transport", () => {
     await client.connect(clientTransport);
     await expect(client.listTools()).resolves.toMatchObject({
       tools: [
-        { name: "mcode_guide", description: expect.stringContaining("Mcode Browser") },
+        { name: "mcode_browser_guide", description: expect.stringContaining("Mcode Browser") },
+        { name: "thread_control_guide", description: expect.stringContaining("thread-control") },
         { name: "workspace_search" },
         { name: "worktree_list" },
         { name: "thread_create_batch" },
@@ -110,9 +111,13 @@ describe("internal thread-control MCP transport", () => {
         { name: "thread_wait" },
       ],
     });
-    await expect(client.callTool({ name: "mcode_guide" })).resolves.toMatchObject({
+    await expect(client.callTool({ name: "mcode_browser_guide" })).resolves.toMatchObject({
+      structuredContent: { guide: expect.stringContaining("browser_status") },
+      content: [{ type: "text", text: expect.not.stringContaining("thread_create_batch") }],
+    });
+    await expect(client.callTool({ name: "thread_control_guide" })).resolves.toMatchObject({
       structuredContent: { guide: expect.stringContaining("thread_create_batch") },
-      content: [{ type: "text", text: expect.stringContaining("browser_status") }],
+      content: [{ type: "text", text: expect.not.stringContaining("browser_status") }],
     });
     await expect(client.callTool({
       name: "thread_wait",
@@ -163,7 +168,8 @@ describe("internal thread-control MCP transport", () => {
     await client.connect(clientTransport);
     await expect(client.listTools()).resolves.toMatchObject({
       tools: [
-        { name: "mcode_guide" },
+        { name: "mcode_browser_guide" },
+        { name: "thread_control_guide" },
         { name: "workspace_search" },
         { name: "worktree_list" },
         { name: "thread_create_batch" },
