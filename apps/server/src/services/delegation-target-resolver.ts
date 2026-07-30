@@ -34,6 +34,8 @@ export class DelegationTargetResolver {
   /** Return bounded, secret-free provider/model targets usable for delegation. */
   async listTargets(): Promise<ThreadTargetListResult> {
     const settings = this.settings.get();
+    const globalProviderId = settings.model.defaults.provider;
+    const globalModelId = settings.model.defaults.id.trim();
     const targets: ThreadTargetListResult["providers"] = [];
     for (const provider of this.providers.resolveAll()) {
       const catalog = getCatalogEntry(provider.id);
@@ -43,8 +45,8 @@ export class DelegationTargetResolver {
         const models = await this.models.listModels(provider.id);
         const usableModels = this.usableModels(models);
         if (usableModels.length === 0) continue;
-        const globalDefaultModel = settings.model.defaults.provider === provider.id
-          ? settings.model.defaults.id.trim()
+        const globalDefaultModel = globalProviderId === provider.id
+          ? globalModelId
           : undefined;
         const defaultModelId = globalDefaultModel && usableModels.some((model) => model.id === globalDefaultModel)
           ? globalDefaultModel
@@ -69,7 +71,9 @@ export class DelegationTargetResolver {
   /** Resolve one requested provider/model pair against the current usable snapshot. */
   async resolve(input: Pick<ThreadCreateInput, "providerId" | "modelId">): Promise<DelegationTargetResolution> {
     const settings = this.settings.get();
-    const providerId = (input.providerId ?? settings.model.defaults.provider) as ProviderId;
+    const globalProviderId = settings.model.defaults.provider;
+    const globalModelId = settings.model.defaults.id.trim();
+    const providerId = (input.providerId ?? globalProviderId) as ProviderId;
     let provider;
     try {
       provider = this.providers.resolve(providerId);
@@ -79,11 +83,11 @@ export class DelegationTargetResolver {
     const explicitProvider = input.providerId !== undefined;
     const requiresExplicitModel = explicitProvider
       && input.modelId === undefined
-      && providerId !== settings.model.defaults.provider;
+      && providerId !== globalProviderId;
     let modelId = input.modelId;
     if (modelId === undefined) {
       if (requiresExplicitModel) return { status: "model_required" };
-      modelId = settings.model.defaults.id;
+      modelId = globalModelId;
     }
     try {
       this.availability?.assertUsable(provider.id);

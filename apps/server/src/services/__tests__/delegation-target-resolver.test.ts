@@ -46,11 +46,14 @@ describe("DelegationTargetResolver", () => {
   it("inherits the global pair only when the explicit provider matches", async () => {
     const settings = getDefaultSettings();
     settings.model.defaults.provider = "codex";
-    settings.model.defaults.id = "gpt";
+    settings.model.defaults.id = " gpt ";
     const codex = provider("codex");
     const registry: IProviderRegistry = { resolve: () => codex, resolveAll: () => [codex], shutdown: vi.fn() };
     const models = { listModels: vi.fn().mockResolvedValue([{ id: "gpt", name: "GPT" }]) };
     const resolver = new DelegationTargetResolver(registry, models as never, { get: () => settings } as never);
+    await expect(resolver.listTargets()).resolves.toEqual({
+      providers: [{ providerId: "codex", name: "Codex", models: [{ id: "gpt", name: "GPT" }], defaultModelId: "gpt" }],
+    });
     await expect(resolver.resolve({})).resolves.toEqual({ status: "resolved", providerId: "codex", modelId: "gpt" });
     await expect(resolver.resolve({ providerId: "codex" })).resolves.toEqual({ status: "resolved", providerId: "codex", modelId: "gpt" });
   });
