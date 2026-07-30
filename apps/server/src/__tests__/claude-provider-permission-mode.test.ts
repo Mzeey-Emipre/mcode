@@ -83,6 +83,7 @@ import { ClaudeProvider } from "../providers/claude/claude-provider";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
 import { BrowserAutomationAccessService } from "../services/browser-automation/access-service.js";
+import { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
 
 describe("ClaudeProvider permission mode changes", () => {
   let provider: ClaudeProvider;
@@ -98,11 +99,16 @@ describe("ClaudeProvider permission mode changes", () => {
 
   it("passes browser MCP through query options without touching process.env", async () => {
     const access = new BrowserAutomationAccessService();
+    const lease = new BrowserAutomationSessionLease(access.credentials);
     access.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
-    provider = new ClaudeProvider(stubEnvService(), stubJobObject(), undefined, access);
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    provider = new ClaudeProvider(stubEnvService(), stubJobObject(), undefined, access, lease);
 
     await provider.sendTurn({
       sessionId: "mcode-browser-claude",
