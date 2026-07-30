@@ -409,17 +409,19 @@ export class ThreadHydrator {
       return;
     }
 
-    await this.waitForActiveHydration();
-    if (hasCachedRecord(threadId)) return;
-    const activeAfterWait = this.activeHydrates.get(threadId);
-    if (activeAfterWait) {
-      await activeAfterWait;
-      return;
-    }
-    const backgroundAfterWait = this.backgroundHydrates.get(threadId);
-    if (backgroundAfterWait) {
-      await backgroundAfterWait;
-      return;
+    if (this.isActiveHydrationInFlight()) {
+      await this.waitForActiveHydration();
+      if (hasCachedRecord(threadId)) return;
+      const activeAfterWait = this.activeHydrates.get(threadId);
+      if (activeAfterWait) {
+        await activeAfterWait;
+        return;
+      }
+      const backgroundAfterWait = this.backgroundHydrates.get(threadId);
+      if (backgroundAfterWait) {
+        await backgroundAfterWait;
+        return;
+      }
     }
 
     const hydrate = this.fetchAndCacheBackground(threadId).finally(() => {
