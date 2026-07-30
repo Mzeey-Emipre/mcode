@@ -644,7 +644,7 @@ export async function warmCodexAppServer(
  * Emits:
  * - `notification(data: unknown)` - JSON-RPC notification forwarded from the RPC client
  * - `activity()` - a server-initiated request arrived (liveness signal for turn watchdogs)
- * - `fatal(error: string, breadcrumb?: CodexTransportBreadcrumb)` - unrecoverable error from stderr, unexpected exit, or handshake failure
+ * - `fatal(error: string)` - unrecoverable error from stderr, unexpected exit, or handshake failure
  * - `exit(code: number | null, signal: string | null)` - child process exit
  */
 export class CodexAppServer extends EventEmitter {
@@ -674,6 +674,12 @@ export class CodexAppServer extends EventEmitter {
 
   /** Bounded non-benign stderr tail shared by handshake and exit diagnostics. */
   private readonly stderrTail = new StderrTail();
+  /** Most recent immutable crash context, available without changing fatal listener arity. */
+  private _lastTransportBreadcrumb: CodexTransportBreadcrumb | null = null;
+  /** Most recent immutable crash context, if the child exited unexpectedly. */
+  public get lastTransportBreadcrumb(): CodexTransportBreadcrumb | null {
+    return this._lastTransportBreadcrumb;
+  }
   private activeRequestId: number | null = null;
   private activeTurnId: string | null = null;
   private lastActivity: { method: string; timestamp: number } | null = null;
@@ -702,6 +708,7 @@ export class CodexAppServer extends EventEmitter {
    */
   async start(): Promise<void> {
     const { cliPath, workingDirectory } = this.options;
+    this._lastTransportBreadcrumb = null;
 
     // Resolve bare command names to absolute paths so spawn works without shell.
     // On Windows, which() respects PATHEXT (.EXE before .CMD), so native binaries
@@ -1176,8 +1183,9 @@ export class CodexAppServer extends EventEmitter {
           exit: Object.freeze({ code, signal }),
           stderrTail: Object.freeze(stderrTail),
         }) satisfies CodexTransportBreadcrumb;
+        this._lastTransportBreadcrumb = breadcrumb;
         logger.error(msg, { cliPath, exit, stderrTail, breadcrumb });
-        this.emit("fatal", msg, breadcrumb);
+        this.emit("fatal", msg);
       }
     });
   }

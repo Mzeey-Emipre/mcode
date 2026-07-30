@@ -54,7 +54,7 @@ import type {
 import { AgentEventType, CODEX_STATIC_MODELS, isGoalOpen, isVirtualBrowserContextAttachment, supportsCodexUltraOrchestration } from "@mcode/contracts";
 import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
 import { CodexAppServer, warmCodexAppServer } from "./codex-app-server.js";
-import type { CodexApprovalRequest, CodexTransportBreadcrumb } from "./codex-app-server.js";
+import type { CodexApprovalRequest } from "./codex-app-server.js";
 import { CodexEventMapper } from "./codex-event-mapper.js";
 import { traceCodexIngest } from "./codex-trace.js";
 import type {
@@ -1207,8 +1207,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       if (childThreadId) this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId);
     });
 
-    server.on("fatal", (error: string, breadcrumb?: CodexTransportBreadcrumb) => {
-      logger.error("CodexAppServer fatal", { sessionId, error, breadcrumb });
+    server.on("fatal", (error: string) => {
+      logger.error("CodexAppServer fatal", { sessionId, error, breadcrumb: server.lastTransportBreadcrumb });
       for (const event of mapper.drainPendingAssistantBoundary(false)) {
         this.emit("event", event);
       }

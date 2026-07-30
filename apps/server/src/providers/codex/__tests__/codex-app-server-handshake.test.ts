@@ -491,7 +491,8 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
       }),
     );
 
-    const breadcrumb = vi.mocked(fatal).mock.calls[0]?.[1] as {
+    expect(vi.mocked(fatal).mock.calls[0]).toHaveLength(1);
+    const breadcrumb = server.lastTransportBreadcrumb as {
       cause: string;
       pid: number | null;
       activeTurnId: string | null;
@@ -526,7 +527,8 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     await server.sendTurn("secret prompt and response payload");
     child.emit("exit", 9, "SIGKILL");
 
-    const breadcrumb = vi.mocked(fatal).mock.calls[0]?.[1];
+    expect(vi.mocked(fatal).mock.calls[0]).toHaveLength(1);
+    const breadcrumb = server.lastTransportBreadcrumb;
     expect(breadcrumb).toMatchObject({ activeTurnId: "turn-redacted", exit: { code: 9, signal: "SIGKILL" } });
     expect(JSON.stringify(breadcrumb)).not.toContain("secret prompt");
     expect(JSON.stringify(breadcrumb)).not.toContain("response payload");
