@@ -8,8 +8,15 @@ import { WS_CHANNELS, type WsChannelName, encodeTerminalDataFrame } from "@mcode
 import { logger } from "@mcode/shared";
 import { getTransportPayloadValidator } from "./payload-validation.js";
 
+/** Maximum transient agent events retained for one thread. */
+export const MAX_AGENT_EVENT_JOURNAL_EVENTS_PER_THREAD = 256;
+/** Maximum thread journals retained by the process. */
+export const MAX_AGENT_EVENT_JOURNAL_THREADS = 100;
+
 const clients = new Set<WebSocket>();
 const threadSubscriptions = new Map<WebSocket, Set<string>>();
+const threadJournals = new Map<string, { events: unknown[] }>();
+const nextSequenceByThread = new Map<string, number>();
 const SUBSCRIPTION_SCOPED_CHANNELS = new Set<WsChannelName>([
   "agent.event",
   "turn.fileEffectsUpdated",
@@ -75,9 +82,36 @@ export function unsubscribeClientFromThread(ws: WebSocket, threadId: string): vo
 export function setClientThreadSubscriptions(
   ws: WebSocket,
   threadIds: readonly string[],
-): void {
-  if (!clients.has(ws)) return;
+  cursors?: Readonly<Record<string, number>>,
+): { hydrationRequiredThreadIds: string[]; replayedThrough: Record<string, number> } {
+  if (!clients.has(ws)) return { hydrationRequiredThreadIds: [], replayedThrough: {} };
   threadSubscriptions.set(ws, new Set(threadIds));
+  const hydrationRequiredThreadIds: string[] = [];
+  const replayedThrough: Record<string, number> = {};
+  if (!cursors) return { hydrationRequiredThreadIds, replayedThrough };
+
+  for (const threadId of threadIds) {
+    const cursor = cursors[threadId];
+    if (cursor === undefined) continue;
+    const journal = threadJournals.get(threadId);
+    if (!journal) {
+      if (cursor > 0) hydrationRequiredThreadIds.push(threadId);
+      continue;
+    }
+    if (journal.events.length > 0 && cursor < (journal.events[0] as { sequence: number }).sequence - 1) {
+      hydrationRequiredThreadIds.push(threadId);
+      continue;
+    }
+    const pending = journal.events.filter((event) => (event as { sequence: number }).sequence > cursor);
+    if (pending.length === 0) continue;
+    let deliveredThrough = cursor;
+    for (const event of pending) {
+      if (!sendToClient(ws, "agent.event", event)) break;
+      deliveredThrough = (event as { sequence: number }).sequence;
+    }
+    if (deliveredThrough !== cursor) replayedThrough[threadId] = deliveredThrough;
+  }
+  return { hydrationRequiredThreadIds, replayedThrough };
 }
 
 /** Get the current number of connected clients. */
@@ -112,16 +146,44 @@ function payloadThreadId(data: unknown): string | undefined {
 export function broadcast(
   channel: WsChannelName,
   data: unknown,
-): void {
+): unknown {
   const schema = WS_CHANNELS[channel];
   if (!schema) {
     logger.warn("Unknown push channel", { channel });
-    return;
+    return undefined;
   }
 
-  const validation = getTransportPayloadValidator().validatePush(channel, data, schema);
+  let candidate = data;
+  const threadId = payloadThreadId(data);
+  if (channel === "agent.event" && threadId && data && typeof data === "object") {
+    const sequence = (nextSequenceByThread.get(threadId) ?? 0) + 1;
+    candidate = { ...(data as Record<string, unknown>), sequence };
+  }
+
+  const validation = getTransportPayloadValidator().validatePush(channel, candidate, schema);
   if (!validation.ok) {
-    return;
+    return undefined;
+  }
+
+  if (channel === "agent.event" && threadId) {
+    const event = validation.data as { sequence: number };
+    nextSequenceByThread.delete(threadId);
+    nextSequenceByThread.set(threadId, event.sequence);
+    const existing = threadJournals.get(threadId);
+    const events = existing ? [...existing.events, validation.data] : [validation.data];
+    if (events.length > MAX_AGENT_EVENT_JOURNAL_EVENTS_PER_THREAD) {
+      events.splice(0, events.length - MAX_AGENT_EVENT_JOURNAL_EVENTS_PER_THREAD);
+    }
+    threadJournals.delete(threadId);
+    threadJournals.set(threadId, { events });
+    while (threadJournals.size > MAX_AGENT_EVENT_JOURNAL_THREADS) {
+      const oldestThreadId = threadJournals.keys().next().value as string;
+      threadJournals.delete(oldestThreadId);
+    }
+    while (nextSequenceByThread.size > MAX_AGENT_EVENT_JOURNAL_THREADS) {
+      const oldestThreadId = nextSequenceByThread.keys().next().value as string;
+      nextSequenceByThread.delete(oldestThreadId);
+    }
   }
 
   const payload = JSON.stringify({
@@ -129,7 +191,6 @@ export function broadcast(
     channel,
     data: validation.data,
   });
-  const threadId = payloadThreadId(validation.data);
   const requiresThreadSubscription = SUBSCRIPTION_SCOPED_CHANNELS.has(channel);
 
   for (const ws of clients) {
@@ -144,6 +205,7 @@ export function broadcast(
       ws.send(payload);
     }
   }
+  return validation.data;
 }
 
 /** Sends one validated push event to exactly one connected WebSocket client. */
@@ -208,4 +270,6 @@ export function _resetForTest(): void {
   sessionChangeListeners.length = 0;
   clients.clear();
   threadSubscriptions.clear();
+  threadJournals.clear();
+  nextSequenceByThread.clear();
 }

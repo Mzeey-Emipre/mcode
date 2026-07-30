@@ -40,6 +40,7 @@ import type {
   ConversationPage,
   ConversationTail,
   SetThreadSubscriptionsInput,
+  SetThreadSubscriptionsResult,
   GoalLookupResult,
   BrowserAutomationHostRegistration,
   BrowserAutomationHostDispatchTarget,
@@ -329,7 +330,7 @@ export interface McodeTransport {
   /** Remove this client connection's push subscription for a thread. */
   unsubscribeThread(threadId: string): Promise<void>;
   /** Replace this connection's complete push subscription set atomically. */
-  setThreadSubscriptions?(input: SetThreadSubscriptionsInput): Promise<void>;
+  setThreadSubscriptions?(input: SetThreadSubscriptionsInput): Promise<SetThreadSubscriptionsResult>;
   /** Fetch the current active goal for a thread without starting provider work. */
   getThreadGoal(threadId: string): Promise<GoalLookupResult>;
   /** Clear the current active goal for a thread without sending a chat message. */

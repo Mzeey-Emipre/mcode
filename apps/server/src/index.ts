@@ -562,8 +562,8 @@ for (const provider of providerRegistry.resolveAll()) {
       };
     }
 
-    broadcast("agent.event", enrichedEvent);
-    portPush.send("agent.event", enrichedEvent);
+    const sequencedEvent = broadcast("agent.event", enrichedEvent) ?? enrichedEvent;
+    portPush.send("agent.event", sequencedEvent);
 
     if (event.type === AgentEventType.TurnComplete) {
       threadRepo.updateStatus(event.threadId, "completed");

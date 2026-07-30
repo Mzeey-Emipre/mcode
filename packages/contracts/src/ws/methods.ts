@@ -147,11 +147,24 @@ export const SetThreadSubscriptionsSchema = lazySchema(() =>
         context.addIssue({ code: z.ZodIssueCode.custom, message: "threadIds must be unique" });
       }
     }),
+    /** Last applied agent-event sequence per thread; omitted for legacy subscribe calls. */
+    cursors: z.record(ThreadSubscriptionIdSchema, z.number().int().nonnegative()).optional(),
   }),
 );
 
 /** Input accepted by `push.setThreadSubscriptions`. */
 export type SetThreadSubscriptionsInput = z.infer<ReturnType<typeof SetThreadSubscriptionsSchema>>;
+
+/** Result of an atomic subscription replacement and any synchronous replay. */
+export const SetThreadSubscriptionsResultSchema = lazySchema(() =>
+  z.object({
+    hydrationRequiredThreadIds: z.array(ThreadSubscriptionIdSchema),
+    replayedThrough: z.record(ThreadSubscriptionIdSchema, z.number().int().positive()),
+  }),
+);
+
+/** Replay outcome returned by `push.setThreadSubscriptions`. */
+export type SetThreadSubscriptionsResult = z.infer<ReturnType<typeof SetThreadSubscriptionsResultSchema>>;
 
 /** Schema for creating a new thread. */
 export const CreateThreadSchema = lazySchema(() =>
@@ -728,7 +741,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "push.setThreadSubscriptions": {
     params: SetThreadSubscriptionsSchema(),
-    result: z.void(),
+    result: SetThreadSubscriptionsResultSchema(),
   },
   "agent.answerQuestions": {
     params: z.object({
