@@ -208,4 +208,19 @@ describe("web browser automation executor", () => {
     });
     target.remove();
   });
+
+  it("rejects full-page screenshots before capture", async () => {
+    const target = iframe();
+    vi.mocked(captureVisibleWebScreenshot).mockClear();
+    const result = await executeWebBrowserDispatch(
+      dispatch("screenshot", { maxWidth: 320, fullPage: true }),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "UNSUPPORTED_OPERATION" },
+    });
+    expect(captureVisibleWebScreenshot).not.toHaveBeenCalled();
+    target.remove();
+  });
 });

@@ -359,7 +359,7 @@ function acceptExpectedWebNavigationRevision(
   navigation: WebNavigationExpectation | undefined,
   target: { readonly revision: number } | undefined,
 ): number | undefined {
-  if (!navigation || dispatch.request.operation !== "open") return undefined;
+  if (!navigation || (dispatch.request.operation !== "open" && dispatch.request.operation !== "navigate")) return undefined;
   if (navigation.acceptedRevision !== undefined) {
     return navigation.acceptedRevision === target?.revision ? navigation.acceptedRevision : undefined;
   }
@@ -766,12 +766,30 @@ export function BrowserAutomationHost() {
       const webExecutorDispatch = !bridge && webAutomationEnabled;
       const webOpenRequest = !bridge && webAutomationEnabled &&
         dispatch.request.operation === "open" && Boolean(dispatch.request.args.url);
+      const webNavigateRequest = !bridge && webAutomationEnabled &&
+        dispatch.request.operation === "navigate" && Boolean(dispatch.request.args.url);
       const operationAbort = webDispatch ? new AbortController() : null;
       if (operationAbort) webAbortRef.current.set(key, operationAbort);
       const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
       const liveTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
       const currentEpoch = useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
       const staleAtStart = !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration || currentEpoch !== dispatch.request.expectedControlEpoch;
+      if (webNavigateRequest) {
+        const requestedUrl = normalizeWebPreviewUrl(dispatch.request.args.url ?? "");
+        if (
+          requestedUrl &&
+          isSameOriginWebPreviewUrl(requestedUrl) &&
+          liveTarget &&
+          liveTarget.revision === dispatch.target.targetGeneration
+        ) {
+          webNavigationRef.current.set(key, {
+            targetKey,
+            expectedUrl: requestedUrl,
+            initialRevision: liveTarget.revision,
+            loadObserved: false,
+          });
+        }
+      }
       const cancelForHuman = () => {
         if (!operationAbort || cancelledRef.current.has(key)) return;
         cancelledRef.current.add(key);
@@ -877,7 +895,7 @@ export function BrowserAutomationHost() {
           ? executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal)
           : Promise.resolve(failureResponse(dispatch.request, "UNSUPPORTED_OPERATION", WEB_AUTOMATION_UNAVAILABLE_REASON));
       const guardedOperation = operation.then((response) => {
-        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
+        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest || webNavigateRequest)) {
           const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
           const navigation = webNavigationRef.current.get(key);
           const expectedRevision = navigation?.acceptedRevision ??
@@ -889,7 +907,7 @@ export function BrowserAutomationHost() {
         }
         return response;
       }).catch((cause: unknown) => {
-        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest)) {
+        if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest || webNavigateRequest)) {
           const latestTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
           const navigation = webNavigationRef.current.get(key);
           const expectedRevision = navigation?.acceptedRevision ??
