@@ -465,6 +465,7 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     server.on("fatal", fatal);
 
     await server.start();
+    child.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "turn/started", params: { turnId: "turn-crash" } }) + "\n");
     stderr.write("ExperimentalWarning: ignore me\n");
     stderr.write("\u001b[31mfirst useful line\u001b[0m\n");
     stderr.write("latest crash cause\n");
@@ -489,6 +490,46 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
         stderrTail: ["first useful line", "latest crash cause"],
       }),
     );
+
+    const breadcrumb = vi.mocked(fatal).mock.calls[0]?.[1] as {
+      cause: string;
+      pid: number | null;
+      activeTurnId: string | null;
+      lastActivity: { method: string; timestamp: number } | null;
+      exit: { code: number | null; signal: string | null };
+      stderrTail: readonly string[];
+    };
+    expect(breadcrumb).toMatchObject({
+      cause: "unexpected_exit",
+      pid: 4321,
+      activeTurnId: "turn-crash",
+      lastActivity: { method: "turn/started" },
+      exit: { code: 4294967295, signal: null },
+      stderrTail: ["first useful line", "latest crash cause"],
+    });
+    expect(Object.isFrozen(breadcrumb)).toBe(true);
+    expect(Object.isFrozen(breadcrumb.stderrTail)).toBe(true);
+    expect(JSON.stringify(breadcrumb)).not.toContain("prompt");
+  }, 10_000);
+
+  it("captures crash breadcrumb without request payload content", async () => {
+    const { child } = harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method === "thread/start") return { result: { thread: { id: "thread-redacted" } } };
+      if (req.method === "turn/start") return { result: { turn: { id: "turn-redacted" } } };
+      return { result: {} };
+    });
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const fatal = vi.fn();
+    server.on("fatal", fatal);
+
+    await server.start();
+    await server.sendTurn("secret prompt and response payload");
+    child.emit("exit", 9, "SIGKILL");
+
+    const breadcrumb = vi.mocked(fatal).mock.calls[0]?.[1];
+    expect(breadcrumb).toMatchObject({ activeTurnId: "turn-redacted", exit: { code: 9, signal: "SIGKILL" } });
+    expect(JSON.stringify(breadcrumb)).not.toContain("secret prompt");
+    expect(JSON.stringify(breadcrumb)).not.toContain("response payload");
   }, 10_000);
 
   it("reports when unexpected exit has no captured non-benign stderr", async () => {
