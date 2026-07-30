@@ -38,6 +38,7 @@ describe("threadStore textDelta batching", () => {
     });
 
     const tid = "thread-coalesce";
+    resetThreadStoreForTests({ currentThreadId: tid, runningThreadIds: new Set([tid]) });
     for (let i = 0; i < 8; i++) {
       useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: String(i) } satisfies AgentEvent);
     }
@@ -61,6 +62,7 @@ describe("threadStore textDelta batching", () => {
       .mockImplementation(() => undefined);
     const tid = "thread-stale-reconnect";
     resetThreadStoreForTests({
+      currentThreadId: tid,
       runningThreadIds: new Set([tid]),
       records: new Map([
         [
@@ -100,6 +102,7 @@ describe("threadStore textDelta batching", () => {
     });
 
     const tid = "thread-final-flag";
+    resetThreadStoreForTests({ currentThreadId: tid, runningThreadIds: new Set([tid]) });
     useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "think ", isFinalResponse: false } satisfies AgentEvent);
     useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "final", isFinalResponse: true } satisfies AgentEvent);
     expect(queue).toHaveLength(1);
@@ -122,6 +125,8 @@ describe("threadStore textDelta batching", () => {
     const tid = "thread-final-reference";
     const thoughtSegments = [{ text: "closed narration", startedAt: 1, endedAt: 2 }];
     resetThreadStoreForTests({
+      currentThreadId: tid,
+      runningThreadIds: new Set([tid]),
       records: new Map([
         [
           tid,
@@ -151,6 +156,8 @@ describe("threadStore textDelta batching", () => {
     const closedText = "This closed narration is long enough to stay closed. ";
     const thoughtSegments = [{ text: closedText, startedAt: 1, endedAt: 2 }];
     resetThreadStoreForTests({
+      currentThreadId: tid,
+      runningThreadIds: new Set([tid]),
       records: new Map([
         [
           tid,
@@ -181,6 +188,7 @@ describe("threadStore textDelta batching", () => {
     });
 
     const tid = "thread-legacy-unclassified";
+    resetThreadStoreForTests({ currentThreadId: tid, runningThreadIds: new Set([tid]) });
     useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "legacy " } satisfies AgentEvent);
     expect(queue).toHaveLength(1);
 
@@ -198,6 +206,7 @@ describe("threadStore textDelta batching", () => {
     });
 
     const tid = "thread-flush";
+    resetThreadStoreForTests({ currentThreadId: tid, runningThreadIds: new Set([tid]) });
     useThreadStore.getState().handleAgentEvent({ type: "textDelta", threadId: tid, delta: "hello " } satisfies AgentEvent);
     expect(queue).toHaveLength(1);
 

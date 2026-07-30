@@ -8,6 +8,7 @@ import {
 } from "@/stores/workspace-selectors";
 import { useThreadStore } from "@/stores/threadStore";
 import { useActiveThreadRecord, readThreadRecord } from "@/stores/thread-selectors";
+import { getConversationResidency } from "@/stores/conversation-residency";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useOverviewStore } from "@/stores/overviewStore";
@@ -37,9 +38,11 @@ import { McodeLogo } from "@/components/brand/McodeLogo";
 import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
 import {
   recordFirstMessageVisible,
+  recordSubscriptionSkipped,
   recordThreadHoldEnd,
   recordThreadHoldStart,
 } from "@/lib/thread-switch-telemetry";
+import { MAX_THREAD_SUBSCRIPTIONS } from "@mcode/contracts";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -561,11 +564,14 @@ export function ChatView() {
   const [subscriptionReconcileVersion, setSubscriptionReconcileVersion] = useState(0);
 
   useEffect(() => {
-    const desired = new Set(runningThreadIds);
-    if (activeThreadId) desired.add(activeThreadId);
+    const orderedDesiredThreadIds = [
+      ...(activeThreadId ? [activeThreadId] : []),
+      ...Array.from(runningThreadIds).filter((threadId) => threadId !== activeThreadId).sort(),
+    ].slice(0, MAX_THREAD_SUBSCRIPTIONS);
+    const desired = new Set(orderedDesiredThreadIds);
     desiredThreadIdsRef.current = desired;
 
-    const targetSignature = `${connectionStatus}:${Array.from(desired).sort().join("\u0000")}`;
+    const targetSignature = `${connectionStatus}:${orderedDesiredThreadIds.join("\u0000")}`;
     if (subscriptionTargetSignatureRef.current !== targetSignature) {
       subscriptionTargetSignatureRef.current = targetSignature;
       subscriptionRetryAttemptRef.current = 0;
@@ -592,13 +598,17 @@ export function ChatView() {
     const epoch = subscriptionEpochRef.current;
     const setThreadSubscriptions = getTransport().setThreadSubscriptions;
     if (setThreadSubscriptions) {
-      const sortedThreadIds = Array.from(desired).sort();
+      const sortedThreadIds = orderedDesiredThreadIds;
       const sentThreadIds = new Set(sortedThreadIds);
       const confirmed = confirmedThreadIdsRef.current;
       const alreadyApplied = confirmed.size === desired.size
         && Array.from(confirmed).every((threadId) => desired.has(threadId));
       const pending = atomicSubscriptionRequestRef.current;
-      if (alreadyApplied || (pending?.epoch === epoch && pending.signature === targetSignature)) return;
+      if (alreadyApplied) {
+        recordSubscriptionSkipped(activeThreadId ?? sortedThreadIds[0] ?? "");
+        return;
+      }
+      if (pending?.epoch === epoch && pending.signature === targetSignature) return;
       const requestId = atomicSubscriptionRequestIdRef.current + 1;
       atomicSubscriptionRequestIdRef.current = requestId;
       atomicSubscriptionRequestRef.current = {
@@ -607,7 +617,24 @@ export function ChatView() {
         id: requestId,
       };
       pendingAtomicThreadIdsRef.current.set(requestId, sortedThreadIds);
-      void setThreadSubscriptions({ threadIds: sortedThreadIds }).then(() => {
+      const cursors: Record<string, number> = {};
+      for (const threadId of sortedThreadIds) {
+        const sequence = readThreadRecord(threadId).lastAgentEventSequence;
+        if (typeof sequence === "number" && sequence > 0) cursors[threadId] = sequence;
+      }
+      const input = Object.keys(cursors).length > 0
+        ? { threadIds: sortedThreadIds, cursors }
+        : { threadIds: sortedThreadIds };
+      void setThreadSubscriptions(input).then((result) => {
+        if (result?.hydrationRequiredThreadIds?.length) {
+          const residency = getConversationResidency();
+          for (const threadId of result.hydrationRequiredThreadIds) {
+            residency.invalidateConversation(threadId);
+            if (threadId === activeThreadId && runningThreadIds.has(threadId)) {
+              void residency.refresh(threadId, useWorkspaceStore.getState().threads);
+            }
+          }
+        }
         if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
         confirmedThreadIdsRef.current = sentThreadIds;
         const latestDesired = desiredThreadIdsRef.current;

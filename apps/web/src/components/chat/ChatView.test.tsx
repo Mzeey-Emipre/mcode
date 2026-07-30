@@ -658,6 +658,57 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
   });
 
+  it("sends observed cursors without reconciling cursor-only changes", async () => {
+    const setThreadSubscriptions = enableAtomicSubscriptionTransport();
+    const runningThreadIds = new Set<string>();
+    const firstRecord = { ...createEmptyThreadRecord(), lastAgentEventSequence: 7 };
+    setupWorkspaceMock(defaultWorkspaceState({ activeThreadId: "thread-1" }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: "thread-1",
+      runningThreadIds,
+      activeRecord: firstRecord,
+      records: new Map([["thread-1", firstRecord]]),
+    });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledWith({
+        threadIds: ["thread-1"],
+        cursors: { "thread-1": 7 },
+      });
+    });
+
+    const secondRecord = { ...firstRecord, lastAgentEventSequence: 8 };
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: "thread-1",
+      runningThreadIds,
+      activeRecord: secondRecord,
+      records: new Map([["thread-1", secondRecord]]),
+    });
+    rerender(<ChatView />);
+
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the active thread first while bounding running subscriptions", async () => {
+    const setThreadSubscriptions = enableAtomicSubscriptionTransport();
+    const activeThreadId = "thread-active";
+    const runningThreadIds = new Set(
+      Array.from({ length: 105 }, (_, index) => `thread-${String(index).padStart(3, "0")}`),
+    );
+    setupWorkspaceMock(defaultWorkspaceState({ activeThreadId, threads: [] }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: activeThreadId,
+      runningThreadIds,
+    });
+    render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+    const input = setThreadSubscriptions.mock.calls[0]?.[0] as { threadIds: string[] };
+    expect(input.threadIds).toHaveLength(100);
+    expect(input.threadIds[0]).toBe(activeThreadId);
+  });
+
   it("coalesces repeated reconciliation while an atomic request is pending", async () => {
     const requestResolvers: Array<() => void> = [];
     const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve) => {
