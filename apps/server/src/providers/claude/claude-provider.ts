@@ -45,6 +45,7 @@ import { JobObject } from "../../services/job-object.js";
 import { ScopedPreGrantService } from "../../services/scoped-pre-grant.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
+import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { listDirectChildren } from "../../services/process-kill.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
@@ -1496,9 +1497,22 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           },
         }
       : {};
+    const runtimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
+      sourceThreadId: args.threadId,
+      threadControlGranted: Boolean((baseOptions as { mcpServers?: unknown }).mcpServers),
+      browserAutomationGranted: Boolean(browserGrant),
+    }));
+    const optionsWithRuntimeInstructions = {
+      ...baseOptions,
+      systemPrompt: {
+        type: "preset" as const,
+        preset: "claude_code" as const,
+        append: runtimeInstructions,
+      },
+    };
     const options = resume
-      ? { ...baseOptions, ...browserOptions, resume: resumeId, stderr: captureStderr }
-      : { ...baseOptions, ...browserOptions, sessionId: uuid, stderr: captureStderr };
+      ? { ...optionsWithRuntimeInstructions, ...browserOptions, resume: resumeId, stderr: captureStderr }
+      : { ...optionsWithRuntimeInstructions, ...browserOptions, sessionId: uuid, stderr: captureStderr };
 
     const queue = createPromptQueue();
 

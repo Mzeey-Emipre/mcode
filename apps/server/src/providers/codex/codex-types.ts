@@ -56,6 +56,7 @@ export interface ThreadStartParams {
   cwd?: string | null;
   approvalPolicy?: AskForApproval | null;
   sandbox?: SandboxMode | null;
+  developerInstructions?: string | null;
 }
 
 /** Result returned by the `thread/start` RPC method. */
@@ -77,6 +78,7 @@ export interface ThreadResumeParams {
   approvalPolicy?: AskForApproval | null;
   /** Override working directory for the resumed thread. */
   cwd?: string | null;
+  developerInstructions?: string | null;
 }
 
 /** Result returned by the `thread/resume` RPC method. Same dual shape as ThreadStartResult. */

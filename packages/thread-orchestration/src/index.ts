@@ -59,3 +59,14 @@ export function isInternalThreadTargetAllowed(
 ): boolean {
   return authority.sourceThreadId !== targetThreadId;
 }
+
+export {
+  MCODE_INSTRUCTIONS_MAX_CHARS,
+  buildMcodeInstructionPlan,
+  renderMcodeInstructions,
+} from "./mcode-instructions.js";
+export type {
+  BuildMcodeInstructionPlanInput,
+  McodeInstructionCapabilities,
+  McodeInstructionPlan,
+} from "./mcode-instructions.js";

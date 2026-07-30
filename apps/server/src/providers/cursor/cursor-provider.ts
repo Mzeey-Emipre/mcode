@@ -73,6 +73,7 @@ import {
 import { fetchCursorCliModels } from "./cursor-cli-models.js";
 import { buildCursorAcpArgs } from "./cursor-acp-spawn-args.js";
 import { buildCursorAcpPromptBlocks } from "./cursor-acp-prompt.js";
+import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 import {
   buildCursorAgentGuidanceMarkdown,
   formatCursorSkillsAndCommandsForPrompt,
@@ -200,6 +201,9 @@ interface CursorAcpSessionEntry {
   /** Browser permission class fixed to this provider process at spawn. */
   browserPermissionCapability: "observe" | "interact" | "privileged";
   supportsHttpMcp: boolean;
+  /** Capability-derived Mcode guidance sent once on first normal prompt. */
+  mcodeRuntimeInstructions: string;
+  mcodeRuntimeInstructionsSent: boolean;
 }
 
 /**
@@ -657,6 +661,12 @@ export class CursorProvider
       // Open logical ACP session before runtime registration so every setup
       // failure tears down child and browser state through one boundary.
       await this.openLogicalSession(state, resumeFrom !== undefined, mcpServers);
+      state.mcodeRuntimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
+        sourceThreadId: threadId,
+        threadControlGranted: true,
+        browserAutomationGranted: Boolean(browserGrant),
+      }));
+      state.mcodeRuntimeInstructionsSent = false;
       if (browserGrant) {
         state.browserCredential = {
           credentialId: browserGrant.credentialId,
@@ -824,6 +834,8 @@ export class CursorProvider
       cursorModelAppliedPair: null,
       pendingUserStopAbort: false,
       supportsHttpMcp: false,
+      mcodeRuntimeInstructions: "",
+      mcodeRuntimeInstructionsSent: false,
     };
 
     entry.connection = new ClientSideConnection(
@@ -1341,6 +1353,11 @@ export class CursorProvider
               }
             }
             instructionMarkdownReady = true;
+            if (!currentEntry.mcodeRuntimeInstructionsSent && currentEntry.mcodeRuntimeInstructions) {
+              instructionMarkdown = [instructionMarkdown, currentEntry.mcodeRuntimeInstructions]
+                .filter((value): value is string => Boolean(value && value.trim()))
+                .join("\n\n");
+            }
           }
           blocks = buildCursorAcpPromptBlocks(
             promptMessage,
@@ -1356,6 +1373,7 @@ export class CursorProvider
             sessionId: currentEntry.acpSessionId,
             prompt: blocks,
           });
+          if (!isContinueRetry) currentEntry.mcodeRuntimeInstructionsSent = true;
           break;
         } catch (attemptErr) {
           const raw = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);

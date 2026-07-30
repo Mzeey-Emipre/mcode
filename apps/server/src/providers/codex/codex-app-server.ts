@@ -100,6 +100,8 @@ export interface CodexAppServerOptions {
   configOverrides?: readonly string[];
   /** Completes the handshake after initialization without creating a thread. */
   catalogOnly?: boolean;
+  /** Capability-derived Mcode runtime guidance appended to native instructions. */
+  developerInstructions?: string;
 }
 
 /**
@@ -1136,7 +1138,7 @@ export class CodexAppServer extends EventEmitter {
 
   /** Runs the JSON-RPC handshake sequence in order. */
   private async runHandshake(): Promise<void> {
-    const { workingDirectory, model, sandbox, approvalPolicy, resumeThreadId } =
+    const { workingDirectory, model, sandbox, approvalPolicy, resumeThreadId, developerInstructions } =
       this.options;
 
     // Step 1: initialize (cold-start tolerant: raised budget + one retry)
@@ -1174,6 +1176,7 @@ export class CodexAppServer extends EventEmitter {
             ...(sandbox && { sandbox }),
             ...(approvalPolicy && { approvalPolicy }),
             ...(workingDirectory && { cwd: workingDirectory }),
+            ...(developerInstructions && { developerInstructions }),
           },
           THREAD_HANDSHAKE_TIMEOUT_MS,
         );
@@ -1202,6 +1205,7 @@ export class CodexAppServer extends EventEmitter {
         ...(model && { model }),
         ...(sandbox && { sandbox }),
         ...(approvalPolicy && { approvalPolicy }),
+        ...(developerInstructions && { developerInstructions }),
       };
 
       // Some codex app-server versions carry the threadId in the `thread/started`
