@@ -96,7 +96,7 @@ describe("handleAgentEvent branches", () => {
   });
 
   it("background textDelta keeps streaming state without growing narrative state", async () => {
-    const backgroundThreadId = "thread-2";
+    const backgroundThreadId = "thread-deferred";
     const backgroundToolCall = {
       id: "background-tool",
       toolName: "Read",
@@ -138,6 +138,137 @@ describe("handleAgentEvent branches", () => {
     expect(record.streaming).toBe("background text");
     expect(record.thoughtSegments).toEqual([backgroundThought]);
     expect(record.toolCalls).toEqual([backgroundToolCall]);
+  });
+
+  it("promotes deferred text, boundaries, and tool progress once in source order", async () => {
+    const backgroundThreadId = "thread-2";
+    const backgroundToolCall = {
+      id: "background-tool",
+      toolName: "Read",
+      toolInput: { path: "/tmp/background" },
+      output: null,
+      isError: false,
+      isComplete: false,
+    };
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-1", { ...createEmptyThreadRecord() }],
+        [backgroundThreadId, { ...createEmptyThreadRecord(), toolCalls: [backgroundToolCall] }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "first sentence that is deliberately long enough to stay closed.",
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "assistantMessageBoundary",
+      threadId: backgroundThreadId,
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "Second",
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: backgroundToolCall.id,
+      elapsedSeconds: 3,
+    } as AgentEvent);
+    vi.runAllTimers();
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: backgroundThreadId,
+      messageId: "server-message",
+      toolCallCount: 0,
+      filesChanged: [],
+    });
+
+    const promoted = readThreadField(backgroundThreadId, (thread) => thread);
+    expect(promoted.thoughtSegments.map((segment) => segment.text)).toEqual([
+      "first sentence that is deliberately long enough to stay closed.",
+      "Second",
+    ]);
+    expect(promoted.thoughtSegments[0]?.endedAt).toBeDefined();
+    expect(promoted.toolCalls[0]?.elapsedSeconds).toBe(3);
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: "missing-tool",
+      elapsedSeconds: 0,
+    } as AgentEvent);
+    expect(readThreadField(backgroundThreadId, (thread) => thread.thoughtSegments))
+      .toHaveLength(2);
+  });
+
+  it("does not treat null selection as active for multiple running threads", async () => {
+    resetThreadStoreForTests({
+      currentThreadId: null,
+      runningThreadIds: new Set(["thread-2", "thread-3"]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-2", { ...createEmptyThreadRecord() }],
+        ["thread-3", { ...createEmptyThreadRecord() }],
+      ]),
+    });
+
+    for (const threadId of ["thread-2", "thread-3"]) {
+      useThreadStore.getState().handleAgentEvent({
+        type: "textDelta",
+        threadId,
+        delta: `background-${threadId}`,
+      } as AgentEvent);
+    }
+    vi.runAllTimers();
+
+    for (const threadId of ["thread-2", "thread-3"]) {
+      const record = readThreadField(threadId, (thread) => thread);
+      expect(record.streaming).toBe(`background-${threadId}`);
+      expect(record.thoughtSegments).toEqual([]);
+    }
+  });
+
+  it("does not promote final-response deltas into thought segments", () => {
+    const backgroundThreadId = "thread-final-response";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-1", { ...createEmptyThreadRecord() }],
+        [backgroundThreadId, { ...createEmptyThreadRecord() }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "final response",
+      isFinalResponse: true,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "assistantMessageBoundary",
+      threadId: backgroundThreadId,
+      isFinalResponse: true,
+    } as AgentEvent);
+    vi.runAllTimers();
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: backgroundThreadId,
+      messageId: "server-message",
+      toolCallCount: 0,
+      filesChanged: [],
+    });
+
+    expect(readThreadField(backgroundThreadId, (thread) => thread.thoughtSegments)).toEqual([]);
   });
 
   it("session.toolUse ignores duplicate toolCallId (defense in depth)", () => {

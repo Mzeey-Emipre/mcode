@@ -89,6 +89,10 @@ export class AuxiliaryHydrator {
     void this.transport()
       .listPendingPermissions(threadId)
       .then((pending) => {
+        // Running threads receive authoritative permission events over the
+        // live channel. A resident refresh may have started earlier, so its
+        // late snapshot must never replace a newer live request.
+        if (getState().runningThreadIds.has(threadId)) return;
         const mapped = pending.map((p) => ({ ...p, settled: false }));
         const current = getThreadRecord(getState().records, threadId).permissions;
         if (!shallowEqualBy(mapped, current, ["requestId", "toolName", "settled"])) {

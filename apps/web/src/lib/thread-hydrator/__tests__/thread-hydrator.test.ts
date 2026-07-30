@@ -773,6 +773,50 @@ describe("ThreadHydrator", () => {
     expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
   });
 
+  it("does not let late resident permission hydration replace a live request", async () => {
+    let resolvePending!: (value: Array<{
+      requestId: string;
+      threadId: string;
+      toolName: string;
+      input: Record<string, never>;
+    }>) => void;
+    (mockTransport.listPendingPermissions as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolvePending = resolve;
+      }),
+    );
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_B,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map<string, ThreadRecord>([
+        [THREAD_A, { ...createEmptyThreadRecord(), messages: [msgA] }],
+        [THREAD_B, { ...createEmptyThreadRecord(), messages: [msgB] }],
+      ]),
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+    await vi.waitFor(() => {
+      expect(mockTransport.listPendingPermissions).toHaveBeenCalledWith(THREAD_A);
+    });
+
+    useThreadStore.getState().addPermissionRequest({
+      requestId: "live-request",
+      threadId: THREAD_A,
+      toolName: "Bash",
+      input: {},
+    });
+    resolvePending([{
+      requestId: "stale-request",
+      threadId: THREAD_A,
+      toolName: "Read",
+      input: {},
+    }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(useThreadStore.getState().records.get(THREAD_A)?.permissions)
+      .toEqual([expect.objectContaining({ requestId: "live-request", settled: false })]);
+  });
+
   it("preserves volatile state for a running thread on cache hit", async () => {
     resetThreadStoreForTests({
       runningThreadIds: new Set([THREAD_A]),

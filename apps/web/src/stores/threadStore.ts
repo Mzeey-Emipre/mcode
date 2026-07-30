@@ -740,9 +740,62 @@ type PendingTextChunk = {
   deferNarrative?: boolean;
 };
 
+const MAX_DEFERRED_NARRATIVE_EVENTS = 2048;
+
+function appendThoughtSegment(
+  segments: ThoughtSegment[],
+  acc: string,
+  isExplicitNonFinal: boolean,
+): ThoughtSegment[] {
+  if (!acc) return segments;
+  const looksLikeContinuation = (prevText: string, nextText: string): boolean => {
+    const trimmedPrev = prevText.trimEnd();
+    const lastChar = trimmedPrev.slice(-1);
+    const prevEndsSentence = /[.!?]/.test(lastChar);
+    const firstChar = nextText.replace(/^\s+/, "").slice(0, 1);
+    const nextStartsLowerOrPunct =
+      firstChar === "" || /[a-z,;:)\]}-]/.test(firstChar);
+    return !prevEndsSentence || nextStartsLowerOrPunct;
+  };
+  const TINY_SEGMENT_THRESHOLD = 40;
+  const last = segments[segments.length - 1];
+  const shouldReopen =
+    last &&
+    last.endedAt !== undefined &&
+    (last.text.length < TINY_SEGMENT_THRESHOLD || looksLikeContinuation(last.text, acc));
+  if (!last || (last.endedAt !== undefined && !shouldReopen)) {
+    return [
+      ...segments,
+      {
+        text: acc,
+        startedAt: Date.now(),
+        ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+      },
+    ];
+  }
+  if (last.endedAt !== undefined && shouldReopen) {
+    const reopened: ThoughtSegment = {
+      ...last,
+      text: last.text + acc,
+      ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+    };
+    delete (reopened as { endedAt?: number }).endedAt;
+    return [...segments.slice(0, -1), reopened];
+  }
+  return [
+    ...segments.slice(0, -1),
+    {
+      ...last,
+      text: last.text + acc,
+      ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+    },
+  ];
+}
+
 export const useThreadStore = create<ThreadState>((set, get) => {
   let textDeltaFlushRaf: number | null = null;
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
+  const deferredNarrativeEventsByThread = new Map<string, AgentEvent[]>();
 
   const getRec = (threadId: string) => getThreadRecord(get().records, threadId);
 
@@ -768,7 +821,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       cancelAnimationFrame(textDeltaFlushRaf);
       textDeltaFlushRaf = null;
     }
-    if (pendingTextDeltaByThread.size === 0) return;
+    if (pendingTextDeltaByThread.size === 0) {
+      const activeThreadId = get().currentThreadId;
+      if (activeThreadId) promoteDeferredNarrativeEvents(activeThreadId);
+      return;
+    }
     const batch = new Map<string, PendingTextChunk[]>();
     for (const [tid, chunks] of pendingTextDeltaByThread) {
       batch.set(tid, chunks.map((c) => ({
@@ -798,52 +855,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
 
           const isExplicitNonFinal = chunk.isFinalResponse === false;
-          const last = segments[segments.length - 1];
-          const looksLikeContinuation = (prevText: string, nextText: string): boolean => {
-            const trimmedPrev = prevText.trimEnd();
-            const lastChar = trimmedPrev.slice(-1);
-            const prevEndsSentence = /[.!?]/.test(lastChar);
-            const firstChar = nextText.replace(/^\s+/, "").slice(0, 1);
-            const nextStartsLowerOrPunct =
-              firstChar === "" || /[a-z,;:)\]}-]/.test(firstChar);
-            return !prevEndsSentence || nextStartsLowerOrPunct;
-          };
-          const TINY_SEGMENT_THRESHOLD = 40;
-          const shouldReopen =
-            last &&
-            last.endedAt !== undefined &&
-            (last.text.length < TINY_SEGMENT_THRESHOLD ||
-              looksLikeContinuation(last.text, acc));
-          if (!last || (last.endedAt !== undefined && !shouldReopen)) {
-            segments = [
-              ...segments,
-              {
-                text: acc,
-                startedAt: Date.now(),
-                ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-              },
-            ];
-            segmentsChanged = true;
-          } else if (last.endedAt !== undefined && shouldReopen) {
-            const reopened: typeof last = {
-              ...last,
-              text: last.text + acc,
-              ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-            };
-            delete (reopened as { endedAt?: number }).endedAt;
-            segments = [...segments.slice(0, -1), reopened];
-            segmentsChanged = true;
-          } else {
-            segments = [
-              ...segments.slice(0, -1),
-              {
-                ...last,
-                text: last.text + acc,
-                ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-              },
-            ];
-            segmentsChanged = true;
-          }
+          segments = appendThoughtSegment(segments, acc, isExplicitNonFinal);
+          segmentsChanged = true;
         }
         const patch: Partial<ThreadRecord> = {
           streaming,
@@ -856,12 +869,70 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
       return { records };
     });
+
+    const activeThreadId = get().currentThreadId;
+    if (activeThreadId) promoteDeferredNarrativeEvents(activeThreadId);
+  };
+
+  const promoteDeferredNarrativeEvents = (threadId: string): void => {
+    const events = deferredNarrativeEventsByThread.get(threadId);
+    if (!events || events.length === 0) return;
+    deferredNarrativeEventsByThread.delete(threadId);
+    for (const event of events) {
+      if (event.type === "textDelta") {
+        const delta = typeof event.delta === "string" ? event.delta : "";
+        if (!delta || event.isFinalResponse === true) continue;
+        set((state) => {
+          const record = getThreadRecord(state.records, threadId);
+          return {
+            records: patchThreadRecord(state.records, threadId, {
+              thoughtSegments: appendThoughtSegment(
+                record.thoughtSegments,
+                delta,
+                event.isFinalResponse === false,
+              ),
+            }),
+          };
+        });
+      } else if (event.type === "assistantMessageBoundary") {
+        const isFinalResponse = event.isFinalResponse === true;
+        set((state) => {
+          const record = getThreadRecord(state.records, threadId);
+          const last = record.thoughtSegments[record.thoughtSegments.length - 1];
+          if (!last || last.endedAt !== undefined) return state;
+          const thoughtSegments = isFinalResponse
+            ? record.thoughtSegments.slice(0, -1)
+            : [...record.thoughtSegments.slice(0, -1), { ...last, endedAt: Date.now() }];
+          return { records: patchThreadRecord(state.records, threadId, { thoughtSegments }) };
+        });
+      } else if (event.type === "toolProgress") {
+        const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+        if (!toolCallId) continue;
+        const elapsedSeconds = typeof event.elapsedSeconds === "number" ? event.elapsedSeconds : 0;
+        const lastActivityAt = Date.now();
+        set((state) => {
+          const current = getThreadRecord(state.records, threadId).toolCalls;
+          let changed = false;
+          const toolCalls = current.map((toolCall) => {
+            if (toolCall.id === toolCallId && !toolCall.isComplete) {
+              changed = true;
+              return { ...toolCall, elapsedSeconds, lastActivityAt };
+            }
+            return toolCall;
+          });
+          return changed
+            ? { records: patchThreadRecord(state.records, threadId, { toolCalls }) }
+            : state;
+        });
+      }
+    }
   };
 
   const dropPendingTextDeltas = (threadIds: Iterable<string>) => {
     let dropped = false;
     for (const threadId of threadIds) {
       dropped = pendingTextDeltaByThread.delete(threadId) || dropped;
+      dropped = deferredNarrativeEventsByThread.delete(threadId) || dropped;
     }
     if (dropped && pendingTextDeltaByThread.size === 0 && textDeltaFlushRaf != null) {
       cancelAnimationFrame(textDeltaFlushRaf);
@@ -1777,10 +1848,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   handleAgentEvent: (event) => {
     const { threadId } = event;
     const currentThreadId = get().currentThreadId;
-    // A null currentThreadId is the pre-hydration state used while the store
-    // is receiving events for its only known conversation. Preserve the
-    // existing projection until a different conversation is selected.
-    const isActiveThread = currentThreadId == null || currentThreadId === threadId;
+    const isActiveThread = currentThreadId !== null && currentThreadId === threadId;
+
+    if (isActiveThread) promoteDeferredNarrativeEvents(threadId);
 
     if (event.type !== "textDelta") {
       flushPendingTextDeltas();
@@ -2350,6 +2420,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         next.push({ delta, isFinalResponse, deferNarrative });
       }
       pendingTextDeltaByThread.set(threadId, next);
+      if (!isActiveThread) {
+        const deferred = deferredNarrativeEventsByThread.get(threadId) ?? [];
+        if (deferred.length < MAX_DEFERRED_NARRATIVE_EVENTS) {
+          deferredNarrativeEventsByThread.set(threadId, [...deferred, event]);
+        }
+      }
       if (!deferNarrative && (!hadPending || existing.some((chunk) => chunk.deferNarrative))) {
         markPriorToolCallsComplete();
       }
@@ -2373,7 +2449,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Flush any pending text delta chunks first so the open thought we
       // operate on reflects every delta that arrived for this message.
       flushPendingTextDeltas();
-      if (!isActiveThread) return;
+      if (!isActiveThread) {
+        const deferred = deferredNarrativeEventsByThread.get(threadId) ?? [];
+        if (deferred.length < MAX_DEFERRED_NARRATIVE_EVENTS) {
+          deferredNarrativeEventsByThread.set(threadId, [...deferred, event]);
+        }
+        return;
+      }
       set((state) => {
         const rec = getThreadRecord(state.records, threadId);
         const segments = rec.thoughtSegments;
@@ -2394,7 +2476,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "toolProgress") {
-      if (!isActiveThread) return;
+      if (!isActiveThread) {
+        const deferred = deferredNarrativeEventsByThread.get(threadId) ?? [];
+        if (deferred.length < MAX_DEFERRED_NARRATIVE_EVENTS) {
+          deferredNarrativeEventsByThread.set(threadId, [...deferred, event]);
+        }
+        return;
+      }
       const toolCallId = (event.toolCallId as string) || "";
       const elapsedSeconds = (event.elapsedSeconds as number) ?? 0;
       if (!toolCallId) return;
