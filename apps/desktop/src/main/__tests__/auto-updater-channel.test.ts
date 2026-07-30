@@ -16,7 +16,9 @@ const { updaterMock } = vi.hoisted(() => ({
     autoDownload: true,
     autoInstallOnAppQuit: true,
     forceDevUpdateConfig: false,
-    checkForUpdates: vi.fn().mockResolvedValue({ updateInfo: { version: "0.0.0" } }),
+    checkForUpdates: vi
+      .fn()
+      .mockResolvedValue({ updateInfo: { version: "0.0.0" } }),
     on: vi.fn((event: string, listener: (...args: any[]) => void) => {
       updaterMock.listeners.set(event, listener);
     }),
@@ -42,9 +44,14 @@ vi.mock("electron", () => ({
     quit: vi.fn(),
     removeListener: vi.fn(),
   },
-  BrowserWindow: { getAllWindows: vi.fn().mockReturnValue([]), getFocusedWindow: vi.fn() },
+  BrowserWindow: {
+    getAllWindows: vi.fn().mockReturnValue([]),
+    getFocusedWindow: vi.fn(),
+  },
   dialog: { showMessageBox: vi.fn() },
-  Notification: Object.assign(vi.fn(), { isSupported: vi.fn().mockReturnValue(false) }),
+  Notification: Object.assign(vi.fn(), {
+    isSupported: vi.fn().mockReturnValue(false),
+  }),
 }));
 
 vi.mock("@mcode/shared", () => ({
@@ -62,7 +69,6 @@ import {
   installUpdate,
   setBeforeInstallHook,
 } from "../auto-updater";
-
 
 describe("applyChannelConfig", () => {
   beforeEach(() => {
@@ -194,14 +200,22 @@ describe("isTransientNetworkError", () => {
   it("classifies Chromium net::ERR_NAME_NOT_RESOLVED as transient", () => {
     // Regression: this was surfaced as a scary red "Update failed" banner
     // when the app launched before WiFi reconnected. See UpdateIndicator.tsx.
-    expect(isTransientNetworkError(new Error("net::ERR_NAME_NOT_RESOLVED"))).toBe(true);
+    expect(
+      isTransientNetworkError(new Error("net::ERR_NAME_NOT_RESOLVED")),
+    ).toBe(true);
   });
 
   it("classifies other Chromium connectivity errors as transient", () => {
-    expect(isTransientNetworkError(new Error("net::ERR_INTERNET_DISCONNECTED"))).toBe(true);
-    expect(isTransientNetworkError(new Error("net::ERR_CONNECTION_RESET"))).toBe(true);
+    expect(
+      isTransientNetworkError(new Error("net::ERR_INTERNET_DISCONNECTED")),
+    ).toBe(true);
+    expect(
+      isTransientNetworkError(new Error("net::ERR_CONNECTION_RESET")),
+    ).toBe(true);
     expect(isTransientNetworkError(new Error("net::ERR_TIMED_OUT"))).toBe(true);
-    expect(isTransientNetworkError(new Error("net::ERR_PROXY_CONNECTION_FAILED"))).toBe(true);
+    expect(
+      isTransientNetworkError(new Error("net::ERR_PROXY_CONNECTION_FAILED")),
+    ).toBe(true);
   });
 
   it("classifies Node POSIX socket/DNS codes as transient", () => {
@@ -210,10 +224,14 @@ describe("isTransientNetworkError", () => {
     });
     expect(isTransientNetworkError(err)).toBe(true);
 
-    const econn = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+    const econn = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
     expect(isTransientNetworkError(econn)).toBe(true);
 
-    const etimeout = Object.assign(new Error("read ETIMEDOUT"), { code: "ETIMEDOUT" });
+    const etimeout = Object.assign(new Error("read ETIMEDOUT"), {
+      code: "ETIMEDOUT",
+    });
     expect(isTransientNetworkError(etimeout)).toBe(true);
   });
 
@@ -231,24 +249,38 @@ describe("isTransientNetworkError", () => {
     // bare "504 Gateway Time-out" page must be recognized without a statusCode.
     expect(
       isTransientNetworkError(
-        new Error('504 "method: GET url: .../releases.atom\\n\\n<h1>504 Gateway Time-out</h1>"'),
+        new Error(
+          '504 "method: GET url: .../releases.atom\\n\\n<h1>504 Gateway Time-out</h1>"',
+        ),
       ),
     ).toBe(true);
-    expect(isTransientNetworkError(new Error("503 Service Unavailable"))).toBe(true);
+    expect(isTransientNetworkError(new Error("503 Service Unavailable"))).toBe(
+      true,
+    );
     expect(isTransientNetworkError(new Error("502 Bad Gateway"))).toBe(true);
   });
 
   it("does not classify real update failures as transient", () => {
     expect(isTransientNetworkError(new Error("HttpError: 404"))).toBe(false);
-    expect(isTransientNetworkError(new Error("signature verification failed"))).toBe(false);
-    expect(isTransientNetworkError(new Error("Cannot find latest.yml"))).toBe(false);
-    expect(isTransientNetworkError(new Error("Cannot parse update info"))).toBe(false);
+    expect(
+      isTransientNetworkError(new Error("signature verification failed")),
+    ).toBe(false);
+    expect(isTransientNetworkError(new Error("Cannot find latest.yml"))).toBe(
+      false,
+    );
+    expect(isTransientNetworkError(new Error("Cannot parse update info"))).toBe(
+      false,
+    );
     // Real 4xx auth/missing-asset statusCodes must surface, not be swallowed.
     expect(
-      isTransientNetworkError(Object.assign(new Error("forbidden"), { statusCode: 403 })),
+      isTransientNetworkError(
+        Object.assign(new Error("forbidden"), { statusCode: 403 }),
+      ),
     ).toBe(false);
     expect(
-      isTransientNetworkError(Object.assign(new Error("not found"), { statusCode: 404 })),
+      isTransientNetworkError(
+        Object.assign(new Error("not found"), { statusCode: 404 }),
+      ),
     ).toBe(false);
   });
 
@@ -278,13 +310,26 @@ describe("applyReleaseLineSwitch concurrency", () => {
 describe("update installation safety", () => {
   beforeEach(() => {
     updaterMock.isPackaged = true;
-    updaterMock.quitAndInstall.mockClear();
-    vi.mocked(app.quit).mockClear();
+    updaterMock.quitAndInstall.mockReset();
+    updaterMock.quitAndInstall.mockImplementation(() => {
+      updaterMock.appListeners.get("before-quit")?.({
+        preventDefault: vi.fn(),
+      });
+    });
+    vi.mocked(app.quit).mockReset();
+    vi.mocked(app.quit).mockImplementation(() => {
+      updaterMock.appListeners.get("before-quit")?.({
+        preventDefault: vi.fn(),
+      });
+    });
     setBeforeInstallHook(async () => {});
     if (!updaterMock.appListeners.has("before-quit")) {
       initAutoUpdater();
     }
-    updaterMock.listeners.get("update-downloaded")?.({ version: "0.2.0", releaseNotes: null });
+    updaterMock.listeners.get("update-downloaded")?.({
+      version: "0.2.0",
+      releaseNotes: null,
+    });
   });
 
   afterAll(() => {
@@ -323,6 +368,66 @@ describe("update installation safety", () => {
       state: "error",
       message: "Update installation blocked: server teardown failed",
     });
+  });
+
+  it("resets manual install guard when quitAndInstall throws", async () => {
+    updaterMock.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error("installer crashed");
+    });
+
+    await expect(installUpdate()).resolves.toBe(false);
+    expect(getUpdateStatus()).toEqual({
+      state: "error",
+      message: "Update installation blocked: installer crashed",
+    });
+
+    updaterMock.listeners.get("update-downloaded")?.({
+      version: "0.2.0",
+      releaseNotes: null,
+    });
+    await expect(installUpdate()).resolves.toBe(true);
+    expect(updaterMock.quitAndInstall).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets manual install guard when quitAndInstall returns without before-quit", async () => {
+    updaterMock.quitAndInstall.mockImplementationOnce(() => {});
+
+    await expect(installUpdate()).resolves.toBe(false);
+    expect(getUpdateStatus()).toEqual({
+      state: "error",
+      message:
+        "Update installation blocked: Update installer did not begin application shutdown",
+    });
+
+    updaterMock.listeners.get("update-downloaded")?.({
+      version: "0.2.0",
+      releaseNotes: null,
+    });
+    await expect(installUpdate()).resolves.toBe(true);
+    expect(updaterMock.quitAndInstall).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets silent-install guard when deferred app quit returns without before-quit", async () => {
+    vi.mocked(app.quit).mockImplementationOnce(() => {});
+    const beforeQuit = updaterMock.appListeners.get("before-quit");
+    const event = { preventDefault: vi.fn() } as unknown as Event;
+
+    beforeQuit?.(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getUpdateStatus()).toEqual({
+      state: "error",
+      message:
+        "Update installation blocked: Update installer did not begin application shutdown",
+    });
+
+    updaterMock.listeners.get("update-downloaded")?.({
+      version: "0.2.0",
+      releaseNotes: null,
+    });
+    beforeQuit?.({ preventDefault: vi.fn() } as unknown as Event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(app.quit).toHaveBeenCalledTimes(2);
+    expect(getUpdateStatus().state).toBe("downloaded");
   });
 
   it("keeps before-quit ownership at the auto-updater bootstrap boundary", () => {

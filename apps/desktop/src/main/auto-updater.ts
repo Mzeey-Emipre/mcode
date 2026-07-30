@@ -20,7 +20,8 @@ import { getMcodeDir } from "@mcode/shared";
 import { SettingsSchema as BundledSettingsSchema } from "@mcode/contracts";
 
 /** Use snapshot-provided schema when available (V8 snapshot pre-initializes Zod). */
-const SettingsSchema = globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? BundledSettingsSchema;
+const SettingsSchema =
+  globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? BundledSettingsSchema;
 
 /**
  * Connectivity-class error tokens that should NOT surface as a red
@@ -66,7 +67,9 @@ const TRANSIENT_NETWORK_TOKENS: readonly string[] = [
  * problem (401 auth, 403 forbidden, 404 missing asset) are deliberately
  * excluded — those need to surface.
  */
-const TRANSIENT_HTTP_STATUS: ReadonlySet<number> = new Set([408, 429, 500, 502, 503, 504]);
+const TRANSIENT_HTTP_STATUS: ReadonlySet<number> = new Set([
+  408, 429, 500, 502, 503, 504,
+]);
 
 /**
  * Human-readable gateway phrases electron-updater includes in the error body
@@ -110,7 +113,7 @@ const INTERVAL_MS_MAP: Record<string, number> = {
   "1hour": 60 * 60 * 1000,
   "4hours": 4 * 60 * 60 * 1000,
   "1day": 24 * 60 * 60 * 1000,
-  "never": Infinity,
+  never: Infinity,
 };
 
 interface UpdaterSettings {
@@ -124,7 +127,9 @@ interface UpdaterSettings {
 /**
  * Maps persisted `updates.channel` to the electron-updater publish channel name.
  */
-function releaseLineToUpdaterChannel(releaseLine: "stable" | "nightly"): string {
+function releaseLineToUpdaterChannel(
+  releaseLine: "stable" | "nightly",
+): string {
   return releaseLine === "nightly" ? "nightly" : "latest";
 }
 
@@ -287,16 +292,23 @@ function loadUpdaterSettings(): UpdaterSettings {
 
       return {
         releaseLine,
-        autoDownload: result.data.updates?.autoDownload ?? defaults.autoDownload,
-        autoInstallOnQuit: result.data.updates?.autoInstallOnQuit ?? defaults.autoInstallOnQuit,
-        checkInterval: result.data.updates?.checkInterval ?? defaults.checkInterval,
+        autoDownload:
+          result.data.updates?.autoDownload ?? defaults.autoDownload,
+        autoInstallOnQuit:
+          result.data.updates?.autoInstallOnQuit ?? defaults.autoInstallOnQuit,
+        checkInterval:
+          result.data.updates?.checkInterval ?? defaults.checkInterval,
       };
     }
-    console.warn("[auto-updater] settings.json failed validation, using defaults");
+    console.warn(
+      "[auto-updater] settings.json failed validation, using defaults",
+    );
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[auto-updater] settings.json could not be loaded, using defaults: ${message}`);
+      console.warn(
+        `[auto-updater] settings.json could not be loaded, using defaults: ${message}`,
+      );
     }
   }
   return defaults;
@@ -304,7 +316,7 @@ function loadUpdaterSettings(): UpdaterSettings {
 
 /** Convert a check-interval name to milliseconds, defaulting to 4 hours. */
 function intervalToMs(interval: string): number {
-  return INTERVAL_MS_MAP[interval] ?? (4 * 60 * 60 * 1000);
+  return INTERVAL_MS_MAP[interval] ?? 4 * 60 * 60 * 1000;
 }
 
 /** IPC push channel used to broadcast update status to the renderer. */
@@ -333,6 +345,7 @@ let beforeInstallHook: (() => Promise<void>) | null = null;
  * Matches our own before-quit handler on the synthetic second quit().
  */
 let isCompletingStoppedServerQuit = false;
+let installerQuitObserved = false;
 
 /**
  * Register a callback that runs before every quitAndInstall.
@@ -354,13 +367,42 @@ async function quitAndInstallSafely(): Promise<boolean> {
       await beforeInstallHook();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[auto-updater] beforeInstallHook failed, cancelling install:", message);
-      broadcastStatus({ state: "error", message: `Update installation blocked: ${message}` });
+      console.error(
+        "[auto-updater] beforeInstallHook failed, cancelling install:",
+        message,
+      );
+      broadcastStatus({
+        state: "error",
+        message: `Update installation blocked: ${message}`,
+      });
       return false;
     }
   }
+  installerQuitObserved = false;
   isCompletingStoppedServerQuit = true;
-  autoUpdater.quitAndInstall();
+  try {
+    autoUpdater.quitAndInstall();
+  } catch (err) {
+    isCompletingStoppedServerQuit = false;
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[auto-updater] quitAndInstall failed:", message);
+    broadcastStatus({
+      state: "error",
+      message: `Update installation blocked: ${message}`,
+    });
+    return false;
+  }
+  if (!installerQuitObserved) {
+    isCompletingStoppedServerQuit = false;
+    const message = "Update installer did not begin application shutdown";
+    console.error(`[auto-updater] ${message}`);
+    broadcastStatus({
+      state: "error",
+      message: `Update installation blocked: ${message}`,
+    });
+    return false;
+  }
+  isCompletingStoppedServerQuit = false;
   return true;
 }
 
@@ -394,7 +436,10 @@ let inFlightCheck: Promise<UpdateStatus> | null = null;
  */
 export function checkForUpdatesNow(): Promise<UpdateStatus> {
   if (!initialized) {
-    return Promise.resolve({ state: "not-available", version: app.getVersion() });
+    return Promise.resolve({
+      state: "not-available",
+      version: app.getVersion(),
+    });
   }
   if (inFlightCheck) {
     return inFlightCheck;
@@ -448,25 +493,57 @@ export async function downloadUpdate(): Promise<void> {
  * still holds DLLs inside the install prefix. Deferred quit frees those handles first.
  */
 function onBeforeQuitForPendingInstall(event: Event): void {
-  if (isCompletingStoppedServerQuit) return;
+  if (isCompletingStoppedServerQuit) {
+    installerQuitObserved = true;
+    return;
+  }
   if (!app.isPackaged) return;
   if (!initialized) return;
   const { autoInstallOnQuit } = loadUpdaterSettings();
   if (!autoInstallOnQuit || lastStatus.state !== "downloaded") return;
 
   event.preventDefault();
+  installerQuitObserved = false;
   isCompletingStoppedServerQuit = true;
   void (async () => {
     try {
       if (beforeInstallHook) await beforeInstallHook();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[auto-updater] server stop failed before silent install on quit:", message);
+      console.error(
+        "[auto-updater] server stop failed before silent install on quit:",
+        message,
+      );
       isCompletingStoppedServerQuit = false;
-      broadcastStatus({ state: "error", message: `Update installation blocked: ${message}` });
+      broadcastStatus({
+        state: "error",
+        message: `Update installation blocked: ${message}`,
+      });
       return;
     }
-    app.quit();
+    try {
+      app.quit();
+    } catch (err) {
+      isCompletingStoppedServerQuit = false;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[auto-updater] deferred app quit failed:", message);
+      broadcastStatus({
+        state: "error",
+        message: `Update installation blocked: ${message}`,
+      });
+      return;
+    }
+    if (!installerQuitObserved) {
+      isCompletingStoppedServerQuit = false;
+      const message = "Update installer did not begin application shutdown";
+      console.error(`[auto-updater] ${message}`);
+      broadcastStatus({
+        state: "error",
+        message: `Update installation blocked: ${message}`,
+      });
+      return;
+    }
+    isCompletingStoppedServerQuit = false;
   })();
 }
 
@@ -548,7 +625,10 @@ export function initAutoUpdater(): void {
       // Connectivity blips (DNS failure, captive portal, offline-at-launch)
       // resolve themselves on the next periodic check. Log for diagnostics but
       // do not flip the renderer to an error toast — see UpdateIndicator.tsx.
-      console.warn("[auto-updater] Transient network failure, will retry:", message);
+      console.warn(
+        "[auto-updater] Transient network failure, will retry:",
+        message,
+      );
       broadcastStatus({ state: "idle" });
       return;
     }
@@ -576,6 +656,8 @@ export function initAutoUpdater(): void {
  */
 export function cleanupAutoUpdater(): void {
   app.removeListener("before-quit", onBeforeQuitForPendingInstall);
+  isCompletingStoppedServerQuit = false;
+  installerQuitObserved = false;
   if (initialCheckTimeoutId) {
     clearTimeout(initialCheckTimeoutId);
     initialCheckTimeoutId = null;
@@ -589,7 +671,8 @@ export function cleanupAutoUpdater(): void {
 
 /** Bring the main window to the foreground (restoring it if minimized). */
 function focusMainWindow(): void {
-  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const win =
+    BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
@@ -601,7 +684,8 @@ function focusMainWindow(): void {
  * either a string, an array of {version, note} entries, or null.
  */
 function stringifyReleaseNotes(
-  notes: string | Array<{ version: string; note: string | null }> | null | undefined,
+  notes:
+    string | Array<{ version: string; note: string | null }> | null | undefined,
 ): string | undefined {
   if (!notes) return undefined;
   if (typeof notes === "string") return notes;
