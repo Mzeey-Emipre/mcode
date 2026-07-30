@@ -795,7 +795,11 @@ function appendThoughtSegment(
 export const useThreadStore = create<ThreadState>((set, get) => {
   let textDeltaFlushRaf: number | null = null;
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
-  const deferredNarrativeEventsByThread = new Map<string, AgentEvent[]>();
+  const deferredNarrativeEventsByThread = new Map<
+    string,
+    { generation: number; events: AgentEvent[] }
+  >();
+  const deferredNarrativeGenerations = new Map<string, number>();
 
   const getRec = (threadId: string) => getThreadRecord(get().records, threadId);
 
@@ -875,10 +879,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   };
 
   const promoteDeferredNarrativeEvents = (threadId: string): void => {
-    const events = deferredNarrativeEventsByThread.get(threadId);
-    if (!events || events.length === 0) return;
+    const queued = deferredNarrativeEventsByThread.get(threadId);
+    if (!queued || queued.events.length === 0) return;
     deferredNarrativeEventsByThread.delete(threadId);
-    for (const event of events) {
+    if (queued.generation !== (deferredNarrativeGenerations.get(threadId) ?? 0)) return;
+    for (const event of queued.events) {
       if (event.type === "textDelta") {
         const delta = typeof event.delta === "string" ? event.delta : "";
         if (!delta || event.isFinalResponse === true) continue;
@@ -940,6 +945,25 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
   };
 
+  const invalidateDeferredNarrativeEvents = (threadId: string): void => {
+    deferredNarrativeGenerations.set(
+      threadId,
+      (deferredNarrativeGenerations.get(threadId) ?? 0) + 1,
+    );
+    dropPendingTextDeltas([threadId]);
+  };
+
+  const queueDeferredNarrativeEvent = (threadId: string, event: AgentEvent): void => {
+    const generation = deferredNarrativeGenerations.get(threadId) ?? 0;
+    const queued = deferredNarrativeEventsByThread.get(threadId);
+    const events = queued?.generation === generation ? queued.events : [];
+    if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS) return;
+    deferredNarrativeEventsByThread.set(threadId, {
+      generation,
+      events: [...events, event],
+    });
+  };
+
   const messageSequenceFor = (threadId: string) =>
     getRec(threadId).messages.reduce(
       (latestSequence, message) => Math.max(latestSequence, message.sequence),
@@ -981,7 +1005,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   const conversationResidency = createConversationResidency({
     restoreConversation: (threadId) => threadHydrator.hydrate(threadId, "active"),
     refreshConversation: (threadId) => threadHydrator.hydrate(threadId, "active", { force: true }),
-    deactivateConversation: () => threadHydrator.deactivate(),
+    deactivateConversation: () => {
+      const current = get().currentThreadId;
+      if (current) invalidateDeferredNarrativeEvents(current);
+      threadHydrator.deactivate();
+    },
     retainInactiveConversation: (threadId) => threadHydrator.retainInactiveConversation(threadId),
     invalidateConversation: (threadId) => threadHydrator.invalidateConversation(threadId),
     synchronizeConversation: (threadId) => threadHydrator.synchronizeConversation(threadId),
@@ -1149,7 +1177,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       throw new Error(`Thread ${threadId} already has an active agent session`);
     }
     if (!isControlCommand) {
-      dropPendingTextDeltas([threadId]);
+      invalidateDeferredNarrativeEvents(threadId);
       useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
     }
 
@@ -1289,6 +1317,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           runningThreadIds: next,
         };
       });
+      if (!activeSessionConflict && !isControlCommand) {
+        invalidateDeferredNarrativeEvents(threadId);
+      }
     }
   },
 
@@ -1333,6 +1364,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         })),
       };
     });
+    invalidateDeferredNarrativeEvents(threadId);
+    threadHydrator.invalidatePermissionSnapshots(threadId);
   },
 
   hydrateRunningThreads: (ids) => {
@@ -1367,7 +1400,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
       return { runningThreadIds: new Set(ids), records };
     });
-    dropPendingTextDeltas(resetPendingIds);
+    for (const threadId of resetPendingIds) {
+      invalidateDeferredNarrativeEvents(threadId);
+      threadHydrator.invalidatePermissionSnapshots(threadId);
+    }
   },
 
   /** Append a single message to the current thread's message list. */
@@ -1388,9 +1424,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * Does NOT reset runningThreadIds since agents may still be executing.
    */
   clearMessages: () => {
-    flushPendingTextDeltas();
     const current = get().currentThreadId;
-    if (current) conversationResidency.invalidateConversation(current);
+    if (current) {
+      invalidateDeferredNarrativeEvents(current);
+      conversationResidency.invalidateConversation(current);
+    }
+    flushPendingTextDeltas();
 
     get().toolCallRecordCache.clear();
     if (current) {
@@ -1420,6 +1459,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   deactivateConversation: () => {
+    const current = get().currentThreadId;
+    if (current) invalidateDeferredNarrativeEvents(current);
     threadHydrator.deactivate();
   },
 
@@ -1521,6 +1562,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   clearThreadState: (threadId) => {
     conversationResidency.invalidateConversation(threadId);
     clearDequeueTimer(threadId);
+    invalidateDeferredNarrativeEvents(threadId);
     forgetScrollTop(threadId);
 
     const isCurrentThread = get().currentThreadId === threadId;
@@ -1550,6 +1592,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     for (const threadId of threadIds) {
       conversationResidency.invalidateConversation(threadId);
       clearDequeueTimer(threadId);
+      invalidateDeferredNarrativeEvents(threadId);
       forgetScrollTop(threadId);
     }
 
@@ -1763,6 +1806,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   addPermissionRequest: (request) => {
+    threadHydrator.invalidatePermissionSnapshots(request.threadId);
     set((s) => {
       const existing = getThreadRecord(s.records, request.threadId).permissions;
       if (existing.some((p) => p.requestId === request.requestId)) return s;
@@ -1775,6 +1819,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   resolvePermissionRequest: (requestId, decision) => {
+    for (const [threadId, rec] of get().records) {
+      if (rec.permissions.some((permission) => permission.requestId === requestId)) {
+        threadHydrator.invalidatePermissionSnapshots(threadId);
+        break;
+      }
+    }
     set((s) => {
       let records = s.records;
       for (const [threadId, rec] of s.records) {
@@ -1849,8 +1899,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const { threadId } = event;
     const currentThreadId = get().currentThreadId;
     const isActiveThread = currentThreadId !== null && currentThreadId === threadId;
+    const isLifecycleExit = event.type === "turnComplete" || event.type === "ended" || event.type === "error";
+    const startsNewInstance = event.type === "turnStarted";
 
-    if (isActiveThread) promoteDeferredNarrativeEvents(threadId);
+    if (isLifecycleExit || startsNewInstance) {
+      invalidateDeferredNarrativeEvents(threadId);
+    }
+    if (startsNewInstance) {
+      threadHydrator.invalidatePermissionSnapshots(threadId);
+    }
+    if (isActiveThread && !startsNewInstance && !isLifecycleExit) {
+      promoteDeferredNarrativeEvents(threadId);
+    }
 
     if (event.type !== "textDelta") {
       flushPendingTextDeltas();
@@ -2396,6 +2456,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
     // session.textDelta: accumulate streaming text for live preview and finalization.
     if (event.type === "textDelta") {
+      if (!get().runningThreadIds.has(threadId)) return;
       const delta = (event.delta as string) || "";
       if (!delta) return;
       const rawIsFinalResponse = event.isFinalResponse;
@@ -2420,11 +2481,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         next.push({ delta, isFinalResponse, deferNarrative });
       }
       pendingTextDeltaByThread.set(threadId, next);
-      if (!isActiveThread) {
-        const deferred = deferredNarrativeEventsByThread.get(threadId) ?? [];
-        if (deferred.length < MAX_DEFERRED_NARRATIVE_EVENTS) {
-          deferredNarrativeEventsByThread.set(threadId, [...deferred, event]);
-        }
+      if (!isActiveThread && get().runningThreadIds.has(threadId)) {
+        queueDeferredNarrativeEvent(threadId, event);
       }
       if (!deferNarrative && (!hadPending || existing.some((chunk) => chunk.deferNarrative))) {
         markPriorToolCallsComplete();
@@ -2434,6 +2492,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "assistantMessageBoundary") {
+      if (!get().runningThreadIds.has(threadId)) return;
       // Authoritative classification of the text deltas just streamed for this
       // assistant message, derived from the Anthropic `stop_reason`.
       //
@@ -2449,11 +2508,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Flush any pending text delta chunks first so the open thought we
       // operate on reflects every delta that arrived for this message.
       flushPendingTextDeltas();
-      if (!isActiveThread) {
-        const deferred = deferredNarrativeEventsByThread.get(threadId) ?? [];
-        if (deferred.length < MAX_DEFERRED_NARRATIVE_EVENTS) {
-          deferredNarrativeEventsByThread.set(threadId, [...deferred, event]);
-        }
+      if (!isActiveThread && get().runningThreadIds.has(threadId)) {
+        queueDeferredNarrativeEvent(threadId, event);
         return;
       }
       set((state) => {
@@ -2476,11 +2532,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "toolProgress") {
-      if (!isActiveThread) {
-        const deferred = deferredNarrativeEventsByThread.get(threadId) ?? [];
-        if (deferred.length < MAX_DEFERRED_NARRATIVE_EVENTS) {
-          deferredNarrativeEventsByThread.set(threadId, [...deferred, event]);
-        }
+      if (!get().runningThreadIds.has(threadId)) return;
+      if (!isActiveThread && get().runningThreadIds.has(threadId)) {
+        queueDeferredNarrativeEvent(threadId, event);
         return;
       }
       const toolCallId = (event.toolCallId as string) || "";

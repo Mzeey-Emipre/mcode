@@ -49,7 +49,17 @@ export interface AuxiliaryHydratorDeps {
  * Owns the freshness TTL gate and diff-before-set discipline.
  */
 export class AuxiliaryHydrator {
+  private readonly permissionSnapshotGenerations = new Map<string, number>();
+
   constructor(private readonly deps: AuxiliaryHydratorDeps) {}
+
+  /** Invalidate pending permission snapshots for one thread instance. */
+  invalidatePermissions(threadId: string): void {
+    this.permissionSnapshotGenerations.set(
+      threadId,
+      (this.permissionSnapshotGenerations.get(threadId) ?? 0) + 1,
+    );
+  }
 
   /**
    * Run the auxiliary fanout for a thread when the TTL gate allows (or force is set).
@@ -85,19 +95,42 @@ export class AuxiliaryHydrator {
 
   private hydratePermissions(threadId: string): void {
     const { getState, setState, shallowEqualBy } = this.deps;
+    const startedState = getState();
+    const startedRecord = getThreadRecord(startedState.records, threadId);
+    const startedGeneration = this.permissionSnapshotGenerations.get(threadId) ?? 0;
+    const startedRunning = startedState.runningThreadIds.has(threadId);
+    const startedCurrentThreadId = startedState.currentThreadId;
 
     void this.transport()
       .listPendingPermissions(threadId)
       .then((pending) => {
-        // Running threads receive authoritative permission events over the
-        // live channel. A resident refresh may have started earlier, so its
-        // late snapshot must never replace a newer live request.
-        if (getState().runningThreadIds.has(threadId)) return;
+        const state = getState();
+        const current = getThreadRecord(state.records, threadId);
+        const generation = this.permissionSnapshotGenerations.get(threadId) ?? 0;
+        const runningNow = state.runningThreadIds.has(threadId);
+        // Snapshot may commit only to same thread instance and lifecycle. A
+        // live request wins once present; empty live state still permits a
+        // running snapshot when no event arrived to populate it.
+        if (
+          generation !== startedGeneration
+          || state.currentThreadId !== startedCurrentThreadId
+          || !state.records.has(threadId)
+          || current.loadEpoch !== startedRecord.loadEpoch
+          || runningNow !== startedRunning
+          || (runningNow && current.permissions.length > 0)
+        ) return;
         const mapped = pending.map((p) => ({ ...p, settled: false }));
-        const current = getThreadRecord(getState().records, threadId).permissions;
-        if (!shallowEqualBy(mapped, current, ["requestId", "toolName", "settled"])) {
+        if (!shallowEqualBy(mapped, current.permissions, ["requestId", "toolName", "settled"])) {
           setState((s: ThreadHydratorWriteState) => {
-            if (!s.records.has(threadId)) return {};
+            const next = getThreadRecord(s.records, threadId);
+            if (
+              !s.records.has(threadId)
+              || s.currentThreadId !== startedCurrentThreadId
+              || next.loadEpoch !== startedRecord.loadEpoch
+              || (this.permissionSnapshotGenerations.get(threadId) ?? 0) !== startedGeneration
+              || s.runningThreadIds.has(threadId) !== startedRunning
+              || (s.runningThreadIds.has(threadId) && next.permissions.length > 0)
+            ) return {};
             return {
               records: patchThreadRecord(s.records, threadId, { permissions: mapped }),
             };
