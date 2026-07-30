@@ -275,6 +275,20 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+/** Check whether a detached POSIX process group still exists. */
+function isProcessGroupAlive(pid: number): boolean {
+  if (process.platform === "win32") return isProcessAlive(pid);
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    const message =
+      error instanceof Error ? error.message : String(error ?? "");
+    return code !== "ESRCH" && !message.includes("ESRCH");
+  }
+}
+
 function sameServerLockIdentity(left: ServerLock, right: ServerLock): boolean {
   return (
     left.port === right.port &&
@@ -722,13 +736,14 @@ export class ServerManager {
 
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
-      if (!isProcessAlive(lock.pid)) break;
+      if (!isProcessAlive(lock.pid) && !isProcessGroupAlive(lock.pid)) break;
       await new Promise((r) => setTimeout(r, 200));
     }
 
     const processAlive = isProcessAlive(lock.pid);
+    const processGroupAlive = isProcessGroupAlive(lock.pid);
 
-    if (processAlive) {
+    if (processAlive || processGroupAlive) {
       if (!ownsServerProcess) {
         throw new Error(
           `Server process ${lock.pid} still running after graceful shutdown; refusing to terminate unrelated process`,
@@ -740,6 +755,21 @@ export class ServerManager {
         throw new Error(`Failed to terminate server process tree ${lock.pid}`, {
           cause: error,
         });
+      }
+
+      if (process.platform !== "win32") {
+        const forceKillDeadline = Date.now() + 10_000;
+        while (
+          Date.now() < forceKillDeadline &&
+          isProcessGroupAlive(lock.pid)
+        ) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        if (isProcessGroupAlive(lock.pid)) {
+          throw new Error(
+            `Server process tree ${lock.pid} still running after termination`,
+          );
+        }
       }
     }
 

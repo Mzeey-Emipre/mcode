@@ -825,6 +825,90 @@ describe("ServerManager", () => {
     }
   });
 
+  it("kills an owned POSIX process group after its leader exits", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    (manager as unknown as { serverProcess: unknown }).serverProcess =
+      refs.mockChildProcess;
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    let groupAlive = true;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid > 0) {
+        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        throw error;
+      }
+      if (signal === 0) {
+        if (!groupAlive) {
+          const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+          throw error;
+        }
+        return true as never;
+      }
+      groupAlive = false;
+      return true as never;
+    });
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(killSpy).toHaveBeenCalledWith(-12345, "SIGKILL");
+      expect(unlinkSync).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
+  it("preserves an unknown lock when its leader is dead but POSIX group remains", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
+      if (pid > 0) {
+        const error = Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        throw error;
+      }
+      return true as never;
+    });
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "refusing to terminate unrelated process",
+      );
+      expect(killSpy).not.toHaveBeenCalledWith(-12345, "SIGKILL");
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
+    }
+  });
+
   it("does not unlink a lock replaced while shutdown was in progress", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     const replacement = JSON.stringify({
