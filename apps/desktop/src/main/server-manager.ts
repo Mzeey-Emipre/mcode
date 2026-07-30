@@ -246,6 +246,12 @@ interface ServerLock {
   ipcPath: string;
 }
 
+interface OwnedServerIdentity {
+  pid: number;
+  startedAt: string;
+  authToken: string;
+}
+
 function isServerLock(value: unknown): value is ServerLock {
   if (!value || typeof value !== "object") return false;
   const lock = value as Partial<ServerLock>;
@@ -297,6 +303,17 @@ function sameServerLockIdentity(left: ServerLock, right: ServerLock): boolean {
     left.startedAt === right.startedAt &&
     left.version === right.version &&
     left.ipcPath === right.ipcPath
+  );
+}
+
+function sameOwnedServerIdentity(
+  lock: ServerLock,
+  identity: OwnedServerIdentity,
+): boolean {
+  return (
+    lock.pid === identity.pid &&
+    lock.startedAt === identity.startedAt &&
+    lock.authToken === identity.authToken
   );
 }
 
@@ -375,6 +392,7 @@ async function tryExistingServer(
  */
 export class ServerManager {
   private serverProcess: ChildProcess | null = null;
+  private ownedServerIdentity: OwnedServerIdentity | null = null;
   private _port = 0;
   private _authToken = "";
   private _ipcPath = "";
@@ -424,10 +442,14 @@ export class ServerManager {
         await this.forceReplace();
         // Fall through to spawn new server
       } else {
+        const ownsExistingServer =
+          this.ownedServerIdentity !== null &&
+          sameOwnedServerIdentity(existing, this.ownedServerIdentity);
+        if (!ownsExistingServer) this.ownedServerIdentity = null;
         this._port = existing.port;
         this._authToken = existing.authToken;
         this._ipcPath = existing.ipcPath ?? "";
-        this._reusedExisting = true;
+        this._reusedExisting = !ownsExistingServer;
         return { port: this._port, authToken: this._authToken };
       }
     }
@@ -447,10 +469,14 @@ export class ServerManager {
           await new Promise((r) => setTimeout(r, 200));
           const existingNow = await tryExistingServer(PORT_MIN, PORT_MAX);
           if (existingNow) {
+            const ownsExistingServer =
+              this.ownedServerIdentity !== null &&
+              sameOwnedServerIdentity(existingNow, this.ownedServerIdentity);
+            if (!ownsExistingServer) this.ownedServerIdentity = null;
             this._port = existingNow.port;
             this._authToken = existingNow.authToken;
             this._ipcPath = existingNow.ipcPath ?? "";
-            this._reusedExisting = true;
+            this._reusedExisting = !ownsExistingServer;
             return { port: this._port, authToken: this._authToken };
           }
         }
@@ -687,7 +713,10 @@ export class ServerManager {
    */
   async stopServerHeldByLock(): Promise<void> {
     const lockPath = lockFilePath();
-    if (!existsSync(lockPath)) return;
+    if (!existsSync(lockPath)) {
+      this.ownedServerIdentity = null;
+      return;
+    }
 
     let parsedLock: unknown;
     try {
@@ -719,7 +748,13 @@ export class ServerManager {
     }
     const lock = parsedLock;
 
-    const ownsServerProcess = this.serverProcess?.pid === lock.pid;
+    const ownedIdentity = this.ownedServerIdentity;
+    if (ownedIdentity && !sameOwnedServerIdentity(lock, ownedIdentity)) {
+      this.ownedServerIdentity = null;
+      return;
+    }
+
+    const ownsServerProcess = ownedIdentity !== null;
 
     try {
       await fetch(`http://localhost:${lock.port}/shutdown`, {
@@ -749,6 +784,19 @@ export class ServerManager {
           `Server process ${lock.pid} still running after graceful shutdown; refusing to terminate unrelated process`,
         );
       }
+      let currentLock: unknown;
+      try {
+        currentLock = JSON.parse(readFileSync(lockPath, "utf-8"));
+      } catch {
+        return;
+      }
+      if (
+        !isServerLock(currentLock) ||
+        (ownedIdentity && !sameOwnedServerIdentity(currentLock, ownedIdentity))
+      ) {
+        this.ownedServerIdentity = null;
+        return;
+      }
       try {
         forceKillServerProcessTree(lock.pid);
       } catch (error) {
@@ -776,6 +824,7 @@ export class ServerManager {
     try {
       const currentLock = JSON.parse(readFileSync(lockPath, "utf-8"));
       if (!isServerLock(currentLock) || !sameServerLockIdentity(lock, currentLock)) {
+        this.ownedServerIdentity = null;
         return;
       }
     } catch {
@@ -787,6 +836,7 @@ export class ServerManager {
     } catch {
       /* ok */
     }
+    this.ownedServerIdentity = null;
   }
 
   /**
@@ -807,9 +857,16 @@ export class ServerManager {
     for (let i = 0; i < maxAttempts; i++) {
       try {
         const raw = await readFile(lockFilePath(), "utf-8");
-        const lock: ServerLock = JSON.parse(raw);
-        if (lock.authToken) {
+        const lock: unknown = JSON.parse(raw);
+        if (isServerLock(lock) && lock.authToken) {
           this._ipcPath = lock.ipcPath ?? "";
+          if (this.serverProcess?.pid === lock.pid) {
+            this.ownedServerIdentity = {
+              pid: lock.pid,
+              startedAt: lock.startedAt,
+              authToken: lock.authToken,
+            };
+          }
           return lock.authToken;
         }
       } catch {

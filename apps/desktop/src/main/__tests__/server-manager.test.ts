@@ -760,6 +760,8 @@ describe("ServerManager", () => {
     });
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
+    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
+      JSON.parse(LOCK_FILE_JSON);
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", {
@@ -792,6 +794,8 @@ describe("ServerManager", () => {
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
+    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
+      JSON.parse(LOCK_FILE_JSON);
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", {
       value: "linux",
@@ -826,10 +830,12 @@ describe("ServerManager", () => {
   });
 
   it("kills an owned POSIX process group after its leader exits", async () => {
+    await manager.start();
+    refs.getExitCallback()!(1);
+
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
-    (manager as unknown as { serverProcess: unknown }).serverProcess =
-      refs.mockChildProcess;
+    vi.mocked(unlinkSync).mockReset();
     const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", {
       value: "linux",
@@ -936,6 +942,31 @@ describe("ServerManager", () => {
     }
   });
 
+  it("does not signal a replacement lock after the owned child exits", async () => {
+    await manager.start();
+    refs.getExitCallback()!(1);
+
+    const replacement = JSON.stringify({
+      ...JSON.parse(LOCK_FILE_JSON),
+      authToken: "replacement-token",
+    });
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(replacement);
+    vi.mocked(unlinkSync).mockReset();
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
   it("forceReplace polls PID until process exits", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
@@ -979,6 +1010,8 @@ describe("ServerManager", () => {
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
     (manager as unknown as { serverProcess: unknown }).serverProcess =
       refs.mockChildProcess;
+    (manager as unknown as { ownedServerIdentity: unknown }).ownedServerIdentity =
+      JSON.parse(LOCK_FILE_JSON);
 
     // Always report alive so we hit the SIGKILL fallback.
     // Mock Date.now to fast-forward past the 10s deadline.
