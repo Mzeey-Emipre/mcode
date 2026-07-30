@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import path from "node:path";
 import {
   copilotSdkPlatformPackageName,
@@ -15,12 +16,21 @@ const serverRoot = path.join(repoRoot, "apps/server");
 
 describe("Copilot SDK target package preparation", () => {
   it("derives the target package version from installed Copilot metadata", () => {
+    const testSource = readFileSync(import.meta.filename, "utf8");
+    expect(testSource).not.toMatch(/@github\+copilot@\d+\.\d+\.\d+/);
     const plan = resolveCopilotTargetPackagePlan(serverRoot, "darwin", "x64");
+    const sdkEntry = createRequire(path.join(serverRoot, "package.json")).resolve(
+      "@github/copilot-sdk",
+    );
     const installed = JSON.parse(
       readFileSync(
-        path.join(
-          repoRoot,
-          "node_modules/.bun/@github+copilot@1.0.25/node_modules/@github/copilot/package.json",
+        path.resolve(
+          path.dirname(sdkEntry),
+          "..",
+          "..",
+          "..",
+          "copilot",
+          "package.json",
         ),
         "utf8",
       ),
