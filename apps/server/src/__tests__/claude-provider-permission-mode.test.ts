@@ -83,6 +83,8 @@ import { ClaudeProvider } from "../providers/claude/claude-provider";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
 import { BrowserAutomationAccessService } from "../services/browser-automation/access-service.js";
+import { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
+import { BrowserAutomationCredentialRegistry } from "../services/browser-automation/credential-registry.js";
 
 describe("ClaudeProvider permission mode changes", () => {
   let provider: ClaudeProvider;
@@ -97,35 +99,45 @@ describe("ClaudeProvider permission mode changes", () => {
   });
 
   it("passes browser MCP through query options without touching process.env", async () => {
-    const access = new BrowserAutomationAccessService();
+    const credentials = new BrowserAutomationCredentialRegistry();
+    const access = new BrowserAutomationAccessService(credentials);
+    const lease = new BrowserAutomationSessionLease(credentials);
     access.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
-    provider = new ClaudeProvider(stubEnvService(), stubJobObject(), undefined, access);
-
-    await provider.sendTurn({
-      sessionId: "mcode-browser-claude",
-      workspaceId: "workspace-test",
-      threadId: "browser-claude",
-      message: "inspect the page",
-      cwd: process.cwd(),
-      model: "claude-sonnet-4-6",
-      permissionMode: "supervised",
-      interactionMode: "build",
-      providerOptions: {},
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
     });
+    provider = new ClaudeProvider(stubEnvService(), stubJobObject(), undefined, access, lease);
 
-    expect(sdkCalls[0]!.options.mcpServers).toMatchObject({
-      "mcode-browser": {
-        type: "http",
-        url: "http://127.0.0.1:19400/mcp",
-        headers: { Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{40,}$/) },
-      },
-    });
-    expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
-    await provider.stopSession("mcode-browser-claude");
-    expect(access.credentials.size()).toBe(0);
+    try {
+      await provider.sendTurn({
+        sessionId: "mcode-browser-claude",
+        workspaceId: "workspace-test",
+        threadId: "browser-claude",
+        message: "inspect the page",
+        cwd: process.cwd(),
+        model: "claude-sonnet-4-6",
+        permissionMode: "supervised",
+        interactionMode: "build",
+        providerOptions: {},
+      });
+
+      expect(sdkCalls[0]!.options.mcpServers).toMatchObject({
+        "mcode-browser": {
+          type: "http",
+          url: "http://127.0.0.1:19400/mcp",
+          headers: { Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{40,}$/) },
+        },
+      });
+      expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
+      await provider.stopSession("mcode-browser-claude");
+    } finally {
+      lease.shutdown();
+    }
+    expect(credentials.size()).toBe(0);
   });
 
   it("reuses the session when permissionMode is unchanged", async () => {

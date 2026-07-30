@@ -196,6 +196,14 @@ export class BrowserAutomationSessionLease {
     return this.configuration !== null;
   }
 
+  /** Returns whether an active lease still owns a retained registry credential. */
+  isActive(leaseId: string): boolean {
+    // Registry sweeps expired or evicted credentials from its own accessors and
+    // synchronously notifies this lease, so refresh state before checking it.
+    this.credentials.size();
+    return this.active.has(leaseId);
+  }
+
   /** Stages one bounded scope and returns its opaque lease handle. */
   stage(request: BrowserAutomationSessionLeaseRequest): BrowserAutomationSessionLeaseStage {
     this.cleanupPending();

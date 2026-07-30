@@ -35,11 +35,14 @@ import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { CleanForker } from "../../services/handoff/session-forker.js";
 import {
-  BrowserAutomationAccessService,
   browserAutomationPermissionCapability,
-  type BrowserAutomationAccessRequest,
   type BrowserAutomationCredentialMetadata,
 } from "../../services/browser-automation/access-service.js";
+import {
+  BrowserAutomationSessionLease,
+  type BrowserAutomationSessionLeaseScope,
+  type BrowserAutomationSessionLeaseStage,
+} from "../../services/browser-automation/browser-automation-session-lease.js";
 import type {
   IAgentProvider,
   ISessionEvictable,
@@ -173,6 +176,8 @@ interface CopilotSessionState {
   turnActive: boolean;
   /** Non-secret browser credential lifecycle metadata for this main session. */
   browserCredential?: BrowserAutomationCredentialMetadata;
+  /** Lease handle owning the browser credential for this main session. */
+  browserLeaseId?: string;
   /** Workspace fixed to this SDK session at creation. */
   workspaceId: string;
   /** Browser permission class fixed to this SDK session at creation. */
@@ -211,7 +216,12 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    */
   private pendingSpawnTurns = new Map<string, { message: string; model?: string; copilotAgent?: string }>();
   /** Browser scope staged only until a fresh normal SDK session starts. */
-  private pendingBrowserAccess = new Map<string, BrowserAutomationAccessRequest>();
+  private pendingBrowserAccess = new Map<
+    string,
+    { scope: BrowserAutomationSessionLeaseScope; stage: BrowserAutomationSessionLeaseStage }
+  >();
+  /** Serialises setup of overlapping sends so staged browser handles cannot be overwritten. */
+  private sendLocks = new Map<string, Promise<void>>();
   /** Serialises concurrent refreshClient() calls so only one rebuild runs at a time. */
   private clientStartLock: Promise<void> = Promise.resolve();
 
@@ -224,8 +234,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("JobObject") private readonly jobObject: JobObject,
     @inject(EnvService) private readonly envService: EnvService,
-    @inject(BrowserAutomationAccessService)
-    private readonly browserAutomationAccess: BrowserAutomationAccessService = new BrowserAutomationAccessService(),
+    @inject(BrowserAutomationSessionLease)
+    private readonly browserAutomationLease: BrowserAutomationSessionLease = new BrowserAutomationSessionLease(),
   ) {
     super();
     this.runtime = new SessionRuntime<CopilotSessionState>(this, {
@@ -696,11 +706,19 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
   /** Start or continue a session by sending a message via the Copilot SDK. When `copilotAgent` is provided, routes the session to the appropriate built-in mode or custom agent before sending. */
   async sendTurn(req: TurnRequest<"copilot">): Promise<void> {
+    const previousSend = this.sendLocks.get(req.sessionId) ?? Promise.resolve();
+    let releaseSend!: () => void;
+    const currentSend = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    this.sendLocks.set(req.sessionId, currentSend);
+    await previousSend;
+
     // `resumeFrom` defined ⇒ resume that SDK session; undefined ⇒ fresh.
     if (req.resumeFrom !== undefined) {
       this.sdkSessionIds.set(req.sessionId, req.resumeFrom);
     }
-    this.pendingBrowserAccess.set(req.sessionId, {
+    const browserScope: BrowserAutomationSessionLeaseScope = {
       providerId: this.id,
       providerSessionId: req.resumeFrom ?? req.sessionId,
       mcodeSessionId: req.sessionId,
@@ -710,7 +728,12 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         req.permissionMode,
         req.interactionMode,
       ),
-    });
+    };
+    const browserAccess = {
+      scope: browserScope,
+      stage: this.browserAutomationLease.stage(browserScope),
+    };
+    this.pendingBrowserAccess.set(req.sessionId, browserAccess);
     const params = {
       sessionId: req.sessionId,
       message: req.message,
@@ -761,7 +784,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
       throw e;
     } finally {
-      this.pendingBrowserAccess.delete(req.sessionId);
+      const currentBrowserAccess = this.pendingBrowserAccess.get(req.sessionId);
+      if (currentBrowserAccess === browserAccess) {
+        this.browserAutomationLease.release(browserAccess.stage.leaseId);
+        this.pendingBrowserAccess.delete(req.sessionId);
+      }
+      releaseSend();
+      if (this.sendLocks.get(req.sessionId) === currentSend) this.sendLocks.delete(req.sessionId);
     }
   }
 
@@ -794,17 +823,29 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // Re-read after the async refreshClient() await so concurrent sends that
     // both passed the first check don't each create a new SDK session for the
     // same sessionId.
-    const existing = this.runtime.get(sessionId);
-    const browserScope = this.pendingBrowserAccess.get(sessionId);
+    let existing = this.runtime.get(sessionId);
+    const browserAccess = this.pendingBrowserAccess.get(sessionId);
+    const browserScope = browserAccess?.scope;
     if (
       existing &&
       browserScope &&
-      this.browserAutomationAccess.isConfigured() &&
+      this.browserAutomationLease.isConfigured() &&
       (existing.workspaceId !== browserScope.workspaceId ||
         existing.browserPermissionCapability !== browserScope.permissionCapability ||
-        (existing.browserCredential && existing.browserCredential.expiresAt <= Date.now()))
+        (existing.browserCredential &&
+          (existing.browserCredential.expiresAt <= Date.now() ||
+            (existing.browserLeaseId !== undefined && !this.browserAutomationLease.isActive(existing.browserLeaseId)))))
     ) {
+      if (
+        existing.browserCredential &&
+        existing.browserLeaseId &&
+        existing.browserCredential.expiresAt <= Date.now() &&
+        this.browserAutomationLease.isActive(existing.browserLeaseId)
+      ) {
+        this.browserAutomationLease.refresh(existing.browserLeaseId);
+      }
       await this.runtime.stop(sessionId);
+      existing = undefined;
     }
 
     // Stage the per-turn options (model, agent routing) so `spawn` can build a
@@ -824,10 +865,16 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       });
     } catch (e: unknown) {
       this.pendingSpawnTurns.delete(sessionId);
-      this.pendingBrowserAccess.delete(sessionId);
+      if (browserAccess) {
+        this.browserAutomationLease.release(browserAccess.stage.leaseId);
+        this.pendingBrowserAccess.delete(sessionId);
+      }
       throw e;
     }
     this.pendingSpawnTurns.delete(sessionId);
+    if (existing && browserAccess) {
+      this.browserAutomationLease.release(browserAccess.stage.leaseId);
+    }
     this.pendingBrowserAccess.delete(sessionId);
     this.runtime.recordUsage(sessionId);
 
@@ -886,8 +933,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
     const staged = this.pendingSpawnTurns.get(sessionId);
     const copilotAgent = staged?.copilotAgent;
-    const browserScope = this.pendingBrowserAccess.get(sessionId);
-    const browserGrant = browserScope ? this.browserAutomationAccess.issue(browserScope) : null;
+    const browserAccess = this.pendingBrowserAccess.get(sessionId);
+    const browserScope = browserAccess?.scope;
+    const browserGrant = browserAccess
+      ? this.browserAutomationLease.issue(browserAccess.stage)
+      : null;
 
     let session: CopilotSession;
 
@@ -951,7 +1001,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         session = await client.createSession(sessionBase);
       }
     } catch (error) {
-      if (browserGrant) this.browserAutomationAccess.revokeCredential(browserGrant.credentialId);
+      if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
       throw error;
     }
 
@@ -991,6 +1041,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
             credentialId: browserGrant.credentialId,
             expiresAt: browserGrant.expiresAt,
           },
+          browserLeaseId: browserGrant.leaseId,
         }),
       };
 
@@ -1002,7 +1053,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
       return { state, pids: [] };
     } catch (error) {
-      if (browserGrant) this.browserAutomationAccess.revokeCredential(browserGrant.credentialId);
+      if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
       await session.disconnect().catch(() => {});
       throw error;
     }
@@ -1035,7 +1086,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    */
   async close(state: CopilotSessionState): Promise<void> {
     if (state.browserCredential) {
-      this.browserAutomationAccess.revokeCredential(state.browserCredential.credentialId);
+      if (state.browserLeaseId) {
+        this.browserAutomationLease.release(state.browserLeaseId);
+      } else {
+        this.browserAutomationLease.revokeCredential(state.browserCredential.credentialId);
+      }
     }
     try {
       await state.session.disconnect();
@@ -1344,6 +1399,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     if (this.runtime.get(sessionId) !== undefined) {
       await this.runtime.stop(sessionId);
     } else {
+      this.browserAutomationLease.releaseSession(this.id, sessionId);
       this.pendingStops.add(sessionId);
       this.pendingSpawnTurns.delete(sessionId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
@@ -1367,6 +1423,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     );
     this.sdkSessionIds.clear();
     this.pendingSpawnTurns.clear();
+    this.sendLocks.clear();
+    for (const { stage } of this.pendingBrowserAccess.values()) {
+      this.browserAutomationLease.release(stage.leaseId);
+    }
     this.pendingBrowserAccess.clear();
     this.contextWindowBySession.clear();
 
