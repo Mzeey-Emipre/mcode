@@ -33,6 +33,7 @@ import { useReplyStore } from "@/stores/replyStore";
 import { getTransport } from "@/transport";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
+import { hasResidentContent } from "@/lib/thread-hydrator/resident-content";
 import { Button } from "@/components/ui/button";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { NewThreadProjectPicker } from "./NewThreadProjectPicker";
@@ -341,20 +342,13 @@ export function ChatView() {
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   const hydratedThreadId = useThreadStore((s) => s.currentThreadId);
   const messageCount = useActiveThreadRecord((r) => r.messages.length);
-  const hasResidentContent = useActiveThreadRecord((r) =>
-    r.messages.length > 0
-    || r.streaming.length > 0
-    || r.streamingPreview.length > 0
-    || r.toolCalls.length > 0
-    || r.thoughtSegments.length > 0
-    || r.hooks.length > 0,
-  );
+  const residentContent = useActiveThreadRecord(hasResidentContent);
   const historyLoading = useActiveThreadRecord((r) => r.loading);
   const setPendingPrefill = useComposerDraftStore((s) => s.setPendingPrefill);
 
   const isAgentRunning = activeThreadId ? runningThreadIds.has(activeThreadId) : false;
   const targetPaintable = hydratedThreadId === activeThreadId
-    && (messageCount > 0 || (isAgentRunning && hasResidentContent));
+    && (messageCount > 0 || (isAgentRunning && residentContent));
   const previousActiveThreadIdRef = useRef<string | null>(activeThreadId);
   const [heldOutgoingThreadId, setHeldOutgoingThreadId] = useState<string | null>(null);
   const previousThreadId = previousActiveThreadIdRef.current;
@@ -676,7 +670,7 @@ export function ChatView() {
             residency.invalidateConversation(threadId);
             if (threadId === activeThreadId && runningThreadIds.has(threadId)) {
               if (!isCurrentAtomicResponse()) return;
-              void residency.refresh(threadId, useWorkspaceStore.getState().threads);
+              void residency.refresh(threadId, useWorkspaceStore.getState().threads).catch(() => {});
             }
           }
         }

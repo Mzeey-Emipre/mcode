@@ -36,18 +36,11 @@ import {
 } from "@/lib/thread-switch-telemetry";
 import { scheduleDeferredWork } from "./deferred-work";
 import type { DeferredWorkHandle } from "./deferred-work";
+import { hasResidentContent } from "./resident-content";
 
 interface PendingHistoryPrefetch {
   expectedEpoch: number;
   promise: Promise<void>;
-}
-
-function hasResidentLayer(record: ThreadRecord): boolean {
-  return record.messages.length > 0
-    || record.streaming.length > 0
-    || record.toolCalls.length > 0
-    || record.thoughtSegments.length > 0
-    || record.hooks.length > 0;
 }
 
 /** Snapshot the transcript and volatile layers that an active page fetch must not replace. */
@@ -469,7 +462,7 @@ export class ThreadHydrator {
       };
       const cachedRecord = projectConversationCacheState(record);
       const resident = this.deps.getState().records.get(threadId);
-      if (resident && hasResidentLayer(resident)) {
+      if (resident && hasResidentContent(resident)) {
         cacheRecord(threadId, mergeResidentConversationCacheState(resident, cachedRecord));
         return;
       }
@@ -514,14 +507,14 @@ export class ThreadHydrator {
     }
 
     const resident = this.deps.getState().records.get(threadId);
-    const hasResidentContent = resident != null && hasResidentLayer(resident);
-    if (hasResidentContent && this.deps.getState().runningThreadIds.has(threadId)) {
+    const residentContent = resident != null && hasResidentContent(resident);
+    if (residentContent && this.deps.getState().runningThreadIds.has(threadId)) {
       recordRunningResidentHit(threadId);
     }
 
     const inFlight = this.activeHydrates.get(threadId);
     if (inFlight) {
-      this.selectInFlightLayer(threadId, hasResidentContent);
+      this.selectInFlightLayer(threadId, residentContent);
       await inFlight;
       const state = this.deps.getState();
       const current = getThreadRecord(state.records, threadId);
@@ -541,7 +534,7 @@ export class ThreadHydrator {
       return;
     }
 
-    if (hasResidentContent) {
+    if (residentContent) {
       this.activateResidentLayer(threadId);
       if (this.deps.getState().runningThreadIds.has(threadId)) {
         const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
@@ -561,7 +554,7 @@ export class ThreadHydrator {
       recordRunningFetchRequired(threadId);
     }
 
-    const hydrate = this.fetchActiveReusingBackground(threadId, opts, hasResidentContent).finally(() => {
+    const hydrate = this.fetchActiveReusingBackground(threadId, opts, residentContent).finally(() => {
       if (this.activeHydrates.get(threadId) === hydrate) {
         this.activeHydrates.delete(threadId);
         this.discardInactiveLoadingRecord(threadId);
@@ -580,7 +573,7 @@ export class ThreadHydrator {
     const resident = state.records.get(threadId);
     if (!resident) return;
     if (
-      !hasResidentLayer(resident)
+      !hasResidentContent(resident)
       && (hadActiveHydrate || this.activeHydrates.has(threadId))
     ) return;
 
@@ -607,7 +600,7 @@ export class ThreadHydrator {
     this.deps.setState((state: ThreadHydratorWriteState) => {
       if (state.currentThreadId === threadId) return {};
       const resident = state.records.get(threadId);
-      if (!resident || hasResidentLayer(resident)) return {};
+      if (!resident || hasResidentContent(resident)) return {};
       return { records: deleteThreadRecord(state.records, threadId) };
     });
   }
@@ -633,11 +626,11 @@ export class ThreadHydrator {
   private async fetchActiveReusingBackground(
     threadId: string,
     opts?: ThreadHydratorOptions,
-    hasResidentLayer = false,
+    hasResidentContent = false,
   ): Promise<void> {
     const background = this.backgroundHydrates.get(threadId);
     if (background) {
-      if (!hasResidentLayer) {
+      if (!hasResidentContent) {
         this.selectInFlightLayer(threadId, false);
       }
       await background;
@@ -660,7 +653,7 @@ export class ThreadHydrator {
       return;
     }
 
-    await this.fetchAndCommit(threadId, opts, hasResidentLayer
+    await this.fetchAndCommit(threadId, opts, hasResidentContent
       ? {
           skipPrepare: true,
           fetchLimit: BACKGROUND_PREFETCH_LIMIT,
@@ -670,10 +663,10 @@ export class ThreadHydrator {
   }
 
   /** Makes an already-loading thread current without invalidating its request epoch. */
-  private selectInFlightLayer(threadId: string, hasResidentLayer: boolean): void {
+  private selectInFlightLayer(threadId: string, hasResidentContent: boolean): void {
     this.deps.setState((state: ThreadHydratorWriteState) => ({
       records: patchThreadRecord(state.records, threadId, {
-        loading: !hasResidentLayer,
+        loading: !hasResidentContent,
         error: null,
         settings: this.deps.getWorkspaceThreadSettings(threadId),
       }),
@@ -1056,7 +1049,7 @@ export class ThreadHydrator {
           ...patch,
           narrativeByMessage: pageResult.narrativeByMessage,
         });
-        const conversation = hasResidentLayer(current)
+        const conversation = hasResidentContent(current)
           ? mergeResidentConversationCacheState(current, fetchedConversation, false)
           : fetchedConversation;
         const ownsLiveFileEffects = current.fileEffectTurnId.length > 0

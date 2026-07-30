@@ -819,6 +819,31 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(chatViewResidencyMock.refresh).not.toHaveBeenCalled();
   });
 
+  it("swallows rejected atomic hydration refreshes", async () => {
+    const setThreadSubscriptions = vi.fn().mockResolvedValue({
+      hydrationRequiredThreadIds: ["thread-1"],
+    });
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1"]),
+    });
+    chatViewResidencyMock.refresh.mockRejectedValueOnce(new Error("refresh failed"));
+
+    render(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewResidencyMock.refresh).toHaveBeenCalledWith(
+        "thread-1",
+        expect.any(Array),
+      );
+    });
+  });
+
   it("ignores same-epoch stale atomic hydration responses after the target changes", async () => {
     const requests: Array<(result: { hydrationRequiredThreadIds: string[] }) => void> = [];
     const setThreadSubscriptions = vi.fn(
