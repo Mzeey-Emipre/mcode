@@ -1862,7 +1862,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     this.sdkSessionIds.clear();
     this.pendingSpawnTurns.clear();
     this.pendingBrowserAccess.clear();
-    this.browserAutomationLease.shutdown();
     this.liveSessionIds.clear();
     logger.info("CodexProvider shutdown complete");
   }

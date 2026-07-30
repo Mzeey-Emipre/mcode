@@ -168,6 +168,72 @@ describe("CodexProvider first turn on new session", () => {
     expect(lease.credentials.size()).toBe(0);
   });
 
+  it("releases staged browser access when stopped before runtime acquisition", async () => {
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = makeProvider(undefined, lease);
+    let rejectAcquire!: (error: Error) => void;
+    const acquirePromise = new Promise<never>((_, reject) => {
+      rejectAcquire = reject;
+    });
+    (provider as any).runtime.acquire = vi.fn(() => acquirePromise);
+
+    const sessionId = "mcode-pending-stop";
+    const sendPromise = provider.sendTurn({
+      sessionId,
+      workspaceId: "workspace-test",
+      threadId: "pending-stop",
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    await vi.waitFor(() => expect(lease.status()).toEqual({ active: 0, pending: 1 }));
+    await provider.stopSession(sessionId);
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+
+    rejectAcquire(new Error("stop requested"));
+    await sendPromise;
+  });
+
+  it("does not shut down the shared lease when Codex stops", () => {
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const claudeGrant = lease.issue({
+      providerId: "claude",
+      providerSessionId: "claude-session",
+      mcodeSessionId: "claude-session",
+      threadId: "claude-thread",
+      workspaceId: "workspace-test",
+      permissionCapability: "interact",
+    })!;
+    const codexGrant = lease.issue({
+      providerId: "codex",
+      providerSessionId: "codex-session",
+      mcodeSessionId: "codex-session",
+      threadId: "codex-thread",
+      workspaceId: "workspace-test",
+      permissionCapability: "interact",
+    })!;
+    const provider = makeProvider(undefined, lease);
+    const shutdown = vi.spyOn(lease, "shutdown");
+
+    provider.shutdown();
+
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(lease.credentials.authenticate(claudeGrant.token)).not.toBeNull();
+    expect(lease.credentials.authenticate(codexGrant.token)).not.toBeNull();
+  });
+
   it("sent turn/start after spawn when the runtime pool registers on the next tick", async () => {
     const provider = makeProvider();
 
