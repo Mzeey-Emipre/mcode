@@ -18,6 +18,8 @@ import {
   WorkspaceSearchResultSchema,
   WorktreeListInputSchema,
   WorktreeListResultSchema,
+  ThreadTargetListInputSchema,
+  ThreadTargetListResultSchema,
 } from "@mcode/contracts";
 import type { ThreadControlService } from "./thread-control-service.js";
 import {
@@ -41,7 +43,7 @@ export interface ExternalThreadControlMcpRequest extends ExternalThreadControlMc
   signal?: AbortSignal;
 }
 
-/** Session exposing exactly the eight public thread-control tools. */
+/** Session exposing exactly the nine public thread-control tools. */
 export interface ExternalThreadControlMcpSession {
   dispatch(request: ExternalThreadControlMcpRequest): Promise<Record<string, unknown>>;
   createServer(credential?: string): McpServer;
@@ -129,6 +131,9 @@ async function executeTool(
       return WorktreeListResultSchema().parse(await service.worktreeList(authority, WorktreeListInputSchema().parse(request.arguments)));
     case "thread_create_batch":
       return ThreadCreateBatchResultSchema().parse(await service.threadCreateBatch(authority, ThreadCreateBatchInputSchema().parse(request.arguments)));
+    case "thread_target_list":
+      ThreadTargetListInputSchema().parse(request.arguments);
+      return ThreadTargetListResultSchema().parse(await service.threadTargetList(authority));
     case "thread_search":
       return ThreadSearchResultSchema().parse(service.threadSearch(authority, ThreadSearchInputSchema().parse(request.arguments)));
     case "thread_get":
@@ -158,7 +163,8 @@ function registerTools(
   };
   register("workspace_search", "Search selected Mcode Projects.", WorkspaceSearchInputSchema(), WorkspaceSearchResultSchema());
   register("worktree_list", "List opaque worktrees in one selected Project.", WorktreeListInputSchema(), WorktreeListResultSchema());
-  register("thread_create_batch", "Create one to twenty delegated Mcode threads.", ThreadCreateBatchInputSchema(), ThreadCreateBatchResultSchema());
+  register("thread_create_batch", "Create one to twenty delegated Mcode threads. providerId/modelId select the delegated target; discover named targets with thread_target_list first.", ThreadCreateBatchInputSchema(), ThreadCreateBatchResultSchema());
+  register("thread_target_list", "List provider and model targets currently usable for delegated threads.", ThreadTargetListInputSchema(), ThreadTargetListResultSchema());
   register("thread_search", "Search readable delegated threads.", ThreadSearchInputSchema(), ThreadSearchResultSchema());
   register("thread_get", "Read one bounded delegated thread transcript.", ThreadGetInputSchema(), ThreadGetResultSchema());
   register("thread_send", "Send a message to one readable delegated thread.", ThreadSendInputSchema(), ThreadSendResultSchema());

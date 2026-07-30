@@ -189,6 +189,13 @@ export const SettingsSchema = lazySchema(() =>
             id: z.string().default(""),
           })
           .default({}),
+        /** Default model used by delegated threads when a provider is named without a model. */
+        providerDefaults: z
+          .record(z.string().trim().min(1).max(128), z.string().trim().max(128))
+          .refine((value) => Object.keys(value).length <= 20, {
+            message: "At most 20 delegated provider defaults are supported",
+          })
+          .default({}),
       })
       .default({}),
 
@@ -503,7 +510,13 @@ export const SettingsSchema = lazySchema(() =>
 );
 
 /** Full settings object with all defaults applied. */
-export type Settings = z.infer<ReturnType<typeof SettingsSchema>>;
+type ParsedSettings = z.infer<ReturnType<typeof SettingsSchema>>;
+export type Settings = Omit<ParsedSettings, "model"> & {
+  model: Omit<ParsedSettings["model"], "providerDefaults"> & {
+    /** Optional in hand-authored test fixtures; runtime parsing supplies an empty map. */
+    providerDefaults?: ParsedSettings["model"]["providerDefaults"];
+  };
+};
 
 /** Returns a fresh default settings object by parsing an empty input. */
 export function getDefaultSettings(): Settings {
@@ -563,6 +576,12 @@ export const PartialSettingsSchema = lazySchema(() =>
           .object({
             provider: ProviderIdSchema.or(z.literal("")).optional(),
             id: z.string().optional(),
+          })
+          .optional(),
+        providerDefaults: z
+          .record(z.string().trim().min(1).max(128), z.string().trim().max(128))
+          .refine((value) => Object.keys(value).length <= 20, {
+            message: "At most 20 delegated provider defaults are supported",
           })
           .optional(),
       })

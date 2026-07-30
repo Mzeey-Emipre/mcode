@@ -22,3 +22,8 @@ copy. Provider adapters render that plan through native fields:
 Output is capped at 4000 characters with an explicit truncation marker. Copy
 contains server and tool names, routing constraints, and no credentials, URLs,
 or filesystem paths.
+
+When an agent needs a named provider or model, runtime guidance routes it through
+`thread_target_list`; the exact returned `providerId` and `modelId` must then be
+passed to `thread_create_batch`. The guidance does not enumerate or guarantee a
+static provider list.

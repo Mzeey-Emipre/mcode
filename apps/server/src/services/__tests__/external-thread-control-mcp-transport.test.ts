@@ -128,7 +128,7 @@ describe("external thread-control MCP transport", () => {
     expect(pairingService.beginDelivery).toHaveBeenCalledWith(expect.anything(), "normal-request-id", expect.any(String));
   });
 
-  it("registers exactly the eight public tools", async () => {
+  it("registers exactly the nine public tools", async () => {
     const { service, pairingService } = createHarness();
     const session = createExternalThreadControlMcpSession({ pairingService: pairingService as never, service: service as never });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -141,6 +141,7 @@ describe("external thread-control MCP transport", () => {
         { name: "workspace_search" },
         { name: "worktree_list" },
         { name: "thread_create_batch" },
+        { name: "thread_target_list" },
         { name: "thread_search" },
         { name: "thread_get" },
         { name: "thread_send" },

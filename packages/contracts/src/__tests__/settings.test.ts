@@ -8,6 +8,18 @@ import {
 } from "../models/settings.js";
 
 describe("SettingsSchema", () => {
+  describe("model.providerDefaults", () => {
+    it("accepts bounded per-provider delegated model overrides", () => {
+      const result = SettingsSchema().parse({ model: { providerDefaults: { codex: "gpt-5.6-sol", claude: "" } } });
+      expect(result.model.providerDefaults).toEqual({ codex: "gpt-5.6-sol", claude: "" });
+    });
+
+    it("rejects more than twenty provider overrides", () => {
+      const defaults = Object.fromEntries(Array.from({ length: 21 }, (_, index) => [`provider-${index}`, "model"]));
+      expect(SettingsSchema().safeParse({ model: { providerDefaults: defaults } }).success).toBe(false);
+    });
+  });
+
   describe("model.defaults.reasoning", () => {
     it("normalizes legacy orchestration-shaped values to max", () => {
       expect(SettingsSchema().parse({

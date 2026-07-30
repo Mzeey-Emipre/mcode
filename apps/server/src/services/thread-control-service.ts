@@ -35,6 +35,7 @@ import {
   type WorkspaceSearchResult,
   type WorktreeListInput,
   type WorktreeListResult,
+  type ThreadTargetListResult,
   ThreadCreateBatchInputSchema,
   ThreadGetInputSchema,
   ThreadControlReadInputSchema,
@@ -44,6 +45,7 @@ import {
   ThreadStopInputSchema,
   ThreadSearchInputSchema,
   ThreadWaitInputSchema,
+  ThreadTargetListResultSchema,
   THREAD_GET_TRANSCRIPT_MAX_BYTES,
   THREAD_SEARCH_LIMIT_MAX,
   THREAD_CREATE_TITLE_MAX_LENGTH,
@@ -81,6 +83,7 @@ import { GitService } from "./git-service.js";
 import { ModelCacheService } from "./model-cache-service.js";
 import { SettingsService } from "./settings-service.js";
 import { ThreadService } from "./thread-service.js";
+import { DelegationTargetResolver } from "./delegation-target-resolver.js";
 import { broadcast } from "../transport/push.js";
 
 const THREAD_WAIT_POLL_INTERVAL_MS = 250;
@@ -112,6 +115,7 @@ export class ThreadControlService {
     @inject(ThreadControlAuditRepo) private readonly audit: ThreadControlAuditRepo,
     @inject("MessageRepo", { isOptional: true }) private readonly messages?: MessageRepo,
     @inject(ThreadControlMutationReservationService) mutationReservations?: ThreadControlMutationReservationService,
+    @inject(DelegationTargetResolver) private readonly targetResolver?: DelegationTargetResolver,
   ) {
     this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
   }
@@ -133,6 +137,15 @@ export class ThreadControlService {
         ...(workspace.last_opened_at ? { lastUsedAt: new Date(workspace.last_opened_at).toISOString() } : {}),
       })),
     };
+  }
+
+  /** Return provider/model targets currently usable for delegated thread creation. */
+  async threadTargetList(authority: ThreadControlAuthority): Promise<ThreadTargetListResult> {
+    if (authority.type === "external" && !authority.scopes.includes("threads:create")) {
+      return { providers: [] };
+    }
+    const resolver = this.targetResolver ?? new DelegationTargetResolver(this.providers, this.models, this.settings);
+    return ThreadTargetListResultSchema().parse(await resolver.listTargets());
   }
 
   /** Search readable registered Projects using authoritative observed state. */
@@ -1294,28 +1307,19 @@ export class ThreadControlService {
         error: this.error("forbidden", "Full execution is not permitted", false),
       };
     }
-    const providerId = input.providerId ?? settings.model.defaults.provider;
-    try {
-      this.providers.resolve(providerId as ProviderId);
-    } catch {
-      return { error: this.error("invalid_provider", "Provider is not available", false) };
-    }
-
-    const modelId = input.modelId ?? settings.model.defaults.id;
-    let models;
-    try {
-      models = await this.models.listModels(providerId);
-    } catch {
-      return { error: this.error("internal_error", "Provider model discovery failed", true) };
-    }
-    if (!models.some((model) => model.id === modelId && model.policy?.state !== "disabled")) {
-      return {
-        error: this.error(
-          "invalid_model",
-          "Model is not available for the selected provider",
-          false,
-        ),
-      };
+    const resolver = this.targetResolver ?? new DelegationTargetResolver(this.providers, this.models, this.settings);
+    const target = await resolver.resolve(input);
+    if (target.status !== "resolved") {
+      if (target.status === "invalid_provider") {
+        return { error: this.error("invalid_provider", "Provider is not available", false) };
+      }
+      if (target.status === "model_required") {
+        return { error: this.error("invalid_model", "A model is required when selecting a provider", false) };
+      }
+      if (target.status === "discovery_failed") {
+        return { error: this.error("internal_error", "Provider model discovery failed", true) };
+      }
+      return { error: this.error("invalid_model", "Model is not available for the selected provider", false) };
     }
 
     const permissionMode = input.permissionMode ?? (
@@ -1326,8 +1330,8 @@ export class ThreadControlService {
 
     return {
       value: {
-        providerId,
-        modelId,
+        providerId: target.providerId,
+        modelId: target.modelId,
         permissionMode,
         interactionMode: input.interactionMode ?? "build",
       },

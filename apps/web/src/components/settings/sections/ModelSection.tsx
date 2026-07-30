@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef, type ReactNode } from "react";
+import { useMemo, useEffect, useRef, useState, type ReactNode } from "react";
 import { ProviderSection } from "./ProviderSection";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
@@ -125,8 +125,10 @@ export function ModelSection() {
   );
   const utilityProvider = useSettingsStore((s) => s.settings.model.utility.provider);
   const utilityModelId = useSettingsStore((s) => s.settings.model.utility.id);
+  const providerDefaults = useSettingsStore((s) => s.settings.model.providerDefaults ?? {});
   const diffSummaryEnabled = useSettingsStore((s) => s.settings.diffSummary.enabled);
   const update = useSettingsStore((s) => s.update);
+  const [delegatedProviderId, setDelegatedProviderId] = useState<SettingsProviderId>(provider);
   const availabilityProviders = useProviderAvailabilityStore((s) => s.providers);
   const availabilityById = useMemo(
     () => new Map<string, ProviderAvailability>(availabilityProviders.map((row) => [row.id, row])),
@@ -166,6 +168,8 @@ export function ModelSection() {
   const fetchModels = useProviderModelsStore((s) => s.fetchModels);
   const dynamicModels = useProviderModelsStore((s) => s.models[provider]);
   const modelsLoading = useProviderModelsStore((s) => s.loading[provider] ?? false);
+  const delegatedModels = useProviderModelsStore((s) => s.models[delegatedProviderId]);
+  const delegatedModelsLoading = useProviderModelsStore((s) => s.loading[delegatedProviderId] ?? false);
 
   const cliPaths = useSettingsStore((s) => s.settings.provider.cli);
   const dynamicCliPath =
@@ -185,6 +189,10 @@ export function ModelSection() {
     if (!utilityProvider) return;
     void fetchModels(utilityEffectiveId, { force: true });
   }, [utilityProvider, utilityEffectiveId, utilityDynamicCliPath, fetchModels]);
+
+  useEffect(() => {
+    void fetchModels(delegatedProviderId, { force: true });
+  }, [delegatedProviderId, fetchModels]);
 
   const mergedCatalogModels = useMemo(
     () => pickProviderModelsForSettings(activeProvider?.models ?? [], dynamicModels),
@@ -299,6 +307,23 @@ export function ModelSection() {
       })),
     ],
     [modelsForUtilityPicker],
+  );
+
+  const delegatedProviderCatalog = MODEL_PROVIDERS.find((p) => p.id === delegatedProviderId);
+  const delegatedCatalogModels = useMemo(
+    () => pickProviderModelsForSettings(delegatedProviderCatalog?.models ?? [], delegatedModels),
+    [delegatedProviderCatalog, delegatedModels],
+  );
+  const delegatedDefaultOptions = useMemo(
+    () => [
+      { value: "", label: "No override", group: undefined },
+      ...delegatedCatalogModels.map((m) => ({
+        value: m.id,
+        label: m.multiplier != null && m.multiplier !== 1 ? `${m.label} (${m.multiplier}x)` : m.label,
+        group: m.group,
+      })),
+    ],
+    [delegatedCatalogModels],
   );
 
   // Gate on provider so Copilot models that share IDs with Codex models
@@ -538,6 +563,39 @@ export function ModelSection() {
           />
         </SettingRow>
       )}
+        </SettingsGroup>
+
+        <SettingsGroup
+          title="Delegated thread defaults"
+          description="Optional per-provider model overrides used when an agent names a provider without a model."
+        >
+          <SettingRow
+            label="Provider"
+            configKey="model.providerDefaults"
+            hint="Choose the provider whose delegated-thread model override you want to edit."
+          >
+            <SettingsProviderPicker
+              value={delegatedProviderId}
+              onChange={(value) => setDelegatedProviderId(value as SettingsProviderId)}
+              options={providerOptions}
+              data-testid="settings-delegated-provider-trigger"
+            />
+          </SettingRow>
+          <SettingRow
+            label="Default model"
+            configKey={`model.providerDefaults.${delegatedProviderId}`}
+            hint="Agents must discover and pass a model when this override is empty."
+          >
+            <SearchableGroupedPicker
+              value={providerDefaults[delegatedProviderId] ?? ""}
+              onChange={(value) => void update({ model: { providerDefaults: { [delegatedProviderId]: value } } })}
+              options={delegatedDefaultOptions}
+              emptyTriggerLabel="No override"
+              searchPlaceholder="Search models…"
+              loading={delegatedModelsLoading}
+              data-testid="settings-delegated-model-trigger"
+            />
+          </SettingRow>
         </SettingsGroup>
 
         <SettingsGroup
