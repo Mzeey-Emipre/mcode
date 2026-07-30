@@ -175,7 +175,7 @@ export function packageMetadataUsable(metadata, plan) {
   const hasTarget = (value, target) =>
     Array.isArray(value) ? value.includes(target) : value === target;
   if (
-    metadata?.name !== plan.platformPkg ||
+    metadata?.name !== plan.packageName ||
     metadata?.version !== plan.version ||
     !hasTarget(metadata.os, plan.platform) ||
     !hasTarget(metadata.cpu, plan.arch)
@@ -195,7 +195,7 @@ export function packageMetadataUsable(metadata, plan) {
 function planLockData(plan, serverPackageRoot) {
   const lock = readLockPackageRecord(
     packageLockPath(serverPackageRoot),
-    plan.platformPkg,
+    plan.packageName,
     plan.version,
   );
   return { ...plan, ...lock };
@@ -245,7 +245,7 @@ export function resolveClaudeTargetPackagePlan(
       kind: "claude",
       platform,
       arch,
-      platformPkg,
+      packageName: platformPkg,
       version: readPackageVersion(dirname(sdkEntry)),
       destination: resolveInstallPackageDestination(sdkEntry, platformPkg),
       installRoot: resolveInstallRoot(sdkEntry),
@@ -280,7 +280,7 @@ export function resolveCopilotTargetPackagePlan(
       kind: "copilot",
       platform,
       arch,
-      platformPkg,
+      packageName: platformPkg,
       version,
       destination: resolveInstallPackageDestination(sdkEntry, platformPkg),
       installRoot: resolveInstallRoot(sdkEntry),
@@ -400,6 +400,14 @@ export async function downloadAndExtractPackage({
   }
 }
 
+/** Forward a resolved package plan through shared download mechanics. */
+export async function downloadTargetPackage(
+  plan,
+  downloader = downloadAndExtractPackage,
+) {
+  return downloader({ ...plan, packageName: plan.packageName, plan });
+}
+
 /** Ensure both SDK platform packages exist for a packaging target. */
 export async function prepareSdkPlatformPackages({
   serverPackageRoot = serverRoot,
@@ -422,16 +430,16 @@ export async function prepareSdkPlatformPackages({
     );
   } else {
     console.log(
-      `[ensure-sdk] Downloading ${claudePlan.platformPkg}@${claudePlan.version} for ${platform}-${arch}...`,
+      `[ensure-sdk] Downloading ${claudePlan.packageName}@${claudePlan.version} for ${platform}-${arch}...`,
     );
-    await downloadAndExtractPackage({ ...claudePlan, plan: claudePlan });
+    await downloadTargetPackage(claudePlan);
     if (!readPlanTargetMetadata(claudePlan, serverPackageRoot)) {
       throw new Error(
-        `[ensure-sdk] Installed Claude package failed validation: ${claudePlan.platformPkg}`,
+        `[ensure-sdk] Installed Claude package failed validation: ${claudePlan.packageName}`,
       );
     }
     console.log(
-      `[ensure-sdk] Installed ${claudePlan.platformPkg} at ${claudePlan.destination}`,
+      `[ensure-sdk] Installed ${claudePlan.packageName} at ${claudePlan.destination}`,
     );
   }
 
@@ -446,16 +454,16 @@ export async function prepareSdkPlatformPackages({
     );
   } else {
     console.log(
-      `[ensure-sdk] Downloading ${copilotPlan.platformPkg}@${copilotPlan.version} for ${platform}-${arch}...`,
+      `[ensure-sdk] Downloading ${copilotPlan.packageName}@${copilotPlan.version} for ${platform}-${arch}...`,
     );
-    await downloadAndExtractPackage({ ...copilotPlan, plan: copilotPlan });
+    await downloadTargetPackage(copilotPlan);
     if (!readPlanTargetMetadata(copilotPlan, serverPackageRoot)) {
       throw new Error(
-        `[ensure-sdk] Installed Copilot package failed validation: ${copilotPlan.platformPkg}`,
+        `[ensure-sdk] Installed Copilot package failed validation: ${copilotPlan.packageName}`,
       );
     }
     console.log(
-      `[ensure-sdk] Installed ${copilotPlan.platformPkg} at ${copilotPlan.destination}`,
+      `[ensure-sdk] Installed ${copilotPlan.packageName} at ${copilotPlan.destination}`,
     );
   }
 }
