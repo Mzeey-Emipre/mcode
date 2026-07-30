@@ -452,6 +452,62 @@ describe("BrowserAutomationBroker", () => {
     await expect(status).resolves.toMatchObject({ ok: true });
   });
 
+  it("preserves an assigned navigate across an exact target generation transition", async () => {
+    let delivery: any;
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        if (channel === "browserAutomation.request") delivery = data;
+        return true;
+      },
+    }));
+    const hostSocket = socket("first");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("first", "workspace-a"),
+      capabilities: [
+        { operation: "navigate", available: true },
+        { operation: "status", available: true },
+      ],
+    }, authorization("first")).generation;
+    const target = {
+      desktopInstanceId: "desktop-first",
+      windowId: 1,
+      connectionGeneration: generation,
+      threadId: "thread-a",
+      tabId: "tab-thread-a",
+      targetGeneration: 0,
+      active: true,
+      focused: true,
+      lastUsedAt: 10,
+    };
+    broker.updateTargets(hostSocket, "first", generation, [target]);
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      allowedOperations: ["navigate" as const, "status" as const],
+    };
+    const navigated = broker.execute(scope, {
+      ...request(scope),
+      operation: "navigate",
+      args: { url: "https://example.test/destination" },
+    });
+    broker.updateTargets(hostSocket, "first", generation, [{ ...target, targetGeneration: 1 }]);
+    expect(broker.status().pending).toBe(1);
+
+    broker.respond(hostSocket, "first", generation, {
+      contractVersion: 1,
+      requestId: delivery.dispatch.request.requestId,
+      sequence: delivery.dispatch.request.sequence,
+      ok: true,
+      result: {
+        operation: "navigate",
+        url: "https://example.test/destination",
+        title: "Destination",
+        controlEpoch: 1,
+      },
+    });
+    await expect(navigated).resolves.toMatchObject({ ok: true });
+  });
+
   it("settles non-open work when an assigned target advances generations", async () => {
     let delivery: any;
     const broker = new BrowserAutomationBroker(options({

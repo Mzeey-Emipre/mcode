@@ -142,7 +142,7 @@ function targetsMatch(
     left.targetGeneration === right.targetGeneration;
 }
 
-function isExactOpenTargetReplacement(
+function isExactTargetReplacement(
   oldTarget: BrowserAutomationHostDispatchTarget,
   replacement: BrowserAutomationHostDispatchTarget,
 ): boolean {
@@ -358,7 +358,7 @@ export class BrowserAutomationBroker {
     for (const [key, oldTarget] of host.targets) {
       const replacement = next.get(key);
       if (replacement && replacement.targetGeneration === oldTarget.targetGeneration && replacement.windowId === oldTarget.windowId) continue;
-      this.invalidateTarget(host, key, replacement !== undefined && isExactOpenTargetReplacement(oldTarget, replacement));
+      this.invalidateTarget(host, key, replacement !== undefined && isExactTargetReplacement(oldTarget, replacement));
     }
     for (const [key, target] of next) {
       host.targetGenerationTombstones.delete(key);
@@ -929,14 +929,17 @@ export class BrowserAutomationBroker {
   private invalidateTarget(
     host: RegisteredHost,
     removedTargetKey: string,
-    preserveOpenTransition = false,
+    preserveTargetTransition = false,
   ): void {
     for (const [key, assignment] of this.assignments) {
       if (assignment.host === host && assignment.targetKey === removedTargetKey) this.assignments.delete(key);
     }
     for (const [key, pending] of this.pending) {
       if (pending.host === host && pending.target && targetKey(pending.target) === removedTargetKey) {
-        if (preserveOpenTransition && pending.request.operation === "open") continue;
+        if (
+          preserveTargetTransition &&
+          (pending.request.operation === "open" || pending.request.operation === "navigate")
+        ) continue;
         this.settle(
           key,
           pending,
