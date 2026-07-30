@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { app } from "electron";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 // Capture writes to autoUpdater so we can assert on the channel + prerelease config.
 // Hoisted so the reference is initialized before vi.mock's hoisted factory runs.
@@ -321,6 +323,17 @@ describe("update installation safety", () => {
       state: "error",
       message: "Update installation blocked: server teardown failed",
     });
+  });
+
+  it("keeps before-quit ownership at the auto-updater bootstrap boundary", () => {
+    const mainSource = readFileSync(
+      fileURLToPath(new URL("../main.ts", import.meta.url)),
+      "utf8",
+    );
+
+    expect(mainSource).not.toMatch(/app\s*\.\s*on\s*\(\s*["']before-quit["']/);
+    expect(updaterMock.appListeners.has("before-quit")).toBe(true);
+    expect(updaterMock.appListeners.size).toBe(1);
   });
 
   it("keeps successful silent installation behavior", async () => {

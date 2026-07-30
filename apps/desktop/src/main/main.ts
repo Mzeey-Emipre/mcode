@@ -1019,25 +1019,6 @@ app.on("window-all-closed", () => {
   }
 });
 
-// When autoInstallOnAppQuit is true, electron-updater runs the installer
-// during the quit sequence. Stop the server first so the installer can
-// replace files without hitting locks from the detached process.
-let isQuittingForUpdate = false;
-app.on("before-quit", async (e) => {
-  if (isQuittingForUpdate) return; // re-entrant guard after we call app.quit()
-  const status = getUpdateStatus();
-  if (status.state === "downloaded") {
-    e.preventDefault();
-    isQuittingForUpdate = true;
-    try {
-      await serverManager.forceReplace();
-    } catch (err) {
-      console.error("[main] Failed to stop server before update install:", err);
-    }
-    app.quit();
-  }
-});
-
 app.on("will-quit", () => {
   cleanupAutoUpdater();
   void disposeBrowserUseBridge();
