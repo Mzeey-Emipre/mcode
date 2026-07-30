@@ -324,6 +324,22 @@ describe("selection + text replacement", () => {
     expect(emittedValue).toBe("/commit ");
     expect(result.current.isOpen).toBe(false);
   });
+
+  it("inserts the Mcode capability guide slash command", async () => {
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({ anchorRef: ref }));
+    await act(async () => { result.current.onInputChange("/mcode-g"); });
+    await act(async () => {});
+
+    const guideCommand = result.current.items.find((item) => item.name === "mcode-guide");
+    expect(guideCommand).toBeDefined();
+
+    let inserted = "";
+    await act(async () => {
+      result.current.onSelect(guideCommand!, (value: string) => { inserted = value; });
+    });
+    expect(inserted).toBe("/mcode-guide ");
+  });
 });
 
 describe("mcode side-effect dispatch", () => {
