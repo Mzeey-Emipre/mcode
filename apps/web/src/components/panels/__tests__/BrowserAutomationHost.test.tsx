@@ -428,23 +428,48 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
+  it("rejects an open revision advance observed before iframe load", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const expectedUrl = `${window.location.origin}/revision-open-before-load`;
+    const openDispatch = dispatch(1, 44, { targetGeneration: 1 });
+    openDispatch.request = { ...openDispatch.request, operation: "open", args: { url: expectedUrl, activate: true } } as never;
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
+    await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(expectedUrl));
+    const iframe = document.createElement("iframe");
+    iframe.src = expectedUrl;
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "tab-1";
+    document.body.append(iframe);
+    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "STALE_TARGET_GENERATION" }) }),
+    );
+    iframe.remove();
+    view.unmount();
+  });
+
   it("accepts the expected target revision advanced by a same-origin navigate load", async () => {
     delete window.desktopBridge;
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     const executing = deferred<BrowserAutomationResponse>();
-    webExecutor.executeWebBrowserDispatch.mockReturnValue(executing.promise);
+    webExecutor.executeWebBrowserDispatch.mockReturnValueOnce(executing.promise);
     const view = render(<BrowserAutomationHost />);
     await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
     const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
-    const navigateDispatch = dispatch(1, 40, { tabId: "tab-1", targetGeneration: 1 });
+    const expectedUrl = `${window.location.origin}/revision-navigate`;
+    const navigateDispatch = dispatch(1, 43, { targetGeneration: 1 });
     navigateDispatch.request = {
       ...navigateDispatch.request,
       operation: "navigate",
-      args: { url: `${window.location.origin}/revision-navigate` },
+      args: { url: expectedUrl },
     } as never;
-    const expectedUrl = `${window.location.origin}/revision-navigate`;
-    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: navigateDispatch }));
-
     const iframe = document.createElement("iframe");
     iframe.src = expectedUrl;
     iframe.dataset.threadId = "thread-1";
@@ -454,19 +479,49 @@ describe("BrowserAutomationHost", () => {
       value: { location: { origin: window.location.origin } },
     });
     document.body.append(iframe);
-    act(() => {
-      iframe.dispatchEvent(new Event("load"));
-      useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1");
-    });
-
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: navigateDispatch }));
+    await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(navigateDispatch, expect.any(AbortSignal)));
+    act(() => iframe.dispatchEvent(new Event("load")));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
     executing.resolve(successResponse(navigateDispatch.request));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
       hostId,
       1,
       expect.objectContaining({ ok: true }),
+      navigateDispatch.target,
     );
-    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(navigateDispatch, expect.any(AbortSignal));
+    iframe.remove();
+    view.unmount();
+  });
+
+  it("rejects a navigate revision advance observed before iframe load", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const executing = deferred<BrowserAutomationResponse>();
+    webExecutor.executeWebBrowserDispatch.mockReturnValueOnce(executing.promise);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const expectedUrl = `${window.location.origin}/revision-navigate-before-load`;
+    const navigateDispatch = dispatch(1, 45, { targetGeneration: 1 });
+    navigateDispatch.request = { ...navigateDispatch.request, operation: "navigate", args: { url: expectedUrl } } as never;
+    const iframe = document.createElement("iframe");
+    iframe.src = `${window.location.origin}/before`;
+    iframe.dataset.threadId = "thread-1";
+    iframe.dataset.tabId = "tab-1";
+    document.body.append(iframe);
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: navigateDispatch }));
+    await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(navigateDispatch, expect.any(AbortSignal)));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    executing.resolve(successResponse(navigateDispatch.request));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: "STALE_TARGET_GENERATION" }) }),
+      navigateDispatch.target,
+    );
     iframe.remove();
     view.unmount();
   });
@@ -548,6 +603,51 @@ describe("BrowserAutomationHost", () => {
     first.resolve(response(firstDispatch.request));
     await act(async () => first.promise);
     expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("routes web screenshots to the registered target", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const screenshotRequest = dispatch(1, 41);
+    const requestId = screenshotRequest.request.requestId;
+    const sequence = screenshotRequest.request.sequence;
+    screenshotRequest.request = {
+      ...screenshotRequest.request,
+      operation: "screenshot",
+      args: { maxWidth: 320, fullPage: false },
+    } as never;
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue({
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId,
+      sequence,
+      ok: true,
+      result: {
+        operation: "screenshot",
+        screenshot: {
+          mediaType: "image/png",
+          dataBase64: "AAAA",
+          width: 320,
+          height: 180,
+          truncation: { truncated: false },
+        },
+        controlEpoch: 0,
+      },
+    } as never);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const registration = harness.transport.registerBrowserAutomationHost.mock.calls[0]?.[0];
+    expect(registration.capabilities).toContainEqual({ operation: "screenshot", available: true });
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: screenshotRequest }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(screenshotRequest, expect.any(AbortSignal));
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: true, result: expect.objectContaining({ operation: "screenshot" }) }),
+      screenshotRequest.target,
+    );
     view.unmount();
   });
 
@@ -1482,6 +1582,7 @@ describe("BrowserAutomationHost", () => {
       hostId,
       1,
       expect.objectContaining({ ok: true, result: expect.objectContaining({ operation: "screenshot" }) }),
+      screenshotDispatch.target,
     );
     view.unmount();
   });

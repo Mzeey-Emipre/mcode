@@ -449,7 +449,7 @@ export async function executeWebBrowserDispatch(
   }
   if (request.operation === "snapshot") return snapshot(dispatch, iframe, signal);
   if (request.operation === "screenshot") {
-    if (request.args.fullPage) {
+    if (request.args.fullPage === true) {
       return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation does not support full-page screenshots");
     }
     return screenshot(dispatch, iframe, signal);

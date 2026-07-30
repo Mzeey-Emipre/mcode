@@ -360,6 +360,7 @@ function acceptExpectedWebNavigationRevision(
   target: { readonly revision: number } | undefined,
 ): number | undefined {
   if (!navigation || (dispatch.request.operation !== "open" && dispatch.request.operation !== "navigate")) return undefined;
+  if (!navigation.loadObserved) return undefined;
   if (navigation.acceptedRevision !== undefined) {
     return navigation.acceptedRevision === target?.revision ? navigation.acceptedRevision : undefined;
   }
@@ -782,12 +783,22 @@ export function BrowserAutomationHost() {
           liveTarget &&
           liveTarget.revision === dispatch.target.targetGeneration
         ) {
-          webNavigationRef.current.set(key, {
+          const navigation: WebNavigationExpectation = {
             targetKey,
             expectedUrl: requestedUrl,
             initialRevision: liveTarget.revision,
             loadObserved: false,
-          });
+          };
+          webNavigationRef.current.set(key, navigation);
+          const selector = `iframe[data-thread-id="${escapeWebSelector(dispatch.target.threadId)}"][data-tab-id="${escapeWebSelector(dispatch.target.tabId)}"]`;
+          const iframe = document.querySelector<HTMLIFrameElement>(selector);
+          if (iframe) {
+            const onLoad = () => {
+              if (normalizeWebPreviewUrl(iframe.src) === requestedUrl) navigation.loadObserved = true;
+            };
+            iframe.addEventListener("load", onLoad, { once: true });
+            webObserverRef.current.set(key, () => iframe.removeEventListener("load", onLoad));
+          }
         }
       }
       const cancelForHuman = () => {
@@ -921,7 +932,7 @@ export function BrowserAutomationHost() {
       });
       void guardedOperation.then((response) => {
         if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
-        return webDispatch
+        return webDispatch || webNavigateRequest || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
           ? getTransport().respondToBrowserAutomationRequest(
             lease.hostId,
             lease.generation,
