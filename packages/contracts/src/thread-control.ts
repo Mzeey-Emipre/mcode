@@ -178,7 +178,7 @@ export type ResolvedPlacement = z.infer<ReturnType<typeof ResolvedPlacementSchem
 /** One requested delegated thread and its initial turn. */
 export const ThreadCreateInputSchema = lazySchema(() =>
   z.object({
-    workspaceId: opaqueId,
+    workspaceId: opaqueId.optional(),
     title: z.string().trim().min(1).max(THREAD_CREATE_TITLE_MAX_LENGTH),
     prompt: z.string().min(1).max(THREAD_CREATE_PROMPT_MAX_LENGTH),
     placement: ThreadPlacementSchema(),

@@ -437,6 +437,71 @@ describe("ThreadControlService", () => {
     }));
   });
 
+  it("defaults an internal item without a Project to its source thread Project", async () => {
+    const service = createService();
+    threads.findById.mockImplementation((id: string) => id === authority.sourceThreadId
+      ? { ...createdThread, id: authority.sourceThreadId, deleted_at: null }
+      : null);
+
+    const result = await service.threadCreateBatch(authority, {
+      items: [{
+        title: "Inherited Project",
+        prompt: "Create in source Project.",
+        placement: { type: "direct" },
+      }],
+    });
+
+    expect(result.results[0]).toMatchObject({ status: "created", workspaceId: workspace.id });
+    expect(threads.create).toHaveBeenCalledWith(workspace.id, expect.any(String), "direct", "main", true, "codex", undefined, "named", null);
+  });
+
+  it("rejects an external item without a Project without looking up or creating", async () => {
+    const service = createService();
+    const externalAuthority = {
+      type: "external" as const,
+      integrationId: "integration-1",
+      allowedWorkspaceIds: [workspace.id],
+      scopes: ["threads:create"] as const,
+      limits: { callsPerMinute: 10, maxActiveThreads: 1 },
+    };
+
+    const result = await service.threadCreateBatch(externalAuthority, {
+      items: [{
+        title: "Missing Project",
+        prompt: "Reject this.",
+        placement: { type: "direct" },
+      }],
+    });
+
+    expect(result.results).toEqual([{
+      index: 0,
+      status: "rejected",
+      error: { code: "not_found", message: "Workspace not found", retryable: false },
+    }]);
+    expect(workspaces.findById).not.toHaveBeenCalled();
+    expect(threads.create).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an internal source thread is unavailable", async () => {
+    const service = createService();
+
+    const result = await service.threadCreateBatch(authority, {
+      items: [{
+        title: "Unavailable source",
+        prompt: "Reject this.",
+        placement: { type: "direct" },
+      }],
+    });
+
+    expect(result.results).toEqual([{
+      index: 0,
+      status: "rejected",
+      error: { code: "not_found", message: "Source thread not found", retryable: false },
+    }]);
+    expect(workspaces.findById).not.toHaveBeenCalled();
+    expect(threads.create).not.toHaveBeenCalled();
+  });
+
   it("returns a created result when audit storage fails", async () => {
     const service = createService();
     audit.write.mockImplementationOnce(() => { throw new Error("audit unavailable"); });
@@ -630,6 +695,30 @@ describe("ThreadControlService", () => {
         branchName: "codex/issue-960",
       },
     );
+  });
+
+  it("keeps new worktree branchless when branchName is omitted", async () => {
+    const service = createService();
+    const fullAuthority = { ...authority, permissionMode: "full" as const };
+
+    const result = await service.threadCreateBatch(fullAuthority, {
+      items: [{
+        workspaceId: workspace.id,
+        title: "Branchless worktree",
+        prompt: "Start branchless.",
+        placement: { type: "new_worktree", baseRef: "main" },
+      }],
+    });
+
+    expect(result.results[0]).toMatchObject({
+      status: "created",
+      placement: { type: "new_worktree", baseRef: "main", worktreeId: "worktree-created" },
+    });
+    expect(result.results[0]).not.toHaveProperty("placement.branchName");
+    expect(threadService.provisionWorktree).toHaveBeenCalledWith(createdThread.id, workspace.id, {
+      type: "new_worktree",
+      baseRef: "main",
+    });
   });
 
   it("resumes the same pending operation exactly once after human approval", async () => {

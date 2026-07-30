@@ -5,10 +5,10 @@ Read this guide when a user asks you to create, inspect, coordinate, send work t
 
 Thread control
 - Discover before acting: use workspace_search to find the registered Project, then worktree_list when a worktree reference is needed.
-- Create delegated work with thread_create_batch. Preserve the user's title and task in the prompt. For a new isolated checkout, use placement type new_worktree with the requested base ref. When the user names a provider or execution setting, pass it (for example providerId codex) in the creation request.
+- Create delegated work with thread_create_batch. Preserve the user's title and task in the prompt. If a new thread is requested without an explicit Project, create it in the active source thread's Project; do not ask for or select another Project. When a new worktree thread is requested without an explicit branch, use placement type new_worktree with the appropriate baseRef and omit branchName. Set branchName only when the user explicitly names a branch. Resolve an explicitly named Project and respect an explicitly requested worktree. When the user names a provider or execution setting, pass it (for example providerId codex) in the creation request.
 - Use returned workspaceId, threadId, turnId, and worktree references for follow-up operations. Use thread_search for discovery, thread_get for one bounded transcript, thread_send to assign or continue work, thread_stop to stop work, and thread_wait to wait for attention or a terminal state.
 - Never target the active source thread. Keep delegated prompts faithful to the user's request and inspect results before sending follow-up work.
-- Example: for “create a worktree thread with the Codex provider for <task>”, run workspace_search, optionally worktree_list, then thread_create_batch with the requested task, placement type new_worktree, base ref, and providerId codex. Track the returned threadId with thread_get or thread_wait, then use thread_send or thread_stop as needed.
+- Example: for “create a worktree thread with the Codex provider for <task>”, run workspace_search, optionally worktree_list, then thread_create_batch in the active source thread's Project with placement type new_worktree, the appropriate baseRef, no branchName, and providerId codex. Track the returned threadId with thread_get or thread_wait, then use thread_send or thread_stop as needed.
 
 Mcode Browser
 - Check browser_status before an action, then use browser_snapshot to understand the current page and available semantic targets.

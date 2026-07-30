@@ -8,6 +8,9 @@ describe("Mcode capability guide", () => {
     expect(result).toEqual({ guide: MCODE_CAPABILITY_GUIDE });
     expect(result.guide).toContain("workspace_search");
     expect(result.guide).toContain("thread_create_batch");
+    expect(result.guide).toContain("active source thread's Project");
+    expect(result.guide).toContain("omit branchName");
+    expect(result.guide).toContain("no branchName");
     expect(result.guide).toContain("providerId codex");
     expect(result.guide).toContain("browser_status");
     expect(result.guide).toContain("expectedControlEpoch");

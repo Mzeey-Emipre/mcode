@@ -365,20 +365,39 @@ export class ThreadControlService {
     input: ThreadCreateBatchInput,
   ): Promise<ThreadCreateBatchResult> {
     const validatedInput = ThreadCreateBatchInputSchema().parse(input);
+    const sourceWorkspaceId = authority.type === "internal"
+      && validatedInput.items.some((item) => item.workspaceId === undefined)
+      ? this.resolveInternalSourceWorkspaceId(authority)
+      : undefined;
+    const items = validatedInput.items.map((item) => item.workspaceId === undefined && sourceWorkspaceId
+      ? { ...item, workspaceId: sourceWorkspaceId }
+      : item);
+    const normalizedInput = { items };
     const reservations = authority.type === "external"
-      ? await this.reserveExternalCapacity(authority, validatedInput)
-      : validatedInput.items.map(() => false);
+      ? await this.reserveExternalCapacity(authority, normalizedInput)
+      : items.map(() => false);
     const results: ThreadCreateItemResult[] = [];
-    for (let index = 0; index < validatedInput.items.length; index += 1) {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]!;
+      if (authority.type === "internal" && item.workspaceId === undefined) {
+        const result: ThreadCreateItemResult = {
+          index,
+          status: "rejected",
+          error: this.error("not_found", "Source thread not found", false),
+        };
+        this.auditCreateResult(authority, result);
+        results.push(result);
+        continue;
+      }
       if (
         authority.type === "external"
-        && this.externalItemCanCreate(authority, validatedInput.items[index]!)
+        && this.externalItemCanCreate(authority, item)
         && !reservations[index]
       ) {
         const result: ThreadCreateItemResult = {
           index,
           status: "rejected",
-          workspaceId: validatedInput.items[index]!.workspaceId,
+          workspaceId: item.workspaceId,
           error: this.error("limit_exceeded", "External active-thread limit reached", true),
         };
         this.auditCreateResult(authority, result);
@@ -386,7 +405,7 @@ export class ThreadControlService {
         continue;
       }
       try {
-        const result = await this.createOne(authority, validatedInput.items[index]!, index);
+        const result = await this.createOne(authority, item, index);
         this.auditCreateResult(authority, result);
         results.push(result);
         if ("threadId" in result && result.threadId) {
@@ -1086,10 +1105,13 @@ export class ThreadControlService {
     index: number,
   ): Promise<ThreadCreateItemResult> {
     if (
+      input.workspaceId === undefined
+      || (
       authority.type === "external"
       && (
         !authority.allowedWorkspaceIds.includes(input.workspaceId)
         || !authority.scopes.includes("threads:create")
+      )
       )
     ) {
       return {
@@ -1156,7 +1178,11 @@ export class ThreadControlService {
 
     let threadId: string | undefined;
     try {
-      const persisted = await this.persistThread(input, execution.value, existingWorktree);
+      const persisted = await this.persistThread(
+        input as ThreadCreateInput & { workspaceId: string },
+        execution.value,
+        existingWorktree,
+      );
       threadId = persisted.threadId;
       if (authority.type === "internal") {
         this.threads.updateDelegationLineage(threadId, {
@@ -1335,7 +1361,7 @@ export class ThreadControlService {
   }
 
   private async persistThread(
-    input: ThreadCreateInput,
+    input: ThreadCreateInput & { workspaceId: string },
     execution: ResolvedExecution,
     existingWorktree: InternalRegisteredWorktree | null,
   ): Promise<{ threadId: string }> {
@@ -1640,12 +1666,19 @@ export class ThreadControlService {
     authority: ExternalThreadControlAuthority,
     input: ThreadCreateInput,
   ): boolean {
+    if (input.workspaceId === undefined) return false;
     return authority.allowedWorkspaceIds.includes(input.workspaceId)
       && authority.scopes.includes("threads:create")
       && (
         input.placement.type !== "new_worktree"
         || authority.scopes.includes("worktrees:create")
       );
+  }
+
+  private resolveInternalSourceWorkspaceId(authority: InternalThreadControlAuthority): string | undefined {
+    const source = this.threads.findById(authority.sourceThreadId);
+    if (!source || source.deleted_at != null) return undefined;
+    return source.workspace_id;
   }
 
   private async reserveExternalCapacity(
