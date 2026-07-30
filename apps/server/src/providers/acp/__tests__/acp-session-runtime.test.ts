@@ -5,10 +5,10 @@ import type { Client, ClientSideConnection, SessionNotification } from "@agentcl
 import { AcpSessionRuntime } from "../acp-session-runtime.js";
 
 function fakeChild() {
-  const child = new EventEmitter() as ChildProcess;
-  child.kill = vi.fn(() => true);
-  child.pid = 1234;
-  return child;
+  return Object.assign(new EventEmitter(), {
+    kill: vi.fn(() => true),
+    pid: 1234,
+  }) as unknown as ChildProcess;
 }
 
 describe("AcpSessionRuntime", () => {
@@ -102,7 +102,7 @@ describe("AcpSessionRuntime", () => {
     const connection = {
       initialize: vi.fn(async () => ({ agentCapabilities: { loadSession: true }, authMethods: [] })),
       loadSession: vi.fn(async () => {
-        await client.sessionUpdate({ sessionId: "resume-1", update: { kind: "historical" } } as SessionNotification);
+        await client.sessionUpdate({ sessionId: "resume-1", update: { kind: "historical" } } as unknown as SessionNotification);
         await new Promise<void>((resolve) => { finishLoad = resolve; });
       }),
       newSession: vi.fn(async () => ({ sessionId: "fresh" })),
@@ -138,7 +138,7 @@ describe("AcpSessionRuntime", () => {
 
     finishLoad();
     await expect(opening).resolves.toEqual({ sessionId: "resume-1", reloaded: true });
-    await client.sessionUpdate({ sessionId: "resume-1", update: { kind: "live" } } as SessionNotification);
+    await client.sessionUpdate({ sessionId: "resume-1", update: { kind: "live" } } as unknown as SessionNotification);
     expect(updates.map((update) => update.update)).toEqual([{ kind: "live" }]);
   });
 
@@ -161,7 +161,7 @@ describe("AcpSessionRuntime", () => {
 
       await runtime.initialize();
       const opening = runtime.openSession({ resumeFrom: "stalled", cwd: ".", mcpServers: [] });
-      vi.advanceTimersByTime(50);
+      await vi.advanceTimersByTimeAsync(50);
       expect(runtime.state.sessionId).toBe("");
       resolveNewSession({ sessionId: "fresh-after-timeout" });
       await expect(opening).resolves.toEqual({ sessionId: "fresh-after-timeout", reloaded: false });

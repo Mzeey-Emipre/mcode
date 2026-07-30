@@ -15,8 +15,14 @@ export function createAcpClientHandlers(callbacks: AcpSessionCallbacks): Client 
       await callbacks.writeTextFile(path, content);
       return {};
     },
-    extMethod: async (method, params) =>
-      callbacks.onExtensionRequest ? callbacks.onExtensionRequest(method, params) : {},
+    extMethod: async (method, params) => {
+      const result = callbacks.onExtensionRequest
+        ? await callbacks.onExtensionRequest(method, params)
+        : {};
+      return result !== null && typeof result === "object" && !Array.isArray(result)
+        ? result as Record<string, unknown>
+        : {};
+    },
     extNotification: async (method, params) => {
       if (callbacks.onExtensionNotification) await callbacks.onExtensionNotification(method, params);
     },

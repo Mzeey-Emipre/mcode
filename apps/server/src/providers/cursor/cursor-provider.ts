@@ -298,6 +298,8 @@ export class CursorProvider
    * Checked after session creation; if found the session is torn down immediately.
    */
   private pendingStops = new Set<string>();
+  /** ACP runtimes still opening before SessionRuntime can own their state. */
+  private pendingAcpRuntimes = new Map<string, AcpSessionRuntime>();
   private pendingPermissions = new Map<string, PendingAcpPermission>();
   /** Threads in Mcode plan-questions phase; disables Cursor ask_question auto-picks. */
   private planQuestionModeThreads = new Set<string>();
@@ -545,6 +547,9 @@ export class CursorProvider
       const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
       await this.runtime.stop(sessionId);
       this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+    } else if (this.pendingAcpRuntimes?.has(sessionId)) {
+      this.pendingStops.add(sessionId);
+      await this.pendingAcpRuntimes?.get(sessionId)?.close();
     } else {
       this.pendingStops.add(sessionId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
@@ -566,6 +571,10 @@ export class CursorProvider
   /** Tear down all sessions, cancel pending permissions, and stop the eviction timer. */
   shutdown(): void {
     this.drainAllPendingCancelled();
+    for (const [sessionId, runtime] of this.pendingAcpRuntimes ?? []) {
+      this.pendingStops.add(sessionId);
+      void runtime.close();
+    }
     for (const sessionId of this.liveSessionIds) {
       this.browserAutomationLease.releaseSession(this.id, sessionId);
     }
@@ -663,6 +672,9 @@ export class CursorProvider
     let state: CursorAcpSessionEntry | undefined;
     try {
       state = await this.spawnChild(sessionId, threadId, cwd, pm, settings);
+      if (this.pendingStops?.has(sessionId)) {
+        throw new Error("Cursor ACP session stopped during startup");
+      }
       if (state.browserHttpMcpSupported) {
         if (refreshedGrant) {
           browserGrant = refreshedGrant;
@@ -695,6 +707,9 @@ export class CursorProvider
         resumeFrom !== undefined,
         mcpServers,
       );
+      if (this.pendingStops?.has(sessionId)) {
+        throw new Error("Cursor ACP session stopped during startup");
+      }
       state.mcodeRuntimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
         sourceThreadId: threadId,
         threadControlGranted: true,
@@ -710,10 +725,13 @@ export class CursorProvider
       }
     } catch (err) {
       this.cleanupSpawnFailure(sessionId, state, browserGrant, browserStage, refreshedGrant);
+      this.pendingStops?.delete(sessionId);
+      this.pendingAcpRuntimes?.delete(sessionId);
       await this.threadControlMcp?.close(sessionId);
       throw err;
     }
 
+    this.pendingAcpRuntimes?.delete(sessionId);
     this.liveSessionIds.add(sessionId);
     return { state, pids: state.child.pid != null ? [state.child.pid] : [] };
   }
@@ -803,6 +821,7 @@ export class CursorProvider
       try {
         return await this.spawnOneCli(cliPath, mcodeSessionId, threadId, cwd, permissionMode);
       } catch (e) {
+        this.pendingAcpRuntimes?.delete(mcodeSessionId);
         lastErr = e;
         const msg = e instanceof Error ? e.message : String(e);
         if (/Failed to spawn cursor-agent/i.test(msg)) continue;
@@ -868,6 +887,7 @@ export class CursorProvider
       selectAuthMethod: (methods) => methods.find((method) => method.id === "cursor_login")?.id ?? methods[0]?.id,
       ignoreAuthenticationErrors: true,
     });
+    (this.pendingAcpRuntimes ??= new Map()).set(mcodeSessionId, acpRuntime);
     const child = acpRuntime.state.child;
     const connection = acpRuntime.state.connection;
     entry = {

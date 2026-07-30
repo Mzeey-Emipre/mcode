@@ -11,10 +11,10 @@ import {
 import { resolveCursorAssistantMessageContent } from "../cursor-stream-event-mapper.js";
 
 function fakeChild(): ChildProcess {
-  const child = new EventEmitter() as ChildProcess;
-  child.kill = vi.fn(() => true);
-  child.pid = 1234;
-  return child;
+  return Object.assign(new EventEmitter(), {
+    kill: vi.fn(() => true),
+    pid: 1234,
+  }) as unknown as ChildProcess;
 }
 
 describe("mapCursorAcpSessionNotification", () => {
