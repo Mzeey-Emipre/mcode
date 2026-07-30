@@ -82,7 +82,6 @@ vi.mock("@mcode/shared", async (importOriginal) => {
 import { ClaudeProvider } from "../providers/claude/claude-provider";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
-import { BrowserAutomationAccessService } from "../services/browser-automation/access-service.js";
 import { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
 import { BrowserAutomationCredentialRegistry } from "../services/browser-automation/credential-registry.js";
 
@@ -100,17 +99,12 @@ describe("ClaudeProvider permission mode changes", () => {
 
   it("passes browser MCP through query options without touching process.env", async () => {
     const credentials = new BrowserAutomationCredentialRegistry();
-    const access = new BrowserAutomationAccessService(credentials);
     const lease = new BrowserAutomationSessionLease(credentials);
-    access.configure({
-      mcpUrl: "http://127.0.0.1:19400/mcp",
-      worktreeIdentity: "worktree-test",
-    });
     lease.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
-    provider = new ClaudeProvider(stubEnvService(), stubJobObject(), undefined, access, lease);
+    provider = new ClaudeProvider(stubEnvService(), stubJobObject(), undefined, lease);
 
     try {
       await provider.sendTurn({

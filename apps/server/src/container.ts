@@ -93,7 +93,6 @@ import { PullRequestService } from "./services/pull-requests/pull-request-servic
 import { PullRequestMutationService } from "./services/pull-requests/pull-request-mutation-service.js";
 import { ReviewWorktreeService } from "./services/pull-requests/review-worktree-service.js";
 import {
-  BrowserAutomationAccessService,
   BrowserAutomationCredentialRegistry,
   BrowserAutomationSessionLease,
 } from "./services/browser-automation/index.js";
@@ -102,10 +101,6 @@ import {
 export function setupContainer(mcodeDir: string): typeof container {
   const browserAutomationCredentials = new BrowserAutomationCredentialRegistry();
   container.registerInstance(BrowserAutomationCredentialRegistry, browserAutomationCredentials);
-  container.registerInstance(
-    BrowserAutomationAccessService,
-    new BrowserAutomationAccessService(browserAutomationCredentials),
-  );
   container.registerInstance(
     BrowserAutomationSessionLease,
     new BrowserAutomationSessionLease(browserAutomationCredentials),

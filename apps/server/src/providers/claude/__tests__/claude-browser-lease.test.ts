@@ -77,7 +77,6 @@ function makeProvider(lease: BrowserAutomationSessionLease) {
     planAnswerThreads: new Set(),
     pendingPermissions: new Map(),
     browserAutomationSessionLease: lease,
-    browserAutomationAccess: { isConfigured: () => true },
     scopedPreGrant: { tryConsume: () => false },
     envService: { getEnv: () => ({}) },
     jobObject: { isWindowsJob: false },
@@ -171,7 +170,6 @@ describe("ClaudeProvider browser session lease lifecycle", () => {
     const provider = new ClaudeProvider(
       { getEnv: () => ({}) } as any,
       { isWindowsJob: false } as any,
-      undefined,
       undefined,
       lease,
     );

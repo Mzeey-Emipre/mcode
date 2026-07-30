@@ -22,16 +22,10 @@ export {
   type BrowserAutomationMcpHandlerOptions,
 } from "./mcp-handler.js";
 
-/** Provider-facing browser credential lifecycle exports. */
+/** Provider-facing browser permission helpers and session metadata. */
 export {
-  BrowserAutomationAccessService,
   browserAutomationPermissionCapability,
-  type BrowserAutomationAccessConfiguration,
-  type BrowserAutomationAccessGrant,
-  type BrowserAutomationAccessRequest,
   type BrowserAutomationCredentialMetadata,
-  type BrowserAutomationCredentialRevocation,
-  type BrowserAutomationCredentialRevokedListener,
 } from "./access-service.js";
 
 /** Provider-neutral browser session lease exports. */
