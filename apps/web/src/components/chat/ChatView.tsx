@@ -42,7 +42,7 @@ import {
   recordThreadHoldEnd,
   recordThreadHoldStart,
 } from "@/lib/thread-switch-telemetry";
-import { MAX_THREAD_SUBSCRIPTIONS } from "@mcode/contracts";
+import { MAX_THREAD_SUBSCRIPTIONS, type SetThreadSubscriptionsInput } from "@mcode/contracts";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -617,10 +617,20 @@ export function ChatView() {
         id: requestId,
       };
       pendingAtomicThreadIdsRef.current.set(requestId, sortedThreadIds);
-      const cursors: Record<string, number> = {};
+      const cursors: NonNullable<SetThreadSubscriptionsInput["cursors"]> = {};
+      const cursorAuthority = new Map<string, { epoch?: string; sequence?: number }>();
       for (const threadId of sortedThreadIds) {
-        const sequence = readThreadRecord(threadId).lastAgentEventSequence;
-        if (typeof sequence === "number" && sequence > 0) cursors[threadId] = sequence;
+        const record = readThreadRecord(threadId);
+        const sequence = record.lastAgentEventSequence;
+        if (typeof sequence === "number" && sequence > 0) {
+          cursorAuthority.set(threadId, {
+            epoch: record.lastAgentEventEpoch,
+            sequence,
+          });
+          cursors[threadId] = record.lastAgentEventEpoch
+            ? { epoch: record.lastAgentEventEpoch, sequence }
+            : sequence;
+        }
       }
       const input = Object.keys(cursors).length > 0
         ? { threadIds: sortedThreadIds, cursors }
@@ -629,6 +639,24 @@ export function ChatView() {
         if (result?.hydrationRequiredThreadIds?.length) {
           const residency = getConversationResidency();
           for (const threadId of result.hydrationRequiredThreadIds) {
+            const expected = cursorAuthority.get(threadId);
+            useThreadStore.setState((state) => {
+              const record = state.records.get(threadId);
+              if (!record) return state;
+              const stillOwnsCursor = expected?.epoch
+                ? record.lastAgentEventEpoch === expected.epoch
+                  && record.lastAgentEventSequence === expected.sequence
+                : record.lastAgentEventEpoch === undefined
+                  && record.lastAgentEventSequence === expected?.sequence;
+              if (!stillOwnsCursor) return state;
+              const records = new Map(state.records);
+              records.set(threadId, {
+                ...record,
+                lastAgentEventEpoch: undefined,
+                lastAgentEventSequence: undefined,
+              });
+              return { records };
+            });
             residency.invalidateConversation(threadId);
             if (threadId === activeThreadId && runningThreadIds.has(threadId)) {
               void residency.refresh(threadId, useWorkspaceStore.getState().threads);

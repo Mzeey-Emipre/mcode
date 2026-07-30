@@ -17,6 +17,10 @@ describe("thread switching WebSocket contracts", () => {
     expect(method.params.safeParse({ threadIds: ["thread-1", "thread-1"] }).success).toBe(false);
     expect(method.params.safeParse({ threadIds: Array.from({ length: MAX_THREAD_SUBSCRIPTIONS + 1 }, (_, index) => `thread-${index}`) }).success).toBe(false);
     expect(method.params.safeParse({ threadIds: [""] }).success).toBe(false);
+    expect(method.params.safeParse({
+      threadIds: ["thread-1"],
+      cursors: { "thread-1": { epoch: "00000000-0000-4000-8000-000000000001", sequence: 4 } },
+    }).success).toBe(true);
   });
 
   it("keeps legacy single-thread subscription methods available", () => {

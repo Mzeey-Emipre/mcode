@@ -456,7 +456,7 @@ export type {
 } from "./models/browser-automation.js";
 
 // Events
-export { AgentEventSchema, AgentEventType } from "./events/agent-event.js";
+export { AgentEventSchema, AgentEventType, AgentEventEpochSchema } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";
 
 // Plan questions

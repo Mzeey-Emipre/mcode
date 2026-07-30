@@ -4,7 +4,8 @@
  */
 
 import type { WebSocket } from "ws";
-import { WS_CHANNELS, type WsChannelName, encodeTerminalDataFrame } from "@mcode/contracts";
+import { randomUUID } from "node:crypto";
+import { WS_CHANNELS, type WsChannelName, type SetThreadSubscriptionsInput, encodeTerminalDataFrame } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import { getTransportPayloadValidator } from "./payload-validation.js";
 
@@ -17,6 +18,7 @@ const clients = new Set<WebSocket>();
 const threadSubscriptions = new Map<WebSocket, Set<string>>();
 const threadJournals = new Map<string, { events: unknown[] }>();
 const nextSequenceByThread = new Map<string, number>();
+const eventEpoch = randomUUID();
 const SUBSCRIPTION_SCOPED_CHANNELS = new Set<WsChannelName>([
   "agent.event",
   "turn.fileEffectsUpdated",
@@ -82,7 +84,7 @@ export function unsubscribeClientFromThread(ws: WebSocket, threadId: string): vo
 export function setClientThreadSubscriptions(
   ws: WebSocket,
   threadIds: readonly string[],
-  cursors?: Readonly<Record<string, number>>,
+  cursors?: NonNullable<SetThreadSubscriptionsInput["cursors"]>,
 ): { hydrationRequiredThreadIds: string[]; replayedThrough: Record<string, number> } {
   if (!clients.has(ws)) return { hydrationRequiredThreadIds: [], replayedThrough: {} };
   threadSubscriptions.set(ws, new Set(threadIds));
@@ -91,8 +93,13 @@ export function setClientThreadSubscriptions(
   if (!cursors) return { hydrationRequiredThreadIds, replayedThrough };
 
   for (const threadId of threadIds) {
-    const cursor = cursors[threadId];
-    if (cursor === undefined) continue;
+    const rawCursor = cursors[threadId];
+    if (rawCursor === undefined) continue;
+    const cursor = typeof rawCursor === "number" ? rawCursor : rawCursor.sequence;
+    if (typeof rawCursor !== "number" && rawCursor.epoch !== eventEpoch) {
+      hydrationRequiredThreadIds.push(threadId);
+      continue;
+    }
     const journal = threadJournals.get(threadId);
     if (!journal) {
       if (cursor > 0) hydrationRequiredThreadIds.push(threadId);
@@ -157,7 +164,7 @@ export function broadcast(
   const threadId = payloadThreadId(data);
   if (channel === "agent.event" && threadId && data && typeof data === "object") {
     const sequence = (nextSequenceByThread.get(threadId) ?? 0) + 1;
-    candidate = { ...(data as Record<string, unknown>), sequence };
+    candidate = { ...(data as Record<string, unknown>), sequence, epoch: eventEpoch };
   }
 
   const validation = getTransportPayloadValidator().validatePush(channel, candidate, schema);

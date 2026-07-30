@@ -139,6 +139,12 @@ export const MAX_THREAD_SUBSCRIPTIONS = 100;
 /** Thread identifier schema shared by atomic push subscription updates. */
 const ThreadSubscriptionIdSchema = z.string().trim().min(1).max(CONVERSATION_TAIL_THREAD_ID_MAX_LENGTH);
 
+/** Cursor identity for one server-process event stream. */
+const AgentEventCursorSchema = z.object({
+  epoch: z.string().uuid(),
+  sequence: z.number().int().nonnegative(),
+});
+
 /** Complete desired push subscription set for one WebSocket connection. */
 export const SetThreadSubscriptionsSchema = lazySchema(() =>
   z.object({
@@ -148,7 +154,10 @@ export const SetThreadSubscriptionsSchema = lazySchema(() =>
       }
     }),
     /** Last applied agent-event sequence per thread; omitted for legacy subscribe calls. */
-    cursors: z.record(ThreadSubscriptionIdSchema, z.number().int().nonnegative()).optional(),
+    cursors: z.record(
+      ThreadSubscriptionIdSchema,
+      z.union([z.number().int().nonnegative(), AgentEventCursorSchema]),
+    ).optional(),
   }),
 );
 

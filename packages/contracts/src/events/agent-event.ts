@@ -357,9 +357,14 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
     }),
   ]);
 
+/** Cryptographic identity for one server process event stream. */
+export const AgentEventEpochSchema = z.string().uuid();
+
 /** Optional server-assigned per-thread ordering metadata. */
 const AgentEventSequenceSchema = z.object({
   sequence: z.number().int().positive().optional(),
+  /** Server-process epoch paired with `sequence`; absent for legacy events. */
+  epoch: AgentEventEpochSchema.optional(),
 });
 
 /** Validated agent event payload, including an optional server ordering sequence. */

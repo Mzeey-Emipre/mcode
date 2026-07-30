@@ -180,6 +180,21 @@ describe("handleAgentEvent branches", () => {
     expect(record.toolCalls[0]?.toolInput).toEqual({ path: "/first" });
   });
 
+  it("resets sequence authority when server event epoch changes", () => {
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+    handleAgentEvent({
+      type: "toolUse", threadId: "thread-1", epoch: "00000000-0000-4000-8000-000000000001",
+      sequence: 9, toolCallId: "old", toolName: "Read", toolInput: {},
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolUse", threadId: "thread-1", epoch: "00000000-0000-4000-8000-000000000002",
+      sequence: 1, toolCallId: "new", toolName: "Write", toolInput: {},
+    } as AgentEvent);
+    expect(readThreadField("thread-1", (thread) => thread.lastAgentEventSequence)).toBe(1);
+    expect(readThreadField("thread-1", (thread) => thread.lastAgentEventEpoch))
+      .toBe("00000000-0000-4000-8000-000000000002");
+  });
+
   it("retains hook progress for an inactive thread", () => {
     const backgroundThreadId = "thread-background-hook";
     resetThreadStoreForTests({

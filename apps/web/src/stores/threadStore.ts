@@ -798,9 +798,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
   const deferredNarrativeEventsByThread = new Map<
     string,
-    { generation: number; events: AgentEvent[] }
+    { generation: number; events: AgentEvent[]; bytes: number }
   >();
   const deferredNarrativeGenerations = new Map<string, number>();
+  const MAX_DEFERRED_NARRATIVE_BYTES = 256 * 1024;
 
   const getRec = (threadId: string) => getThreadRecord(get().records, threadId);
 
@@ -883,7 +884,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const queued = deferredNarrativeEventsByThread.get(threadId);
     if (!queued || queued.events.length === 0) return;
     deferredNarrativeEventsByThread.delete(threadId);
-    if (queued.generation !== (deferredNarrativeGenerations.get(threadId) ?? 0)) return;
+    if (queued.generation !== (deferredNarrativeGenerations.get(threadId) ?? 0)) {
+      if (!pendingTextDeltaByThread.has(threadId) && !get().runningThreadIds.has(threadId)) {
+        deferredNarrativeGenerations.delete(threadId);
+      }
+      return;
+    }
     for (const event of queued.events) {
       if (event.type === "textDelta") {
         const delta = typeof event.delta === "string" ? event.delta : "";
@@ -932,6 +938,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         });
       }
     }
+    if (!pendingTextDeltaByThread.has(threadId) && !get().runningThreadIds.has(threadId)) {
+      deferredNarrativeGenerations.delete(threadId);
+    }
+  };
+
+  const deferredNarrativeEventBytes = (event: AgentEvent): number => {
+    if (event.type === "textDelta") {
+      return (typeof event.delta === "string" ? event.delta.length : 0) * 2 + 32;
+    }
+    if (event.type === "toolProgress") {
+      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+      const toolName = typeof event.toolName === "string" ? event.toolName : "";
+      return 64 + toolCallId.length * 2 + toolName.length * 2;
+    }
+    if (event.type === "assistantMessageBoundary") return 48;
+    return 64;
   };
 
   const dropPendingTextDeltas = (threadIds: Iterable<string>) => {
@@ -939,6 +961,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     for (const threadId of threadIds) {
       dropped = pendingTextDeltaByThread.delete(threadId) || dropped;
       dropped = deferredNarrativeEventsByThread.delete(threadId) || dropped;
+      if (!pendingTextDeltaByThread.has(threadId) && !deferredNarrativeEventsByThread.has(threadId)
+        && !get().runningThreadIds.has(threadId)) {
+        deferredNarrativeGenerations.delete(threadId);
+      }
     }
     if (dropped && pendingTextDeltaByThread.size === 0 && textDeltaFlushRaf != null) {
       cancelAnimationFrame(textDeltaFlushRaf);
@@ -959,13 +985,29 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const generation = deferredNarrativeGenerations.get(threadId) ?? 0;
     const queued = deferredNarrativeEventsByThread.get(threadId);
     const events = queued?.generation === generation ? queued.events : [];
-    if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS) {
-      recordBackgroundEventDropped(threadId);
-      return;
+    const bytes = queued?.generation === generation ? queued.bytes : 0;
+    const eventBytes = deferredNarrativeEventBytes(event);
+    if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS || bytes + eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
+      promoteDeferredNarrativeEvents(threadId);
+      if (eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
+        const prior = deferredNarrativeEventsByThread.get(threadId);
+        deferredNarrativeEventsByThread.set(threadId, {
+          generation,
+          events: [event],
+          bytes: eventBytes,
+        });
+        promoteDeferredNarrativeEvents(threadId);
+        if (prior) deferredNarrativeEventsByThread.delete(threadId);
+        return;
+      }
     }
+    const latest = deferredNarrativeEventsByThread.get(threadId);
+    const nextEvents = latest?.generation === generation ? latest.events : [];
+    const nextBytes = latest?.generation === generation ? latest.bytes : 0;
     deferredNarrativeEventsByThread.set(threadId, {
       generation,
-      events: [...events, event],
+      events: [...nextEvents, event],
+      bytes: nextBytes + eventBytes,
     });
   };
 
@@ -1458,6 +1500,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           latestTurnWithChanges: null,
           serverMessageIds: {},
           narrativeByMessage: {},
+          lastAgentEventEpoch: undefined,
+          lastAgentEventSequence: undefined,
         }),
       }));
     }
@@ -1586,6 +1630,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         ...(isCurrentThread ? { currentThreadId: null } : {}),
       };
     });
+    deferredNarrativeGenerations.delete(threadId);
 
     if (isCurrentThread) {
       get().toolCallRecordCache.clear();
@@ -1631,6 +1676,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         ...(deletingCurrentThread ? { currentThreadId: null } : {}),
       };
     });
+    for (const threadId of threadIds) deferredNarrativeGenerations.delete(threadId);
 
     if (deletingCurrentThread) {
       get().toolCallRecordCache.clear();
@@ -1904,16 +1950,23 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    */
   handleAgentEvent: (event) => {
     const { threadId } = event;
+    const eventEpoch = typeof event.epoch === "string" ? event.epoch : undefined;
     const eventSequence = typeof event.sequence === "number" && event.sequence > 0
       ? event.sequence
       : undefined;
     if (eventSequence !== undefined) {
-      const lastSequence = getRec(threadId).lastAgentEventSequence;
-      if (lastSequence !== undefined && eventSequence <= lastSequence) {
+      const record = getRec(threadId);
+      const lastSequence = record.lastAgentEventSequence;
+      const epochChanged = eventEpoch !== undefined
+        && eventEpoch !== record.lastAgentEventEpoch;
+      if (!epochChanged && lastSequence !== undefined && eventSequence <= lastSequence) {
         if (get().currentThreadId !== threadId) recordBackgroundEventDropped(threadId);
         return;
       }
-      patchRec(threadId, { lastAgentEventSequence: eventSequence });
+      patchRec(threadId, {
+        lastAgentEventSequence: eventSequence,
+        ...(eventEpoch !== undefined ? { lastAgentEventEpoch: eventEpoch } : {}),
+      });
     }
     const currentThreadId = get().currentThreadId;
     const isActiveThread = currentThreadId !== null && currentThreadId === threadId;
@@ -1925,6 +1978,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Flush first so invalidation cannot discard text needed for persistence.
       flushPendingTextDeltas();
       if (startsNewInstance) invalidateDeferredNarrativeEvents(threadId);
+      if (isLifecycleExit && !isActiveThread) promoteDeferredNarrativeEvents(threadId);
+      if (isLifecycleExit) {
+        queueMicrotask(() => {
+          if (!get().runningThreadIds.has(threadId)
+            && !pendingTextDeltaByThread.has(threadId)
+            && !deferredNarrativeEventsByThread.has(threadId)) {
+            deferredNarrativeGenerations.delete(threadId);
+          }
+        });
+      }
     }
     if (startsNewInstance) {
       threadHydrator.invalidatePermissionSnapshots(threadId);

@@ -194,6 +194,18 @@ describe("broadcast", () => {
     expect(received).toHaveLength(0);
   });
 
+  it("reports hydration for a cursor from another server epoch without replay", () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    broadcast("agent.event", { type: "textDelta", threadId: "thread-epoch", delta: "one" });
+    const ws = fakeOpenSocket(received);
+    addClient(ws);
+    const result = setClientThreadSubscriptions(ws, ["thread-epoch"], {
+      "thread-epoch": { epoch: "00000000-0000-4000-8000-000000000001", sequence: 0 },
+    });
+    expect(result.hydrationRequiredThreadIds).toEqual(["thread-epoch"]);
+    expect(received).toHaveLength(0);
+  });
+
   it("clears all thread subscriptions when replacing with an empty set", () => {
     const received: Array<{ buf: Buffer; binary: boolean }> = [];
     const ws = fakeOpenSocket(received);
