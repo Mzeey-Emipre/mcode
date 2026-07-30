@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
+import { app } from "electron";
 
 // Capture writes to autoUpdater so we can assert on the channel + prerelease config.
 // Hoisted so the reference is initialized before vi.mock's hoisted factory runs.
 const { updaterMock } = vi.hoisted(() => ({
   updaterMock: {
+    appListeners: new Map<string, (...args: any[]) => void>(),
+    isPackaged: false,
+    listeners: new Map<string, (...args: any[]) => void>(),
     channel: "",
     allowPrerelease: false,
     allowDowngrade: false,
@@ -11,8 +15,10 @@ const { updaterMock } = vi.hoisted(() => ({
     autoInstallOnAppQuit: true,
     forceDevUpdateConfig: false,
     checkForUpdates: vi.fn().mockResolvedValue({ updateInfo: { version: "0.0.0" } }),
-    on: vi.fn(),
-    removeAllListeners: vi.fn(),
+    on: vi.fn((event: string, listener: (...args: any[]) => void) => {
+      updaterMock.listeners.set(event, listener);
+    }),
+    removeAllListeners: vi.fn(() => updaterMock.listeners.clear()),
     downloadUpdate: vi.fn(),
     quitAndInstall: vi.fn(),
   },
@@ -24,9 +30,14 @@ vi.mock("electron-updater", () => ({
 
 vi.mock("electron", () => ({
   app: {
+    get isPackaged() {
+      return updaterMock.isPackaged;
+    },
     getVersion: vi.fn().mockReturnValue("0.1.0-test"),
-    isPackaged: false,
-    on: vi.fn(),
+    on: vi.fn((event: string, listener: (...args: any[]) => void) => {
+      updaterMock.appListeners.set(event, listener);
+    }),
+    quit: vi.fn(),
     removeListener: vi.fn(),
   },
   BrowserWindow: { getAllWindows: vi.fn().mockReturnValue([]), getFocusedWindow: vi.fn() },
@@ -43,7 +54,13 @@ import {
   applyReleaseLineSwitch,
   isCrossChannelDowngrade,
   isTransientNetworkError,
+  cleanupAutoUpdater,
+  getUpdateStatus,
+  initAutoUpdater,
+  installUpdate,
+  setBeforeInstallHook,
 } from "../auto-updater";
+
 
 describe("applyChannelConfig", () => {
   beforeEach(() => {
@@ -253,5 +270,74 @@ describe("applyReleaseLineSwitch concurrency", () => {
     const b = applyReleaseLineSwitch("stable"); // would otherwise interleave
     const [resA, resB] = await Promise.all([a, b]);
     expect(resA).toBe(resB);
+  });
+});
+
+describe("update installation safety", () => {
+  beforeEach(() => {
+    updaterMock.isPackaged = true;
+    updaterMock.quitAndInstall.mockClear();
+    vi.mocked(app.quit).mockClear();
+    setBeforeInstallHook(async () => {});
+    if (!updaterMock.appListeners.has("before-quit")) {
+      initAutoUpdater();
+    }
+    updaterMock.listeners.get("update-downloaded")?.({ version: "0.2.0", releaseNotes: null });
+  });
+
+  afterAll(() => {
+    cleanupAutoUpdater();
+    updaterMock.isPackaged = false;
+  });
+
+  it("aborts manual installation when server teardown fails", async () => {
+    setBeforeInstallHook(async () => {
+      throw new Error("server teardown failed");
+    });
+
+    await expect(installUpdate()).resolves.toBe(false);
+    expect(updaterMock.quitAndInstall).not.toHaveBeenCalled();
+    expect(getUpdateStatus()).toEqual({
+      state: "error",
+      message: "Update installation blocked: server teardown failed",
+    });
+  });
+
+  it("keeps the app open when silent install teardown fails", async () => {
+    const beforeQuit = updaterMock.appListeners.get("before-quit");
+    expect(beforeQuit).toBeDefined();
+    setBeforeInstallHook(async () => {
+      throw new Error("server teardown failed");
+    });
+    const event = { preventDefault: vi.fn() } as unknown as Event;
+
+    beforeQuit?.(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(app.quit).not.toHaveBeenCalled();
+    expect(updaterMock.quitAndInstall).not.toHaveBeenCalled();
+    expect(getUpdateStatus()).toEqual({
+      state: "error",
+      message: "Update installation blocked: server teardown failed",
+    });
+  });
+
+  it("keeps successful silent installation behavior", async () => {
+    const beforeQuit = updaterMock.appListeners.get("before-quit");
+    expect(beforeQuit).toBeDefined();
+    const event = { preventDefault: vi.fn() } as unknown as Event;
+
+    beforeQuit?.(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(app.quit).toHaveBeenCalledOnce();
+    expect(updaterMock.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("keeps successful manual installation behavior", async () => {
+    await expect(installUpdate()).resolves.toBe(true);
+    expect(updaterMock.quitAndInstall).toHaveBeenCalledOnce();
   });
 });

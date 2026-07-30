@@ -348,16 +348,20 @@ export function setBeforeInstallHook(hook: () => Promise<void>): void {
  * All code paths that previously called autoUpdater.quitAndInstall()
  * must use this instead.
  */
-async function quitAndInstallSafely(): Promise<void> {
-  isCompletingStoppedServerQuit = true;
+async function quitAndInstallSafely(): Promise<boolean> {
   if (beforeInstallHook) {
     try {
       await beforeInstallHook();
     } catch (err) {
-      console.error("[auto-updater] beforeInstallHook failed, proceeding with install:", err);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[auto-updater] beforeInstallHook failed, cancelling install:", message);
+      broadcastStatus({ state: "error", message: `Update installation blocked: ${message}` });
+      return false;
     }
   }
+  isCompletingStoppedServerQuit = true;
   autoUpdater.quitAndInstall();
+  return true;
 }
 
 /** Returns the most recently observed update status (for renderer hydration). */
@@ -421,8 +425,7 @@ export function checkForUpdatesNow(): Promise<UpdateStatus> {
 export async function installUpdate(): Promise<boolean> {
   if (!app.isPackaged) return false;
   if (lastStatus.state !== "downloaded") return false;
-  await quitAndInstallSafely();
-  return true;
+  return quitAndInstallSafely();
 }
 
 /**
@@ -459,9 +462,11 @@ function onBeforeQuitForPendingInstall(event: Event): void {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[auto-updater] server stop failed before silent install on quit:", message);
-    } finally {
-      app.quit();
+      isCompletingStoppedServerQuit = false;
+      broadcastStatus({ state: "error", message: `Update installation blocked: ${message}` });
+      return;
     }
+    app.quit();
   })();
 }
 
