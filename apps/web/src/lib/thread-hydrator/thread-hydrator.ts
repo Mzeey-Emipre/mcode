@@ -1197,7 +1197,6 @@ export class ThreadHydrator {
     if (hasPrefetchedHistoryPage(threadId, before)) return;
     const epoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
     const prefetchKey = `${threadId}:${before}`;
-    let deferred!: DeferredWorkHandle;
     let cancelled = false;
     const start = async () => {
       if (cancelled) return;
@@ -1230,7 +1229,7 @@ export class ThreadHydrator {
     const initial = scheduleDeferredWork(() => {
       if (!cancelled) void start();
     }, { maxDelayMs: 100 });
-    deferred = {
+    const deferred: DeferredWorkHandle = {
       cancel: () => {
         cancelled = true;
         initial.cancel();
