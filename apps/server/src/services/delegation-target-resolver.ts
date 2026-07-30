@@ -43,9 +43,11 @@ export class DelegationTargetResolver {
         const models = await this.models.listModels(provider.id);
         const usableModels = this.usableModels(models);
         if (usableModels.length === 0) continue;
-        const configuredDefault = settings.model.providerDefaults?.[provider.id]?.trim();
-        const defaultModelId = configuredDefault && usableModels.some((model) => model.id === configuredDefault)
-          ? configuredDefault
+        const globalDefaultModel = settings.model.defaults.provider === provider.id
+          ? settings.model.defaults.id.trim()
+          : undefined;
+        const defaultModelId = globalDefaultModel && usableModels.some((model) => model.id === globalDefaultModel)
+          ? globalDefaultModel
           : undefined;
         targets.push({
           providerId: provider.id,
@@ -75,21 +77,19 @@ export class DelegationTargetResolver {
       return { status: "invalid_provider" };
     }
     const explicitProvider = input.providerId !== undefined;
-    const usingProviderDefault = explicitProvider && input.modelId === undefined;
+    const requiresExplicitModel = explicitProvider
+      && input.modelId === undefined
+      && providerId !== settings.model.defaults.provider;
     let modelId = input.modelId;
     if (modelId === undefined) {
-      if (explicitProvider) {
-        modelId = settings.model.providerDefaults?.[providerId]?.trim() || undefined;
-        if (!modelId) return { status: "model_required" };
-      } else {
-        modelId = settings.model.defaults.id;
-      }
+      if (requiresExplicitModel) return { status: "model_required" };
+      modelId = settings.model.defaults.id;
     }
     try {
       this.availability?.assertUsable(provider.id);
       const models = this.usableModels(await this.models.listModels(provider.id));
       if (!models.some((model) => model.id === modelId)) {
-        return usingProviderDefault ? { status: "model_required" } : { status: "invalid_model" };
+        return requiresExplicitModel ? { status: "model_required" } : { status: "invalid_model" };
       }
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("No provider registered")) {
