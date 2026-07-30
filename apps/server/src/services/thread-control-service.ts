@@ -115,7 +115,7 @@ export class ThreadControlService {
     @inject(ThreadControlAuditRepo) private readonly audit: ThreadControlAuditRepo,
     @inject("MessageRepo", { isOptional: true }) private readonly messages?: MessageRepo,
     @inject(ThreadControlMutationReservationService) mutationReservations?: ThreadControlMutationReservationService,
-    @inject("DelegationTargetResolver", { isOptional: true }) private readonly targetResolver?: DelegationTargetResolver,
+    @inject(delay(() => DelegationTargetResolver), { isOptional: true }) private readonly targetResolver?: DelegationTargetResolver,
   ) {
     this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
   }
