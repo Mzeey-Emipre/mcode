@@ -229,6 +229,10 @@ async function tryExistingServer(portMin: number, portMax: number): Promise<Serv
       console.log(`[server-manager] Ignored existing server on port ${lock.port} (outside ${portMin}-${portMax})`);
       return null;
     }
+    if (!Number.isSafeInteger(lock.pid) || lock.pid <= 0) {
+      console.log(`[server-manager] Ignored existing server with invalid PID ${lock.pid}`);
+      return null;
+    }
 
     // Check PID liveness before wasting time on HTTP probe
     try {
@@ -593,10 +597,21 @@ export class ServerManager {
       }
     }
 
+    let processAlive = false;
     try {
       process.kill(lock.pid, 0);
-      forceKillServerProcessTree(lock.pid);
+      processAlive = true;
     } catch { /* already dead */ }
+
+    if (processAlive) {
+      try {
+        forceKillServerProcessTree(lock.pid);
+      } catch (error) {
+        if (process.platform === "win32") {
+          throw new Error(`Failed to terminate server process tree ${lock.pid}`, { cause: error });
+        }
+      }
+    }
 
     try { unlinkSync(lockPath); } catch { /* ok */ }
   }

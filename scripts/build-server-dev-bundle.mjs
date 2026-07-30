@@ -338,14 +338,14 @@ export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
 function copilotTreesMatch(sourceDir, destinationDir) {
   try {
     if (!statSync(destinationDir).isDirectory()) return false;
-  } catch {
+  } catch (error) {
+    if (error?.code === "EACCES" || error?.code === "EPERM") return true;
     return false;
   }
 
-  let sourceEntries;
+  const sourceEntries = readdirSync(sourceDir, { withFileTypes: true });
   let destinationEntries;
   try {
-    sourceEntries = readdirSync(sourceDir, { withFileTypes: true });
     destinationEntries = readdirSync(destinationDir, { withFileTypes: true });
   } catch (error) {
     if (error?.code === "EACCES" || error?.code === "EPERM") return true;
@@ -370,7 +370,7 @@ function copilotTreesMatch(sourceDir, destinationDir) {
     try {
       if (!copilotFilesMatch(sourcePath, destinationPath)) return false;
     } catch (error) {
-      if (error?.code === "EACCES" || error?.code === "EPERM") return true;
+      if (error?.destinationAccess === true) return true;
       throw error;
     }
   }
@@ -380,11 +380,22 @@ function copilotTreesMatch(sourceDir, destinationDir) {
 /** Compare file contents in bounded chunks so equal-size files remain content-checked. */
 function copilotFilesMatch(sourcePath, destinationPath) {
   const sourceStat = statSync(sourcePath);
-  const destinationStat = statSync(destinationPath);
+  let destinationStat;
+  try {
+    destinationStat = statSync(destinationPath);
+  } catch (error) {
+    throw markDestinationAccessError(error);
+  }
   if (sourceStat.size !== destinationStat.size) return false;
 
   const sourceFd = openSync(sourcePath, "r");
-  const destinationFd = openSync(destinationPath, "r");
+  let destinationFd;
+  try {
+    destinationFd = openSync(destinationPath, "r");
+  } catch (error) {
+    closeSync(sourceFd);
+    throw markDestinationAccessError(error);
+  }
   const sourceBuffer = Buffer.allocUnsafe(64 * 1024);
   const destinationBuffer = Buffer.allocUnsafe(sourceBuffer.length);
   try {
@@ -392,7 +403,12 @@ function copilotFilesMatch(sourcePath, destinationPath) {
     while (offset < sourceStat.size) {
       const expected = Math.min(sourceBuffer.length, sourceStat.size - offset);
       const sourceRead = readSync(sourceFd, sourceBuffer, 0, expected, offset);
-      const destinationRead = readSync(destinationFd, destinationBuffer, 0, expected, offset);
+      let destinationRead;
+      try {
+        destinationRead = readSync(destinationFd, destinationBuffer, 0, expected, offset);
+      } catch (error) {
+        throw markDestinationAccessError(error);
+      }
       if (sourceRead === 0 || destinationRead === 0) return false;
       if (sourceRead !== destinationRead) return false;
       if (!sourceBuffer.subarray(0, sourceRead).equals(destinationBuffer.subarray(0, destinationRead))) {
@@ -405,6 +421,14 @@ function copilotFilesMatch(sourcePath, destinationPath) {
     closeSync(sourceFd);
     closeSync(destinationFd);
   }
+}
+
+/** Mark access failures raised while reading destination files as lock-preservation cases. */
+function markDestinationAccessError(error) {
+  if (error?.code === "EACCES" || error?.code === "EPERM") {
+    error.destinationAccess = true;
+  }
+  return error;
 }
 
 /** Copy the complete Copilot CLI package tree and target platform package into a server tree. */

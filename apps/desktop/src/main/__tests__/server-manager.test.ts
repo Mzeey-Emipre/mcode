@@ -138,7 +138,7 @@ const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
 import { execFileSync, spawn } from "child_process";
-import { existsSync, readFileSync, writeFileSync, createWriteStream, renameSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, createWriteStream, renameSync, unlinkSync } from "fs";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import { SERVER_HEAP_DEFAULT_MB, SERVER_HEAP_LEGACY_DEFAULT_MB } from "@mcode/contracts";
@@ -612,7 +612,7 @@ describe("ServerManager", () => {
     vi.mocked(readFileSync).mockReset().mockReturnValue(
       JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 0 }),
     );
-    const killSpy = vi.spyOn(process, "kill");
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
 
     try {
       await manager.stopServerHeldByLock();
@@ -621,6 +621,33 @@ describe("ServerManager", () => {
       expect(globalThis.fetch).not.toHaveBeenCalled();
     } finally {
       killSpy.mockRestore();
+    }
+  });
+
+  it("keeps the lock and reports Windows tree-kill failure", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
+    vi.mocked(execFileSync).mockImplementation(() => {
+      throw new Error("taskkill failed");
+    });
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true as never);
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    let now = 1000;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      now += 5000;
+      return now;
+    });
+
+    try {
+      await expect(manager.stopServerHeldByLock()).rejects.toThrow(
+        "Failed to terminate server process tree 12345",
+      );
+      expect(unlinkSync).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+      killSpy.mockRestore();
+      dateSpy.mockRestore();
     }
   });
 
@@ -749,5 +776,27 @@ describe("ServerManager", () => {
     expect(result.port).toBe(19600);
     expect(result.authToken).toBe("test-auth-token");
     expect(manager.reusedExisting).toBe(true);
+  });
+
+  it("does not probe or reuse an existing server with an invalid PID", async () => {
+    const enoent = () => {
+      const err = new Error("ENOENT: no such file or directory") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    };
+    vi.mocked(readFileSync).mockReset()
+      .mockReturnValueOnce(JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 0 }))
+      .mockImplementationOnce(enoent);
+    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true as never);
+
+    try {
+      await manager.start();
+
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
   });
 });
