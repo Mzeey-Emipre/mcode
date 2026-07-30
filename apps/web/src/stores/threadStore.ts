@@ -793,6 +793,34 @@ function appendThoughtSegment(
   ];
 }
 
+function projectAssistantMessageBoundary(
+  segments: ThoughtSegment[],
+  isFinalResponse: boolean,
+): ThoughtSegment[] | undefined {
+  const last = segments[segments.length - 1];
+  if (!last || last.endedAt !== undefined) return undefined;
+  return isFinalResponse
+    ? segments.slice(0, -1)
+    : [...segments.slice(0, -1), { ...last, endedAt: Date.now() }];
+}
+
+function projectToolProgress(
+  toolCalls: ToolCall[],
+  toolCallId: string,
+  elapsedSeconds: number,
+  lastActivityAt: number,
+): ToolCall[] | undefined {
+  let changed = false;
+  const updated = toolCalls.map((toolCall) => {
+    if (toolCall.id === toolCallId && !toolCall.isComplete) {
+      changed = true;
+      return { ...toolCall, elapsedSeconds, lastActivityAt };
+    }
+    return toolCall;
+  });
+  return changed ? updated : undefined;
+}
+
 export const useThreadStore = create<ThreadState>((set, get) => {
   let textDeltaFlushRaf: number | null = null;
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
@@ -900,12 +928,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const isFinalResponse = event.isFinalResponse === true;
       set((state) => {
         const record = getThreadRecord(state.records, threadId);
-        const last = record.thoughtSegments[record.thoughtSegments.length - 1];
-        if (!last || last.endedAt !== undefined) return state;
-        const thoughtSegments = isFinalResponse
-          ? record.thoughtSegments.slice(0, -1)
-          : [...record.thoughtSegments.slice(0, -1), { ...last, endedAt: Date.now() }];
-        return { records: patchThreadRecord(state.records, threadId, { thoughtSegments }) };
+        const thoughtSegments = projectAssistantMessageBoundary(record.thoughtSegments, isFinalResponse);
+        return thoughtSegments
+          ? { records: patchThreadRecord(state.records, threadId, { thoughtSegments }) }
+          : state;
       });
     } else if (event.type === "toolProgress") {
       const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
@@ -914,15 +940,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const lastActivityAt = Date.now();
       set((state) => {
         const current = getThreadRecord(state.records, threadId).toolCalls;
-        let changed = false;
-        const toolCalls = current.map((toolCall) => {
-          if (toolCall.id === toolCallId && !toolCall.isComplete) {
-            changed = true;
-            return { ...toolCall, elapsedSeconds, lastActivityAt };
-          }
-          return toolCall;
-        });
-        return changed
+        const toolCalls = projectToolProgress(current, toolCallId, elapsedSeconds, lastActivityAt);
+        return toolCalls
           ? { records: patchThreadRecord(state.records, threadId, { toolCalls }) }
           : state;
       });
@@ -2617,14 +2636,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
       set((state) => {
         const rec = getThreadRecord(state.records, threadId);
-        const segments = rec.thoughtSegments;
-        const last = segments[segments.length - 1];
-        if (!last || last.endedAt !== undefined) {
-          return state;
-        }
-        const nextSegments = isFinalResponse
-          ? segments.slice(0, -1)
-          : [...segments.slice(0, -1), { ...last, endedAt: Date.now() }];
+        const nextSegments = projectAssistantMessageBoundary(rec.thoughtSegments, isFinalResponse);
+        if (!nextSegments) return state;
         return {
           records: patchThreadRecord(state.records, threadId, {
             thoughtSegments: nextSegments,
@@ -2645,16 +2658,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const lastActivityAt = Date.now();
       set((state) => {
         const current = getThreadRecord(state.records, threadId).toolCalls;
-        let changed = false;
-        const updated = current.map((tc) => {
-          if (tc.id === toolCallId && !tc.isComplete) {
-            changed = true;
-            return { ...tc, elapsedSeconds, lastActivityAt };
-          }
-          return tc;
-        });
+        const updated = projectToolProgress(current, toolCallId, elapsedSeconds, lastActivityAt);
         // Return same state reference when nothing changed — Zustand skips notification.
-        if (!changed) return state;
+        if (!updated) return state;
         return { records: patchThreadRecord(state.records, threadId, { toolCalls: updated }) };
       });
       return;
