@@ -53,6 +53,22 @@ const MAX_SLASH_COMMAND_ITEMS = 100;
 
 const BUILTIN_COMMANDS: Command[] = [
   {
+    id: "builtin:mcode:mcode-browser",
+    name: "mcode-browser",
+    description: "Read the Mcode Browser operating guide",
+    namespace: "mcode",
+    capabilityKind: "mcode",
+    nativeId: "mcode-browser",
+  },
+  {
+    id: "builtin:mcode:thread-control",
+    name: "thread-control",
+    description: "Read the Mcode thread-control operating guide",
+    namespace: "mcode",
+    capabilityKind: "mcode",
+    nativeId: "thread-control",
+  },
+  {
     id: "builtin:command:compact",
     name: "compact",
     description: "Summarise conversation history to free up context window",
@@ -151,7 +167,7 @@ interface UseSlashCommandOptions {
   /** Model ID used to resolve model-specific composer capabilities. */
   modelId?: string;
   /**
-   * Whether to include mcode built-in commands (plan, compact, goal) in the
+   * Whether to include mcode built-in commands (plan, compact, goal, mcode-browser, thread-control) in the
    * command list. Default `true`. Pass `false` for contexts like the annotation
    * bubble where mcode actions are meaningless and must not be selectable.
    */

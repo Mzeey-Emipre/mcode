@@ -203,6 +203,8 @@ describe("thread_create_batch schemas", () => {
 
   it("accepts one to twenty ordered creation items and rejects authority fields", () => {
     expect(ThreadCreateBatchInputSchema().parse({ items: [item] })).toEqual({ items: [item] });
+    const itemWithoutWorkspace = { title: item.title, prompt: item.prompt, placement: item.placement };
+    expect(ThreadCreateBatchInputSchema().parse({ items: [itemWithoutWorkspace] })).toEqual({ items: [itemWithoutWorkspace] });
     expect(ThreadCreateBatchInputSchema().safeParse({ items: [] }).success).toBe(false);
     expect(ThreadCreateBatchInputSchema().safeParse({
       items: Array.from({ length: THREAD_CREATE_BATCH_MAX_ITEMS + 1 }, () => item),
