@@ -108,6 +108,7 @@ import {
 } from "./cursor-acp-session-trace.js";
 import { cursorTaskExtToAgentEvents } from "./cursor-acp-task.js";
 import { extractCursorCreatePlanMarkdown } from "./cursor-create-plan.js";
+import { AcpSessionRuntime } from "../acp/acp-session-runtime.js";
 
 const CURSOR_STDERR_TAIL_MAX = 48;
 
@@ -175,6 +176,7 @@ interface CursorAcpSessionEntry {
   threadId: string;
   child: ChildProcess;
   connection: ClientSideConnection;
+  acpRuntime: AcpSessionRuntime;
   acpSessionId: string;
   cwd: string;
   permissionMode: "full" | "default";
@@ -296,6 +298,8 @@ export class CursorProvider
    * Checked after session creation; if found the session is torn down immediately.
    */
   private pendingStops = new Set<string>();
+  /** ACP runtimes still opening before SessionRuntime can own their state. */
+  private pendingAcpRuntimes = new Map<string, AcpSessionRuntime>();
   private pendingPermissions = new Map<string, PendingAcpPermission>();
   /** Threads in Mcode plan-questions phase; disables Cursor ask_question auto-picks. */
   private planQuestionModeThreads = new Set<string>();
@@ -537,12 +541,15 @@ export class CursorProvider
       entry.pendingUserStopAbort = true;
     }
     if (entry?.acpSessionId) {
-      await entry.connection.cancel({ sessionId: entry.acpSessionId }).catch(() => {});
+      await entry.acpRuntime.cancel().catch(() => {});
     } else if (entry) {
       // Entry exists but ACP session hasn't opened yet; tear down immediately.
       const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
       await this.runtime.stop(sessionId);
       this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+    } else if (this.pendingAcpRuntimes?.has(sessionId)) {
+      this.pendingStops.add(sessionId);
+      await this.pendingAcpRuntimes?.get(sessionId)?.close();
     } else {
       this.pendingStops.add(sessionId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
@@ -564,6 +571,10 @@ export class CursorProvider
   /** Tear down all sessions, cancel pending permissions, and stop the eviction timer. */
   shutdown(): void {
     this.drainAllPendingCancelled();
+    for (const [sessionId, runtime] of this.pendingAcpRuntimes ?? []) {
+      this.pendingStops.add(sessionId);
+      void runtime.close();
+    }
     for (const sessionId of this.liveSessionIds) {
       this.browserAutomationLease.releaseSession(this.id, sessionId);
     }
@@ -661,6 +672,9 @@ export class CursorProvider
     let state: CursorAcpSessionEntry | undefined;
     try {
       state = await this.spawnChild(sessionId, threadId, cwd, pm, settings);
+      if (this.pendingStops?.has(sessionId)) {
+        throw new Error("Cursor ACP session stopped during startup");
+      }
       if (state.browserHttpMcpSupported) {
         if (refreshedGrant) {
           browserGrant = refreshedGrant;
@@ -693,6 +707,9 @@ export class CursorProvider
         resumeFrom !== undefined,
         mcpServers,
       );
+      if (this.pendingStops?.has(sessionId)) {
+        throw new Error("Cursor ACP session stopped during startup");
+      }
       state.mcodeRuntimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
         sourceThreadId: threadId,
         threadControlGranted: true,
@@ -708,10 +725,13 @@ export class CursorProvider
       }
     } catch (err) {
       this.cleanupSpawnFailure(sessionId, state, browserGrant, browserStage, refreshedGrant);
+      this.pendingStops?.delete(sessionId);
+      this.pendingAcpRuntimes?.delete(sessionId);
       await this.threadControlMcp?.close(sessionId);
       throw err;
     }
 
+    this.pendingAcpRuntimes?.delete(sessionId);
     this.liveSessionIds.add(sessionId);
     return { state, pids: state.child.pid != null ? [state.child.pid] : [] };
   }
@@ -729,7 +749,7 @@ export class CursorProvider
   async interrupt(state: CursorSessionState): Promise<void> {
     state.pendingUserStopAbort = false;
     if (state.acpSessionId) {
-      await state.connection.cancel({ sessionId: state.acpSessionId }).catch(() => {});
+      await state.acpRuntime.cancel().catch(() => {});
     }
   }
 
@@ -801,6 +821,7 @@ export class CursorProvider
       try {
         return await this.spawnOneCli(cliPath, mcodeSessionId, threadId, cwd, permissionMode);
       } catch (e) {
+        this.pendingAcpRuntimes?.delete(mcodeSessionId);
         lastErr = e;
         const msg = e instanceof Error ? e.message : String(e);
         if (/Failed to spawn cursor-agent/i.test(msg)) continue;
@@ -820,32 +841,56 @@ export class CursorProvider
     permissionMode: "full" | "default",
   ): Promise<CursorAcpSessionEntry> {
     const args = buildCursorAcpArgs({ permissionMode });
-    const child = spawn(cliPath, args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd,
-      shell: process.platform === "win32",
-      env: this.envService.getEnv(),
+    let entry!: CursorAcpSessionEntry;
+    const acpRuntime = await AcpSessionRuntime.start({
+      spawnSpec: {
+        command: cliPath,
+        args,
+        cwd,
+        env: this.envService.getEnv(),
+      },
+      callbacks: {
+        onPermissionRequest: async (request) => this.bridgePermission(entry, request),
+        onSessionUpdate: async (update) => this.deliverSessionUpdate(entry, update),
+        readTextFile: async (filePath) => this.safeReadWorkspaceFile(cwd, filePath),
+        writeTextFile: async (filePath, content) => this.safeWriteWorkspaceFile(cwd, filePath, content),
+        onExtensionRequest: async () => ({}),
+        onExtensionNotification: async () => {},
+      },
+      clientFactory: (callbacks) => {
+        return {
+          requestPermission: async (request) => {
+            if (!entry) return { outcome: { outcome: "cancelled" } };
+            return this.bridgePermission(entry, request);
+          },
+          sessionUpdate: callbacks.onSessionUpdate,
+          readTextFile: async ({ path: filePath }) => ({
+            content: entry ? this.safeReadWorkspaceFile(entry.cwd, filePath) : "",
+          }),
+          writeTextFile: async ({ path: filePath, content }) => {
+            if (!entry) throw new Error("Cursor ACP session is not ready");
+            this.safeWriteWorkspaceFile(entry.cwd, filePath, content);
+            return {};
+          },
+          extMethod: async (method, params) => {
+            if (!entry) return {};
+            const client = this.buildAcpClient(entry);
+            return client.extMethod ? (await client.extMethod(method, params)) ?? {} : {};
+          },
+          extNotification: async (method, params) => {
+            if (!entry) return;
+            const client = this.buildAcpClient(entry);
+            if (client.extNotification) await client.extNotification(method, params);
+          },
+        };
+      },
+      selectAuthMethod: (methods) => methods.find((method) => method.id === "cursor_login")?.id ?? methods[0]?.id,
+      ignoreAuthenticationErrors: true,
     });
-
-    if (!child.stdin || !child.stdout) {
-      try {
-        child.kill();
-      } catch {
-        /* best-effort: the child may already be gone */
-      }
-      throw new Error("Failed to spawn cursor-agent: stdio pipes unavailable");
-    }
-
-    // JobObject attach + hard kill are now owned by the SessionRuntime, which
-    // acts on the PID this method surfaces through `spawn`'s `pids`.
-
-    const out = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
-    const inp = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
-    const stream = ndJsonStream(out, inp);
-
-    const entry: Omit<CursorAcpSessionEntry, "connection"> & {
-      connection?: CursorAcpSessionEntry["connection"];
-    } = {
+    (this.pendingAcpRuntimes ??= new Map()).set(mcodeSessionId, acpRuntime);
+    const child = acpRuntime.state.child;
+    const connection = acpRuntime.state.connection;
+    entry = {
       workspaceId: this.pendingBrowserContext.get(mcodeSessionId)?.workspaceId ?? "unknown-workspace",
       browserPermissionCapability:
         this.pendingBrowserContext.get(mcodeSessionId)?.browserPermissionCapability ?? "interact",
@@ -853,6 +898,8 @@ export class CursorProvider
       mcodeSessionId,
       threadId,
       child,
+      connection,
+      acpRuntime,
       acpSessionId: "",
       cwd,
       permissionMode,
@@ -870,13 +917,6 @@ export class CursorProvider
       mcodeRuntimeInstructionsSent: false,
       mcodeLogicalSessionReloaded: false,
     };
-
-    entry.connection = new ClientSideConnection(
-      () => this.buildAcpClient(entry as CursorAcpSessionEntry),
-      stream,
-    ) as CursorAcpSessionEntry["connection"];
-
-    const connection = entry.connection;
 
     child.stderr?.on("data", (chunk: Buffer) => {
       const verboseLogs = this.settingsService.get().provider.cursor.verboseFailureLogs;
@@ -905,7 +945,8 @@ export class CursorProvider
     });
 
     try {
-      const supportsHttpMcp = await this.acpHandshake(connection, threadId);
+      const initResult = await acpRuntime.initialize() as { agentCapabilities?: { mcpCapabilities?: { http?: boolean } } };
+      const supportsHttpMcp = cursorSupportsHttpMcp(initResult);
       entry.browserHttpMcpSupported = supportsHttpMcp;
       entry.supportsHttpMcp = supportsHttpMcp;
     } catch (error) {
@@ -1177,45 +1218,19 @@ export class CursorProvider
       ...buildCursorInternalMcpServers(internalMcp),
       ...mcpServers,
     ];
-    let acpId: string;
-    let reloadedStoredSession = false;
-
-    if (resume && stored) {
-      try {
-        await entry.connection.loadSession({
-          cwd: entry.cwd,
-          mcpServers: effectiveMcpServers,
-          sessionId: stored,
-        });
-        acpId = stored;
-        reloadedStoredSession = true;
-      } catch (err) {
-        logger.info("Cursor ACP loadSession failed; new session", {
-          threadId: entry.threadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        const created = await entry.connection.newSession({
-          cwd: entry.cwd,
-            mcpServers: effectiveMcpServers,
-        });
-        acpId = created.sessionId;
-      }
-    } else {
-      const created = await entry.connection.newSession({
-        cwd: entry.cwd,
-          mcpServers: effectiveMcpServers,
-      });
-      acpId = created.sessionId;
-    }
-
-    entry.acpSessionId = acpId;
-    this.sdkSessionIds.set(entry.mcodeSessionId, acpId);
+    const opened = await entry.acpRuntime.openSession({
+      resumeFrom: resume ? stored : undefined,
+      cwd: entry.cwd,
+      mcpServers: effectiveMcpServers,
+    });
+    entry.acpSessionId = opened.sessionId;
+    this.sdkSessionIds.set(entry.mcodeSessionId, opened.sessionId);
     this.emit("event", {
       type: AgentEventType.System,
       threadId: entry.threadId,
-      subtype: `sdk_session_id:${acpId}`,
+      subtype: `sdk_session_id:${opened.sessionId}`,
     } satisfies AgentEvent);
-    return reloadedStoredSession;
+    return opened.reloaded;
   }
 
   private async applyModel(entry: CursorAcpSessionEntry, model: string): Promise<void> {
@@ -1421,7 +1436,7 @@ export class CursorProvider
         try {
           attempt += 1;
           currentEntry.activeTurnState = createCursorAcpTurnState();
-          promptResponse = await currentEntry.connection.prompt({
+          promptResponse = await currentEntry.acpRuntime.prompt({
             sessionId: currentEntry.acpSessionId,
             prompt: blocks,
           });

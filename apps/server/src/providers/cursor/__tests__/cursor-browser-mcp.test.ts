@@ -14,6 +14,7 @@ import {
   CursorProvider,
   cursorSupportsHttpMcp,
 } from "../cursor-provider.js";
+import { AcpSessionRuntime } from "../../acp/acp-session-runtime.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", async () => {
@@ -305,25 +306,75 @@ describe("Cursor browser MCP configuration", () => {
 
   it("kills child when ACP handshake fails before spawn returns", async () => {
     const child = Object.assign(new EventEmitter(), {
-      stdin: new PassThrough(),
-      stdout: new PassThrough(),
       stderr: new PassThrough(),
       pid: 104,
       kill: vi.fn(),
     });
-    spawnMock.mockReturnValue(child as never);
+    const runtime = {
+      state: { child, connection: {} },
+      initialize: vi.fn().mockRejectedValue(new Error("handshake failed")),
+    } as unknown as AcpSessionRuntime;
+    const start = vi.spyOn(AcpSessionRuntime, "start").mockResolvedValue(runtime);
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.envService = { getEnv: vi.fn(() => ({})) };
     provider.settingsService = { get: vi.fn(() => ({ provider: { cursor: { verboseFailureLogs: false } } })) };
     provider.pendingBrowserContext = new Map();
-    vi.spyOn(provider, "acpHandshake").mockRejectedValue(new Error("handshake failed"));
 
     await expect(provider.spawnOneCli("cursor-agent", "mcode-a", "C:\\", "default")).rejects.toThrow(
       "handshake failed",
     );
 
     expect(child.kill).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledOnce();
+    start.mockRestore();
     spawnMock.mockReset();
+  });
+
+  it("closes pending ACP runtime when stopped during logical session load", async () => {
+    const child = { pid: 108, kill: vi.fn() };
+    const close = vi.fn().mockResolvedValue(undefined);
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.settingsService = { get: vi.fn(() => ({})) };
+    provider.browserAutomationLease = {
+      release: vi.fn(),
+      releaseSession: vi.fn(),
+    };
+    provider.pendingAcpRuntimes = new Map([["mcode-a", { close }]]);
+    provider.pendingStops = new Set();
+    provider.pendingPermissions = new Map();
+    provider.runtime = { get: vi.fn(() => undefined) };
+    provider.pendingBrowserLeases = new Map();
+    provider.pendingBrowserContext = new Map();
+    provider.pendingBrowserGrants = new Map();
+    provider.pendingBrowserGrantContext = new Map();
+    provider.liveSessionIds = new Set();
+    provider.spawnChild = vi.fn().mockResolvedValue({
+      mcodeSessionId: "mcode-a",
+      threadId: "thread-a",
+      child,
+      browserHttpMcpSupported: false,
+      acpSessionId: "",
+      acpRuntime: { close },
+    });
+    provider.openLogicalSession = vi.fn().mockImplementation(
+      () => new Promise<boolean>((resolve) => { provider.finishLoad = () => resolve(false); }),
+    );
+
+    const opening = provider.spawn({
+      sessionId: "mcode-a",
+      threadId: "thread-a",
+      cwd: ".",
+      permissionMode: "default",
+      env: {},
+    });
+    await Promise.resolve();
+    await provider.stopSession("mcode-a");
+    expect(close).toHaveBeenCalledOnce();
+    expect(provider.pendingStops.has("mcode-a")).toBe(true);
+
+    provider.finishLoad();
+    await expect(opening).rejects.toThrow("Cursor ACP session stopped during startup");
+    expect(provider.liveSessionIds.has("mcode-a")).toBe(false);
   });
 
   it("keeps a refreshed grant alive while the replacement session is opening", () => {
