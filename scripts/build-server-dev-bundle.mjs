@@ -1,7 +1,7 @@
 /**
  * One-shot dev server bundle: `apps/server` swc emit (decorator metadata for
  * tsyringe) followed by esbuild CJS bundle to `apps/desktop/dist/server/server.cjs`,
- * plus Claude SDK native CLI binary beside it. Shared by desktop dev orchestration
+ * plus Claude and Copilot SDK native CLI binaries beside it. Shared by desktop dev orchestration
  * and `scripts/dev-web.mjs` (no `--import tsx` at runtime). Typechecking is NOT
  * part of this pipeline — it lives in the separate `typecheck` verify gate
  * (and `tsc --watch` during `dev:desktop` for live feedback).
@@ -226,7 +226,7 @@ export function resolveClaudeSdkCliSources(serverPackageRoot, platform, arch) {
 
   const label = candidates.join(" or ");
   throw new Error(
-    `${label} not installed - run 'bun install' or node apps/desktop/scripts/ensure-claude-sdk-platform-package.mjs (node_modules out of sync with bun.lock): ${failures.join("; ")}`,
+    `${label} not installed - run 'bun install' or node apps/desktop/scripts/ensure-sdk-platform-packages.mjs (node_modules out of sync with bun.lock): ${failures.join("; ")}`,
   );
 }
 
@@ -316,7 +316,7 @@ export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `${platformPkg} not installed - run 'bun install' (Copilot SDK dependencies are out of sync): ${detail}`,
+      `${platformPkg} not installed - run 'bun install' or node apps/desktop/scripts/ensure-sdk-platform-packages.mjs (Copilot SDK dependencies are out of sync): ${detail}`,
     );
   }
 }
