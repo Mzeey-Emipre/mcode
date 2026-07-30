@@ -30,8 +30,23 @@ export type AcpSessionRuntimeOptions = {
   clientCapabilities?: Record<string, unknown>;
   selectAuthMethod?: (methods: readonly { id: string }[]) => string | undefined;
   ignoreAuthenticationErrors?: boolean;
+  /** Maximum time to wait for a resumed session/load response. */
+  sessionLoadTimeoutMs?: number;
+  /** Alias for sessionLoadTimeoutMs used by replay-gate callers. */
+  replayGateTimeoutMs?: number;
   transportFactory?: (spec: AcpSpawnSpec, client: Client) => Promise<AcpTransport>;
 };
+
+type ReplayGate = {
+  attemptId: number;
+  targetSessionId: string;
+  phase: "loading";
+  lastReplayAt: number;
+  hardDeadline: number;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+const DEFAULT_SESSION_LOAD_TIMEOUT_MS = 10_000;
 
 /** Owns ACP transport, handshake, logical session setup, prompts, cancellation, and disposal. */
 export class AcpSessionRuntime {
@@ -40,8 +55,12 @@ export class AcpSessionRuntime {
   private readonly clientCapabilities: Record<string, unknown>;
   private readonly clientInfo: { name: string; title: string; version: string };
   private readonly ignoreAuthenticationErrors: boolean;
+  private readonly sessionLoadTimeoutMs: number;
   private promptChain: Promise<void> = Promise.resolve();
   private closed = false;
+  private openAttemptId = 0;
+  private replayGate: ReplayGate | null = null;
+  private openingSession: Promise<{ sessionId: string; reloaded: boolean }> | null = null;
 
   private constructor(
     transport: AcpTransport,
@@ -60,6 +79,11 @@ export class AcpSessionRuntime {
     };
     this.clientInfo = options.clientInfo ?? { name: "mcode", title: "Mcode", version: "0.0.1" };
     this.ignoreAuthenticationErrors = options.ignoreAuthenticationErrors ?? false;
+    const configuredTimeout = options.replayGateTimeoutMs ?? options.sessionLoadTimeoutMs;
+    this.sessionLoadTimeoutMs =
+      typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0
+        ? configuredTimeout
+        : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
   }
 
   /** Spawns an ACP child and creates its JSON-lines transport. */
@@ -68,7 +92,13 @@ export class AcpSessionRuntime {
     const callbacks: AcpSessionCallbacks = {
       ...options.callbacks,
       onSessionUpdate: async (update) => {
-        if (!runtimeRef?.state.sessionId || update.sessionId !== runtimeRef.state.sessionId) return;
+        const runtime = runtimeRef;
+        if (!runtime) return;
+        if (runtime.replayGate?.phase === "loading" && update.sessionId === runtime.replayGate.targetSessionId) {
+          runtime.replayGate.lastReplayAt = Date.now();
+          return;
+        }
+        if (!runtime.state.sessionId || update.sessionId !== runtime.state.sessionId) return;
         await options.callbacks.onSessionUpdate(update);
       },
     };
@@ -130,23 +160,59 @@ export class AcpSessionRuntime {
   /** Opens a logical session, loading a persisted id only when requested. */
   async openSession(input: AcpSessionOpenInput): Promise<{ sessionId: string; reloaded: boolean }> {
     if (this.state.sessionId) return { sessionId: this.state.sessionId, reloaded: true };
+    if (this.openingSession) return this.openingSession;
+    const opening = this.openSessionAttempt(input);
+    this.openingSession = opening;
+    try {
+      return await opening;
+    } finally {
+      if (this.openingSession === opening) this.openingSession = null;
+    }
+  }
+
+  private async openSessionAttempt(input: AcpSessionOpenInput): Promise<{ sessionId: string; reloaded: boolean }> {
     try {
       const loadSessionSupported =
         typeof this.state.agentCapabilities === "object" &&
         this.state.agentCapabilities !== null &&
         (this.state.agentCapabilities as { loadSession?: boolean }).loadSession === true;
       if (input.resumeFrom && loadSessionSupported) {
-        try {
-          await this.state.connection.loadSession({
-            cwd: input.cwd,
-            mcpServers: [...input.mcpServers],
-            sessionId: input.resumeFrom,
-          });
+        const attemptId = ++this.openAttemptId;
+        const hardDeadline = Date.now() + this.sessionLoadTimeoutMs;
+        let timer!: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<"timeout">((resolve) => {
+          timer = setTimeout(() => {
+            this.clearReplayGate(attemptId);
+            resolve("timeout");
+          }, Math.max(0, hardDeadline - Date.now()));
+        });
+        this.replayGate = {
+          attemptId,
+          targetSessionId: input.resumeFrom,
+          phase: "loading",
+          lastReplayAt: Date.now(),
+          hardDeadline,
+          timer,
+        };
+
+        const load = this.state.connection.loadSession({
+          cwd: input.cwd,
+          mcpServers: [...input.mcpServers],
+          sessionId: input.resumeFrom,
+        }).then(
+          () => "loaded" as const,
+          (error) => ({ error } as const),
+        );
+        const outcome = await Promise.race([load, timeout]);
+        clearTimeout(timer);
+
+        if (outcome === "loaded" && this.replayGate?.attemptId === attemptId) {
           this.state.sessionId = input.resumeFrom;
+          this.clearReplayGate(attemptId);
           return { sessionId: this.state.sessionId, reloaded: true };
-        } catch {
-          // Providers may choose to fall back to a fresh session after load failure.
         }
+        if (this.openAttemptId !== attemptId) throw new Error("ACP session open superseded");
+        this.clearReplayGate(attemptId);
       }
       const created = await this.state.connection.newSession({
         cwd: input.cwd,
@@ -186,6 +252,15 @@ export class AcpSessionRuntime {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.openAttemptId += 1;
+    this.clearReplayGate();
     try { this.state.child.kill(); } catch { /* best effort */ }
+  }
+
+  private clearReplayGate(attemptId?: number): void {
+    const gate = this.replayGate;
+    if (!gate || (attemptId !== undefined && gate.attemptId !== attemptId)) return;
+    clearTimeout(gate.timer);
+    this.replayGate = null;
   }
 }

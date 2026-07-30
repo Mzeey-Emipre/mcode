@@ -94,6 +94,81 @@ describe("AcpSessionRuntime", () => {
     expect(connection.newSession).toHaveBeenCalledTimes(1);
   });
 
+  it("suppresses resume replay until the load response installs the active session", async () => {
+    const child = fakeChild();
+    let client!: Client;
+    let finishLoad!: () => void;
+    const updates: SessionNotification[] = [];
+    const connection = {
+      initialize: vi.fn(async () => ({ agentCapabilities: { loadSession: true }, authMethods: [] })),
+      loadSession: vi.fn(async () => {
+        await client.sessionUpdate({ sessionId: "resume-1", update: { kind: "historical" } } as SessionNotification);
+        await new Promise<void>((resolve) => { finishLoad = resolve; });
+      }),
+      newSession: vi.fn(async () => ({ sessionId: "fresh" })),
+    } as unknown as ClientSideConnection;
+
+    const runtime = await AcpSessionRuntime.start({
+      spawnSpec: { command: "fake", args: [], cwd: ".", env: {} },
+      callbacks: {
+        onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }),
+        onSessionUpdate: async (update) => { updates.push(update); },
+      },
+      clientFactory: (handlers) => {
+        client = {
+          requestPermission: handlers.onPermissionRequest,
+          sessionUpdate: handlers.onSessionUpdate,
+          readTextFile: async () => ({ content: "" }),
+          writeTextFile: async () => ({}),
+          extMethod: async () => ({}),
+          extNotification: async () => {},
+        };
+        return client;
+      },
+      transportFactory: async () => ({ child, connection }),
+      sessionLoadTimeoutMs: 100,
+    });
+
+    await runtime.initialize();
+    const opening = runtime.openSession({ resumeFrom: "resume-1", cwd: ".", mcpServers: [] });
+    await Promise.resolve();
+    await client.sessionUpdate({ sessionId: "other", update: {} } as SessionNotification);
+    expect(updates).toHaveLength(0);
+    expect(runtime.state.sessionId).toBe("");
+
+    finishLoad();
+    await expect(opening).resolves.toEqual({ sessionId: "resume-1", reloaded: true });
+    await client.sessionUpdate({ sessionId: "resume-1", update: { kind: "live" } } as SessionNotification);
+    expect(updates.map((update) => update.update)).toEqual([{ kind: "live" }]);
+  });
+
+  it("times out a stalled load, clears replay state, and falls back to a fresh session", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = fakeChild();
+      const connection = {
+        initialize: vi.fn(async () => ({ agentCapabilities: { loadSession: true }, authMethods: [] })),
+        loadSession: vi.fn(() => new Promise<never>(() => {})),
+        newSession: vi.fn(async () => ({ sessionId: "fresh-after-timeout" })),
+      } as unknown as ClientSideConnection;
+      const runtime = await AcpSessionRuntime.start({
+        spawnSpec: { command: "fake", args: [], cwd: ".", env: {} },
+        callbacks: { onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }), onSessionUpdate: async () => {} },
+        transportFactory: async () => ({ child, connection }),
+        sessionLoadTimeoutMs: 50,
+      });
+
+      await runtime.initialize();
+      const opening = runtime.openSession({ resumeFrom: "stalled", cwd: ".", mcpServers: [] });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(runtime.state.sessionId).toBe("");
+      await expect(opening).resolves.toEqual({ sessionId: "fresh-after-timeout", reloaded: false });
+      expect(connection.newSession).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("kills the child when initialization fails", async () => {
     const child = fakeChild();
     const connection = {
