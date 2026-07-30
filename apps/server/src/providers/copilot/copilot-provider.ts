@@ -220,6 +220,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     string,
     { scope: BrowserAutomationSessionLeaseScope; stage: BrowserAutomationSessionLeaseStage }
   >();
+  /** Serialises setup of overlapping sends so staged browser handles cannot be overwritten. */
+  private sendLocks = new Map<string, Promise<void>>();
   /** Serialises concurrent refreshClient() calls so only one rebuild runs at a time. */
   private clientStartLock: Promise<void> = Promise.resolve();
 
@@ -704,6 +706,14 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
   /** Start or continue a session by sending a message via the Copilot SDK. When `copilotAgent` is provided, routes the session to the appropriate built-in mode or custom agent before sending. */
   async sendTurn(req: TurnRequest<"copilot">): Promise<void> {
+    const previousSend = this.sendLocks.get(req.sessionId) ?? Promise.resolve();
+    let releaseSend!: () => void;
+    const currentSend = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    this.sendLocks.set(req.sessionId, currentSend);
+    await previousSend;
+
     // `resumeFrom` defined ⇒ resume that SDK session; undefined ⇒ fresh.
     if (req.resumeFrom !== undefined) {
       this.sdkSessionIds.set(req.sessionId, req.resumeFrom);
@@ -719,10 +729,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         req.interactionMode,
       ),
     };
-    this.pendingBrowserAccess.set(req.sessionId, {
+    const browserAccess = {
       scope: browserScope,
       stage: this.browserAutomationLease.stage(browserScope),
-    });
+    };
+    this.pendingBrowserAccess.set(req.sessionId, browserAccess);
     const params = {
       sessionId: req.sessionId,
       message: req.message,
@@ -773,7 +784,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
       throw e;
     } finally {
-      this.pendingBrowserAccess.delete(req.sessionId);
+      const currentBrowserAccess = this.pendingBrowserAccess.get(req.sessionId);
+      if (currentBrowserAccess === browserAccess) {
+        this.browserAutomationLease.release(browserAccess.stage.leaseId);
+        this.pendingBrowserAccess.delete(req.sessionId);
+      }
+      releaseSend();
+      if (this.sendLocks.get(req.sessionId) === currentSend) this.sendLocks.delete(req.sessionId);
     }
   }
 
@@ -815,12 +832,15 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       this.browserAutomationLease.isConfigured() &&
       (existing.workspaceId !== browserScope.workspaceId ||
         existing.browserPermissionCapability !== browserScope.permissionCapability ||
-        (existing.browserCredential && existing.browserCredential.expiresAt <= Date.now()))
+        (existing.browserCredential &&
+          (existing.browserCredential.expiresAt <= Date.now() ||
+            (existing.browserLeaseId !== undefined && !this.browserAutomationLease.isActive(existing.browserLeaseId)))))
     ) {
       if (
         existing.browserCredential &&
         existing.browserLeaseId &&
-        existing.browserCredential.expiresAt <= Date.now()
+        existing.browserCredential.expiresAt <= Date.now() &&
+        this.browserAutomationLease.isActive(existing.browserLeaseId)
       ) {
         this.browserAutomationLease.refresh(existing.browserLeaseId);
       }
@@ -845,8 +865,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       });
     } catch (e: unknown) {
       this.pendingSpawnTurns.delete(sessionId);
-      if (browserAccess) this.browserAutomationLease.release(browserAccess.stage.leaseId);
-      this.pendingBrowserAccess.delete(sessionId);
+      if (browserAccess) {
+        this.browserAutomationLease.release(browserAccess.stage.leaseId);
+        this.pendingBrowserAccess.delete(sessionId);
+      }
       throw e;
     }
     this.pendingSpawnTurns.delete(sessionId);
@@ -1401,6 +1423,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     );
     this.sdkSessionIds.clear();
     this.pendingSpawnTurns.clear();
+    this.sendLocks.clear();
     for (const { stage } of this.pendingBrowserAccess.values()) {
       this.browserAutomationLease.release(stage.leaseId);
     }

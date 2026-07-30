@@ -269,8 +269,89 @@ describe("CopilotProvider bootstrap", () => {
     });
     expect(config.mcpServers["mcode-browser"].tools).toHaveLength(17);
     expect(config.mcpServers["mcode-browser"].tools).not.toContain("browser_evaluate");
+    expect(lease.status()).toEqual({ active: 1, pending: 0 });
     await provider.stopSession("mcode-browser-copilot");
     expect(lease.credentials.size()).toBe(0);
+  });
+
+  it("recreates a pooled session after its browser lease is revoked externally", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    const firstSession = makeMockSession();
+    const secondSession = makeMockSession();
+    mockClient.createSession.mockResolvedValueOnce(firstSession).mockResolvedValueOnce(secondSession);
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
+    const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), lease);
+    const request = {
+      sessionId: "mcode-browser-revoked",
+      workspaceId: "workspace-test",
+      threadId: "browser-revoked",
+      message: "inspect the page",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "supervised" as const,
+    };
+
+    await provider.sendTurn(request);
+    const authHeader = mockClient.createSession.mock.calls[0]![0].mcpServers["mcode-browser"].headers.Authorization as string;
+    const claims = lease.credentials.authenticate(authHeader.slice("Bearer ".length));
+    expect(claims).not.toBeNull();
+    lease.credentials.revoke(claims!.credentialId);
+
+    await provider.sendTurn({ ...request, message: "inspect again" });
+
+    expect(mockClient.createSession).toHaveBeenCalledTimes(2);
+    expect(firstSession.disconnect).toHaveBeenCalled();
+    expect(lease.status()).toEqual({ active: 1, pending: 0 });
+    await provider.stopSession(request.sessionId);
+  });
+
+  it("releases staged browser access when spawning fails", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.createSession.mockRejectedValue(new Error("spawn failed"));
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
+    const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), lease);
+
+    await expect(provider.sendTurn({
+      sessionId: "mcode-browser-spawn-failed",
+      workspaceId: "workspace-test",
+      threadId: "browser-spawn-failed",
+      message: "inspect the page",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    })).rejects.toThrow("spawn failed");
+
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+  });
+
+  it("releases exactly one staged handle when sends overlap", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.createSession.mockResolvedValue(makeMockSession());
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-test" });
+    const provider = new CopilotProvider(makeSettingsService() as any, stubJobObject(), stubEnvService(), lease);
+    const request = {
+      sessionId: "mcode-browser-overlap",
+      workspaceId: "workspace-test",
+      threadId: "browser-overlap",
+      message: "inspect the page",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "supervised" as const,
+    };
+
+    await Promise.all([provider.sendTurn(request), provider.sendTurn({ ...request, message: "inspect again" })]);
+
+    expect(lease.status()).toEqual({ active: 1, pending: 0 });
+    await provider.stopSession(request.sessionId);
   });
 
   describe("error translation", () => {

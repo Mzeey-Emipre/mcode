@@ -69,6 +69,15 @@ describe("BrowserAutomationSessionLease", () => {
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
   });
 
+  it("reports a lease inactive after registry revocation", () => {
+    const lease = configuredLease();
+    const grant = lease.issue(scope())!;
+
+    expect(lease.isActive(grant.leaseId)).toBe(true);
+    lease.credentials.revoke(grant.credentialId);
+    expect(lease.isActive(grant.leaseId)).toBe(false);
+  });
+
   it("expires pending scopes and releases every credential on shutdown", () => {
     let now = 100;
     const registry = new BrowserAutomationCredentialRegistry({ idleTtlMs: 10, absoluteTtlMs: 100, now: () => now });
