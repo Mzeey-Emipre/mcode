@@ -474,6 +474,10 @@ describe("BrowserAutomationHost", () => {
     iframe.src = expectedUrl;
     iframe.dataset.threadId = "thread-1";
     iframe.dataset.tabId = "tab-1";
+    Object.defineProperty(iframe, "contentWindow", {
+      configurable: true,
+      value: { location: { origin: window.location.origin } },
+    });
     document.body.append(iframe);
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: navigateDispatch }));
     await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(navigateDispatch, expect.any(AbortSignal)));
@@ -1534,6 +1538,53 @@ describe("BrowserAutomationHost", () => {
     ]));
     view.unmount();
     vi.unstubAllGlobals();
+  });
+
+  it("returns web screenshot responses through transport", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const screenshotDispatch = dispatch(1, 21);
+    const requestId = screenshotDispatch.request.requestId;
+    const sequence = screenshotDispatch.request.sequence;
+    const expectedControlEpoch = screenshotDispatch.request.expectedControlEpoch;
+    screenshotDispatch.request = {
+      ...screenshotDispatch.request,
+      operation: "screenshot",
+      args: { maxWidth: 320, fullPage: false },
+    } as never;
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue({
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId,
+      sequence,
+      ok: true,
+      result: {
+        operation: "screenshot",
+        screenshot: {
+          mediaType: "image/png",
+          dataBase64: "AAAA",
+          width: 320,
+          height: 180,
+          truncation: { truncated: false },
+        },
+        controlEpoch: expectedControlEpoch,
+      },
+    });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: screenshotDispatch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
+      screenshotDispatch,
+      expect.any(AbortSignal),
+    );
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: true, result: expect.objectContaining({ operation: "screenshot" }) }),
+      screenshotDispatch.target,
+    );
+    view.unmount();
   });
 
   it("sanitizes the mounted web status location before responding", async () => {

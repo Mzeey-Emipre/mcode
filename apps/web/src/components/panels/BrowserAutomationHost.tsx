@@ -773,9 +773,16 @@ export function BrowserAutomationHost() {
       if (operationAbort) webAbortRef.current.set(key, operationAbort);
       const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
       const liveTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
-      if (webNavigateRequest && liveTarget) {
+      const currentEpoch = useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
+      const staleAtStart = !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration || currentEpoch !== dispatch.request.expectedControlEpoch;
+      if (webNavigateRequest) {
         const requestedUrl = normalizeWebPreviewUrl(dispatch.request.args.url ?? "");
-        if (requestedUrl && isSameOriginWebPreviewUrl(requestedUrl)) {
+        if (
+          requestedUrl &&
+          isSameOriginWebPreviewUrl(requestedUrl) &&
+          liveTarget &&
+          liveTarget.revision === dispatch.target.targetGeneration
+        ) {
           const navigation: WebNavigationExpectation = {
             targetKey,
             expectedUrl: requestedUrl,
@@ -794,8 +801,6 @@ export function BrowserAutomationHost() {
           }
         }
       }
-      const currentEpoch = useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
-      const staleAtStart = !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration || currentEpoch !== dispatch.request.expectedControlEpoch;
       const cancelForHuman = () => {
         if (!operationAbort || cancelledRef.current.has(key)) return;
         cancelledRef.current.add(key);

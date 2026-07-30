@@ -390,9 +390,6 @@ function snapshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, si
 }
 
 function screenshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
-  if (dispatch.request.args.fullPage === true) {
-    return Promise.resolve(failure(dispatch, "UNSUPPORTED_OPERATION", "Full-page web screenshots are unsupported"));
-  }
   const maxWidth = dispatch.request.operation === "screenshot" && typeof dispatch.request.args.maxWidth === "number"
     ? dispatch.request.args.maxWidth
     : BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH;
@@ -451,6 +448,11 @@ export async function executeWebBrowserDispatch(
     });
   }
   if (request.operation === "snapshot") return snapshot(dispatch, iframe, signal);
-  if (request.operation === "screenshot") return screenshot(dispatch, iframe, signal);
+  if (request.operation === "screenshot") {
+    if (request.args.fullPage === true) {
+      return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation does not support full-page screenshots");
+    }
+    return screenshot(dispatch, iframe, signal);
+  }
   return failure(dispatch, "UNSUPPORTED_OPERATION", "Web automation supports status, open, navigate, snapshot, and screenshot");
 }
