@@ -23,6 +23,7 @@ import { findModelById } from "@/lib/model-registry";
 import { resolveContextWindow } from "@/lib/resolve-context-window";
 import { useSettingsStore } from "./settingsStore";
 import { createConversationResidency, registerConversationResidency } from "./conversation-residency";
+import { recordBackgroundEventDropped } from "@/lib/thread-switch-telemetry";
 import {
   clearPendingTurnPersistMessage,
   projectTurnResponse,
@@ -946,19 +947,22 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   };
 
   const invalidateDeferredNarrativeEvents = (threadId: string): void => {
-    flushPendingTextDeltas();
     deferredNarrativeGenerations.set(
       threadId,
       (deferredNarrativeGenerations.get(threadId) ?? 0) + 1,
     );
     dropPendingTextDeltas([threadId]);
+    flushPendingTextDeltas();
   };
 
   const queueDeferredNarrativeEvent = (threadId: string, event: AgentEvent): void => {
     const generation = deferredNarrativeGenerations.get(threadId) ?? 0;
     const queued = deferredNarrativeEventsByThread.get(threadId);
     const events = queued?.generation === generation ? queued.events : [];
-    if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS) return;
+    if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS) {
+      recordBackgroundEventDropped(threadId);
+      return;
+    }
     deferredNarrativeEventsByThread.set(threadId, {
       generation,
       events: [...events, event],
@@ -1900,6 +1904,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    */
   handleAgentEvent: (event) => {
     const { threadId } = event;
+    const eventSequence = typeof event.sequence === "number" && event.sequence > 0
+      ? event.sequence
+      : undefined;
+    if (eventSequence !== undefined) {
+      const lastSequence = getRec(threadId).lastAgentEventSequence;
+      if (lastSequence !== undefined && eventSequence <= lastSequence) {
+        if (get().currentThreadId !== threadId) recordBackgroundEventDropped(threadId);
+        return;
+      }
+      patchRec(threadId, { lastAgentEventSequence: eventSequence });
+    }
     const currentThreadId = get().currentThreadId;
     const isActiveThread = currentThreadId !== null && currentThreadId === threadId;
     const isLifecycleExit = event.type === "turnComplete" || event.type === "ended" || event.type === "error";
@@ -1909,7 +1924,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Lifecycle events can arrive in same frame as final text delta.
       // Flush first so invalidation cannot discard text needed for persistence.
       flushPendingTextDeltas();
-      invalidateDeferredNarrativeEvents(threadId);
+      if (startsNewInstance) invalidateDeferredNarrativeEvents(threadId);
     }
     if (startsNewInstance) {
       threadHydrator.invalidatePermissionSnapshots(threadId);
@@ -2009,7 +2024,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           attachments: null,
         };
         set((state) => {
-          if (state.currentThreadId !== threadId) return {};
           const rec = getThreadRecord(state.records, threadId);
           const { messages: capped, evicted } = capMessages([...rec.messages, message]);
           return {
@@ -2586,7 +2600,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "hookProgress") {
-      if (!isActiveThread) return;
       const hookName = (event.hookName as string) || "";
       const output = (event.output as string) || "";
       if (!hookName || !output) return;
@@ -2818,7 +2831,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               : {}),
           };
 
-          if (dedupedGuardrail && state.currentThreadId === threadId) {
+          if (dedupedGuardrail) {
             const { messages: capped, evicted } = capMessages([...rec.messages, dedupedGuardrail]);
             return {
               runningThreadIds: nextRunning,
@@ -3059,7 +3072,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const active = event.active as boolean;
       if (!active) {
         const wasCompacting = getRec(threadId).isCompacting;
-        if (wasCompacting && get().currentThreadId === threadId) {
+        if (wasCompacting) {
           const systemMsg: Message = {
             id: crypto.randomUUID(),
             thread_id: threadId,
@@ -3153,12 +3166,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           rateLimit: undefined,
           apiRetry: undefined,
         };
-        if (state.currentThreadId !== threadId) {
-          return {
-            runningThreadIds: nextRunning,
-            records: patchThreadRecord(state.records, threadId, basePatch),
-          };
-        }
         const { messages: capped, evicted } = capMessages([...rec.messages, errorMessage]);
         return {
           runningThreadIds: nextRunning,

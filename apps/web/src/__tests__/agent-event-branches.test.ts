@@ -146,6 +146,69 @@ describe("handleAgentEvent branches", () => {
     expect(calls[0].isComplete).toBe(false);
   });
 
+  it("deduplicates sequenced replay events while accepting a first sequence above one", () => {
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      sequence: 17,
+      toolCallId: "seq-tool-1",
+      toolName: "Read",
+      toolInput: { path: "/first" },
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      sequence: 17,
+      toolCallId: "seq-tool-1",
+      toolName: "Read",
+      toolInput: { path: "/replay" },
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      sequence: 18,
+      toolCallId: "seq-tool-2",
+      toolName: "Write",
+      toolInput: { path: "/second" },
+    } as AgentEvent);
+
+    const record = readThreadField("thread-1", (thread) => thread);
+    expect(record.lastAgentEventSequence).toBe(18);
+    expect(record.toolCalls.map((call) => call.id)).toEqual(["seq-tool-1", "seq-tool-2"]);
+    expect(record.toolCalls[0]?.toolInput).toEqual({ path: "/first" });
+  });
+
+  it("retains hook progress for an inactive thread", () => {
+    const backgroundThreadId = "thread-background-hook";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+    handleAgentEvent({
+      type: "hookStarted",
+      threadId: backgroundThreadId,
+      hookName: "format",
+      hookType: "stop",
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "hookProgress",
+      threadId: backgroundThreadId,
+      hookName: "format",
+      output: "line one\nline two",
+    } as AgentEvent);
+
+    expect(readThreadField(backgroundThreadId, (thread) => thread.hooks[0]?.outputLines))
+      .toEqual(["line one", "line two"]);
+  });
+
   it("background textDelta keeps streaming state without growing narrative state", async () => {
     const backgroundThreadId = "thread-deferred";
     const backgroundToolCall = {

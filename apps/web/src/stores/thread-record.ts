@@ -95,6 +95,8 @@ export interface ThreadRecord {
   serverMessageIds: Record<string, string>;
   narrativeByMessage: ThreadNarrativeByMessage;
   answeredPlanMessageIds: Set<string>;
+  /** Highest positive server-assigned agent-event sequence observed for this thread. */
+  lastAgentEventSequence?: number;
 
   error: string | null;
   streaming: string;
