@@ -8,7 +8,7 @@
  */
 
 import { app } from "electron";
-import { execSync, spawn, type ChildProcess } from "child_process";
+import { execFileSync, execSync, spawn, type ChildProcess } from "child_process";
 import { createRequire } from "module";
 import {
   createWriteStream,
@@ -184,6 +184,18 @@ async function findAvailablePort(min: number, max: number): Promise<number> {
 /** Path to the server lock file for service discovery across instances. */
 function lockFilePath(): string {
   return join(getMcodeDir(), "server.lock");
+}
+
+/** Terminate a server and all provider subprocesses that it owns. */
+function forceKillServerProcessTree(pid: number): void {
+  if (process.platform === "win32") {
+    execFileSync("taskkill", ["/T", "/F", "/PID", String(pid)], {
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+    return;
+  }
+  process.kill(pid, "SIGKILL");
 }
 
 /** Lock file schema written by the server on startup. */
@@ -554,6 +566,11 @@ export class ServerManager {
       try { unlinkSync(lockPath); } catch { /* ok */ }
       return;
     }
+    if (!Number.isSafeInteger(lock.pid) || lock.pid <= 0) {
+      console.warn(`[server-manager] stopServerHeldByLock: invalid PID ${lock.pid}, skipping`);
+      try { unlinkSync(lockPath); } catch { /* ok */ }
+      return;
+    }
 
     try {
       await fetch(`http://localhost:${lock.port}/shutdown`, {
@@ -578,7 +595,7 @@ export class ServerManager {
 
     try {
       process.kill(lock.pid, 0);
-      process.kill(lock.pid, "SIGKILL");
+      forceKillServerProcessTree(lock.pid);
     } catch { /* already dead */ }
 
     try { unlinkSync(lockPath); } catch { /* ok */ }

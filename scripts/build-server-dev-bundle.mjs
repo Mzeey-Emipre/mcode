@@ -9,7 +9,20 @@
 
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -321,6 +334,79 @@ export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
   }
 }
 
+/** Compare two complete package trees without mutating either destination. */
+function copilotTreesMatch(sourceDir, destinationDir) {
+  try {
+    if (!statSync(destinationDir).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+
+  let sourceEntries;
+  let destinationEntries;
+  try {
+    sourceEntries = readdirSync(sourceDir, { withFileTypes: true });
+    destinationEntries = readdirSync(destinationDir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "EACCES" || error?.code === "EPERM") return true;
+    throw error;
+  }
+  if (sourceEntries.length !== destinationEntries.length) return false;
+
+  const destinationByName = new Map(destinationEntries.map((entry) => [entry.name, entry]));
+  for (const sourceEntry of sourceEntries) {
+    const destinationEntry = destinationByName.get(sourceEntry.name);
+    if (!destinationEntry || sourceEntry.isDirectory() !== destinationEntry.isDirectory()) {
+      return false;
+    }
+
+    const sourcePath = resolve(sourceDir, sourceEntry.name);
+    const destinationPath = resolve(destinationDir, sourceEntry.name);
+    if (sourceEntry.isDirectory()) {
+      if (!copilotTreesMatch(sourcePath, destinationPath)) return false;
+      continue;
+    }
+    if (!sourceEntry.isFile() || !destinationEntry.isFile()) return false;
+    try {
+      if (!copilotFilesMatch(sourcePath, destinationPath)) return false;
+    } catch (error) {
+      if (error?.code === "EACCES" || error?.code === "EPERM") return true;
+      throw error;
+    }
+  }
+  return true;
+}
+
+/** Compare file contents in bounded chunks so equal-size files remain content-checked. */
+function copilotFilesMatch(sourcePath, destinationPath) {
+  const sourceStat = statSync(sourcePath);
+  const destinationStat = statSync(destinationPath);
+  if (sourceStat.size !== destinationStat.size) return false;
+
+  const sourceFd = openSync(sourcePath, "r");
+  const destinationFd = openSync(destinationPath, "r");
+  const sourceBuffer = Buffer.allocUnsafe(64 * 1024);
+  const destinationBuffer = Buffer.allocUnsafe(sourceBuffer.length);
+  try {
+    let offset = 0;
+    while (offset < sourceStat.size) {
+      const expected = Math.min(sourceBuffer.length, sourceStat.size - offset);
+      const sourceRead = readSync(sourceFd, sourceBuffer, 0, expected, offset);
+      const destinationRead = readSync(destinationFd, destinationBuffer, 0, expected, offset);
+      if (sourceRead === 0 || destinationRead === 0) return false;
+      if (sourceRead !== destinationRead) return false;
+      if (!sourceBuffer.subarray(0, sourceRead).equals(destinationBuffer.subarray(0, destinationRead))) {
+        return false;
+      }
+      offset += sourceRead;
+    }
+    return true;
+  } finally {
+    closeSync(sourceFd);
+    closeSync(destinationFd);
+  }
+}
+
 /** Copy the complete Copilot CLI package tree and target platform package into a server tree. */
 export function copyCopilotSdkToDir({ destServerDir, serverPackageRoot, platform, arch }) {
   const { platformPkg, copilotPackageDir, platformPackageDir } = resolveCopilotSdkSources(
@@ -332,10 +418,14 @@ export function copyCopilotSdkToDir({ destServerDir, serverPackageRoot, platform
   const copilotDst = resolve(githubDir, "copilot");
   const platformDst = resolve(githubDir, platformPkg.slice("@github/".length));
   mkdirSync(githubDir, { recursive: true });
-  rmSync(copilotDst, { recursive: true, force: true });
-  rmSync(platformDst, { recursive: true, force: true });
-  cpSync(copilotPackageDir, copilotDst, { recursive: true });
-  cpSync(platformPackageDir, platformDst, { recursive: true });
+  if (!copilotTreesMatch(copilotPackageDir, copilotDst)) {
+    rmSync(copilotDst, { recursive: true, force: true });
+    cpSync(copilotPackageDir, copilotDst, { recursive: true });
+  }
+  if (!copilotTreesMatch(platformPackageDir, platformDst)) {
+    rmSync(platformDst, { recursive: true, force: true });
+    cpSync(platformPackageDir, platformDst, { recursive: true });
+  }
   return { platformPkg, copilotDst, platformDst };
 }
 

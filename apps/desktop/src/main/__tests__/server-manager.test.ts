@@ -58,6 +58,8 @@ vi.mock("electron", () => ({
 
 vi.mock("child_process", () => ({
   spawn: vi.fn().mockReturnValue(refs.mockChildProcess),
+  execFileSync: vi.fn(),
+  execSync: vi.fn(),
 }));
 
 vi.mock("@mcode/shared", () => ({
@@ -135,7 +137,7 @@ function setupDefaultReadFileMock() {
 const originalFetch = globalThis.fetch;
 
 import { ServerManager } from "../server-manager.js";
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { existsSync, readFileSync, writeFileSync, createWriteStream, renameSync } from "fs";
 import { readFile } from "fs/promises";
 import { join } from "path";
@@ -605,6 +607,23 @@ describe("ServerManager", () => {
     killSpy.mockRestore();
   });
 
+  it("ignores a lock with an invalid PID before probing or stopping it", async () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReset().mockReturnValue(
+      JSON.stringify({ ...JSON.parse(LOCK_FILE_JSON), pid: 0 }),
+    );
+    const killSpy = vi.spyOn(process, "kill");
+
+    try {
+      await manager.stopServerHeldByLock();
+
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
   it("forceReplace polls PID until process exits", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReset().mockReturnValue(LOCK_FILE_JSON);
@@ -650,12 +669,19 @@ describe("ServerManager", () => {
       now += 5000; // jump 5s each call to exceed 10s deadline quickly
       return now;
     });
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
 
     try {
       await manager.forceReplace();
 
-      expect(killSpy).toHaveBeenCalledWith(12345, "SIGKILL");
+      expect(execFileSync).toHaveBeenCalledWith(
+        "taskkill",
+        ["/T", "/F", "/PID", "12345"],
+        expect.objectContaining({ stdio: "ignore" }),
+      );
     } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
       killSpy.mockRestore();
       dateSpy.mockRestore();
     }
