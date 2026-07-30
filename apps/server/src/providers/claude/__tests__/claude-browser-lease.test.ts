@@ -62,6 +62,7 @@ function makeProvider(lease: BrowserAutomationSessionLease) {
     shutdown: vi.fn(async () => {}),
   };
   Object.assign(provider as any, {
+    id: "claude",
     runtime,
     pendingSpawnTurns: new Map(),
     pendingBrowserAccess: new Map(),
