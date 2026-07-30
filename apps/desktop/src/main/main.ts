@@ -142,6 +142,8 @@ let mainWindow: BrowserWindow | null = null;
 /** Channel used by the renderer crash boundary to report local diagnostics. */
 export const RENDERER_CRASH_REPORT_CHANNEL = "renderer:crash-report";
 const RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH = 16 * 1024;
+const RENDERER_CRASH_COMPONENT_FRAME_MAX_COUNT = 32;
+const RENDERER_CRASH_COMPONENT_FRAME_MAX_LENGTH = 128;
 const RENDERER_CRASH_REPORT_LIMIT = 3;
 const RENDERER_CRASH_REPORT_WINDOW_MS = 60_000;
 const RENDERER_CRASH_ERROR_NAMES = new Set([
@@ -161,14 +163,31 @@ const rendererCrashReportTimestamps = new Map<number, number[]>();
 export interface RendererCrashReportPayload {
   readonly errorName: string;
   readonly componentStack: string;
+  readonly componentStackTruncated: boolean;
 }
 
-/** Remove terminal escape sequences and non-printing control characters. */
-function sanitizeRendererComponentStack(value: string): string {
-  return value
-    .replace(/\u001B(?:[@-_][0-?]*[ -/]*[@-~]|\[[0-?]*[ -/]*[@-~])/g, "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .replace(/\r\n?/g, "\n");
+/** Extract bounded React frame names, dropping renderer-controlled locations and text. */
+function normalizeRendererComponentStack(value: string): {
+  componentStack: string;
+  componentStackTruncated: boolean;
+} | null {
+  const framePattern = /^\s*at\s+([A-Za-z_$][A-Za-z0-9_$]*(?:[.$][A-Za-z_$][A-Za-z0-9_$]*){0,7})\s*(?:\(|$)/;
+  const frames: string[] = [];
+  for (const line of value.replace(/\r\n?/g, "\n").split("\n")) {
+    const frameName = framePattern.exec(line)?.[1];
+    if (!frameName || frameName.length > RENDERER_CRASH_COMPONENT_FRAME_MAX_LENGTH) {
+      continue;
+    }
+    frames.push(frameName);
+  }
+  if (frames.length === 0) return null;
+  const componentStackTruncated = frames.length > RENDERER_CRASH_COMPONENT_FRAME_MAX_COUNT;
+  return {
+    componentStack: frames
+      .slice(0, RENDERER_CRASH_COMPONENT_FRAME_MAX_COUNT)
+      .join("\n"),
+    componentStackTruncated,
+  };
 }
 
 /** Validate and normalize untrusted renderer crash diagnostics. */
@@ -191,15 +210,16 @@ export function normalizeRendererCrashReport(
     ) {
       return null;
     }
-    const componentStack = sanitizeRendererComponentStack(record.componentStack);
-    if (componentStack.length > RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH) {
+    if (record.componentStack.length > RENDERER_CRASH_COMPONENT_STACK_MAX_LENGTH) {
       return null;
     }
+    const normalizedStack = normalizeRendererComponentStack(record.componentStack);
+    if (!normalizedStack) return null;
     return {
       errorName: RENDERER_CRASH_ERROR_NAMES.has(record.errorName)
         ? record.errorName
         : "Error",
-      componentStack,
+      ...normalizedStack,
     };
   } catch {
     return null;
@@ -225,7 +245,7 @@ export function handleRendererCrashReport(
   logger.info("Renderer crash report", {
     errorName: normalized.errorName,
     componentStack: normalized.componentStack,
-    componentStackTruncated: false,
+    componentStackTruncated: normalized.componentStackTruncated,
   });
 }
 const serverManager = new ServerManager();
