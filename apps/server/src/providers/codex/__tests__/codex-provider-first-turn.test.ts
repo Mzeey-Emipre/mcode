@@ -65,7 +65,7 @@ import { CodexProvider } from "../codex-provider.js";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { stubEnvService } from "../../../__tests__/stub-env-service.js";
-import { BrowserAutomationAccessService } from "../../../services/browser-automation/access-service.js";
+import { BrowserAutomationSessionLease } from "../../../services/browser-automation/browser-automation-session-lease.js";
 
 function makeProvider(
   catalogService: {
@@ -83,7 +83,7 @@ function makeProvider(
     onSkillsChanged: vi.fn(() => () => undefined),
     shutdown: vi.fn(async () => undefined),
   },
-  browserAutomationAccess = new BrowserAutomationAccessService(),
+  browserAutomationLease = new BrowserAutomationSessionLease(),
 ): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
@@ -91,7 +91,7 @@ function makeProvider(
     stubEnvService() as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
     catalogService as never,
-    browserAutomationAccess,
+    browserAutomationLease,
   );
 }
 
@@ -113,12 +113,12 @@ describe("CodexProvider first turn on new session", () => {
   });
 
   it("passes loopback browser MCP config and a child-only bearer token", async () => {
-    const access = new BrowserAutomationAccessService();
-    access.configure({
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
-    const provider = makeProvider(undefined, access);
+    const provider = makeProvider(undefined, lease);
 
     await provider.sendTurn({
       sessionId,
@@ -141,17 +141,17 @@ describe("CodexProvider first turn on new session", () => {
     expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
     await new Promise<void>((resolve) => setImmediate(resolve));
     await provider.stopSession(sessionId);
-    expect(access.credentials.size()).toBe(0);
+    expect(lease.credentials.size()).toBe(0);
   });
 
   it("revokes a browser credential when app-server startup fails", async () => {
-    const access = new BrowserAutomationAccessService();
-    access.configure({
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
     startError.current = new Error("handshake failed");
-    const provider = makeProvider(undefined, access);
+    const provider = makeProvider(undefined, lease);
 
     await provider.sendTurn({
       sessionId: "mcode-browser-spawn-failure",
@@ -165,7 +165,139 @@ describe("CodexProvider first turn on new session", () => {
       permissionMode: "supervised",
     });
 
-    expect(access.credentials.size()).toBe(0);
+    expect(lease.credentials.size()).toBe(0);
+  });
+
+  it("releases staged browser access when internal MCP configuration fails", async () => {
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = makeProvider(undefined, lease);
+    (provider as any).threadControlMcp = {
+      createCodexConfiguration: vi.fn().mockRejectedValue(new Error("MCP config failed")),
+    };
+
+    await provider.sendTurn({
+      sessionId: "mcode-browser-config-failure",
+      workspaceId: "workspace-test",
+      threadId: "browser-config-failure",
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+    expect(appServers).toHaveLength(0);
+  });
+
+  it("releases the previous staged browser access for overlapping sends", async () => {
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = makeProvider(undefined, lease);
+    let rejectAcquire!: (error: Error) => void;
+    const acquirePromise = new Promise<never>((_, reject) => {
+      rejectAcquire = reject;
+    });
+    (provider as any).runtime.acquire = vi.fn(() => acquirePromise);
+    const release = vi.spyOn(lease, "release");
+    const request = {
+      sessionId: "mcode-overlapping-browser-stage",
+      workspaceId: "workspace-test",
+      threadId: "overlapping-browser-stage",
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "supervised" as const,
+    };
+
+    const firstSend = provider.sendTurn(request);
+    await vi.waitFor(() => expect(lease.status()).toEqual({ active: 0, pending: 1 }));
+    const firstStage = (provider as any).pendingBrowserAccess.get(request.sessionId).stage.leaseId;
+
+    const secondSend = provider.sendTurn({ ...request, message: "inspect again" });
+    await vi.waitFor(() => expect(release).toHaveBeenCalledWith(firstStage));
+    expect(lease.status()).toEqual({ active: 0, pending: 1 });
+    expect((provider as any).pendingBrowserAccess.get(request.sessionId).stage.leaseId).not.toBe(firstStage);
+
+    rejectAcquire(new Error("acquire failed"));
+    await Promise.all([firstSend, secondSend]);
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+  });
+
+  it("releases staged browser access when stopped before runtime acquisition", async () => {
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const provider = makeProvider(undefined, lease);
+    let rejectAcquire!: (error: Error) => void;
+    const acquirePromise = new Promise<never>((_, reject) => {
+      rejectAcquire = reject;
+    });
+    (provider as any).runtime.acquire = vi.fn(() => acquirePromise);
+
+    const sessionId = "mcode-pending-stop";
+    const sendPromise = provider.sendTurn({
+      sessionId,
+      workspaceId: "workspace-test",
+      threadId: "pending-stop",
+      message: "inspect the page",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    await vi.waitFor(() => expect(lease.status()).toEqual({ active: 0, pending: 1 }));
+    await provider.stopSession(sessionId);
+    expect(lease.status()).toEqual({ active: 0, pending: 0 });
+
+    rejectAcquire(new Error("stop requested"));
+    await sendPromise;
+  });
+
+  it("does not shut down the shared lease when Codex stops", () => {
+    const lease = new BrowserAutomationSessionLease();
+    lease.configure({
+      mcpUrl: "http://127.0.0.1:19400/mcp",
+      worktreeIdentity: "worktree-test",
+    });
+    const claudeGrant = lease.issue({
+      providerId: "claude",
+      providerSessionId: "claude-session",
+      mcodeSessionId: "claude-session",
+      threadId: "claude-thread",
+      workspaceId: "workspace-test",
+      permissionCapability: "interact",
+    })!;
+    const codexGrant = lease.issue({
+      providerId: "codex",
+      providerSessionId: "codex-session",
+      mcodeSessionId: "codex-session",
+      threadId: "codex-thread",
+      workspaceId: "workspace-test",
+      permissionCapability: "interact",
+    })!;
+    const provider = makeProvider(undefined, lease);
+    const shutdown = vi.spyOn(lease, "shutdown");
+
+    provider.shutdown();
+
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(lease.credentials.authenticate(claudeGrant.token)).not.toBeNull();
+    expect(lease.credentials.authenticate(codexGrant.token)).not.toBeNull();
   });
 
   it("sent turn/start after spawn when the runtime pool registers on the next tick", async () => {

@@ -46,7 +46,7 @@ function makeProvider(lease: BrowserAutomationSessionLease) {
     hasFiredToolThisTurn: false,
     workspaceId: "workspace-1",
     browserPermissionCapability: "interact" as const,
-  };
+  } as unknown as Parameters<ClaudeProvider["close"]>[0];
   let spawnedState: unknown;
   const runtime = {
     get: vi.fn(() => existingState),

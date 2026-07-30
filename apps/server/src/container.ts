@@ -95,6 +95,7 @@ import { ReviewWorktreeService } from "./services/pull-requests/review-worktree-
 import {
   BrowserAutomationAccessService,
   BrowserAutomationCredentialRegistry,
+  BrowserAutomationSessionLease,
 } from "./services/browser-automation/index.js";
 
 /** Initialize the DI container with all server dependencies. */
@@ -104,6 +105,10 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.registerInstance(
     BrowserAutomationAccessService,
     new BrowserAutomationAccessService(browserAutomationCredentials),
+  );
+  container.registerInstance(
+    BrowserAutomationSessionLease,
+    new BrowserAutomationSessionLease(browserAutomationCredentials),
   );
 
   // PtyPidRegistry — registered before TerminalService because it is injected into it
