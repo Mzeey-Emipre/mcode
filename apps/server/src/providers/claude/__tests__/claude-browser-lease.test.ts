@@ -62,6 +62,7 @@ function makeProvider(lease: BrowserAutomationSessionLease) {
     shutdown: vi.fn(async () => {}),
   };
   Object.assign(provider as any, {
+    id: "claude",
     runtime,
     pendingSpawnTurns: new Map(),
     pendingBrowserAccess: new Map(),
@@ -111,7 +112,7 @@ describe("ClaudeProvider browser session lease lifecycle", () => {
     mockQuery.mockReturnValue({ close: vi.fn() });
   });
 
-  it("keeps a refreshed grant active across replacement close and passes it to SDK", async () => {
+  it("closes a refreshed replacement with no active or pending lease", async () => {
     const lease = configuredLease();
     const oldGrant = lease.issue(scope)!;
     const harness = makeProvider(lease);
@@ -128,6 +129,7 @@ describe("ClaudeProvider browser session lease lifecycle", () => {
     expect(runtime.stop).toHaveBeenCalledOnce();
     const options = mockQuery.mock.calls[0][0].options;
     const token = options.mcpServers["mcode-browser"].headers.Authorization.slice("Bearer ".length);
+    expect(lease.credentials.authenticate(oldGrant.token)).toBeNull();
     expect(lease.credentials.authenticate(token)).not.toBeNull();
     expect((provider as any).browserAutomationSessionLease.status()).toEqual({ active: 1, pending: 0 });
     const spawnedState = harness.spawnedState;
@@ -140,9 +142,10 @@ describe("ClaudeProvider browser session lease lifecycle", () => {
     const lease = configuredLease();
     const { provider } = makeProvider(lease);
     (provider as any).runtime.get = vi.fn(() => undefined);
-    mockQuery.mockImplementationOnce(() => { throw new Error("spawn failed"); });
+    const spawnError = new Error("spawn failed");
+    mockQuery.mockImplementationOnce(() => { throw spawnError; });
 
-    await expect((provider as any).sendTurn(request())).rejects.toThrow("spawn failed");
+    await expect((provider as any).sendTurn(request())).rejects.toBe(spawnError);
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
   });
 

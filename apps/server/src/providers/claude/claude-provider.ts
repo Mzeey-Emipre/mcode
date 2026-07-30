@@ -473,6 +473,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         req.interactionMode,
       ),
     };
+    const previousBrowserAccess = this.pendingBrowserAccess.get(req.sessionId);
+    if (previousBrowserAccess?.stage) {
+      this.browserAutomationSessionLease.release(previousBrowserAccess.stage.leaseId);
+    }
     this.pendingBrowserAccess.set(req.sessionId, {
       scope: browserScope,
       stage: this.browserAutomationSessionLease.stage(browserScope),
@@ -944,6 +948,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       // close must not revoke a refreshed grant needed by replacement spawn.
       existing.browserLease = undefined;
       if (refreshed.ok) {
+        if (pendingBrowserAccess.stage) {
+          this.browserAutomationSessionLease.release(pendingBrowserAccess.stage.leaseId);
+        }
         pendingBrowserAccess.grant = refreshed.grant;
         pendingBrowserAccess.stage = undefined;
       } else {
@@ -1473,8 +1480,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     if (pendingBrowserAccess?.grant && pendingBrowserAccess.stage) {
       this.browserAutomationSessionLease.release(pendingBrowserAccess.stage.leaseId);
     }
-    this.pendingBrowserAccess.delete(sessionId);
-
     // Capture the subprocess stderr tail so a non-zero exit (which the SDK
     // reports as a bare "process exited with code N") carries the actual CLI
     // error instead of an opaque code. Reset per spawn so a crash is never
@@ -1524,8 +1529,16 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       q = this.withSdkSpawnEnv(() => sdkQuery({ prompt: queue.iterable, options }));
     } catch (error) {
       if (browserGrant) this.browserAutomationSessionLease.release(browserGrant.leaseId);
+      if (pendingBrowserAccess?.stage) {
+        this.browserAutomationSessionLease.release(pendingBrowserAccess.stage.leaseId);
+      }
+      this.pendingBrowserAccess.delete(sessionId);
       throw error;
     }
+    if (pendingBrowserAccess?.grant && pendingBrowserAccess.stage) {
+      this.browserAutomationSessionLease.release(pendingBrowserAccess.stage.leaseId);
+    }
+    this.pendingBrowserAccess.delete(sessionId);
 
     // Discover the newly-spawned child PID(s) so the runtime can JobObject-
     // attach and taskkill them. Mirrors the old `labelSdkSubprocess` diff, but
