@@ -1969,7 +1969,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       });
     }
     const currentThreadId = get().currentThreadId;
-    const isActiveThread = currentThreadId !== null && currentThreadId === threadId;
+    // Before conversation hydration, no running IDs means events belong to the
+    // only known conversation. Once running sessions are known, null selection
+    // must keep background narrative deferred.
+    const isActiveThread = currentThreadId === threadId
+      || (currentThreadId === null && get().runningThreadIds.size === 0);
     const isLifecycleExit = event.type === "turnComplete" || event.type === "ended" || event.type === "error";
     const startsNewInstance = event.type === "turnStarted";
 
@@ -2539,7 +2543,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
 
     // session.textDelta: accumulate streaming text for live preview and finalization.
     if (event.type === "textDelta") {
-      if (!get().runningThreadIds.has(threadId)) return;
       const delta = (event.delta as string) || "";
       if (!delta) return;
       const rawIsFinalResponse = event.isFinalResponse;
@@ -2564,7 +2567,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         next.push({ delta, isFinalResponse, deferNarrative });
       }
       pendingTextDeltaByThread.set(threadId, next);
-      if (!isActiveThread && get().runningThreadIds.has(threadId)) {
+      if (!isActiveThread) {
         queueDeferredNarrativeEvent(threadId, event);
       }
       if (!deferNarrative && (!hadPending || existing.some((chunk) => chunk.deferNarrative))) {
@@ -2575,7 +2578,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "assistantMessageBoundary") {
-      if (!get().runningThreadIds.has(threadId)) return;
       // Authoritative classification of the text deltas just streamed for this
       // assistant message, derived from the Anthropic `stop_reason`.
       //
@@ -2591,7 +2593,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Flush any pending text delta chunks first so the open thought we
       // operate on reflects every delta that arrived for this message.
       flushPendingTextDeltas();
-      if (!isActiveThread && get().runningThreadIds.has(threadId)) {
+      if (!isActiveThread) {
         queueDeferredNarrativeEvent(threadId, event);
         return;
       }
@@ -2615,8 +2617,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "toolProgress") {
-      if (!get().runningThreadIds.has(threadId)) return;
-      if (!isActiveThread && get().runningThreadIds.has(threadId)) {
+      if (!isActiveThread) {
         queueDeferredNarrativeEvent(threadId, event);
         return;
       }
