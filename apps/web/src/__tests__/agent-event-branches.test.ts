@@ -461,6 +461,47 @@ describe("handleAgentEvent branches", () => {
       .toHaveLength(2);
   });
 
+  it("promotes inactive text before projecting its following toolUse", () => {
+    const backgroundThreadId = "thread-tool-boundary";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "Before the tool call.",
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolUse",
+      threadId: backgroundThreadId,
+      toolCallId: "background-tool",
+      toolName: "Read",
+      toolInput: { path: "/tmp/background" },
+    } as AgentEvent);
+
+    const beforeSwitch = readThreadField(backgroundThreadId, (thread) => thread);
+    expect(beforeSwitch.thoughtSegments.map((segment) => segment.text)).toEqual([
+      "Before the tool call.",
+    ]);
+    expect(beforeSwitch.thoughtSegments[0]?.endedAt).toBeDefined();
+    expect(beforeSwitch.toolCalls.map((call) => call.id)).toEqual(["background-tool"]);
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    const afterSwitch = readThreadField(backgroundThreadId, (thread) => thread);
+    expect(afterSwitch.thoughtSegments.map((segment) => segment.text)).toEqual([
+      "Before the tool call.",
+    ]);
+    expect(afterSwitch.thoughtSegments[0]?.endedAt).toBeDefined();
+    expect(afterSwitch.toolCalls.map((call) => call.id)).toEqual(["background-tool"]);
+  });
+
   it("does not treat null selection as active for multiple running threads", async () => {
     resetThreadStoreForTests({
       currentThreadId: null,

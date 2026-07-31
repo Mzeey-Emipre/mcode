@@ -2280,6 +2280,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "toolUse") {
+      // Background text stays deferred until its tool boundary arrives. Project
+      // that queued narrative first so toolUse closes the correct thought.
+      if (!isActiveThread) {
+        promoteDeferredNarrativeEvents(threadId);
+      }
       const toolCallId = (event.toolCallId as string) || "";
       const existingCalls = getRec(threadId).toolCalls;
       const toolName = (event.toolName as string) || "unknown";
