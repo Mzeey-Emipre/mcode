@@ -542,7 +542,7 @@ export class ThreadHydrator {
         void this.refreshThreadGoal(threadId, expectedEpoch);
         this.scheduleAuxiliaryHydration(threadId, expectedEpoch, {
           freshnessTtlMs: HYDRATION_TTL_MS,
-          force: opts?.force ?? true,
+          force: opts?.force ?? false,
           commitFileChangesToStore: true,
           expectedLoadEpoch: expectedEpoch,
         });
@@ -628,6 +628,14 @@ export class ThreadHydrator {
     opts?: ThreadHydratorOptions,
     hasResidentContent = false,
   ): Promise<void> {
+    const residentFetchOptions = hasResidentContent
+      ? {
+          skipPrepare: true,
+          fetchLimit: BACKGROUND_PREFETCH_LIMIT,
+          prefetchEarlierHistory: false,
+        }
+      : undefined;
+    const backgroundFetchOptions = residentFetchOptions ?? { skipPrepare: true };
     const background = this.backgroundHydrates.get(threadId);
     if (background) {
       if (!hasResidentContent) {
@@ -638,13 +646,7 @@ export class ThreadHydrator {
       if (this.deps.getState().currentThreadId !== threadId) return;
 
       if (opts?.force) {
-        await this.fetchAndCommit(threadId, opts, hasResidentContent
-          ? {
-              skipPrepare: true,
-              fetchLimit: BACKGROUND_PREFETCH_LIMIT,
-              prefetchEarlierHistory: false,
-            }
-          : { skipPrepare: true });
+        await this.fetchAndCommit(threadId, opts, backgroundFetchOptions);
         return;
       }
 
@@ -664,13 +666,7 @@ export class ThreadHydrator {
       return;
     }
 
-    await this.fetchAndCommit(threadId, opts, hasResidentContent
-      ? {
-          skipPrepare: true,
-          fetchLimit: BACKGROUND_PREFETCH_LIMIT,
-          prefetchEarlierHistory: false,
-        }
-      : undefined);
+    await this.fetchAndCommit(threadId, opts, residentFetchOptions);
   }
 
   /** Makes an already-loading thread current without invalidating its request epoch. */

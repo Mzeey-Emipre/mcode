@@ -823,6 +823,32 @@ describe("ThreadHydrator", () => {
     expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
   });
 
+  it("uses auxiliary TTL by default and when force is false for resident hydration", async () => {
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_B,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map<string, ThreadRecord>([
+        [THREAD_A, { ...makeCachedRecord(), lastHydratedAt: Date.now() }],
+        [THREAD_B, makeCachedRecord([msgB])],
+      ]),
+    });
+
+    await hydrator.hydrate(THREAD_A, "active");
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(mockTransport.listPendingPermissions).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    await hydrator.hydrate(THREAD_A, "active", { force: false });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(mockTransport.listPendingPermissions).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    await hydrator.hydrate(THREAD_A, "active", { force: true });
+    await vi.waitFor(() => {
+      expect(mockTransport.listPendingPermissions).toHaveBeenCalledWith(THREAD_A);
+    });
+  });
+
   it("force refreshes a running resident layer without wiping live state", async () => {
     let resolveFetch!: (value: {
       messages: typeof msgA[];
