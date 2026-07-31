@@ -846,4 +846,186 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-b-reused")).toBe("exec-b");
     void events;
   });
+
+  it("does not let a late A parent activity replace the active B child generation", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
+    const provider = makeProvider();
+    const entry = await startSession(provider, "mcode-late-parent", "late-parent");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "turn-a",
+        item: { type: "subAgentActivity", id: "call-reused-a", kind: "started", agentThreadId: "child-reused" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-reused", turn: { id: "child-turn-a" } },
+    });
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-late-parent",
+      workspaceId: "workspace-test",
+      threadId: "late-parent",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "turn-b",
+        item: { type: "subAgentActivity", id: "call-reused-b", kind: "started", agentThreadId: "child-reused" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "turn-a",
+        item: { type: "subAgentActivity", id: "call-reused-a-late", kind: "started", agentThreadId: "child-reused" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-reused", turn: { id: "child-turn-b" } },
+    });
+    const maps = entry as PoolEntry & {
+      turnExecutionIdsByNativeTurn: Map<string, string>;
+      nativeThreadExecutionIds: Map<string, string>;
+    };
+    expect(maps.nativeThreadExecutionIds.get("child-reused")).toBe("exec-b");
+    expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-b")).toBe("exec-b");
+  });
+
+  it("links a current B parent activity without a turn id to B", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
+    const provider = makeProvider();
+    const entry = await startSession(provider, "mcode-parent-no-turn", "parent-no-turn");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-parent-no-turn",
+      workspaceId: "workspace-test",
+      threadId: "parent-no-turn",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        item: { type: "subAgentActivity", id: "call-no-turn", kind: "started", agentThreadId: "child-no-turn" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-no-turn", turn: { id: "child-turn-b" } },
+    });
+    const maps = entry as PoolEntry & {
+      turnExecutionIdsByNativeTurn: Map<string, string>;
+    };
+    expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-b")).toBe("exec-b");
+  });
+
+  it("keeps old A child events A while new B child events stay B after late replay", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
+    const provider = makeProvider();
+    const entry = await startSession(provider, "mcode-child-replay-events", "child-replay-events");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "turn-a",
+        item: { type: "subAgentActivity", id: "call-replay-a", kind: "started", agentThreadId: "child-replay" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-replay", turn: { id: "child-turn-a" } },
+    });
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-child-replay-events",
+      workspaceId: "workspace-test",
+      threadId: "child-replay-events",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "turn-b",
+        item: { type: "subAgentActivity", id: "call-replay-b", kind: "started", agentThreadId: "child-replay" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "turn-a",
+        item: { type: "subAgentActivity", id: "call-replay-a-late", kind: "started", agentThreadId: "child-replay" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-replay", turn: { id: "child-turn-b" } },
+    });
+    const maps = entry as PoolEntry & {
+      turnExecutionIdsByNativeTurn: Map<string, string>;
+      nativeThreadExecutionIds: Map<string, string>;
+    };
+    expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-a")).toBe("exec-mcode-child-replay-events");
+    expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-b")).toBe("exec-b");
+    expect(maps.nativeThreadExecutionIds.get("child-replay")).toBe("exec-b");
+  });
 });

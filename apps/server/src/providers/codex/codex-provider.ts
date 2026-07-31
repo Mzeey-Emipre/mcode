@@ -1342,17 +1342,29 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       }
       const childThreadId = nativeSubAgentThreadId(n);
       if (childThreadId) {
-        const parentTurnExecutionId = nativeTurnId
-          ? entry?.turnExecutionIdsByNativeTurn.get(nativeTurnId)
-          : undefined;
-        if (entry && eventExecutionId && parentTurnExecutionId === eventExecutionId) {
+        const currentExecutionId = entry?.currentTurnExecutionId;
+        const knownMainThreadNotification = Boolean(
+          entry
+          && server.threadId
+          && nativeThreadId === server.threadId,
+        );
+        const currentParentNotification = Boolean(
+          entry
+          && entry.turnBindingPhase === "bound"
+          && currentExecutionId
+          && knownMainThreadNotification
+          && (!nativeTurnId
+            || (nativeTurnId === entry.currentNativeTurnId
+              && entry.turnExecutionIdsByNativeTurn.get(nativeTurnId) === currentExecutionId)),
+        );
+        if (currentParentNotification && currentExecutionId) {
           entry.nextChildGeneration += 1;
           entry.childExecutionGenerations.set(childThreadId, {
-            executionId: eventExecutionId,
+            executionId: currentExecutionId,
             generation: entry.nextChildGeneration,
           });
           pruneChildGenerationMap(entry.childExecutionGenerations);
-          entry.nativeThreadExecutionIds.set(childThreadId, eventExecutionId);
+          entry.nativeThreadExecutionIds.set(childThreadId, currentExecutionId);
           pruneExecutionMap(entry.nativeThreadExecutionIds);
         }
         this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId);
