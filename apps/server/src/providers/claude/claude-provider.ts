@@ -362,6 +362,18 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   readonly maxInputCharactersPerTurn = 180_000;
   /** Path B (+ B-prime) forker; calls this provider's runSideChannelQuery. */
   readonly forker: SessionForker = new CleanForker(this);
+  private readonly turnExecutionIds = new Map<string, string>();
+
+  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
+    if (eventName === "event") {
+      const event = args[0] as { threadId?: unknown; turnExecutionId?: unknown } | undefined;
+      if (event && typeof event.threadId === "string" && typeof event.turnExecutionId !== "string") {
+        const turnExecutionId = this.turnExecutionIds.get(event.threadId);
+        if (turnExecutionId) args[0] = { ...event, turnExecutionId };
+      }
+    }
+    return super.emit(eventName, ...args);
+  }
 
   /** Owns the session pool, idle eviction (with busy guard), and JobObject/kill. */
   private readonly runtime: SessionRuntime<ClaudeSessionState>;
@@ -472,6 +484,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
   /** Start or continue a session by sending a message via the SDK. */
   async sendTurn(req: TurnRequest<"claude">): Promise<void> {
+    if (req.turnExecutionId) this.turnExecutionIds.set(req.threadId, req.turnExecutionId);
     // Seed the resume id so doSendMessage's sdkSessionIds lookup resolves it.
     // `resumeFrom` defined ⇒ resume that SDK session; undefined ⇒ fresh.
     if (req.resumeFrom !== undefined) {

@@ -14,7 +14,10 @@ describe("hydrateRunningThreadsFromServer", () => {
   });
 
   it("replaces runningThreadIds with the RPC result", async () => {
-    const rpc = vi.fn().mockResolvedValue(["t-1", "t-2"]);
+    const rpc = vi.fn().mockResolvedValue([
+      { threadId: "t-1", turnExecutionId: "00000000-0000-4000-8000-000000000001", phase: "running" },
+      { threadId: "t-2", turnExecutionId: "00000000-0000-4000-8000-000000000002", phase: "finalizing" },
+    ]);
     await hydrateRunningThreadsFromServer(rpc);
     expect(rpc).toHaveBeenCalledWith("agent.listRunning", {});
     const ids = useThreadStore.getState().runningThreadIds;
@@ -58,13 +61,10 @@ describe("hydrateRunningThreadsFromServer", () => {
     expect(rec.thoughtSegments).toEqual([]);
   });
 
-  it("preserves threadIds added while the RPC is in flight", async () => {
-    // Start with one stale id. The server will return ["t-server"] but a
-    // concurrent session.turnStarted push will add "t-concurrent" DURING the
-    // RPC. The final Set must contain both server ids and the concurrent add,
-    // but NOT the stale one.
-    let resolveRpc: (v: string[]) => void = () => {};
-    const rpcPromise = new Promise<string[]>((r) => { resolveRpc = r; });
+  it("uses server snapshots as the running-state authority", async () => {
+    // Concurrent optimistic ids are replaced by server snapshots.
+    let resolveRpc: (v: Array<{ threadId: string; turnExecutionId: string; phase: "running" }>) => void = () => {};
+    const rpcPromise = new Promise<Array<{ threadId: string; turnExecutionId: string; phase: "running" }>>((r) => { resolveRpc = r; });
     const rpc = vi.fn().mockReturnValue(rpcPromise);
 
     const pending = hydrateRunningThreadsFromServer(rpc);
@@ -83,13 +83,13 @@ describe("hydrateRunningThreadsFromServer", () => {
     });
 
     // Now resolve the RPC with the server's snapshot (which does NOT include t-concurrent).
-    resolveRpc(["t-server"]);
+    resolveRpc([{ threadId: "t-server", turnExecutionId: "00000000-0000-4000-8000-000000000003", phase: "running" }]);
     await pending;
 
     const ids = useThreadStore.getState().runningThreadIds;
     expect(ids.has("stale")).toBe(false);          // dropped (server doesn't report it)
     expect(ids.has("t-server")).toBe(true);        // server's truth
-    expect(ids.has("t-concurrent")).toBe(true);    // concurrent add preserved
+    expect(ids.has("t-concurrent")).toBe(false);   // client identity not fabricated
   });
 });
 

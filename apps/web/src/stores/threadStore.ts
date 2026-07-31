@@ -1507,6 +1507,10 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   },
 
   hydrateThreadRuntimes: (snapshots) => {
+    const runningThreadIds = snapshots
+      .filter((snapshot) => snapshot.phase === "running" || snapshot.phase === "finalizing")
+      .map((snapshot) => snapshot.threadId);
+    get().hydrateRunningThreads(runningThreadIds);
     set((state) => {
       let records = state.records;
       for (const snapshot of snapshots) {

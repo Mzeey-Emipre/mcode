@@ -9,6 +9,7 @@ describe("TurnRuntimeRegistry", () => {
     const started = runtime.normalizeEvent({
       type: AgentEventType.TurnStarted,
       threadId: "thread-1",
+      turnExecutionId: first.turnExecutionId!,
     });
     expect(started?.turnExecutionId).toBe(first.turnExecutionId);
 
@@ -16,6 +17,7 @@ describe("TurnRuntimeRegistry", () => {
       type: AgentEventType.TextDelta,
       threadId: "thread-1",
       delta: "still running",
+      turnExecutionId: first.turnExecutionId!,
     });
     expect(delta?.turnExecutionId).toBe(first.turnExecutionId);
 
@@ -60,5 +62,28 @@ describe("TurnRuntimeRegistry", () => {
     })?.turnExecutionId).toBe(second.turnExecutionId);
     expect(runtime.terminalize("thread-1", second.turnExecutionId!, "completed")).toBe(true);
     expect(runtime.terminalize("thread-1", second.turnExecutionId!, "completed")).toBe(false);
+  });
+
+  it("rejects lifecycle events without source identity", () => {
+    const runtime = new TurnRuntimeRegistry();
+    runtime.start("thread-1");
+    expect(runtime.normalizeEvent({
+      type: AgentEventType.TextDelta,
+      threadId: "thread-1",
+      delta: "unbound",
+    })).toBeUndefined();
+  });
+
+  it("bounds terminal retention without evicting active turns", () => {
+    const runtime = new TurnRuntimeRegistry();
+    const active = runtime.start("active");
+    for (let i = 0; i < 140; i++) {
+      const snapshot = runtime.start(`terminal-${i}`);
+      runtime.terminalize(`terminal-${i}`, snapshot.turnExecutionId!, "completed");
+    }
+    const snapshots = runtime.snapshots();
+    expect(snapshots.some((snapshot) => snapshot.threadId === "active")).toBe(true);
+    expect(snapshots.filter((snapshot) => snapshot.phase === "completed")).toHaveLength(128);
+    expect(active.phase).toBe("running");
   });
 });

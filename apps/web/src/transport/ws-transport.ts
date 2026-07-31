@@ -196,15 +196,9 @@ export async function hydrateRunningThreadsFromServer(
   rpcCall: (method: string, params: unknown) => Promise<unknown>,
 ): Promise<void> {
   try {
-    const beforeRpc = new Set(useThreadStore.getState().runningThreadIds);
     const result = await rpcCall("agent.listRunning", {});
-    if (Array.isArray(result) && (result.length === 0 || typeof result[0] === "string")) {
-      const current = useThreadStore.getState().runningThreadIds;
-      const concurrentAdds = [...current].filter((id) => !beforeRpc.has(id));
-      useThreadStore.getState().hydrateRunningThreads([...(result as string[]), ...concurrentAdds]);
-    } else {
-      useThreadStore.getState().hydrateThreadRuntimes(result as import("@mcode/contracts").TurnRuntimeSnapshot[]);
-    }
+    const snapshots = result as import("@mcode/contracts").TurnRuntimeSnapshot[];
+    useThreadStore.getState().hydrateThreadRuntimes(snapshots);
   } catch {
     // Best-effort; optimistic state remains if the call fails.
   }

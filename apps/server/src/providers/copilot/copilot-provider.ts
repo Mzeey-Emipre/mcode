@@ -223,6 +223,18 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
   readonly maxInputCharactersPerTurn = 16_000;
   /** Path B forker; calls this provider's throwaway SDK side channel. */
   readonly forker: SessionForker = new CleanForker(this);
+  private readonly turnExecutionIds = new Map<string, string>();
+
+  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
+    if (eventName === "event") {
+      const event = args[0] as { threadId?: unknown; turnExecutionId?: unknown } | undefined;
+      if (event && typeof event.threadId === "string" && typeof event.turnExecutionId !== "string") {
+        const turnExecutionId = this.turnExecutionIds.get(event.threadId);
+        if (turnExecutionId) args[0] = { ...event, turnExecutionId };
+      }
+    }
+    return super.emit(eventName, ...args);
+  }
 
   private client: CopilotClient | null = null;
   private lastCliPath: string | undefined;
@@ -737,6 +749,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
   /** Start or continue a session by sending a message via the Copilot SDK. When `copilotAgent` is provided, routes the session to the appropriate built-in mode or custom agent before sending. */
   async sendTurn(req: TurnRequest<"copilot">): Promise<void> {
+    if (req.turnExecutionId) this.turnExecutionIds.set(req.threadId, req.turnExecutionId);
     const previousSend = this.sendLocks.get(req.sessionId) ?? Promise.resolve();
     let releaseSend!: () => void;
     const currentSend = new Promise<void>((resolve) => {

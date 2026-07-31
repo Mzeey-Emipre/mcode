@@ -9,7 +9,11 @@ type TerminalPhase = Extract<TurnRuntimePhase, "completed" | "errored" | "cancel
 
 interface RuntimeState extends TurnRuntimeSnapshot {
   terminalized: boolean;
+  terminalizedAt?: number;
 }
+
+const MAX_TERMINAL_RETAINED = 128;
+const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 
 /** Owns one Mcode execution identity and lifecycle per thread. */
 export class TurnRuntimeRegistry {
@@ -35,6 +39,7 @@ export class TurnRuntimeRegistry {
 
   /** Return snapshots for reconnect hydration. */
   snapshots(): TurnRuntimeSnapshot[] {
+    this.sweepTerminalState();
     return [...this.states.values()].map((state) => this.copy(state));
   }
 
@@ -45,18 +50,19 @@ export class TurnRuntimeRegistry {
       .map((state) => state.threadId);
   }
 
-  /** Normalize provider output to the current Mcode execution identity. */
+  /** Normalize provider output only when provider supplied its source identity. */
   normalizeEvent(event: AgentEvent): AgentEvent | undefined {
     const current = this.states.get(event.threadId);
     if (event.type === "turnStarted") {
-      const state = current?.phase === "running" && !current.terminalized
-        ? current
-        : this.start(event.threadId);
-      return { ...event, turnExecutionId: state.turnExecutionId! };
+      if (!event.turnExecutionId) return undefined;
+      if (!current || current.turnExecutionId !== event.turnExecutionId || current.terminalized) {
+        return undefined;
+      }
+      return event;
     }
-    if (!current || current.turnExecutionId === null || current.terminalized) return undefined;
-    if (event.turnExecutionId && event.turnExecutionId !== current.turnExecutionId) return undefined;
-    return { ...event, turnExecutionId: current.turnExecutionId };
+    if (!current || current.turnExecutionId === null || current.terminalized || !event.turnExecutionId) return undefined;
+    if (event.turnExecutionId !== current.turnExecutionId) return undefined;
+    return event;
   }
 
   /** Accept the first terminal signal for the active execution only. */
@@ -65,6 +71,7 @@ export class TurnRuntimeRegistry {
     if (!state || state.terminalized || state.turnExecutionId !== executionId) return false;
     state.phase = phase;
     state.terminalized = true;
+    state.terminalizedAt = Date.now();
     return true;
   }
 
@@ -74,6 +81,7 @@ export class TurnRuntimeRegistry {
       this.states.set(snapshot.threadId, {
         ...snapshot,
         terminalized: snapshot.phase !== "running" && snapshot.phase !== "finalizing",
+        ...(snapshot.phase !== "running" && snapshot.phase !== "finalizing" ? { terminalizedAt: Date.now() } : {}),
       });
     }
   }
@@ -82,6 +90,22 @@ export class TurnRuntimeRegistry {
   evict(threadId: string): void {
     const state = this.states.get(threadId);
     if (state && state.terminalized) this.states.delete(threadId);
+  }
+
+  private sweepTerminalState(): void {
+    const now = Date.now();
+    const terminal = [...this.states.values()]
+      .filter((state) => state.terminalized)
+      .sort((a, b) => (a.terminalizedAt ?? 0) - (b.terminalizedAt ?? 0));
+    for (const state of terminal) {
+      if ((state.terminalizedAt ?? now) + TERMINAL_RETENTION_MS <= now) {
+        this.states.delete(state.threadId);
+      }
+    }
+    const remaining = terminal.filter((state) => this.states.has(state.threadId));
+    for (const state of remaining.slice(0, Math.max(0, remaining.length - MAX_TERMINAL_RETAINED))) {
+      this.states.delete(state.threadId);
+    }
   }
 
   private copy(state: RuntimeState): TurnRuntimeSnapshot {

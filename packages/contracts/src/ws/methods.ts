@@ -746,7 +746,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "agent.listRunning": {
     params: z.object({}),
-    result: z.array(z.union([TurnRuntimeSnapshotSchema, z.string()])),
+    result: z.array(TurnRuntimeSnapshotSchema),
   },
   "push.subscribeThread": {
     params: z.object({ threadId: z.string() }),

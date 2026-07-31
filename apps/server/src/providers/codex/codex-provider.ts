@@ -536,6 +536,18 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   readonly maxInputCharactersPerTurn = 16_000;
   /** Path B forker; calls this provider's throwaway app-server side channel. */
   readonly forker: SessionForker = new CleanForker(this);
+  private readonly turnExecutionIds = new Map<string, string>();
+
+  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
+    if (eventName === "event") {
+      const event = args[0] as { threadId?: unknown; turnExecutionId?: unknown } | undefined;
+      if (event && typeof event.threadId === "string" && typeof event.turnExecutionId !== "string") {
+        const turnExecutionId = this.turnExecutionIds.get(event.threadId);
+        if (turnExecutionId) args[0] = { ...event, turnExecutionId };
+      }
+    }
+    return super.emit(eventName, ...args);
+  }
 
   /** Returns the static Codex model catalog. Codex does not support dynamic model discovery. */
   async listModels(): Promise<ProviderModelInfo[]> {
@@ -923,6 +935,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    * The method returns immediately; events stream via the `event` EventEmitter channel.
    */
   async sendTurn(req: TurnRequest<"codex">): Promise<void> {
+    if (req.turnExecutionId) this.turnExecutionIds.set(req.threadId, req.turnExecutionId);
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.codex || "codex";
 

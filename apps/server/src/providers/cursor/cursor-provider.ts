@@ -281,6 +281,18 @@ export class CursorProvider
   readonly maxInputCharactersPerTurn = 4_000;
   /** Path B forker; calls this provider's runSideChannelQuery on a forked copy of the parent session. */
   readonly forker: SessionForker = new CleanForker(this);
+  private readonly turnExecutionIds = new Map<string, string>();
+
+  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
+    if (eventName === "event") {
+      const event = args[0] as { threadId?: unknown; turnExecutionId?: unknown } | undefined;
+      if (event && typeof event.threadId === "string" && typeof event.turnExecutionId !== "string") {
+        const turnExecutionId = this.turnExecutionIds.get(event.threadId);
+        if (turnExecutionId) args[0] = { ...event, turnExecutionId };
+      }
+    }
+    return super.emit(eventName, ...args);
+  }
 
   /**
    * Opens the throwaway ACP transport for {@link runSideChannelQuery}. Defaults
@@ -354,6 +366,7 @@ export class CursorProvider
 
   /** Queues an ACP `session/prompt` on the session subprocess (serialized per thread). */
   async sendTurn(req: TurnRequest<"cursor">): Promise<void> {
+    if (req.turnExecutionId) this.turnExecutionIds.set(req.threadId, req.turnExecutionId);
     void req.fallbackModel;
     void req.reasoningLevel;
 

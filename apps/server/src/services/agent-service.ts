@@ -1007,6 +1007,9 @@ export class AgentService {
       };
       dispatch.sendTurnInFlight = true;
       try {
+        if (typeof dispatch.turnRequest.turnExecutionId !== "string") {
+          throw new Error("Turn execution identity required at provider dispatch boundary");
+        }
         const sendTurn = this.mutationReservations.runIfOwned(
           threadId,
           reservationToken,
@@ -1621,7 +1624,13 @@ export class AgentService {
     // A user stop ends the turn. The finalizer flushes partial assistant text,
     // persists buffered tool calls (running ones inherit "cancelled"), captures
     // the snapshot, broadcasts turn.persisted, and clears per-turn state.
-    const finalize = this.finalizeTerminalTurn(threadId, "cancelled", "user stop");
+    const runtime = this.turnRuntime.snapshot(threadId);
+    const terminalized = runtime?.turnExecutionId
+      ? this.turnRuntime.terminalize(threadId, runtime.turnExecutionId, "cancelled")
+      : false;
+    const finalize = terminalized || runtime?.phase === "cancelled"
+      ? this.finalizeTerminalTurn(threadId, "cancelled", "user stop")
+      : null;
     try {
       const provider = this.providerRegistry.resolve(providerId);
       await provider.stopSession(sessionId);
@@ -3490,9 +3499,15 @@ ${userMessage}`;
   async stopAll(): Promise<void> {
     const ids = [...this.activeSessionIds];
     await Promise.all(
-      ids.map((threadId) =>
-        this.finalizeTerminalTurn(threadId, "cancelled", "shutdown") ?? Promise.resolve(),
-      ),
+      ids.map((threadId) => {
+        const runtime = this.turnRuntime.snapshot(threadId);
+        const terminalized = runtime?.turnExecutionId
+          ? this.turnRuntime.terminalize(threadId, runtime.turnExecutionId, "cancelled")
+          : false;
+        return (terminalized || runtime?.phase === "cancelled")
+          ? this.finalizeTerminalTurn(threadId, "cancelled", "shutdown") ?? Promise.resolve()
+          : Promise.resolve();
+      }),
     );
     for (const threadId of ids) {
       const sessionId = `mcode-${threadId}`;
