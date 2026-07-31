@@ -18,6 +18,7 @@ import type { MemoryPressureService } from "../memory-pressure-service.js";
 import type { TaskRepo } from "../../repositories/task-repo.js";
 import type { SettingsService } from "../settings-service.js";
 import type { ThreadService } from "../thread-service.js";
+import { EventEmitter } from "node:events";
 
 // Mock the broadcast transport so we can assert agent.event emissions
 // without a real WebSocket server.
@@ -66,7 +67,7 @@ function buildService({
   assertUsable?: ReturnType<typeof vi.fn>;
   resolveProvider?: ReturnType<typeof vi.fn>;
   threadStatus?: Thread["status"] | "idle" | "stopped";
-} = {}): AgentService {
+} = {}) {
   const thread = threadStatus === "idle" ? makeThread() : makeThread({ status: threadStatus as Thread["status"] });
 
   const threadRepo = {
@@ -85,7 +86,7 @@ function buildService({
   } as unknown as ThreadRepo;
 
   const workspaceRepo = {
-    findById: vi.fn(() => ({ id: "ws-1", path: "/workspace" })),
+    findById: vi.fn(() => ({ id: "ws-1", path: process.cwd() })),
   } as unknown as WorkspaceRepo;
 
   const messageRepo = {
@@ -96,7 +97,7 @@ function buildService({
   } as unknown as MessageRepo;
 
   const gitService = {
-    resolveWorkingDir: vi.fn(() => "/workspace"),
+    resolveWorkingDir: vi.fn(() => process.cwd()),
     listWorktrees: vi.fn(() => []),
   } as unknown as GitService;
 
@@ -104,8 +105,16 @@ function buildService({
     persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
   } as unknown as AttachmentService;
 
+  const providerStub = Object.assign(new EventEmitter(), {
+    id: "codex" as const,
+    supportsCompletion: true,
+    sessionForkOnResume: "unsupported" as const,
+    maxInputCharactersPerTurn: 16_000,
+    sendTurn: vi.fn(() => Promise.resolve()),
+  });
+
   const providerRegistry = {
-    resolve: resolveProvider,
+    resolve: resolveProvider.getMockImplementation() ? resolveProvider : vi.fn(() => providerStub),
     resolveAll: vi.fn(() => []),
     shutdown: vi.fn(),
   } as unknown as IProviderRegistry;
@@ -168,7 +177,7 @@ function buildService({
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as import("../../repositories/plan-question-answers-repo.js").PlanQuestionAnswersRepo;
 
-  return new AgentService(
+  const svc = new AgentService(
     threadRepo,
     workspaceRepo,
     messageRepo,
@@ -196,6 +205,7 @@ function buildService({
       ),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
   );
+  return { svc, threadRepo, messageRepo, providerStub, providerRegistry };
 }
 
 describe("AgentService.sendMessage — provider availability gate", () => {
@@ -209,7 +219,7 @@ describe("AgentService.sendMessage — provider availability gate", () => {
       throw new ProviderDisabledError("codex");
     });
 
-    const svc = buildService({ assertUsable, resolveProvider });
+    const { svc } = buildService({ assertUsable, resolveProvider });
 
     await expect(
       svc.sendMessage({
@@ -235,9 +245,9 @@ describe("AgentService.sendMessage — provider availability gate", () => {
     });
   });
 
-  it.each(["completed", "errored", "interrupted", "stopped"] as const)("rejects composer sends to %s threads before persistence", async (threadStatus) => {
+  it.each(["errored", "interrupted", "stopped", "archived", "deleted"] as const)("rejects composer sends to %s threads before persistence", async (threadStatus) => {
     const assertUsable = vi.fn();
-    const svc = buildService({ threadStatus, assertUsable });
+    const { svc } = buildService({ threadStatus, assertUsable });
 
     await expect(svc.sendMessage({
       threadId: THREAD_ID,
@@ -251,10 +261,49 @@ describe("AgentService.sendMessage — provider availability gate", () => {
     expect(assertUsable).not.toHaveBeenCalled();
   });
 
+  it("allows a direct follow-up to a completed thread through persistence and provider dispatch", async () => {
+    const { svc, threadRepo, messageRepo, providerStub } = buildService({ threadStatus: "completed" });
+
+    await svc.sendMessage({
+      threadId: THREAD_ID,
+      content: "Continue from the completed turn",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "codex",
+    });
+
+    expect(messageRepo.create).toHaveBeenCalled();
+    expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "active");
+    expect(providerStub.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a completed cross-thread target before persistence or provider side effects", async () => {
+    const assertUsable = vi.fn();
+    const { svc, threadRepo, messageRepo, providerStub } = buildService({ threadStatus: "completed", assertUsable });
+
+    await expect(svc.sendMessage({
+      threadId: THREAD_ID,
+      content: "Delegated follow-up must not resume a completed task",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "codex",
+      sourceThreadId: "source-thread",
+      originSourceTurnId: "source-turn",
+      sourceProviderId: "claude",
+    })).rejects.toThrow("terminal thread");
+
+    expect(assertUsable).not.toHaveBeenCalled();
+    expect(messageRepo.create).not.toHaveBeenCalled();
+    expect(threadRepo.updateStatus).not.toHaveBeenCalled();
+    expect(providerStub.sendTurn).not.toHaveBeenCalled();
+  });
+
   it("rejects incomplete cross-thread provenance before provider side effects", async () => {
     const assertUsable = vi.fn();
     const resolveProvider = vi.fn();
-    const svc = buildService({ assertUsable, resolveProvider });
+    const { svc } = buildService({ assertUsable, resolveProvider });
 
     await expect(svc.sendMessage({
       threadId: THREAD_ID,
