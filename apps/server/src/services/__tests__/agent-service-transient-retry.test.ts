@@ -567,6 +567,50 @@ describe("AgentService transient-failure auto-retry", () => {
     expect((sendTurn.mock.calls[1][0] as TurnRequest).resumeFrom).toBeUndefined();
   });
 
+  it("retries when a failed completion emits an identified transient Error", async () => {
+    const { service, sendTurn, providerEmitter, threadRepo } = buildService();
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const turnExecutionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
+
+    providerEmitter.emit("event", {
+      type: "error",
+      threadId: THREAD_ID,
+      error: "stream disconnected before completion: error sending request for url (http://127.0.0.1:3845/mcp)",
+      turnExecutionId,
+    });
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      outcome: "errored",
+      turnExecutionId,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(sendTurn).toHaveBeenCalledTimes(2);
+    expect((sendTurn.mock.calls[1][0] as TurnRequest).resumeFrom).toBeUndefined();
+    expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "errored");
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      turnExecutionId: (sendTurn.mock.calls[1][0] as TurnRequest).turnExecutionId,
+    });
+    expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
+  });
+
   it("swallows a failed attempt's TurnComplete during the retry window", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
     service.init();

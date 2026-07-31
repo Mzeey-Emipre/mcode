@@ -31,6 +31,7 @@ const TRANSIENT_SIGNATURES: readonly RegExp[] = [
   /\bETIMEDOUT\b/i,
   /\bsocket hang up\b/i,
   /\bfetch failed\b/i,
+  /\bstream disconnected before completion\b/i,
   /\btransport channel closed\b/i,
   /\bhttp\/request failed\b/i,
 ];
