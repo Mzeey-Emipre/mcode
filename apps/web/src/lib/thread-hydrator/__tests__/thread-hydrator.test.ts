@@ -872,6 +872,97 @@ describe("ThreadHydrator", () => {
     expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
   });
 
+  it("force refreshes authoritatively after an in-flight background prefetch", async () => {
+    const resident = createMockMessage({
+      id: "resident-message",
+      thread_id: THREAD_A,
+      content: "resident message",
+      sequence: 1,
+    });
+    const speculative = createMockMessage({
+      id: "speculative-message",
+      thread_id: THREAD_A,
+      content: "speculative background message",
+      sequence: 2,
+    });
+    const authoritative = createMockMessage({
+      id: "authoritative-message",
+      thread_id: THREAD_A,
+      content: "authoritative refresh message",
+      sequence: 3,
+    });
+    let resolveBackground!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    let resolveAuthoritative!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveBackground = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveAuthoritative = resolve;
+      }));
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_B,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map<string, ThreadRecord>([[
+        THREAD_A,
+        {
+          ...createEmptyThreadRecord(),
+          messages: [resident],
+          streaming: "current activity",
+          toolCalls: [
+            { id: "tc1", toolName: "bash", toolInput: {}, output: null, isError: false, isComplete: false },
+          ],
+        },
+      ]]),
+    });
+
+    const background = hydrator.hydrate(THREAD_A, "background");
+    await vi.waitFor(() => {
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    });
+
+    const force = hydrator.hydrate(THREAD_A, "active", { force: true });
+    await Promise.resolve();
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    expect(getTestActiveMessages()).toEqual([resident]);
+    expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
+    expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
+
+    resolveBackground({ messages: [resident, speculative], hasMore: false, narrativeByMessage: {} });
+    await vi.waitFor(() => {
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(2);
+    });
+    expect(mockTransport.loadConversationPage).toHaveBeenNthCalledWith(
+      1,
+      THREAD_A,
+      BACKGROUND_PREFETCH_LIMIT,
+    );
+    expect(mockTransport.loadConversationPage).toHaveBeenNthCalledWith(
+      2,
+      THREAD_A,
+      BACKGROUND_PREFETCH_LIMIT,
+    );
+    expect(getTestActiveMessages()).toEqual([resident]);
+    expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
+    expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
+
+    resolveAuthoritative({ messages: [resident, authoritative], hasMore: false, narrativeByMessage: {} });
+    await Promise.all([background, force]);
+
+    expect(getTestActiveMessages()).toEqual([resident, authoritative]);
+    expect(getTestActiveMessages()).not.toContainEqual(speculative);
+    expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
+    expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
+  });
+
   it("does not let late resident permission hydration replace a live request", async () => {
     let resolvePending!: (value: Array<{
       requestId: string;

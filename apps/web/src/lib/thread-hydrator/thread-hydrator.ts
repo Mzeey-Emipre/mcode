@@ -637,6 +637,17 @@ export class ThreadHydrator {
 
       if (this.deps.getState().currentThreadId !== threadId) return;
 
+      if (opts?.force) {
+        await this.fetchAndCommit(threadId, opts, hasResidentContent
+          ? {
+              skipPrepare: true,
+              fetchLimit: BACKGROUND_PREFETCH_LIMIT,
+              prefetchEarlierHistory: false,
+            }
+          : { skipPrepare: true });
+        return;
+      }
+
       const cached = getCachedRecord(threadId);
       if (cached) {
         const resident = this.deps.getState().records.get(threadId);
