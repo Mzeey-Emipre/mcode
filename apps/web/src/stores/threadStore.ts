@@ -732,7 +732,6 @@ export function extractPendingPlanQuestions(
   }
 }
 
-/** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
 /** One coalesced `session.textDelta` span for rAF flushing; preserves missing `isFinalResponse` for legacy fallback behavior. */
 type PendingTextChunk = {
   delta: string;
@@ -821,6 +820,7 @@ function projectToolProgress(
   return changed ? updated : undefined;
 }
 
+/** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
 export const useThreadStore = create<ThreadState>((set, get) => {
   let textDeltaFlushRaf: number | null = null;
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
@@ -3179,7 +3179,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             tokens_used: null,
             attachments: null,
           };
-          get().addMessage(systemMsg);
+          patchRec(threadId, (rec) => {
+            const { messages: capped, evicted } = capMessages([...rec.messages, systemMsg]);
+            return {
+              messages: capped,
+              ...(evicted ? { hasMoreMessages: true } : {}),
+            };
+          });
         }
       }
       set((state) => {
