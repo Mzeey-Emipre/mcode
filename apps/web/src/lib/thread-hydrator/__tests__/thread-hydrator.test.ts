@@ -823,6 +823,55 @@ describe("ThreadHydrator", () => {
     expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
   });
 
+  it("force refreshes a running resident layer without wiping live state", async () => {
+    let resolveFetch!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    const freshMessage = createMockMessage({
+      id: "fresh-message",
+      thread_id: THREAD_A,
+      content: "fresh authoritative message",
+      sequence: 2,
+    });
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_B,
+      runningThreadIds: new Set([THREAD_A]),
+      records: new Map<string, ThreadRecord>([[
+        THREAD_A,
+        {
+          ...createEmptyThreadRecord(),
+          messages: [msgA],
+          streaming: "current activity",
+          toolCalls: [
+            { id: "tc1", toolName: "bash", toolInput: {}, output: null, isError: false, isComplete: false },
+          ],
+        },
+      ]]),
+    });
+
+    const hydrate = hydrator.hydrate(THREAD_A, "active", { force: true });
+    await vi.waitFor(() => {
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledWith(THREAD_A, BACKGROUND_PREFETCH_LIMIT);
+    });
+    expect(getTestActiveMessages()).toEqual([msgA]);
+    expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
+    expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
+
+    resolveFetch({ messages: [msgA, freshMessage], hasMore: false, narrativeByMessage: {} });
+    await hydrate;
+
+    expect(getTestActiveMessages()).toEqual([msgA, freshMessage]);
+    expect(getTestThreadStreaming(THREAD_A)).toBe("current activity");
+    expect(getTestThreadToolCalls(THREAD_A)).toHaveLength(1);
+  });
+
   it("does not let late resident permission hydration replace a live request", async () => {
     let resolvePending!: (value: Array<{
       requestId: string;

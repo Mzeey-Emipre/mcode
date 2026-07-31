@@ -536,7 +536,7 @@ export class ThreadHydrator {
 
     if (residentContent) {
       this.activateResidentLayer(threadId);
-      if (this.deps.getState().runningThreadIds.has(threadId)) {
+      if (this.deps.getState().runningThreadIds.has(threadId) && !opts?.force) {
         const expectedEpoch = getThreadRecord(this.deps.getState().records, threadId).loadEpoch;
         this.synchronizeConversation(threadId);
         void this.refreshThreadGoal(threadId, expectedEpoch);
