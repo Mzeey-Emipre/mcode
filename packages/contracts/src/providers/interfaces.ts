@@ -57,6 +57,8 @@ export interface ProviderOptionsByProvider {
  * between Turns. Provider-specific knobs live only in `providerOptions`.
  */
 export interface TurnRequest<P extends ProviderId = ProviderId> {
+  /** Mcode-owned identity for this logical turn. */
+  turnExecutionId?: string;
   /** SDK session name, currently `mcode-${threadId}`. */
   sessionId: string;
   /** Workspace that owns the thread and any visible-browser automation scope. */

@@ -9,6 +9,7 @@ import type {
   ProviderUsageInfo,
   GoalState,
   TurnFileEffectSummary,
+  TurnRuntimePhase,
 } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
@@ -79,6 +80,10 @@ export interface ThreadForkMode {
  * Collapses the former ~30 parallel `Record<string, X>` maps and active-thread mirror fields.
  */
 export interface ThreadRecord {
+  /** Mcode-owned identity for the current logical turn. */
+  turnExecutionId: string | null;
+  /** Authoritative lifecycle phase restored from server runtime snapshots. */
+  runtimePhase: TurnRuntimePhase;
   messages: Message[];
   loading: boolean;
   oldestLoadedSequence: number;
@@ -145,6 +150,8 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
 /** Returns a fresh empty {@link ThreadRecord} for lazy Map insertion. */
 export function createEmptyThreadRecord(): ThreadRecord {
   return {
+    turnExecutionId: null,
+    runtimePhase: "idle",
     messages: [],
     loading: false,
     oldestLoadedSequence: 0,

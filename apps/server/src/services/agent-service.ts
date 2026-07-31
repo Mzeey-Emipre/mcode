@@ -80,6 +80,7 @@ import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js
 import { TurnErrorPolicy } from "./turn-error-policy.js";
 import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js";
 import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
+import { TurnRuntimeRegistry } from "./turn-runtime.js";
 import type { TurnOutcome } from "./turn-outcome.js";
 
 /**
@@ -245,6 +246,8 @@ function parseHarnessTaskId(output: string): string | null {
 /** Orchestrates agent sessions, message sending, and event forwarding. */
 @injectable()
 export class AgentService {
+  /** Canonical per-thread execution identity and lifecycle authority. */
+  private readonly turnRuntime = new TurnRuntimeRegistry();
   private readonly activeSessionIds = new Set<string>();
   private readonly nativeGoalRefreshInFlight = new Set<string>();
   private initialized = false;
@@ -811,11 +814,13 @@ export class AgentService {
     this.threadRepo.updateStatus(threadId, "active");
 
     const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
+    const turnExecutionId = this.turnRuntime.start(threadId).turnExecutionId!;
     // Emit before baseline I/O so the UI enters running state immediately. AgentService's
     // provider listener initializes the tracker synchronously before the broadcaster reads its id.
     (resolvedProvider as unknown as import("events").EventEmitter).emit("event", {
       type: AgentEventType.TurnStarted,
       threadId,
+      turnExecutionId,
     } satisfies AgentEvent);
 
     await this.ensureTurnFileTracking(threadId, cwd);
@@ -951,6 +956,7 @@ export class AgentService {
     this.retryingThreads.add(threadId);
     const baseTurnRequest = {
       sessionId: sessionName,
+      turnExecutionId,
       workspaceId: workspace.id,
       threadId,
       message: providerMessage,

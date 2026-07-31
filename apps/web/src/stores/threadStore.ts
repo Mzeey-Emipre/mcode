@@ -95,6 +95,8 @@ interface ThreadState {
   stopAgent: (threadId: string) => Promise<void>;
   /** Replace runningThreadIds with the authoritative server snapshot. Called on WS (re)connect. */
   hydrateRunningThreads: (ids: string[]) => void;
+  /** Restore authoritative per-thread execution snapshots during reconnect. */
+  hydrateThreadRuntimes: (snapshots: import("@mcode/contracts").TurnRuntimeSnapshot[]) => void;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
   /** Deactivate the selected conversation and invalidate any active hydration commit. */
@@ -1465,7 +1467,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       for (const id of current) {
         if (!nextIds.has(id)) {
           resetPendingIds.add(id);
-          records = patchThreadRecord(records, id, resetTurnEphemeral(getThreadRecord(records, id)));
+          records = patchThreadRecord(records, id, {
+            ...resetTurnEphemeral(getThreadRecord(records, id)),
+            runtimePhase: "idle",
+          });
         }
       }
       for (const id of ids) {
@@ -1475,11 +1480,17 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           resetPendingIds.add(id);
           records = patchThreadRecord(records, id, {
             ...resetTurnEphemeral(rec),
+            turnExecutionId: rec.turnExecutionId ?? crypto.randomUUID(),
+            runtimePhase: "running",
             currentTurnResponseKey: createTurnResponseKey(id),
             agentStartTime: rec.agentStartTime ?? now,
           });
-        } else if (rec.agentStartTime === undefined) {
-          records = patchThreadRecord(records, id, { agentStartTime: now });
+        } else if (rec.agentStartTime === undefined || rec.runtimePhase !== "running") {
+          records = patchThreadRecord(records, id, {
+            agentStartTime: now,
+            turnExecutionId: rec.turnExecutionId ?? crypto.randomUUID(),
+            runtimePhase: "running",
+          });
         }
       }
       return { runningThreadIds: new Set(ids), records };
@@ -1488,6 +1499,23 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       invalidateDeferredNarrativeEvents(threadId);
       threadHydrator.invalidatePermissionSnapshots(threadId);
     }
+  },
+
+  hydrateThreadRuntimes: (snapshots) => {
+    const running = snapshots
+      .filter((snapshot) => snapshot.phase === "running" || snapshot.phase === "finalizing")
+      .map((snapshot) => snapshot.threadId);
+    set((state) => {
+      let records = state.records;
+      for (const snapshot of snapshots) {
+        records = patchThreadRecord(records, snapshot.threadId, {
+          turnExecutionId: snapshot.turnExecutionId,
+          runtimePhase: snapshot.phase,
+          ...(snapshot.phase === "running" && { agentStartTime: getThreadRecord(records, snapshot.threadId).agentStartTime ?? Date.now() }),
+        });
+      }
+      return { runningThreadIds: new Set(running), records };
+    });
   },
 
   /** Append a single message to the current thread's message list. */
@@ -1987,6 +2015,21 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    */
   handleAgentEvent: (event) => {
     const { threadId } = event;
+    const runtimeRecord = getRec(threadId);
+    const runtimeActive = runtimeRecord.runtimePhase === "running"
+      || get().runningThreadIds.has(threadId)
+      || runtimeRecord.streaming.length > 0;
+    const incomingExecutionId = typeof event.turnExecutionId === "string"
+      ? event.turnExecutionId
+      : undefined;
+    if (event.type === "turnStarted") {
+      if (runtimeRecord.runtimePhase === "running"
+        && runtimeRecord.turnExecutionId
+        && incomingExecutionId
+        && runtimeRecord.turnExecutionId !== incomingExecutionId) return;
+    } else if (incomingExecutionId
+      && runtimeRecord.turnExecutionId
+      && incomingExecutionId !== runtimeRecord.turnExecutionId) return;
     const eventEpoch = typeof event.epoch === "string" ? event.epoch : undefined;
     const eventSequence = typeof event.sequence === "number" && event.sequence > 0
       ? event.sequence
@@ -2161,6 +2204,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           runningThreadIds: next,
           records: patchThreadRecord(state.records, threadId, {
             agentStartTime: Date.now(),
+            turnExecutionId: incomingExecutionId ?? rec.turnExecutionId ?? crypto.randomUUID(),
+            runtimePhase: "running",
             fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
             ...resetTurnEphemeral(rec),
             fileEffectTurnId,
@@ -2794,6 +2839,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "turnComplete" || event.type === "ended") {
+      if (!runtimeActive
+        || (incomingExecutionId && runtimeRecord.turnExecutionId !== incomingExecutionId)) return;
       useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(threadId);
       const turnComplete = event.type === "turnComplete" ? event : undefined;
       const costUsd = turnComplete?.costUsd ?? null;
@@ -2867,6 +2914,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const basePatch = {
             streaming: "",
             streamingPreview: "",
+            runtimePhase: "completed" as const,
             currentTurnMessageId: message.id,
             ...queuePendingTurnPersistMessage(rec, message.id),
             currentTurnResponseKey: nextLiveKey,
@@ -2914,6 +2962,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           const basePatch = {
             streaming: "",
             streamingPreview: "",
+            runtimePhase: "completed" as const,
             toolCalls: completedCalls,
             permissions: [] as StoredPermission[],
             rateLimit: undefined,
@@ -3235,6 +3284,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "error") {
+      if (!runtimeActive
+        || (incomingExecutionId && runtimeRecord.turnExecutionId !== incomingExecutionId)) return;
       const errorMsg = typeof event.error === "string" ? event.error : String(event.error ?? "Unknown error");
       const errorMessage: Message = {
         id: crypto.randomUUID(),
@@ -3255,6 +3306,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         nextRunning.delete(threadId);
         const basePatch = {
           error: errorMsg,
+          runtimePhase: "errored" as const,
           streaming: "",
           streamingPreview: "",
           agentStartTime: undefined,

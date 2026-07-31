@@ -36,6 +36,17 @@ export { WorkspaceSchema, WorkspaceEnrichmentSchema } from "./models/workspace.j
 export type { Workspace, WorkspaceEnrichment } from "./models/workspace.js";
 
 export {
+  TurnExecutionIdSchema,
+  TurnRuntimePhaseSchema,
+  TurnRuntimeSnapshotSchema,
+} from "./models/turn-runtime.js";
+export type {
+  TurnExecutionId,
+  TurnRuntimePhase,
+  TurnRuntimeSnapshot,
+} from "./models/turn-runtime.js";
+
+export {
   THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH,
   WORKSPACE_SEARCH_QUERY_MAX_LENGTH,
   WORKSPACE_SEARCH_LIMIT_MAX,
