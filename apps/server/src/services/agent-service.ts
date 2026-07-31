@@ -381,6 +381,8 @@ export class AgentService {
   private planCapturedThisTurn = new Set<string>();
   /** Reservation token attached to each active provider turn. */
   private readonly activeMutationReservations = new Map<string, string>();
+  /** Single-flight user stop operation per thread. */
+  private readonly stopOperationsByThread = new Map<string, Promise<AgentStopResult>>();
   /** Monotonic turn generation per thread, including turns that failed setup. */
   private readonly turnGenerations = new Map<string, number>();
   private readonly mutationReservations: ThreadControlMutationReservationService;
@@ -653,10 +655,17 @@ export class AgentService {
       throw new Error(`Thread ${threadId} already has an active agent session`);
     }
     let reservationToken: string | null = null;
+    let reservedExecutionId: string | null = null;
     const releaseReservedSlot = () => {
       if (!activeSlotReserved) return;
       activeSlotReserved = false;
-      if (this.activeSessionIds.delete(threadId)) {
+      const currentRuntime = this.turnRuntime.snapshot(threadId);
+      const ownsRuntime = reservedExecutionId !== null
+        && currentRuntime?.turnExecutionId === reservedExecutionId;
+      const ownsMutation = reservationToken !== null
+        && this.activeMutationReservations.get(threadId) === reservationToken;
+      const ownsUnstartedSlot = reservedExecutionId === null && reservationToken === null;
+      if ((ownsRuntime || ownsMutation || ownsUnstartedSlot) && this.activeSessionIds.delete(threadId)) {
         this.memoryPressureService.markIdle(threadId);
       }
       if (reservationToken && this.activeMutationReservations.get(threadId) === reservationToken) {
@@ -676,8 +685,21 @@ export class AgentService {
     this.activeMutationReservations.set(threadId, reservationToken);
     const generation = (this.turnGenerations.get(threadId) ?? 0) + 1;
     this.turnGenerations.set(threadId, generation);
+    const turnExecutionId = this.turnRuntime.start(threadId).turnExecutionId!;
+    reservedExecutionId = turnExecutionId;
 
     let commandDispatched = false;
+    const rollbackCommand = async (): Promise<void> => {
+      if (!commandDispatched || pendingRollback === null) return;
+      try {
+        await pendingRollback();
+      } catch (rollbackErr) {
+        logger.warn("Failed to roll back command side effect after send setup failure", {
+          threadId,
+          error: rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+        });
+      }
+    };
 
     try {
       const cwd = this.gitService.resolveWorkingDir(
@@ -816,10 +838,11 @@ export class AgentService {
       }
     }
 
-    this.threadRepo.updateStatus(threadId, "active");
-
     const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
-    const turnExecutionId = this.turnRuntime.start(threadId).turnExecutionId!;
+    if (!this.ownsActiveTurnExecution(threadId, turnExecutionId, reservationToken)) {
+      return;
+    }
+    this.threadRepo.updateStatus(threadId, "active");
     // Emit before baseline I/O so the UI enters running state immediately. AgentService's
     // provider listener initializes the tracker synchronously before the broadcaster reads its id.
     (resolvedProvider as unknown as import("events").EventEmitter).emit("event", {
@@ -922,7 +945,7 @@ export class AgentService {
     // effect active. Only set for a rewrite outcome that supplied onDispatch.
     if (pendingDispatch !== null) {
       if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
-        throw new Error("Thread mutation reservation is no longer owned");
+        return;
       }
       // Flag the attempt before running it so the catch-block rollback fires
       // even if the (possibly async) side effect itself throws. Awaited because
@@ -930,6 +953,10 @@ export class AgentService {
       // install must complete before the provider turn is dispatched.
       commandDispatched = true;
       await pendingDispatch();
+      if (!this.ownsActiveTurnExecution(threadId, turnExecutionId, reservationToken)) {
+        await rollbackCommand();
+        return;
+      }
       logger.info("Command side effect installed; dispatching to provider", {
         threadId,
       });
@@ -989,7 +1016,7 @@ export class AgentService {
       });
     }
     if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
-      throw new Error("Thread mutation reservation is no longer owned");
+      return;
     }
     this.turnRetryDispatchByThread.set(threadId, {
       attempt: 1,
@@ -1026,9 +1053,7 @@ export class AgentService {
             return resolvedProvider.sendTurn(dispatch.turnRequest);
           },
         );
-        if (sendTurn === undefined) {
-          throw new Error("Thread mutation reservation is no longer owned");
-        }
+        if (sendTurn === undefined) return;
         await sendTurn;
         dispatch.sendTurnInFlight = false;
         logger.info("Message sent via provider", {
@@ -1052,17 +1077,21 @@ export class AgentService {
       }
     }
     } catch (err) {
-      releaseReservedSlot();
-      if (commandDispatched && pendingRollback !== null) {
-        try {
-          pendingRollback();
-        } catch (rollbackErr) {
-          logger.warn("Failed to roll back command side effect after send setup failure", {
-            threadId,
-            error: rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
-          });
-        }
+      const runtime = this.turnRuntime.snapshot(threadId);
+      const cancelledByStop = runtime?.turnExecutionId === turnExecutionId
+        && runtime.phase === "cancelled"
+        && !this.mutationReservations.owns(threadId, reservationToken, "activeTurn");
+      if (cancelledByStop) {
+        await rollbackCommand();
+        releaseReservedSlot();
+        return;
       }
+      if (this.turnRuntime.terminalize(threadId, turnExecutionId, "errored")) {
+        await (this.finalizeTerminalTurn(threadId, "errored", "send setup failure") ?? Promise.resolve());
+        this.disarmTurnRetryWindow(threadId);
+      }
+      releaseReservedSlot();
+      await rollbackCommand();
       throw err;
     }
   }
@@ -1617,8 +1646,23 @@ export class AgentService {
     return { ...thread, ...(threadWarnings?.length ? { warnings: threadWarnings } : {}) };
   }
 
-  /** Stop exact active turn, preserving provider failure as retryable RPC error. */
+  /** Stop exact active turn, sharing one in-flight operation per thread. */
   async stopSession(threadId: string): Promise<AgentStopResult> {
+    const existing = this.stopOperationsByThread.get(threadId);
+    if (existing) return existing;
+    const operation = this.stopSessionInternal(threadId);
+    this.stopOperationsByThread.set(threadId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.stopOperationsByThread.get(threadId) === operation) {
+        this.stopOperationsByThread.delete(threadId);
+      }
+    }
+  }
+
+  /** Stop exact active turn, preserving provider failure as retryable RPC error. */
+  private async stopSessionInternal(threadId: string): Promise<AgentStopResult> {
     const sessionId = `mcode-${threadId}`;
     const thread = this.threadRepo.findById(threadId);
     const providerId = (thread?.provider ?? "claude") as ProviderId;
@@ -2147,6 +2191,18 @@ export class AgentService {
       this.activeMutationReservations.delete(threadId);
       this.mutationReservations.release(threadId, token);
     }
+  }
+
+  /** Check exact runtime and reservation ownership before setup crosses an async boundary. */
+  private ownsActiveTurnExecution(
+    threadId: string,
+    turnExecutionId: string,
+    reservationToken: string,
+  ): boolean {
+    const runtime = this.turnRuntime.snapshot(threadId);
+    return runtime?.turnExecutionId === turnExecutionId
+      && (runtime.phase === "running" || runtime.phase === "finalizing")
+      && this.mutationReservations.owns(threadId, reservationToken, "activeTurn");
   }
 
   /** Return a retry dispatch only while its token and generation still own the thread. */
