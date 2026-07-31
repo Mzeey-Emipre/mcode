@@ -528,6 +528,28 @@ function nativeThreadIdFromParams(params: Record<string, unknown> | undefined): 
     : undefined;
 }
 
+type NativeExecutionAssignment = "inserted" | "same" | "conflict";
+
+function assignNativeExecution(
+  map: Map<string, string>,
+  key: string,
+  executionId: string,
+): NativeExecutionAssignment {
+  const existingExecutionId = map.get(key);
+  if (existingExecutionId === undefined) {
+    map.set(key, executionId);
+    return "inserted";
+  }
+  if (existingExecutionId === executionId) return "same";
+
+  logger.warn("Codex native execution mapping conflict", {
+    key,
+    existingExecutionId,
+    executionId,
+  });
+  return "conflict";
+}
+
 function pruneExecutionMap(map: Map<string, string>): void {
   while (map.size > 128) {
     const oldest = map.keys().next().value as string | undefined;
@@ -1227,20 +1249,21 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       const nativeTurnId = nativeTurnIdFromParams(n.params);
       if (entry && n.method === "turn/started") {
         const executionId = entry.nextTurnExecutionId ?? entry.activeParentTurnExecutionId;
+        let turnAssignment: NativeExecutionAssignment | undefined;
         if (executionId) {
           entry.activeParentTurnExecutionId = executionId;
-          if (nativeThreadId) entry.nativeThreadExecutionIds.set(nativeThreadId, executionId);
-          if (nativeTurnId) entry.turnExecutionIdsByNativeTurn.set(nativeTurnId, executionId);
+          if (nativeThreadId) assignNativeExecution(entry.nativeThreadExecutionIds, nativeThreadId, executionId);
+          if (nativeTurnId) turnAssignment = assignNativeExecution(entry.turnExecutionIdsByNativeTurn, nativeTurnId, executionId);
           pruneExecutionMap(entry.nativeThreadExecutionIds);
           pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
         }
         if (mainNotification) {
-          if (nativeTurnId) entry.pendingTurnId = nativeTurnId;
+          if (nativeTurnId && turnAssignment !== "conflict") entry.pendingTurnId = nativeTurnId;
           entry.nextTurnExecutionId = undefined;
           entry.childMetadataFetches.clear();
         } else if (entry.activeParentTurnExecutionId) {
-          if (nativeThreadId) entry.nativeThreadExecutionIds.set(nativeThreadId, entry.activeParentTurnExecutionId);
-          if (nativeTurnId) entry.turnExecutionIdsByNativeTurn.set(nativeTurnId, entry.activeParentTurnExecutionId);
+          if (nativeThreadId) assignNativeExecution(entry.nativeThreadExecutionIds, nativeThreadId, entry.activeParentTurnExecutionId);
+          if (nativeTurnId) assignNativeExecution(entry.turnExecutionIdsByNativeTurn, nativeTurnId, entry.activeParentTurnExecutionId);
           pruneExecutionMap(entry.nativeThreadExecutionIds);
           pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
         }
@@ -1248,7 +1271,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       if (server.threadId) {
         mapper.setMainCodexThreadId(server.threadId);
         if (entry?.activeParentTurnExecutionId) {
-          entry.nativeThreadExecutionIds.set(server.threadId, entry.activeParentTurnExecutionId);
+          assignNativeExecution(entry.nativeThreadExecutionIds, server.threadId, entry.activeParentTurnExecutionId);
           pruneExecutionMap(entry.nativeThreadExecutionIds);
         }
       }

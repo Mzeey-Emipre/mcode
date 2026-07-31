@@ -373,4 +373,96 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
 
     expect(events.some((event) => event.turnExecutionId === "exec-b")).toBe(true);
   });
+
+  it("keeps known native A mappings immutable after B starts", async () => {
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-origin-immutable", "origin-immutable");
+
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-a", turn: { id: "child-turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "turn/completed",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-origin-immutable",
+      workspaceId: "workspace-test",
+      threadId: "origin-immutable",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(sendTurnMock).toHaveBeenCalledTimes(2);
+    (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+
+    // Replay known A lifecycle ids after B is active. These duplicates must
+    // remain attributed to A and never overwrite either native map.
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "sdk-thread-1", turnId: "turn-a", delta: "late A" },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-a", turn: { id: "child-turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-a", turnId: "child-turn-a", delta: "late child A" },
+    });
+    entry.server.emit("notification", {
+      method: "turn/completed",
+      params: { threadId: "child-a", turn: { id: "child-turn-a", status: "completed" } },
+    });
+
+    expect(entry.pendingTurnId).toBe("turn-b");
+    const nativeMaps = entry as PoolEntry & {
+      turnExecutionIdsByNativeTurn: Map<string, string>;
+      nativeThreadExecutionIds: Map<string, string>;
+    };
+    expect(nativeMaps.turnExecutionIdsByNativeTurn.get("turn-a")).toBe("exec-mcode-origin-immutable");
+    expect(nativeMaps.turnExecutionIdsByNativeTurn.get("child-turn-a")).toBe("exec-mcode-origin-immutable");
+    expect(nativeMaps.nativeThreadExecutionIds.get("child-a")).toBe("exec-mcode-origin-immutable");
+
+    entry.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "sdk-thread-1", turnId: "turn-b", delta: "B" },
+    });
+    entry.server.emit("notification", {
+      method: "turn/completed",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const lateA = events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "late A");
+    const bText = events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "B");
+    expect(lateA?.turnExecutionId).toBe("exec-mcode-origin-immutable");
+    expect(bText?.turnExecutionId).toBe("exec-b");
+    expect(events.filter((event) => event.type === AgentEventType.Ended).at(-1)?.turnExecutionId).toBe("exec-b");
+  });
 });
