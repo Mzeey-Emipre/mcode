@@ -223,18 +223,6 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
   readonly maxInputCharactersPerTurn = 16_000;
   /** Path B forker; calls this provider's throwaway SDK side channel. */
   readonly forker: SessionForker = new CleanForker(this);
-  private readonly turnExecutionIds = new Map<string, string>();
-
-  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
-    if (eventName === "event") {
-      const event = args[0] as { threadId?: unknown; turnExecutionId?: unknown } | undefined;
-      if (event && typeof event.threadId === "string" && typeof event.turnExecutionId !== "string") {
-        const turnExecutionId = this.turnExecutionIds.get(event.threadId);
-        if (turnExecutionId) args[0] = { ...event, turnExecutionId };
-      }
-    }
-    return super.emit(eventName, ...args);
-  }
 
   private client: CopilotClient | null = null;
   private lastCliPath: string | undefined;
@@ -256,7 +244,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
    * state, so the turn message and agent routing are staged here keyed by
    * sessionId.
    */
-  private pendingSpawnTurns = new Map<string, { message: string; model?: string; copilotAgent?: string }>();
+  private pendingSpawnTurns = new Map<string, { message: string; model?: string; copilotAgent?: string; turnExecutionId: string }>();
   /** Browser scope staged only until a fresh normal SDK session starts. */
   private pendingBrowserAccess = new Map<
     string,
@@ -749,7 +737,6 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
   /** Start or continue a session by sending a message via the Copilot SDK. When `copilotAgent` is provided, routes the session to the appropriate built-in mode or custom agent before sending. */
   async sendTurn(req: TurnRequest<"copilot">): Promise<void> {
-    if (req.turnExecutionId) this.turnExecutionIds.set(req.threadId, req.turnExecutionId);
     const previousSend = this.sendLocks.get(req.sessionId) ?? Promise.resolve();
     let releaseSend!: () => void;
     const currentSend = new Promise<void>((resolve) => {
@@ -791,7 +778,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       copilotAgent: req.providerOptions.agent,
     };
     try {
-      await this.doSendMessage(params);
+      await this.doSendMessage(params, req.turnExecutionId!);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       logger.error("CopilotProvider sendMessage error", {
@@ -811,8 +798,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         const userMsg =
           "GitHub Copilot CLI exited unexpectedly.\n\n" +
           "Ensure you are authenticated: run `gh auth login` and confirm you have an active GitHub Copilot subscription.";
-        this.emit("event", { type: "error", threadId, error: userMsg } satisfies AgentEvent);
-        this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+        this.emit("event", { type: "error", threadId, error: userMsg, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
+        this.emit("event", { type: "ended", threadId, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
         return;
       }
 
@@ -821,8 +808,8 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
           undefined,
           createNodeResolverIO(this.envService.getEnv(), process.platform),
         );
-        this.emit("event", { type: "error", threadId, error: userMsg } satisfies AgentEvent);
-        this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+        this.emit("event", { type: "error", threadId, error: userMsg, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
+        this.emit("event", { type: "ended", threadId, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
         return;
       }
 
@@ -850,17 +837,18 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     reasoningLevel?: ReasoningLevel;
     /** Copilot sub-agent name. Built-in modes: "interactive" | "plan" | "autopilot". Custom: any YAML agent name. */
     copilotAgent?: string;
-  }): Promise<void> {
+  }, turnExecutionId: string): Promise<void> {
     await this.refreshClient();
 
     const { sessionId, message, cwd, model, permissionMode, resume, copilotAgent } = params;
     const threadId = this.toThreadId(sessionId);
+    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
 
     // The CLI could not be resolved during refreshClient; surface the resolver's
     // install message via the existing error seam (mirrors Codex's abort-before-spawn).
     if (this.lastResolution?.source === "not-found") {
-      this.emit("event", { type: "error", threadId, error: this.lastResolution.message } satisfies AgentEvent);
-      this.emit("event", { type: "ended", threadId } satisfies AgentEvent);
+      emitTurnEvent({ type: "error", threadId, error: this.lastResolution.message } satisfies AgentEvent);
+      emitTurnEvent({ type: "ended", threadId } satisfies AgentEvent);
       return;
     }
 
@@ -896,7 +884,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // fresh session correctly. The turn itself is run here after `acquire`
     // (uniformly for fresh and reuse paths) so it never races the runtime's
     // post-spawn pool write.
-    this.pendingSpawnTurns.set(sessionId, { message, model, copilotAgent });
+    this.pendingSpawnTurns.set(sessionId, { message, model, copilotAgent, turnExecutionId });
 
     let state: CopilotSessionState;
     try {
@@ -954,7 +942,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
     // Run the turn. Sending a new message on an existing session implicitly
     // aborts any in-flight turn; the prior runTurn promise resolves on idle.
-    void this.runTurn(sessionId, threadId, state.session, message);
+    void this.runTurn(sessionId, threadId, state.session, message, turnExecutionId);
   }
 
   /**
@@ -977,6 +965,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
     const staged = this.pendingSpawnTurns.get(sessionId);
     const copilotAgent = staged?.copilotAgent;
+    const stagedExecutionId = staged?.turnExecutionId;
     const browserAccess = this.pendingBrowserAccess.get(sessionId);
     const browserScope = browserAccess?.scope;
     const browserGrant = browserAccess
@@ -1102,7 +1091,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       if (this.pendingStops.has(sessionId)) {
         logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
         session.disconnect().catch(() => {});
-        this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+        this.emit("event", {
+          type: AgentEventType.Ended,
+          threadId,
+          ...(stagedExecutionId ? { turnExecutionId: stagedExecutionId } : {}),
+        } satisfies AgentEvent);
       }
 
       return { state, pids: [] };
@@ -1179,7 +1172,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     threadId: string,
     session: CopilotSession,
     message: string,
+    turnExecutionId: string,
   ): Promise<void> {
+    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
     // Mark the session busy so the runtime's idle-eviction guard spares it for
     // the duration of the turn (Copilot has no native busy signal).
     const turnState = this.runtime.get(sessionId);
@@ -1209,7 +1204,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
             if (entry) entry.lastUsedAt = Date.now();
             this.runtime.recordUsage(sessionId);
 
-            this.emit("event", {
+            emitTurnEvent({
               type: "textDelta",
               threadId,
               delta: event.data.deltaContent,
@@ -1230,7 +1225,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
             if (event.data.phase === "thinking") return;
             const content = event.data.content;
             if (!content) return;
-            this.emit("event", {
+            emitTurnEvent({
               type: "message",
               threadId,
               content,
@@ -1244,7 +1239,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
           session.on("tool.execution_start", (event) => {
             const { toolCallId, toolName, arguments: toolArgs } = event.data;
             toolStartTimes.set(toolCallId, Date.now());
-            this.emit("event", {
+            emitTurnEvent({
               type: "toolUse",
               threadId,
               toolCallId,
@@ -1259,7 +1254,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
           session.on("tool.execution_complete", (event) => {
             const { toolCallId, success, result, error } = event.data;
             toolStartTimes.delete(toolCallId);
-            this.emit("event", {
+            emitTurnEvent({
               type: "toolResult",
               threadId,
               toolCallId,
@@ -1282,7 +1277,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
               toolCallId,
               progress: event.data.progressMessage,
             });
-            this.emit("event", {
+            emitTurnEvent({
               type: "toolProgress",
               threadId,
               // toolName is not provided in tool.execution_progress; omit gracefully
@@ -1301,7 +1296,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
               currentTokens: number;
             };
             this.contextWindowBySession.set(sessionId, tokenLimit);
-            this.emit("event", {
+            emitTurnEvent({
               type: "contextEstimate",
               threadId,
               tokensIn: currentTokens,
@@ -1334,7 +1329,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
             // Quota updates are safe to emit immediately (they only update
             // usage display, not running state).
             if (quotaSnapshots && typeof quotaSnapshots === "object") {
-              this.emit("event", {
+              emitTurnEvent({
                 type: AgentEventType.QuotaUpdate,
                 threadId,
                 providerId: "copilot",
@@ -1351,7 +1346,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         // busy guard does not block teardown.
         unsubscribers.push(
           session.on("session.error", (event) => {
-            this.emit("event", {
+            emitTurnEvent({
               type: "error",
               threadId,
               error: event.data.message,
@@ -1367,7 +1362,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         // session.compaction_start - context window compaction beginning
         unsubscribers.push(
           session.on("session.compaction_start", () => {
-            this.emit("event", {
+            emitTurnEvent({
               type: "compacting",
               threadId,
               active: true,
@@ -1379,13 +1374,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         unsubscribers.push(
           session.on("session.compaction_complete", (event) => {
             if (event.data.summaryContent) {
-              this.emit("event", {
+              emitTurnEvent({
                 type: "compactSummary",
                 threadId,
                 summary: event.data.summaryContent,
               } satisfies AgentEvent);
             }
-            this.emit("event", {
+            emitTurnEvent({
               type: "compacting",
               threadId,
               active: false,
@@ -1400,7 +1395,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         unsubscribers.push(
           session.on("session.idle", () => {
             const contextWindow = this.contextWindowBySession.get(sessionId);
-            this.emit("event", {
+            emitTurnEvent({
               type: AgentEventType.TurnComplete,
               threadId,
               reason: "end_turn",
@@ -1424,7 +1419,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       logger.error("CopilotProvider turn error", { sessionId, error: errorMessage });
-      this.emit("event", {
+            emitTurnEvent({
         type: "error",
         threadId,
         error: errorMessage,
@@ -1438,7 +1433,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       for (const unsub of unsubscribers) {
         unsub();
       }
-      this.emit("event", {
+            emitTurnEvent({
         type: "ended",
         threadId,
       } satisfies AgentEvent);

@@ -309,6 +309,10 @@ interface CodexSessionState {
   runTurnSeq: number;
   /** Codex `turn.id` from the latest `turn/started` for this session. */
   pendingTurnId: string | null;
+  /** Immutable Mcode execution identity keyed by native Codex turn id. */
+  turnExecutionIdsByNativeTurn: Map<string, string>;
+  /** Execution identity waiting for the next native turn/started notification. */
+  nextTurnExecutionId?: string;
   /** Child threads already queried for authoritative model metadata this session. */
   childMetadataFetches: Set<string>;
   /** Clears the in-flight `runTurn` listener when a new turn preempts it. */
@@ -536,18 +540,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   readonly maxInputCharactersPerTurn = 16_000;
   /** Path B forker; calls this provider's throwaway app-server side channel. */
   readonly forker: SessionForker = new CleanForker(this);
-  private readonly turnExecutionIds = new Map<string, string>();
-
-  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
-    if (eventName === "event") {
-      const event = args[0] as { threadId?: unknown; turnExecutionId?: unknown } | undefined;
-      if (event && typeof event.threadId === "string" && typeof event.turnExecutionId !== "string") {
-        const turnExecutionId = this.turnExecutionIds.get(event.threadId);
-        if (turnExecutionId) args[0] = { ...event, turnExecutionId };
-      }
-    }
-    return super.emit(eventName, ...args);
-  }
 
   /** Returns the static Codex model catalog. Codex does not support dynamic model discovery. */
   async listModels(): Promise<ProviderModelInfo[]> {
@@ -588,7 +580,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    */
   private pendingSpawnTurns = new Map<
     string,
-    { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions }
+    { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions; turnExecutionId: string }
   >();
   /** Browser scope staged only until a fresh main app-server process starts. */
   private pendingBrowserAccess = new Map<string, {
@@ -720,14 +712,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     error: string,
     outcome?: CodexEndedOutcome,
     emitEnded = true,
+    turnExecutionId?: string,
   ): AgentEvent {
-    this.emit("event", { type: AgentEventType.Error, threadId, error } satisfies AgentEvent);
+    this.emit("event", { type: AgentEventType.Error, threadId, error, ...(turnExecutionId ? { turnExecutionId } : {}) } satisfies AgentEvent);
     const ended = {
       type: AgentEventType.Ended,
       threadId,
       ...(outcome ? { outcome } : {}),
     } satisfies AgentEvent;
-    if (emitEnded) this.emit("event", ended);
+    if (emitEnded) this.emit("event", turnExecutionId ? { ...ended, turnExecutionId } : ended);
     return ended;
   }
 
@@ -935,7 +928,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    * The method returns immediately; events stream via the `event` EventEmitter channel.
    */
   async sendTurn(req: TurnRequest<"codex">): Promise<void> {
-    if (req.turnExecutionId) this.turnExecutionIds.set(req.threadId, req.turnExecutionId);
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.codex || "codex";
 
@@ -965,7 +957,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         promptName: err.promptName,
         cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
       });
-      this.emitTurnFailure(threadId, err.message);
+      this.emitTurnFailure(threadId, err.message, undefined, true, req.turnExecutionId);
       return;
     }
 
@@ -1045,14 +1037,14 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         const errorMessage = preflight.reason === "unavailable"
           ? preflight.error
           : `Codex CLI version ${preflight.version} is not supported. Minimum required: ${CODEX_MIN_VERSION}. Update with: npm install -g @openai/codex`;
-        this.emitTurnFailure(threadId, errorMessage);
+        this.emitTurnFailure(threadId, errorMessage, undefined, true, req.turnExecutionId);
         return;
       }
     }
 
     // Stage the per-turn payload so `spawn` can run the first turn of a fresh
     // session; reuse reads it directly below. Keyed by sessionId.
-    this.pendingSpawnTurns.set(sessionId, { input, turnOptions });
+    this.pendingSpawnTurns.set(sessionId, { input, turnOptions, turnExecutionId: req.turnExecutionId! });
     const browserStage = this.browserAutomationLease.isConfigured()
       ? this.browserAutomationLease.stage({
       providerId: this.id,
@@ -1092,7 +1084,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       if (stagedBrowser) this.browserAutomationLease.release(stagedBrowser.stage.leaseId);
       const errorMessage = e instanceof Error ? e.message : String(e);
       logger.error("CodexAppServer start failed", { sessionId, error: errorMessage });
-      this.emitTurnFailure(threadId, errorMessage);
+      this.emitTurnFailure(threadId, errorMessage, undefined, true, req.turnExecutionId);
       return;
     }
     this.runtime.recordUsage(sessionId);
@@ -1105,7 +1097,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       logger.info("Pending stop consumed, tearing down new Codex session", { sessionId });
       this.pendingSpawnTurns.delete(sessionId);
       void this.runtime.stop(sessionId);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      this.emit("event", { type: AgentEventType.Ended, threadId, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
       return;
     }
 
@@ -1113,7 +1105,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // the staged turn is still pending. Reset the mapper and run it here.
     if (reusable && this.pendingSpawnTurns.delete(sessionId)) {
       state.lastUsedAt = Date.now();
-      void this.runTurnAfterGoal(sessionId, threadId, state.server, input, turnOptions);
+      void this.runTurnAfterGoal(sessionId, threadId, state.server, input, turnOptions, req.turnExecutionId!);
       return;
     }
   }
@@ -1130,6 +1122,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const settings = await this.settingsService.get();
     const cliPath = settings.provider.cli.codex || "codex";
     const { sessionId, threadId, cwd, permissionMode, resumeFrom } = args;
+    const stagedExecutionId = this.pendingSpawnTurns.get(sessionId)?.turnExecutionId;
 
     const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
     const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
@@ -1207,6 +1200,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         const entry = this.runtime.get(sessionId);
         if (entry && turnId) {
           entry.pendingTurnId = turnId;
+          if (entry.nextTurnExecutionId) {
+            entry.turnExecutionIdsByNativeTurn.set(turnId, entry.nextTurnExecutionId);
+            while (entry.turnExecutionIdsByNativeTurn.size > 128) {
+              const oldest = entry.turnExecutionIdsByNativeTurn.keys().next().value as string | undefined;
+              if (oldest === undefined) break;
+              entry.turnExecutionIdsByNativeTurn.delete(oldest);
+            }
+            entry.nextTurnExecutionId = undefined;
+          }
           entry.childMetadataFetches.clear();
         }
       }
@@ -1214,25 +1216,30 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         mapper.setMainCodexThreadId(server.threadId);
       }
       const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification);
+      const nativeTurnId = typeof n.params?.turnId === "string"
+        ? n.params.turnId
+        : (isRecord(n.params?.turn) && typeof n.params.turn.id === "string" ? n.params.turn.id : undefined);
+      const eventExecutionId = this.runtime.get(sessionId)?.turnExecutionIdsByNativeTurn.get(nativeTurnId ?? "")
+        ?? stagedExecutionId;
       for (const event of generatedImageEvents) {
-        this.emit("event", event);
+        this.emit("event", { ...event, turnExecutionId: eventExecutionId });
       }
       const events = mapper.mapNotification(notification as CodexNotification);
       traceCodexIngest(threadId, n.method, n.params, [...generatedImageEvents, ...events]);
       for (const event of events) {
         this.recordGoalEvent(sessionId, event);
-        this.emit("event", event);
+        this.emit("event", { ...event, turnExecutionId: eventExecutionId });
       }
       const childThreadId = nativeSubAgentThreadId(n);
-      if (childThreadId) this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId);
+      if (childThreadId) this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId);
     });
 
     server.on("fatal", (error: string) => {
       logger.error("CodexAppServer fatal", { sessionId, error, breadcrumb: server.lastTransportBreadcrumb });
       for (const event of mapper.drainPendingAssistantBoundary(false)) {
-        this.emit("event", event);
+        this.emit("event", stagedExecutionId ? { ...event, turnExecutionId: stagedExecutionId } : event);
       }
-      this.emitTurnFailure(threadId, error);
+      this.emitTurnFailure(threadId, error, undefined, true, stagedExecutionId);
       void this.runtime.stop(sessionId);
     });
 
@@ -1316,6 +1323,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       sandboxMode: sandbox,
       runTurnSeq: 0,
       pendingTurnId: null,
+      turnExecutionIdsByNativeTurn: new Map(),
       workspaceId: browserAccess?.workspaceId ?? "unknown-workspace",
       browserPermissionCapability: browserAccess?.permissionCapability ?? "interact",
       ...(browserGrant && {
@@ -1335,14 +1343,14 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // `runTurn`'s `this.runtime.get(sessionId)` sees it.
     const staged = this.pendingSpawnTurns.get(sessionId);
     if (staged && !this.pendingStops.has(sessionId)) {
-      const { input, turnOptions } = staged;
+      const { input, turnOptions, turnExecutionId } = staged;
       this.pendingSpawnTurns.delete(sessionId);
       // SessionRuntime inserts `state` into the pool only after `spawn` resolves.
       // queueMicrotask runs before that continuation, so a pool identity check drops
       // the first turn on every new session (UI: Thinking forever, turn/start never sent).
       setImmediate(() => {
         if (!this.runtime.get(sessionId)) return;
-        void this.runTurnAfterGoal(sessionId, threadId, server, input, turnOptions);
+        void this.runTurnAfterGoal(sessionId, threadId, server, input, turnOptions, turnExecutionId);
       });
     }
 
@@ -1356,6 +1364,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     server: CodexAppServer,
     mapper: CodexEventMapper,
     childThreadId: string,
+    turnExecutionId?: string,
   ): void {
     const state = this.runtime.get(sessionId);
     if (!state || state.mapper !== mapper || state.childMetadataFetches.has(childThreadId)) return;
@@ -1370,7 +1379,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         traceCodexIngest(threadId, "child/thread-resume", { childThreadId }, events);
         for (const event of events) {
           this.recordGoalEvent(sessionId, event);
-          this.emit("event", event);
+          this.emit("event", turnExecutionId ? { ...event, turnExecutionId } : event);
         }
       })
       .catch((error: unknown) => {
@@ -1390,7 +1399,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   /** Graceful protocol interrupt of the in-flight turn (does not kill the process). */
   async interrupt(state: CodexSessionState): Promise<void> {
     for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
-      this.emit("event", event);
+      const turnExecutionId = state.pendingTurnId
+        ? state.turnExecutionIdsByNativeTurn.get(state.pendingTurnId)
+        : undefined;
+      this.emit("event", turnExecutionId ? { ...event, turnExecutionId } : event);
     }
     await state.server.interruptTurn();
   }
@@ -1403,7 +1415,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   async close(state: CodexSessionState): Promise<void> {
     await this.threadControlMcp?.close(state.sessionId);
     for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
-      this.emit("event", event);
+      const turnExecutionId = state.pendingTurnId
+        ? state.turnExecutionIdsByNativeTurn.get(state.pendingTurnId)
+        : undefined;
+      this.emit("event", turnExecutionId ? { ...event, turnExecutionId } : event);
     }
     this.liveSessionIds.delete(state.sessionId);
     this.drainPending((e) => e.sessionId === state.sessionId);
@@ -1570,7 +1585,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     threadId: string,
     server: CodexAppServer,
     input: string | TurnInputPart[],
-    turnOptions?: CodexTurnOptions,
+    turnOptions: CodexTurnOptions | undefined,
+    turnExecutionId: string,
   ): Promise<void> {
     try {
       await this.applyPendingGoal(sessionId, server);
@@ -1578,10 +1594,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       const error = err instanceof Error ? err.message : String(err);
       logger.error("Codex goal install failed", { sessionId, error });
       this.emitGoalCleared(sessionId, "rollback");
-      this.emitTurnFailure(threadId, error, "errored");
+      this.emitTurnFailure(threadId, error, "errored", true, turnExecutionId);
       return;
     }
-    await this.runTurn(sessionId, threadId, server, input, turnOptions);
+    await this.runTurn(sessionId, threadId, server, input, turnOptions, turnExecutionId);
   }
 
   /**
@@ -1594,13 +1610,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     threadId: string,
     server: CodexAppServer,
     input: string | TurnInputPart[],
-    turnOptions?: CodexTurnOptions,
+    turnOptions: CodexTurnOptions | undefined,
+    turnExecutionId: string,
   ): Promise<void> {
     const entry = this.runtime.get(sessionId);
     if (!entry) return;
+    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
 
     for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
-      this.emit("event", event);
+      emitTurnEvent(event);
     }
     entry.mapper.prepareForTurn();
 
@@ -1609,6 +1627,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // 5s timeout) of latency to every message.
     const hadInflightTurn =
       entry.pendingTurnId !== null || entry.abortPendingTurnWait !== undefined;
+    entry.nextTurnExecutionId = turnExecutionId;
 
     entry.abortPendingTurnWait?.();
     entry.abortPendingTurnWait = undefined;
@@ -1739,7 +1758,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           timeoutMs: TURN_TIMEOUT_MS,
         });
         for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
-          this.emit("event", event);
+          emitTurnEvent(event);
         }
         // Interrupt the upstream turn so the app-server state matches the UI
         // ("ended") instead of silently chewing in the background.
@@ -1751,9 +1770,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         const errorMessage = e instanceof Error ? e.message : String(e);
         logger.error("Codex turn failed", { sessionId, error: errorMessage });
         for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
-          this.emit("event", event);
+          emitTurnEvent(event);
         }
-        deferredEnded = this.emitTurnFailure(threadId, errorMessage, endedOutcome, false);
+        deferredEnded = this.emitTurnFailure(threadId, errorMessage, endedOutcome, false, turnExecutionId);
       }
     } finally {
       if (seq === entry.runTurnSeq) {
@@ -1764,7 +1783,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       }
       if (!serverDied && seq === entry.runTurnSeq && !endedEmitted) {
         endedEmitted = true;
-        this.emit("event", deferredEnded ?? {
+        emitTurnEvent(deferredEnded ?? {
           type: AgentEventType.Ended,
           threadId,
           ...(endedOutcome ? { outcome: endedOutcome } : {}),

@@ -64,6 +64,38 @@ describe("TurnRuntimeRegistry", () => {
     expect(runtime.terminalize("thread-1", second.turnExecutionId!, "completed")).toBe(false);
   });
 
+  it("preserves immutable A identity when A arrives after B starts", () => {
+    const runtime = new TurnRuntimeRegistry();
+    const first = runtime.start("thread-1");
+    runtime.terminalize("thread-1", first.turnExecutionId!, "completed");
+    const second = runtime.start("thread-1");
+
+    expect(runtime.normalizeEvent({
+      type: AgentEventType.Ended,
+      threadId: "thread-1",
+      turnExecutionId: first.turnExecutionId!,
+    })).toBeUndefined();
+    expect(runtime.normalizeEvent({
+      type: AgentEventType.TextDelta,
+      threadId: "thread-1",
+      delta: "B text",
+      turnExecutionId: second.turnExecutionId!,
+    })?.turnExecutionId).toBe(second.turnExecutionId);
+    expect(runtime.terminalize("thread-1", second.turnExecutionId!, "completed")).toBe(true);
+  });
+
+  it("delivers out-of-turn quota events without turn identity", () => {
+    const runtime = new TurnRuntimeRegistry();
+    runtime.start("thread-1");
+    const quota = runtime.normalizeEvent({
+      type: AgentEventType.QuotaUpdate,
+      threadId: "thread-1",
+      providerId: "claude",
+      categories: [],
+    });
+    expect(quota?.type).toBe(AgentEventType.QuotaUpdate);
+  });
+
   it("rejects lifecycle events without source identity", () => {
     const runtime = new TurnRuntimeRegistry();
     runtime.start("thread-1");

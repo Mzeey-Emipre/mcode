@@ -1,9 +1,22 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentEvent,
+  AgentEventType,
   TurnRuntimePhase,
   TurnRuntimeSnapshot,
 } from "@mcode/contracts";
+
+const TURN_SCOPED_EVENT_TYPES = new Set<AgentEventType>([
+  "turnStarted", "message", "generatedAttachment", "toolUse", "toolResult",
+  "turnComplete", "error", "ended", "compacting", "compactSummary",
+  "modelFallback", "textDelta", "toolInputDelta", "toolProgress", "contextEstimate",
+  "assistantMessageBoundary",
+]);
+
+/** Return whether provider event belongs to one originating logical turn. */
+export function isTurnScopedEvent(event: AgentEvent): boolean {
+  return TURN_SCOPED_EVENT_TYPES.has(event.type);
+}
 
 type TerminalPhase = Extract<TurnRuntimePhase, "completed" | "errored" | "cancelled">;
 
@@ -52,6 +65,7 @@ export class TurnRuntimeRegistry {
 
   /** Normalize provider output only when provider supplied its source identity. */
   normalizeEvent(event: AgentEvent): AgentEvent | undefined {
+    if (!isTurnScopedEvent(event)) return event;
     const current = this.states.get(event.threadId);
     if (event.type === "turnStarted") {
       if (!event.turnExecutionId) return undefined;

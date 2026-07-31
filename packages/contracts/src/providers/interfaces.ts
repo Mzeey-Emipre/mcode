@@ -58,7 +58,7 @@ export interface ProviderOptionsByProvider {
  */
 export interface TurnRequest<P extends ProviderId = ProviderId> {
   /** Mcode-owned identity for this logical turn. */
-  /** Required by the production dispatch boundary; optional only for legacy provider fixture typing. */
+  /** Required at production dispatch; optional for legacy provider fixtures. */
   turnExecutionId?: string;
   /** SDK session name, currently `mcode-${threadId}`. */
   sessionId: string;

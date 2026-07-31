@@ -281,18 +281,6 @@ export class CursorProvider
   readonly maxInputCharactersPerTurn = 4_000;
   /** Path B forker; calls this provider's runSideChannelQuery on a forked copy of the parent session. */
   readonly forker: SessionForker = new CleanForker(this);
-  private readonly turnExecutionIds = new Map<string, string>();
-
-  override emit(eventName: string | symbol, ...args: unknown[]): boolean {
-    if (eventName === "event") {
-      const event = args[0] as { threadId?: unknown; turnExecutionId?: unknown } | undefined;
-      if (event && typeof event.threadId === "string" && typeof event.turnExecutionId !== "string") {
-        const turnExecutionId = this.turnExecutionIds.get(event.threadId);
-        if (turnExecutionId) args[0] = { ...event, turnExecutionId };
-      }
-    }
-    return super.emit(eventName, ...args);
-  }
 
   /**
    * Opens the throwaway ACP transport for {@link runSideChannelQuery}. Defaults
@@ -305,6 +293,8 @@ export class CursorProvider
   /** Owns the session pool, idle eviction (with busy guard), and JobObject/kill. */
   private readonly runtime: SessionRuntime<CursorSessionState>;
   private sdkSessionIds = new Map<string, string>();
+  /** Binds each ACP prompt state to its immutable originating Mcode execution. */
+  private readonly turnExecutionByState = new WeakMap<object, string>();
   /**
    * Session IDs for which a stop was requested before the session was created.
    * Checked after session creation; if found the session is torn down immediately.
@@ -366,7 +356,6 @@ export class CursorProvider
 
   /** Queues an ACP `session/prompt` on the session subprocess (serialized per thread). */
   async sendTurn(req: TurnRequest<"cursor">): Promise<void> {
-    if (req.turnExecutionId) this.turnExecutionIds.set(req.threadId, req.turnExecutionId);
     void req.fallbackModel;
     void req.reasoningLevel;
 
@@ -385,6 +374,7 @@ export class CursorProvider
     }
 
     const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId: req.turnExecutionId }); };
     const browserPermissionCapability = browserAutomationPermissionCapability(
       permissionMode,
       req.interactionMode,
@@ -509,8 +499,8 @@ export class CursorProvider
       this.pendingBrowserGrantContext.delete(sessionId);
       const errMsg = err instanceof Error ? err.message : String(err);
       logger.error("Cursor ACP spawn failed", { sessionId, error: errMsg });
-      this.emit("event", { type: AgentEventType.Error, threadId, error: errMsg } satisfies AgentEvent);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      emitTurnEvent({ type: AgentEventType.Error, threadId, error: errMsg } satisfies AgentEvent);
+      emitTurnEvent({ type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
     this.pendingBrowserLeases.delete(sessionId);
@@ -521,14 +511,14 @@ export class CursorProvider
     if (this.pendingStops.delete(sessionId)) {
       logger.info("Pending stop consumed, tearing down new Cursor session", { sessionId });
       void this.runtime.stop(sessionId);
-      this.emit("event", { type: AgentEventType.Ended, threadId } satisfies AgentEvent);
+      emitTurnEvent({ type: AgentEventType.Ended, threadId } satisfies AgentEvent);
       return;
     }
 
     this.runtime.recordUsage(sessionId);
     entry.lastUsedAt = Date.now();
     const scheduled = entry.turnChain.then(() =>
-      this.runTurn(entry, { message, model, resume, attachments }),
+      this.runTurn(entry, { message, model, resume, attachments, turnExecutionId: req.turnExecutionId! }),
     );
     entry.turnChain = scheduled.then(
       () => {},
@@ -1003,6 +993,12 @@ export class CursorProvider
   }
 
   private buildAcpClient(entry: CursorAcpSessionEntry): Client {
+    const emitAcpEvent = (event: AgentEvent): void => {
+      const executionId = entry.activeTurnState
+        ? this.turnExecutionByState.get(entry.activeTurnState)
+        : undefined;
+      this.emit("event", executionId ? { ...event, turnExecutionId: executionId } : event);
+    };
     return {
       requestPermission: async (req) => this.bridgePermission(entry, req),
       sessionUpdate: async (params) => this.deliverSessionUpdate(entry, params),
@@ -1031,7 +1027,7 @@ export class CursorProvider
               });
               if (cursorPrefs.echoAskQuestionsToTimeline) {
                 const clip = summary.lines.join(" · ").slice(0, 900);
-                this.emit("event", {
+                emitAcpEvent({
                   type: AgentEventType.System,
                   threadId: entry.threadId,
                   subtype: `cursor:ask_question:auto:${clip}`,
@@ -1070,7 +1066,7 @@ export class CursorProvider
             entry.activeTurnState,
           );
           for (const ev of events) {
-            this.emit("event", ev);
+            emitAcpEvent(ev);
           }
           return {};
         }
@@ -1088,7 +1084,7 @@ export class CursorProvider
             entry.todoSnapshot,
           );
           for (const ev of events) {
-            this.emit("event", ev);
+            emitAcpEvent(ev);
           }
           return {};
         }
@@ -1111,7 +1107,7 @@ export class CursorProvider
             entry.todoSnapshot,
           );
           for (const ev of events) {
-            this.emit("event", ev);
+          emitAcpEvent(ev);
           }
           return;
         }
@@ -1187,7 +1183,8 @@ export class CursorProvider
     }
 
     for (const ev of mapped) {
-      this.emit("event", ev);
+      const executionId = this.turnExecutionByState.get(state);
+      this.emit("event", executionId ? { ...ev, turnExecutionId: executionId } : ev);
     }
   }
 
@@ -1357,9 +1354,11 @@ export class CursorProvider
       model: string;
       resume: boolean;
       attachments?: AttachmentMeta[];
+      turnExecutionId: string;
     },
   ): Promise<void> {
-    const { message, model, resume, attachments } = opts;
+    const { message, model, resume, attachments, turnExecutionId } = opts;
+    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
     const cursorCfg = this.settingsService.get().provider.cursor;
     let currentEntry = entry;
     let promptMessage = message;
@@ -1449,6 +1448,7 @@ export class CursorProvider
         try {
           attempt += 1;
           currentEntry.activeTurnState = createCursorAcpTurnState();
+          this.turnExecutionByState.set(currentEntry.activeTurnState, turnExecutionId);
           promptResponse = await currentEntry.acpRuntime.prompt({
             sessionId: currentEntry.acpSessionId,
             prompt: blocks,
@@ -1504,7 +1504,7 @@ export class CursorProvider
 
       const text = resolveCursorAssistantMessageContent(currentEntry.activeTurnState.accumulator);
       if (text.length > 0) {
-        this.emit("event", {
+        emitTurnEvent({
           type: AgentEventType.Message,
           threadId: currentEntry.threadId,
           content: text,
@@ -1513,7 +1513,7 @@ export class CursorProvider
       }
 
       const usage = promptResponse.usage;
-      this.emit("event", {
+      emitTurnEvent({
         type: AgentEventType.TurnComplete,
         threadId: currentEntry.threadId,
         reason: promptResponse.stopReason,
@@ -1523,7 +1523,7 @@ export class CursorProvider
         providerId: "cursor",
       } satisfies AgentEvent);
 
-      this.emit("event", { type: AgentEventType.Ended, threadId: currentEntry.threadId } satisfies AgentEvent);
+      emitTurnEvent({ type: AgentEventType.Ended, threadId: currentEntry.threadId } satisfies AgentEvent);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       const userStoppedStream = shouldSuppressCursorPromptError(errMsg, {
@@ -1546,7 +1546,7 @@ export class CursorProvider
           stderrTail,
           error: errMsg,
         });
-        this.emit("event", {
+        emitTurnEvent({
           type: AgentEventType.Error,
           threadId: currentEntry.threadId,
           error: errMsg,
@@ -1561,7 +1561,7 @@ export class CursorProvider
             ? resolveCursorAssistantMessageContent(currentEntry.activeTurnState.accumulator).trim()
             : "";
         if (interrupted.length > 0) {
-          this.emit("event", {
+          emitTurnEvent({
             type: AgentEventType.Message,
             threadId: currentEntry.threadId,
             content: interrupted,
@@ -1569,7 +1569,7 @@ export class CursorProvider
           } satisfies AgentEvent);
         }
       }
-      this.emit("event", { type: AgentEventType.Ended, threadId: currentEntry.threadId } satisfies AgentEvent);
+      emitTurnEvent({ type: AgentEventType.Ended, threadId: currentEntry.threadId } satisfies AgentEvent);
     } finally {
       currentEntry.activeTurnState = null;
       currentEntry.pendingUserStopAbort = false;
