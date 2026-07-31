@@ -51,6 +51,7 @@ async function startSession(
   threadId: string,
 ): Promise<PoolEntry> {
   await provider.sendTurn({
+    turnExecutionId: `exec-${sessionId}`,
     sessionId,
     workspaceId: "workspace-test",
     threadId,
@@ -222,6 +223,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(1);
 
     await provider.sendTurn({
+      turnExecutionId: "exec-next",
       sessionId: "mcode-subagent-metadata-race",
       workspaceId: "workspace-test",
       threadId: "subagent-metadata-race",
@@ -315,5 +317,60 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-main", status: "completed" } },
     });
     await ended;
+  });
+
+  it("attributes reused-session child notifications to the active execution", async () => {
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-origin-a", "origin-a");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "sdk-thread-1", turnId: "turn-a", delta: "A" },
+    });
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-origin-a",
+      workspaceId: "workspace-test",
+      threadId: "origin-a",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-b", turn: { id: "child-turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "child-b",
+        turnId: "child-turn-b",
+        item: {
+          type: "subAgentActivity",
+          id: "call-child-b",
+          kind: "started",
+          agentThreadId: "child-b-nested",
+          agentPath: "/root/worker",
+        },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(events.some((event) => event.turnExecutionId === "exec-b")).toBe(true);
   });
 });

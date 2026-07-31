@@ -168,6 +168,7 @@ describe("Cursor browser MCP configuration", () => {
     };
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-a",
       threadId: "thread-a",
       workspaceId: "workspace-a",
@@ -444,6 +445,7 @@ describe("Cursor browser MCP configuration", () => {
     };
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-a",
       threadId: "thread-a",
       workspaceId: "workspace-a",

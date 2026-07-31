@@ -82,6 +82,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-boundary-final",
       threadId: "thread-boundary-final",
       message: "hi",
@@ -125,6 +126,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-boundary-preamble",
       threadId: "thread-boundary-preamble",
       message: "read file",
@@ -167,6 +169,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-boundary-no-text",
       threadId: "thread-boundary-no-text",
       message: "go",

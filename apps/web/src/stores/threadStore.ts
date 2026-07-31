@@ -836,9 +836,11 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     const next = typeof updater === "function" ? updater(state) : updater;
     if (!next || Object.keys(next).length === 0) return next;
     const records = "records" in next && next.records ? next.records : state.records;
-    const runningThreadIds = records.size === 0
-      ? state.runningThreadIds
-      : deriveRunningThreadIds(records);
+    const runningThreadIds = "runningThreadIds" in next
+      ? next.runningThreadIds
+      : records.size === 0
+        ? state.runningThreadIds
+        : deriveRunningThreadIds(records);
     return { ...next, runningThreadIds };
   })) as typeof zustandSet;
   let textDeltaFlushRaf: number | null = null;
@@ -1276,6 +1278,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     // failure the rollback below must not clear the running-state of a real
     // turn the control command was issued against mid-flight (#583).
     const isControlCommand = isGoalControlCommand(content);
+    const runningBeforeControl = isControlCommand
+      ? new Set(get().runningThreadIds)
+      : undefined;
     if (!isControlCommand && get().runningThreadIds.has(threadId)) {
       throw new Error(`Thread ${threadId} already has an active agent session`);
     }
@@ -1411,6 +1416,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           })),
         };
       });
+      if (isControlCommand && runningBeforeControl?.has(threadId) && !get().runningThreadIds.has(threadId)) {
+        set((state) => ({ runningThreadIds: new Set([...state.runningThreadIds, threadId]) }));
+      }
       if (!activeSessionConflict && !isControlCommand) {
         invalidateDeferredNarrativeEvents(threadId);
       }

@@ -58,8 +58,7 @@ export interface ProviderOptionsByProvider {
  */
 export interface TurnRequest<P extends ProviderId = ProviderId> {
   /** Mcode-owned identity for this logical turn. */
-  /** Required at production dispatch; optional for legacy provider fixtures. */
-  turnExecutionId?: string;
+  turnExecutionId: string;
   /** SDK session name, currently `mcode-${threadId}`. */
   sessionId: string;
   /** Workspace that owns the thread and any visible-browser automation scope. */

@@ -428,4 +428,54 @@ describe("Cursor ACP client-factory session-update seam", () => {
     } as SessionNotification);
     expect(events).toEqual([{ type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "live" }]);
   });
+
+  it("keeps late callbacks bound to their ACP generation", async () => {
+    const generations: Array<{ client: Client; events: unknown[] }> = [];
+    const makeRuntime = async (threadId: string) => {
+      let client!: Client;
+      const events: unknown[] = [];
+      const connection = {
+        initialize: vi.fn(async () => ({ agentCapabilities: {}, authMethods: [] })),
+        newSession: vi.fn(async () => ({ sessionId: `session-${threadId}` })),
+      } as unknown as ClientSideConnection;
+      const runtime = await AcpSessionRuntime.start({
+        spawnSpec: { command: "fake", args: [], cwd: ".", env: {} },
+        callbacks: {
+          onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }),
+          onSessionUpdate: async (update) => {
+            events.push(...mapCursorAcpSessionNotification(update, threadId, createCursorAcpTurnState()));
+          },
+        },
+        clientFactory: (callbacks) => {
+          client = {
+            requestPermission: callbacks.onPermissionRequest,
+            sessionUpdate: callbacks.onSessionUpdate,
+            readTextFile: async () => ({ content: "" }),
+            writeTextFile: async () => ({}),
+            extMethod: async () => ({}),
+            extNotification: async () => {},
+          };
+          return client;
+        },
+        transportFactory: async () => ({ child: fakeChild(), connection }),
+      });
+      await runtime.initialize();
+      await runtime.openSession({ cwd: ".", mcpServers: [] });
+      generations.push({ client, events });
+    };
+
+    await makeRuntime("cursor-a");
+    await makeRuntime("cursor-b");
+    await generations[1].client.sessionUpdate({
+      sessionId: "session-cursor-b",
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "B" } },
+    } as SessionNotification);
+    await generations[0].client.sessionUpdate({
+      sessionId: "session-cursor-a",
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "late A" } },
+    } as SessionNotification);
+
+    expect(generations[0].events).toEqual([{ type: AgentEventType.TextDelta, threadId: "cursor-a", delta: "late A" }]);
+    expect(generations[1].events).toEqual([{ type: AgentEventType.TextDelta, threadId: "cursor-b", delta: "B" }]);
+  });
 });

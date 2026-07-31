@@ -515,7 +515,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       maxTurns: req.maxTurns,
     };
     try {
-      await this.doSendMessage(params, req.turnExecutionId!);
+      await this.doSendMessage(params, req.turnExecutionId);
     } catch (e: unknown) {
       logger.error("sendTurn error", {
         sessionId: req.sessionId,

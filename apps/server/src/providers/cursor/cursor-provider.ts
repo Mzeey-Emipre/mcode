@@ -393,13 +393,20 @@ export class CursorProvider
       this.planQuestionModeThreads.delete(threadId);
     }
 
-    const existing = this.runtime.get(sessionId);
+    let existing = this.runtime.get(sessionId);
     const pendingGrant = this.pendingBrowserGrants.get(sessionId);
     const pendingGrantContext = this.pendingBrowserGrantContext.get(sessionId);
     if (pendingGrant && (!pendingGrantContext || !this.sameBrowserContext(pendingGrantContext, browserContext))) {
       this.releaseBrowserLeases(pendingGrant);
       this.pendingBrowserGrants.delete(sessionId);
       this.pendingBrowserGrantContext.delete(sessionId);
+    }
+    // ACP callbacks are connection-scoped and carry no prompt id. Rotate a
+    // completed session before the next logical turn so late notifications
+    // stay bound to the old connection's immutable execution state.
+    if (existing && existing.activeTurnState === null && existing.cursorPromptOrdinal > 0) {
+      await this.runtime.stop(sessionId);
+      existing = undefined;
     }
     let browserStage: BrowserAutomationSessionLeaseStage | undefined;
     if (existing) {
@@ -518,7 +525,7 @@ export class CursorProvider
     this.runtime.recordUsage(sessionId);
     entry.lastUsedAt = Date.now();
     const scheduled = entry.turnChain.then(() =>
-      this.runTurn(entry, { message, model, resume, attachments, turnExecutionId: req.turnExecutionId! }),
+      this.runTurn(entry, { message, model, resume, attachments, turnExecutionId: req.turnExecutionId }),
     );
     entry.turnChain = scheduled.then(
       () => {},

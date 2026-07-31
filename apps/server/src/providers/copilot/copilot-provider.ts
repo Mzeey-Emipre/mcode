@@ -778,7 +778,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       copilotAgent: req.providerOptions.agent,
     };
     try {
-      await this.doSendMessage(params, req.turnExecutionId!);
+      await this.doSendMessage(params, req.turnExecutionId);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       logger.error("CopilotProvider sendMessage error", {

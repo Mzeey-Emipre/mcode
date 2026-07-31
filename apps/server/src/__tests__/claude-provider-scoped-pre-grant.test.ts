@@ -93,6 +93,7 @@ describe("ClaudeProvider scoped pre-grant (off-band handoff Read)", () => {
 
   async function startTurn(threadId: string): Promise<void> {
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: `mcode-${threadId}`,
       threadId,
       message: "hello",

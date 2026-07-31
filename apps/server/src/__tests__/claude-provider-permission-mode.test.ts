@@ -108,6 +108,7 @@ describe("ClaudeProvider permission mode changes", () => {
 
     try {
       await provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-browser-claude",
         workspaceId: "workspace-test",
         threadId: "browser-claude",
@@ -136,6 +137,7 @@ describe("ClaudeProvider permission mode changes", () => {
 
   it("reuses the session when permissionMode is unchanged", async () => {
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-a",
       threadId: "thread-a",
       message: "first",
@@ -146,6 +148,7 @@ describe("ClaudeProvider permission mode changes", () => {
       providerOptions: {},
     });
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-a",
       threadId: "thread-a",
       message: "second",
@@ -162,6 +165,7 @@ describe("ClaudeProvider permission mode changes", () => {
 
   it("tears down and respawns the session when permissionMode changes", async () => {
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-b",
       threadId: "thread-b",
       message: "first",
@@ -172,6 +176,7 @@ describe("ClaudeProvider permission mode changes", () => {
       providerOptions: {},
     });
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-b",
       threadId: "thread-b",
       message: "second",
@@ -196,6 +201,7 @@ describe("ClaudeProvider permission mode changes", () => {
 
   it("starts proactive sessions with Ultracode enabled", async () => {
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-ultracode-new",
       threadId: "ultracode-new",
       message: "delegate this work",
@@ -221,8 +227,10 @@ describe("ClaudeProvider permission mode changes", () => {
       interactionMode: "build" as const,
       providerOptions: {},
     };
-    await provider.sendTurn({ ...baseRequest, message: "first", orchestrationMode: "standard" });
-    await provider.sendTurn({ ...baseRequest, message: "second", orchestrationMode: "proactive" });
+    await provider.sendTurn({
+      turnExecutionId: "test-execution", ...baseRequest, message: "first", orchestrationMode: "standard" });
+    await provider.sendTurn({
+      turnExecutionId: "test-execution", ...baseRequest, message: "second", orchestrationMode: "proactive" });
 
     expect(sdkCalls).toHaveLength(1);
     expect(flagSettingsCalls).toEqual([{ ultracode: true }]);

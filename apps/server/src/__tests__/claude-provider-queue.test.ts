@@ -90,6 +90,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
 
     // First send establishes the session
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-t1",
       threadId: "t1",
       message: "first",
@@ -108,6 +109,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
     // Second send on same sessionId: push hits a closed queue
     await expect(
       provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-t1",
         threadId: "t1",
         message: "second",
@@ -153,6 +155,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
 
     // First send establishes the session
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-overflow",
       threadId: "overflow",
       message: "first",
@@ -169,6 +172,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
     for (let i = 0; i < 25; i++) {
       try {
         await provider.sendTurn({
+      turnExecutionId: "test-execution",
           sessionId: "mcode-overflow",
           threadId: "overflow",
           message: `msg-${i}`,
