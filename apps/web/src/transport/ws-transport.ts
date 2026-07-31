@@ -185,20 +185,29 @@ export interface WsTransportOptions {
 /**
  * Reconcile runningThreadIds with the server's authoritative set on (re)connect.
  *
- * Race-safe: captures the optimistic runningThreadIds before the RPC and
- * preserves any threadIds added concurrently (e.g., by a session.turnStarted
- * push that arrives while the RPC is in flight). Stale threadIds from before
- * the RPC are dropped; the server's list is the source of truth for those.
+ * Race-safe: captures each optimistic runtime identity before the RPC and
+ * applies the response only to threads that have not advanced while it was
+ * in flight. Unchanged stale threads are dropped; newer push state wins.
  *
  * Exported for unit testing.
  */
 export async function hydrateRunningThreadsFromServer(
   rpcCall: (method: string, params: unknown) => Promise<unknown>,
 ): Promise<void> {
+  const beforeHydration = useThreadStore.getState();
+  const observed = new Map(
+    [...beforeHydration.runningThreadIds].map((threadId) => {
+      const record = beforeHydration.records.get(threadId);
+      return [threadId, {
+        turnExecutionId: record?.turnExecutionId ?? null,
+        runtimePhase: record?.runtimePhase ?? "idle",
+      }] as const;
+    }),
+  );
   try {
     const result = await rpcCall("agent.listRunning", {});
     const snapshots = result as import("@mcode/contracts").TurnRuntimeSnapshot[];
-    useThreadStore.getState().hydrateThreadRuntimes(snapshots);
+    useThreadStore.getState().hydrateThreadRuntimes(snapshots, observed);
   } catch {
     // Best-effort; optimistic state remains if the call fails.
   }

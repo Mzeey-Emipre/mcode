@@ -61,6 +61,11 @@ function deriveRunningThreadIds(records: Map<string, ThreadRecord>): Set<string>
   );
 }
 
+interface RuntimeHydrationObservation {
+  turnExecutionId: string | null;
+  runtimePhase: ThreadRecord["runtimePhase"];
+}
+
 export type { HandoffMeta, ThreadSettings, StoredPermission } from "./thread-record";
 export { getHandoffStatus } from "./thread-record";
 
@@ -104,9 +109,12 @@ interface ThreadState {
   /** Apply one authoritative runtime snapshot without replacing other running threads. */
   applyThreadRuntimeSnapshot: (snapshot: TurnRuntimeSnapshot) => void;
   /** Replace runningThreadIds with the authoritative server snapshot. Called on WS (re)connect. */
-  hydrateRunningThreads: (ids: string[]) => void;
+  hydrateRunningThreads: (ids: string[], observed?: ReadonlyMap<string, RuntimeHydrationObservation>) => void;
   /** Restore authoritative per-thread execution snapshots during reconnect. */
-  hydrateThreadRuntimes: (snapshots: import("@mcode/contracts").TurnRuntimeSnapshot[]) => void;
+  hydrateThreadRuntimes: (
+    snapshots: import("@mcode/contracts").TurnRuntimeSnapshot[],
+    observed?: ReadonlyMap<string, RuntimeHydrationObservation>,
+  ) => void;
   addMessage: (message: Message) => void;
   clearMessages: () => void;
   /** Deactivate the selected conversation and invalidate any active hydration commit. */
@@ -1485,7 +1493,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     });
   },
 
-  hydrateRunningThreads: (ids) => {
+  hydrateRunningThreads: (ids, observed) => {
     const resetPendingIds = new Set<string>();
     set((state) => {
       const current = state.runningThreadIds;
@@ -1497,9 +1505,17 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       let records = state.records;
       for (const id of current) {
         if (!nextIds.has(id)) {
+          const observation = observed?.get(id);
+          const currentRecord = getThreadRecord(records, id);
+          if (observed && (!observation
+            || currentRecord.turnExecutionId !== observation.turnExecutionId
+            || currentRecord.runtimePhase !== observation.runtimePhase)) {
+            nextIds.add(id);
+            continue;
+          }
           resetPendingIds.add(id);
           records = patchThreadRecord(records, id, {
-            ...resetTurnEphemeral(getThreadRecord(records, id)),
+            ...resetTurnEphemeral(currentRecord),
             runtimePhase: "idle",
           });
         }
@@ -1524,7 +1540,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           });
         }
       }
-      return { records };
+      return { records, runningThreadIds: nextIds };
     });
     for (const threadId of resetPendingIds) {
       invalidateDeferredNarrativeEvents(threadId);
@@ -1532,14 +1548,27 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     }
   },
 
-  hydrateThreadRuntimes: (snapshots) => {
-    const runningThreadIds = snapshots
+  hydrateThreadRuntimes: (snapshots, observed) => {
+    const currentRecords = get().records;
+    const acceptedSnapshots = observed
+      ? snapshots.filter((snapshot) => {
+        const observation = observed.get(snapshot.threadId);
+        if (!observation) return true;
+        const currentRecord = getThreadRecord(currentRecords, snapshot.threadId);
+        const advanced = currentRecord.turnExecutionId !== observation.turnExecutionId
+          || currentRecord.runtimePhase !== observation.runtimePhase;
+        return !advanced
+          || (currentRecord.turnExecutionId === snapshot.turnExecutionId
+            && currentRecord.runtimePhase === snapshot.phase);
+      })
+      : snapshots;
+    const runningThreadIds = acceptedSnapshots
       .filter((snapshot) => snapshot.phase === "running" || snapshot.phase === "finalizing")
       .map((snapshot) => snapshot.threadId);
-    get().hydrateRunningThreads(runningThreadIds);
+    get().hydrateRunningThreads(runningThreadIds, observed);
     set((state) => {
       let records = state.records;
-      for (const snapshot of snapshots) {
+      for (const snapshot of acceptedSnapshots) {
         records = patchThreadRecord(records, snapshot.threadId, {
           turnExecutionId: snapshot.turnExecutionId,
           runtimePhase: snapshot.phase,
