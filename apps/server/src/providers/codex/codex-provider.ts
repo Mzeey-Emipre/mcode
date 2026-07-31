@@ -309,6 +309,16 @@ interface CodexSessionState {
   runTurnSeq: number;
   /** Codex `turn.id` from the latest `turn/started` for this session. */
   pendingTurnId: string | null;
+  /** Execution currently awaiting or owning an authoritative native turn id. */
+  currentTurnExecutionId?: string;
+  /** Native turn id returned by `turn/start` for the current execution. */
+  currentNativeTurnId?: string;
+  /** Current turn binding phase; notifications cannot invent identities while unbound. */
+  turnBindingPhase: "idle" | "awaiting" | "bound";
+  /** True until the current `turn/start` RPC response arrives. */
+  turnStartResponsePending: boolean;
+  /** Native turn notification buffered until the authoritative RPC response arrives. */
+  pendingTurnStartNotification?: { nativeTurnId: string; executionId: string };
   /** Immutable Mcode execution identity keyed by native Codex turn id. */
   turnExecutionIdsByNativeTurn: Map<string, string>;
   /** Immutable execution identity keyed by native Codex thread id. */
@@ -317,6 +327,8 @@ interface CodexSessionState {
   activeParentTurnExecutionId?: string;
   /** Execution identity waiting for the next native turn/started notification. */
   nextTurnExecutionId?: string;
+  /** Bounded conflict fingerprints already logged for this session. */
+  nativeExecutionConflictKeys: Set<string>;
   /** Child threads already queried for authoritative model metadata this session. */
   childMetadataFetches: Set<string>;
   /** Clears the in-flight `runTurn` listener when a new turn preempts it. */
@@ -534,6 +546,7 @@ function assignNativeExecution(
   map: Map<string, string>,
   key: string,
   executionId: string,
+  conflictKeys?: Set<string>,
 ): NativeExecutionAssignment {
   const existingExecutionId = map.get(key);
   if (existingExecutionId === undefined) {
@@ -542,11 +555,15 @@ function assignNativeExecution(
   }
   if (existingExecutionId === executionId) return "same";
 
-  logger.warn("Codex native execution mapping conflict", {
-    key,
-    existingExecutionId,
-    executionId,
-  });
+  const diagnosticKey = `${key}\u0000${existingExecutionId}\u0000${executionId}`;
+  if (!conflictKeys || (!conflictKeys.has(diagnosticKey) && conflictKeys.size < 64)) {
+    conflictKeys?.add(diagnosticKey);
+    logger.warn("Codex native execution mapping conflict", {
+      key,
+      existingExecutionId,
+      executionId,
+    });
+  }
   return "conflict";
 }
 
@@ -559,7 +576,8 @@ function pruneExecutionMap(map: Map<string, string>): void {
 }
 
 function executionForDrain(state: CodexSessionState): string | undefined {
-  return (state.pendingTurnId && state.turnExecutionIdsByNativeTurn.get(state.pendingTurnId))
+  return state.currentTurnExecutionId
+    ?? (state.pendingTurnId && state.turnExecutionIdsByNativeTurn.get(state.pendingTurnId))
     ?? state.activeParentTurnExecutionId;
 }
 
@@ -1248,38 +1266,54 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       const nativeThreadId = nativeThreadIdFromParams(n.params);
       const nativeTurnId = nativeTurnIdFromParams(n.params);
       if (entry && n.method === "turn/started") {
-        const executionId = entry.nextTurnExecutionId ?? entry.activeParentTurnExecutionId;
-        let turnAssignment: NativeExecutionAssignment | undefined;
-        if (executionId) {
-          entry.activeParentTurnExecutionId = executionId;
-          if (nativeThreadId) assignNativeExecution(entry.nativeThreadExecutionIds, nativeThreadId, executionId);
-          if (nativeTurnId) turnAssignment = assignNativeExecution(entry.turnExecutionIdsByNativeTurn, nativeTurnId, executionId);
-          pruneExecutionMap(entry.nativeThreadExecutionIds);
-          pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
-        }
+        const executionId = entry.nextTurnExecutionId ?? entry.currentTurnExecutionId ?? entry.activeParentTurnExecutionId;
         if (mainNotification) {
-          if (nativeTurnId && turnAssignment !== "conflict") entry.pendingTurnId = nativeTurnId;
+          if (executionId) entry.activeParentTurnExecutionId = executionId;
+          if (nativeTurnId && executionId && entry.currentTurnExecutionId === executionId) {
+            if (entry.turnStartResponsePending) {
+              entry.pendingTurnStartNotification = { nativeTurnId, executionId };
+            } else if (entry.currentNativeTurnId === nativeTurnId) {
+              entry.pendingTurnId = nativeTurnId;
+              entry.turnBindingPhase = "bound";
+            } else if (entry.turnExecutionIdsByNativeTurn.get(nativeTurnId) === executionId) {
+              entry.currentNativeTurnId = nativeTurnId;
+              entry.pendingTurnId = nativeTurnId;
+              entry.turnBindingPhase = "bound";
+            } else if (entry.turnExecutionIdsByNativeTurn.has(nativeTurnId)) {
+              assignNativeExecution(
+                entry.turnExecutionIdsByNativeTurn,
+                nativeTurnId,
+                executionId,
+                entry.nativeExecutionConflictKeys,
+              );
+            }
+          }
           entry.nextTurnExecutionId = undefined;
           entry.childMetadataFetches.clear();
         } else if (entry.activeParentTurnExecutionId) {
-          if (nativeThreadId) assignNativeExecution(entry.nativeThreadExecutionIds, nativeThreadId, entry.activeParentTurnExecutionId);
-          if (nativeTurnId) assignNativeExecution(entry.turnExecutionIdsByNativeTurn, nativeTurnId, entry.activeParentTurnExecutionId);
+          const childExecutionId = nativeThreadId
+            ? entry.nativeThreadExecutionIds.get(nativeThreadId)
+            : undefined;
+          if (nativeTurnId && childExecutionId) {
+            assignNativeExecution(
+              entry.turnExecutionIdsByNativeTurn,
+              nativeTurnId,
+              childExecutionId,
+              entry.nativeExecutionConflictKeys,
+            );
+          }
           pruneExecutionMap(entry.nativeThreadExecutionIds);
           pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
         }
       }
       if (server.threadId) {
         mapper.setMainCodexThreadId(server.threadId);
-        if (entry?.activeParentTurnExecutionId) {
-          assignNativeExecution(entry.nativeThreadExecutionIds, server.threadId, entry.activeParentTurnExecutionId);
-          pruneExecutionMap(entry.nativeThreadExecutionIds);
-        }
       }
       const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification);
       const eventExecutionId = entry
         ? (nativeTurnId && entry.turnExecutionIdsByNativeTurn.get(nativeTurnId))
           ?? (nativeThreadId && entry.nativeThreadExecutionIds.get(nativeThreadId))
-          ?? (mainNotification ? entry.activeParentTurnExecutionId : undefined)
+          ?? (mainNotification ? (entry.currentTurnExecutionId ?? entry.activeParentTurnExecutionId) : undefined)
         : undefined;
       for (const event of generatedImageEvents) {
         this.emit("event", { ...event, turnExecutionId: eventExecutionId });
@@ -1291,7 +1325,18 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         this.emit("event", { ...event, turnExecutionId: eventExecutionId });
       }
       const childThreadId = nativeSubAgentThreadId(n);
-      if (childThreadId) this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId);
+      if (childThreadId) {
+        if (entry && eventExecutionId) {
+          assignNativeExecution(
+            entry.nativeThreadExecutionIds,
+            childThreadId,
+            eventExecutionId,
+            entry.nativeExecutionConflictKeys,
+          );
+          pruneExecutionMap(entry.nativeThreadExecutionIds);
+        }
+        this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId);
+      }
     });
 
     server.on("fatal", (error: string) => {
@@ -1384,8 +1429,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       sandboxMode: sandbox,
       runTurnSeq: 0,
       pendingTurnId: null,
+      turnBindingPhase: "idle",
+      turnStartResponsePending: false,
       turnExecutionIdsByNativeTurn: new Map(),
       nativeThreadExecutionIds: new Map(),
+      nativeExecutionConflictKeys: new Set(),
       workspaceId: browserAccess?.workspaceId ?? "unknown-workspace",
       browserPermissionCapability: browserAccess?.permissionCapability ?? "interact",
       ...(browserGrant && {
@@ -1685,6 +1733,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // 5s timeout) of latency to every message.
     const hadInflightTurn =
       entry.pendingTurnId !== null || entry.abortPendingTurnWait !== undefined;
+    entry.currentTurnExecutionId = turnExecutionId;
+    entry.currentNativeTurnId = undefined;
+    entry.turnBindingPhase = "awaiting";
+    entry.turnStartResponsePending = true;
+    entry.pendingTurnStartNotification = undefined;
+    entry.activeParentTurnExecutionId = turnExecutionId;
     entry.nextTurnExecutionId = turnExecutionId;
 
     entry.abortPendingTurnWait?.();
@@ -1770,11 +1824,21 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
                 : turn?.status === "interrupted"
                   ? "cancelled"
                   : "completed";
-            const tid = turn?.id;
-            if (tid && entry.pendingTurnId && tid !== entry.pendingTurnId) {
+            const tid = nativeTurnIdFromParams(n.params);
+            const currentExecutionId = entry.currentTurnExecutionId;
+            const currentNativeTurnId = entry.currentNativeTurnId;
+            const provenCurrentTurn = Boolean(
+              currentExecutionId === turnExecutionId
+              && currentNativeTurnId
+              && tid
+              && tid === currentNativeTurnId,
+            );
+            if (!provenCurrentTurn) {
               logger.debug("Codex turn/completed ignored (stale or unmatched)", {
                 tid,
                 pending: entry.pendingTurnId,
+                currentNativeTurnId,
+                currentExecutionId,
                 seq,
                 liveSeq: entry.runTurnSeq,
               });
@@ -1800,7 +1864,23 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         void (async () => {
           try {
             const turnId = await server.sendTurn(input, turnOptions);
-            if (turnId && seq === entry.runTurnSeq) entry.pendingTurnId = turnId;
+            if (seq !== entry.runTurnSeq) return;
+            entry.turnStartResponsePending = false;
+            if (turnId) {
+              const assignment = assignNativeExecution(
+                entry.turnExecutionIdsByNativeTurn,
+                turnId,
+                turnExecutionId,
+                entry.nativeExecutionConflictKeys,
+              );
+              if (assignment !== "conflict") {
+                entry.currentNativeTurnId = turnId;
+                entry.pendingTurnId = turnId;
+                entry.turnBindingPhase = "bound";
+              }
+              entry.pendingTurnStartNotification = undefined;
+              pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
+            }
           } catch (err) {
             cleanup();
             reject(err);
@@ -1838,6 +1918,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         // runtime's busy guard (`isBusy` reads `pendingTurnId`) stops sparing
         // the session from idle eviction. A superseding turn owns its own id.
         entry.pendingTurnId = null;
+        entry.turnBindingPhase = "idle";
+        entry.turnStartResponsePending = false;
+        entry.pendingTurnStartNotification = undefined;
       }
       if (!serverDied && seq === entry.runTurnSeq && !endedEmitted) {
         endedEmitted = true;

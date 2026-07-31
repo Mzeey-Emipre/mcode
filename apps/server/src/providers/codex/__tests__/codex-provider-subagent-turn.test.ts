@@ -1,8 +1,10 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const { loggerWarnMock } = vi.hoisted(() => ({ loggerWarnMock: vi.fn() }));
+
 vi.mock("@mcode/shared", () => ({
-  logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+  logger: { warn: loggerWarnMock, info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("../codex-version.js", () => ({
@@ -11,7 +13,7 @@ vi.mock("../codex-version.js", () => ({
 }));
 
 const { sendTurnMock, getChildThreadMetadataMock } = vi.hoisted(() => ({
-  sendTurnMock: vi.fn().mockResolvedValue("turn-main"),
+  sendTurnMock: vi.fn().mockResolvedValue(null),
   getChildThreadMetadataMock: vi.fn().mockResolvedValue({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
 }));
 
@@ -22,7 +24,7 @@ vi.mock("../codex-app-server.js", async () => {
     threadId = "sdk-thread-1";
     resumeFailed = false;
     async start(): Promise<void> {}
-    async sendTurn(input: unknown, turnOptions: unknown): Promise<string> {
+    async sendTurn(input: unknown, turnOptions: unknown): Promise<string | null> {
       return sendTurnMock(input, turnOptions);
     }
     async getChildThreadMetadata(childThreadId: string): Promise<{ model: string; reasoningEffort: string }> {
@@ -107,6 +109,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   beforeEach(() => {
     sendTurnMock.mockClear();
     getChildThreadMetadataMock.mockClear();
+    loggerWarnMock.mockClear();
   });
 
   it("enriches nested native sub-agents from one authoritative child lookup each", async () => {
@@ -264,6 +267,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   });
 
   it("does not let a child-thread turn/started overwrite pendingTurnId", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-main");
     const provider = makeProvider();
     const entry = await startSession(provider, "mcode-subagent-a", "subagent-a");
 
@@ -281,6 +285,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   });
 
   it("does not emit Ended when a child-thread turn completes mid main turn", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-main");
     const provider = makeProvider();
     const events: AgentEvent[] = [];
     provider.on("event", (e: AgentEvent) => events.push(e));
@@ -375,6 +380,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   });
 
   it("keeps known native A mappings immutable after B starts", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
     const events: AgentEvent[] = [];
     provider.on("event", (event: AgentEvent) => events.push(event));
@@ -383,6 +389,19 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     entry.server.emit("notification", {
       method: "turn/started",
       params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "turn-a",
+        item: {
+          type: "subAgentActivity",
+          id: "call-child-a",
+          kind: "started",
+          agentThreadId: "child-a",
+        },
+      },
     });
     entry.server.emit("notification", {
       method: "turn/started",
@@ -411,6 +430,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     }
     expect(sendTurnMock).toHaveBeenCalledTimes(2);
     (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     entry.server.emit("notification", {
       method: "turn/started",
@@ -464,5 +484,173 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     expect(lateA?.turnExecutionId).toBe("exec-mcode-origin-immutable");
     expect(bText?.turnExecutionId).toBe("exec-b");
     expect(events.filter((event) => event.type === AgentEventType.Ended).at(-1)?.turnExecutionId).toBe("exec-b");
+  });
+
+  it("does not settle B from late A completion before B binds", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-late-completion", "late-completion");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-late-completion",
+      workspaceId: "workspace-test",
+      threadId: "late-completion",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    entry.server.emit("notification", {
+      method: "turn/completed",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(events.some((event) => event.type === AgentEventType.Ended && event.turnExecutionId === "exec-b")).toBe(false);
+
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "turn/completed",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(events.some((event) => event.type === AgentEventType.Ended && event.turnExecutionId === "exec-b")).toBe(true);
+  });
+
+  it("does not rebind an evicted native A turn id from a late start", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-evicted-turn", "evicted-turn");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-evicted-turn",
+      workspaceId: "workspace-test",
+      threadId: "evicted-turn",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    for (let i = 0; i < 129; i++) {
+      entry.server.emit("notification", {
+        method: "turn/started",
+        params: { threadId: `child-${i}`, turn: { id: `child-turn-${i}` } },
+      });
+    }
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "turn/completed",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a", status: "completed" } },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(events.some((event) => event.type === AgentEventType.Ended && event.turnExecutionId === "exec-b")).toBe(false);
+  });
+
+  it("attributes parent notifications without turn ids to active B", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-parent-no-turn", "parent-no-turn");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-parent-no-turn",
+      workspaceId: "workspace-test",
+      threadId: "parent-no-turn",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "sdk-thread-1", delta: "B no turn id" },
+    });
+    expect(events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "B no turn id")?.turnExecutionId).toBe("exec-b");
+  });
+
+  it("bounds repeated native mapping conflict diagnostics", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
+    const provider = makeProvider();
+    const entry = await startSession(provider, "mcode-conflict-bound", "conflict-bound");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-conflict-bound",
+      workspaceId: "workspace-test",
+      threadId: "conflict-bound",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    for (let i = 0; i < 200; i++) {
+      entry.server.emit("notification", {
+        method: "turn/started",
+        params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+      });
+    }
+    expect(loggerWarnMock.mock.calls.length).toBeLessThanOrEqual(1);
   });
 });
