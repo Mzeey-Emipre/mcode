@@ -57,7 +57,7 @@ import type {
   CreateAndSendInput,
 } from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
-import type { PaginatedMessages, ConversationPage, ConversationTail, SetThreadSubscriptionsInput, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
+import type { PaginatedMessages, ConversationPage, ConversationTail, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
   decodeTerminalDataFrame,
@@ -680,7 +680,7 @@ export function createWsTransport(
     subscribeThread: (threadId) => rpc<void>("push.subscribeThread", { threadId }),
     unsubscribeThread: (threadId) => rpc<void>("push.unsubscribeThread", { threadId }),
     setThreadSubscriptions: (input: SetThreadSubscriptionsInput) =>
-      rpc<void>("push.setThreadSubscriptions", input),
+      rpc<SetThreadSubscriptionsResult>("push.setThreadSubscriptions", input),
     getThreadGoal: (threadId) =>
       rpc<GoalLookupResult>("thread.goal.get", { threadId }),
     clearThreadGoal: (threadId) =>

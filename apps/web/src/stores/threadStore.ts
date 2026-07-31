@@ -23,6 +23,7 @@ import { findModelById } from "@/lib/model-registry";
 import { resolveContextWindow } from "@/lib/resolve-context-window";
 import { useSettingsStore } from "./settingsStore";
 import { createConversationResidency, registerConversationResidency } from "./conversation-residency";
+import { recordBackgroundEventDropped } from "@/lib/thread-switch-telemetry";
 import {
   clearPendingTurnPersistMessage,
   projectTurnResponse,
@@ -731,13 +732,104 @@ export function extractPendingPlanQuestions(
   }
 }
 
-/** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
 /** One coalesced `session.textDelta` span for rAF flushing; preserves missing `isFinalResponse` for legacy fallback behavior. */
-type PendingTextChunk = { delta: string; isFinalResponse?: boolean };
+type PendingTextChunk = {
+  delta: string;
+  isFinalResponse?: boolean;
+  /** Background deltas retain the streaming buffer but defer narrative projection until activation. */
+  deferNarrative?: boolean;
+};
 
+const MAX_DEFERRED_NARRATIVE_EVENTS = 2048;
+
+function appendThoughtSegment(
+  segments: ThoughtSegment[],
+  acc: string,
+  isExplicitNonFinal: boolean,
+): ThoughtSegment[] {
+  if (!acc) return segments;
+  const looksLikeContinuation = (prevText: string, nextText: string): boolean => {
+    const trimmedPrev = prevText.trimEnd();
+    const lastChar = trimmedPrev.slice(-1);
+    const prevEndsSentence = /[.!?]/.test(lastChar);
+    const firstChar = nextText.replace(/^\s+/, "").slice(0, 1);
+    const nextStartsLowerOrPunct =
+      firstChar === "" || /[a-z,;:)\]}-]/.test(firstChar);
+    return !prevEndsSentence || nextStartsLowerOrPunct;
+  };
+  const TINY_SEGMENT_THRESHOLD = 40;
+  const last = segments[segments.length - 1];
+  const shouldReopen =
+    last &&
+    last.endedAt !== undefined &&
+    (last.text.length < TINY_SEGMENT_THRESHOLD || looksLikeContinuation(last.text, acc));
+  if (!last || (last.endedAt !== undefined && !shouldReopen)) {
+    return [
+      ...segments,
+      {
+        text: acc,
+        startedAt: Date.now(),
+        ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+      },
+    ];
+  }
+  if (last.endedAt !== undefined && shouldReopen) {
+    const reopened: ThoughtSegment = {
+      ...last,
+      text: last.text + acc,
+      ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+    };
+    delete (reopened as { endedAt?: number }).endedAt;
+    return [...segments.slice(0, -1), reopened];
+  }
+  return [
+    ...segments.slice(0, -1),
+    {
+      ...last,
+      text: last.text + acc,
+      ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
+    },
+  ];
+}
+
+function projectAssistantMessageBoundary(
+  segments: ThoughtSegment[],
+  isFinalResponse: boolean,
+): ThoughtSegment[] | undefined {
+  const last = segments[segments.length - 1];
+  if (!last || last.endedAt !== undefined) return undefined;
+  return isFinalResponse
+    ? segments.slice(0, -1)
+    : [...segments.slice(0, -1), { ...last, endedAt: Date.now() }];
+}
+
+function projectToolProgress(
+  toolCalls: ToolCall[],
+  toolCallId: string,
+  elapsedSeconds: number,
+  lastActivityAt: number,
+): ToolCall[] | undefined {
+  let changed = false;
+  const updated = toolCalls.map((toolCall) => {
+    if (toolCall.id === toolCallId && !toolCall.isComplete) {
+      changed = true;
+      return { ...toolCall, elapsedSeconds, lastActivityAt };
+    }
+    return toolCall;
+  });
+  return changed ? updated : undefined;
+}
+
+/** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
 export const useThreadStore = create<ThreadState>((set, get) => {
   let textDeltaFlushRaf: number | null = null;
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
+  const deferredNarrativeEventsByThread = new Map<
+    string,
+    { generation: number; events: AgentEvent[]; bytes: number }
+  >();
+  const deferredNarrativeGenerations = new Map<string, number>();
+  const MAX_DEFERRED_NARRATIVE_BYTES = 256 * 1024;
 
   const getRec = (threadId: string) => getThreadRecord(get().records, threadId);
 
@@ -763,10 +855,18 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       cancelAnimationFrame(textDeltaFlushRaf);
       textDeltaFlushRaf = null;
     }
-    if (pendingTextDeltaByThread.size === 0) return;
+    if (pendingTextDeltaByThread.size === 0) {
+      const activeThreadId = get().currentThreadId;
+      if (activeThreadId) promoteDeferredNarrativeEvents(activeThreadId);
+      return;
+    }
     const batch = new Map<string, PendingTextChunk[]>();
     for (const [tid, chunks] of pendingTextDeltaByThread) {
-      batch.set(tid, chunks.map((c) => ({ delta: c.delta, isFinalResponse: c.isFinalResponse })));
+      batch.set(tid, chunks.map((c) => ({
+        delta: c.delta,
+        isFinalResponse: c.isFinalResponse,
+        deferNarrative: c.deferNarrative,
+      })));
     }
     pendingTextDeltaByThread.clear();
     set((state) => {
@@ -784,57 +884,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           streaming = combined;
           streamingPreview = combined.length > 200 ? combined.slice(-200) : combined;
 
-          if (chunk.isFinalResponse) {
+          if (chunk.deferNarrative || chunk.isFinalResponse) {
             continue;
           }
 
           const isExplicitNonFinal = chunk.isFinalResponse === false;
-          const last = segments[segments.length - 1];
-          const looksLikeContinuation = (prevText: string, nextText: string): boolean => {
-            const trimmedPrev = prevText.trimEnd();
-            const lastChar = trimmedPrev.slice(-1);
-            const prevEndsSentence = /[.!?]/.test(lastChar);
-            const firstChar = nextText.replace(/^\s+/, "").slice(0, 1);
-            const nextStartsLowerOrPunct =
-              firstChar === "" || /[a-z,;:)\]}-]/.test(firstChar);
-            return !prevEndsSentence || nextStartsLowerOrPunct;
-          };
-          const TINY_SEGMENT_THRESHOLD = 40;
-          const shouldReopen =
-            last &&
-            last.endedAt !== undefined &&
-            (last.text.length < TINY_SEGMENT_THRESHOLD ||
-              looksLikeContinuation(last.text, acc));
-          if (!last || (last.endedAt !== undefined && !shouldReopen)) {
-            segments = [
-              ...segments,
-              {
-                text: acc,
-                startedAt: Date.now(),
-                ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-              },
-            ];
-            segmentsChanged = true;
-          } else if (last.endedAt !== undefined && shouldReopen) {
-            const reopened: typeof last = {
-              ...last,
-              text: last.text + acc,
-              ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-            };
-            delete (reopened as { endedAt?: number }).endedAt;
-            segments = [...segments.slice(0, -1), reopened];
-            segmentsChanged = true;
-          } else {
-            segments = [
-              ...segments.slice(0, -1),
-              {
-                ...last,
-                text: last.text + acc,
-                ...(isExplicitNonFinal ? { isExplicitNonFinal: true } : {}),
-              },
-            ];
-            segmentsChanged = true;
-          }
+          segments = appendThoughtSegment(segments, acc, isExplicitNonFinal);
+          segmentsChanged = true;
         }
         const patch: Partial<ThreadRecord> = {
           streaming,
@@ -847,16 +903,148 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
       return { records };
     });
+
+    const activeThreadId = get().currentThreadId;
+    if (activeThreadId) promoteDeferredNarrativeEvents(activeThreadId);
+  };
+
+  const applyDeferredNarrativeEvent = (threadId: string, event: AgentEvent): void => {
+    if (event.type === "textDelta") {
+      const delta = typeof event.delta === "string" ? event.delta : "";
+      if (!delta || event.isFinalResponse === true) return;
+      set((state) => {
+        const record = getThreadRecord(state.records, threadId);
+        return {
+          records: patchThreadRecord(state.records, threadId, {
+            thoughtSegments: appendThoughtSegment(
+              record.thoughtSegments,
+              delta,
+              event.isFinalResponse === false,
+            ),
+          }),
+        };
+      });
+    } else if (event.type === "assistantMessageBoundary") {
+      const isFinalResponse = event.isFinalResponse === true;
+      set((state) => {
+        const record = getThreadRecord(state.records, threadId);
+        const thoughtSegments = projectAssistantMessageBoundary(record.thoughtSegments, isFinalResponse);
+        return thoughtSegments
+          ? { records: patchThreadRecord(state.records, threadId, { thoughtSegments }) }
+          : state;
+      });
+    } else if (event.type === "toolProgress") {
+      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+      if (!toolCallId) return;
+      const elapsedSeconds = typeof event.elapsedSeconds === "number" ? event.elapsedSeconds : 0;
+      const lastActivityAt = Date.now();
+      set((state) => {
+        const current = getThreadRecord(state.records, threadId).toolCalls;
+        const toolCalls = projectToolProgress(current, toolCallId, elapsedSeconds, lastActivityAt);
+        return toolCalls
+          ? { records: patchThreadRecord(state.records, threadId, { toolCalls }) }
+          : state;
+      });
+    }
+  };
+
+  const promoteDeferredNarrativeEvents = (threadId: string): void => {
+    const queued = deferredNarrativeEventsByThread.get(threadId);
+    if (!queued || queued.events.length === 0) return;
+    deferredNarrativeEventsByThread.delete(threadId);
+    if (queued.generation !== (deferredNarrativeGenerations.get(threadId) ?? 0)) {
+      if (!pendingTextDeltaByThread.has(threadId) && !get().runningThreadIds.has(threadId)) {
+        deferredNarrativeGenerations.delete(threadId);
+      }
+      return;
+    }
+    for (const event of queued.events) {
+      applyDeferredNarrativeEvent(threadId, event);
+    }
+    if (!pendingTextDeltaByThread.has(threadId) && !get().runningThreadIds.has(threadId)) {
+      deferredNarrativeGenerations.delete(threadId);
+    }
+  };
+
+  const deferredNarrativeEventBytes = (event: AgentEvent): number => {
+    if (event.type === "textDelta") {
+      return (typeof event.delta === "string" ? event.delta.length : 0) * 2 + 32;
+    }
+    if (event.type === "toolProgress") {
+      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+      const toolName = typeof event.toolName === "string" ? event.toolName : "";
+      return 64 + toolCallId.length * 2 + toolName.length * 2;
+    }
+    if (event.type === "assistantMessageBoundary") return 48;
+    return 64;
+  };
+
+  const splitDeferredNarrativeEvent = (event: AgentEvent): AgentEvent[] => {
+    if (event.type !== "textDelta") return [event];
+    const delta = typeof event.delta === "string" ? event.delta : "";
+    const maxDeltaLength = Math.floor((MAX_DEFERRED_NARRATIVE_BYTES - 32) / 2);
+    if (delta.length <= maxDeltaLength) return [event];
+
+    const chunks: AgentEvent[] = [];
+    for (let offset = 0; offset < delta.length;) {
+      let end = Math.min(delta.length, offset + maxDeltaLength);
+      if (end < delta.length && end > offset && /[\uD800-\uDBFF]/.test(delta[end - 1] ?? "")) {
+        end -= 1;
+      }
+      chunks.push({ ...event, delta: delta.slice(offset, end) });
+      offset = end;
+    }
+    return chunks;
   };
 
   const dropPendingTextDeltas = (threadIds: Iterable<string>) => {
     let dropped = false;
     for (const threadId of threadIds) {
       dropped = pendingTextDeltaByThread.delete(threadId) || dropped;
+      dropped = deferredNarrativeEventsByThread.delete(threadId) || dropped;
+      if (!pendingTextDeltaByThread.has(threadId) && !deferredNarrativeEventsByThread.has(threadId)
+        && !get().runningThreadIds.has(threadId)) {
+        deferredNarrativeGenerations.delete(threadId);
+      }
     }
     if (dropped && pendingTextDeltaByThread.size === 0 && textDeltaFlushRaf != null) {
       cancelAnimationFrame(textDeltaFlushRaf);
       textDeltaFlushRaf = null;
+    }
+  };
+
+  const invalidateDeferredNarrativeEvents = (threadId: string): void => {
+    deferredNarrativeGenerations.set(
+      threadId,
+      (deferredNarrativeGenerations.get(threadId) ?? 0) + 1,
+    );
+    dropPendingTextDeltas([threadId]);
+    flushPendingTextDeltas();
+  };
+
+  const queueDeferredNarrativeEvent = (threadId: string, event: AgentEvent): void => {
+    for (const chunk of splitDeferredNarrativeEvent(event)) {
+      const generation = deferredNarrativeGenerations.get(threadId) ?? 0;
+      const queued = deferredNarrativeEventsByThread.get(threadId);
+      const events = queued?.generation === generation ? queued.events : [];
+      const bytes = queued?.generation === generation ? queued.bytes : 0;
+      const eventBytes = deferredNarrativeEventBytes(chunk);
+      if (events.length >= MAX_DEFERRED_NARRATIVE_EVENTS || bytes + eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
+        promoteDeferredNarrativeEvents(threadId);
+      }
+
+      const latest = deferredNarrativeEventsByThread.get(threadId);
+      const nextEvents = latest?.generation === generation ? latest.events : [];
+      const nextBytes = latest?.generation === generation ? latest.bytes : 0;
+      if (eventBytes > MAX_DEFERRED_NARRATIVE_BYTES) {
+        applyDeferredNarrativeEvent(threadId, chunk);
+        continue;
+      }
+      deferredNarrativeEventsByThread.set(threadId, {
+        generation,
+        events: [...nextEvents, chunk],
+        bytes: nextBytes + eventBytes,
+      });
     }
   };
 
@@ -901,7 +1089,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   const conversationResidency = createConversationResidency({
     restoreConversation: (threadId) => threadHydrator.hydrate(threadId, "active"),
     refreshConversation: (threadId) => threadHydrator.hydrate(threadId, "active", { force: true }),
-    deactivateConversation: () => threadHydrator.deactivate(),
+    deactivateConversation: () => {
+      const current = get().currentThreadId;
+      if (current) invalidateDeferredNarrativeEvents(current);
+      threadHydrator.deactivate();
+    },
     retainInactiveConversation: (threadId) => threadHydrator.retainInactiveConversation(threadId),
     invalidateConversation: (threadId) => threadHydrator.invalidateConversation(threadId),
     synchronizeConversation: (threadId) => threadHydrator.synchronizeConversation(threadId),
@@ -1069,7 +1261,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       throw new Error(`Thread ${threadId} already has an active agent session`);
     }
     if (!isControlCommand) {
-      dropPendingTextDeltas([threadId]);
+      invalidateDeferredNarrativeEvents(threadId);
       useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
     }
 
@@ -1209,6 +1401,9 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           runningThreadIds: next,
         };
       });
+      if (!activeSessionConflict && !isControlCommand) {
+        invalidateDeferredNarrativeEvents(threadId);
+      }
     }
   },
 
@@ -1253,6 +1448,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         })),
       };
     });
+    invalidateDeferredNarrativeEvents(threadId);
+    threadHydrator.invalidatePermissionSnapshots(threadId);
   },
 
   hydrateRunningThreads: (ids) => {
@@ -1287,7 +1484,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
       return { runningThreadIds: new Set(ids), records };
     });
-    dropPendingTextDeltas(resetPendingIds);
+    for (const threadId of resetPendingIds) {
+      invalidateDeferredNarrativeEvents(threadId);
+      threadHydrator.invalidatePermissionSnapshots(threadId);
+    }
   },
 
   /** Append a single message to the current thread's message list. */
@@ -1308,9 +1508,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    * Does NOT reset runningThreadIds since agents may still be executing.
    */
   clearMessages: () => {
-    flushPendingTextDeltas();
     const current = get().currentThreadId;
-    if (current) conversationResidency.invalidateConversation(current);
+    if (current) {
+      invalidateDeferredNarrativeEvents(current);
+      conversationResidency.invalidateConversation(current);
+    }
+    flushPendingTextDeltas();
 
     get().toolCallRecordCache.clear();
     if (current) {
@@ -1334,12 +1537,16 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           latestTurnWithChanges: null,
           serverMessageIds: {},
           narrativeByMessage: {},
+          lastAgentEventEpoch: undefined,
+          lastAgentEventSequence: undefined,
         }),
       }));
     }
   },
 
   deactivateConversation: () => {
+    const current = get().currentThreadId;
+    if (current) invalidateDeferredNarrativeEvents(current);
     threadHydrator.deactivate();
   },
 
@@ -1441,6 +1648,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   clearThreadState: (threadId) => {
     conversationResidency.invalidateConversation(threadId);
     clearDequeueTimer(threadId);
+    invalidateDeferredNarrativeEvents(threadId);
+    threadHydrator.forgetThread(threadId);
     forgetScrollTop(threadId);
 
     const isCurrentThread = get().currentThreadId === threadId;
@@ -1458,6 +1667,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         ...(isCurrentThread ? { currentThreadId: null } : {}),
       };
     });
+    deferredNarrativeGenerations.delete(threadId);
 
     if (isCurrentThread) {
       get().toolCallRecordCache.clear();
@@ -1470,6 +1680,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     for (const threadId of threadIds) {
       conversationResidency.invalidateConversation(threadId);
       clearDequeueTimer(threadId);
+      invalidateDeferredNarrativeEvents(threadId);
+      threadHydrator.forgetThread(threadId);
       forgetScrollTop(threadId);
     }
 
@@ -1501,6 +1713,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         ...(deletingCurrentThread ? { currentThreadId: null } : {}),
       };
     });
+    for (const threadId of threadIds) deferredNarrativeGenerations.delete(threadId);
 
     if (deletingCurrentThread) {
       get().toolCallRecordCache.clear();
@@ -1683,6 +1896,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   addPermissionRequest: (request) => {
+    threadHydrator.invalidatePermissionSnapshots(request.threadId);
     set((s) => {
       const existing = getThreadRecord(s.records, request.threadId).permissions;
       if (existing.some((p) => p.requestId === request.requestId)) return s;
@@ -1695,6 +1909,12 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   resolvePermissionRequest: (requestId, decision) => {
+    for (const [threadId, rec] of get().records) {
+      if (rec.permissions.some((permission) => permission.requestId === requestId)) {
+        threadHydrator.invalidatePermissionSnapshots(threadId);
+        break;
+      }
+    }
     set((s) => {
       let records = s.records;
       for (const [threadId, rec] of s.records) {
@@ -1767,6 +1987,55 @@ export const useThreadStore = create<ThreadState>((set, get) => {
    */
   handleAgentEvent: (event) => {
     const { threadId } = event;
+    const eventEpoch = typeof event.epoch === "string" ? event.epoch : undefined;
+    const eventSequence = typeof event.sequence === "number" && event.sequence > 0
+      ? event.sequence
+      : undefined;
+    if (eventSequence !== undefined) {
+      const record = getRec(threadId);
+      const lastSequence = record.lastAgentEventSequence;
+      const epochChanged = eventEpoch !== undefined
+        && eventEpoch !== record.lastAgentEventEpoch;
+      if (!epochChanged && lastSequence !== undefined && eventSequence <= lastSequence) {
+        if (get().currentThreadId !== threadId) recordBackgroundEventDropped(threadId);
+        return;
+      }
+      patchRec(threadId, {
+        lastAgentEventSequence: eventSequence,
+        ...(eventEpoch !== undefined ? { lastAgentEventEpoch: eventEpoch } : {}),
+      });
+    }
+    const currentThreadId = get().currentThreadId;
+    // Before conversation hydration, no running IDs means events belong to the
+    // only known conversation. Once running sessions are known, null selection
+    // must keep background narrative deferred.
+    const isActiveThread = currentThreadId === threadId
+      || (currentThreadId === null && get().runningThreadIds.size === 0);
+    const isLifecycleExit = event.type === "turnComplete" || event.type === "ended" || event.type === "error";
+    const startsNewInstance = event.type === "turnStarted";
+
+    if (isLifecycleExit || startsNewInstance) {
+      // Lifecycle events can arrive in same frame as final text delta.
+      // Flush first so invalidation cannot discard text needed for persistence.
+      flushPendingTextDeltas();
+      if (startsNewInstance) invalidateDeferredNarrativeEvents(threadId);
+      if (isLifecycleExit && !isActiveThread) promoteDeferredNarrativeEvents(threadId);
+      if (isLifecycleExit) {
+        queueMicrotask(() => {
+          if (!get().runningThreadIds.has(threadId)
+            && !pendingTextDeltaByThread.has(threadId)
+            && !deferredNarrativeEventsByThread.has(threadId)) {
+            deferredNarrativeGenerations.delete(threadId);
+          }
+        });
+      }
+    }
+    if (startsNewInstance) {
+      threadHydrator.invalidatePermissionSnapshots(threadId);
+    }
+    if (isActiveThread && !startsNewInstance && !isLifecycleExit) {
+      promoteDeferredNarrativeEvents(threadId);
+    }
 
     if (event.type !== "textDelta") {
       flushPendingTextDeltas();
@@ -1859,7 +2128,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           attachments: null,
         };
         set((state) => {
-          if (state.currentThreadId !== threadId) return {};
           const rec = getThreadRecord(state.records, threadId);
           const { messages: capped, evicted } = capMessages([...rec.messages, message]);
           return {
@@ -2012,6 +2280,11 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "toolUse") {
+      // Background text stays deferred until its tool boundary arrives. Project
+      // that queued narrative first so toolUse closes the correct thought.
+      if (!isActiveThread) {
+        promoteDeferredNarrativeEvents(threadId);
+      }
       const toolCallId = (event.toolCallId as string) || "";
       const existingCalls = getRec(threadId).toolCalls;
       const toolName = (event.toolName as string) || "unknown";
@@ -2317,17 +2590,29 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const rawIsFinalResponse = event.isFinalResponse;
       const isFinalResponse =
         typeof rawIsFinalResponse === "boolean" ? rawIsFinalResponse : undefined;
+      const deferNarrative = !isActiveThread;
       const hadPending = pendingTextDeltaByThread.has(threadId);
       const existing = pendingTextDeltaByThread.get(threadId) ?? [];
       const next = [...existing];
       const tail = next[next.length - 1];
-      if (tail && tail.isFinalResponse === isFinalResponse) {
-        next[next.length - 1] = { delta: tail.delta + delta, isFinalResponse };
+      if (
+        tail
+        && tail.isFinalResponse === isFinalResponse
+        && tail.deferNarrative === deferNarrative
+      ) {
+        next[next.length - 1] = {
+          delta: tail.delta + delta,
+          isFinalResponse,
+          deferNarrative,
+        };
       } else {
-        next.push({ delta, isFinalResponse });
+        next.push({ delta, isFinalResponse, deferNarrative });
       }
       pendingTextDeltaByThread.set(threadId, next);
-      if (!hadPending) {
+      if (!isActiveThread) {
+        queueDeferredNarrativeEvent(threadId, event);
+      }
+      if (!deferNarrative && (!hadPending || existing.some((chunk) => chunk.deferNarrative))) {
         markPriorToolCallsComplete();
       }
       scheduleTextDeltaFlush();
@@ -2350,16 +2635,14 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       // Flush any pending text delta chunks first so the open thought we
       // operate on reflects every delta that arrived for this message.
       flushPendingTextDeltas();
+      if (!isActiveThread) {
+        queueDeferredNarrativeEvent(threadId, event);
+        return;
+      }
       set((state) => {
         const rec = getThreadRecord(state.records, threadId);
-        const segments = rec.thoughtSegments;
-        const last = segments[segments.length - 1];
-        if (!last || last.endedAt !== undefined) {
-          return state;
-        }
-        const nextSegments = isFinalResponse
-          ? segments.slice(0, -1)
-          : [...segments.slice(0, -1), { ...last, endedAt: Date.now() }];
+        const nextSegments = projectAssistantMessageBoundary(rec.thoughtSegments, isFinalResponse);
+        if (!nextSegments) return state;
         return {
           records: patchThreadRecord(state.records, threadId, {
             thoughtSegments: nextSegments,
@@ -2370,22 +2653,19 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     if (event.type === "toolProgress") {
+      if (!isActiveThread) {
+        queueDeferredNarrativeEvent(threadId, event);
+        return;
+      }
       const toolCallId = (event.toolCallId as string) || "";
       const elapsedSeconds = (event.elapsedSeconds as number) ?? 0;
       if (!toolCallId) return;
       const lastActivityAt = Date.now();
       set((state) => {
         const current = getThreadRecord(state.records, threadId).toolCalls;
-        let changed = false;
-        const updated = current.map((tc) => {
-          if (tc.id === toolCallId && !tc.isComplete) {
-            changed = true;
-            return { ...tc, elapsedSeconds, lastActivityAt };
-          }
-          return tc;
-        });
+        const updated = projectToolProgress(current, toolCallId, elapsedSeconds, lastActivityAt);
         // Return same state reference when nothing changed — Zustand skips notification.
-        if (!changed) return state;
+        if (!updated) return state;
         return { records: patchThreadRecord(state.records, threadId, { toolCalls: updated }) };
       });
       return;
@@ -2644,7 +2924,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               : {}),
           };
 
-          if (dedupedGuardrail && state.currentThreadId === threadId) {
+          if (dedupedGuardrail) {
             const { messages: capped, evicted } = capMessages([...rec.messages, dedupedGuardrail]);
             return {
               runningThreadIds: nextRunning,
@@ -2885,7 +3165,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       const active = event.active as boolean;
       if (!active) {
         const wasCompacting = getRec(threadId).isCompacting;
-        if (wasCompacting && get().currentThreadId === threadId) {
+        if (wasCompacting) {
           const systemMsg: Message = {
             id: crypto.randomUUID(),
             thread_id: threadId,
@@ -2899,7 +3179,13 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             tokens_used: null,
             attachments: null,
           };
-          get().addMessage(systemMsg);
+          patchRec(threadId, (rec) => {
+            const { messages: capped, evicted } = capMessages([...rec.messages, systemMsg]);
+            return {
+              messages: capped,
+              ...(evicted ? { hasMoreMessages: true } : {}),
+            };
+          });
         }
       }
       set((state) => {
@@ -2979,12 +3265,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           rateLimit: undefined,
           apiRetry: undefined,
         };
-        if (state.currentThreadId !== threadId) {
-          return {
-            runningThreadIds: nextRunning,
-            records: patchThreadRecord(state.records, threadId, basePatch),
-          };
-        }
         const { messages: capped, evicted } = capMessages([...rec.messages, errorMessage]);
         return {
           runningThreadIds: nextRunning,

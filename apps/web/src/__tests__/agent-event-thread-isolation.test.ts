@@ -7,6 +7,8 @@ import {
   getTestThreadStreaming,
   getTestThreadToolCalls,
   getTestThreadError,
+  getTestThreadMessages,
+  getTestThreadHasMoreMessages,
   getTestThreadLoadEpoch,
   getTestThreadPlanQuestionsStatus,
   readActiveThreadField,
@@ -210,6 +212,70 @@ await activateTestConversation(THREAD_A);
       expect(getTestActiveMessages()).toHaveLength(0);
       // Streaming state is cleaned up for Thread B
       expect(getTestThreadStreaming(THREAD_B)).toBeUndefined();
+    });
+  });
+
+  // ── Compaction notice isolation ──────────────────────────────────────
+
+  describe("compaction notice isolation", () => {
+    it("appends background compaction notice to event thread, not selected thread", () => {
+      const { handleAgentEvent } = useThreadStore.getState();
+
+      handleAgentEvent({ type: "compacting", threadId: THREAD_B, active: true } as AgentEvent);
+      handleAgentEvent({ type: "compacting", threadId: THREAD_B, active: false } as AgentEvent);
+
+      expect(getTestThreadMessages(THREAD_B).map((message) => message.content)).toEqual([
+        "Context compacted",
+      ]);
+      expect(getTestThreadMessages(THREAD_A)).toHaveLength(0);
+    });
+
+    it("appends background compaction notice when no thread is selected", () => {
+      resetThreadStoreForTests({
+        currentThreadId: null,
+        runningThreadIds: new Set([THREAD_B]),
+        records: new Map([[THREAD_B, createEmptyThreadRecord()]]),
+      });
+      const { handleAgentEvent } = useThreadStore.getState();
+
+      handleAgentEvent({ type: "compacting", threadId: THREAD_B, active: true } as AgentEvent);
+      handleAgentEvent({ type: "compacting", threadId: THREAD_B, active: false } as AgentEvent);
+
+      expect(getTestThreadMessages(THREAD_B)).toHaveLength(1);
+      expect(getTestThreadMessages(THREAD_B)[0]?.content).toBe("Context compacted");
+    });
+
+    it("sets hasMoreMessages when compaction notice evicts an older message", () => {
+      const messages = Array.from({ length: 200 }, (_, index) => ({
+        id: `message-${index}`,
+        thread_id: THREAD_B,
+        role: "user" as const,
+        content: `message ${index}`,
+        tool_calls: null,
+        files_changed: null,
+        cost_usd: null,
+        tokens_used: null,
+        timestamp: "",
+        sequence: index + 1,
+        attachments: null,
+      }));
+      resetThreadStoreForTests({
+        currentThreadId: THREAD_A,
+        records: new Map([
+          [THREAD_A, createEmptyThreadRecord()],
+          [THREAD_B, { ...createEmptyThreadRecord(), messages }],
+        ]),
+      });
+      const { handleAgentEvent } = useThreadStore.getState();
+
+      handleAgentEvent({ type: "compacting", threadId: THREAD_B, active: true } as AgentEvent);
+      handleAgentEvent({ type: "compacting", threadId: THREAD_B, active: false } as AgentEvent);
+
+      expect(getTestThreadMessages(THREAD_B)).toHaveLength(200);
+      expect(getTestThreadMessages(THREAD_B)[0]?.id).toBe("message-1");
+      expect(getTestThreadMessages(THREAD_B).at(-1)?.content).toBe("Context compacted");
+      expect(getTestThreadHasMoreMessages(THREAD_B)).toBe(true);
+      expect(getTestThreadMessages(THREAD_A)).toHaveLength(0);
     });
   });
 

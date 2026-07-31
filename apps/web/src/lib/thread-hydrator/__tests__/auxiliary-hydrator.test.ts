@@ -128,6 +128,26 @@ describe("AuxiliaryHydrator", () => {
     });
   });
 
+  it("pruned permission generation after deleted thread snapshot settled", async () => {
+    let resolvePermissions!: (value: readonly unknown[]) => void;
+    (mockTransport.listPendingPermissions as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<readonly unknown[]>((resolve) => {
+        resolvePermissions = resolve;
+      }),
+    );
+    const aux = createAux();
+    aux.hydrate(THREAD_ID, { freshnessTtlMs: HYDRATION_TTL_MS, force: true });
+    aux.forgetThread(THREAD_ID);
+
+    resolvePermissions([]);
+    await vi.waitFor(() => {
+      const generations = (aux as unknown as {
+        permissionSnapshotGenerations: Map<string, number>;
+      }).permissionSnapshotGenerations;
+      expect(generations.has(THREAD_ID)).toBe(false);
+    });
+  });
+
   it("did not call setState for permissions when payload was unchanged", async () => {
     records = patchThreadRecord(records, THREAD_ID, {
       permissions: [{ requestId: "r1", toolName: "bash", settled: false, threadId: THREAD_ID, input: {} }],

@@ -159,6 +159,53 @@ describe("broadcast", () => {
     expect(JSON.parse(received[0].buf.toString("utf-8")).data.threadId).toBe("thread-new");
   });
 
+  it("assigns ordered sequences and replays retained events before live delivery", () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    broadcast("agent.event", { type: "textDelta", threadId: "thread-replay", delta: "one" });
+    broadcast("agent.event", { type: "textDelta", threadId: "thread-replay", delta: "two" });
+    const ws = fakeOpenSocket(received);
+    addClient(ws);
+
+    const result = setClientThreadSubscriptions(ws, ["thread-replay"], { "thread-replay": 0 });
+    expect(result).toEqual({ hydrationRequiredThreadIds: [], replayedThrough: { "thread-replay": 2 } });
+    broadcast("agent.event", { type: "textDelta", threadId: "thread-replay", delta: "three" });
+
+    expect(received.map((entry) => JSON.parse(entry.buf.toString("utf-8")).data.sequence)).toEqual([1, 2, 3]);
+  });
+
+  it("does not replay history for legacy subscription calls without cursors", () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    broadcast("agent.event", { type: "textDelta", threadId: "thread-legacy", delta: "old" });
+    const ws = fakeOpenSocket(received);
+    addClient(ws);
+    setClientThreadSubscriptions(ws, ["thread-legacy"]);
+    expect(received).toHaveLength(0);
+  });
+
+  it("reports hydration when a cursor falls behind the bounded journal", () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    for (let i = 0; i < 257; i++) {
+      broadcast("agent.event", { type: "textDelta", threadId: "thread-gap", delta: String(i) });
+    }
+    const ws = fakeOpenSocket(received);
+    addClient(ws);
+    const result = setClientThreadSubscriptions(ws, ["thread-gap"], { "thread-gap": 0 });
+    expect(result.hydrationRequiredThreadIds).toEqual(["thread-gap"]);
+    expect(received).toHaveLength(0);
+  });
+
+  it("reports hydration for a cursor from another server epoch without replay", () => {
+    const received: Array<{ buf: Buffer; binary: boolean }> = [];
+    broadcast("agent.event", { type: "textDelta", threadId: "thread-epoch", delta: "one" });
+    const ws = fakeOpenSocket(received);
+    addClient(ws);
+    const result = setClientThreadSubscriptions(ws, ["thread-epoch"], {
+      "thread-epoch": { epoch: "00000000-0000-4000-8000-000000000001", sequence: 0 },
+    });
+    expect(result.hydrationRequiredThreadIds).toEqual(["thread-epoch"]);
+    expect(received).toHaveLength(0);
+  });
+
   it("clears all thread subscriptions when replacing with an empty set", () => {
     const received: Array<{ buf: Buffer; binary: boolean }> = [];
     const ws = fakeOpenSocket(received);

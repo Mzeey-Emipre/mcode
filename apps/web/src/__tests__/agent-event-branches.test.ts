@@ -83,6 +83,57 @@ describe("handleAgentEvent branches", () => {
     expect(state.runningThreadIds.has("thread-1")).toBe(false);
   });
 
+  it("flushes same-frame textDelta before turnComplete persists assistant content", () => {
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: "thread-1",
+      delta: "final assistant answer",
+      isFinalResponse: true,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "turnComplete",
+      threadId: "thread-1",
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    } as AgentEvent);
+
+    expect(getTestActiveMessages().find((message) => message.role === "assistant")?.content)
+      .toBe("final assistant answer");
+  });
+
+  it("flushes same-frame background textDelta before turnComplete persists content", () => {
+    const backgroundThreadId = "thread-background-complete";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-1", { ...createEmptyThreadRecord() }],
+        [backgroundThreadId, { ...createEmptyThreadRecord() }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "background final answer",
+      isFinalResponse: true,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "turnComplete",
+      threadId: backgroundThreadId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    } as AgentEvent);
+
+    expect(readThreadField(backgroundThreadId, (thread) => thread.messages)
+      .find((message) => message.role === "assistant")?.content)
+      .toBe("background final answer");
+  });
+
   it("session.toolUse adds tool call to toolCallsByThread", () => {
     useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "tc1", toolName: "Read", toolInput: { path: "/foo" } } as AgentEvent);
     vi.runAllTimers();
@@ -93,6 +144,423 @@ describe("handleAgentEvent branches", () => {
     expect(calls[0].id).toBe("tc1");
     expect(calls[0].toolInput).toEqual({ path: "/foo" });
     expect(calls[0].isComplete).toBe(false);
+  });
+
+  it("deduplicates sequenced replay events while accepting a first sequence above one", () => {
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      sequence: 17,
+      toolCallId: "seq-tool-1",
+      toolName: "Read",
+      toolInput: { path: "/first" },
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      sequence: 17,
+      toolCallId: "seq-tool-1",
+      toolName: "Read",
+      toolInput: { path: "/replay" },
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      sequence: 18,
+      toolCallId: "seq-tool-2",
+      toolName: "Write",
+      toolInput: { path: "/second" },
+    } as AgentEvent);
+
+    const record = readThreadField("thread-1", (thread) => thread);
+    expect(record.lastAgentEventSequence).toBe(18);
+    expect(record.toolCalls.map((call) => call.id)).toEqual(["seq-tool-1", "seq-tool-2"]);
+    expect(record.toolCalls[0]?.toolInput).toEqual({ path: "/first" });
+  });
+
+  it("resets sequence authority when server event epoch changes", () => {
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+    handleAgentEvent({
+      type: "toolUse", threadId: "thread-1", epoch: "00000000-0000-4000-8000-000000000001",
+      sequence: 9, toolCallId: "old", toolName: "Read", toolInput: {},
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolUse", threadId: "thread-1", epoch: "00000000-0000-4000-8000-000000000002",
+      sequence: 1, toolCallId: "new", toolName: "Write", toolInput: {},
+    } as AgentEvent);
+    expect(readThreadField("thread-1", (thread) => thread.lastAgentEventSequence)).toBe(1);
+    expect(readThreadField("thread-1", (thread) => thread.lastAgentEventEpoch))
+      .toBe("00000000-0000-4000-8000-000000000002");
+  });
+
+  it("retains hook progress for an inactive thread", () => {
+    const backgroundThreadId = "thread-background-hook";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+    handleAgentEvent({
+      type: "hookStarted",
+      threadId: backgroundThreadId,
+      hookName: "format",
+      hookType: "stop",
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "hookProgress",
+      threadId: backgroundThreadId,
+      hookName: "format",
+      output: "line one\nline two",
+    } as AgentEvent);
+
+    expect(readThreadField(backgroundThreadId, (thread) => thread.hooks[0]?.outputLines))
+      .toEqual(["line one", "line two"]);
+  });
+
+  it("background textDelta keeps streaming state without growing narrative state", async () => {
+    const backgroundThreadId = "thread-deferred";
+    const backgroundToolCall = {
+      id: "background-tool",
+      toolName: "Read",
+      toolInput: { path: "/tmp/background" },
+      output: null,
+      isError: false,
+      isComplete: false,
+    };
+    const backgroundThought = { text: "existing thought", startedAt: 1, endedAt: 2 };
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-1", { ...createEmptyThreadRecord() }],
+        [backgroundThreadId, {
+          ...createEmptyThreadRecord(),
+          streaming: "",
+          thoughtSegments: [backgroundThought],
+          toolCalls: [backgroundToolCall],
+        }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "background text",
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: backgroundToolCall.id,
+      elapsedSeconds: 1,
+    } as AgentEvent);
+    await Promise.resolve();
+    vi.runAllTimers();
+
+    const record = readThreadField(backgroundThreadId, (thread) => thread);
+    expect(record.streaming).toBe("background text");
+    expect(record.thoughtSegments).toEqual([backgroundThought]);
+    expect(record.toolCalls).toEqual([backgroundToolCall]);
+  });
+
+  it("materializes deferred events at the count cap without reordering or duplication", () => {
+    const backgroundThreadId = "thread-deferred-count-cap";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    const deltas = Array.from({ length: 2049 }, (_, index) => `event-${index}|`);
+    for (const delta of deltas) {
+      useThreadStore.getState().handleAgentEvent({
+        type: "textDelta",
+        threadId: backgroundThreadId,
+        delta,
+      } as AgentEvent);
+    }
+    vi.runAllTimers();
+
+    const materializedBeforeActivation = readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    );
+    expect(materializedBeforeActivation).toBe(deltas.slice(0, 2048).join(""));
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: "missing-tool",
+      elapsedSeconds: 0,
+    } as AgentEvent);
+
+    const materialized = readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    );
+    expect(materialized).toBe(deltas.join(""));
+    expect(materialized.match(/event-/g)).toHaveLength(2049);
+  });
+
+  it("materializes deferred events at the byte cap without losing content", () => {
+    const backgroundThreadId = "thread-deferred-byte-cap";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    const deltas = ["A".repeat(100_000), "B".repeat(100_000)];
+    for (const delta of deltas) {
+      useThreadStore.getState().handleAgentEvent({
+        type: "textDelta",
+        threadId: backgroundThreadId,
+        delta,
+      } as AgentEvent);
+    }
+    vi.runAllTimers();
+
+    expect(readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    )).toBe(deltas[0]);
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: "missing-tool",
+      elapsedSeconds: 0,
+    } as AgentEvent);
+
+    expect(readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    )).toBe(deltas.join(""));
+  });
+
+  it("splits an oversized deferred textDelta into bounded ordered chunks", () => {
+    const backgroundThreadId = "thread-deferred-oversized-delta";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    const maxChunkLength = Math.floor((256 * 1024 - 32) / 2);
+    const delta = "x".repeat(maxChunkLength + 17);
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta,
+    } as AgentEvent);
+    vi.runAllTimers();
+
+    expect(readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    )).toBe(delta.slice(0, maxChunkLength));
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: "missing-tool",
+      elapsedSeconds: 0,
+    } as AgentEvent);
+
+    expect(readThreadField(
+      backgroundThreadId,
+      (thread) => thread.thoughtSegments.map((segment) => segment.text).join(""),
+    )).toBe(delta);
+  });
+
+  it("promotes deferred text, boundaries, and tool progress once in source order", async () => {
+    const backgroundThreadId = "thread-2";
+    const backgroundToolCall = {
+      id: "background-tool",
+      toolName: "Read",
+      toolInput: { path: "/tmp/background" },
+      output: null,
+      isError: false,
+      isComplete: false,
+    };
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-1", { ...createEmptyThreadRecord() }],
+        [backgroundThreadId, { ...createEmptyThreadRecord(), toolCalls: [backgroundToolCall] }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "first sentence that is deliberately long enough to stay closed.",
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "assistantMessageBoundary",
+      threadId: backgroundThreadId,
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "Second",
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: backgroundToolCall.id,
+      elapsedSeconds: 3,
+    } as AgentEvent);
+    vi.runAllTimers();
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: backgroundThreadId,
+      messageId: "server-message",
+      toolCallCount: 0,
+      filesChanged: [],
+    });
+
+    const promoted = readThreadField(backgroundThreadId, (thread) => thread);
+    expect(promoted.thoughtSegments.map((segment) => segment.text)).toEqual([
+      "first sentence that is deliberately long enough to stay closed.",
+      "Second",
+    ]);
+    expect(promoted.thoughtSegments[0]?.endedAt).toBeDefined();
+    expect(promoted.toolCalls[0]?.elapsedSeconds).toBe(3);
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolProgress",
+      threadId: backgroundThreadId,
+      toolCallId: "missing-tool",
+      elapsedSeconds: 0,
+    } as AgentEvent);
+    expect(readThreadField(backgroundThreadId, (thread) => thread.thoughtSegments))
+      .toHaveLength(2);
+  });
+
+  it("promotes inactive text before projecting its following toolUse", () => {
+    const backgroundThreadId = "thread-tool-boundary";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map([
+        ["thread-1", createEmptyThreadRecord()],
+        [backgroundThreadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "Before the tool call.",
+      isFinalResponse: false,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolUse",
+      threadId: backgroundThreadId,
+      toolCallId: "background-tool",
+      toolName: "Read",
+      toolInput: { path: "/tmp/background" },
+    } as AgentEvent);
+
+    const beforeSwitch = readThreadField(backgroundThreadId, (thread) => thread);
+    expect(beforeSwitch.thoughtSegments.map((segment) => segment.text)).toEqual([
+      "Before the tool call.",
+    ]);
+    expect(beforeSwitch.thoughtSegments[0]?.endedAt).toBeDefined();
+    expect(beforeSwitch.toolCalls.map((call) => call.id)).toEqual(["background-tool"]);
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    const afterSwitch = readThreadField(backgroundThreadId, (thread) => thread);
+    expect(afterSwitch.thoughtSegments.map((segment) => segment.text)).toEqual([
+      "Before the tool call.",
+    ]);
+    expect(afterSwitch.thoughtSegments[0]?.endedAt).toBeDefined();
+    expect(afterSwitch.toolCalls.map((call) => call.id)).toEqual(["background-tool"]);
+  });
+
+  it("does not treat null selection as active for multiple running threads", async () => {
+    resetThreadStoreForTests({
+      currentThreadId: null,
+      runningThreadIds: new Set(["thread-2", "thread-3"]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-2", { ...createEmptyThreadRecord() }],
+        ["thread-3", { ...createEmptyThreadRecord() }],
+      ]),
+    });
+
+    for (const threadId of ["thread-2", "thread-3"]) {
+      useThreadStore.getState().handleAgentEvent({
+        type: "textDelta",
+        threadId,
+        delta: `background-${threadId}`,
+      } as AgentEvent);
+    }
+    vi.runAllTimers();
+
+    for (const threadId of ["thread-2", "thread-3"]) {
+      const record = readThreadField(threadId, (thread) => thread);
+      expect(record.streaming).toBe(`background-${threadId}`);
+      expect(record.thoughtSegments).toEqual([]);
+    }
+  });
+
+  it("does not promote final-response deltas into thought segments", () => {
+    const backgroundThreadId = "thread-final-response";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-1",
+      runningThreadIds: new Set(["thread-1", backgroundThreadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-1", { ...createEmptyThreadRecord() }],
+        [backgroundThreadId, { ...createEmptyThreadRecord() }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: backgroundThreadId,
+      delta: "final response",
+      isFinalResponse: true,
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "assistantMessageBoundary",
+      threadId: backgroundThreadId,
+      isFinalResponse: true,
+    } as AgentEvent);
+    vi.runAllTimers();
+
+    useThreadStore.setState({ currentThreadId: backgroundThreadId });
+    useThreadStore.getState().handleTurnPersisted({
+      threadId: backgroundThreadId,
+      messageId: "server-message",
+      toolCallCount: 0,
+      filesChanged: [],
+    });
+
+    expect(readThreadField(backgroundThreadId, (thread) => thread.thoughtSegments)).toEqual([]);
   });
 
   it("session.toolUse ignores duplicate toolCallId (defense in depth)", () => {

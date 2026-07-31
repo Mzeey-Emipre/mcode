@@ -17,6 +17,53 @@ describe("thread switching WebSocket contracts", () => {
     expect(method.params.safeParse({ threadIds: ["thread-1", "thread-1"] }).success).toBe(false);
     expect(method.params.safeParse({ threadIds: Array.from({ length: MAX_THREAD_SUBSCRIPTIONS + 1 }, (_, index) => `thread-${index}`) }).success).toBe(false);
     expect(method.params.safeParse({ threadIds: [""] }).success).toBe(false);
+    expect(method.params.safeParse({
+      threadIds: ["thread-1"],
+      cursors: { "thread-1": { epoch: "00000000-0000-4000-8000-000000000001", sequence: 4 } },
+    }).success).toBe(true);
+    expect(method.params.safeParse({
+      threadIds: ["thread-1"],
+      cursors: { "thread-1": 4 },
+    }).success).toBe(true);
+    expect(method.params.safeParse({
+      threadIds: ["thread-1"],
+      cursors: { "thread-1": -1 },
+    }).success).toBe(false);
+    expect(method.params.safeParse({
+      threadIds: ["thread-1"],
+      cursors: { "thread-1": 1.5 },
+    }).success).toBe(false);
+    expect(method.params.safeParse({
+      threadIds: ["thread-1"],
+      cursors: Object.fromEntries(
+        Array.from({ length: MAX_THREAD_SUBSCRIPTIONS + 1 }, (_, index) => [`thread-${index}`, index]),
+      ),
+    }).success).toBe(false);
+  });
+
+  it("parses structured hydration and replay results", () => {
+    const method = WS_METHODS()["push.setThreadSubscriptions"];
+    const result = {
+      hydrationRequiredThreadIds: ["thread-1"],
+      replayedThrough: { "thread-2": 12 },
+    };
+
+    const parsed = method.result.safeParse(result);
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) {
+      throw new Error(parsed.error.message);
+    }
+    expect(parsed.data).toEqual(result);
+  });
+
+  it("rejects malformed subscription replay results", () => {
+    const method = WS_METHODS()["push.setThreadSubscriptions"];
+
+    expect(method.result.safeParse({
+      hydrationRequiredThreadIds: ["thread-1"],
+      replayedThrough: { "thread-2": 0 },
+    }).success).toBe(false);
   });
 
   it("keeps legacy single-thread subscription methods available", () => {

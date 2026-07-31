@@ -244,7 +244,6 @@ export function ProjectTree() {
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const reorderWorkspace = useWorkspaceStore((s) => s.reorderWorkspace);
   const error = useWorkspaceStore((s) => s.error);
-  const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
   // Derive pending permission thread IDs directly in the selector with useShallow
   // so the component only re-renders when the actual set of IDs changes, not on
   // every unrelated threadStore update that creates a new permissionsByThread ref.
@@ -632,7 +631,6 @@ export function ProjectTree() {
                     isExpanded={expanded[ws.id] ?? false}
                     isActive={activeWorkspaceId === ws.id}
                     threads={wsThreads}
-                    runningThreadIds={runningThreadIds}
                     pendingPermissionThreadIds={pendingPermissionThreadIds}
                     isThreadListExpanded={threadListExpanded[ws.id] ?? false}
                     checksById={checksById}
@@ -905,7 +903,6 @@ interface VirtualizedThreadListProps {
   treeItems: ThreadTreeItem[];
   /** Maximum number of tree rows to render. Used by the parent to enforce the THREAD_LIST_CAP. */
   maxVisible: number;
-  runningThreadIds: Set<string>;
   /** Thread IDs with at least one unsettled permission request. */
   pendingPermissionThreadIds: Set<string>;
   /** Per-thread CI check status. Passed from parent to avoid duplicate store subscriptions. */
@@ -925,7 +922,6 @@ interface ThreadRowProps {
   workspaceName: string;
   thread: WorkspaceThread;
   depth: number;
-  isRunning: boolean;
   hasPendingPermission: boolean;
   checks?: ChecksStatus;
   isEditing: boolean;
@@ -946,12 +942,11 @@ interface ThreadRowProps {
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
 }
 
-/** Renders one sidebar thread row and subscribes only to its own active state. */
+/** Renders one sidebar thread row and subscribes only to its own active and running state. */
 const ThreadRow = memo(function ThreadRow({
   workspaceName,
   thread,
   depth,
-  isRunning,
   hasPendingPermission,
   checks,
   isEditing,
@@ -968,6 +963,7 @@ const ThreadRow = memo(function ThreadRow({
   onThreadContextMenu,
 }: ThreadRowProps) {
   const isActive = useWorkspaceStore((s) => s.activeThreadId === thread.id);
+  const isRunning = useThreadStore((s) => s.runningThreadIds.has(thread.id));
   const marker = getThreadStateMarker({
     thread,
     checks,
@@ -1367,7 +1363,6 @@ function VirtualizedThreadList({
   workspaceName,
   treeItems: allTreeItems,
   maxVisible,
-  runningThreadIds,
   pendingPermissionThreadIds,
   checksById,
   scrollElementRef,
@@ -1492,7 +1487,6 @@ function VirtualizedThreadList({
               workspaceName={workspaceName}
               thread={thread}
               depth={depth}
-              isRunning={runningThreadIds.has(thread.id)}
               hasPendingPermission={pendingPermissionThreadIds.has(thread.id)}
               checks={checksById[thread.id]}
               isEditing={isEditing}
@@ -1523,7 +1517,6 @@ interface ProjectNodeProps {
   isExpanded: boolean;
   isActive: boolean;
   threads: WorkspaceThread[];
-  runningThreadIds: Set<string>;
   /** Thread IDs with at least one unsettled permission request. */
   pendingPermissionThreadIds: Set<string>;
   /** Whether the thread list is fully expanded (persisted by parent). */
@@ -1561,7 +1554,6 @@ const ProjectNode = memo(function ProjectNode({
   isExpanded,
   isActive,
   threads,
-  runningThreadIds,
   pendingPermissionThreadIds,
   isThreadListExpanded,
   checksById,
@@ -1581,9 +1573,8 @@ const ProjectNode = memo(function ProjectNode({
   sortableListeners,
   isProjectDragging = false,
 }: ProjectNodeProps) {
-  const hasRunning = useMemo(
-    () => threads.some((t) => runningThreadIds.has(t.id)),
-    [threads, runningThreadIds],
+  const hasRunning = useThreadStore((s) =>
+    threads.some((thread) => s.runningThreadIds.has(thread.id)),
   );
   // Cap logic: show THREAD_LIST_CAP rows unless the user opted in, or the
   // active thread sits beyond the cap (force expand so the active row is
@@ -1822,7 +1813,6 @@ const ProjectNode = memo(function ProjectNode({
             workspaceName={workspace.name}
             treeItems={treeItems}
             maxVisible={maxVisible}
-            runningThreadIds={runningThreadIds}
             pendingPermissionThreadIds={pendingPermissionThreadIds}
             checksById={checksById}
             scrollElementRef={scrollElementRef}

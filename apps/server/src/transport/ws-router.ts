@@ -493,9 +493,9 @@ async function dispatch(
       return;
     case "push.setThreadSubscriptions":
       if (context.client) {
-        setClientThreadSubscriptions(context.client, params.threadIds);
+        return setClientThreadSubscriptions(context.client, params.threadIds, params.cursors);
       }
-      return;
+      return { hydrationRequiredThreadIds: [], replayedThrough: {} };
 
     // Workspace
     case "workspace.list":

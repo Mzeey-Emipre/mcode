@@ -456,7 +456,7 @@ export type {
 } from "./models/browser-automation.js";
 
 // Events
-export { AgentEventSchema, AgentEventType } from "./events/agent-event.js";
+export { AgentEventSchema, AgentEventType, AgentEventEpochSchema } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";
 
 // Plan questions
@@ -779,6 +779,7 @@ export {
   RECAP_MAX_PREVIOUS_RECAP_CHARS,
   MAX_THREAD_SUBSCRIPTIONS,
   SetThreadSubscriptionsSchema,
+  SetThreadSubscriptionsResultSchema,
 } from "./ws/methods.js";
 export type {
   WsMethodName,
@@ -786,6 +787,7 @@ export type {
   CreateAndSendInput,
   CreateAndSendResult,
   SetThreadSubscriptionsInput,
+  SetThreadSubscriptionsResult,
 } from "./ws/methods.js";
 
 export { WS_CHANNELS } from "./ws/channels.js";

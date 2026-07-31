@@ -604,6 +604,13 @@ describe("ProjectTree action-required indicator", () => {
     expect(indicator.className).not.toContain("bg-primary");
   });
 
+  it("renders the running marker from the matching thread row state", () => {
+    threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
+    render(<ProjectTree />);
+
+    expect(screen.getByLabelText("Running")).toBeInTheDocument();
+  });
+
   it("renders the ring on the right edge when the thread has a pr_number", () => {
     currentThread = makeThread({
       id: "thread-pending",

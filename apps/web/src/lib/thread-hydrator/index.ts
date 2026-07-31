@@ -7,6 +7,7 @@ export {
   MESSAGE_FETCH_SIZE,
   HISTORY_PREFETCH_SIZE,
   HYDRATION_TTL_MS,
+  ACTIVE_HYDRATION_MAX_DELAY_MS,
   BACKGROUND_PREFETCH_LIMIT,
 } from "./thread-hydrator";
 export { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
