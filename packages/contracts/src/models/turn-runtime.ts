@@ -25,3 +25,23 @@ export const TurnRuntimeSnapshotSchema = z.object({
 });
 /** Authoritative reconnect snapshot for one thread. */
 export type TurnRuntimeSnapshot = z.infer<typeof TurnRuntimeSnapshotSchema>;
+
+/** Provider dispatch boundary observed while servicing a user stop. */
+export const AgentStopDispatchStateSchema = z.enum([
+  "not-dispatched",
+  "dispatched",
+  "unknown",
+]);
+/** Provider dispatch boundary observed while servicing a user stop. */
+export type AgentStopDispatchState = z.infer<typeof AgentStopDispatchStateSchema>;
+
+/** Authoritative result returned by an agent.stop RPC. */
+export const AgentStopResultSchema = z.object({
+  threadId: z.string().min(1),
+  turnExecutionId: TurnExecutionIdSchema.nullable(),
+  snapshot: TurnRuntimeSnapshotSchema,
+  status: z.enum(["cancelled", "already-terminal"]),
+  dispatchState: AgentStopDispatchStateSchema,
+}).strict();
+/** Authoritative result returned by an agent.stop RPC. */
+export type AgentStopResult = z.infer<typeof AgentStopResultSchema>;

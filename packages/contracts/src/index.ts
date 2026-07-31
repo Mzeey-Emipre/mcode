@@ -39,11 +39,15 @@ export {
   TurnExecutionIdSchema,
   TurnRuntimePhaseSchema,
   TurnRuntimeSnapshotSchema,
+  AgentStopDispatchStateSchema,
+  AgentStopResultSchema,
 } from "./models/turn-runtime.js";
 export type {
   TurnExecutionId,
   TurnRuntimePhase,
   TurnRuntimeSnapshot,
+  AgentStopDispatchState,
+  AgentStopResult,
 } from "./models/turn-runtime.js";
 
 export {

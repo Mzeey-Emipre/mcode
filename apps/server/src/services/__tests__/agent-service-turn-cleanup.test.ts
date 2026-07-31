@@ -370,6 +370,32 @@ describe("AgentService turn cleanup", () => {
     expect(memoryPressureService.markActive).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps exact turn running when provider stop fails, then cancels on retry", async () => {
+    const { service, providerEmitter } = buildService();
+    service.init();
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const provider = providerEmitter as EventEmitter & { stopSession: ReturnType<typeof vi.fn> };
+    provider.stopSession.mockRejectedValueOnce(new Error("stop unavailable"));
+
+    await expect(service.stopSession(THREAD_ID)).rejects.toThrow("stop unavailable");
+    expect(service.activeThreadIds()).toContain(THREAD_ID);
+
+    provider.stopSession.mockResolvedValueOnce(undefined);
+    const result = await service.stopSession(THREAD_ID);
+    expect(result.status).toBe("cancelled");
+    expect(result.dispatchState).toBe("dispatched");
+    expect(result.snapshot).toMatchObject({ threadId: THREAD_ID, phase: "cancelled" });
+    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+  });
+
   it("persists preview annotation snapshots as visible provider attachments", async () => {
     const { service, providerEmitter, attachmentService, messageRepo } = buildService();
     const bundle = makePreviewAnnotationBundle();

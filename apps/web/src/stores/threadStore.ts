@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { AgentEvent, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary } from "@mcode/contracts";
+import type { AgentEvent, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary, TurnRuntimeSnapshot } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import {
@@ -101,6 +101,8 @@ interface ThreadState {
   loadOlderMessages: (threadId: string) => Promise<void>;
   sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle, goalObjective?: string, orchestrationMode?: OrchestrationMode) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
+  /** Apply one authoritative runtime snapshot without replacing other running threads. */
+  applyThreadRuntimeSnapshot: (snapshot: TurnRuntimeSnapshot) => void;
   /** Replace runningThreadIds with the authoritative server snapshot. Called on WS (re)connect. */
   hydrateRunningThreads: (ids: string[]) => void;
   /** Restore authoritative per-thread execution snapshots during reconnect. */
@@ -1425,46 +1427,62 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     }
   },
 
-  /** Request the agent to stop on a thread. Always marks the thread as not running, even on error. */
+  /** Request exact active turn stop and apply authoritative runtime result. */
   stopAgent: async (threadId) => {
-    let stopSucceeded = false;
-    patchRec(threadId, { awaitingUserStopPersist: true });
+    const wasRunning = get().runningThreadIds.has(threadId);
+    patchRec(threadId, { awaitingUserStopPersist: true, composerRecallFromStop: undefined });
     try {
-      await getTransport().stopAgent(threadId);
-      stopSucceeded = true;
+      const result = await getTransport().stopAgent(threadId);
+      get().applyThreadRuntimeSnapshot(result.snapshot);
+
+      let lastUserText: string | null = null;
+      if (result.status === "cancelled"
+        && result.dispatchState === "not-dispatched"
+        && result.snapshot.phase === "cancelled"
+        && get().currentThreadId === threadId) {
+        const messages = getRec(threadId).messages;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === "user") {
+            lastUserText = messages[i].content;
+            break;
+          }
+        }
+      }
+      if (lastUserText !== null) {
+        patchRec(threadId, { composerRecallFromStop: { text: lastUserText } });
+      }
     } catch (e) {
       patchRec(threadId, () => ({
         error: String(e),
         awaitingUserStopPersist: undefined,
+        ...(wasRunning ? { runtimePhase: "running" as const } : {}),
       }));
-    }
-
-    const snap = get();
-    let lastUserText: string | null = null;
-    if (snap.currentThreadId === threadId) {
-      const messages = getRec(threadId).messages;
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-          lastUserText = messages[i].content;
-          break;
-        }
+      if (wasRunning && !get().runningThreadIds.has(threadId)) {
+        set((state) => ({ runningThreadIds: new Set([...state.runningThreadIds, threadId]) }));
       }
     }
+    invalidateDeferredNarrativeEvents(threadId);
+    threadHydrator.invalidatePermissionSnapshots(threadId);
+  },
 
+  applyThreadRuntimeSnapshot: (snapshot) => {
+    const running = snapshot.phase === "running" || snapshot.phase === "finalizing";
     set((state) => {
+      const nextRunning = new Set(state.runningThreadIds);
+      if (running) nextRunning.add(snapshot.threadId);
+      else nextRunning.delete(snapshot.threadId);
       return {
-        records: patchThreadRecord(state.records, threadId, (rec) => ({
+        runningThreadIds: nextRunning,
+        records: patchThreadRecord(state.records, snapshot.threadId, (rec) => ({
+          ...(running ? {} : resetTurnEphemeral(rec)),
+          turnExecutionId: snapshot.turnExecutionId,
+          runtimePhase: snapshot.phase,
+          awaitingUserStopPersist: undefined,
           rateLimit: undefined,
           apiRetry: undefined,
-          composerRecallFromStop:
-            stopSucceeded && lastUserText !== null && state.currentThreadId === threadId
-              ? { text: lastUserText }
-              : rec.composerRecallFromStop,
         })),
       };
     });
-    invalidateDeferredNarrativeEvents(threadId);
-    threadHydrator.invalidatePermissionSnapshots(threadId);
   },
 
   hydrateRunningThreads: (ids) => {

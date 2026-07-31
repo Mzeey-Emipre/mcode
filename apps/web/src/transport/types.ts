@@ -75,6 +75,7 @@ import type {
   PullRequestMergeResult,
   SendMessageInput,
   CreateAndSendInput,
+  AgentStopResult,
   ThreadControlIdentity,
   ThreadControlReadResult,
   ThreadControlUserSendInput,
@@ -295,7 +296,7 @@ export interface McodeTransport {
   // Agent commands
   sendMessage(input: SendMessageInput): Promise<void>;
   createAndSendMessage(input: CreateAndSendInput): Promise<CreateAndSendResult>;
-  stopAgent(threadId: string): Promise<void>;
+  stopAgent(threadId: string): Promise<AgentStopResult>;
   /** Respond to a tool permission request from the agent. */
   respondToPermission(requestId: string, decision: PermissionDecision): Promise<void>;
   /** List pending permission requests for a thread (used to re-hydrate after reconnect). */

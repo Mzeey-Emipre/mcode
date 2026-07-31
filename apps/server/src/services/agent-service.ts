@@ -41,6 +41,7 @@ import type {
   PermissionMode,
   ProviderFileMutationStart,
   TurnRuntimeSnapshot,
+  AgentStopResult,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -330,6 +331,8 @@ export class AgentService {
       retryInFlight: boolean;
       /** False once the in-flight `sendTurn` promise has settled (success or throw). */
       sendTurnInFlight: boolean;
+      /** True once the provider's sendTurn invocation has begun. */
+      dispatchStarted: boolean;
       sessionName: string;
       sourceTurnId: string;
       resolvedProvider: import("@mcode/contracts").IAgentProvider;
@@ -985,10 +988,14 @@ export class AgentService {
         permissionMode: permissionMode === "full" ? "full" : "supervised",
       });
     }
+    if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
+      throw new Error("Thread mutation reservation is no longer owned");
+    }
     this.turnRetryDispatchByThread.set(threadId, {
       attempt: 1,
       retryInFlight: false,
       sendTurnInFlight: false,
+      dispatchStarted: false,
       sessionName,
       sourceTurnId,
       resolvedProvider,
@@ -1014,7 +1021,10 @@ export class AgentService {
           threadId,
           reservationToken,
           "activeTurn",
-          () => resolvedProvider.sendTurn(dispatch.turnRequest),
+          () => {
+            dispatch.dispatchStarted = true;
+            return resolvedProvider.sendTurn(dispatch.turnRequest);
+          },
         );
         if (sendTurn === undefined) {
           throw new Error("Thread mutation reservation is no longer owned");
@@ -1607,40 +1617,102 @@ export class AgentService {
     return { ...thread, ...(threadWarnings?.length ? { warnings: threadWarnings } : {}) };
   }
 
-  /** Stop the agent for a given thread, persisting any buffered tool calls first. */
-  async stopSession(threadId: string): Promise<void> {
+  /** Stop exact active turn, preserving provider failure as retryable RPC error. */
+  async stopSession(threadId: string): Promise<AgentStopResult> {
     const sessionId = `mcode-${threadId}`;
     const thread = this.threadRepo.findById(threadId);
     const providerId = (thread?.provider ?? "claude") as ProviderId;
     const reservationToken = this.activeMutationReservations.get(threadId);
+    const reservation = reservationToken ? this.mutationReservations.get(threadId) : undefined;
+    const dispatch = this.turnRetryDispatchByThread.get(threadId);
+    const runtimeBefore = this.turnRuntime.snapshot(threadId);
+    const activeExecution = runtimeBefore
+      && (runtimeBefore.phase === "running" || runtimeBefore.phase === "finalizing")
+      && runtimeBefore.turnExecutionId !== null;
+    const dispatchState: AgentStopResult["dispatchState"] = !activeExecution
+      ? "unknown"
+      : dispatch?.dispatchStarted === true
+        ? "dispatched"
+        : dispatch
+          || reservation?.state === "activeTurn"
+          || reservation?.state === "stopping"
+          ? "not-dispatched"
+          : "unknown";
     if (reservationToken) {
       this.mutationReservations.transition(threadId, reservationToken, "activeTurn", "stopping");
     }
-    // Tear down any armed transient-retry window so a scheduled stream retry
-    // can't re-dispatch after the user stopped, and the suppression flags don't
-    // outlive the turn (they would otherwise swallow the next turn's terminal
-    // events). The stop's own finalize below clears the UI running state.
+    const idleSnapshot: TurnRuntimeSnapshot = {
+      threadId,
+      turnExecutionId: null,
+      phase: "idle",
+    };
+    if (!activeExecution) {
+      this.disarmTurnRetryWindow(threadId);
+      return {
+        threadId,
+        turnExecutionId: runtimeBefore?.turnExecutionId ?? null,
+        snapshot: runtimeBefore ?? idleSnapshot,
+        status: "already-terminal",
+        dispatchState,
+      };
+    }
+
+    if (dispatchState !== "not-dispatched") {
+      try {
+        const provider = this.providerRegistry.resolve(providerId);
+        await provider.stopSession(sessionId);
+      } catch (err) {
+        const runtimeAfterFailure = this.turnRuntime.snapshot(threadId);
+        if (runtimeAfterFailure?.phase === "running" || runtimeAfterFailure?.phase === "finalizing") {
+          if (reservationToken) {
+            this.mutationReservations.transition(threadId, reservationToken, "stopping", "activeTurn");
+          }
+          this.retryingThreads.delete(threadId);
+          this.endedSuppressionThreads.delete(threadId);
+          logger.warn("Provider stopSession failed", {
+            threadId,
+            providerId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        }
+      }
+    }
+
     this.disarmTurnRetryWindow(threadId);
+    const runtimeAfterProvider = this.turnRuntime.snapshot(threadId);
+    if (!runtimeAfterProvider
+      || runtimeAfterProvider.phase !== "running" && runtimeAfterProvider.phase !== "finalizing"
+      || runtimeAfterProvider.turnExecutionId !== runtimeBefore.turnExecutionId) {
+      return {
+        threadId,
+        turnExecutionId: runtimeAfterProvider?.turnExecutionId ?? runtimeBefore.turnExecutionId,
+        snapshot: runtimeAfterProvider ?? runtimeBefore,
+        status: "already-terminal",
+        dispatchState,
+      };
+    }
+
     // A user stop ends the turn. The finalizer flushes partial assistant text,
     // persists buffered tool calls (running ones inherit "cancelled"), captures
     // the snapshot, broadcasts turn.persisted, and clears per-turn state.
-    const runtime = this.turnRuntime.snapshot(threadId);
-    const terminalized = runtime?.turnExecutionId
-      ? this.turnRuntime.terminalize(threadId, runtime.turnExecutionId, "cancelled")
-      : false;
-    const finalize = terminalized || runtime?.phase === "cancelled"
-      ? this.finalizeTerminalTurn(threadId, "cancelled", "user stop")
-      : null;
-    try {
-      const provider = this.providerRegistry.resolve(providerId);
-      await provider.stopSession(sessionId);
-    } catch (err) {
-      logger.warn("Provider stopSession failed", {
+    const terminalized = this.turnRuntime.terminalize(
+      threadId,
+      runtimeBefore.turnExecutionId!,
+      "cancelled",
+    );
+    if (!terminalized) {
+      const terminalSnapshot = this.turnRuntime.snapshot(threadId) ?? idleSnapshot;
+      return {
         threadId,
-        providerId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+        turnExecutionId: terminalSnapshot.turnExecutionId,
+        snapshot: terminalSnapshot,
+        status: "already-terminal",
+        dispatchState,
+      };
     }
+    const finalize = this.finalizeTerminalTurn(threadId, "cancelled", "user stop");
+    this.disarmTurnRetryWindow(threadId);
     await (finalize ?? Promise.resolve());
     this.threadRepo.updateStatus(threadId, "paused");
     broadcast("thread.status", { threadId, status: "paused" });
@@ -1649,6 +1721,14 @@ export class AgentService {
       this.memoryPressureService.markIdle(threadId);
     }
     this.releaseMutationReservation(threadId, reservationToken);
+    const snapshot = this.turnRuntime.snapshot(threadId) ?? idleSnapshot;
+    return {
+      threadId,
+      turnExecutionId: runtimeBefore.turnExecutionId,
+      snapshot,
+      status: "cancelled",
+      dispatchState,
+    };
   }
 
   /** Return a thread's active open goal without starting provider work. */
@@ -2279,7 +2359,10 @@ export class AgentService {
           threadId,
           identity.mutationReservationToken,
           "activeTurn",
-          () => dispatch.resolvedProvider.sendTurn(dispatch.turnRequest),
+          () => {
+            dispatch.dispatchStarted = true;
+            return dispatch.resolvedProvider.sendTurn(dispatch.turnRequest);
+          },
         );
         if (sendTurn === undefined) return false;
         await sendTurn;

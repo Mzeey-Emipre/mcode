@@ -658,7 +658,7 @@ export function createWsTransport(
         ...guardrails,
       });
     },
-    stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
+    stopAgent: (threadId) => rpc<import("@mcode/contracts").AgentStopResult>("agent.stop", { threadId }),
     respondToPermission: (requestId, decision) =>
       rpc<void>("permission.respond", { requestId, decision }),
     listPendingPermissions: (threadId) =>

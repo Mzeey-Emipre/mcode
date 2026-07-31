@@ -208,7 +208,7 @@ describe("Thread Lifecycle Behavior", () => {
     );
   });
 
-  it("when stopAgent fails, the thread is still marked as not running", async () => {
+  it("when stopAgent fails, the thread remains running for retry", async () => {
     const threadId = "thread-1";
     useThreadStore.setState({
       runningThreadIds: new Set([threadId]),
@@ -219,11 +219,67 @@ describe("Thread Lifecycle Behavior", () => {
 
     await useThreadStore.getState().stopAgent(threadId);
 
-    // Should still be cleared even on error
+    // Provider stop failure must not create false idle state.
     expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(
-      false,
+      true,
     );
     expect(getTestThreadError("thread-1")).toBeTruthy();
+  });
+
+  it("recalls only an undispatched stopped message", async () => {
+    const threadId = "thread-1";
+    const userMessage = createMockMessage({
+      id: "user-1",
+      thread_id: threadId,
+      role: "user",
+      content: "keep working on this",
+    });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      runningThreadIds: new Set([threadId]),
+      records: new Map([[threadId, { ...createEmptyThreadRecord(), messages: [userMessage] }]]),
+    });
+    (mockTransport.stopAgent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      threadId,
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
+      snapshot: {
+        threadId,
+        turnExecutionId: "00000000-0000-4000-8000-000000000001",
+        phase: "cancelled",
+      },
+      status: "cancelled",
+      dispatchState: "not-dispatched",
+    });
+
+    await useThreadStore.getState().stopAgent(threadId);
+
+    expect(useThreadStore.getState().records.get(threadId)?.composerRecallFromStop).toEqual({
+      text: "keep working on this",
+    });
+  });
+
+  it("does not recall a dispatched stopped message", async () => {
+    const threadId = "thread-1";
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      runningThreadIds: new Set([threadId]),
+      records: new Map([[threadId, createEmptyThreadRecord()]]),
+    });
+    (mockTransport.stopAgent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      threadId,
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
+      snapshot: {
+        threadId,
+        turnExecutionId: "00000000-0000-4000-8000-000000000001",
+        phase: "cancelled",
+      },
+      status: "cancelled",
+      dispatchState: "dispatched",
+    });
+
+    await useThreadStore.getState().stopAgent(threadId);
+
+    expect(useThreadStore.getState().records.get(threadId)?.composerRecallFromStop).toBeUndefined();
   });
 
   it("when sendMessage fails, the thread is no longer marked as running", async () => {

@@ -20,7 +20,7 @@ import { GitBranchSchema, WorktreeSchema, BranchComparisonSchema, GitRefSchema, 
 import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
-import { TurnRuntimeSnapshotSchema } from "../models/turn-runtime.js";
+import { AgentStopResultSchema, TurnRuntimeSnapshotSchema } from "../models/turn-runtime.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
 import { PlanStatusSchema, PlanRecordSchema, PlanActionSchema } from "../models/plan-output.js";
 import { DiffStatsSchema } from "../models/diff-stats.js";
@@ -738,7 +738,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "agent.stop": {
     params: z.object({ threadId: z.string() }),
-    result: z.void(),
+    result: AgentStopResultSchema,
   },
   "agent.activeCount": {
     params: z.object({}),

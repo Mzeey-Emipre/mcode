@@ -78,6 +78,8 @@ function buildService(): {
   const providerEmitter = new EventEmitter();
   const sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as unknown as { sendTurn: typeof sendTurn }).sendTurn = sendTurn;
+  const stopSession = vi.fn().mockResolvedValue(undefined);
+  (providerEmitter as unknown as { stopSession: typeof stopSession }).stopSession = stopSession;
   // Implementing discardSession makes the fake provider ISessionEvictable, so
   // the retry path force-evicts the pooled session before re-dispatch.
   const discardSession = vi.fn();
