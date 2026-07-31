@@ -44,6 +44,7 @@ import { stubEnvService } from "../../../__tests__/stub-env-service.js";
 interface PoolEntry {
   pendingTurnId: string | null;
   server: { emit: (event: string, payload: unknown) => void };
+  mapper: { prepareForTurn: () => void };
 }
 
 /** Spawns a provider session and returns its pool entry once the first turn was sent. */
@@ -110,6 +111,178 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     sendTurnMock.mockClear();
     getChildThreadMetadataMock.mockClear();
     loggerWarnMock.mockClear();
+  });
+
+  it("assigns the active execution to main tool and text events before turn/start binds", async () => {
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-early-main", "early-main");
+    const state = entry as PoolEntry & {
+      currentTurnExecutionId?: string;
+      activeParentTurnExecutionId?: string;
+      nextTurnExecutionId?: string;
+      turnBindingPhase: "idle" | "awaiting" | "bound";
+      turnStartResponsePending: boolean;
+      currentNativeTurnId?: string;
+    };
+    entry.mapper.prepareForTurn();
+    state.currentTurnExecutionId = "exec-early-main";
+    state.activeParentTurnExecutionId = "exec-early-main";
+    state.nextTurnExecutionId = "exec-early-main";
+    state.turnBindingPhase = "awaiting";
+    state.turnStartResponsePending = true;
+    state.currentNativeTurnId = undefined;
+
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "early-native-turn",
+        item: { type: "commandExecution", id: "early-tool", command: "echo early" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "sdk-thread-1", turnId: "early-native-turn", delta: "early text" },
+    });
+    entry.server.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turn: { id: "early-native-turn", status: "completed", usage: {} },
+      },
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: AgentEventType.ToolUse, toolCallId: "early-tool", turnExecutionId: "exec-early-main" }),
+      expect.objectContaining({ type: AgentEventType.TextDelta, delta: "early text", turnExecutionId: "exec-early-main" }),
+      expect.objectContaining({ type: AgentEventType.TurnComplete, turnExecutionId: "exec-early-main" }),
+    ]));
+  });
+
+  it("resolves an early main completion after turn/start returns its native id", async () => {
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    let resolveNativeTurn!: (turnId: string) => void;
+    sendTurnMock.mockImplementationOnce(() => new Promise<string>((resolve) => {
+      resolveNativeTurn = resolve;
+    }));
+
+    const sessionId = "mcode-early-completion";
+    const completion = provider.sendTurn({
+      turnExecutionId: "exec-early-completion",
+      sessionId,
+      workspaceId: "workspace-test",
+      threadId: "early-completion",
+      message: "hey",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    let entry: PoolEntry | undefined;
+    for (let i = 0; i < 20 && !entry; i++) {
+      entry = (
+        provider as unknown as {
+          runtime: { get: (id: string) => PoolEntry | undefined };
+        }
+      ).runtime.get(sessionId);
+      if (!entry) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    }
+    expect(entry).toBeDefined();
+    for (let i = 0; i < 20 && !resolveNativeTurn; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(resolveNativeTurn).toEqual(expect.any(Function));
+
+    entry!.server.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turn: { id: "early-native-turn", status: "completed", usage: {} },
+      },
+    });
+    resolveNativeTurn("early-native-turn");
+
+    await expect(completion).resolves.toBeUndefined();
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: AgentEventType.TurnComplete, turnExecutionId: "exec-early-completion" }),
+    ]));
+  });
+
+  it("buffers ambiguous child events, replays after native mapping, and stays bounded", async () => {
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-child-buffer", "child-buffer");
+    const state = entry as PoolEntry & {
+      currentTurnExecutionId?: string;
+      activeParentTurnExecutionId?: string;
+      turnBindingPhase: "idle" | "awaiting" | "bound";
+      currentNativeTurnId?: string;
+      turnExecutionIdsByNativeTurn: Map<string, string>;
+      nativeThreadExecutionIds: Map<string, string>;
+      childExecutionGenerations: Map<string, { executionId: string; generation: number }>;
+      pendingChildEvents: unknown[];
+    };
+    entry.mapper.prepareForTurn();
+    state.currentTurnExecutionId = "exec-child-buffer";
+    state.activeParentTurnExecutionId = "exec-child-buffer";
+    state.turnBindingPhase = "bound";
+    state.currentNativeTurnId = "main-native-turn";
+    state.turnExecutionIdsByNativeTurn.set("main-native-turn", "exec-child-buffer");
+    state.childExecutionGenerations.set("child-buffered", { executionId: "exec-child-buffer", generation: 1 });
+    state.nativeThreadExecutionIds.set("child-buffered", "exec-child-buffer");
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "main-native-turn",
+        item: {
+          type: "collabAgentToolCall",
+          id: "agent-child",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-buffered"],
+        },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "child-buffered",
+        turnId: "child-native-turn",
+        item: { type: "commandExecution", id: "child-tool", command: "echo child" },
+      },
+    });
+    expect(events.find((event) => event.type === AgentEventType.ToolUse && event.toolCallId === "child-tool")).toBeUndefined();
+
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-buffered", turn: { id: "child-native-turn" } },
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: AgentEventType.ToolUse,
+      toolCallId: "child-tool",
+      turnExecutionId: "exec-child-buffer",
+    }));
+
+    for (let i = 0; i < 140; i++) {
+      entry.server.emit("notification", {
+        method: "item/started",
+        params: {
+          threadId: "child-buffered",
+          turnId: `unbound-child-turn-${i}`,
+          item: { type: "commandExecution", id: `child-tool-${i}`, command: "echo child" },
+        },
+      });
+    }
+    expect(state.pendingChildEvents).toHaveLength(128);
   });
 
   it("enriches nested native sub-agents from one authoritative child lookup each", async () => {

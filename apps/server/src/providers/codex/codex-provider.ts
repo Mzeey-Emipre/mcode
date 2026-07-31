@@ -68,6 +68,7 @@ import type {
   ThreadGoal,
 } from "./codex-types.js";
 import { toCodexEffort } from "./codex-types.js";
+import { isTurnScopedEvent } from "../../services/turn-runtime.js";
 import {
   mapDecisionToCodexResponse,
   synthesizeCodexPermissionRequest,
@@ -95,6 +96,7 @@ const USAGE_WARMUP_TIMEOUT_MS = 10_000;
 const CODEX_MCP_STARTUP_TIMEOUT_MS = 10_000;
 const USAGE_WARMUP_RETRY_MS = 60_000;
 const CODEX_MIN_VERSION = "0.37.0";
+const MAX_PENDING_CHILD_EVENTS = 128;
 
 type CodexEndedOutcome = "completed" | "errored" | "cancelled";
 
@@ -335,6 +337,8 @@ interface CodexSessionState {
   nextChildGeneration: number;
   /** Child threads already queried for authoritative model metadata this session. */
   childMetadataFetches: Set<string>;
+  /** Child events awaiting an authoritative parent/child execution mapping. */
+  pendingChildEvents: PendingChildEvent[];
   /** Clears the in-flight `runTurn` listener when a new turn preempts it. */
   abortPendingTurnWait?: () => void;
   /** Non-secret browser credential lifecycle metadata for this main session. */
@@ -532,6 +536,14 @@ function isMainThreadNotification(
   return !notifThreadId || !server.threadId || notifThreadId === server.threadId;
 }
 
+interface PendingChildEvent {
+  event: AgentEvent;
+  nativeThreadId: string;
+  nativeTurnId?: string;
+  childGeneration?: number;
+  executionIdAtBuffer?: string;
+}
+
 function nativeTurnIdFromParams(params: Record<string, unknown> | undefined): string | undefined {
   if (typeof params?.turnId === "string") return params.turnId;
   const turn = params?.turn;
@@ -593,6 +605,24 @@ function executionForDrain(state: CodexSessionState): string | undefined {
   return state.currentTurnExecutionId
     ?? (state.pendingTurnId && state.turnExecutionIdsByNativeTurn.get(state.pendingTurnId))
     ?? state.activeParentTurnExecutionId;
+}
+
+function bufferPendingChildEvent(
+  state: CodexSessionState,
+  event: AgentEvent,
+  nativeThreadId: string,
+  nativeTurnId: string | undefined,
+): void {
+  state.pendingChildEvents.push({
+    event,
+    nativeThreadId,
+    ...(nativeTurnId ? { nativeTurnId } : {}),
+    childGeneration: state.childExecutionGenerations.get(nativeThreadId)?.generation,
+    executionIdAtBuffer: state.currentTurnExecutionId ?? state.activeParentTurnExecutionId,
+  });
+  while (state.pendingChildEvents.length > MAX_PENDING_CHILD_EVENTS) {
+    state.pendingChildEvents.shift();
+  }
 }
 
 /** Returns the child thread id when a native sub-agent activity starts. */
@@ -1309,12 +1339,15 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
             ? entry.childExecutionGenerations.get(nativeThreadId)?.executionId
             : undefined;
           if (nativeTurnId && childExecutionId) {
-            assignNativeExecution(
+            const assignment = assignNativeExecution(
               entry.turnExecutionIdsByNativeTurn,
               nativeTurnId,
               childExecutionId,
               entry.nativeExecutionConflictKeys,
             );
+            if (assignment !== "conflict" && nativeThreadId) {
+              this.replayPendingChildEvents(entry, sessionId, nativeThreadId);
+            }
           }
           pruneExecutionMap(entry.nativeThreadExecutionIds);
           pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
@@ -1324,20 +1357,29 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         mapper.setMainCodexThreadId(server.threadId);
       }
       const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification);
-      const eventExecutionId = entry
-        ? (nativeTurnId && entry.turnExecutionIdsByNativeTurn.get(nativeTurnId))
-          ?? (!nativeTurnId && mainNotification && entry.turnBindingPhase === "bound"
-            ? (entry.currentTurnExecutionId ?? entry.activeParentTurnExecutionId)
-            : undefined)
-        : undefined;
-      for (const event of generatedImageEvents) {
-        this.emit("event", { ...event, turnExecutionId: eventExecutionId });
-      }
       const events = mapper.mapNotification(notification as CodexNotification);
       traceCodexIngest(threadId, n.method, n.params, [...generatedImageEvents, ...events]);
-      for (const event of events) {
-        this.recordGoalEvent(sessionId, event);
-        this.emit("event", { ...event, turnExecutionId: eventExecutionId });
+      const eventExecutionId = entry
+        ? (nativeTurnId && entry.turnExecutionIdsByNativeTurn.get(nativeTurnId))
+          ?? (!nativeTurnId && !mainNotification
+            ? (nativeThreadId ? entry.nativeThreadExecutionIds.get(nativeThreadId) : undefined)
+            : undefined)
+          ?? (mainNotification && entry.currentTurnExecutionId && entry.turnBindingPhase !== "idle" && (
+            !nativeTurnId
+            || entry.turnStartResponsePending
+            || nativeTurnId === entry.currentNativeTurnId
+          )
+            ? entry.currentTurnExecutionId
+            : undefined)
+        : undefined;
+      const mappedEvents = [...generatedImageEvents, ...events];
+      for (const event of mappedEvents) {
+        if (!entry || eventExecutionId || !isTurnScopedEvent(event) || mainNotification || !nativeThreadId) {
+          this.recordGoalEvent(sessionId, event);
+          this.emit("event", { ...event, ...(eventExecutionId ? { turnExecutionId: eventExecutionId } : {}) });
+        } else {
+          bufferPendingChildEvent(entry, event, nativeThreadId, nativeTurnId);
+        }
       }
       const childThreadId = nativeSubAgentThreadId(n);
       if (childThreadId) {
@@ -1349,12 +1391,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         );
         const currentParentNotification = Boolean(
           entry
-          && entry.turnBindingPhase === "bound"
           && currentExecutionId
-          && knownMainThreadNotification
-          && (!nativeTurnId
-            || (nativeTurnId === entry.currentNativeTurnId
-              && entry.turnExecutionIdsByNativeTurn.get(nativeTurnId) === currentExecutionId)),
+          && eventExecutionId === currentExecutionId
+          && (
+            knownMainThreadNotification
+            || (nativeThreadId && entry.nativeThreadExecutionIds.get(nativeThreadId) === currentExecutionId)
+          ),
         );
         if (currentParentNotification && currentExecutionId) {
           entry.nextChildGeneration += 1;
@@ -1365,6 +1407,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           pruneChildGenerationMap(entry.childExecutionGenerations);
           entry.nativeThreadExecutionIds.set(childThreadId, currentExecutionId);
           pruneExecutionMap(entry.nativeThreadExecutionIds);
+          this.replayPendingChildEvents(entry, sessionId, childThreadId);
         }
         this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId);
       }
@@ -1467,6 +1510,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       nativeExecutionConflictKeys: new Set(),
       childExecutionGenerations: new Map(),
       nextChildGeneration: 0,
+      pendingChildEvents: [],
       workspaceId: browserAccess?.workspaceId ?? "unknown-workspace",
       browserPermissionCapability: browserAccess?.permissionCapability ?? "interact",
       ...(browserGrant && {
@@ -1500,6 +1544,36 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     return { state, pids: [] };
   }
 
+  /** Replays buffered child events once the parent activity links the child generation. */
+  private replayPendingChildEvents(
+    state: CodexSessionState,
+    sessionId: string,
+    childThreadId: string,
+  ): void {
+    const childMapping = state.childExecutionGenerations.get(childThreadId);
+    const executionId = childMapping?.executionId;
+    if (!executionId) return;
+
+    const pending = state.pendingChildEvents;
+    if (pending.length === 0) return;
+    const remaining: PendingChildEvent[] = [];
+    for (const item of pending) {
+      if (item.nativeThreadId !== childThreadId) {
+        remaining.push(item);
+        continue;
+      }
+      if (item.childGeneration !== undefined && item.childGeneration !== childMapping.generation) {
+        continue;
+      }
+      if (item.executionIdAtBuffer && item.childGeneration === undefined && item.executionIdAtBuffer !== executionId) {
+        continue;
+      }
+      this.recordGoalEvent(sessionId, item.event);
+      this.emit("event", { ...item.event, turnExecutionId: executionId });
+    }
+    state.pendingChildEvents = remaining;
+  }
+
   /** Fetches one native child thread's authoritative model settings without affecting the parent turn. */
   private fetchChildThreadMetadata(
     sessionId: string,
@@ -1520,9 +1594,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         if (!metadata || !activeState || activeState.mapper !== mapper || activeState.runTurnSeq !== runTurnSeq) return;
         const events = mapper.applyChildThreadMetadata(childThreadId, metadata);
         traceCodexIngest(threadId, "child/thread-resume", { childThreadId }, events);
+        const resolvedExecutionId = turnExecutionId
+          ?? activeState.nativeThreadExecutionIds.get(childThreadId);
         for (const event of events) {
           this.recordGoalEvent(sessionId, event);
-          this.emit("event", turnExecutionId ? { ...event, turnExecutionId } : event);
+          this.emit("event", resolvedExecutionId ? { ...event, turnExecutionId: resolvedExecutionId } : event);
         }
       })
       .catch((error: unknown) => {
@@ -1552,6 +1628,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     state.pendingTurnId = null;
     state.childExecutionGenerations.clear();
     state.nativeThreadExecutionIds.clear();
+    state.pendingChildEvents = [];
     await state.server.interruptTurn();
   }
 
@@ -1574,6 +1651,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     state.pendingTurnId = null;
     state.childExecutionGenerations.clear();
     state.nativeThreadExecutionIds.clear();
+    state.pendingChildEvents = [];
     state.nativeExecutionConflictKeys.clear();
     this.drainPending((e) => e.sessionId === state.sessionId);
     if (state.browserLeaseId) this.browserAutomationLease.release(state.browserLeaseId);
@@ -1789,6 +1867,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     entry.activeParentTurnExecutionId = turnExecutionId;
     entry.nextTurnExecutionId = turnExecutionId;
     entry.childExecutionGenerations.clear();
+    entry.pendingChildEvents = [];
 
     entry.abortPendingTurnWait?.();
     entry.abortPendingTurnWait = undefined;
@@ -1805,6 +1884,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     let endedEmitted = false;
     let endedOutcome: CodexEndedOutcome | undefined;
     let deferredEnded: AgentEvent | undefined;
+    let earlyCompletionTurnId: string | undefined;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -1882,6 +1962,17 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
               && tid
               && tid === currentNativeTurnId,
             );
+            const completionBeforeBinding = Boolean(
+              entry.turnStartResponsePending
+              && currentExecutionId === turnExecutionId
+              && tid
+              && (!entry.pendingTurnStartNotification
+                || entry.pendingTurnStartNotification.nativeTurnId === tid),
+            );
+            if (completionBeforeBinding) {
+              earlyCompletionTurnId = tid;
+              return;
+            }
             if (!provenCurrentTurn) {
               logger.debug("Codex turn/completed ignored (stale or unmatched)", {
                 tid,
@@ -1933,6 +2024,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
             entry.pendingTurnId = turnId;
             entry.turnBindingPhase = "bound";
             pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
+            if (earlyCompletionTurnId === turnId) {
+              cleanup();
+              resolve();
+            }
           } catch (err) {
             cleanup();
             reject(err);
@@ -1959,6 +2054,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         entry.pendingTurnId = null;
         entry.childExecutionGenerations.clear();
         entry.nativeThreadExecutionIds.clear();
+        entry.pendingChildEvents = [];
         void server.interruptTurn();
         return;
       }
@@ -1980,6 +2076,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         entry.turnBindingPhase = "idle";
         entry.turnStartResponsePending = false;
         entry.pendingTurnStartNotification = undefined;
+        entry.pendingChildEvents = [];
       }
       if (!serverDied && seq === entry.runTurnSeq && !endedEmitted) {
         endedEmitted = true;
