@@ -850,6 +850,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   it("does not let a late A parent activity replace the active B child generation", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-late-parent", "late-parent");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -896,6 +898,10 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       },
     });
     entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
       method: "item/completed",
       params: {
         threadId: "sdk-thread-1",
@@ -907,12 +913,78 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       method: "turn/started",
       params: { threadId: "child-reused", turn: { id: "child-turn-b" } },
     });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "child-reused",
+        turnId: "child-turn-b",
+        item: { type: "imageGeneration", id: "child-b-image", savedPath: "C:/tmp/child-b.png" },
+      },
+    });
     const maps = entry as PoolEntry & {
       turnExecutionIdsByNativeTurn: Map<string, string>;
       nativeThreadExecutionIds: Map<string, string>;
     };
     expect(maps.nativeThreadExecutionIds.get("child-reused")).toBe("exec-b");
     expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-b")).toBe("exec-b");
+    expect(events.find((event) => event.type === AgentEventType.GeneratedAttachment)?.turnExecutionId).toBe("exec-b");
+  });
+
+  it("keeps B child attribution after a stale A main turn/started replay", async () => {
+    sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-stale-main", "stale-main");
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    await provider.sendTurn({
+      turnExecutionId: "exec-b",
+      sessionId: "mcode-stale-main",
+      workspaceId: "workspace-test",
+      threadId: "stale-main",
+      message: "next",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length < 2; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    (entry as PoolEntry & { nextTurnExecutionId?: string }).nextTurnExecutionId = "exec-b";
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "turn-b",
+        item: { type: "subAgentActivity", id: "call-stale-main", kind: "started", agentThreadId: "child-stale-main" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-stale-main", turn: { id: "child-turn-b" } },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "child-stale-main",
+        turnId: "child-turn-b",
+        item: { type: "imageGeneration", id: "stale-main-b-image", savedPath: "C:/tmp/stale-main-b.png" },
+      },
+    });
+    expect(events.find((event) => event.type === AgentEventType.GeneratedAttachment)?.turnExecutionId).toBe("exec-b");
   });
 
   it("links a current B parent activity without a turn id to B", async () => {

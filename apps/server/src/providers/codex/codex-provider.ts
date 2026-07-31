@@ -1304,7 +1304,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           }
           entry.nextTurnExecutionId = undefined;
           entry.childMetadataFetches.clear();
-          entry.childExecutionGenerations.clear();
         } else if (entry.activeParentTurnExecutionId) {
           const childExecutionId = nativeThreadId
             ? entry.childExecutionGenerations.get(nativeThreadId)?.executionId
