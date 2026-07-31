@@ -383,16 +383,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     const pending = pendingThreadCreationByPlaceholderId.get(placeholderId);
     bumpThreadListMutationEpoch(workspaceId);
     pendingThreadCreationByPlaceholderId.delete(placeholderId);
-    const startTime =
-      useThreadStore.getState().records.get(placeholderId)?.agentStartTime ?? Date.now();
-    useThreadStore.setState((state) => {
-      const nextRunning = new Set(state.runningThreadIds);
-      nextRunning.delete(placeholderId);
-      nextRunning.add(thread.id);
-      let records = deleteThreadRecord(state.records, placeholderId);
-      records = patchThreadRecord(records, thread.id, { agentStartTime: startTime });
-      return { runningThreadIds: nextRunning, records };
-    });
+    useThreadStore.getState().transferThreadRuntime(placeholderId, thread.id);
     useDiffStore.getState().hideRightPanel(workspaceId, thread.id);
     set((state) => {
       const without = state.threads.filter((t) => t.id !== placeholderId);
@@ -925,7 +916,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     useThreadStore.setState((state) => ({
       runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
-      records: patchThreadRecord(state.records, placeholderId, { agentStartTime: Date.now() }),
+      records: patchThreadRecord(state.records, placeholderId, {
+        agentStartTime: Date.now(),
+        runtimePhase: "running",
+      }),
     }));
 
     try {
@@ -1053,7 +1047,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     useThreadStore.setState((state) => ({
       runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
-      records: patchThreadRecord(state.records, placeholderId, { agentStartTime: Date.now() }),
+      records: patchThreadRecord(state.records, placeholderId, {
+        agentStartTime: Date.now(),
+        runtimePhase: "running",
+      }),
     }));
 
     try {
@@ -1085,7 +1082,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     }));
     useThreadStore.setState((state) => ({
       runningThreadIds: new Set([...state.runningThreadIds, placeholderId]),
-      records: patchThreadRecord(state.records, placeholderId, { agentStartTime: Date.now() }),
+      records: patchThreadRecord(state.records, placeholderId, {
+        agentStartTime: Date.now(),
+        runtimePhase: "running",
+      }),
     }));
     try {
       const result = await runCreateAndSend(pending);

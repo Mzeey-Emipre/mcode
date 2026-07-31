@@ -66,6 +66,101 @@ interface RuntimeHydrationObservation {
   runtimePhase: ThreadRecord["runtimePhase"];
 }
 
+function mergeRuntimeList<T>(
+  persisted: T[],
+  placeholder: T[],
+): T[] {
+  return persisted.length > 0 ? persisted : placeholder;
+}
+
+function transferThreadRuntime(
+  records: Map<string, ThreadRecord>,
+  placeholderId: string,
+  persistedId: string,
+  placeholderRunning: boolean,
+): Map<string, ThreadRecord> {
+  const placeholder = records.get(placeholderId);
+  if (!placeholder || placeholderId === persistedId) return records;
+  const persisted = getThreadRecord(records, persistedId);
+  const persistedExists = records.has(persistedId);
+  const persistedSequence = persisted.lastAgentEventSequence;
+  const usePersisted = <T>(value: T, fallback: T, empty: (candidate: T) => boolean): T =>
+    empty(value) ? fallback : value;
+  const placeholderPhase = placeholder.runtimePhase === "idle" && placeholderRunning
+    ? "running"
+    : placeholder.runtimePhase;
+  const runtimePhase = persisted.runtimePhase === "idle"
+    ? placeholderPhase
+    : persisted.runtimePhase;
+  const turnExecutionId = persisted.turnExecutionId ?? placeholder.turnExecutionId;
+  const currentTurnResponseKey = usePersisted(
+    persisted.currentTurnResponseKey,
+    placeholder.currentTurnResponseKey,
+    (value) => value.length === 0,
+  ) || `turn-response:${persistedId}:${crypto.randomUUID()}`;
+  // Agent-event sequences are scoped to the persisted thread ID. A cursor
+  // observed on the client-only placeholder must not suppress its first
+  // persisted-ID event after the handoff.
+  const nextPersistedSequence = persistedExists ? (persistedSequence ?? 0) : 0;
+  const nextRecords = deleteThreadRecord(records, placeholderId);
+  return patchThreadRecord(nextRecords, persistedId, {
+    runtimePhase,
+    turnExecutionId,
+    agentStartTime: persisted.agentStartTime ?? placeholder.agentStartTime,
+    streaming: usePersisted(persisted.streaming, placeholder.streaming, (value) => value.length === 0),
+    streamingPreview: usePersisted(
+      persisted.streamingPreview,
+      placeholder.streamingPreview,
+      (value) => value.length === 0,
+    ),
+    toolCalls: mergeRuntimeList(persisted.toolCalls, placeholder.toolCalls),
+    thoughtSegments: mergeRuntimeList(persisted.thoughtSegments, placeholder.thoughtSegments),
+    hooks: mergeRuntimeList(persisted.hooks, placeholder.hooks),
+    currentTurnMessageId: usePersisted(
+      persisted.currentTurnMessageId,
+      placeholder.currentTurnMessageId,
+      (value) => value.length === 0,
+    ),
+    pendingTurnPersistMessageIds: [
+      ...new Set([
+        ...placeholder.pendingTurnPersistMessageIds,
+        ...persisted.pendingTurnPersistMessageIds,
+      ]),
+    ],
+    currentTurnResponseKey,
+    assistantResponseKeys: {
+      ...placeholder.assistantResponseKeys,
+      ...persisted.assistantResponseKeys,
+    },
+    isCompacting: persisted.isCompacting || placeholder.isCompacting,
+    permissions: persisted.permissions.length > 0 ? persisted.permissions : placeholder.permissions,
+    narrativeByMessage: {
+      ...placeholder.narrativeByMessage,
+      ...persisted.narrativeByMessage,
+    },
+    ...(nextPersistedSequence > 0
+      ? {
+        lastAgentEventSequence: nextPersistedSequence,
+        lastAgentEventEpoch: persisted.lastAgentEventEpoch,
+      }
+      : {}),
+    fileEffectSummary: persisted.fileEffectSummary.effects.length > 0
+      ? persisted.fileEffectSummary
+      : placeholder.fileEffectSummary,
+    fileEffectTurnId: usePersisted(
+      persisted.fileEffectTurnId,
+      placeholder.fileEffectTurnId,
+      (value) => value.length === 0,
+    ),
+    awaitingUserStopPersist: persisted.awaitingUserStopPersist ?? placeholder.awaitingUserStopPersist,
+    rateLimit: persisted.rateLimit ?? placeholder.rateLimit,
+    apiRetry: persisted.apiRetry ?? placeholder.apiRetry,
+    ...(persistedExists && persisted.error !== null
+      ? {}
+      : { error: placeholder.error }),
+  });
+}
+
 export type { HandoffMeta, ThreadSettings, StoredPermission } from "./thread-record";
 export { getHandoffStatus } from "./thread-record";
 
@@ -108,6 +203,8 @@ interface ThreadState {
   stopAgent: (threadId: string) => Promise<void>;
   /** Apply one authoritative runtime snapshot without replacing other running threads. */
   applyThreadRuntimeSnapshot: (snapshot: TurnRuntimeSnapshot) => void;
+  /** Atomically move optimistic first-turn runtime state to the persisted thread identity. */
+  transferThreadRuntime: (placeholderId: string, persistedId: string) => void;
   /** Replace runningThreadIds with the authoritative server snapshot. Called on WS (re)connect. */
   hydrateRunningThreads: (ids: string[], observed?: ReadonlyMap<string, RuntimeHydrationObservation>) => void;
   /** Restore authoritative per-thread execution snapshots during reconnect. */
@@ -1490,6 +1587,27 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           apiRetry: undefined,
         })),
       };
+    });
+  },
+
+  transferThreadRuntime: (placeholderId, persistedId) => {
+    set((state) => {
+      const records = transferThreadRuntime(
+        state.records,
+        placeholderId,
+        persistedId,
+        state.runningThreadIds.has(placeholderId),
+      );
+      if (records === state.records) return {};
+      const nextRunning = new Set(state.runningThreadIds);
+      nextRunning.delete(placeholderId);
+      const persistedRecord = getThreadRecord(records, persistedId);
+      if (persistedRecord.runtimePhase === "running" || persistedRecord.runtimePhase === "finalizing") {
+        nextRunning.add(persistedId);
+      } else {
+        nextRunning.delete(persistedId);
+      }
+      return { records, runningThreadIds: nextRunning };
     });
   },
 

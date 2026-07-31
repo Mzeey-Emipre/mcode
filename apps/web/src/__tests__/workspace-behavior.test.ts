@@ -3,7 +3,7 @@ import {
   getTestThreadError,
   hasTestThreadRecord,
 } from "@/stores/thread-store-test-utils";
-import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
+import { createEmptyThreadRecord, patchThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "@/stores/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
@@ -916,6 +916,108 @@ describe("Workspace Behavior", () => {
       expect(fin.threads[0]?.model).toBe("gpt-5.5");
       expect(fin.threads[0]?.provider).toBe("codex");
       expect(fin.threads[0]?.reasoning_level).toBe("high");
+    });
+
+    it("transfers placeholder runtime identity and narrative state to the persisted first turn", async () => {
+      const ws = createMockWorkspace({ id: "ws-runtime-transfer" });
+      let resolveRpc!: (value: ReturnType<typeof createMockThread>) => void;
+      const rpcPromise = new Promise<ReturnType<typeof createMockThread>>((resolve) => {
+        resolveRpc = resolve;
+      });
+      useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id });
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockReturnValue(rpcPromise);
+
+      const sendOp = useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5");
+      await Promise.resolve();
+      const placeholderId = useWorkspaceStore.getState().activeThreadId!;
+      const toolCall = {
+        id: "tool-1",
+        toolName: "Read",
+        input: "file.ts",
+        output: "",
+        isComplete: false,
+      } as never;
+      useThreadStore.setState((state) => ({
+        records: patchThreadRecord(state.records, placeholderId, {
+          runtimePhase: "running",
+          turnExecutionId: "turn-placeholder",
+          currentTurnResponseKey: "response-placeholder",
+          streaming: "thinking",
+          thoughtSegments: [{ id: "thought-1", text: "thinking" } as never],
+          toolCalls: [toolCall],
+          agentStartTime: 123,
+        }),
+      }));
+
+      resolveRpc(createMockThread({ id: "persisted-runtime", workspace_id: ws.id, title: "Hello" }));
+      await sendOp;
+
+      const record = useThreadStore.getState().records.get("persisted-runtime");
+      expect(useWorkspaceStore.getState().activeThreadId).toBe("persisted-runtime");
+      expect(useThreadStore.getState().runningThreadIds.has("persisted-runtime")).toBe(true);
+      expect(record?.runtimePhase).toBe("running");
+      expect(record?.turnExecutionId).toBe("turn-placeholder");
+      expect(record?.currentTurnResponseKey).toBe("response-placeholder");
+      expect(record?.streaming).toBe("thinking");
+      expect(record?.thoughtSegments).toHaveLength(1);
+      expect(record?.toolCalls).toHaveLength(1);
+      expect(useThreadStore.getState().records.has(placeholderId)).toBe(false);
+    });
+
+    it("keeps newer persisted runtime identity and fields during the handoff", async () => {
+      const ws = createMockWorkspace({ id: "ws-runtime-authoritative" });
+      let resolveRpc!: (value: ReturnType<typeof createMockThread>) => void;
+      const rpcPromise = new Promise<ReturnType<typeof createMockThread>>((resolve) => {
+        resolveRpc = resolve;
+      });
+      useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id });
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockReturnValue(rpcPromise);
+
+      const sendOp = useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5");
+      await Promise.resolve();
+      const placeholderId = useWorkspaceStore.getState().activeThreadId!;
+      const persistedTool = {
+        id: "server-tool",
+        toolName: "Read",
+        input: "server.ts",
+        output: "done",
+        isComplete: true,
+      } as never;
+      useThreadStore.setState((state) => ({
+        records: patchThreadRecord(
+          patchThreadRecord(state.records, placeholderId, {
+            runtimePhase: "running",
+            turnExecutionId: "stale-placeholder-turn",
+            streaming: "stale thinking",
+            toolCalls: [{ id: "placeholder-tool" } as never],
+          }),
+          "persisted-authoritative",
+          {
+            runtimePhase: "finalizing",
+            turnExecutionId: "authoritative-turn",
+            currentTurnResponseKey: "authoritative-response",
+            streaming: "authoritative response",
+            toolCalls: [persistedTool],
+            lastAgentEventSequence: 4,
+            lastAgentEventEpoch: "server-epoch",
+          },
+        ),
+      }));
+
+      resolveRpc(createMockThread({ id: "persisted-authoritative", workspace_id: ws.id, title: "Hello" }));
+      await sendOp;
+
+      const record = useThreadStore.getState().records.get("persisted-authoritative");
+      expect(record?.runtimePhase).toBe("finalizing");
+      expect(record?.turnExecutionId).toBe("authoritative-turn");
+      expect(record?.currentTurnResponseKey).toBe("authoritative-response");
+      expect(record?.streaming).toBe("authoritative response");
+      expect(record?.toolCalls).toEqual([persistedTool]);
+      expect(record?.toolCalls).not.toContainEqual({ id: "placeholder-tool" });
+      expect(record?.lastAgentEventSequence).toBe(4);
+      expect(record?.lastAgentEventEpoch).toBe("server-epoch");
+      expect(useThreadStore.getState().runningThreadIds.has("persisted-authoritative")).toBe(true);
+      expect(useThreadStore.getState().records.has(placeholderId)).toBe(false);
     });
 
     it("branchThread placeholder preserves selected composer settings before the child exists", async () => {
