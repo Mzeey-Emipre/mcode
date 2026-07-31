@@ -141,6 +141,8 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
   permissionMode: PERMISSION_MODES.FULL,
   interactionMode: INTERACTION_MODES.BUILD,
 };
+const EMPTY_PENDING_TURN_PERSIST_MESSAGE_IDS: string[] = [];
+const EMPTY_NARRATIVE_BY_MESSAGE: ThreadNarrativeByMessage = {};
 
 /** Returns a fresh empty {@link ThreadRecord} for lazy Map insertion. */
 export function createEmptyThreadRecord(): ThreadRecord {
@@ -186,16 +188,25 @@ export function createEmptyThreadRecord(): ThreadRecord {
   };
 }
 
-/** Read a thread record, returning a fresh empty record when absent. */
+/** Read a thread record, normalizing missing nullable persistence fields. */
 export function getThreadRecord(
   records: Map<string, ThreadRecord>,
   threadId: string,
 ): ThreadRecord {
   const record = records.get(threadId);
   if (!record) return createEmptyThreadRecord();
-  return record.pendingTurnPersistMessageIds === undefined
-    ? { ...record, pendingTurnPersistMessageIds: [] }
-    : record;
+  if (
+    record.pendingTurnPersistMessageIds != null
+    && record.narrativeByMessage != null
+  ) {
+    return record;
+  }
+  return {
+    ...record,
+    pendingTurnPersistMessageIds:
+      record.pendingTurnPersistMessageIds ?? EMPTY_PENDING_TURN_PERSIST_MESSAGE_IDS,
+    narrativeByMessage: record.narrativeByMessage ?? EMPTY_NARRATIVE_BY_MESSAGE,
+  };
 }
 
 /** Immutable Map update with a partial or functional patch for one thread. */
