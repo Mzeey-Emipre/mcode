@@ -40,6 +40,7 @@ import type {
   CreateAndSendInput,
   PermissionMode,
   ProviderFileMutationStart,
+  TurnRuntimeSnapshot,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -248,6 +249,7 @@ function parseHarnessTaskId(output: string): string | null {
 export class AgentService {
   /** Canonical per-thread execution identity and lifecycle authority. */
   private readonly turnRuntime = new TurnRuntimeRegistry();
+  private readonly preparedProviderEvents = new WeakMap<object, AgentEvent | undefined>();
   private readonly activeSessionIds = new Set<string>();
   private readonly nativeGoalRefreshInFlight = new Set<string>();
   private initialized = false;
@@ -1994,7 +1996,22 @@ export class AgentService {
 
   /** Get all currently active thread IDs. */
   activeThreadIds(): string[] {
-    return [...this.activeSessionIds];
+    return this.turnRuntime.runningThreadIds();
+  }
+
+  /** Return authoritative per-thread runtime snapshots for reconnect hydration. */
+  runtimeSnapshots(): TurnRuntimeSnapshot[] {
+    return this.turnRuntime.snapshots();
+  }
+
+  /** Normalize one provider event once at the production provider boundary. */
+  prepareProviderEvent(event: AgentEvent): AgentEvent | undefined {
+    if (this.preparedProviderEvents.has(event as object)) {
+      return this.preparedProviderEvents.get(event as object);
+    }
+    const normalized = this.turnRuntime.normalizeEvent(event);
+    this.preparedProviderEvents.set(event as object, normalized);
+    return normalized;
   }
 
   /**
@@ -2382,6 +2399,9 @@ export class AgentService {
         ));
       });
       const handleEvent = (event: AgentEvent): void => {
+        const normalizedEvent = this.prepareProviderEvent(event);
+        if (!normalizedEvent) return;
+        event = normalizedEvent;
         const priorFinalization = this.fileTrackingFinalizationByThread.get(event.threadId);
         const existingBarrier = this.providerEventBarrierByThread.get(event.threadId);
         if (!existingBarrier && priorFinalization && event.type === AgentEventType.TurnStarted) {
@@ -2840,7 +2860,10 @@ export class AgentService {
           // flushLateHook instead of the normal mid-turn buffer.
           this.turnCompleteSeenByThread.add(event.threadId);
 
-          void this.finalizeTerminalTurn(event.threadId, "completed", "turnComplete");
+          if (!this.compactionInProgressByThread.has(event.threadId)
+            && this.turnRuntime.terminalize(event.threadId, event.turnExecutionId!, "completed")) {
+            void this.finalizeTerminalTurn(event.threadId, "completed", "turnComplete");
+          }
 
           // Clear the "running" flag so agent.listRunning no longer reports
           // this thread and shutdown won't downgrade it to "interrupted."
@@ -2902,7 +2925,10 @@ export class AgentService {
           // exists (e.g. a pre-turn CLI-not-found failure) rather than
           // broadcasting turn.persisted against the wrong (user) message id.
           this.disarmTurnRetryWindow(event.threadId);
-          void this.finalizeTerminalTurn(event.threadId, "errored", "error");
+          if (this.turnRuntime.terminalize(event.threadId, event.turnExecutionId!, "errored")) {
+            void this.finalizeTerminalTurn(event.threadId, "errored", "error");
+          }
+          this.trackSessionEnded(event.threadId);
           this.releaseMutationReservation(event.threadId);
           // Turn-scoped cleanup of any one-shot handoff Read grant when the
           // first Turn errors out before completing normally.
@@ -3008,7 +3034,10 @@ export class AgentService {
                 this.turnFinalizer.appendStreamingText(event.threadId, finalText);
               }
             }
-            void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
+            const phase = outcome === "cancelled" ? "cancelled" : outcome === "errored" ? "errored" : "completed";
+            if (this.turnRuntime.terminalize(event.threadId, event.turnExecutionId!, phase)) {
+              void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
+            }
           }
           this.trackSessionEnded(event.threadId);
           this.threadControlMcp?.revoke(`mcode-${event.threadId}`);

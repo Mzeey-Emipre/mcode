@@ -324,7 +324,7 @@ export interface McodeTransport {
    * Called on WebSocket (re)connect to reconcile runningThreadIds after the
    * optimistic client-side set was lost (reload, new tab, reconnect).
    */
-  listRunning(): Promise<string[]>;
+  listRunning(): Promise<import("@mcode/contracts").TurnRuntimeSnapshot[]>;
   /** Subscribe this client connection to push events for the active thread. */
   subscribeThread(threadId: string): Promise<void>;
   /** Remove this client connection's push subscription for a thread. */

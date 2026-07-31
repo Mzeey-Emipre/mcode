@@ -884,7 +884,7 @@ async function dispatch(
     case "agent.activeCount":
       return deps.agentService.activeCount();
     case "agent.listRunning":
-      return deps.agentService.activeThreadIds();
+      return deps.agentService.runtimeSnapshots();
     case "agent.answerQuestions":
       await deps.agentService.answerQuestions(
         params.threadId,

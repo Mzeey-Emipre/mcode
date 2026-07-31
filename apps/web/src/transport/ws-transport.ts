@@ -197,12 +197,14 @@ export async function hydrateRunningThreadsFromServer(
 ): Promise<void> {
   try {
     const beforeRpc = new Set(useThreadStore.getState().runningThreadIds);
-    const ids = (await rpcCall("agent.listRunning", {})) as string[];
-    const current = useThreadStore.getState().runningThreadIds;
-    // Preserve threadIds added concurrently while the RPC was in flight
-    // (e.g., session.turnStarted push during the round-trip).
-    const concurrentAdds = [...current].filter((id) => !beforeRpc.has(id));
-    useThreadStore.getState().hydrateRunningThreads([...ids, ...concurrentAdds]);
+    const result = await rpcCall("agent.listRunning", {});
+    if (Array.isArray(result) && (result.length === 0 || typeof result[0] === "string")) {
+      const current = useThreadStore.getState().runningThreadIds;
+      const concurrentAdds = [...current].filter((id) => !beforeRpc.has(id));
+      useThreadStore.getState().hydrateRunningThreads([...(result as string[]), ...concurrentAdds]);
+    } else {
+      useThreadStore.getState().hydrateThreadRuntimes(result as import("@mcode/contracts").TurnRuntimeSnapshot[]);
+    }
   } catch {
     // Best-effort; optimistic state remains if the call fails.
   }
@@ -676,7 +678,7 @@ export function createWsTransport(
     saveClipboardFile: (data, mimeType, fileName) =>
       rpcBinary<AttachmentMeta | null>("clipboard.saveFile", { mimeType, fileName }, data),
     getActiveAgentCount: () => rpc<number>("agent.activeCount", {}),
-    listRunning: () => rpc<string[]>("agent.listRunning", {}),
+    listRunning: () => rpc<import("@mcode/contracts").TurnRuntimeSnapshot[]>("agent.listRunning", {}),
     subscribeThread: (threadId) => rpc<void>("push.subscribeThread", { threadId }),
     unsubscribeThread: (threadId) => rpc<void>("push.unsubscribeThread", { threadId }),
     setThreadSubscriptions: (input: SetThreadSubscriptionsInput) =>

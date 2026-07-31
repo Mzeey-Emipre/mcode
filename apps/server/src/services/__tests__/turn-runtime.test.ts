@@ -40,4 +40,25 @@ describe("TurnRuntimeRegistry", () => {
     expect(runtime.terminalize("thread-1", first.turnExecutionId!, "completed")).toBe(false);
     expect(runtime.terminalize("thread-1", second.turnExecutionId!, "completed")).toBe(true);
   });
+
+  it("keeps a replacement turn alive after a stale child terminal", () => {
+    const runtime = new TurnRuntimeRegistry();
+    const first = runtime.start("thread-1");
+    expect(runtime.terminalize("thread-1", first.turnExecutionId!, "completed")).toBe(true);
+    const second = runtime.start("thread-1");
+
+    expect(runtime.normalizeEvent({
+      type: AgentEventType.Ended,
+      threadId: "thread-1",
+      turnExecutionId: first.turnExecutionId!,
+    })).toBeUndefined();
+    expect(runtime.normalizeEvent({
+      type: AgentEventType.TextDelta,
+      threadId: "thread-1",
+      delta: "parent still running",
+      turnExecutionId: second.turnExecutionId!,
+    })?.turnExecutionId).toBe(second.turnExecutionId);
+    expect(runtime.terminalize("thread-1", second.turnExecutionId!, "completed")).toBe(true);
+    expect(runtime.terminalize("thread-1", second.turnExecutionId!, "completed")).toBe(false);
+  });
 });

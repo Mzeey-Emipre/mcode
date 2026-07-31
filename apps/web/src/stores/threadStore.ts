@@ -53,6 +53,14 @@ import {
   deleteThreadRecord,
 } from "./thread-record";
 
+function deriveRunningThreadIds(records: Map<string, ThreadRecord>): Set<string> {
+  return new Set(
+    [...records]
+      .filter(([, record]) => record.runtimePhase === "running" || record.runtimePhase === "finalizing")
+      .map(([id]) => id),
+  );
+}
+
 export type { HandoffMeta, ThreadSettings, StoredPermission } from "./thread-record";
 export { getHandoffStatus } from "./thread-record";
 
@@ -823,7 +831,16 @@ function projectToolProgress(
 }
 
 /** Zustand store for thread-scoped messages, streaming session state, and agent event handling. */
-export const useThreadStore = create<ThreadState>((set, get) => {
+export const useThreadStore = create<ThreadState>((zustandSet, get) => {
+  const set = ((updater: Parameters<typeof zustandSet>[0]) => zustandSet((state) => {
+    const next = typeof updater === "function" ? updater(state) : updater;
+    if (!next || Object.keys(next).length === 0) return next;
+    const records = "records" in next && next.records ? next.records : state.records;
+    const runningThreadIds = records.size === 0
+      ? state.runningThreadIds
+      : deriveRunningThreadIds(records);
+    return { ...next, runningThreadIds };
+  })) as typeof zustandSet;
   let textDeltaFlushRaf: number | null = null;
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
   const deferredNarrativeEventsByThread = new Map<
@@ -1345,10 +1362,8 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           rateLimit: undefined,
           apiRetry: undefined,
           error: null,
+          runtimePhase: isControlCommand ? rec.runtimePhase : "running",
         }),
-        runningThreadIds: isControlCommand
-          ? state.runningThreadIds
-          : new Set([...state.runningThreadIds, threadId]),
       };
     });
 
@@ -1386,12 +1401,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       set((state) => {
         // Control commands never added the thread to running-state, so leave it
         // untouched on rollback - a real turn in flight may own it (#583).
-        const next = new Set(state.runningThreadIds);
-        if (activeSessionConflict) {
-          next.add(threadId);
-        } else if (!isControlCommand) {
-          next.delete(threadId);
-        }
         return {
           records: patchThreadRecord(state.records, threadId, (rec) => ({
             error,
@@ -1400,7 +1409,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
               : {}),
             ...(!activeSessionConflict ? { agentStartTime: undefined } : {}),
           })),
-          runningThreadIds: next,
         };
       });
       if (!activeSessionConflict && !isControlCommand) {
@@ -1436,10 +1444,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     }
 
     set((state) => {
-      const next = new Set(state.runningThreadIds);
-      next.delete(threadId);
       return {
-        runningThreadIds: next,
         records: patchThreadRecord(state.records, threadId, (rec) => ({
           rateLimit: undefined,
           apiRetry: undefined,
@@ -1480,20 +1485,20 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           resetPendingIds.add(id);
           records = patchThreadRecord(records, id, {
             ...resetTurnEphemeral(rec),
-            turnExecutionId: rec.turnExecutionId ?? crypto.randomUUID(),
+            turnExecutionId: rec.turnExecutionId,
             runtimePhase: "running",
             currentTurnResponseKey: createTurnResponseKey(id),
             agentStartTime: rec.agentStartTime ?? now,
           });
         } else if (rec.agentStartTime === undefined || rec.runtimePhase !== "running") {
           records = patchThreadRecord(records, id, {
-            agentStartTime: now,
-            turnExecutionId: rec.turnExecutionId ?? crypto.randomUUID(),
+            ...(rec.agentStartTime === undefined ? { agentStartTime: now } : {}),
+            turnExecutionId: rec.turnExecutionId,
             runtimePhase: "running",
           });
         }
       }
-      return { runningThreadIds: new Set(ids), records };
+      return { records };
     });
     for (const threadId of resetPendingIds) {
       invalidateDeferredNarrativeEvents(threadId);
@@ -1502,9 +1507,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
   },
 
   hydrateThreadRuntimes: (snapshots) => {
-    const running = snapshots
-      .filter((snapshot) => snapshot.phase === "running" || snapshot.phase === "finalizing")
-      .map((snapshot) => snapshot.threadId);
     set((state) => {
       let records = state.records;
       for (const snapshot of snapshots) {
@@ -1514,7 +1516,7 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           ...(snapshot.phase === "running" && { agentStartTime: getThreadRecord(records, snapshot.threadId).agentStartTime ?? Date.now() }),
         });
       }
-      return { runningThreadIds: new Set(running), records };
+      return { records };
     });
   },
 
@@ -1683,13 +1685,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const isCurrentThread = get().currentThreadId === threadId;
 
     set((state) => {
-      const nextRunning = new Set(state.runningThreadIds);
-      nextRunning.delete(threadId);
       const recapByThread = { ...state.recapByThread };
       delete recapByThread[threadId];
 
       return {
-        runningThreadIds: nextRunning,
         records: deleteThreadRecord(state.records, threadId),
         recapByThread,
         ...(isCurrentThread ? { currentThreadId: null } : {}),
@@ -1717,10 +1716,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
     const deletingCurrentThread = currentThreadId !== null && threadIds.includes(currentThreadId);
 
     set((state) => {
-      const nextRunning = new Set(state.runningThreadIds);
-      for (const threadId of threadIds) {
-        nextRunning.delete(threadId);
-      }
 
       const idsToDelete = new Set(threadIds);
       let records = state.records;
@@ -1735,7 +1730,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       }
 
       return {
-        runningThreadIds: nextRunning,
         records,
         recapByThread,
         ...(deletingCurrentThread ? { currentThreadId: null } : {}),
@@ -1799,7 +1793,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         planQuestionsStatus: "answered",
         agentStartTime: Date.now(),
       }),
-      runningThreadIds: new Set([...s.runningThreadIds, threadId]),
     }));
     usePlanStore.getState().setGenerating(threadId, true);
 
@@ -1819,7 +1812,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           planQuestionsStatus: "pending",
           error: String(e),
         }),
-        runningThreadIds: new Set([...Array.from(s.runningThreadIds).filter((id) => id !== threadId)]),
       }));
     }
   },
@@ -2197,14 +2189,10 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
       set((state) => {
         const rec = getThreadRecord(state.records, threadId);
-        const next = state.runningThreadIds.has(threadId)
-          ? state.runningThreadIds
-          : new Set([...state.runningThreadIds, threadId]);
         return {
-          runningThreadIds: next,
           records: patchThreadRecord(state.records, threadId, {
             agentStartTime: Date.now(),
-            turnExecutionId: incomingExecutionId ?? rec.turnExecutionId ?? crypto.randomUUID(),
+            turnExecutionId: incomingExecutionId ?? rec.turnExecutionId,
             runtimePhase: "running",
             fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
             ...resetTurnEphemeral(rec),
@@ -2886,8 +2874,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         };
         set((state) => {
           const rec = getThreadRecord(state.records, threadId);
-          const nextRunning = new Set(state.runningThreadIds);
-          nextRunning.delete(threadId);
           const segments = rec.thoughtSegments;
           const lastSeg = segments[segments.length - 1];
           const closedSegments =
@@ -2934,7 +2920,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
             capped,
           );
           return {
-            runningThreadIds: nextRunning,
             records: patchThreadRecord(state.records, threadId, {
               ...basePatch,
               messages: capped,
@@ -2946,8 +2931,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       } else {
         set((state) => {
           const rec = getThreadRecord(state.records, threadId);
-          const nextRunning = new Set(state.runningThreadIds);
-          nextRunning.delete(threadId);
           const completedCalls = rec.toolCalls.map((tc) =>
             tc.isComplete ? tc : { ...tc, isComplete: true },
           );
@@ -2976,7 +2959,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           if (dedupedGuardrail) {
             const { messages: capped, evicted } = capMessages([...rec.messages, dedupedGuardrail]);
             return {
-              runningThreadIds: nextRunning,
               records: patchThreadRecord(state.records, threadId, {
                 ...basePatch,
                 messages: capped,
@@ -2986,7 +2968,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
           }
 
           return {
-            runningThreadIds: nextRunning,
             records: patchThreadRecord(state.records, threadId, basePatch),
           };
         });
@@ -3302,8 +3283,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
       };
       set((state) => {
         const rec = getThreadRecord(state.records, threadId);
-        const nextRunning = new Set(state.runningThreadIds);
-        nextRunning.delete(threadId);
         const basePatch = {
           error: errorMsg,
           runtimePhase: "errored" as const,
@@ -3319,7 +3298,6 @@ export const useThreadStore = create<ThreadState>((set, get) => {
         };
         const { messages: capped, evicted } = capMessages([...rec.messages, errorMessage]);
         return {
-          runningThreadIds: nextRunning,
           records: patchThreadRecord(state.records, threadId, {
             ...basePatch,
             messages: capped,
