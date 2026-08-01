@@ -372,7 +372,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     result: CreateAndSendResult,
     transportWasWorktree: boolean,
   ) => {
-    const { warnings, ...thread } = result;
+    const { runtimeSnapshot, warnings, ...thread } = result;
     if (!pendingThreadCreationByPlaceholderId.has(placeholderId)) {
       return;
     }
@@ -384,6 +384,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     bumpThreadListMutationEpoch(workspaceId);
     pendingThreadCreationByPlaceholderId.delete(placeholderId);
     useThreadStore.getState().transferThreadRuntime(placeholderId, thread.id);
+    useThreadStore.getState().applyThreadRuntimeSnapshot(runtimeSnapshot);
     useDiffStore.getState().hideRightPanel(workspaceId, thread.id);
     set((state) => {
       const without = state.threads.filter((t) => t.id !== placeholderId);

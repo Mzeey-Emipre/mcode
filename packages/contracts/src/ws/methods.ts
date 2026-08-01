@@ -302,9 +302,11 @@ export const CreateAndSendSchema = lazySchema(() =>
 /** Validated command for creating a thread and sending its first message. */
 export type CreateAndSendInput = z.infer<ReturnType<typeof CreateAndSendSchema>>;
 
-/** Result schema for agent.createAndSend: a Thread with optional non-fatal warnings. */
+/** Result schema for agent.createAndSend: a Thread, runtime handshake, and optional warnings. */
 export const CreateAndSendResultSchema = lazySchema(() =>
   ThreadSchema().extend({
+    /** Authoritative runtime identity captured after the first turn starts. */
+    runtimeSnapshot: TurnRuntimeSnapshotSchema,
     warnings: z.array(z.string()).optional(),
   }),
 );

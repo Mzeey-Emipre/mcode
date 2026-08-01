@@ -123,6 +123,8 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   originSourceTurnId?: string;
   /** Existing shared mutation reservation supplied by thread-control approval dispatch. */
   mutationReservationToken?: string;
+  /** Resolves the authoritative first-turn handshake before provider I/O continues. */
+  onTurnStarted?: (snapshot: TurnRuntimeSnapshot) => void;
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -554,6 +556,7 @@ export class AgentService {
     sourceProviderId: originSourceProviderId,
     originSourceTurnId,
     mutationReservationToken,
+    onTurnStarted,
   }: SendMessageCommand): Promise<void> {
     const provenance = [originSourceThreadId, originSourceTurnId, originSourceProviderId];
     const hasAnyProvenance = provenance.some((value) => value !== undefined);
@@ -693,6 +696,11 @@ export class AgentService {
     this.turnGenerations.set(threadId, generation);
     const turnExecutionId = this.turnRuntime.start(threadId).turnExecutionId!;
     reservedExecutionId = turnExecutionId;
+    onTurnStarted?.({
+      threadId,
+      turnExecutionId,
+      phase: "running",
+    });
 
     let commandDispatched = false;
     const rollbackCommand = async (): Promise<void> => {
@@ -1289,6 +1297,30 @@ export class AgentService {
    * Generates a title from the content, creates the thread, sends,
    * and returns the fully-populated Thread object.
    */
+  private async sendInitialMessageAndSnapshot(
+    command: SendMessageCommand,
+    onError: (error: unknown) => void,
+  ): Promise<TurnRuntimeSnapshot> {
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const send = this.sendMessage({
+      ...command,
+      onTurnStarted: resolveStarted,
+    });
+    void send.catch(onError);
+    await Promise.race([
+      started,
+      send.then(() => undefined, () => undefined),
+    ]);
+    return this.turnRuntime.snapshot(command.threadId) ?? {
+      threadId: command.threadId,
+      turnExecutionId: null,
+      phase: "idle",
+    };
+  }
+
   async createAndSend({
     workspaceId,
     content,
@@ -1316,7 +1348,7 @@ export class AgentService {
     previewAnnotations,
     goalObjective,
     orchestrationMode,
-  }: CreateAndSendCommand): Promise<Thread & { warnings?: string[] }> {
+  }: CreateAndSendCommand): Promise<Thread & { runtimeSnapshot: TurnRuntimeSnapshot; warnings?: string[] }> {
     const title = truncateTitle(displayContent ?? content);
 
     if (parentThreadId) {
@@ -1400,7 +1432,7 @@ export class AgentService {
         : thread.codex_fast_mode,
     };
 
-    void this.sendMessage({
+    const runtimeSnapshot = await this.sendInitialMessageAndSnapshot({
       threadId: thread.id,
       content,
       permissionMode,
@@ -1419,7 +1451,7 @@ export class AgentService {
       previewAnnotations,
       goalObjective,
       orchestrationMode,
-    }).catch((err) => {
+    }, (err) => {
       logger.error("createAndSend initial send failed", {
         threadId: thread.id,
         error: err instanceof Error ? err.message : String(err),
@@ -1427,7 +1459,11 @@ export class AgentService {
     });
 
     const updated = this.threadRepo.findById(thread.id);
-    return { ...(updated ?? thread), ...(threadWarnings?.length ? { warnings: threadWarnings } : {}) };
+    return {
+      ...(updated ?? thread),
+      runtimeSnapshot,
+      ...(threadWarnings?.length ? { warnings: threadWarnings } : {}),
+    };
   }
 
   /**
@@ -1464,7 +1500,7 @@ export class AgentService {
     previewAnnotations?: PreviewAnnotationBundle;
     goalObjective?: string;
     orchestrationMode?: OrchestrationMode;
-  }): Promise<Thread & { warnings?: string[] }> {
+  }): Promise<Thread & { runtimeSnapshot: TurnRuntimeSnapshot; warnings?: string[] }> {
     const {
       workspaceId, content, model, permissionMode, mode, branch,
       existingWorktreePath, existingWorktreeBaseBranch, worktreeBranchMode, attachments, mentions, reasoningLevel, provider,
@@ -1621,7 +1657,7 @@ export class AgentService {
       });
     }
 
-    void this.sendMessage({
+    const runtimeSnapshot = await this.sendInitialMessageAndSnapshot({
       threadId: thread.id,
       content,
       permissionMode,
@@ -1642,14 +1678,18 @@ export class AgentService {
       previewAnnotations,
       goalObjective,
       orchestrationMode,
-    }).catch((err) => {
+    }, (err) => {
       logger.error("createBranchedThread initial send failed", {
         threadId: thread.id,
         error: err instanceof Error ? err.message : String(err),
       });
     });
 
-    return { ...thread, ...(threadWarnings?.length ? { warnings: threadWarnings } : {}) };
+    return {
+      ...thread,
+      runtimeSnapshot,
+      ...(threadWarnings?.length ? { warnings: threadWarnings } : {}),
+    };
   }
 
   /** Stop exact active turn, sharing one in-flight operation per thread. */

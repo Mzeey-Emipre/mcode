@@ -8,6 +8,7 @@ import { MessageRepo } from "../../repositories/message-repo";
 import { AgentService } from "../agent-service";
 import type { GitService } from "../git-service";
 import type { ThreadService } from "../thread-service";
+import type { TurnRuntimeSnapshot } from "@mcode/contracts";
 
 function createAgentServiceHarness() {
   const db: Database.Database = openMemoryDatabase();
@@ -50,6 +51,69 @@ function createAgentServiceHarness() {
 }
 
 describe("AgentService.createAndSend defaults", () => {
+  it("returns the authoritative running runtime snapshot after startup", async () => {
+    const { workspaceRepo, service } = createAgentServiceHarness();
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    vi.mocked(service.sendMessage).mockImplementation(async ({ threadId, onTurnStarted }) => {
+      const snapshot = (service as unknown as {
+        turnRuntime: { start: (id: string) => TurnRuntimeSnapshot };
+      }).turnRuntime.start(threadId);
+      onTurnStarted?.(snapshot);
+    });
+
+    const result = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Start the first turn",
+    });
+
+    expect(result.runtimeSnapshot).toMatchObject({
+      threadId: result.id,
+      phase: "running",
+    });
+    expect(result.runtimeSnapshot.turnExecutionId).toEqual(expect.any(String));
+  });
+
+  it("returns an idle snapshot when startup fails before runtime ownership", async () => {
+    const { workspaceRepo, service } = createAgentServiceHarness();
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    vi.mocked(service.sendMessage).mockRejectedValue(new Error("startup failed"));
+
+    const result = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Start the first turn",
+    });
+
+    expect(result.runtimeSnapshot).toEqual({
+      threadId: result.id,
+      turnExecutionId: null,
+      phase: "idle",
+    });
+  });
+
+  it("returns after runtime startup without waiting for provider completion", async () => {
+    const { workspaceRepo, service } = createAgentServiceHarness();
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    let finishProvider!: () => void;
+    const providerDone = new Promise<void>((resolve) => {
+      finishProvider = resolve;
+    });
+    vi.mocked(service.sendMessage).mockImplementation(async ({ threadId, onTurnStarted }) => {
+      const snapshot = (service as unknown as {
+        turnRuntime: { start: (id: string) => TurnRuntimeSnapshot };
+      }).turnRuntime.start(threadId);
+      onTurnStarted?.(snapshot);
+      await providerDone;
+    });
+
+    const result = await service.createAndSend({
+      workspaceId: workspace.id,
+      content: "Start without waiting",
+    });
+
+    expect(result.runtimeSnapshot.phase).toBe("running");
+    finishProvider();
+  });
+
   it("uses the default model when the command omits it", async () => {
     const { threadRepo, workspaceRepo, service } = createAgentServiceHarness();
     const workspace = workspaceRepo.create("Repo", "/repo");

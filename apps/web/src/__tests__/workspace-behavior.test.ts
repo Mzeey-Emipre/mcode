@@ -15,6 +15,23 @@ import {
   createMockWorkspace,
   createMockThread,
 } from "./mocks/transport";
+import type { CreateAndSendResult, TurnRuntimeSnapshot } from "@mcode/contracts";
+
+function createMockCreateAndSendResult(
+  overrides?: Parameters<typeof createMockThread>[0],
+  runtimeSnapshot?: Partial<TurnRuntimeSnapshot>,
+): CreateAndSendResult {
+  const thread = createMockThread(overrides);
+  return {
+    ...thread,
+    runtimeSnapshot: {
+      threadId: thread.id,
+      turnExecutionId: null,
+      phase: "running",
+      ...runtimeSnapshot,
+    },
+  };
+}
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -178,7 +195,9 @@ describe("Workspace Behavior", () => {
       title: "Forked",
       parent_thread_id: "parent-1",
     });
-    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(child);
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      createMockCreateAndSendResult(child),
+    );
 
     await useWorkspaceStore.getState().branchThread({
       sourceThreadId: "parent-1",
@@ -225,7 +244,9 @@ describe("Workspace Behavior", () => {
       workspace_id: ws.id,
       title: "New from first message",
     });
-    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+    (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      createMockCreateAndSendResult(created),
+    );
 
     await useWorkspaceStore.getState().createAndSendMessage("Hello", "composer-2-fast");
 
@@ -673,7 +694,9 @@ describe("Workspace Behavior", () => {
           managed: true,
         },
       });
-      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockCreateAndSendResult(created),
+      );
 
       await useWorkspaceStore.getState().createAndSendMessage("Hello", "gpt-5.5");
 
@@ -778,7 +801,7 @@ describe("Workspace Behavior", () => {
       });
       expect(useWorkspaceStore.getState().newThreadBranchSource).toBe("branch");
 
-      resolveRpc(createMockThread({
+      resolveRpc(createMockCreateAndSendResult({
         id: "pr-branch-thread",
         workspace_id: ws.id,
         mode: "worktree",
@@ -849,7 +872,7 @@ describe("Workspace Behavior", () => {
         previewAnnotations: undefined,
       });
 
-      resolveRpc(createMockThread({
+      resolveRpc(createMockCreateAndSendResult({
         id: "named-existing-thread",
         workspace_id: ws.id,
         mode: "worktree",
@@ -907,7 +930,7 @@ describe("Workspace Behavior", () => {
         provider: "claude",
         reasoning_level: null,
       });
-      resolveRpc(created);
+      resolveRpc(createMockCreateAndSendResult(created));
       await done;
 
       const fin = useWorkspaceStore.getState();
@@ -920,8 +943,8 @@ describe("Workspace Behavior", () => {
 
     it("transfers placeholder runtime identity and narrative state to the persisted first turn", async () => {
       const ws = createMockWorkspace({ id: "ws-runtime-transfer" });
-      let resolveRpc!: (value: ReturnType<typeof createMockThread>) => void;
-      const rpcPromise = new Promise<ReturnType<typeof createMockThread>>((resolve) => {
+      let resolveRpc!: (value: CreateAndSendResult) => void;
+      const rpcPromise = new Promise<CreateAndSendResult>((resolve) => {
         resolveRpc = resolve;
       });
       useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id });
@@ -940,7 +963,7 @@ describe("Workspace Behavior", () => {
       useThreadStore.setState((state) => ({
         records: patchThreadRecord(state.records, placeholderId, {
           runtimePhase: "running",
-          turnExecutionId: "turn-placeholder",
+          turnExecutionId: null,
           currentTurnResponseKey: "response-placeholder",
           streaming: "thinking",
           thoughtSegments: [{ id: "thought-1", text: "thinking" } as never],
@@ -949,25 +972,42 @@ describe("Workspace Behavior", () => {
         }),
       }));
 
-      resolveRpc(createMockThread({ id: "persisted-runtime", workspace_id: ws.id, title: "Hello" }));
+      resolveRpc(createMockCreateAndSendResult({ id: "persisted-runtime", workspace_id: ws.id, title: "Hello" }, {
+        turnExecutionId: "authoritative-first-turn",
+      }));
       await sendOp;
 
       const record = useThreadStore.getState().records.get("persisted-runtime");
       expect(useWorkspaceStore.getState().activeThreadId).toBe("persisted-runtime");
       expect(useThreadStore.getState().runningThreadIds.has("persisted-runtime")).toBe(true);
       expect(record?.runtimePhase).toBe("running");
-      expect(record?.turnExecutionId).toBe("turn-placeholder");
+      expect(record?.turnExecutionId).toBe("authoritative-first-turn");
       expect(record?.currentTurnResponseKey).toBe("response-placeholder");
       expect(record?.streaming).toBe("thinking");
       expect(record?.thoughtSegments).toHaveLength(1);
       expect(record?.toolCalls).toHaveLength(1);
       expect(useThreadStore.getState().records.has(placeholderId)).toBe(false);
+
+      useThreadStore.getState().handleAgentEvent({
+        type: "turnComplete",
+        threadId: "persisted-runtime",
+        turnExecutionId: "stale-first-turn",
+      } as never);
+      expect(useThreadStore.getState().runningThreadIds.has("persisted-runtime")).toBe(true);
+
+      useThreadStore.getState().handleAgentEvent({
+        type: "turnComplete",
+        threadId: "persisted-runtime",
+        turnExecutionId: "authoritative-first-turn",
+      } as never);
+      expect(useThreadStore.getState().runningThreadIds.has("persisted-runtime")).toBe(false);
+      expect(useThreadStore.getState().records.get("persisted-runtime")?.runtimePhase).toBe("completed");
     });
 
     it("keeps newer persisted runtime identity and fields during the handoff", async () => {
       const ws = createMockWorkspace({ id: "ws-runtime-authoritative" });
-      let resolveRpc!: (value: ReturnType<typeof createMockThread>) => void;
-      const rpcPromise = new Promise<ReturnType<typeof createMockThread>>((resolve) => {
+      let resolveRpc!: (value: CreateAndSendResult) => void;
+      const rpcPromise = new Promise<CreateAndSendResult>((resolve) => {
         resolveRpc = resolve;
       });
       useWorkspaceStore.setState({ workspaces: [ws], activeWorkspaceId: ws.id });
@@ -1004,7 +1044,10 @@ describe("Workspace Behavior", () => {
         ),
       }));
 
-      resolveRpc(createMockThread({ id: "persisted-authoritative", workspace_id: ws.id, title: "Hello" }));
+      resolveRpc(createMockCreateAndSendResult(
+        { id: "persisted-authoritative", workspace_id: ws.id, title: "Hello" },
+        { phase: "finalizing", turnExecutionId: "authoritative-turn" },
+      ));
       await sendOp;
 
       const record = useThreadStore.getState().records.get("persisted-authoritative");
@@ -1059,7 +1102,7 @@ describe("Workspace Behavior", () => {
       expect(mid.threads[0]?.context_window_mode).toBe("1m");
       expect(mid.threads[0]?.thinking).toBe(true);
 
-      resolveRpc(createMockThread({
+      resolveRpc(createMockCreateAndSendResult({
         id: "child-branch",
         workspace_id: ws.id,
         parent_thread_id: parent.id,
@@ -1100,7 +1143,9 @@ describe("Workspace Behavior", () => {
           managed: true,
         }],
       });
-      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+      (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+        createMockCreateAndSendResult(created),
+      );
 
       await useWorkspaceStore.getState().branchThread({
         sourceThreadId: parent.id,
@@ -1184,7 +1229,7 @@ describe("Workspace Behavior", () => {
       useWorkspaceStore.getState().setActiveThread(null);
 
       resolveRpc(
-        createMockThread({ id: "server-thread-2", workspace_id: ws.id, title: "Hi" }),
+        createMockCreateAndSendResult({ id: "server-thread-2", workspace_id: ws.id, title: "Hi" }),
       );
       await done;
 
@@ -1230,7 +1275,7 @@ describe("Workspace Behavior", () => {
 
       expect(useWorkspaceStore.getState().threads.some((t) => t.id === placeholderId)).toBe(true);
 
-      resolveRpc(createMockThread({ id: "real-new", workspace_id: ws.id, title: "New" }));
+      resolveRpc(createMockCreateAndSendResult({ id: "real-new", workspace_id: ws.id, title: "New" }));
       await sendOp;
     });
 
