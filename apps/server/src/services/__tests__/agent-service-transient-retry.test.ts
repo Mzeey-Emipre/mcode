@@ -429,6 +429,183 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
   });
 
+  it("synthesizes completion when a matching provider stream ends after a final response", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockImplementationOnce((request: TurnRequest) => {
+      providerEmitter.emit("event", {
+        type: "message",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+        content: "done",
+        tokens: null,
+      });
+      providerEmitter.emit("event", {
+        type: "ended",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+      });
+      return Promise.resolve();
+    });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    const executionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+    expect(events.find((event) => event.type === "turnComplete")?.turnExecutionId).toBe(executionId);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+  });
+
+  it("does not synthesize a second terminal event after an explicit completion", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockImplementationOnce((request: TurnRequest) => {
+      providerEmitter.emit("event", {
+        type: "message",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+        content: "done",
+        tokens: null,
+      });
+      providerEmitter.emit("event", {
+        type: "turnComplete",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+        reason: "end_turn",
+        costUsd: null,
+        tokensIn: 0,
+        tokensOut: 0,
+      });
+      providerEmitter.emit("event", {
+        type: "ended",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+      });
+      return Promise.resolve();
+    });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+  });
+
+  it("fences child Ended events and clears the final-response marker for the next turn", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockImplementation((request: TurnRequest) => {
+      if (sendTurn.mock.calls.length === 1) {
+        providerEmitter.emit("event", {
+          type: "message",
+          threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
+          content: "done",
+          tokens: null,
+        });
+        providerEmitter.emit("event", {
+          type: "ended",
+          threadId: THREAD_ID,
+          turnExecutionId: "child-execution",
+        });
+      }
+      providerEmitter.emit("event", {
+        type: "ended",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+      });
+      return Promise.resolve();
+    });
+
+    const command = {
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default" as const,
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude" as const,
+    };
+    await service.sendMessage(command);
+    await service.sendMessage(command);
+
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "error")).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+  });
+
+  it("keeps a stream that reports an error on the error path", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockImplementationOnce((request: TurnRequest) => {
+      providerEmitter.emit("event", {
+        type: "error",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+        error: "stream failed",
+      });
+      return Promise.resolve();
+    });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    expect(events.filter((event) => event.type === "error")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+  });
+
+  it("does not turn a stopped turn into a successful fallback", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    await service.stopSession(THREAD_ID);
+
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+    });
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("cancelled");
+  });
+
   it("swallows discardSession's trailing Ended when sendTurn rejects without emitting Error", async () => {
     const { service, sendTurn, discardSession, waitForSessionExit, providerEmitter } = buildService();
     service.init();

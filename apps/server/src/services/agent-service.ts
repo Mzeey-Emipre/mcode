@@ -369,6 +369,8 @@ export class AgentService {
    * SessionEnd / PreCompact) and flushed directly via `flushLateHook`.
    */
   private turnCompleteSeenByThread = new Set<string>();
+  /** Execution identity that produced the last assistant Message for each thread. */
+  private finalResponseExecutionByThread = new Map<string, string>();
   /** Per-thread streaming parsers active while the model is generating questions in plan mode. */
   private planParsers = new Map<string, PlanQuestionParser>();
   /** Per-thread streaming parsers for extracting structured plan-output blocks. */
@@ -2309,6 +2311,7 @@ export class AgentService {
   ): Promise<void> | null {
     if (this.terminalFinalizedThreads.has(threadId)) return null;
     this.terminalFinalizedThreads.add(threadId);
+    const finalizedExecutionId = this.turnRuntime.snapshot(threadId)?.turnExecutionId;
     const setup = this.fileTrackingSetupByThread.get(threadId);
     const activity = this.fileTrackingActivityByThread.get(threadId) ?? setup;
     const refCapture = this.fileTrackingRefCaptureByThread.get(threadId);
@@ -2327,6 +2330,9 @@ export class AgentService {
       });
     this.fileTrackingFinalizationByThread.set(threadId, finalize);
     void finalize.finally(() => {
+      if (this.finalResponseExecutionByThread.get(threadId) === finalizedExecutionId) {
+        this.finalResponseExecutionByThread.delete(threadId);
+      }
       if (this.fileTrackingSetupByThread.get(threadId) === setup) {
         this.fileTrackingSetupByThread.delete(threadId);
       }
@@ -2650,6 +2656,9 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.Message) {
+          if (event.turnExecutionId) {
+            this.finalResponseExecutionByThread.set(event.threadId, event.turnExecutionId);
+          }
           try {
             // Record the thread's active model on the message so the UI can
             // display which provider/model produced the response, even if the
@@ -3001,6 +3010,7 @@ export class AgentService {
           // while late hooks from the prior turn can still increment the old one.
           this.narrativeStore.resetTurnCounters(event.threadId);
           this.turnCompleteSeenByThread.delete(event.threadId);
+          this.finalResponseExecutionByThread.delete(event.threadId);
           this.terminalFinalizedThreads.delete(event.threadId);
         }
 
@@ -3177,7 +3187,35 @@ export class AgentService {
             return;
           }
           const thread = this.threadRepo.findById(event.threadId);
+          const runtime = this.turnRuntime.snapshot(event.threadId);
+          const activeExecution = runtime != null
+            && runtime.turnExecutionId === event.turnExecutionId
+            && (runtime.phase === "running" || runtime.phase === "finalizing");
+          const activeExecutionId = runtime?.turnExecutionId;
+          if (event.outcome == null && activeExecution && activeExecutionId
+            && !this.turnCompleteSeenByThread.has(event.threadId)) {
+            const hasFinalResponse = this.finalResponseExecutionByThread.get(event.threadId)
+              === activeExecutionId;
+            this.emitProviderEvent(provider, hasFinalResponse
+              ? {
+                  type: AgentEventType.TurnComplete,
+                  threadId: event.threadId,
+                  turnExecutionId: activeExecutionId,
+                  reason: "provider_stream_exhausted",
+                  costUsd: null,
+                  tokensIn: 0,
+                  tokensOut: 0,
+                  providerId: thread?.provider,
+                }
+              : {
+                  type: AgentEventType.Error,
+                  threadId: event.threadId,
+                  turnExecutionId: activeExecutionId,
+                  error: "Provider stream ended before terminal event",
+                });
+          }
           const shouldInferCodexCancellation = event.outcome == null
+            && !activeExecution
             && thread?.provider === "codex"
             && this.activeSessionIds.has(event.threadId);
           const outcome = event.outcome
