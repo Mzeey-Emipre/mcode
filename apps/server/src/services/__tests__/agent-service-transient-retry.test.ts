@@ -322,6 +322,30 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
   });
 
+  it("terminalizes exhausted provider retries with the active turn identity", async () => {
+    const { service, sendTurn, providerEmitter, threadRepo } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    const terminalEvents = events.filter((event) => event.type === "error" || event.type === "ended");
+    expect(terminalEvents).toHaveLength(2);
+    expect(terminalEvents[0]?.turnExecutionId).toEqual(expect.any(String));
+    expect(terminalEvents[1]?.turnExecutionId).toBe(terminalEvents[0]?.turnExecutionId);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+    expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "errored");
+  });
+
   it("swallows the failed attempt's trailing Ended so the UI's running state survives the retry", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
     service.init();

@@ -2500,6 +2500,7 @@ export class AgentService {
     }
     const rawMessage = err instanceof Error ? err.message : String(err);
     const errorMessage = this.normalizeProviderError(rawMessage, effectiveProvider);
+    const turnExecutionId = dispatch.turnRequest.turnExecutionId;
     logger.error("Provider send failed", { threadId, error: rawMessage });
 
     try {
@@ -2507,11 +2508,13 @@ export class AgentService {
       resolvedProvider.emit("event", {
         type: "error",
         threadId,
+        turnExecutionId,
         error: errorMessage,
       } satisfies AgentEvent);
       resolvedProvider.emit("event", {
         type: "ended",
         threadId,
+        turnExecutionId,
       } satisfies AgentEvent);
     } catch (emitErr) {
       logger.warn("Failed to emit error event to provider", {
