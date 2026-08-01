@@ -5,6 +5,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "events";
 import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
@@ -132,6 +133,8 @@ interface ClaudeSessionState {
   query: Query;
   pushMessage: (msg: SDKUserMessage) => void;
   closeQueue: () => void;
+  /** Execution identities queued for prompts that have not started streaming. */
+  pendingTurnExecutionIds: string[];
   model: string;
   /**
    * Permission mode the SDK subprocess was spawned with ("full" or "supervised").
@@ -1088,6 +1091,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
       try {
         existing.pushMessage(prompt);
+        existing.pendingTurnExecutionIds.push(turnExecutionId);
       } catch (err) {
         const errorMessage =
           err instanceof Error ? err.message : String(err);
@@ -1595,6 +1599,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       orchestrationMode,
       lastUsedAt: Date.now(),
       pendingToolUses: new Set<string>(),
+      pendingTurnExecutionIds: [],
       hasFiredToolThisTurn: false,
       workspaceId: browserScope?.workspaceId ?? "unknown-workspace",
       browserPermissionCapability: browserScope?.permissionCapability ?? "interact",
@@ -1670,7 +1675,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       : sessionId;
 
     (async () => {
-      const emitTurnEvent = createTurnEventSink(this, turnExecutionId);
+      let currentTurnExecutionId = turnExecutionId;
+      const emitTurnEvent = (event: AgentEvent): void =>
+        createTurnEventSink(this, currentTurnExecutionId)(event);
       let suppressEnded = false;
       try {
         let lastAssistantText = "";
@@ -1768,6 +1775,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           // activeSessionIds and the frontend shows the running indicator.
           if (awaitingResume && anyMsg.type !== "result" && anyMsg.type !== "system") {
             awaitingResume = false;
+            const resumedEntry = this.runtime.get(sessionId);
+            currentTurnExecutionId = resumedEntry?.pendingTurnExecutionIds.shift() ?? randomUUID();
         emitTurnEvent({
               type: AgentEventType.TurnStarted,
               threadId,

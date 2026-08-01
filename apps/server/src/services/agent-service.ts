@@ -2642,7 +2642,8 @@ export class AgentService {
               && this.providerEventBarrierByThread.get(event.threadId) === barrier) {
               this.providerEventBarrierByThread.delete(event.threadId);
             }
-            handleEvent(event);
+            const deferredEvent = this.turnRuntime.normalizeEvent(event);
+            if (deferredEvent) handleEvent(deferredEvent);
           });
           return;
         }

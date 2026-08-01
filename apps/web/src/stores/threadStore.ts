@@ -61,6 +61,10 @@ function deriveRunningThreadIds(records: Map<string, ThreadRecord>): Set<string>
   );
 }
 
+function preserveRunningThreadIds(previous: Set<string>, next: Set<string>): Set<string> {
+  return previous.size === next.size && [...next].every((id) => previous.has(id)) ? previous : next;
+}
+
 interface RuntimeHydrationObservation {
   turnExecutionId: string | null;
   runtimePhase: ThreadRecord["runtimePhase"];
@@ -205,7 +209,7 @@ interface ThreadState {
   applyThreadRuntimeSnapshot: (snapshot: TurnRuntimeSnapshot) => void;
   /** Atomically move optimistic first-turn runtime state to the persisted thread identity. */
   transferThreadRuntime: (placeholderId: string, persistedId: string) => void;
-  /** Replace runningThreadIds with the authoritative server snapshot. Called on WS (re)connect. */
+  /** Reconcile server runtime snapshots while preserving locally advanced state. */
   hydrateRunningThreads: (ids: string[], observed?: ReadonlyMap<string, RuntimeHydrationObservation>) => void;
   /** Restore authoritative per-thread execution snapshots during reconnect. */
   hydrateThreadRuntimes: (
@@ -948,7 +952,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       : records.size === 0
         ? state.runningThreadIds
         : deriveRunningThreadIds(records);
-    return { ...next, runningThreadIds };
+    return { ...next, runningThreadIds: preserveRunningThreadIds(state.runningThreadIds, runningThreadIds) };
   })) as typeof zustandSet;
   let textDeltaFlushRaf: number | null = null;
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
@@ -1409,6 +1413,8 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       ...storedComposerAttachments,
       ...storedPreviewAnnotationAttachments,
     ];
+    const optimisticTurnResponseKey = createTurnResponseKey(threadId);
+    const optimisticTurnExecutionId = getRec(threadId).turnExecutionId;
 
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
@@ -1469,7 +1475,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           ...messagePatch,
           agentStartTime: Date.now(),
           fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
-          currentTurnResponseKey: createTurnResponseKey(threadId),
+          currentTurnResponseKey: optimisticTurnResponseKey,
           lastFallback: undefined,
           rateLimit: undefined,
           apiRetry: undefined,
@@ -1514,7 +1520,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         const currentRecord = getThreadRecord(state.records, threadId);
         const ownsOnlyOptimisticRuntime = !isControlCommand
           && !activeSessionConflict
-          && currentRecord.turnExecutionId === null;
+          && currentRecord.currentTurnResponseKey === optimisticTurnResponseKey
+          && currentRecord.turnExecutionId === optimisticTurnExecutionId
+          && currentRecord.runtimePhase === "running";
         // Control commands never added the thread to running-state, so leave it
         // untouched on rollback - a real turn in flight may own it (#583).
         return {
@@ -1695,7 +1703,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         records = patchThreadRecord(records, snapshot.threadId, {
           turnExecutionId: snapshot.turnExecutionId,
           runtimePhase: snapshot.phase,
-          ...(snapshot.phase === "running" && { agentStartTime: getThreadRecord(records, snapshot.threadId).agentStartTime ?? Date.now() }),
+          ...((snapshot.phase === "running" || snapshot.phase === "finalizing") && {
+            agentStartTime: getThreadRecord(records, snapshot.threadId).agentStartTime ?? Date.now(),
+          }),
         });
       }
       return { records };

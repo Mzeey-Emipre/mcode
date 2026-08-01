@@ -69,9 +69,25 @@ export class TurnRuntimeRegistry {
     const current = this.states.get(event.threadId);
     if (event.type === "turnStarted") {
       if (!event.turnExecutionId) return undefined;
+      if (current?.terminalized && current.phase === "completed") {
+        const resumed: RuntimeState = {
+          threadId: event.threadId,
+          turnExecutionId: event.turnExecutionId,
+          phase: "running",
+          terminalized: false,
+        };
+        this.states.set(event.threadId, resumed);
+        return event;
+      }
       if (!current || current.turnExecutionId !== event.turnExecutionId || current.terminalized) {
         return undefined;
       }
+      return event;
+    }
+    if (event.type === "turnComplete"
+      && current?.terminalized
+      && current.phase === "completed"
+      && event.turnExecutionId === current.turnExecutionId) {
       return event;
     }
     if (!current || current.turnExecutionId === null || current.terminalized || !event.turnExecutionId) return undefined;

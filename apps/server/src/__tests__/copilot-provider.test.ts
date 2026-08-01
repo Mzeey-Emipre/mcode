@@ -388,8 +388,14 @@ describe("CopilotProvider bootstrap", () => {
       permissionMode: "supervised" as const,
     };
 
-    await Promise.all([provider.sendTurn(request), provider.sendTurn({
-      turnExecutionId: "test-execution", ...request, message: "inspect again" })]);
+    await Promise.all([provider.sendTurn({
+      ...request,
+      turnExecutionId: "test-execution-1",
+    }), provider.sendTurn({
+      ...request,
+      turnExecutionId: "test-execution-2",
+      message: "inspect again",
+    })]);
 
     expect(lease.status()).toEqual({ active: 1, pending: 0 });
     await provider.stopSession(request.sessionId);

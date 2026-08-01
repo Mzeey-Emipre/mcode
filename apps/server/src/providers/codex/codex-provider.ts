@@ -545,9 +545,9 @@ interface PendingChildEvent {
 }
 
 function nativeTurnIdFromParams(params: Record<string, unknown> | undefined): string | undefined {
-  if (typeof params?.turnId === "string") return params.turnId;
+  if (typeof params?.turnId === "string" && params.turnId.length > 0) return params.turnId;
   const turn = params?.turn;
-  return isRecord(turn) && typeof turn.id === "string" ? turn.id : undefined;
+  return isRecord(turn) && typeof turn.id === "string" && turn.id.length > 0 ? turn.id : undefined;
 }
 
 function nativeThreadIdFromParams(params: Record<string, unknown> | undefined): string | undefined {

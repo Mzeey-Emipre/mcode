@@ -20,6 +20,7 @@ import type {
   CopilotSubagent,
   GitRemoteUrl,
 } from "./types";
+import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
 import type {
   CreateAndSendResult,
   PullRequestCapabilitiesRequest,
@@ -206,7 +207,7 @@ export async function hydrateRunningThreadsFromServer(
   );
   try {
     const result = await rpcCall("agent.listRunning", {});
-    const snapshots = result as import("@mcode/contracts").TurnRuntimeSnapshot[];
+    const snapshots = TurnRuntimeSnapshotSchema.array().parse(result);
     useThreadStore.getState().hydrateThreadRuntimes(snapshots, observed);
   } catch {
     // Best-effort; optimistic state remains if the call fails.
