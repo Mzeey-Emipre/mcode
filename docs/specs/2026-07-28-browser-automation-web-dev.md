@@ -17,6 +17,11 @@ makes web development mode behave differently from the desktop path.
 The solution must keep one shared page state for the user and the agent. It must
 also preserve the existing Electron control path, broker authority, security
 boundaries, tab identity, cancellation behavior, and bounded browser payloads.
+The client boundary is shared by both runtimes: `BrowserSessionDriver` is the
+single Browser v1 command entry, `BrowserTargetRegistry` owns logical target
+lifetime outside React, and web and Electron provide one runtime-adapter
+contract. React only projects registry state and attaches or detaches runtime
+handles. Broker and MCP ownership remain unchanged.
 
 ## Solution
 
@@ -161,19 +166,24 @@ or extension bridge if product requirements justify that boundary.
 13. **Electron preservation.** The Electron path keeps its current visible
     preview, adoption, CDP, capture, and security behavior. Web mode selects a
     different executor behind the host capability boundary.
-14. **Contract compatibility.** Shared schemas remain provider-neutral. Any new
+14. **Client ownership.** `BrowserSessionDriver` selects the runtime adapter for
+    every Browser v1 dispatch. `BrowserTargetRegistry` retains logical records
+    across panel hiding, tab changes, thread switches, and ordinary remounts;
+    explicit tab, thread, or workspace deletion releases them. React does not
+    own target existence.
+15. **Contract compatibility.** Shared schemas remain provider-neutral. Any new
     web capability or error is added as a discriminated, bounded contract and
     consumed by every importing package.
-15. **UI behavior.** The Browser panel exposes a clear unavailable or disabled
+16. **UI behavior.** The Browser panel exposes a clear unavailable or disabled
     state in web mode and does not imply arbitrary browsing support.
-16. **Code structure phase.** After web behavior reaches a stable release
+17. **Code structure phase.** After web behavior reaches a stable release
     candidate, extract duplicated provider credential and browser-session
     lifecycle into a `BrowserAutomationSessionLease` service. The lease owns
     issue, refresh, expiry, revocation, pending cleanup, and shutdown release.
-17. **Provider boundaries.** The lease does not own provider-specific transport,
+18. **Provider boundaries.** The lease does not own provider-specific transport,
     restart or resume policy, environment overrides, MCP descriptor format, or
     provider event mapping.
-18. **Refactor sequence.** Add the lease and tests without callers, migrate one
+19. **Refactor sequence.** Add the lease and tests without callers, migrate one
     provider, verify, then migrate the remaining providers incrementally. Do not
     combine this extraction with the first web executor change.
 

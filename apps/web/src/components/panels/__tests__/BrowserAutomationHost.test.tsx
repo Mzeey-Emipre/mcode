@@ -15,6 +15,7 @@ import {
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 
 const harness = vi.hoisted(() => {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
@@ -74,6 +75,7 @@ vi.mock("../webBrowserInteractionExecutor", async (importOriginal) => {
 
 import { BrowserAutomationHost, isBrowserAutomationWebRuntimeEnabled } from "../BrowserAutomationHost";
 import { BrowserAutomationRecorder } from "../browserAutomationRecorder";
+import { BrowserSessionDriver } from "@/services/browser-automation/browserSessionDriver";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -235,6 +237,7 @@ describe("BrowserAutomationHost", () => {
       hostedScopeIds: new Set(),
     });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    browserTargetRegistry.clear();
     useBrowserAutomationStore.getState().registerTarget(
       "workspace-1",
       "thread-1",
@@ -246,6 +249,36 @@ describe("BrowserAutomationHost", () => {
     expect(isBrowserAutomationWebRuntimeEnabled({})).toBe(false);
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "0" })).toBe(false);
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "1" })).toBe(true);
+  });
+
+  it("enters BrowserSessionDriver for broker-dispatched web and Electron commands", async () => {
+    execute.mockResolvedValue(successResponse(dispatch(1, 91).request));
+    const driverExecute = vi.spyOn(BrowserSessionDriver.prototype, "execute");
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: dispatch(1, 91) }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(driverExecute).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ operation: "status" }) }), expect.any(AbortSignal));
+    view.unmount();
+    driverExecute.mockRestore();
+    execute.mockReset();
+  });
+
+  it("enters BrowserSessionDriver before web adapter dispatch", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const driverExecute = vi.spyOn(BrowserSessionDriver.prototype, "execute");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 92).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: dispatch(1, 92) }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(driverExecute).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ operation: "status" }) }), expect.any(AbortSignal));
+    view.unmount();
+    driverExecute.mockRestore();
+    webExecutor.executeWebBrowserDispatch.mockReset();
   });
 
   it("carries an initial web open URL into the visible preview state", async () => {
@@ -1474,6 +1507,103 @@ describe("BrowserAutomationHost", () => {
     await act(async () => executing.promise);
     expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
     await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "created-tab"));
+    expect(browserTargetRegistry.get("thread-1", "created-tab")).toBeNull();
+    view.unmount();
+  });
+
+  it("releases a bootstrap-created target when bootstrap fails before execution", async () => {
+    useBrowserAutomationStore.setState({ liveTargets: new Map() });
+    createTab.mockImplementation(async (threadId: string) => {
+      useBrowserAutomationStore.getState().registerTarget("workspace-1", threadId, "failed-tab");
+      return {
+        ok: true,
+        data: {
+          tabId: "failed-tab",
+          tabs: { threadId, activeTabId: "failed-tab", tabs: [{ id: "failed-tab", threadId, url: null, title: null, faviconUrl: null, warm: true }] },
+        },
+      };
+    });
+    describeTarget.mockImplementation(async ({ tabId }: { readonly tabId: string }) =>
+      tabId === "failed-tab"
+        ? { ok: false, error: "target unavailable" }
+        : { ok: true, target: { windowId: 7, threadId: "thread-1", tabId, targetGeneration: 3, active: true, focused: true, lastUsedAt: 10 } },
+    );
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const request = dispatch(1, 13).request;
+    const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: true } };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "failed-tab"));
+    expect(browserTargetRegistry.get("thread-1", "failed-tab")).toBeNull();
+    view.unmount();
+  });
+
+  it("attempts created-tab close when background restoration rejects", async () => {
+    useBrowserAutomationStore.setState({ liveTargets: new Map() });
+    usePreviewTabsStore.setState({
+      tabSetByScope: {
+        "thread-1": {
+          threadId: "thread-1",
+          activeTabId: "previous-tab",
+          tabs: [{ id: "previous-tab", threadId: "thread-1", url: null, title: null, faviconUrl: null, warm: true, active: true }],
+        },
+      },
+    });
+    createTab.mockImplementation(async (threadId: string) => {
+      useBrowserAutomationStore.getState().registerTarget("workspace-1", threadId, "restore-failure-tab");
+      return {
+        ok: true,
+        data: {
+          tabId: "restore-failure-tab",
+          tabs: { threadId, activeTabId: "restore-failure-tab", tabs: [{ id: "restore-failure-tab", threadId, url: null, title: null, faviconUrl: null, warm: true }] },
+        },
+      };
+    });
+    describeTarget.mockImplementation(async ({ tabId }: { readonly tabId: string }) => ({
+      ok: true,
+      target: { windowId: 7, threadId: "thread-1", tabId, targetGeneration: 1, active: true, focused: true, lastUsedAt: 10 },
+    }));
+    execute.mockRejectedValueOnce(new Error("bootstrap execution failed"));
+    const activatePage = vi.fn().mockRejectedValue(new Error("restore activation failed"));
+    usePreviewTabsStore.setState({ activatePage });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const request = dispatch(1, 15).request;
+    const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: false } };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "restore-failure-tab"));
+    expect(activatePage).toHaveBeenCalledWith("thread-1", "previous-tab");
+    expect(browserTargetRegistry.get("thread-1", "restore-failure-tab")).toBeNull();
+    view.unmount();
+  });
+
+  it("retains logical target when created-tab physical close fails", async () => {
+    useBrowserAutomationStore.setState({ liveTargets: new Map() });
+    createTab.mockImplementation(async (threadId: string) => {
+      useBrowserAutomationStore.getState().registerTarget("workspace-1", threadId, "close-failure-tab");
+      return {
+        ok: true,
+        data: {
+          tabId: "close-failure-tab",
+          tabs: { threadId, activeTabId: "close-failure-tab", tabs: [{ id: "close-failure-tab", threadId, url: null, title: null, faviconUrl: null, warm: true }] },
+        },
+      };
+    });
+    describeTarget.mockResolvedValue({
+      ok: false,
+      error: "target unavailable",
+    });
+    closeTab.mockResolvedValueOnce({ ok: false, error: "physical close failed" });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const request = dispatch(1, 17).request;
+    const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: true } };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "close-failure-tab"));
+    expect(browserTargetRegistry.get("thread-1", "close-failure-tab")).not.toBeNull();
     view.unmount();
   });
 
