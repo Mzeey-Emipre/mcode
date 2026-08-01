@@ -1414,7 +1414,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       ...storedPreviewAnnotationAttachments,
     ];
     const optimisticTurnResponseKey = createTurnResponseKey(threadId);
-    const optimisticTurnExecutionId = getRec(threadId).turnExecutionId;
+    const optimisticTurnExecutionId = isControlCommand ? getRec(threadId).turnExecutionId : null;
 
     // Add user message to local state immediately (optimistic)
     // Use displayContent for the UI (without injected file blocks) if provided
@@ -1476,6 +1476,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           agentStartTime: Date.now(),
           fileEffectSummary: { revision: 0, fileCount: 0, additions: 0, deletions: 0, effects: [] },
           currentTurnResponseKey: optimisticTurnResponseKey,
+          ...(isControlCommand ? {} : { turnExecutionId: null }),
           lastFallback: undefined,
           rateLimit: undefined,
           apiRetry: undefined,

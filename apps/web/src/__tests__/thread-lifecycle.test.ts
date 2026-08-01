@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 import { clearRecordCache } from "@/lib/thread-hydrator/record-cache";
-import type { PreviewAnnotationBundle } from "@mcode/contracts";
+import type { AgentEvent, PreviewAnnotationBundle } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -300,6 +300,35 @@ describe("Thread Lifecycle Behavior", () => {
       false,
     );
     expect(getTestThreadError("thread-1")).toBeTruthy();
+  });
+
+  it("accepts a new turn execution after a completed turn", async () => {
+    const threadId = "thread-1";
+    const previousExecutionId = "00000000-0000-4000-8000-000000000001";
+    const nextExecutionId = "00000000-0000-4000-8000-000000000002";
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      runningThreadIds: new Set(),
+      records: new Map([[threadId, {
+        ...createEmptyThreadRecord(),
+        runtimePhase: "completed",
+        turnExecutionId: previousExecutionId,
+      }]]),
+    });
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      expect(useThreadStore.getState().records.get(threadId)?.turnExecutionId).toBeNull();
+      useThreadStore.getState().handleAgentEvent({
+        type: "turnStarted",
+        threadId,
+        turnExecutionId: nextExecutionId,
+        fileEffectTurnId: nextExecutionId,
+      } as AgentEvent);
+    });
+
+    await useThreadStore.getState().sendMessage(threadId, "Continue");
+
+    expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+    expect(useThreadStore.getState().records.get(threadId)?.turnExecutionId).toBe(nextExecutionId);
   });
 
   it("preserves running state when transport fails after authoritative startup", async () => {
