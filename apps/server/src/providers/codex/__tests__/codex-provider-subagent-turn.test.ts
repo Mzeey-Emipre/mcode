@@ -216,6 +216,78 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     ]));
   });
 
+  it("settles the root turn by native identity after a child thread id churn", async () => {
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    sendTurnMock.mockResolvedValueOnce("root-native-turn");
+
+    const completion = provider.sendTurn({
+      turnExecutionId: "exec-root-child-churn",
+      sessionId: "mcode-root-child-churn",
+      workspaceId: "workspace-test",
+      threadId: "root-child-churn",
+      message: "delegate and summarize",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    let entry: PoolEntry | undefined;
+    for (let i = 0; i < 20 && !entry; i++) {
+      entry = (
+        provider as unknown as {
+          runtime: { get: (id: string) => PoolEntry | undefined };
+        }
+      ).runtime.get("mcode-root-child-churn");
+      if (!entry) await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(entry).toBeDefined();
+    for (let i = 0; i < 20 && sendTurnMock.mock.calls.length === 0; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(sendTurnMock).toHaveBeenCalled();
+
+    // A child thread/started notification without parentThreadId can churn the
+    // app-server's mutable thread id while the root turn remains in flight.
+    (entry!.server as unknown as { threadId: string }).threadId = "child-native-thread";
+    entry!.server.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: "child-native-thread",
+        turn: { id: "child-native-turn", status: "completed" },
+      },
+    });
+    entry!.server.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "sdk-thread-1", turnId: "root-native-turn", delta: "root final" },
+    });
+    entry!.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "root-native-turn",
+        item: { type: "agentMessage", id: "root-message" },
+      },
+    });
+    entry!.server.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        turn: { id: "root-native-turn", status: "completed", usage: {} },
+      },
+    });
+
+    await expect(completion).resolves.toBeUndefined();
+    expect(events.filter((event) => event.type === AgentEventType.TurnComplete)).toHaveLength(1);
+    expect(events.filter((event) => event.type === AgentEventType.Ended)).toHaveLength(1);
+    expect(events.find((event) => event.type === AgentEventType.Message)).toMatchObject({
+      content: "root final",
+    });
+  });
+
   it("buffers ambiguous child events, replays after native mapping, and stays bounded", async () => {
     const provider = makeProvider();
     const events: AgentEvent[] = [];

@@ -1353,9 +1353,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
         }
       }
-      if (server.threadId) {
-        mapper.setMainCodexThreadId(server.threadId);
-      }
       const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification);
       const events = mapper.mapNotification(notification as CodexNotification);
       traceCodexIngest(threadId, n.method, n.params, [...generatedImageEvents, ...events]);
@@ -1943,9 +1940,22 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           armTimer();
           const n = notification as { method?: string; params?: Record<string, unknown> };
           if (n.method === "turn/completed") {
+            const tid = nativeTurnIdFromParams(n.params);
+            const currentNativeTurnId = entry.currentNativeTurnId;
+            const pendingNativeTurnId = entry.pendingTurnStartNotification?.nativeTurnId;
+            const nativeTurnBelongsToCurrentExecution = Boolean(
+              tid
+              && (
+                tid === currentNativeTurnId
+                || tid === pendingNativeTurnId
+                || entry.turnExecutionIdsByNativeTurn.get(tid) === turnExecutionId
+              ),
+            );
             // Sub-agent receiver threads complete their own turns mid-run;
-            // only the main thread's completion settles this wait.
-            if (!isMainThreadNotification(server, n.params)) return;
+            // only the main thread's completion settles this wait. Native turn
+            // identity is authoritative when a child thread/started notification
+            // has temporarily changed the app-server's mutable thread id.
+            if (!nativeTurnBelongsToCurrentExecution && !isMainThreadNotification(server, n.params)) return;
             const turn = n.params?.turn as { id?: string; status?: string } | undefined;
             endedOutcome =
               turn?.status === "failed"
@@ -1953,9 +1963,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
                 : turn?.status === "interrupted"
                   ? "cancelled"
                   : "completed";
-            const tid = nativeTurnIdFromParams(n.params);
             const currentExecutionId = entry.currentTurnExecutionId;
-            const currentNativeTurnId = entry.currentNativeTurnId;
             const provenCurrentTurn = Boolean(
               currentExecutionId === turnExecutionId
               && currentNativeTurnId
