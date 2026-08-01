@@ -34,6 +34,7 @@ import { usePreviewFocusStore } from "@/stores/previewFocusStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { BrowserHeader } from "./BrowserHeader";
+import { BrowserControlOverlayPrototype } from "./BrowserControlOverlayPrototype";
 import { PreviewAnnotationHeader } from "./PreviewAnnotationHeader";
 import { LocalPortsEmptyState } from "./LocalPortsEmptyState";
 import { PreviewErrorPanel } from "./PreviewErrorPanel";
@@ -2409,6 +2410,12 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
 
   const hasDesktopPreview = !!window.desktopBridge?.preview;
   const webRuntimeEnabled = isBrowserAutomationWebRuntimeEnabled();
+  const controlOverlayPrototypeEnabled =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).has("browserControlPrototype");
+  if (controlOverlayPrototypeEnabled) {
+    return <BrowserControlOverlayPrototype />;
+  }
   if (!hasDesktopPreview && webRuntimeEnabled) {
     return <WebRuntimePreview key={threadId} threadId={threadId} workspaceId={workspaceId} />;
   }

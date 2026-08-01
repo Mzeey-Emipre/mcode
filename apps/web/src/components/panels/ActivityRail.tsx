@@ -46,6 +46,30 @@ const RAIL_COLLAPSE_DELAY_MS = 250;
 
 /** Shared trailing anchor for expanded-rail actions. */
 const RAIL_TRAILING_CONTROL_CLASS = "absolute right-0 top-0";
+
+const BROWSER_CONTROL_PROTOTYPE_STATE_EVENT = "mcode:browser-control-prototype-state";
+
+function readPrototypeBrowserControl(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("browserControlPrototype")) return false;
+  const scenario = params.get("browserControlScenario");
+  return scenario === "pointer" || scenario === "observe";
+}
+
+function usePrototypeBrowserControl(): boolean {
+  const [controlled, setControlled] = useState(readPrototypeBrowserControl);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const update = () => setControlled(readPrototypeBrowserControl());
+    window.addEventListener(BROWSER_CONTROL_PROTOTYPE_STATE_EVENT, update);
+    return () => window.removeEventListener(BROWSER_CONTROL_PROTOTYPE_STATE_EVENT, update);
+  }, []);
+
+  return controlled;
+}
+
 /** Pointer and keyboard reorder boundary for one top-level rail instance. */
 function ReorderableRailItem({
   instanceId,
@@ -227,6 +251,7 @@ function RailTab({
   scope,
   changesCount,
   changesFresh,
+  agentControlled = false,
   onSelect,
   onClose,
 }: {
@@ -237,6 +262,7 @@ function RailTab({
   scope: ScopeProgress;
   changesCount: number;
   changesFresh: boolean;
+  agentControlled?: boolean;
   onSelect: (id: RightPanelTab) => void;
   onClose: (id: RightPanelTab) => void;
 }) {
@@ -253,7 +279,7 @@ function RailTab({
         data-rail-tab={railDomId(id)}
         data-active={active ? "true" : undefined}
         aria-pressed={active}
-        aria-label={railAccessibleLabel(id, label, scope, changesCount, changesFresh)}
+        aria-label={`${railAccessibleLabel(id, label, scope, changesCount, changesFresh)}${agentControlled ? ", controlled by agent" : ""}`}
         title={expanded ? undefined : label}
         onClick={() => onSelect(id)}
         className={cn(
@@ -264,7 +290,13 @@ function RailTab({
             : "text-foreground/70 hover:bg-card/60 hover:text-foreground",
         )}
       >
-        <Icon size={17} />
+        <Icon
+          size={17}
+          className={cn(agentControlled && "text-primary")}
+          style={agentControlled ? {
+            filter: "drop-shadow(0 0 4px color-mix(in oklab, var(--primary) 60%, transparent))",
+          } : undefined}
+        />
         <span
           aria-hidden
           className={cn(
@@ -338,6 +370,7 @@ function BrowserPageRailTab({
   page,
   active,
   browserActive,
+  agentControlled,
   expanded,
   onSelect,
   onClose,
@@ -345,6 +378,7 @@ function BrowserPageRailTab({
   page: BrowserTabInfo;
   active: boolean;
   browserActive: boolean;
+  agentControlled: boolean;
   expanded: boolean;
   onSelect: (pageId: string) => void;
   onClose: (pageId: string) => void;
@@ -362,7 +396,7 @@ function BrowserPageRailTab({
         // The live page (active, and Browser owns the panel) is the current
         // page in the switcher; expose that beyond the visual lamp.
         aria-current={active && browserActive ? "page" : undefined}
-        aria-label={`Browser page: ${label}`}
+        aria-label={`Browser page: ${label}${agentControlled ? ", controlled by agent" : ""}`}
         title={expanded ? undefined : label}
         onClick={() => onSelect(page.id)}
         className={cn(
@@ -374,7 +408,15 @@ function BrowserPageRailTab({
               : "text-foreground/70 hover:bg-card/60 hover:text-foreground",
         )}
       >
-        {page.faviconUrl ? (
+        {agentControlled ? (
+          <Globe
+            size={17}
+            className="text-primary"
+            style={{
+              filter: "drop-shadow(0 0 4px color-mix(in oklab, var(--primary) 60%, transparent))",
+            }}
+          />
+        ) : page.faviconUrl ? (
           <img src={page.faviconUrl} alt="" width={17} height={17} className="rounded-[3px]" />
         ) : (
           <Globe size={17} />
@@ -432,12 +474,14 @@ function BrowserPageRailTab({
 function BrowserPageGroup({
   tabSet,
   browserActive,
+  agentControlled,
   expanded,
   onSelectPage,
   onClosePage,
 }: {
   tabSet: BrowserTabSet;
   browserActive: boolean;
+  agentControlled: boolean;
   expanded: boolean;
   onSelectPage: (pageId: string) => void;
   onClosePage: (pageId: string) => void;
@@ -455,6 +499,7 @@ function BrowserPageGroup({
           page={page}
           active={page.id === tabSet.activeTabId}
           browserActive={browserActive}
+          agentControlled={agentControlled}
           expanded={expanded}
           onSelect={onSelectPage}
           onClose={onClosePage}
@@ -623,6 +668,7 @@ export function ActivityRail({
   onCloseBrowserPage: (pageId: string) => void;
 }) {
   const openTabs = tabInstances.map((instance) => instance.type);
+  const prototypeBrowserControlled = usePrototypeBrowserControl();
   const [expanded, setExpanded] = useState(false);
   const railRef = useRef<HTMLDivElement>(null);
   const expandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -774,6 +820,7 @@ export function ActivityRail({
               <BrowserPageGroup
                 tabSet={browserTabSet}
                 browserActive={activeTabId === instanceId}
+                agentControlled={prototypeBrowserControlled}
                 expanded={expanded}
                 onSelectPage={(pageId) => onSelectBrowserPage(instanceId, pageId)}
                 onClosePage={onCloseBrowserPage}
@@ -791,6 +838,7 @@ export function ActivityRail({
               scope={scopeProgress}
               changesCount={changesCount}
               changesFresh={changesFresh}
+              agentControlled={id === "preview" && prototypeBrowserControlled}
               onSelect={() => onSelect(instanceId)}
               onClose={() => onClose(instanceId)}
             />
