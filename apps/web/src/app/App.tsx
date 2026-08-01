@@ -36,6 +36,7 @@ import type { SettingsSection } from "@/components/settings/settings-nav";
 import { TerminalPoolHost } from "@/components/terminal/TerminalPoolHost";
 import { TerminalPoolSlotProvider } from "@/components/terminal/TerminalPoolSlotContext";
 import { BrowserAutomationHost } from "@/components/panels/BrowserAutomationHost";
+import { BrowserViewportPrototype } from "@/components/panels/BrowserViewportPrototype";
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
 import {
   useNavigationHistoryStore,
@@ -65,8 +66,43 @@ const LazyPullRequestSurface = lazy(async () => {
   return { default: m.PullRequestSurface };
 });
 
-/** Root application component. Initializes WS transport and push listeners. */
+/** Root application component with a development-only viewport prototype viewer. */
 export function App() {
+  const viewportPrototypeActive =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).get("viewport-prototype") ===
+      "1";
+
+  if (viewportPrototypeActive) {
+    return (
+      <TooltipProvider>
+        <main className="flex h-screen min-h-0 overflow-hidden bg-page">
+          <section className="hidden min-w-0 flex-1 flex-col justify-between p-8 text-muted-foreground lg:flex">
+            <div>
+              <p className="text-sm font-medium text-foreground">Conversation</p>
+              <p className="mt-1 max-w-sm text-sm">
+                Development-only Browser viewport prototype. Resize this window
+                to test the right panel's constrained and narrow postures.
+              </p>
+            </div>
+            <div className="space-y-3 opacity-40" aria-hidden>
+              <div className="h-2 w-3/4 rounded-full bg-muted-foreground" />
+              <div className="h-2 w-1/2 rounded-full bg-muted-foreground" />
+              <div className="h-2 w-2/3 rounded-full bg-muted-foreground" />
+            </div>
+          </section>
+          <section className="h-full w-[min(60rem,100vw)] flex-none border-l border-border bg-background">
+            <BrowserViewportPrototype />
+          </section>
+        </main>
+      </TooltipProvider>
+    );
+  }
+
+  return <ApplicationShell />;
+}
+
+function ApplicationShell() {
   const isDesktop = Boolean(window.desktopBridge?.window);
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
   const threadCacheSize = useSettingsStore(
