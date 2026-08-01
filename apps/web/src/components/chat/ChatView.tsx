@@ -44,6 +44,7 @@ import {
   recordThreadHoldStart,
 } from "@/lib/thread-switch-telemetry";
 import { MAX_THREAD_SUBSCRIPTIONS, type SetThreadSubscriptionsInput } from "@mcode/contracts";
+import { BrowserActivityPrototype } from "./narrative/BrowserActivityPrototype";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -327,8 +328,22 @@ function ConversationErrorState({ error }: { error: string }) {
   );
 }
 
-/** Renders the main chat UI for sending and receiving messages within a thread. */
+function isBrowserActivityPrototypeEnabled(): boolean {
+  if (!import.meta.env.DEV) return false;
+  const variant = new URLSearchParams(window.location.search).get("browserActivityPrototype");
+  return variant === "A" || variant === "B" || variant === "C";
+}
+
+/** Renders the main chat UI or its development-only Browser activity prototype. */
 export function ChatView() {
+  if (isBrowserActivityPrototypeEnabled()) {
+    return <BrowserActivityPrototype />;
+  }
+
+  return <ChatViewContent />;
+}
+
+function ChatViewContent() {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
