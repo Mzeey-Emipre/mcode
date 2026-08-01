@@ -323,7 +323,15 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(fatalSuppressedDuringAttempt).toBe(false);
     // Fire-and-forget providers keep the window armed until TurnComplete.
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
   });
 
@@ -361,10 +369,11 @@ describe("AgentService transient-failure auto-retry", () => {
     // suppression so it never tears down the spinner before the retry streams.
     let endedSuppressedDuringAttempt: boolean | undefined;
     sendTurn
-      .mockImplementationOnce(() => {
+      .mockImplementationOnce((request: TurnRequest) => {
         providerEmitter.emit("event", {
           type: "error",
           threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
           error: "read ECONNRESET",
         });
         endedSuppressedDuringAttempt = service.shouldSuppressTurnEnded(THREAD_ID);
@@ -383,7 +392,15 @@ describe("AgentService transient-failure auto-retry", () => {
 
     // The trailing Ended was armed for suppression during the failed attempt...
     expect(endedSuppressedDuringAttempt).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
   });
 
@@ -833,9 +850,11 @@ describe("AgentService transient-failure auto-retry", () => {
       attachments: [],
       provider: "claude",
     });
+    const initialTurnExecutionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
     providerEmitter.emit("event", {
       type: "error",
       threadId: THREAD_ID,
+      turnExecutionId: initialTurnExecutionId,
       error: "read ECONNRESET",
     });
     await evictionReady;
@@ -882,6 +901,7 @@ describe("AgentService transient-failure auto-retry", () => {
     providerEmitter.emit("event", {
       type: "error",
       threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
       error: "read ECONNRESET",
     });
     await new Promise((r) => setTimeout(r, 0));
@@ -940,15 +960,17 @@ describe("AgentService transient-failure auto-retry", () => {
 
     let turnCompleteSuppressedDuringAttempt: boolean | undefined;
     sendTurn
-      .mockImplementationOnce(() => {
+      .mockImplementationOnce((request: TurnRequest) => {
         providerEmitter.emit("event", {
           type: "error",
           threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
           error: "read ECONNRESET",
         });
         providerEmitter.emit("event", {
           type: "turnComplete",
           threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
           reason: "end_turn",
           costUsd: null,
           tokensIn: 0,
@@ -969,7 +991,15 @@ describe("AgentService transient-failure auto-retry", () => {
     });
 
     expect(turnCompleteSuppressedDuringAttempt).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTurnComplete(THREAD_ID)).toBe(false);
   });
 
