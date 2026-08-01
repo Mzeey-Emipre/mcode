@@ -41,8 +41,18 @@ describe("Agent event thread isolation", () => {
       currentThreadId: THREAD_A,
       runningThreadIds: new Set([THREAD_A, THREAD_B]),
       records: new Map<string, ThreadRecord>([
-        [THREAD_A, { ...createEmptyThreadRecord(), agentStartTime: Date.now() }],
-        [THREAD_B, { ...createEmptyThreadRecord(), agentStartTime: Date.now() }],
+        [THREAD_A, {
+          ...createEmptyThreadRecord(),
+          agentStartTime: Date.now(),
+          runtimePhase: "running",
+          turnExecutionId: "exec-a",
+        }],
+        [THREAD_B, {
+          ...createEmptyThreadRecord(),
+          agentStartTime: Date.now(),
+          runtimePhase: "running",
+          turnExecutionId: "exec-b",
+        }],
       ]),
     });
     useWorkspaceStore.setState({
@@ -379,6 +389,8 @@ await activateTestConversation(THREAD_A);
             THREAD_A,
             {
               ...createEmptyThreadRecord(),
+              runtimePhase: "running",
+              turnExecutionId: "exec-a",
               error: "kept",
               streaming: "kept-stream",
               loadEpoch: 1,
@@ -389,6 +401,8 @@ await activateTestConversation(THREAD_A);
             THREAD_B,
             {
               ...createEmptyThreadRecord(),
+              runtimePhase: "running",
+              turnExecutionId: "exec-b",
               error: "zombie",
               streaming: "zombie-stream",
               loadEpoch: 99,

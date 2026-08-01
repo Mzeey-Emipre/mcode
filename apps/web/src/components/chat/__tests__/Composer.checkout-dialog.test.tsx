@@ -325,7 +325,14 @@ describe("Composer checkout confirmation", () => {
     (mockTransport.getCurrentBranch as ReturnType<typeof vi.fn>).mockResolvedValue("main");
     (mockTransport.checkoutBranch as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      createMockThread({ id: "thread-created", workspace_id: "ws-1", branch: "feature/base" }),
+      {
+        ...createMockThread({ id: "thread-created", workspace_id: "ws-1", branch: "feature/base" }),
+        runtimeSnapshot: {
+          threadId: "thread-created",
+          turnExecutionId: "exec-test",
+          phase: "running",
+        },
+      },
     );
   });
 
