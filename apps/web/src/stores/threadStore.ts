@@ -1511,6 +1511,10 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       const activeSessionConflict =
         !isControlCommand && error.includes("already has an active agent session");
       set((state) => {
+        const currentRecord = getThreadRecord(state.records, threadId);
+        const ownsOnlyOptimisticRuntime = !isControlCommand
+          && !activeSessionConflict
+          && currentRecord.turnExecutionId === null;
         // Control commands never added the thread to running-state, so leave it
         // untouched on rollback - a real turn in flight may own it (#583).
         return {
@@ -1519,7 +1523,8 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
             ...(activeSessionConflict && state.currentThreadId === threadId
               ? { messages: rec.messages.filter((m) => m.id !== userMessage.id) }
               : {}),
-            ...(!activeSessionConflict ? { agentStartTime: undefined } : {}),
+            ...(ownsOnlyOptimisticRuntime ? { agentStartTime: undefined } : {}),
+            ...(ownsOnlyOptimisticRuntime ? { runtimePhase: "errored" as const } : {}),
           })),
         };
       });

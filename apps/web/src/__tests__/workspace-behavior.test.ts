@@ -267,8 +267,8 @@ describe("Workspace Behavior", () => {
       workspace_id: ws.id,
       title: "New Thread",
     });
-    let resolveRpc!: (value: typeof created) => void;
-    const rpcPromise = new Promise<typeof created>((resolve) => {
+    let resolveRpc!: (value: CreateAndSendResult) => void;
+    const rpcPromise = new Promise<CreateAndSendResult>((resolve) => {
       resolveRpc = resolve;
     });
 
@@ -293,7 +293,7 @@ describe("Workspace Behavior", () => {
     expect(placeholderId).not.toBeNull();
     expect(diff.getRightPanelVisible(ws.id, placeholderId)).toBe(false);
 
-    resolveRpc(created);
+    resolveRpc(createMockCreateAndSendResult(created));
     await sendOp;
 
     expect(useWorkspaceStore.getState().activeThreadId).toBe(created.id);
@@ -488,8 +488,11 @@ describe("Workspace Behavior", () => {
               error: "some error",
               streaming: "some text",
               agentStartTime: Date.now(),
+              runtimePhase: "running",
+              turnExecutionId: "00000000-0000-4000-8000-000000000001",
             },
           ],
+          ["other-thread", createEmptyThreadRecord()],
         ]),
       });
       useThreadStore.setState({
@@ -527,8 +530,18 @@ describe("Workspace Behavior", () => {
         currentThreadId: null,
         runningThreadIds: new Set(["t-keep", "t-del"]),
         records: new Map<string, ThreadRecord>([
-          ["t-keep", { ...createEmptyThreadRecord(), error: "keep error" }],
-          ["t-del", { ...createEmptyThreadRecord(), error: "del error" }],
+          ["t-keep", {
+            ...createEmptyThreadRecord(),
+            error: "keep error",
+            runtimePhase: "running",
+            turnExecutionId: "00000000-0000-4000-8000-000000000001",
+          }],
+          ["t-del", {
+            ...createEmptyThreadRecord(),
+            error: "del error",
+            runtimePhase: "running",
+            turnExecutionId: "00000000-0000-4000-8000-000000000002",
+          }],
         ]),
       });
       useThreadStore.setState({
@@ -623,8 +636,21 @@ describe("Workspace Behavior", () => {
         currentThreadId: null,
         runningThreadIds: new Set(["t-1", "t-2"]),
         records: new Map<string, ThreadRecord>([
-          ["t-1", { ...createEmptyThreadRecord(), error: "err-1", streaming: "text-1" }],
-          ["t-2", { ...createEmptyThreadRecord(), error: "err-2", streaming: "text-2" }],
+          ["t-1", {
+            ...createEmptyThreadRecord(),
+            error: "err-1",
+            streaming: "text-1",
+            runtimePhase: "running",
+            turnExecutionId: "00000000-0000-4000-8000-000000000001",
+          }],
+          ["t-2", {
+            ...createEmptyThreadRecord(),
+            error: "err-2",
+            streaming: "text-2",
+            runtimePhase: "running",
+            turnExecutionId: "00000000-0000-4000-8000-000000000002",
+          }],
+          ["other-workspace-thread", createEmptyThreadRecord()],
         ]),
       });
       useThreadStore.setState({
