@@ -38,6 +38,18 @@ function iframe(): HTMLIFrameElement {
   return element;
 }
 
+function expectTypedFailure(result: unknown): void {
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      stage: expect.any(String),
+      effect: expect.any(String),
+      recovery: expect.any(String),
+      correlationId: expect.any(String),
+    },
+  });
+}
+
 describe("web browser automation executor", () => {
   it("navigates the visible iframe and snapshots bounded semantic content", async () => {
     const target = iframe();
@@ -157,17 +169,45 @@ describe("web browser automation executor", () => {
     target.parentElement?.setAttribute("aria-hidden", "true");
     const result = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
     expect(result).toMatchObject({ ok: false, error: { code: "TAB_UNAVAILABLE" } });
+    expectTypedFailure(result);
     target.parentElement?.removeAttribute("aria-hidden");
     target.remove();
+  });
+
+  it("accepts a hidden iframe only inside the dedicated automation surface", async () => {
+    const surface = document.createElement("div");
+    surface.dataset.automationPersistentScope = "thread-1";
+    surface.setAttribute("aria-hidden", "true");
+    surface.setAttribute("inert", "");
+    const target = document.createElement("iframe");
+    target.dataset.threadId = "thread-1";
+    target.dataset.tabId = "web-preview";
+    target.src = "about:blank";
+    surface.append(target);
+    document.body.append(surface);
+    const page = document.implementation.createHTMLDocument("Fixture");
+    page.title = "Fixture";
+    Object.defineProperty(target, "contentDocument", { configurable: true, value: page });
+    const openDispatch = dispatch("open", { url: `${window.location.origin}/browser-automation-fixture.html` });
+    openDispatch.target = { ...openDispatch.target, tabId: "web-preview" };
+    const opening = executeWebBrowserDispatch(
+      openDispatch,
+      new AbortController().signal,
+    );
+    window.setTimeout(() => target.dispatchEvent(new Event("load")), 0);
+    await expect(opening).resolves.toMatchObject({ ok: true, result: { operation: "open" } });
+    surface.remove();
   });
 
   it("rejects cross-origin navigation and DOM access with a typed error", async () => {
     const target = iframe();
     const rejected = await executeWebBrowserDispatch(dispatch("navigate", { url: "https://other.example/" }), new AbortController().signal);
     expect(rejected).toMatchObject({ ok: false, error: { code: "CROSS_ORIGIN" } });
+    expectTypedFailure(rejected);
     Object.defineProperty(target, "contentDocument", { configurable: true, get: () => null });
     const snapshot = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
     expect(snapshot).toMatchObject({ ok: false, error: { code: "CROSS_ORIGIN" } });
+    expectTypedFailure(snapshot);
     target.remove();
   });
 
@@ -177,8 +217,10 @@ describe("web browser automation executor", () => {
     controller.abort();
     const cancelled = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), controller.signal);
     expect(cancelled).toMatchObject({ ok: false, error: { code: "OPERATION_CANCELLED" } });
+    expectTypedFailure(cancelled);
     const expired = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }, Date.now() - 1), new AbortController().signal);
     expect(expired).toMatchObject({ ok: false, error: { code: "DEADLINE_EXCEEDED" } });
+    expectTypedFailure(expired);
     target.remove();
   });
 
@@ -220,6 +262,7 @@ describe("web browser automation executor", () => {
       ok: false,
       error: { code: "UNSUPPORTED_OPERATION" },
     });
+    expectTypedFailure(result);
     expect(captureVisibleWebScreenshot).not.toHaveBeenCalled();
     target.remove();
   });

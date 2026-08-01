@@ -166,6 +166,12 @@ function successResponse(request: BrowserAutomationHostDispatch["request"]): Bro
   };
 }
 
+function markIframeLoaded(iframe: HTMLIFrameElement): void {
+  if (iframe.contentDocument) {
+    Object.defineProperty(iframe.contentDocument, "readyState", { configurable: true, value: "complete" });
+  }
+}
+
 describe("BrowserAutomationHost", () => {
   const execute = vi.fn();
   const beginRendererOperation = vi.fn();
@@ -303,6 +309,7 @@ describe("BrowserAutomationHost", () => {
     iframe.dataset.threadId = "thread-1";
     iframe.dataset.tabId = "web-preview";
     document.body.append(iframe);
+    markIframeLoaded(iframe);
     window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
     expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(`${window.location.origin}/fixture`);
@@ -334,12 +341,115 @@ describe("BrowserAutomationHost", () => {
     iframe.dataset.threadId = "thread-1";
     iframe.dataset.tabId = "web-preview";
     document.body.append(iframe);
+    markIframeLoaded(iframe);
     window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
     await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ request: expect.objectContaining({ args: { activate: true } }) }),
       expect.any(AbortSignal),
     ));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    iframe.remove();
+    view.unmount();
+  });
+
+  it("bootstraps the hidden dedicated web surface with its created tab id", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useBrowserAutomationStore.setState({ liveTargets: new Map() });
+    webExecutor.executeWebBrowserDispatch.mockImplementation(async (value: BrowserAutomationHostDispatch) => ({
+      contractVersion: value.request.contractVersion,
+      requestId: value.request.requestId,
+      sequence: value.request.sequence,
+      ok: true as const,
+      result: {
+        operation: "open" as const,
+        url: value.request.args.url ?? `${window.location.origin}/browser-automation-fixture.html`,
+        title: "Fixture",
+        controlEpoch: 0,
+      },
+    }));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openRequest = {
+      ...dispatch(1, 37).request,
+      operation: "open" as const,
+      args: {
+        url: `${window.location.origin}/browser-automation-fixture.html`,
+        idempotencyKey: "hidden-web-open",
+        activate: false,
+      },
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().hostedScopeIds.has("thread-1")).toBe(true));
+    const surface = document.querySelector<HTMLElement>('[data-automation-persistent-scope="thread-1"]');
+    expect(surface).not.toBeNull();
+    let iframe!: HTMLIFrameElement;
+    await waitFor(() => {
+      const value = document.querySelector<HTMLIFrameElement>(
+        '[data-automation-persistent-scope="thread-1"] iframe[data-tab-id^="web-agent-"]',
+      );
+      expect(value).not.toBeNull();
+      iframe = value!;
+    });
+    expect(iframe.src).toBe(openRequest.args.url);
+    window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: true }),
+      expect.objectContaining({ tabId: iframe.dataset.tabId }),
+    ));
+    const firstResponse = harness.transport.respondToBrowserAutomationRequest.mock.calls[0]?.[2];
+    expect(firstResponse.result.observationRef).toEqual(expect.any(String));
+    if (iframe.contentDocument) {
+      Object.defineProperty(iframe.contentDocument, "readyState", { configurable: true, value: "complete" });
+    }
+
+    const replayRequest = {
+      ...openRequest,
+      requestId: "request-38",
+      sequence: 38,
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: replayRequest }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledTimes(2));
+    const replayResponse = harness.transport.respondToBrowserAutomationRequest.mock.calls[1]?.[2];
+    expect(replayResponse).toMatchObject({ ok: true, requestId: replayRequest.requestId, sequence: replayRequest.sequence });
+    expect(replayResponse.result.observationRef).toBe(firstResponse.result.observationRef);
+
+    const secondRequest = {
+      ...openRequest,
+      requestId: "request-39",
+      sequence: 39,
+      args: {
+        ...openRequest.args,
+        idempotencyKey: "hidden-web-open-2",
+        url: `${window.location.origin}/browser-automation-fixture-second.html`,
+      },
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: secondRequest }));
+    let secondIframe!: HTMLIFrameElement;
+    await waitFor(() => {
+      const value = [...document.querySelectorAll<HTMLIFrameElement>(
+        '[data-automation-persistent-scope="thread-1"] iframe[data-tab-id^="web-agent-"]',
+      )].find((candidate) => candidate !== iframe);
+      expect(value).toBeDefined();
+      secondIframe = value!;
+    });
+    expect(secondIframe.dataset.tabId).not.toBe(iframe.dataset.tabId);
+    expect(secondIframe.src).toBe(secondRequest.args.url);
+    markIframeLoaded(secondIframe);
+    window.setTimeout(() => secondIframe.dispatchEvent(new Event("load")), 0);
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledTimes(3));
+    const secondResponse = harness.transport.respondToBrowserAutomationRequest.mock.calls[2]?.[2];
+    expect(secondResponse.result.observationRef).not.toBe(firstResponse.result.observationRef);
+    expect(harness.transport.respondToBrowserAutomationRequest.mock.calls[2]?.[3]).toMatchObject({
+      tabId: secondIframe.dataset.tabId,
+      active: false,
+      focused: false,
+    });
+
+    expect(surface).toHaveAttribute("aria-hidden", "true");
     iframe.remove();
     view.unmount();
   });
@@ -809,6 +919,7 @@ describe("BrowserAutomationHost", () => {
   });
 
   it("cancels an exact removed target and suppresses its late success response", async () => {
+    const clearTargetReplay = vi.spyOn(BrowserSessionDriver.prototype, "clearIdempotencyForTarget");
     const executing = deferred<BrowserAutomationResponse>();
     execute.mockReturnValueOnce(executing.promise);
     const view = render(<BrowserAutomationHost />);
@@ -824,6 +935,7 @@ describe("BrowserAutomationHost", () => {
 
     act(() => useBrowserAutomationStore.getState().unregisterTarget("thread-1", "tab-1"));
     await waitFor(() => expect(cancel).toHaveBeenCalledWith(activeDispatch.request.requestId));
+    expect(clearTargetReplay).toHaveBeenCalledWith("thread-1", "tab-1");
     expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
       hostId,
       1,
@@ -836,6 +948,7 @@ describe("BrowserAutomationHost", () => {
     executing.resolve(successResponse(activeDispatch.request));
     await act(async () => executing.promise);
     expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
+    clearTargetReplay.mockRestore();
     view.unmount();
   });
 

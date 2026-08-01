@@ -350,6 +350,20 @@ describe("BrowserAutomationKernel", () => {
     });
   });
 
+  it("describes a native background tab without renderer adoption", () => {
+    const native = new FakeWebContents(9);
+    fakePreviewSession.tabsByThread.set("native-thread", {
+      threadId: "native-thread",
+      activeTabId: "native-tab",
+      tabs: [{ id: "native-tab", threadId: "native-thread", view: { webContents: native } as never }],
+    });
+    adoptedWebContents.set(JSON.stringify(["native-thread", "native-tab"]), null);
+    expect(kernel.describeTarget(event(), { threadId: "native-thread", tabId: "native-tab" })).toMatchObject({
+      ok: true,
+      target: { threadId: "native-thread", tabId: "native-tab" },
+    });
+  });
+
   it("issues media source ids only for the current exact adopted target", () => {
     expect(kernel.getMediaSourceId(event(), {
       windowId: 7,

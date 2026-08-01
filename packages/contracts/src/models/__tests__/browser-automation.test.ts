@@ -236,6 +236,22 @@ describe("browser automation operation contract", () => {
       ).toBe(false);
     }
   });
+
+  it("accepts bounded browser_open idempotency and opaque observation references", () => {
+    const parsed = BrowserAutomationRequestSchema().parse({
+      ...requestBase,
+      operation: "open",
+      args: { idempotencyKey: "open-key" },
+    });
+    expect(parsed.args).toEqual({ idempotencyKey: "open-key" });
+    expect(BrowserAutomationResultSchema().parse({
+      operation: "open",
+      url: "about:blank",
+      title: "",
+      controlEpoch: 0,
+      observationRef: "observation-1",
+    })).toMatchObject({ observationRef: "observation-1" });
+  });
 });
 
 describe("browser automation boundaries", () => {

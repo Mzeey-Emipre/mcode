@@ -106,7 +106,10 @@ const commonProperties = {
 function inputSchema(operation: BrowserAutomationOperation): Record<string, unknown> {
   const schemas: Record<BrowserAutomationOperation, Record<string, unknown>> = {
     status: {},
-    open: { url: { type: "string", format: "uri" }, activate: { type: "boolean", default: true } },
+    open: {
+      url: { type: "string", format: "uri" },
+      idempotencyKey: { type: "string", minLength: 1, maxLength: 256 },
+    },
     navigate: { url: { type: "string", format: "uri" } },
     resize: { width: { type: "integer", minimum: 320, maximum: 7680 }, height: { type: "integer", minimum: 240, maximum: 4320 } },
     snapshot: { includeScreenshot: { type: "boolean", default: true }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
@@ -125,7 +128,7 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
     recordingStop: {},
   };
   const requiredByOperation: Partial<Record<BrowserAutomationOperation, string[]>> = {
-    navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["expression"],
+    open: ["idempotencyKey"], navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["expression"],
   };
   return {
     type: "object",

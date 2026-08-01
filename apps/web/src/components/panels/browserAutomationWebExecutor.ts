@@ -47,6 +47,33 @@ function popSnapshotNode(stack: SnapshotNode[], budget: SnapshotBudget): Snapsho
 
 type WebIframe = HTMLIFrameElement & { dataset: DOMStringMap };
 
+type WebFailureCode =
+  | "CROSS_ORIGIN"
+  | "DEADLINE_EXCEEDED"
+  | "INTERNAL_ERROR"
+  | "NAVIGATION_FAILED"
+  | "OPERATION_CANCELLED"
+  | "RESULT_TOO_LARGE"
+  | "TAB_UNAVAILABLE"
+  | "UNSUPPORTED_OPERATION";
+
+type WebFailureMetadata = {
+  stage: "validation" | "allocation" | "observation" | "effect" | "recovery" | "transport";
+  effect: "none" | "created" | "closed" | "preserved" | "unknown";
+  recovery: "none" | "retry" | "refresh" | "reopen" | "manual";
+};
+
+const WEB_FAILURE_METADATA: Record<WebFailureCode, WebFailureMetadata> = {
+  CROSS_ORIGIN: { stage: "observation", effect: "none", recovery: "manual" },
+  DEADLINE_EXCEEDED: { stage: "recovery", effect: "unknown", recovery: "retry" },
+  INTERNAL_ERROR: { stage: "transport", effect: "unknown", recovery: "retry" },
+  NAVIGATION_FAILED: { stage: "effect", effect: "unknown", recovery: "retry" },
+  OPERATION_CANCELLED: { stage: "recovery", effect: "preserved", recovery: "none" },
+  RESULT_TOO_LARGE: { stage: "observation", effect: "none", recovery: "retry" },
+  TAB_UNAVAILABLE: { stage: "allocation", effect: "unknown", recovery: "retry" },
+  UNSUPPORTED_OPERATION: { stage: "validation", effect: "none", recovery: "manual" },
+};
+
 function response(
   dispatch: BrowserAutomationHostDispatch,
   result: BrowserAutomationResult,
@@ -62,21 +89,37 @@ function response(
 
 function failure(
   dispatch: BrowserAutomationHostDispatch,
-  code: "CROSS_ORIGIN" | "DEADLINE_EXCEEDED" | "INTERNAL_ERROR" | "NAVIGATION_FAILED" | "OPERATION_CANCELLED" | "RESULT_TOO_LARGE" | "TAB_UNAVAILABLE" | "UNSUPPORTED_OPERATION",
+  code: WebFailureCode,
   message: string,
 ): BrowserAutomationResponse {
+  const metadata = WEB_FAILURE_METADATA[code];
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
     requestId: dispatch.request.requestId,
     sequence: dispatch.request.sequence,
     ok: false,
-    error: { code, message, retryable: code !== "CROSS_ORIGIN" && code !== "UNSUPPORTED_OPERATION" },
+    error: {
+      code,
+      message,
+      retryable: code !== "CROSS_ORIGIN" && code !== "UNSUPPORTED_OPERATION",
+      ...metadata,
+      correlationId: globalThis.crypto.randomUUID(),
+    },
   };
 }
 
 function findIframe(dispatch: BrowserAutomationHostDispatch): WebIframe | null {
   const candidates = [...document.querySelectorAll<HTMLIFrameElement>("iframe")]
     .filter((candidate) => candidate.dataset.threadId === dispatch.target.threadId && candidate.dataset.tabId === dispatch.target.tabId);
+  const automationSurface = candidates.find((candidate) => {
+    let node: Element | null = candidate.parentElement;
+    while (node) {
+      if (node.getAttribute("data-automation-persistent-scope") === dispatch.target.threadId) return true;
+      node = node.parentElement;
+    }
+    return false;
+  });
+  if (automationSurface) return automationSurface as WebIframe;
   const visible = candidates.find((candidate) => {
     let node: HTMLElement | null = candidate;
     let depth = 0;

@@ -1104,6 +1104,29 @@ describe("preview-browser", () => {
       expect(activated.data.activeTabId).toBe(created.data.tabId);
     });
 
+    it("warms an inactive-thread tab when activation is disabled", async () => {
+      const win = createWindow();
+      await showPreview(win, { threadId: "thread-A" });
+      const activeView = createdViews[0]!;
+      const viewsBeforeCreate = createdViews.length;
+
+      const created = callTabs<{
+        tabId: string;
+        tabs: { activeTabId: string | null; tabs: { id: string; warm: boolean }[] };
+      }>(win, "preview:tabs.create", {
+        threadId: "thread-B",
+        activate: false,
+      });
+
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      expect(created.data.tabs.activeTabId).not.toBe(created.data.tabId);
+      expect(created.data.tabs.tabs.find((tab) => tab.id === created.data.tabId)?.warm).toBe(true);
+      expect(createdViews).toHaveLength(viewsBeforeCreate + 1);
+      expect(win.contentView.addChildView).toHaveBeenCalledTimes(1);
+      expect(win.contentView.children).toEqual([activeView]);
+    });
+
     it("tabs.close promotes a sibling when the active tab is removed", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });

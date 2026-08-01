@@ -1,4 +1,5 @@
 import type { WebSocket } from "ws";
+import { randomUUID } from "node:crypto";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
@@ -37,6 +38,14 @@ interface PendingRequest {
   resolve: (response: BrowserAutomationResponse) => void;
   timer: ReturnType<typeof setTimeout>;
   startedAt: number;
+}
+
+interface OpenReplayRecord {
+  readonly fingerprint: string;
+  readonly promise: Promise<BrowserAutomationResponse>;
+  host?: RegisteredHost;
+  target?: BrowserAutomationHostDispatchTarget;
+  lastUsedAt: number;
 }
 
 /** Content-free reliability counters for the browser automation broker. */
@@ -92,7 +101,15 @@ function failure(
     requestId: request.requestId,
     sequence: request.sequence,
     ok: false,
-    error: { code, message, retryable },
+    error: {
+      code,
+      message,
+      retryable,
+      stage: code === "TAB_UNAVAILABLE" ? "allocation" : "transport",
+      effect: code === "TAB_UNAVAILABLE" ? "unknown" : "none",
+      recovery: retryable ? "retry" : "manual",
+      correlationId: randomUUID(),
+    },
   };
 }
 
@@ -128,6 +145,17 @@ function pendingKey(host: RegisteredHost, requestId: string, sequence: number): 
 
 function targetKey(target: Pick<BrowserAutomationHostDispatchTarget, "threadId" | "tabId">): string {
   return JSON.stringify([target.threadId, target.tabId]);
+}
+
+function openReplayKey(
+  providerId: string,
+  request: Pick<BrowserAutomationRequest, "providerSessionId" | "workspaceId" | "threadId"> & {
+    args?: { idempotencyKey?: string };
+  },
+): string | null {
+  const key = request.args?.idempotencyKey;
+  if (!key) return null;
+  return JSON.stringify([providerId, request.providerSessionId, request.workspaceId, request.threadId, key]);
 }
 
 function targetsMatch(
@@ -197,6 +225,7 @@ export class BrowserAutomationBroker {
   private readonly hostHeartbeatTimeoutMs: number;
   private readonly maxHosts: number;
   private readonly maxTargets: number;
+  private readonly openReplay = new Map<string, OpenReplayRecord>();
   private nextGeneration = 1;
   private readonly reliability: BrowserAutomationReliabilityCounters = {
     dispatched: 0,
@@ -427,6 +456,16 @@ export class BrowserAutomationBroker {
         this.settle(key, pending, failure(pending.request, "INVALID_REQUEST", targetError, false));
         return;
       }
+      if (pending.request.operation === "open") {
+        const replayKey = openReplayKey(pending.providerId, pending.request);
+        if (replayKey) {
+          const replay = this.openReplay.get(replayKey);
+          if (replay) {
+            replay.host = pending.host;
+            replay.target = responseTarget;
+          }
+        }
+      }
     } else if (responseTarget && pending.target && !targetsMatch(responseTarget, pending.target)) {
       this.settle(
         key,
@@ -506,6 +545,53 @@ export class BrowserAutomationBroker {
 
   /** Executes one validated request under credential and host scope constraints. */
   execute(claims: BrowserAutomationCredentialClaims, input: unknown): Promise<BrowserAutomationResponse> {
+    const cutoff = this.now() - 30 * 60_000;
+    for (const [replayKey, record] of this.openReplay) {
+      if (record.lastUsedAt < cutoff) this.openReplay.delete(replayKey);
+    }
+    const parsed = BrowserAutomationRequestSchema().safeParse(input);
+    if (!parsed.success || parsed.data.operation !== "open") return this.executeInternal(claims, input);
+    const request = parsed.data;
+    const key = request.args.idempotencyKey;
+    if (!key) return this.executeInternal(claims, input);
+    const replayKey = openReplayKey(claims.providerId, request);
+    if (!replayKey) return this.executeInternal(claims, request);
+    const fingerprint = JSON.stringify({ url: request.args.url ?? null });
+    const existing = this.openReplay.get(replayKey);
+    if (existing) {
+      existing.lastUsedAt = this.now();
+      if (existing.fingerprint !== fingerprint) {
+        return Promise.resolve(failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_open arguments", false));
+      }
+      return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+    }
+    const bootstrapHost = this.resolveBootstrapHost(claims, request);
+    if (!bootstrapHost) return this.executeInternal(claims, request);
+    let resolveReplay!: (response: BrowserAutomationResponse) => void;
+    const replayPromise = new Promise<BrowserAutomationResponse>((resolve) => {
+      resolveReplay = resolve;
+    });
+    const replayRecord: OpenReplayRecord = {
+      fingerprint,
+      promise: replayPromise,
+      host: bootstrapHost,
+      lastUsedAt: this.now(),
+    };
+    this.openReplay.set(replayKey, replayRecord);
+    while (this.openReplay.size > 256) {
+      const oldest = this.openReplay.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.openReplay.delete(oldest);
+    }
+    const promise = this.executeInternal(claims, request);
+    void promise.then((response) => {
+      resolveReplay(response);
+      if (!response.ok && this.openReplay.get(replayKey) === replayRecord) this.openReplay.delete(replayKey);
+    });
+    return promise;
+  }
+
+  private executeInternal(claims: BrowserAutomationCredentialClaims, input: unknown): Promise<BrowserAutomationResponse> {
     this.pruneExpiredState();
     const parsed = BrowserAutomationRequestSchema().safeParse(input);
     if (!parsed.success) {
@@ -540,7 +626,12 @@ export class BrowserAutomationBroker {
       return finishImmediately(failure(request, "HOST_UNAVAILABLE", "Browser request capacity is exhausted", true));
     }
 
-    const assignment = this.resolveAssignment(claims, request);
+    // Each fresh keyed browser_open owns a new tab. Duplicate keys are
+    // handled by openReplay before this path and continue to reuse the
+    // original target.
+    const assignment = request.operation === "open" && request.args.idempotencyKey !== undefined
+      ? undefined
+      : this.resolveAssignment(claims, request);
     if (!assignment) {
       if (request.operation === "open") {
         const host = this.resolveBootstrapHost(claims, request);
@@ -632,6 +723,9 @@ export class BrowserAutomationBroker {
     if (!host) return;
     this.hostsBySocket.delete(socket);
     clearTimeout(host.heartbeatTimer);
+    for (const [replayKey, record] of this.openReplay) {
+      if (record.host === host) this.openReplay.delete(replayKey);
+    }
     for (const [key, assigned] of this.assignments) {
       if (assigned.host === host) this.assignments.delete(key);
     }
@@ -702,6 +796,10 @@ export class BrowserAutomationBroker {
         pending,
         failure(pending.request, "OPERATION_CANCELLED", "Browser credential was revoked", false),
       );
+    }
+    for (const key of this.openReplay.keys()) {
+      const parts = JSON.parse(key) as string[];
+      if (parts[0] === providerId && parts[1] === providerSessionId) this.openReplay.delete(key);
     }
     return removed;
   }
@@ -931,6 +1029,11 @@ export class BrowserAutomationBroker {
     removedTargetKey: string,
     preserveTargetTransition = false,
   ): void {
+    for (const [replayKey, record] of this.openReplay) {
+      if (record.host === host && record.target && targetKey(record.target) === removedTargetKey) {
+        this.openReplay.delete(replayKey);
+      }
+    }
     for (const [key, assignment] of this.assignments) {
       if (assignment.host === host && assignment.targetKey === removedTargetKey) this.assignments.delete(key);
     }

@@ -1002,6 +1002,250 @@ describe("BrowserAutomationBroker", () => {
     await expect(status).resolves.toMatchObject({ ok: true });
   });
 
+  it("creates one fresh target per keyed open while replaying duplicates", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        deliveries.push({ channel, data });
+        return true;
+      },
+    }));
+    const hostSocket = socket("fresh-open");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("fresh-open", "workspace-a"),
+      capabilities: [{ operation: "open", available: true }],
+    }, authorization("fresh-open")).generation;
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      allowedOperations: ["open" as const],
+    };
+    const open = (requestId: string, sequence: number, key: string, url: string) => broker.execute(scope, {
+      ...request(scope, sequence),
+      requestId,
+      operation: "open",
+      args: { activate: false, idempotencyKey: key, url },
+    });
+    const first = open("open-a", 1, "key-a", "https://example.test/a");
+    const firstBootstrap = deliveries[0]!;
+    const firstTarget = {
+      desktopInstanceId: "desktop-fresh-open",
+      windowId: 1,
+      connectionGeneration: generation,
+      threadId: "thread-a",
+      tabId: "tab-a",
+      targetGeneration: 1,
+      active: false,
+      focused: false,
+      lastUsedAt: 10,
+    };
+    broker.respond(hostSocket, "fresh-open", generation, {
+      contractVersion: 1,
+      requestId: firstBootstrap.data.request.requestId,
+      sequence: firstBootstrap.data.request.sequence,
+      ok: true,
+      result: { operation: "open", url: "https://example.test/a", title: "A", controlEpoch: 0, observationRef: "obs-a" },
+    }, firstTarget);
+    await expect(first).resolves.toMatchObject({ ok: true, result: { observationRef: "obs-a" } });
+
+    const replay = await open("open-a-replay", 2, "key-a", "https://example.test/a");
+    expect(replay).toMatchObject({ ok: true, requestId: "open-a-replay", sequence: 2, result: { observationRef: "obs-a" } });
+    expect(deliveries.filter(({ channel }) => channel === "browserAutomation.bootstrap")).toHaveLength(1);
+
+    const second = open("open-b", 3, "key-b", "https://example.test/b");
+    const secondBootstrap = deliveries[1]!;
+    const secondTarget = { ...firstTarget, tabId: "tab-b", lastUsedAt: 11 };
+    broker.respond(hostSocket, "fresh-open", generation, {
+      contractVersion: 1,
+      requestId: secondBootstrap.data.request.requestId,
+      sequence: secondBootstrap.data.request.sequence,
+      ok: true,
+      result: { operation: "open", url: "https://example.test/b", title: "B", controlEpoch: 0, observationRef: "obs-b" },
+    }, secondTarget);
+    await expect(second).resolves.toMatchObject({ ok: true, result: { observationRef: "obs-b" } });
+    expect(secondBootstrap.data.request.args.url).toBe("https://example.test/b");
+    expect(secondTarget.tabId).not.toBe(firstTarget.tabId);
+    const bootstrapKeys = deliveries
+      .filter(({ channel }) => channel === "browserAutomation.bootstrap")
+      .map(({ data }) => data.request.args.idempotencyKey);
+    expect(bootstrapKeys).toEqual(["key-a", "key-b"]);
+
+    broker.updateTargets(hostSocket, "fresh-open", generation, []);
+    const afterClose = open("open-a-after-close", 4, "key-a", "https://example.test/a");
+    const afterCloseBootstrap = deliveries[2]!;
+    const replacementTarget = { ...firstTarget, tabId: "tab-c" };
+    broker.respond(hostSocket, "fresh-open", generation, {
+      contractVersion: 1,
+      requestId: afterCloseBootstrap.data.request.requestId,
+      sequence: afterCloseBootstrap.data.request.sequence,
+      ok: true,
+      result: { operation: "open", url: "https://example.test/a", title: "A2", controlEpoch: 0, observationRef: "obs-a2" },
+    }, replacementTarget);
+    await expect(afterClose).resolves.toMatchObject({ ok: true, result: { observationRef: "obs-a2" } });
+    expect(deliveries.filter(({ channel }) => channel === "browserAutomation.bootstrap")).toHaveLength(3);
+  });
+
+  it("drops keyed open replay when its host reconnects", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        deliveries.push({ channel, data });
+        return true;
+      },
+    }));
+    const firstSocket = socket("reconnect-first");
+    const firstGeneration = broker.registerHost(firstSocket, {
+      ...registration("reconnect-first", "workspace-a"),
+      capabilities: [{ operation: "open", available: true }],
+    }, authorization("reconnect-first")).generation;
+    const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["open" as const] };
+    const open = (requestId: string, sequence: number) => broker.execute(scope, {
+      ...request(scope, sequence),
+      requestId,
+      operation: "open",
+      args: { activate: false, idempotencyKey: "reconnect-key", url: "https://example.test/reconnect" },
+    });
+    const first = open("reconnect-open-1", 1);
+    const firstBootstrap = deliveries[0]!;
+    const firstTarget = {
+      desktopInstanceId: "desktop-reconnect-first",
+      windowId: 1,
+      connectionGeneration: firstGeneration,
+      threadId: "thread-a",
+      tabId: "tab-first",
+      targetGeneration: 1,
+      active: false,
+      focused: false,
+      lastUsedAt: 10,
+    };
+    broker.respond(firstSocket, "reconnect-first", firstGeneration, {
+      contractVersion: 1,
+      requestId: firstBootstrap.data.request.requestId,
+      sequence: firstBootstrap.data.request.sequence,
+      ok: true,
+      result: { operation: "open", url: "https://example.test/reconnect", title: "First", controlEpoch: 0, observationRef: "obs-first" },
+    }, firstTarget);
+    await expect(first).resolves.toMatchObject({ ok: true, result: { observationRef: "obs-first" } });
+
+    broker.disconnect(firstSocket);
+    const replacementSocket = socket("reconnect-first");
+    const replacementGeneration = broker.registerHost(replacementSocket, {
+      ...registration("reconnect-first", "workspace-a"),
+      capabilities: [{ operation: "open", available: true }],
+    }, authorization("reconnect-first")).generation;
+    const second = open("reconnect-open-2", 2);
+    const secondBootstrap = deliveries[1]!;
+    const secondTarget = { ...firstTarget, connectionGeneration: replacementGeneration, tabId: "tab-second" };
+    broker.respond(replacementSocket, "reconnect-first", replacementGeneration, {
+      contractVersion: 1,
+      requestId: secondBootstrap.data.request.requestId,
+      sequence: secondBootstrap.data.request.sequence,
+      ok: true,
+      result: { operation: "open", url: "https://example.test/reconnect", title: "Second", controlEpoch: 0, observationRef: "obs-second" },
+    }, secondTarget);
+    await expect(second).resolves.toMatchObject({ ok: true, result: { observationRef: "obs-second" } });
+    expect(deliveries.filter(({ channel }) => channel === "browserAutomation.bootstrap")).toHaveLength(2);
+  });
+
+  it("retries a keyed open after a failed bootstrap", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        deliveries.push({ channel, data });
+        return true;
+      },
+    }));
+    const hostSocket = socket("failed-open");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("failed-open", "workspace-a"),
+      capabilities: [{ operation: "open", available: true }],
+    }, authorization("failed-open")).generation;
+    const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["open" as const] };
+    const open = (requestId: string, sequence: number) => broker.execute(scope, {
+      ...request(scope, sequence),
+      requestId,
+      operation: "open",
+      args: { activate: false, idempotencyKey: "failed-key", url: "https://example.test/failed" },
+    });
+    const first = open("failed-open-1", 1);
+    const firstBootstrap = deliveries[0]!;
+    broker.respond(hostSocket, "failed-open", generation, {
+      contractVersion: 1,
+      requestId: firstBootstrap.data.request.requestId,
+      sequence: firstBootstrap.data.request.sequence,
+      ok: false,
+      error: { code: "HOST_UNAVAILABLE", message: "bootstrap failed", retryable: true },
+    });
+    await expect(first).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE" } });
+
+    const retry = open("failed-open-2", 2);
+    expect(deliveries.filter(({ channel }) => channel === "browserAutomation.bootstrap")).toHaveLength(2);
+    const retryBootstrap = deliveries[1]!;
+    broker.respond(hostSocket, "failed-open", generation, {
+      contractVersion: 1,
+      requestId: retryBootstrap.data.request.requestId,
+      sequence: retryBootstrap.data.request.sequence,
+      ok: false,
+      error: { code: "HOST_UNAVAILABLE", message: "retry failed", retryable: true },
+    });
+    await expect(retry).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE" } });
+  });
+
+  it("retries a pending keyed open after host disconnect", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        deliveries.push({ channel, data });
+        return true;
+      },
+    }));
+    const hostSocket = socket("pending-open");
+    broker.registerHost(hostSocket, {
+      ...registration("pending-open", "workspace-a"),
+      capabilities: [{ operation: "open", available: true }],
+    }, authorization("pending-open")).generation;
+    const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["open" as const] };
+    const input = (requestId: string, sequence: number) => ({
+      ...request(scope, sequence),
+      requestId,
+      operation: "open" as const,
+      args: { activate: false, idempotencyKey: "pending-key", url: "https://example.test/pending" },
+    });
+    const first = broker.execute(scope, input("pending-open-1", 1));
+    broker.disconnect(hostSocket);
+    await expect(first).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE" } });
+
+    const replacementSocket = socket("pending-open-replacement");
+    const replacementGeneration = broker.registerHost(replacementSocket, {
+      ...registration("pending-open-replacement", "workspace-a"),
+      capabilities: [{ operation: "open", available: true }],
+    }, authorization("pending-open-replacement")).generation;
+    const retry = broker.execute(scope, input("pending-open-2", 2));
+    expect(deliveries.filter(({ channel }) => channel === "browserAutomation.bootstrap")).toHaveLength(2);
+    const retryBootstrap = deliveries[1]!;
+    broker.respond(replacementSocket, "pending-open-replacement", replacementGeneration, {
+      contractVersion: 1,
+      requestId: retryBootstrap.data.request.requestId,
+      sequence: retryBootstrap.data.request.sequence,
+      ok: true,
+      result: { operation: "open", url: "https://example.test/pending", title: "Retry", controlEpoch: 0 },
+    }, {
+      desktopInstanceId: "desktop-pending-open-replacement",
+      windowId: 1,
+      connectionGeneration: replacementGeneration,
+      threadId: "thread-a",
+      tabId: "tab-retry",
+      targetGeneration: 1,
+      active: false,
+      focused: false,
+      lastUsedAt: 10,
+    });
+    await expect(retry).resolves.toMatchObject({ ok: true });
+  });
+
   it("selects focused, then active, then most recently used matching targets", async () => {
     const deliveries: Array<{ socket: WebSocket; data: any }> = [];
     const broker = new BrowserAutomationBroker(options({

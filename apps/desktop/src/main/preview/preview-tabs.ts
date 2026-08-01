@@ -182,6 +182,12 @@ export function registerTabHandlers(): void {
         activateTabView(win, s, newTab);
       } else if (activate) {
         set.activeTabId = tabId;
+      } else if (!activate) {
+        // Agent-owned tabs stay warm without mounting or selecting their view,
+        // including tabs created for an inactive thread. This preserves the
+        // user's visible page while allowing the automation kernel to attach
+        // to the newly-created target immediately.
+        ensureTabView(win, s, set.tabs[set.tabs.length - 1]!);
       }
 
       const tabs = buildTabSet(s, tid);

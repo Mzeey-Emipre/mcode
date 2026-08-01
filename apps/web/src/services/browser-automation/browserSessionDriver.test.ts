@@ -56,4 +56,52 @@ describe("BrowserSessionDriver", () => {
     expect(electronExecute).toHaveBeenCalledWith(clickDispatch, expect.any(AbortSignal));
     document.body.removeChild(webButton);
   });
+
+  it("joins idempotent opens, returns an observation reference, and rejects conflicts", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      contractVersion: 1,
+      requestId: "first",
+      sequence: 1,
+      ok: true,
+      result: { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+    } as BrowserAutomationResponse);
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+    });
+    const makeDispatch = (requestId: string, url: string, targetGeneration = 1, windowId = 1): BrowserAutomationHostDispatch => ({
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId,
+        sequence: 1,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "open",
+        args: { url, idempotencyKey: "open-key" },
+      },
+      target: { threadId: "thread", tabId: "tab", windowId, targetGeneration },
+    } as unknown as BrowserAutomationHostDispatch);
+    const first = await driver.execute(makeDispatch("first", "https://example.test/"), new AbortController().signal);
+    const replay = await driver.execute(makeDispatch("replay", "https://example.test/"), new AbortController().signal);
+    const conflict = await driver.execute(makeDispatch("conflict", "https://other.test/"), new AbortController().signal);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(first).toMatchObject({ ok: true, result: { operation: "open", observationRef: expect.any(String) } });
+    expect(replay).toMatchObject({ ok: true, requestId: "replay", result: { operation: "open" } });
+    expect(conflict).toMatchObject({ ok: false, error: { code: "IDEMPOTENCY_CONFLICT" } });
+
+    await driver.execute(makeDispatch("window-bump", "https://example.test/", 1, 2), new AbortController().signal);
+    expect(execute).toHaveBeenCalledTimes(2);
+
+    await driver.execute(makeDispatch("generation-bump", "https://example.test/", 2), new AbortController().signal);
+    expect(execute).toHaveBeenCalledTimes(3);
+
+    driver.clearIdempotencyForTarget("thread", "tab");
+    await driver.execute(makeDispatch("fresh", "https://example.test/", 2), new AbortController().signal);
+    expect(execute).toHaveBeenCalledTimes(4);
+  });
 });

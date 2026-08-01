@@ -86,7 +86,15 @@ function failureResponse(
     requestId: request.requestId,
     sequence: request.sequence,
     ok: false,
-    error: { code, message, retryable: code !== "INVALID_REQUEST" },
+    error: {
+      code,
+      message,
+      retryable: code !== "INVALID_REQUEST",
+      stage: code === "TAB_UNAVAILABLE" ? "allocation" : "effect",
+      effect: code === "TAB_UNAVAILABLE" ? "unknown" : "none",
+      recovery: code === "TAB_UNAVAILABLE" ? "reopen" : "manual",
+      correlationId: globalThis.crypto.randomUUID(),
+    },
   };
 }
 
@@ -381,6 +389,13 @@ interface BackgroundBrowserScope {
   readonly workspaceId: string;
 }
 
+interface PersistentAutomationWebTab {
+  readonly threadId: string;
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly url: string;
+}
+
 interface PersistentSurfaceLayout {
   readonly visible: boolean;
   readonly left: number;
@@ -397,7 +412,40 @@ function findAutomationDock(threadId: string): HTMLElement | null {
 }
 
 /** Keeps one exact automation PreviewPanel mounted while moving it into its visible dock. */
-function PersistentAutomationPreviewSurface({ scope }: { readonly scope: BackgroundBrowserScope }) {
+function PersistentAutomationWebTab({ tab }: { readonly tab: PersistentAutomationWebTab }) {
+  useEffect(() => {
+    useBrowserAutomationStore.getState().registerTarget(tab.workspaceId, tab.threadId, tab.tabId);
+    return () => useBrowserAutomationStore.getState().detachTarget(tab.threadId, tab.tabId);
+  }, [tab.tabId, tab.threadId, tab.workspaceId]);
+
+  return (
+    <iframe
+      title="Browser automation page"
+      src={tab.url}
+      data-thread-id={tab.threadId}
+      data-tab-id={tab.tabId}
+      onLoad={() => useBrowserAutomationStore.getState().refreshTarget(tab.threadId, tab.tabId)}
+      style={{
+        position: "fixed",
+        left: -20_000,
+        top: 0,
+        width: 1_280,
+        height: 720,
+        border: 0,
+        pointerEvents: "none",
+      }}
+      referrerPolicy="no-referrer"
+    />
+  );
+}
+
+function PersistentAutomationPreviewSurface({
+  scope,
+  webTabs,
+}: {
+  readonly scope: BackgroundBrowserScope;
+  readonly webTabs: readonly PersistentAutomationWebTab[];
+}) {
   const [layout, setLayout] = useState<PersistentSurfaceLayout>({
     visible: false,
     left: -20_000,
@@ -464,6 +512,9 @@ function PersistentAutomationPreviewSurface({ scope }: { readonly scope: Backgro
         workspaceId={scope.workspaceId}
         automationOnly={!layout.visible}
       />
+      {webTabs
+        .filter((tab) => tab.threadId === scope.threadId)
+        .map((tab) => <PersistentAutomationWebTab key={tab.tabId} tab={tab} />)}
     </div>
   );
 }
@@ -494,6 +545,9 @@ export function BrowserAutomationHost() {
   const priorLiveTargetKeysRef = useRef(new Set<string>());
   const priorLiveTargetRevisionsRef = useRef(new Map<string, number>());
   const cancelledRef = useRef(new Set<string>());
+  const persistentWebTabsRef = useRef(new Map<string, PersistentAutomationWebTab>());
+  const agentOpenTabsRef = useRef(new Map<string, string>());
+  const [, setPersistentWebTabsRevision] = useState(0);
   const sessionDriverRef = useRef<BrowserSessionDriver | null>(null);
   if (!sessionDriverRef.current) {
     const webAdapter = new WebBrowserSessionAdapter({
@@ -525,6 +579,20 @@ export function BrowserAutomationHost() {
       ),
     });
   }
+  const addPersistentWebTab = (tab: PersistentAutomationWebTab): void => {
+    persistentWebTabsRef.current.set(tab.tabId, tab);
+    setPersistentWebTabsRevision((value) => value + 1);
+  };
+  const removePersistentWebTab = (tabId: string): void => {
+    const tab = persistentWebTabsRef.current.get(tabId);
+    if (!tab) return;
+    persistentWebTabsRef.current.delete(tabId);
+    for (const [key, value] of agentOpenTabsRef.current) {
+      if (value === tabId) agentOpenTabsRef.current.delete(key);
+    }
+    useBrowserAutomationStore.getState().unregisterTarget(tab.threadId, tabId);
+    setPersistentWebTabsRevision((value) => value + 1);
+  };
   const stableHostId = useMemo(hostId, []);
   const [backgroundScopes, setBackgroundScopes] = useState<readonly BackgroundBrowserScope[]>([]);
   const backgroundScopesRef = useRef<readonly BackgroundBrowserScope[]>([]);
@@ -665,6 +733,8 @@ export function BrowserAutomationHost() {
         }
         registrationEpochRef.current += 1;
         leaseRef.current = null;
+        sessionDriverRef.current?.clearIdempotency();
+        agentOpenTabsRef.current.clear();
         useBrowserAutomationStore.getState().setRegistered(false);
         useBrowserAutomationStore.getState().setStatus("unavailable");
       }
@@ -746,6 +816,10 @@ export function BrowserAutomationHost() {
     for (const removed of priorLiveTargetKeysRef.current) {
       if (next.has(removed)) continue;
       const [threadId, tabId] = JSON.parse(removed) as [string, string];
+      sessionDriverRef.current?.clearIdempotencyForTarget(threadId, tabId);
+      for (const [openKey, mappedTabId] of agentOpenTabsRef.current) {
+        if (mappedTabId === tabId) agentOpenTabsRef.current.delete(openKey);
+      }
       recorderRef.current.disposeTarget(threadId, tabId);
       for (const [key, dispatch] of inFlightRef.current) {
         if (dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
@@ -1023,6 +1097,7 @@ export function BrowserAutomationHost() {
         !parsed.success || parsed.data.operation !== "open"
       ) return;
       const request = parsed.data;
+      const agentOwnedOpen = request.args.idempotencyKey !== undefined;
       const key = browserAutomationRequestKey(request.requestId, request.sequence);
       if (inFlightRef.current.has(key) || bootstrapPendingRef.current.has(key)) return;
       bootstrapPendingRef.current.add(key);
@@ -1037,10 +1112,14 @@ export function BrowserAutomationHost() {
       const previousPanel = useDiffStore.getState().getRightPanel(request.workspaceId, request.threadId);
       let backgroundContextRestored = false;
       let createdTabId: string | null = null;
+      let createdWebTabId: string | undefined;
+      const agentOpenKey = agentOwnedOpen
+        ? JSON.stringify([request.providerSessionId, request.providerInstanceId, request.workspaceId, request.threadId, request.args.idempotencyKey])
+        : null;
       let bootstrapSucceeded = false;
       let visibleContextModified = false;
       const restoreBackgroundContext = async () => {
-        if (request.args.activate || backgroundContextRestored) return;
+        if (agentOwnedOpen || request.args.activate || backgroundContextRestored) return;
         backgroundContextRestored = true;
         if (createdTabId && previousTabId && previousTabId !== createdTabId) {
           await usePreviewTabsStore.getState().activatePage(request.threadId, previousTabId);
@@ -1101,7 +1180,7 @@ export function BrowserAutomationHost() {
           );
           setBackgroundScopes(nextScopes);
         }
-        if (ownsVisibleContext) {
+        if (ownsVisibleContext && !agentOwnedOpen) {
           visibleContextModified = true;
           diff.showRightPanel(request.workspaceId, request.threadId);
           diff.setRightPanelTab(request.workspaceId, request.threadId, "preview");
@@ -1112,21 +1191,45 @@ export function BrowserAutomationHost() {
           usePreviewTabsStore.getState().setTabSet(request.threadId, listed.data);
         }
         const existingSet = usePreviewTabsStore.getState().tabSetByScope[request.threadId];
-        let tabId = existingSet?.activeTabId || existingSet?.tabs[0]?.id ||
-          (!bridge ? WEB_RUNTIME_PREVIEW_TAB_ID : null);
-        if (!tabId) {
-          tabId = await usePreviewTabsStore.getState().createPage(request.threadId, {
-            focusOmnibox: ownsVisibleContext && request.args.activate,
-          });
-          if (tabId) createdTabId = tabId;
-        }
-        if (!tabId) throw new Error("Browser tab could not be created or restored");
-        const selectedTab = existingSet?.tabs.find((tab) => tab.id === tabId);
         const requestedWebUrl = !bridge && request.args.url
           ? normalizeWebPreviewUrl(request.args.url)
           : undefined;
+        let tabId = agentOwnedOpen
+          ? (agentOpenKey ? agentOpenTabsRef.current.get(agentOpenKey) ?? null : null)
+          : existingSet?.activeTabId || existingSet?.tabs[0]?.id ||
+            (!bridge ? WEB_RUNTIME_PREVIEW_TAB_ID : null);
+        if (!bridge && agentOwnedOpen && !tabId) {
+          const webTabId = `web-agent-${globalThis.crypto.randomUUID()}`;
+          const webTabUrl = requestedWebUrl ?? `${window.location.origin}/browser-automation-fixture.html`;
+          createdWebTabId = webTabId;
+          if (agentOpenKey) agentOpenTabsRef.current.set(agentOpenKey, webTabId);
+          addPersistentWebTab({
+            threadId: request.threadId,
+            workspaceId: request.workspaceId,
+            tabId: webTabId,
+            url: webTabUrl,
+          });
+          tabId = webTabId;
+        }
+        if (!tabId) {
+          tabId = await usePreviewTabsStore.getState().createPage(request.threadId, {
+            activate: !agentOwnedOpen,
+            focusOmnibox: ownsVisibleContext && request.args.activate && !agentOwnedOpen,
+          });
+          if (tabId) {
+            createdTabId = tabId;
+            if (agentOpenKey) agentOpenTabsRef.current.set(agentOpenKey, tabId);
+            useBrowserAutomationStore.getState().registerTarget(
+              request.workspaceId,
+              request.threadId,
+              tabId,
+            );
+          }
+        }
+        if (!tabId) throw new Error("Browser tab could not be created or restored");
+        const selectedTab = existingSet?.tabs.find((tab) => tab.id === tabId);
         const initialUrl = requestedWebUrl ?? selectedTab?.url ?? "about:blank";
-        if (!selectedTab?.url || requestedWebUrl) {
+        if (!agentOwnedOpen && (!selectedTab?.url || requestedWebUrl)) {
           usePreviewTabsStore.getState().updateTabChrome(request.threadId, tabId, {
             title: null,
             url: initialUrl,
@@ -1160,8 +1263,8 @@ export function BrowserAutomationHost() {
                 targetGeneration: useBrowserAutomationStore.getState().liveTargets.get(
                   browserAutomationTargetKey(request.threadId, tabId),
                 )?.revision ?? 1,
-                active: true,
-                focused: true,
+                active: !agentOwnedOpen,
+                focused: !agentOwnedOpen,
                 lastUsedAt: Date.now(),
               },
             };
@@ -1195,7 +1298,10 @@ export function BrowserAutomationHost() {
               ...dispatch,
               request: {
                 ...dispatch.request,
-                args: { activate: request.args.activate },
+                args: {
+                  activate: request.args.activate,
+                  ...(request.args.idempotencyKey ? { idempotencyKey: request.args.idempotencyKey } : {}),
+                },
               },
             }
           : dispatch;
@@ -1230,6 +1336,8 @@ export function BrowserAutomationHost() {
             // Keep finalizer cleanup settled; closePage preserves logical records on physical failure.
           }
         }
+        if (createdWebTabId && !bootstrapSucceeded) removePersistentWebTab(createdWebTabId);
+        if (!bootstrapSucceeded && agentOpenKey) agentOpenTabsRef.current.delete(agentOpenKey);
         window.clearTimeout(deadlineTimer);
         if (bootstrapAbortRef.current.get(key) === controller) bootstrapAbortRef.current.delete(key);
         bootstrapPendingRef.current.delete(key);
@@ -1287,6 +1395,9 @@ export function BrowserAutomationHost() {
         new Set(nextScopes.map((scope) => scope.threadId)),
       );
     }
+    for (const tab of persistentWebTabsRef.current.values()) {
+      if (matches(tab.threadId, tab.workspaceId)) removePersistentWebTab(tab.tabId);
+    }
     const lease = leaseRef.current;
     for (const [key, request] of bootstrapRequestRef.current) {
       if (!matches(request.threadId, request.workspaceId)) continue;
@@ -1339,9 +1450,16 @@ export function BrowserAutomationHost() {
     webAbortRef.current.clear();
     webObserverRef.current.clear();
     webHumanCancelRef.current.clear();
+    persistentWebTabsRef.current.clear();
+    sessionDriverRef.current?.clearIdempotency();
+    agentOpenTabsRef.current.clear();
   }, []);
 
   return backgroundScopes.map((scope) => (
-    <PersistentAutomationPreviewSurface key={scope.threadId} scope={scope} />
+    <PersistentAutomationPreviewSurface
+      key={scope.threadId}
+      scope={scope}
+      webTabs={[...persistentWebTabsRef.current.values()]}
+    />
   ));
 }
