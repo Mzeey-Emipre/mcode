@@ -603,7 +603,7 @@ export function ChatView() {
         if (telemetryThreadId) recordSubscriptionSkipped(telemetryThreadId);
         return;
       }
-      if (pending?.epoch === epoch && pending.signature === targetSignature) return;
+      if (pending?.epoch === epoch) return;
       const requestId = atomicSubscriptionRequestIdRef.current + 1;
       atomicSubscriptionRequestIdRef.current = requestId;
       atomicSubscriptionRequestRef.current = {
@@ -703,6 +703,11 @@ export function ChatView() {
         if (atomicSubscriptionRequestRef.current?.epoch === epoch
           && atomicSubscriptionRequestRef.current.id === requestId) {
           atomicSubscriptionRequestRef.current = null;
+          if (subscriptionMountedRef.current
+            && subscriptionEpochRef.current === epoch
+            && subscriptionTargetSignatureRef.current !== targetSignature) {
+            setSubscriptionReconcileVersion((version) => version + 1);
+          }
         }
       });
       return;
