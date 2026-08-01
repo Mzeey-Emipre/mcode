@@ -41,6 +41,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { PrSplitButton } from "./PrSplitButton";
 import { ChecksPopover } from "./ChecksPopover";
 import { CreatePrDialog } from "./CreatePrDialog";
+import { ThreadOverviewBrowserPrototype } from "./ThreadOverviewBrowserPrototype";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { usePullRequestReviewLink } from "@/hooks/usePullRequestReviewLink";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
@@ -2197,6 +2198,8 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                 />
               </>
             )}
+
+            <ThreadOverviewBrowserPrototype />
 
             {sources.length > 0 && (
               <>
