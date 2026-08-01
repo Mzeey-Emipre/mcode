@@ -149,12 +149,25 @@ describe("CodexProvider permission flow", () => {
     expect(pending).toHaveLength(1);
     const requestId = pending[0].requestId;
 
-    provider.stopSession(sessionId);
+    const pool = (
+      provider as unknown as {
+        runtime: { sessions: Map<string, { state: { server: { interruptTurn: () => Promise<void> } } }> };
+      }
+    ).runtime.sessions;
+    const state = pool.get(sessionId)!.state;
+    let releaseInterrupt!: () => void;
+    const interruptGate = new Promise<void>((resolve) => { releaseInterrupt = resolve; });
+    state.server.interruptTurn = vi.fn(() => interruptGate);
+
+    const stopPromise = provider.stopSession(sessionId);
 
     const response = await p;
     expect(response).toEqual({ decision: "cancel" });
     expect(resolved).toEqual([{ requestId, decision: "cancelled" }]);
     expect(provider.listPendingPermissions!(threadId)).toHaveLength(0);
+
+    releaseInterrupt();
+    await stopPromise;
   });
 
   it("shutdown drains pending permissions across all sessions", async () => {

@@ -2243,6 +2243,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    */
   async stopSession(sessionId: string): Promise<void> {
     const exists = this.runtime.get(sessionId) !== undefined;
+    // Resolve host approvals before teardown can block on provider I/O. The
+    // close path repeats this drain defensively, but the stop contract must
+    // settle waiting requests even when interrupt/close is slow or stuck.
+    this.drainPending((e) => e.sessionId === sessionId);
     if (exists) {
       await this.runtime.stop(sessionId);
     } else {
