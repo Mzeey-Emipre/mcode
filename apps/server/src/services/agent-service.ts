@@ -2659,13 +2659,15 @@ export class AgentService {
           if (event.turnExecutionId) {
             this.finalResponseExecutionByThread.set(event.threadId, event.turnExecutionId);
           }
+          let isPostTurnGoalReceipt = false;
+          let messagePersisted = false;
           try {
             // Record the thread's active model on the message so the UI can
             // display which provider/model produced the response, even if the
             // user later switches model mid-conversation.
             const thread = this.threadRepo.findById(event.threadId);
             const modelForMessage = thread?.model ?? null;
-            const isPostTurnGoalReceipt =
+            isPostTurnGoalReceipt =
               this.turnCompleteSeenByThread.has(event.threadId) &&
               GOAL_ACHIEVED_RECEIPT_RE.test(event.content.trim());
 
@@ -2712,6 +2714,7 @@ export class AgentService {
               }
               this.turnFinalizer.resetStreamingText(event.threadId);
             }
+            messagePersisted = true;
           } catch (err) {
             logger.error("Failed to persist assistant message", {
               threadId: event.threadId,
@@ -2797,6 +2800,37 @@ export class AgentService {
                 error: err instanceof Error ? err.message : String(err),
               });
             }
+          }
+
+          const runtime = this.turnRuntime.snapshot(event.threadId);
+          if (messagePersisted
+            && !isPostTurnGoalReceipt
+            && !this.compactionInProgressByThread.has(event.threadId)
+            && event.turnExecutionId
+            && runtime?.turnExecutionId === event.turnExecutionId
+            && (runtime.phase === "running" || runtime.phase === "finalizing")
+            && !this.turnCompleteSeenByThread.has(event.threadId)) {
+            const completionEvent: AgentEvent = {
+              type: AgentEventType.TurnComplete,
+              threadId: event.threadId,
+              turnExecutionId: event.turnExecutionId,
+              reason: "message_received",
+              costUsd: null,
+              tokensIn: 0,
+              tokensOut: 0,
+              providerId: this.threadRepo.findById(event.threadId)?.provider,
+            };
+            queueMicrotask(() => {
+              const current = this.turnRuntime.snapshot(event.threadId);
+              if (!current || current.turnExecutionId !== event.turnExecutionId) {
+                return;
+              }
+              if ((current.phase === "running" || current.phase === "finalizing")
+                && !this.compactionInProgressByThread.has(event.threadId)
+                && !this.turnCompleteSeenByThread.has(event.threadId)) {
+                this.emitProviderEvent(provider, completionEvent);
+              }
+            });
           }
         }
 

@@ -213,6 +213,11 @@ function buildService(): {
   };
 }
 
+function synthesizedTurnCompleteEvents(events: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return events.filter((event) => event.type === "turnComplete"
+    && (event.reason === "message_received" || event.reason === "provider_stream_exhausted"));
+}
+
 describe("AgentService transient-failure auto-retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -460,7 +465,7 @@ describe("AgentService transient-failure auto-retry", () => {
     });
 
     const executionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
-    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
     expect(events.find((event) => event.type === "turnComplete")?.turnExecutionId).toBe(executionId);
     expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
@@ -478,20 +483,6 @@ describe("AgentService transient-failure auto-retry", () => {
         content: "done",
         tokens: null,
       });
-      providerEmitter.emit("event", {
-        type: "turnComplete",
-        threadId: THREAD_ID,
-        turnExecutionId: request.turnExecutionId,
-        reason: "end_turn",
-        costUsd: null,
-        tokensIn: 0,
-        tokensOut: 0,
-      });
-      providerEmitter.emit("event", {
-        type: "ended",
-        threadId: THREAD_ID,
-        turnExecutionId: request.turnExecutionId,
-      });
       return Promise.resolve();
     });
 
@@ -504,7 +495,22 @@ describe("AgentService transient-failure auto-retry", () => {
       provider: "claude",
     });
 
-    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+    });
+
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
     expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
     expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
@@ -604,6 +610,122 @@ describe("AgentService transient-failure auto-retry", () => {
       turnExecutionId: executionId,
     });
     expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("cancelled");
+  });
+
+  it("ignores stale Message events and completes only the matching execution", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: "child-execution",
+      content: "child",
+      tokens: null,
+    });
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "root",
+      tokens: null,
+    });
+    await Promise.resolve();
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+  });
+
+  it("does not treat a post-turn goal receipt as a new completion", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "done",
+      tokens: null,
+    });
+    await Promise.resolve();
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "Goal achieved in 1s.",
+      tokens: null,
+    });
+
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+  });
+
+  it("leaves compaction-owned messages running until compaction finishes", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    providerEmitter.emit("event", {
+      type: "compacting",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      active: true,
+    });
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "compaction result",
+      tokens: null,
+    });
+    await Promise.resolve();
+
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    providerEmitter.emit("event", {
+      type: "compacting",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      active: false,
+    });
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
   });
 
   it("swallows discardSession's trailing Ended when sendTurn rejects without emitting Error", async () => {
