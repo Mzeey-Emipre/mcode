@@ -213,6 +213,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     const tabs = bridgeTabs();
     const r = await tabs?.closeScope?.(scopeId);
     if (r && !r.ok) throw new Error(r.error);
+    useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
     set((s) => {
       const tabSetByScope = { ...s.tabSetByScope };
       const liveChromeByScope = { ...s.liveChromeByScope };

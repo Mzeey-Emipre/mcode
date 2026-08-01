@@ -6,6 +6,8 @@ import {
   type PreviewLiveChrome,
 } from "../previewTabsStore";
 import { usePreviewFocusStore } from "../previewFocusStore";
+import { useBrowserAutomationStore } from "../browserAutomationStore";
+import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 
 const SCOPE = "thread-1";
 
@@ -31,6 +33,7 @@ function mockBridge(handlers: {
   create?: BrowserTabSet;
   activate?: BrowserTabSet;
   close?: BrowserTabSet;
+  closeScope?: BrowserTabSet;
 }) {
   const create = vi.fn(async () => ({
     ok: true as const,
@@ -44,11 +47,17 @@ function mockBridge(handlers: {
     ok: true as const,
     data: handlers.close ?? set("a", [page("a")]),
   }));
+  const closeScope = vi.fn(async (): Promise<
+    { ok: true; data: BrowserTabSet } | { ok: false; error: string }
+  > => ({
+    ok: true as const,
+    data: handlers.closeScope ?? set(null, []),
+  }));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).desktopBridge = {
-    preview: { tabs: { create, activate, close, list: vi.fn(), onUpdated: vi.fn() } },
+    preview: { tabs: { create, activate, close, closeScope, list: vi.fn(), onUpdated: vi.fn() } },
   };
-  return { create, activate, close };
+  return { create, activate, close, closeScope };
 }
 
 describe("overlayDisplaySet", () => {
@@ -91,6 +100,7 @@ describe("previewTabsStore", () => {
   beforeEach(() => {
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
     usePreviewFocusStore.setState({ omniboxFocusTick: 0 });
+    browserTargetRegistry.clear();
   });
 
   afterEach(() => {
@@ -147,6 +157,29 @@ describe("previewTabsStore", () => {
     // The host recreates a blank fallback, but the Browser tab is gone; the
     // scope's set must clear rather than retain a phantom page.
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
+  });
+
+  it("clearScope releases every target after a successful scope close", async () => {
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "b");
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-2", "other");
+    const { closeScope } = mockBridge({});
+
+    await usePreviewTabsStore.getState().clearScope(SCOPE);
+
+    expect(closeScope).toHaveBeenCalledWith(SCOPE);
+    expect(browserTargetRegistry.get(SCOPE, "a")).toBeNull();
+    expect(browserTargetRegistry.get(SCOPE, "b")).toBeNull();
+    expect(browserTargetRegistry.get("thread-2", "other")).not.toBeNull();
+  });
+
+  it("clearScope retains targets when the physical scope close fails", async () => {
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
+    const { closeScope } = mockBridge({});
+    closeScope.mockResolvedValueOnce({ ok: false, error: "scope close failed" });
+
+    await expect(usePreviewTabsStore.getState().clearScope(SCOPE)).rejects.toThrow("scope close failed");
+    expect(browserTargetRegistry.get(SCOPE, "a")).not.toBeNull();
   });
 
   it("setLiveChrome keeps the same reference when the chrome is unchanged", () => {

@@ -1217,10 +1217,10 @@ export function BrowserAutomationHost() {
           lease.generation,
           failureResponse(request, "TAB_UNAVAILABLE", cause instanceof Error ? cause.message : "Browser open failed"),
         );
-      }).finally(() => {
-        void restoreBackgroundContext();
+      }).finally(async () => {
+        await restoreBackgroundContext();
         if (createdTabId && !bootstrapSucceeded) {
-          void window.desktopBridge?.preview?.tabs.close?.(request.threadId, createdTabId);
+          await usePreviewTabsStore.getState().closePage(request.threadId, createdTabId);
         }
         window.clearTimeout(deadlineTimer);
         if (bootstrapAbortRef.current.get(key) === controller) bootstrapAbortRef.current.delete(key);
