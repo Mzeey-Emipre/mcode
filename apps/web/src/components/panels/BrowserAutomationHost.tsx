@@ -1218,9 +1218,17 @@ export function BrowserAutomationHost() {
           failureResponse(request, "TAB_UNAVAILABLE", cause instanceof Error ? cause.message : "Browser open failed"),
         );
       }).finally(async () => {
-        await restoreBackgroundContext();
+        try {
+          await restoreBackgroundContext();
+        } catch {
+          // Restoration failure must not skip closing a tab created for this bootstrap.
+        }
         if (createdTabId && !bootstrapSucceeded) {
-          await usePreviewTabsStore.getState().closePage(request.threadId, createdTabId);
+          try {
+            await usePreviewTabsStore.getState().closePage(request.threadId, createdTabId);
+          } catch {
+            // Keep finalizer cleanup settled; closePage preserves logical records on physical failure.
+          }
         }
         window.clearTimeout(deadlineTimer);
         if (bootstrapAbortRef.current.get(key) === controller) bootstrapAbortRef.current.delete(key);
