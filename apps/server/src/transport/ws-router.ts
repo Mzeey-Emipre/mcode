@@ -879,12 +879,11 @@ async function dispatch(
       return thread;
     }
     case "agent.stop":
-      await deps.agentService.stopSession(params.threadId);
-      return;
+      return deps.agentService.stopSession(params.threadId);
     case "agent.activeCount":
       return deps.agentService.activeCount();
     case "agent.listRunning":
-      return deps.agentService.activeThreadIds();
+      return deps.agentService.runtimeSnapshots();
     case "agent.answerQuestions":
       await deps.agentService.answerQuestions(
         params.threadId,

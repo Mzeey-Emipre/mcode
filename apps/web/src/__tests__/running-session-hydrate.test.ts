@@ -4,9 +4,11 @@ import {
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import type { HookExecution, ToolCall } from "@/transport";
+import type { AgentEvent } from "@mcode/contracts";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { hydrateRunningThreadsFromServer } from "@/transport/ws-transport";
+import { isThreadRunningForSubmit } from "@/components/chat/Composer";
 
 describe("hydrateRunningThreadsFromServer", () => {
   beforeEach(() => {
@@ -14,7 +16,10 @@ describe("hydrateRunningThreadsFromServer", () => {
   });
 
   it("replaces runningThreadIds with the RPC result", async () => {
-    const rpc = vi.fn().mockResolvedValue(["t-1", "t-2"]);
+    const rpc = vi.fn().mockResolvedValue([
+      { threadId: "t-1", turnExecutionId: "00000000-0000-4000-8000-000000000001", phase: "running" },
+      { threadId: "t-2", turnExecutionId: "00000000-0000-4000-8000-000000000002", phase: "finalizing" },
+    ]);
     await hydrateRunningThreadsFromServer(rpc);
     expect(rpc).toHaveBeenCalledWith("agent.listRunning", {});
     const ids = useThreadStore.getState().runningThreadIds;
@@ -58,38 +63,47 @@ describe("hydrateRunningThreadsFromServer", () => {
     expect(rec.thoughtSegments).toEqual([]);
   });
 
-  it("preserves threadIds added while the RPC is in flight", async () => {
-    // Start with one stale id. The server will return ["t-server"] but a
-    // concurrent session.turnStarted push will add "t-concurrent" DURING the
-    // RPC. The final Set must contain both server ids and the concurrent add,
-    // but NOT the stale one.
-    let resolveRpc: (v: string[]) => void = () => {};
-    const rpcPromise = new Promise<string[]>((r) => { resolveRpc = r; });
+  it("preserves a newer turnStarted runtime while hydration is pending", async () => {
+    resetThreadStoreForTests({ runningThreadIds: new Set() });
+    let resolveRpc: (v: Array<{ threadId: string; turnExecutionId: string; phase: "running" }>) => void = () => {};
+    const rpcPromise = new Promise<Array<{ threadId: string; turnExecutionId: string; phase: "running" }>>((r) => { resolveRpc = r; });
     const rpc = vi.fn().mockReturnValue(rpcPromise);
 
     const pending = hydrateRunningThreadsFromServer(rpc);
 
-    // Flush all pending microtasks (including the dynamic import resolution
-    // chain) before simulating the concurrent push. A single setTimeout(0)
-    // enqueues a macrotask; the event loop drains all microtasks first,
-    // guaranteeing `beforeRpc` is captured before we mutate the store.
+    // The running id is added by the optimistic send while the RPC is in flight.
     await new Promise((r) => setTimeout(r, 0));
 
-    // Simulate a concurrent turnStarted push that adds a new threadId.
-    useThreadStore.setState((state) => {
-      const next = new Set(state.runningThreadIds);
-      next.add("t-concurrent");
-      return { runningThreadIds: next };
-    });
+    const threadId = "t-new";
+    useThreadStore.setState({ runningThreadIds: new Set([threadId]) });
+    const turnExecutionId = "00000000-0000-4000-8000-000000000004";
+    useThreadStore.getState().handleAgentEvent({
+      type: "turnStarted",
+      threadId,
+      turnExecutionId,
+      fileEffectTurnId: "turn-1",
+    } as AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "toolUse",
+      threadId,
+      turnExecutionId,
+      toolCallId: "tool-1",
+      toolName: "Read",
+      toolInput: { path: "README.md" },
+    } as AgentEvent);
 
-    // Now resolve the RPC with the server's snapshot (which does NOT include t-concurrent).
-    resolveRpc(["t-server"]);
+    // Now resolve the RPC with the server's snapshot (which does not include t-new).
+    resolveRpc([{ threadId: "t-server", turnExecutionId: "00000000-0000-4000-8000-000000000003", phase: "running" }]);
     await pending;
 
     const ids = useThreadStore.getState().runningThreadIds;
-    expect(ids.has("stale")).toBe(false);          // dropped (server doesn't report it)
+    expect(ids.has(threadId)).toBe(true);           // newer turnStarted wins
     expect(ids.has("t-server")).toBe(true);        // server's truth
-    expect(ids.has("t-concurrent")).toBe(true);    // concurrent add preserved
+    const record = useThreadStore.getState().records.get(threadId)!;
+    expect(record.runtimePhase).toBe("running");
+    expect(record.turnExecutionId).toBe(turnExecutionId);
+    expect(record.toolCalls).toHaveLength(1);
+    expect(isThreadRunningForSubmit(threadId, false)).toBe(true);
   });
 });
 

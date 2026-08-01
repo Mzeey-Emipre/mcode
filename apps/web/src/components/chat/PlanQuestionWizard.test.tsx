@@ -28,6 +28,8 @@ function seed(running = false) {
   resetThreadStoreForTests({
     records: new Map([[threadId, {
       ...createEmptyThreadRecord(),
+      runtimePhase: running ? "running" : "idle",
+      turnExecutionId: running ? "exec-plan" : null,
       planQuestions: questions,
       planAnswers: new Map(),
       planQuestionsStatus: "pending",
@@ -76,7 +78,11 @@ describe("PlanQuestionWizard", () => {
     const { rerender } = render(<PlanQuestionWizard threadId={threadId} />);
     expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
 
-    useThreadStore.setState({ runningThreadIds: new Set() });
+    useThreadStore.getState().applyThreadRuntimeSnapshot({
+      threadId,
+      turnExecutionId: "exec-plan",
+      phase: "completed",
+    });
     rerender(<PlanQuestionWizard threadId={threadId} />);
     expect(screen.getByRole("button", { name: /submit/i })).toBeEnabled();
   });

@@ -31,6 +31,8 @@ function setup(extra: Partial<ThreadRecord> = {}) {
         THREAD,
         {
           ...createEmptyThreadRecord(),
+          runtimePhase: "running",
+          turnExecutionId: "exec-context",
           agentStartTime: Date.now(),
           ...extra,
         },
@@ -49,7 +51,7 @@ describe("context tracker — Fix 2: output tokens included", () => {
   it("turnComplete stores tokensIn directly (server already adds output tokens)", () => {
     // The server (claude-provider) now includes output_tokens in tokensIn.
     // The frontend stores whatever value it receives.
-    dispatch({ type: "turnComplete", threadId: THREAD, reason: "end_turn", costUsd: null, tokensIn: 5000, tokensOut: 500, contextWindow: 200_000 });
+    dispatch({ type: "turnComplete", threadId: THREAD, turnExecutionId: "exec-context", reason: "end_turn", costUsd: null, tokensIn: 5000, tokensOut: 500, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     expect(ctx?.lastTokensIn).toBe(5000);
@@ -66,7 +68,7 @@ describe("context tracker — Fix 1: turnComplete skipped during compaction", ()
   );
 
   it("turnComplete during compaction does NOT update contextByThread", () => {
-    dispatch({ type: "turnComplete", threadId: THREAD, reason: "end_turn", costUsd: null, tokensIn: 195_000, tokensOut: 500, contextWindow: 200_000 });
+    dispatch({ type: "turnComplete", threadId: THREAD, turnExecutionId: "exec-context", reason: "end_turn", costUsd: null, tokensIn: 195_000, tokensOut: 500, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     // Must stay empty — no flash of pre-compaction tokens
@@ -94,7 +96,12 @@ describe("context tracker — Fix 3: contextEstimate on compaction end", () => {
       currentThreadId: THREAD,
       runningThreadIds: new Set([THREAD]),
       records: new Map<string, ThreadRecord>([
-        [THREAD, { ...createEmptyThreadRecord(), agentStartTime: Date.now() }],
+        [THREAD, {
+          ...createEmptyThreadRecord(),
+          runtimePhase: "running",
+          turnExecutionId: "exec-context",
+          agentStartTime: Date.now(),
+        }],
       ]),
     });
 
@@ -138,7 +145,7 @@ describe("context tracker — Fix 4: live estimation during turn", () => {
 
   it("turnComplete after tool calls overwrites estimate with authoritative value", () => {
     dispatch({ type: "contextEstimate", threadId: THREAD, tokensIn: 52_500, contextWindow: 200_000 });
-    dispatch({ type: "turnComplete", threadId: THREAD, reason: "end_turn", costUsd: null, tokensIn: 53_100, tokensOut: 600, contextWindow: 200_000 });
+    dispatch({ type: "turnComplete", threadId: THREAD, turnExecutionId: "exec-context", reason: "end_turn", costUsd: null, tokensIn: 53_100, tokensOut: 600, contextWindow: 200_000 });
 
     const ctx = getTestThreadContext(THREAD);
     expect(ctx?.lastTokensIn).toBe(53_100);

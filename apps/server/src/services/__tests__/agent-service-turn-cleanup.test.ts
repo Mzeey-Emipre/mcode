@@ -54,6 +54,19 @@ vi.mock("fs", async (importOriginal) => {
 
 const THREAD_ID = "thread-cleanup-test";
 
+function activeExecutionId(service: AgentService, threadId = THREAD_ID): string {
+  const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === threadId)?.turnExecutionId;
+  if (!executionId) throw new Error("Expected an active turn execution identity");
+  return executionId;
+}
+
+function startProviderTurn(service: AgentService): string {
+  const runtime = (service as unknown as {
+    turnRuntime: { start: (threadId: string) => { turnExecutionId: string } };
+  }).turnRuntime;
+  return runtime.start(THREAD_ID).turnExecutionId;
+}
+
 /** Create a minimal Thread fixture with sensible defaults for turn cleanup tests. */
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -327,11 +340,13 @@ describe("AgentService turn cleanup", () => {
     });
 
     expect(service.activeThreadIds()).toContain(THREAD_ID);
+    const executionId = activeExecutionId(service);
 
     // Fire TurnComplete through the provider
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
+      turnExecutionId: executionId,
       reason: "end_turn",
       costUsd: null,
       tokensIn: 100,
@@ -368,6 +383,196 @@ describe("AgentService turn cleanup", () => {
 
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markActive).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps exact turn running when provider stop fails, then cancels on retry", async () => {
+    const { service, providerEmitter } = buildService();
+    service.init();
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const provider = providerEmitter as EventEmitter & { stopSession: ReturnType<typeof vi.fn> };
+    provider.stopSession.mockRejectedValueOnce(new Error("stop unavailable"));
+
+    await expect(service.stopSession(THREAD_ID)).rejects.toThrow("stop unavailable");
+    expect(service.activeThreadIds()).toContain(THREAD_ID);
+
+    provider.stopSession.mockResolvedValueOnce(undefined);
+    const result = await service.stopSession(THREAD_ID);
+    expect(result.status).toBe("cancelled");
+    expect(result.dispatchState).toBe("dispatched");
+    expect(result.snapshot).toMatchObject({ threadId: THREAD_ID, phase: "cancelled" });
+    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+  });
+
+  it("cancels during delayed setup without dispatching after setup resumes", async () => {
+    const { service, providerEmitter, attachmentService } = buildService();
+    service.init();
+    let releaseSetup!: () => void;
+    const setupReady = new Promise<void>((resolve) => { releaseSetup = resolve; });
+    (attachmentService.persist as ReturnType<typeof vi.fn>).mockImplementationOnce(() => (
+      setupReady.then(() => ({ stored: [], persisted: [] }))
+    ));
+
+    const send = service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    await vi.waitFor(() => expect(service.activeThreadIds()).toContain(THREAD_ID));
+
+    const result = await service.stopSession(THREAD_ID);
+    expect(result.status).toBe("cancelled");
+    expect(result.dispatchState).toBe("not-dispatched");
+    expect((providerEmitter as EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
+      .not.toHaveBeenCalled();
+
+    const replacement = service.sendMessage({
+      threadId: THREAD_ID,
+      content: "replacement",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    await replacement;
+    expect(service.activeThreadIds()).toContain(THREAD_ID);
+
+    releaseSetup();
+    await send;
+    expect((providerEmitter as EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
+      .toHaveBeenCalledTimes(1);
+  });
+
+  it("terminalizes setup failure after reserving runtime authority", async () => {
+    const { service, providerEmitter, attachmentService } = buildService();
+    service.init();
+    (attachmentService.persist as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("attachment setup failed"),
+    );
+
+    await expect(service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    })).rejects.toThrow("attachment setup failed");
+    expect(service.activeThreadIds()).not.toContain(THREAD_ID);
+    expect(service.runtimeSnapshots()).toEqual([
+      expect.objectContaining({ threadId: THREAD_ID, phase: "errored" }),
+    ]);
+    expect((providerEmitter as EventEmitter & { sendTurn: ReturnType<typeof vi.fn> }).sendTurn)
+      .not.toHaveBeenCalled();
+  });
+
+  it("shares one successful provider stop across concurrent callers", async () => {
+    const { service, providerEmitter } = buildService();
+    service.init();
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const provider = providerEmitter as EventEmitter & {
+      stopSession: ReturnType<typeof vi.fn>;
+    };
+    let releaseStop!: () => void;
+    provider.stopSession.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    }));
+
+    const first = service.stopSession(THREAD_ID);
+    const second = service.stopSession(THREAD_ID);
+    releaseStop();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(provider.stopSession).toHaveBeenCalledTimes(1);
+    expect(secondResult).toEqual(firstResult);
+    expect(firstResult.status).toBe("cancelled");
+  });
+
+  it("shares provider stop failure, then retries after single-flight clears", async () => {
+    const { service, providerEmitter } = buildService();
+    service.init();
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const provider = providerEmitter as EventEmitter & {
+      stopSession: ReturnType<typeof vi.fn>;
+    };
+    provider.stopSession.mockRejectedValueOnce(new Error("stop unavailable"));
+    const first = service.stopSession(THREAD_ID);
+    const second = service.stopSession(THREAD_ID);
+    await expect(first).rejects.toThrow("stop unavailable");
+    await expect(second).rejects.toThrow("stop unavailable");
+    expect(provider.stopSession).toHaveBeenCalledTimes(1);
+    expect(service.activeThreadIds()).toContain(THREAD_ID);
+
+    provider.stopSession.mockResolvedValueOnce(undefined);
+    const retry = await service.stopSession(THREAD_ID);
+    expect(retry.status).toBe("cancelled");
+    expect(provider.stopSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not duplicate finalization when completion wins during stop", async () => {
+    const { service, providerEmitter } = buildService();
+    service.init();
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const runtime = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID);
+    const executionId = runtime?.turnExecutionId;
+    expect(executionId).toBeTruthy();
+    if (!executionId) throw new Error("turn execution identity missing");
+    const provider = providerEmitter as EventEmitter & {
+      stopSession: ReturnType<typeof vi.fn>;
+    };
+    let releaseStop!: () => void;
+    provider.stopSession.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    }));
+
+    const stopping = service.stopSession(THREAD_ID);
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 1,
+      tokensOut: 1,
+      contextWindow: 200000,
+      totalProcessedTokens: 2,
+      providerId: "claude",
+    } satisfies AgentEvent);
+    releaseStop();
+    const result = await stopping;
+    expect(provider.stopSession).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("already-terminal");
+    expect(result.snapshot).toMatchObject({ threadId: THREAD_ID, phase: "completed" });
   });
 
   it("persists preview annotation snapshots as visible provider attachments", async () => {
@@ -474,11 +679,13 @@ describe("AgentService turn cleanup", () => {
       provider: "claude",
     });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
+    const executionId = activeExecutionId(service);
 
     // Turn completes, thread removed from active
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
+      turnExecutionId: executionId,
       reason: "end_turn",
       costUsd: null,
       tokensIn: 100,
@@ -492,9 +699,11 @@ describe("AgentService turn cleanup", () => {
 
     // SDK auto-resumes: TurnStarted fires from stream loop
     memoryPressureService.markActive.mockClear();
+    const resumedExecutionId = startProviderTurn(service);
     providerEmitter.emit("event", {
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
+      turnExecutionId: resumedExecutionId,
     } satisfies AgentEvent);
 
     // The resumed turn becomes active after prior-turn persistence releases its barrier.
@@ -511,12 +720,19 @@ describe("AgentService turn cleanup", () => {
     service.init();
 
     expect(mutationReservations.rehydrate(THREAD_ID, "pending-approval")).toBe(true);
+    const resumedExecutionId = startProviderTurn(service);
     providerEmitter.emit("event", {
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
+      turnExecutionId: resumedExecutionId,
     } satisfies AgentEvent);
 
     await vi.waitFor(() => expect(provider.stopSession).toHaveBeenCalledWith(`mcode-${THREAD_ID}`));
+    providerEmitter.emit("event", {
+      type: AgentEventType.Ended,
+      threadId: THREAD_ID,
+      turnExecutionId: resumedExecutionId,
+    } satisfies AgentEvent);
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
     expect(mutationReservations.owns(THREAD_ID, "pending-approval", "pendingApproval")).toBe(true);
   });
@@ -532,6 +748,7 @@ describe("AgentService turn cleanup", () => {
         turnSnapshotRepo,
       } = buildService(root);
       service.init();
+      const resumedExecutionId = startProviderTurn(service);
       snapshotService.captureRef.mockClear();
       const internals = service as unknown as {
         turnFileTracker: { observeToolUse: (...args: unknown[]) => Promise<void> };
@@ -541,10 +758,12 @@ describe("AgentService turn cleanup", () => {
       providerEmitter.emit("event", {
         type: AgentEventType.TurnStarted,
         threadId: THREAD_ID,
+        turnExecutionId: resumedExecutionId,
       } satisfies AgentEvent);
       providerEmitter.emit("event", {
         type: AgentEventType.ToolUse,
         threadId: THREAD_ID,
+        turnExecutionId: resumedExecutionId,
         toolCallId: "auto-edit",
         toolName: "Edit",
         toolInput: { file_path: "tracked.txt" },
@@ -556,6 +775,7 @@ describe("AgentService turn cleanup", () => {
       providerEmitter.emit("event", {
         type: AgentEventType.ToolResult,
         threadId: THREAD_ID,
+        turnExecutionId: resumedExecutionId,
         toolCallId: "auto-edit",
         output: "updated",
         isError: false,
@@ -563,6 +783,7 @@ describe("AgentService turn cleanup", () => {
       providerEmitter.emit("event", {
         type: AgentEventType.TurnComplete,
         threadId: THREAD_ID,
+        turnExecutionId: resumedExecutionId,
         reason: "end_turn",
         costUsd: null,
         tokensIn: 1,
@@ -608,6 +829,7 @@ describe("AgentService turn cleanup", () => {
         };
       }).turnFileTracker;
       const observeToolUse = vi.spyOn(tracker, "observeToolUse");
+      const firstExecutionId = startProviderTurn(service);
       const originalObserveToolResult = tracker.observeToolResult.bind(tracker);
       let releaseFirstResult!: () => void;
       const firstResultGate = new Promise<void>((resolve) => {
@@ -623,10 +845,12 @@ describe("AgentService turn cleanup", () => {
       providerEmitter.emit("event", {
         type: AgentEventType.TurnStarted,
         threadId: THREAD_ID,
+        turnExecutionId: firstExecutionId,
       } satisfies AgentEvent);
       providerEmitter.emit("event", {
         type: AgentEventType.ToolUse,
         threadId: THREAD_ID,
+        turnExecutionId: firstExecutionId,
         toolCallId: "first-edit",
         toolName: "Edit",
         toolInput: { file_path: "first.txt" },
@@ -637,6 +861,7 @@ describe("AgentService turn cleanup", () => {
       providerEmitter.emit("event", {
         type: AgentEventType.ToolResult,
         threadId: THREAD_ID,
+        turnExecutionId: firstExecutionId,
         toolCallId: "first-edit",
         output: "updated",
         isError: false,
@@ -644,6 +869,7 @@ describe("AgentService turn cleanup", () => {
       providerEmitter.emit("event", {
         type: AgentEventType.TurnComplete,
         threadId: THREAD_ID,
+        turnExecutionId: firstExecutionId,
         reason: "end_turn",
         costUsd: null,
         tokensIn: 1,
@@ -653,13 +879,16 @@ describe("AgentService turn cleanup", () => {
         providerId: "claude",
       } satisfies AgentEvent);
 
+      const secondExecutionId = startProviderTurn(service);
       providerEmitter.emit("event", {
         type: AgentEventType.TurnStarted,
         threadId: THREAD_ID,
+        turnExecutionId: secondExecutionId,
       } satisfies AgentEvent);
       providerEmitter.emit("event", {
         type: AgentEventType.ToolUse,
         threadId: THREAD_ID,
+        turnExecutionId: secondExecutionId,
         toolCallId: "second-edit",
         toolName: "Edit",
         toolInput: { file_path: "second.txt" },
@@ -668,12 +897,14 @@ describe("AgentService turn cleanup", () => {
       providerEmitter.emit("event", {
         type: AgentEventType.Message,
         threadId: THREAD_ID,
+        turnExecutionId: secondExecutionId,
         content: "second turn complete",
         tokens: null,
       } satisfies AgentEvent);
       providerEmitter.emit("event", {
         type: AgentEventType.ToolResult,
         threadId: THREAD_ID,
+        turnExecutionId: secondExecutionId,
         toolCallId: "second-edit",
         output: "updated",
         isError: false,
@@ -681,6 +912,7 @@ describe("AgentService turn cleanup", () => {
       providerEmitter.emit("event", {
         type: AgentEventType.TurnComplete,
         threadId: THREAD_ID,
+        turnExecutionId: secondExecutionId,
         reason: "end_turn",
         costUsd: null,
         tokensIn: 1,
@@ -729,11 +961,13 @@ describe("AgentService turn cleanup", () => {
       provider: "claude",
     });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
+    const executionId = activeExecutionId(service);
 
     // Turn completes, thread removed
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
+      turnExecutionId: executionId,
       reason: "end_turn",
       costUsd: null,
       tokensIn: 100,
@@ -750,6 +984,7 @@ describe("AgentService turn cleanup", () => {
     providerEmitter.emit("event", {
       type: AgentEventType.Error,
       threadId: THREAD_ID,
+      turnExecutionId: executionId,
       error: "Something went wrong",
     } satisfies AgentEvent);
 
@@ -770,10 +1005,12 @@ describe("AgentService turn cleanup", () => {
       provider: "claude",
     });
     expect(service.activeThreadIds()).toContain(THREAD_ID);
+    const executionId = activeExecutionId(service);
 
     providerEmitter.emit("event", {
       type: AgentEventType.Ended,
       threadId: THREAD_ID,
+      turnExecutionId: executionId,
     } satisfies AgentEvent);
 
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
@@ -878,16 +1115,19 @@ describe("AgentService Ended finalization", () => {
       attachments: [],
       provider: "codex",
     });
+    const executionId = activeExecutionId(service, thread.id);
     providerEmitter.emit("event", {
-      type: AgentEventType.TextDelta,
+      type: AgentEventType.Message,
       threadId: thread.id,
-      delta: "partial answer before the provider stopped",
-      isFinalResponse: false,
+      turnExecutionId: executionId,
+      content: "partial answer before the provider stopped",
+      tokens: null,
     } satisfies AgentEvent);
 
     providerEmitter.emit("event", {
       type: AgentEventType.Ended,
       threadId: thread.id,
+      turnExecutionId: executionId,
     } satisfies AgentEvent);
     await new Promise((resolve) => setTimeout(resolve, 0));
 

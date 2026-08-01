@@ -269,6 +269,7 @@ describe("CopilotProvider bootstrap", () => {
     );
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-browser-copilot",
       workspaceId: "workspace-test",
       threadId: "browser-copilot",
@@ -325,7 +326,8 @@ describe("CopilotProvider bootstrap", () => {
     expect(claims).not.toBeNull();
     lease.credentials.revoke(claims!.credentialId);
 
-    await provider.sendTurn({ ...request, message: "inspect again" });
+    await provider.sendTurn({
+      turnExecutionId: "test-execution", ...request, message: "inspect again" });
 
     expect(mockClient.createSession).toHaveBeenCalledTimes(2);
     expect(firstSession.disconnect).toHaveBeenCalled();
@@ -347,6 +349,7 @@ describe("CopilotProvider bootstrap", () => {
     );
 
     await expect(provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-browser-spawn-failed",
       workspaceId: "workspace-test",
       threadId: "browser-spawn-failed",
@@ -385,7 +388,14 @@ describe("CopilotProvider bootstrap", () => {
       permissionMode: "supervised" as const,
     };
 
-    await Promise.all([provider.sendTurn(request), provider.sendTurn({ ...request, message: "inspect again" })]);
+    await Promise.all([provider.sendTurn({
+      ...request,
+      turnExecutionId: "test-execution-1",
+    }), provider.sendTurn({
+      ...request,
+      turnExecutionId: "test-execution-2",
+      message: "inspect again",
+    })]);
 
     expect(lease.status()).toEqual({ active: 1, pending: 0 });
     await provider.stopSession(request.sessionId);
@@ -411,6 +421,7 @@ describe("CopilotProvider bootstrap", () => {
       provider.on("event", (e: AgentEvent) => events.push(e));
 
       await provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-test1",
         threadId: "test1",
         message: "hello",
@@ -445,6 +456,7 @@ describe("CopilotProvider bootstrap", () => {
       provider.on("event", (e: AgentEvent) => events.push(e));
 
       await provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-test2",
         threadId: "test2",
         message: "hello",
@@ -473,6 +485,7 @@ describe("CopilotProvider bootstrap", () => {
       provider.on("event", (e: AgentEvent) => events.push(e));
 
       await provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-test3",
         threadId: "test3",
         message: "hello",
@@ -558,6 +571,7 @@ async function runWithMockSession(
   provider.on("event", (e: AgentEvent) => events.push(e));
 
   await provider.sendTurn({
+      turnExecutionId: "test-execution",
     sessionId,
     threadId: sessionId.replace(/^mcode-/, ""),
     message: "hello",

@@ -64,6 +64,7 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     provider.on("event", (e: { type: string; error?: string }) => events.push(e));
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-1",
       threadId: "thread-1",
       message: "hi",
@@ -95,6 +96,7 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     provider.on("event", (e: { type: string }) => events.push(e));
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-2",
       threadId: "thread-2",
       message: "hi",
@@ -120,6 +122,7 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     provider.on("event", (e: { type: string; error?: string; content?: string }) => events.push(e));
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-3",
       threadId: "thread-3",
       message: "hi",

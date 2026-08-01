@@ -33,6 +33,28 @@ describe("Mcode runtime instruction plan", () => {
     expect(plan.text).not.toContain("Bearer");
   });
 
+  it("keeps Mcode threads distinct from provider subagents", () => {
+    const plan = buildMcodeInstructionPlan({
+      sourceThreadId: "thread-source",
+      threadControlGranted: true,
+      browserAutomationGranted: false,
+    });
+
+    expect(plan.text).toContain(
+      "An Mcode task/thread/delegated thread is a persistent user-visible conversation controlled by thread_* tools.",
+    );
+    expect(plan.text).toContain(
+      "A subagent is provider/model-side delegation in the same turn.",
+    );
+    expect(plan.text).toContain("'use threads/tasks' maps to thread_* tools");
+    expect(plan.text).toContain(
+      "'use subagents' maps to the provider subagent mechanism",
+    );
+    expect(plan.text).toContain("Never translate one term into the other.");
+    expect(plan.text).not.toContain("'use threads/tasks' maps to subagents");
+    expect(plan.text).not.toContain("'use subagents' maps to thread_* tools");
+  });
+
   it("keeps output within the documented cap", () => {
     const plan = buildMcodeInstructionPlan({
       sourceThreadId: "x".repeat(256),

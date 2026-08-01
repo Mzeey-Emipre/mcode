@@ -490,6 +490,9 @@ for (const provider of providerRegistry.resolveAll()) {
   });
 
   provider.on("event", (event: AgentEvent) => {
+    const normalizedEvent = agentService.prepareProviderEvent(event);
+    if (!normalizedEvent) return;
+    event = normalizedEvent;
     if (event.type === AgentEventType.GeneratedAttachment) {
       return;
     }

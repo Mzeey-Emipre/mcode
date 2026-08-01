@@ -70,6 +70,7 @@ describe("ClaudeProvider idle eviction with pending tool_use (#291)", () => {
     mockQuery.mockImplementation(makeToolUseStream());
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-t1",
       threadId: "t1",
       message: "run something long",
@@ -126,6 +127,7 @@ describe("ClaudeProvider idle eviction with pending tool_use (#291)", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-t2",
       threadId: "t2",
       message: "run",

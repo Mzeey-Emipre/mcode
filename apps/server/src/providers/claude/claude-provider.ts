@@ -33,6 +33,7 @@ import type {
   CompletionOptions,
 } from "@mcode/contracts";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
+import { createTurnEventSink } from "../../services/turn-event-sink.js";
 import { listClaudeModels } from "./list-models.js";
 import { resolveSdkModelSlug } from "./resolve-slug.js";
 import { clampContextWindowToMode, resolveAutoCompactWindow } from "./context-window.js";
@@ -129,7 +130,7 @@ interface ClaudeSessionState {
   /** Working directory the SDK subprocess was spawned with. */
   cwd: string;
   query: Query;
-  pushMessage: (msg: SDKUserMessage) => void;
+  pushMessage: (msg: SDKUserMessage, turnExecutionId?: string) => void;
   closeQueue: () => void;
   model: string;
   /**
@@ -183,16 +184,19 @@ interface ClaudeSessionState {
  * terminates the iterator, signaling the SDK to shut down the subprocess.
  */
 export function createPromptQueue(): {
-  push: (msg: SDKUserMessage) => void;
+  push: (msg: SDKUserMessage, turnExecutionId?: string) => void;
   close: () => void;
+  setOnPromptConsumed: (handler: (turnExecutionId?: string) => void) => void;
   iterable: AsyncIterable<SDKUserMessage>;
 } {
-  const pending: SDKUserMessage[] = [];
+  const pending: Array<{ message: SDKUserMessage; turnExecutionId?: string }> = [];
   let waiting: ((result: IteratorResult<SDKUserMessage>) => void) | null =
     null;
   let done = false;
+  let onPromptConsumed: ((turnExecutionId?: string) => void) | undefined;
 
-  const push = (msg: SDKUserMessage): void => {
+  const push = (msg: SDKUserMessage, turnExecutionId?: string): void => {
+    const queued = { message: msg, turnExecutionId };
     if (done) {
       throw new Error(
         "Prompt queue is closed; message cannot be delivered to the SDK",
@@ -201,15 +205,20 @@ export function createPromptQueue(): {
     if (waiting) {
       const resolve = waiting;
       waiting = null;
-      resolve({ value: msg, done: false });
+      onPromptConsumed?.(queued.turnExecutionId);
+      resolve({ value: queued.message, done: false });
     } else {
       if (pending.length >= MAX_QUEUE_DEPTH) {
         throw new Error(
           `Prompt queue full (depth=${pending.length}), cannot enqueue message`,
         );
       }
-      pending.push(msg);
+      pending.push(queued);
     }
+  };
+
+  const setOnPromptConsumed = (handler: (turnExecutionId?: string) => void): void => {
+    onPromptConsumed = handler;
   };
 
   const close = (): void => {
@@ -229,8 +238,10 @@ export function createPromptQueue(): {
       return {
         next(): Promise<IteratorResult<SDKUserMessage>> {
           if (pending.length > 0) {
+            const queued = pending.shift()!;
+            onPromptConsumed?.(queued.turnExecutionId);
             return Promise.resolve({
-              value: pending.shift()!,
+              value: queued.message,
               done: false,
             });
           }
@@ -248,7 +259,7 @@ export function createPromptQueue(): {
     },
   };
 
-  return { push, close, iterable };
+  return { push, close, setOnPromptConsumed, iterable };
 }
 
 /** Convert a plain string message into an SDKUserMessage. */
@@ -326,6 +337,7 @@ const STDERR_CAPTURE_LIMIT = 8_000;
  * by sessionId. Mirrors the Codex provider's `pendingSpawnTurns`.
  */
 interface PendingSpawnTurn {
+  turnExecutionId: string;
   prompt: SDKUserMessage;
   /** Whether this spawn should resume an existing SDK session id. */
   resume: boolean;
@@ -513,7 +525,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       maxTurns: req.maxTurns,
     };
     try {
-      await this.doSendMessage(params);
+      await this.doSendMessage(params, req.turnExecutionId);
     } catch (e: unknown) {
       logger.error("sendTurn error", {
         sessionId: req.sessionId,
@@ -936,7 +948,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     thinking?: boolean;
     maxBudgetUsd?: number;
     maxTurns?: number;
-  }): Promise<void> {
+  }, turnExecutionId: string): Promise<void> {
     const {
       sessionId,
       message,
@@ -951,6 +963,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       contextWindowMode,
       thinking,
     } = params;
+    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
 
     const existing = this.runtime.get(sessionId);
     const pendingBrowserAccess = this.pendingBrowserAccess.get(sessionId);
@@ -1048,7 +1061,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           this.suppressEndedQueries.add(existing.query);
           this.suppressSessionStartHooks.add(tid);
           await this.runtime.stop(sessionId);
-          return this.doSendMessage({ ...params, resume: false });
+          return this.doSendMessage({ ...params, resume: false }, turnExecutionId);
         }
       }
 
@@ -1079,12 +1092,12 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           this.suppressEndedQueries.add(existing.query);
           this.suppressSessionStartHooks.add(tid);
           await this.runtime.stop(sessionId);
-          return this.doSendMessage({ ...params, resume: false });
+          return this.doSendMessage({ ...params, resume: false }, turnExecutionId);
         }
       }
 
       try {
-        existing.pushMessage(prompt);
+        existing.pushMessage(prompt, turnExecutionId);
       } catch (err) {
         const errorMessage =
           err instanceof Error ? err.message : String(err);
@@ -1098,7 +1111,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
             sessionId,
             error: errorMessage,
           });
-          this.emit("event", {
+          emitTurnEvent({
             type: AgentEventType.Error,
             threadId: tid,
             error: "Message could not be delivered: session was shutting down. Please try again.",
@@ -1115,7 +1128,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
             sessionId,
             error: errorMessage,
           });
-          this.emit("event", {
+          emitTurnEvent({
             type: AgentEventType.Error,
             threadId: tid,
             error: errorMessage,
@@ -1315,7 +1328,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
             const { compact_summary } = (input as PostCompactHookInput);
             // Derive threadId the same way startStreamLoop does.
             const tid = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
-            this.emit("event", {
+          emitTurnEvent({
               type: AgentEventType.CompactSummary,
               threadId: tid,
               summary: compact_summary,
@@ -1349,6 +1362,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     // `spawn` discriminates resume vs. fresh via these staged fields.
     const stageTurn = (doResume: boolean): void => {
       this.pendingSpawnTurns.set(sessionId, {
+        turnExecutionId,
         prompt,
         resume: doResume,
         resumeId,
@@ -1422,7 +1436,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         // TurnStarted was already emitted by AgentService before calling the
         // provider, so the frontend thinks the agent is running. Emit Ended
         // to clear that state.
-        this.emit("event", {
+          emitTurnEvent({
           type: AgentEventType.Ended,
           threadId: tid,
         } satisfies AgentEvent);
@@ -1485,6 +1499,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       resolvedModel,
       contextWindowMode,
       orchestrationMode,
+      turnExecutionId,
     } = staged;
     const pendingBrowserAccess = this.pendingBrowserAccess.get(sessionId);
     const browserScope = pendingBrowserAccess?.scope;
@@ -1606,8 +1621,8 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     // reads `this.runtime.get(sessionId)` lazily on each SDK message; by the
     // time the first message yields, `acquire` has stored `state` in the pool
     // (the runtime stores it synchronously the moment this `spawn` resolves).
-    this.startStreamLoop(sessionId, q);
-    queue.push(prompt);
+    this.startStreamLoop(sessionId, q, turnExecutionId, queue.setOnPromptConsumed);
+    queue.push(prompt, turnExecutionId);
 
     return { state, pids };
   }
@@ -1659,12 +1674,26 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   }
 
   /** Run the stream loop for a query, mapping SDK events to AgentEvent types. */
-  private startStreamLoop(sessionId: string, q: Query): void {
+  private startStreamLoop(
+    sessionId: string,
+    q: Query,
+    turnExecutionId: string,
+    setOnPromptConsumed: (handler: (turnExecutionId?: string) => void) => void,
+  ): void {
     const threadId = sessionId.startsWith("mcode-")
       ? sessionId.slice(6)
       : sessionId;
 
     (async () => {
+      let currentTurnExecutionId = turnExecutionId;
+      const pendingPromptExecutionIds: string[] = [];
+      setOnPromptConsumed((consumedTurnExecutionId) => {
+        if (consumedTurnExecutionId && consumedTurnExecutionId !== currentTurnExecutionId) {
+          pendingPromptExecutionIds.push(consumedTurnExecutionId);
+        }
+      });
+      const emitTurnEvent = (event: AgentEvent): void =>
+        createTurnEventSink(this, currentTurnExecutionId)(event);
       let suppressEnded = false;
       try {
         let lastAssistantText = "";
@@ -1681,8 +1710,11 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         /** Set after a `result` (TurnComplete). When the SDK auto-resumes
          *  (e.g. ScheduleWakeup/loop), the next non-system/non-result event
          *  triggers a synthetic TurnStarted so the server and UI know a new
-         *  turn has begun without going through sendMessage(). */
+         *  turn has begun without going through sendMessage(). Prompt queue
+         *  consumption is the only boundary that can replace the execution ID;
+         *  internal result continuations stay on the current ID. */
         let awaitingResume = false;
+        let resumedTurnStarted = false;
 
         /** Suppresses duplicate ToolUse events when the SDK emits the same id on assistant blocks and tool_use messages. */
         const emittedToolUseIds = new Set<string>();
@@ -1714,7 +1746,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
             subtype: anyMsg.subtype,
             payload: anyMsg,
           });
-          this.emit("event", {
+        emitTurnEvent({
             type: AgentEventType.Error,
             threadId,
             error: errorMessage || "Claude SDK returned an error result",
@@ -1749,7 +1781,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
               sessionId,
               sdkSessionId: sdkSid,
             });
-            this.emit("event", {
+        emitTurnEvent({
               type: AgentEventType.System,
               threadId,
               subtype: "sdk_session_id:" + sdkSid,
@@ -1760,9 +1792,25 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           // going through sendMessage() (e.g. ScheduleWakeup/loop timer).
           // Emit a synthetic TurnStarted so AgentService re-adds to
           // activeSessionIds and the frontend shows the running indicator.
-          if (awaitingResume && anyMsg.type !== "result" && anyMsg.type !== "system") {
-            awaitingResume = false;
-            this.emit("event", {
+          let emitResumeStart = false;
+          if (
+            awaitingResume &&
+            anyMsg.type !== "system" &&
+            (anyMsg.type !== "result" || pendingPromptExecutionIds.length > 0)
+          ) {
+            const nextPromptExecutionId = pendingPromptExecutionIds.shift();
+            if (nextPromptExecutionId) {
+              awaitingResume = false;
+              currentTurnExecutionId = nextPromptExecutionId;
+              resumedTurnStarted = true;
+              emitResumeStart = true;
+            } else if (!resumedTurnStarted) {
+              resumedTurnStarted = true;
+              emitResumeStart = true;
+            }
+          }
+          if (emitResumeStart) {
+            emitTurnEvent({
               type: AgentEventType.TurnStarted,
               threadId,
             } satisfies AgentEvent);
@@ -1786,7 +1834,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 { sessionId },
               );
               this.sdkSessionIds.delete(sessionId);
-              this.emit("event", {
+        emitTurnEvent({
                 type: AgentEventType.System,
                 threadId,
                 subtype: "session_restarted",
@@ -1825,7 +1873,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   stopReason === "end_turn" ||
                   stopReason === "stop_sequence" ||
                   stopReason === "max_tokens";
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.AssistantMessageBoundary,
                   threadId,
                   isFinalResponse,
@@ -1865,7 +1913,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   logger.debug("Claude ToolUse from assistant block", {
                     toolId, toolName, parent_tool_use_id: sdkParentToolUseId ?? null,
                   });
-                  this.emit("event", {
+        emitTurnEvent({
                     type: AgentEventType.ToolUse,
                     threadId,
                     toolCallId: toolId,
@@ -1901,7 +1949,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   // Surface the reset as a quiet system-message hairline in the
                   // transcript (handled client-side), not a red error card. The
                   // same event also clears the persisted sdk_session_id server-side.
-                  this.emit("event", {
+        emitTurnEvent({
                     type: AgentEventType.System,
                     threadId,
                     subtype: "sdk_session_invalidated",
@@ -1909,6 +1957,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   lastAssistantText = "";
                   lastStreamInputTokens = undefined;
                   awaitingResume = false;
+                  resumedTurnStarted = false;
                   break;
                 }
                 // The "No conversation found" resume-recovery branch above
@@ -1919,6 +1968,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 lastAssistantText = "";
                 lastStreamInputTokens = undefined;
                 awaitingResume = false;
+                resumedTurnStarted = false;
                 break;
               }
               const nativeGoalResult = parseClaudeGoalCommandResult(lastAssistantText, anyMsg);
@@ -1926,7 +1976,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 this.applyNativeGoalCommandResult(sessionId, nativeGoalResult);
               }
               if (lastAssistantText) {
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.Message,
                   threadId,
                   content: lastAssistantText,
@@ -1948,7 +1998,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   requestedModel,
                 );
                 if (usedFallback) {
-                  this.emit("event", {
+        emitTurnEvent({
                     type: AgentEventType.ModelFallback,
                     threadId,
                     requestedModel,
@@ -2010,7 +2060,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 ? rawTier
                 : undefined;
 
-              this.emit("event", {
+        emitTurnEvent({
                 type: AgentEventType.TurnComplete,
                 threadId,
                 reason:
@@ -2032,7 +2082,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
               // client picks up fresh plan utilization after this turn.
               this.usageSource.invalidate();
               const billingMode = await this.resolveBillingMode();
-              this.emit("event", {
+        emitTurnEvent({
                 type: AgentEventType.QuotaUpdate,
                 threadId,
                 providerId: "claude",
@@ -2050,6 +2100,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
               lastAssistantText = "";
               awaitingResume = true;
+              resumedTurnStarted = false;
               // Keep `hasFiredToolThisTurn` for the lifetime of this `sendMessage`
               // query. The SDK emits `result` between internal API rounds while the
               // same user turn continues; clearing the flag there made every
@@ -2076,14 +2127,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 const sdkStatus = (anyMsg as { status?: string | null }).status;
                 if (sdkStatus === "compacting" && !sessionCompacting) {
                   sessionCompacting = true;
-                  this.emit("event", {
+        emitTurnEvent({
                     type: AgentEventType.Compacting,
                     threadId,
                     active: true,
                   } satisfies AgentEvent);
                 } else if (sdkStatus !== "compacting" && sessionCompacting) {
                   sessionCompacting = false;
-                  this.emit("event", {
+        emitTurnEvent({
                     type: AgentEventType.Compacting,
                     threadId,
                     active: false,
@@ -2102,7 +2153,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   });
                 }
               } else if ((anyMsg.subtype as string) === "api_retry") {
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.ApiRetry,
                   threadId,
                   reason: (anyMsg.error as string) || "unknown",
@@ -2119,7 +2170,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 ) {
                   break;
                 }
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.HookStarted,
                   threadId,
                   hookName,
@@ -2127,7 +2178,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   ...(anyMsg.tool_name ? { toolName: anyMsg.tool_name as string } : {}),
                 } satisfies AgentEvent);
               } else if ((anyMsg.subtype as string) === "hook_progress") {
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.HookProgress,
                   threadId,
                   hookName: (anyMsg.hook_name as string) || "unknown",
@@ -2142,7 +2193,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   this.suppressSessionStartHooks.delete(threadId);
                   break;
                 }
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.HookCompleted,
                   threadId,
                   hookName,
@@ -2151,7 +2202,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   didBlock: (anyMsg.did_block as boolean) ?? false,
                 } satisfies AgentEvent);
               } else {
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.System,
                   threadId,
                   subtype: (anyMsg.subtype as string) || "unknown",
@@ -2186,7 +2237,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
               logger.debug("Claude ToolUse from tool_use message", {
                 toolId, toolName, parent_tool_use_id: parentToolCallId ?? null,
               });
-              this.emit("event", {
+        emitTurnEvent({
                 type: AgentEventType.ToolUse,
                 threadId,
                 toolCallId: toolId,
@@ -2209,7 +2260,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
             case "tool_result": {
               const toolUseId = (anyMsg.tool_use_id as string) || "";
               const content = anyMsg.content;
-              this.emit("event", {
+        emitTurnEvent({
                 type: AgentEventType.ToolResult,
                 threadId,
                 toolCallId: toolUseId,
@@ -2251,7 +2302,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 // contextEstimate.contextWindow is optional and consumers handle undefined
                 // gracefully via their own lastContextWindowByThread map.
                 if (lastStreamInputTokens > 0) {
-                  this.emit("event", {
+        emitTurnEvent({
                     type: AgentEventType.ContextEstimate,
                     threadId,
                     tokensIn: lastStreamInputTokens,
@@ -2275,7 +2326,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                     sessionEntry !== undefined &&
                     sessionEntry.pendingToolUses.size === 0 &&
                     sessionEntry.hasFiredToolThisTurn === true;
-                  this.emit("event", {
+        emitTurnEvent({
                     type: AgentEventType.TextDelta,
                     threadId,
                     delta: streamEvent.delta.text,
@@ -2286,7 +2337,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                   typeof streamEvent.delta.partial_json === "string" &&
                   streamEvent.delta.partial_json
                 ) {
-                  this.emit("event", {
+        emitTurnEvent({
                     type: AgentEventType.ToolInputDelta,
                     threadId,
                     partialJson: streamEvent.delta.partial_json,
@@ -2301,7 +2352,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
               const toolName = (anyMsg.tool_name as string | undefined) ?? "unknown";
               const elapsedSeconds = (anyMsg.elapsed_time_seconds as number | undefined) ?? 0;
               if (toolUseId) {
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.ToolProgress,
                   threadId,
                   toolCallId: toolUseId,
@@ -2326,7 +2377,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 const retryAfterMs = info?.resetsAt
                   ? Math.max(0, info.resetsAt * 1000 - Date.now())
                   : undefined;
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.RateLimited,
                   threadId,
                   active: true,
@@ -2336,7 +2387,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
                 } satisfies AgentEvent);
               } else if (status === "allowed") {
                 // Clear any previously active rate limit indicator
-                this.emit("event", {
+        emitTurnEvent({
                   type: AgentEventType.RateLimited,
                   threadId,
                   active: false,
@@ -2373,7 +2424,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
             error: errorMessage,
             ...(stderrTail ? { stderr: stderrTail } : {}),
           });
-          this.emit("event", {
+        emitTurnEvent({
             type: AgentEventType.Error,
             threadId,
             error: stderrTail
@@ -2407,7 +2458,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           !current?.suppressEnded &&
           (!current || current.query === q)
         ) {
-          this.emit("event", {
+        emitTurnEvent({
             type: AgentEventType.Ended,
             threadId,
           } satisfies AgentEvent);

@@ -85,6 +85,7 @@ describe("ClaudeProvider native goal support detection", () => {
     claude.on("event", (event) => events.push(event as { type: string; active?: boolean }));
 
     await claude.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-1",
       workspaceId: "workspace-test",
       threadId: "thread-1",

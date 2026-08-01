@@ -123,6 +123,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider(undefined, lease);
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId,
       workspaceId: "workspace-test",
       threadId,
@@ -156,6 +157,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider(undefined, lease);
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-browser-spawn-failure",
       workspaceId: "workspace-test",
       threadId: "browser-spawn-failure",
@@ -182,6 +184,7 @@ describe("CodexProvider first turn on new session", () => {
     };
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-browser-config-failure",
       workspaceId: "workspace-test",
       threadId: "browser-config-failure",
@@ -211,6 +214,7 @@ describe("CodexProvider first turn on new session", () => {
     (provider as any).runtime.acquire = vi.fn(() => acquirePromise);
     const release = vi.spyOn(lease, "release");
     const request = {
+      turnExecutionId: "test-execution",
       sessionId: "mcode-overlapping-browser-stage",
       workspaceId: "workspace-test",
       threadId: "overlapping-browser-stage",
@@ -251,6 +255,7 @@ describe("CodexProvider first turn on new session", () => {
 
     const sessionId = "mcode-pending-stop";
     const sendPromise = provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId,
       workspaceId: "workspace-test",
       threadId: "pending-stop",
@@ -312,6 +317,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId,
       workspaceId: "workspace-test",
       threadId,
@@ -348,6 +354,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-preflight-failure",
       workspaceId: "workspace-test",
       threadId: "preflight-failure",
@@ -360,8 +367,8 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     expect(events).toEqual([
-      { type: AgentEventType.Error, threadId: "preflight-failure", error: "Codex CLI unavailable" },
-      { type: AgentEventType.Ended, threadId: "preflight-failure" },
+      { type: AgentEventType.Error, threadId: "preflight-failure", error: "Codex CLI unavailable", turnExecutionId: "test-execution" },
+      { type: AgentEventType.Ended, threadId: "preflight-failure", turnExecutionId: "test-execution" },
     ]);
     expect(appServers).toHaveLength(0);
   });
@@ -373,6 +380,7 @@ describe("CodexProvider first turn on new session", () => {
     const events: AgentEvent[] = [];
     provider.on("event", (event: AgentEvent) => events.push(event));
     const request = {
+      turnExecutionId: "test-execution",
       sessionId,
       workspaceId: "workspace-test",
       threadId,
@@ -417,6 +425,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-unsupported-version",
       workspaceId: "workspace-test",
       threadId: "unsupported-version",
@@ -433,8 +442,9 @@ describe("CodexProvider first turn on new session", () => {
         type: AgentEventType.Error,
         threadId: "unsupported-version",
         error: "Codex CLI version 0.36.0 is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex",
+        turnExecutionId: "test-execution",
       },
-      { type: AgentEventType.Ended, threadId: "unsupported-version" },
+      { type: AgentEventType.Ended, threadId: "unsupported-version", turnExecutionId: "test-execution" },
     ]);
 
     checkCodexVersionMock.mockReturnValueOnce({ ok: true, version: "0.36.0" });
@@ -473,6 +483,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-catalog-independent",
       workspaceId: "workspace-test",
       threadId: "catalog-independent",
@@ -494,6 +505,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-ultra-sol",
       workspaceId: "workspace-test",
       threadId: "ultra-sol",
@@ -514,6 +526,7 @@ describe("CodexProvider first turn on new session", () => {
 
     sendTurnMock.mockClear();
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-ultra-luna",
       workspaceId: "workspace-test",
       threadId: "ultra-luna",
@@ -546,6 +559,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     void provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: supersedeSessionId,
       workspaceId: "workspace-test",
       threadId: supersedeThreadId,
@@ -603,6 +617,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-skill-turn",
       workspaceId: "workspace-test",
       threadId: "skill-turn",
@@ -628,6 +643,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-mentioned-file",
       workspaceId: "workspace-test",
       threadId: "mentioned-file",
@@ -660,6 +676,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-mentioned-plugin",
       workspaceId: "workspace-test",
       threadId: "mentioned-plugin",
@@ -693,6 +710,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-mentioned-agent",
       workspaceId: "workspace-test",
       threadId: "mentioned-agent",
@@ -750,6 +768,7 @@ describe("CodexProvider first turn on new session", () => {
       });
 
       await provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-prompt-turn",
         workspaceId: "workspace-test",
         threadId: "prompt-turn",
@@ -809,6 +828,7 @@ describe("CodexProvider first turn on new session", () => {
       });
 
       await provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-prompt-collision",
         workspaceId: "workspace-test",
         threadId: "prompt-collision",
@@ -832,6 +852,7 @@ describe("CodexProvider first turn on new session", () => {
         permissionMode: "auto",
       });
       await provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-skill-collision",
         workspaceId: "workspace-test",
         threadId: "skill-collision",
@@ -895,6 +916,7 @@ describe("CodexProvider first turn on new session", () => {
       provider.on("event", (event: AgentEvent) => events.push(event));
 
       await provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-missing-prompt",
         workspaceId: "workspace-test",
         threadId: "missing-prompt",
@@ -912,8 +934,9 @@ describe("CodexProvider first turn on new session", () => {
           type: AgentEventType.Error,
           threadId: "missing-prompt",
           error: "Could not load Codex prompt /prompts:draftpr. Refresh commands and try again.",
+          turnExecutionId: "test-execution",
         },
-        { type: AgentEventType.Ended, threadId: "missing-prompt" },
+        { type: AgentEventType.Ended, threadId: "missing-prompt", turnExecutionId: "test-execution" },
       ]);
     } finally {
       rmSync(promptDir, { recursive: true, force: true });
@@ -924,6 +947,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-unknown-slash",
       workspaceId: "workspace-test",
       threadId: "unknown-slash",
@@ -989,6 +1013,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-mcp-failure",
       workspaceId: "workspace-mcp-failure",
       threadId: "mcp-failure",

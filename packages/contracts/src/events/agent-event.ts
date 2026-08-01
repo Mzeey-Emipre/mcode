@@ -365,6 +365,8 @@ const AgentEventSequenceSchema = z.object({
   sequence: z.number().int().positive().optional(),
   /** Server-process epoch paired with `sequence`; absent for legacy events. */
   epoch: AgentEventEpochSchema.optional(),
+  /** Mcode-owned execution identity for the turn that produced this event. */
+  turnExecutionId: z.string().uuid().optional(),
 });
 
 /** Validated agent event payload, including an optional server ordering sequence. */

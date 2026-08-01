@@ -20,6 +20,7 @@ import type {
   CopilotSubagent,
   GitRemoteUrl,
 } from "./types";
+import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
 import type {
   CreateAndSendResult,
   PullRequestCapabilitiesRequest,
@@ -185,24 +186,29 @@ export interface WsTransportOptions {
 /**
  * Reconcile runningThreadIds with the server's authoritative set on (re)connect.
  *
- * Race-safe: captures the optimistic runningThreadIds before the RPC and
- * preserves any threadIds added concurrently (e.g., by a session.turnStarted
- * push that arrives while the RPC is in flight). Stale threadIds from before
- * the RPC are dropped; the server's list is the source of truth for those.
+ * Race-safe: captures each optimistic runtime identity before the RPC and
+ * applies the response only to threads that have not advanced while it was
+ * in flight. Unchanged stale threads are dropped; newer push state wins.
  *
  * Exported for unit testing.
  */
 export async function hydrateRunningThreadsFromServer(
   rpcCall: (method: string, params: unknown) => Promise<unknown>,
 ): Promise<void> {
+  const beforeHydration = useThreadStore.getState();
+  const observed = new Map(
+    [...beforeHydration.runningThreadIds].map((threadId) => {
+      const record = beforeHydration.records.get(threadId);
+      return [threadId, {
+        turnExecutionId: record?.turnExecutionId ?? null,
+        runtimePhase: record?.runtimePhase ?? "idle",
+      }] as const;
+    }),
+  );
   try {
-    const beforeRpc = new Set(useThreadStore.getState().runningThreadIds);
-    const ids = (await rpcCall("agent.listRunning", {})) as string[];
-    const current = useThreadStore.getState().runningThreadIds;
-    // Preserve threadIds added concurrently while the RPC was in flight
-    // (e.g., session.turnStarted push during the round-trip).
-    const concurrentAdds = [...current].filter((id) => !beforeRpc.has(id));
-    useThreadStore.getState().hydrateRunningThreads([...ids, ...concurrentAdds]);
+    const result = await rpcCall("agent.listRunning", {});
+    const snapshots = TurnRuntimeSnapshotSchema.array().parse(result);
+    useThreadStore.getState().hydrateThreadRuntimes(snapshots, observed);
   } catch {
     // Best-effort; optimistic state remains if the call fails.
   }
@@ -662,7 +668,7 @@ export function createWsTransport(
         ...guardrails,
       });
     },
-    stopAgent: (threadId) => rpc<void>("agent.stop", { threadId }),
+    stopAgent: (threadId) => rpc<import("@mcode/contracts").AgentStopResult>("agent.stop", { threadId }),
     respondToPermission: (requestId, decision) =>
       rpc<void>("permission.respond", { requestId, decision }),
     listPendingPermissions: (threadId) =>
@@ -676,7 +682,7 @@ export function createWsTransport(
     saveClipboardFile: (data, mimeType, fileName) =>
       rpcBinary<AttachmentMeta | null>("clipboard.saveFile", { mimeType, fileName }, data),
     getActiveAgentCount: () => rpc<number>("agent.activeCount", {}),
-    listRunning: () => rpc<string[]>("agent.listRunning", {}),
+    listRunning: () => rpc<import("@mcode/contracts").TurnRuntimeSnapshot[]>("agent.listRunning", {}),
     subscribeThread: (threadId) => rpc<void>("push.subscribeThread", { threadId }),
     unsubscribeThread: (threadId) => rpc<void>("push.unsubscribeThread", { threadId }),
     setThreadSubscriptions: (input: SetThreadSubscriptionsInput) =>

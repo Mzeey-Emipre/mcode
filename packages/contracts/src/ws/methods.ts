@@ -20,6 +20,7 @@ import { GitBranchSchema, WorktreeSchema, BranchComparisonSchema, GitRefSchema, 
 import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
+import { AgentStopResultSchema, TurnRuntimeSnapshotSchema } from "../models/turn-runtime.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
 import { PlanStatusSchema, PlanRecordSchema, PlanActionSchema } from "../models/plan-output.js";
 import { DiffStatsSchema } from "../models/diff-stats.js";
@@ -301,9 +302,11 @@ export const CreateAndSendSchema = lazySchema(() =>
 /** Validated command for creating a thread and sending its first message. */
 export type CreateAndSendInput = z.infer<ReturnType<typeof CreateAndSendSchema>>;
 
-/** Result schema for agent.createAndSend: a Thread with optional non-fatal warnings. */
+/** Result schema for agent.createAndSend: a Thread, runtime handshake, and optional warnings. */
 export const CreateAndSendResultSchema = lazySchema(() =>
   ThreadSchema().extend({
+    /** Authoritative runtime identity captured after the first turn starts. */
+    runtimeSnapshot: TurnRuntimeSnapshotSchema,
     warnings: z.array(z.string()).optional(),
   }),
 );
@@ -737,7 +740,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "agent.stop": {
     params: z.object({ threadId: z.string() }),
-    result: z.void(),
+    result: AgentStopResultSchema,
   },
   "agent.activeCount": {
     params: z.object({}),
@@ -745,7 +748,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "agent.listRunning": {
     params: z.object({}),
-    result: z.array(z.string()),
+    result: z.array(TurnRuntimeSnapshotSchema),
   },
   "push.subscribeThread": {
     params: z.object({ threadId: z.string() }),

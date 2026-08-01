@@ -137,6 +137,8 @@ const loadPromise = activateTestConversation("thread-b");
           "thread-a",
           {
             ...createEmptyThreadRecord(),
+            runtimePhase: "running",
+            turnExecutionId: "exec-thread-a",
             messages: [
               createMockMessage({ id: "a-1", thread_id: "thread-a", content: "hi" }),
             ],

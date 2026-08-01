@@ -30,9 +30,11 @@ const IDENTITY_BLOCK = [
 
 const THREAD_CONTROL_BLOCK = [
   "Use the mcode_internal_thread_control MCP server for cross-thread orchestration.",
+  "An Mcode task/thread/delegated thread is a persistent user-visible conversation controlled by thread_* tools. A subagent is provider/model-side delegation in the same turn.",
+  "User wording 'use threads/tasks' maps to thread_* tools. User wording 'use subagents' maps to the provider subagent mechanism. Never translate one term into the other.",
   "Use workspace_search, worktree_list, thread_target_list, thread_create_batch, thread_search, thread_get, thread_send, thread_stop, and thread_wait as needed.",
   "When a delegated thread needs a named provider or model, call thread_target_list first, then pass the exact returned providerId and modelId to thread_create_batch. Do not assume or enumerate providers or models.",
-  "Route delegated work through Mcode thread tools. Never target the source thread.",
+  "Route delegated Mcode threads through Mcode thread tools. Never target the source thread.",
 ].join(" ");
 
 const BROWSER_BLOCK = [

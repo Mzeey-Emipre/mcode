@@ -37,6 +37,26 @@ describe("createPromptQueue (#292)", () => {
     }
     expect(got).toEqual(["a", "b"]);
   });
+
+  it("does not retain execution identity when enqueue fails", async () => {
+    const q = createPromptQueue();
+    const consumed: string[] = [];
+    q.setOnPromptConsumed((turnExecutionId) => {
+      if (turnExecutionId) consumed.push(turnExecutionId);
+    });
+    for (let i = 0; i < 20; i++) {
+      q.push(msg(`queued-${i}`), `execution-${i}`);
+    }
+
+    expect(() => q.push(msg("overflow"), "stale-execution")).toThrow(/full/i);
+    q.close();
+    for await (const _message of q.iterable) {
+      // Drain queued messages so consumption callbacks run.
+    }
+
+    expect(consumed).not.toContain("stale-execution");
+    expect(consumed).toHaveLength(20);
+  });
 });
 
 import { vi } from "vitest";
@@ -90,6 +110,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
 
     // First send establishes the session
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-t1",
       threadId: "t1",
       message: "first",
@@ -108,6 +129,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
     // Second send on same sessionId: push hits a closed queue
     await expect(
       provider.sendTurn({
+      turnExecutionId: "test-execution",
         sessionId: "mcode-t1",
         threadId: "t1",
         message: "second",
@@ -153,6 +175,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
 
     // First send establishes the session
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-overflow",
       threadId: "overflow",
       message: "first",
@@ -169,6 +192,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
     for (let i = 0; i < 25; i++) {
       try {
         await provider.sendTurn({
+      turnExecutionId: "test-execution",
           sessionId: "mcode-overflow",
           threadId: "overflow",
           message: `msg-${i}`,

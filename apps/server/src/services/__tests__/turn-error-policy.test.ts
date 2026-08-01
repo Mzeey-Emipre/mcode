@@ -27,6 +27,9 @@ describe("TurnErrorPolicy.classify", () => {
     expect(policy.classify(new Error("connect ETIMEDOUT 1.2.3.4:443"))).toBe("transient");
     expect(policy.classify(new Error("socket hang up"))).toBe("transient");
     expect(policy.classify(new Error("fetch failed"))).toBe("transient");
+    expect(
+      policy.classify(new Error("stream disconnected before completion: error sending request for url (http://127.0.0.1:3845/mcp)")),
+    ).toBe("transient");
   });
 
   it("classifies Codex loopback MCP transport exits as transient", () => {

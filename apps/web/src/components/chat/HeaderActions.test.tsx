@@ -46,6 +46,11 @@ vi.mock("@/transport", async (importOriginal) => {
       getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
       getBranchComparison: vi.fn().mockResolvedValue(null),
       getBranchFiles: vi.fn().mockResolvedValue([]),
+      generateRecap: vi.fn().mockImplementation(async (
+        _threadId: string,
+        _messages: Array<{ role: "user" | "assistant"; content: string }>,
+        previousRecap: string | null,
+      ) => ({ text: previousRecap ?? "" })),
       getRemoteUrl: vi.fn().mockResolvedValue({
         label: "Mzeey-Empire/mcode",
         webUrl: "https://github.com/Mzeey-Empire/mcode",
@@ -467,7 +472,12 @@ describe("HeaderActions - consolidated header", () => {
     ];
     const coveredMessages = filterThreadRecapMessages(messages.slice(0, 2));
     useThreadStore.setState({
-      records: new Map([["thread-1", { ...createEmptyThreadRecord(), messages }]]),
+      records: new Map([["thread-1", {
+        ...createEmptyThreadRecord(),
+        runtimePhase: "running",
+        turnExecutionId: "exec-recap",
+        messages,
+      }]]),
       runningThreadIds: new Set(["thread-1"]),
     });
     useThreadStore.getState().recordThreadRecapGeneration({

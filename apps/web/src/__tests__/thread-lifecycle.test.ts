@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 import { clearRecordCache } from "@/lib/thread-hydrator/record-cache";
-import type { PreviewAnnotationBundle } from "@mcode/contracts";
+import type { AgentEvent, PreviewAnnotationBundle } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -208,7 +208,7 @@ describe("Thread Lifecycle Behavior", () => {
     );
   });
 
-  it("when stopAgent fails, the thread is still marked as not running", async () => {
+  it("when stopAgent fails, the thread remains running for retry", async () => {
     const threadId = "thread-1";
     useThreadStore.setState({
       runningThreadIds: new Set([threadId]),
@@ -219,11 +219,73 @@ describe("Thread Lifecycle Behavior", () => {
 
     await useThreadStore.getState().stopAgent(threadId);
 
-    // Should still be cleared even on error
+    // Provider stop failure must not create false idle state.
     expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(
-      false,
+      true,
     );
     expect(getTestThreadError("thread-1")).toBeTruthy();
+  });
+
+  it("recalls only an undispatched stopped message", async () => {
+    const threadId = "thread-1";
+    const userMessage = createMockMessage({
+      id: "user-1",
+      thread_id: threadId,
+      role: "user",
+      content: "keep working on this",
+    });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      runningThreadIds: new Set([threadId]),
+      records: new Map([[threadId, { ...createEmptyThreadRecord(), messages: [userMessage] }]]),
+    });
+    (mockTransport.stopAgent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      threadId,
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
+      snapshot: {
+        threadId,
+        turnExecutionId: "00000000-0000-4000-8000-000000000001",
+        phase: "cancelled",
+      },
+      status: "cancelled",
+      dispatchState: "not-dispatched",
+    });
+
+    await useThreadStore.getState().stopAgent(threadId);
+
+    expect(useThreadStore.getState().records.get(threadId)?.composerRecallFromStop).toEqual({
+      text: "keep working on this",
+    });
+  });
+
+  it("does not recall a dispatched stopped message", async () => {
+    const threadId = "thread-1";
+    const userMessage = createMockMessage({
+      id: "user-1",
+      thread_id: threadId,
+      role: "user",
+      content: "keep working on this",
+    });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      runningThreadIds: new Set([threadId]),
+      records: new Map([[threadId, { ...createEmptyThreadRecord(), messages: [userMessage] }]]),
+    });
+    (mockTransport.stopAgent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      threadId,
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
+      snapshot: {
+        threadId,
+        turnExecutionId: "00000000-0000-4000-8000-000000000001",
+        phase: "cancelled",
+      },
+      status: "cancelled",
+      dispatchState: "dispatched",
+    });
+
+    await useThreadStore.getState().stopAgent(threadId);
+
+    expect(useThreadStore.getState().records.get(threadId)?.composerRecallFromStop).toBeUndefined();
   });
 
   it("when sendMessage fails, the thread is no longer marked as running", async () => {
@@ -240,6 +302,56 @@ describe("Thread Lifecycle Behavior", () => {
     expect(getTestThreadError("thread-1")).toBeTruthy();
   });
 
+  it("accepts a new turn execution after a completed turn", async () => {
+    const threadId = "thread-1";
+    const previousExecutionId = "00000000-0000-4000-8000-000000000001";
+    const nextExecutionId = "00000000-0000-4000-8000-000000000002";
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      runningThreadIds: new Set(),
+      records: new Map([[threadId, {
+        ...createEmptyThreadRecord(),
+        runtimePhase: "completed",
+        turnExecutionId: previousExecutionId,
+      }]]),
+    });
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      expect(useThreadStore.getState().records.get(threadId)?.turnExecutionId).toBeNull();
+      useThreadStore.getState().handleAgentEvent({
+        type: "turnStarted",
+        threadId,
+        turnExecutionId: nextExecutionId,
+        fileEffectTurnId: nextExecutionId,
+      } as AgentEvent);
+    });
+
+    await useThreadStore.getState().sendMessage(threadId, "Continue");
+
+    expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+    expect(useThreadStore.getState().records.get(threadId)?.turnExecutionId).toBe(nextExecutionId);
+  });
+
+  it("preserves running state when transport fails after authoritative startup", async () => {
+    const threadId = "thread-1";
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      useThreadStore.setState((state) => ({
+        records: new Map(state.records).set(threadId, {
+          ...state.records.get(threadId)!,
+          turnExecutionId: "00000000-0000-4000-8000-000000000001",
+          runtimePhase: "running",
+          agentStartTime: 123,
+        }),
+      }));
+      throw new Error("provider disconnected");
+    });
+
+    await useThreadStore.getState().sendMessage(threadId, "Hello");
+
+    expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+    expect(useThreadStore.getState().records.get(threadId)?.runtimePhase).toBe("running");
+    expect(useThreadStore.getState().records.get(threadId)?.agentStartTime).toBe(123);
+  });
+
   it("when clearMessages is called, streaming state resets but running threads persist", () => {
     const msg = createMockMessage({
       id: "1",
@@ -250,7 +362,13 @@ describe("Thread Lifecycle Behavior", () => {
       currentThreadId: "thread-1",
       runningThreadIds: new Set(["thread-1"]),
       records: new Map<string, ThreadRecord>([
-        ["thread-1", { ...createEmptyThreadRecord(), messages: [msg], streaming: "partial" }],
+        ["thread-1", {
+          ...createEmptyThreadRecord(),
+          messages: [msg],
+          streaming: "partial",
+          runtimePhase: "running",
+          turnExecutionId: "00000000-0000-4000-8000-000000000001",
+        }],
       ]),
     });
 

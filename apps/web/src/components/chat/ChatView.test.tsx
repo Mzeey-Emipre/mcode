@@ -768,6 +768,44 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
   });
 
+  it("serializes atomic target replacements and reconciles after the prior write settles", async () => {
+    const requests: Array<{
+      input: { threadIds: string[] };
+      resolve: () => void;
+    }> = [];
+    let serverThreadIds: string[] = [];
+    const setThreadSubscriptions = vi.fn((input: { threadIds: string[] }) => new Promise<void>((resolve) => {
+      requests.push({ input, resolve: () => {
+        serverThreadIds = [...input.threadIds];
+        resolve();
+      } });
+    }));
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    const { rerender } = render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+    expect(requests[0]?.input).toEqual({ threadIds: ["thread-1"] });
+
+    setupWorkspaceMock({ ...defaultWorkspaceState(), activeThreadId: "thread-2", threads: [makeThread({ id: "thread-2" })] });
+    rerender(<ChatView />);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
+
+    requests[0]?.resolve();
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+      expect(requests[1]?.input).toEqual({ threadIds: ["thread-2"] });
+    });
+
+    requests[1]?.resolve();
+    await waitFor(() => expect(serverThreadIds).toEqual(["thread-2"]));
+  });
+
   it("clears a pending atomic set on unmount without retrying after it settles", async () => {
     const requests: Array<{ resolve: () => void }> = [];
     const setThreadSubscriptions = vi.fn(() => new Promise<void>((resolve) => {
@@ -883,7 +921,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       records: new Map([[thread1.id, record]]),
     });
     rerender(<ChatView />);
-    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(2));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
 
     requests[0]?.({ hydrationRequiredThreadIds: [thread1.id] });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -891,7 +929,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(chatViewThreadStoreSetStateMock).not.toHaveBeenCalled();
     expect(chatViewResidencyMock.invalidateConversation).not.toHaveBeenCalled();
     expect(chatViewResidencyMock.refresh).not.toHaveBeenCalled();
-    expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(2));
 
     requests[1]?.({ hydrationRequiredThreadIds: [] });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -922,14 +960,15 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     });
     rerender(<ChatView />);
 
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
+
+    requests[0]?.resolve();
     await waitFor(() => {
       expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
       expect(setThreadSubscriptions).toHaveBeenNthCalledWith(2, {
         threadIds: ["thread-1", "thread-2"],
       });
     });
-
-    requests[0]?.resolve();
     requests[1]?.reject(new Error("temporary atomic subscribe failure"));
 
     await waitFor(() => {
@@ -979,19 +1018,21 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       runningThreadIds: new Set([thread2.id]),
     });
     rerender(<ChatView />);
-    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(2));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
 
     chatViewThreadMockRef.current = defaultThreadState({
       runningThreadIds: new Set([thread3.id]),
     });
     rerender(<ChatView />);
-    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(3));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
 
     requests[0]?.reject(new Error("stale D1 failure"));
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(2));
     requests[1]?.reject(new Error("stale D2 failure"));
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(3));
     requests[2]?.reject(new Error("current D3 failure"));
 
-    for (let requestIndex = 3; requestIndex < 7; requestIndex += 1) {
+    for (let requestIndex = 3; requestIndex < 6; requestIndex += 1) {
       await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(requestIndex + 1), {
         timeout: 3000,
       });
@@ -999,7 +1040,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     }
 
     await new Promise((resolve) => setTimeout(resolve, 1_700));
-    expect(setThreadSubscriptions).toHaveBeenCalledTimes(7);
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(6);
   }, 10_000);
 
   it("reconciles the complete atomic set after reconnecting", async () => {

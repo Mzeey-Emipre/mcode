@@ -10,6 +10,7 @@ import type { TurnRequest } from "../interfaces.js";
 describe("TurnRequest providerOptions discrimination", () => {
   it("accepts Claude knobs on a claude request", () => {
     const req: TurnRequest<"claude"> = {
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
       sessionId: "mcode-t1",
       workspaceId: "workspace-1",
       threadId: "t1",
@@ -25,6 +26,7 @@ describe("TurnRequest providerOptions discrimination", () => {
 
   it("requires an empty bag for knob-less providers", () => {
     const req: TurnRequest<"cursor"> = {
+      turnExecutionId: "00000000-0000-4000-8000-000000000002",
       sessionId: "mcode-t2",
       workspaceId: "workspace-1",
       threadId: "t2",
@@ -40,6 +42,7 @@ describe("TurnRequest providerOptions discrimination", () => {
 
   it("walls off cross-provider knobs (negative case via @ts-expect-error)", () => {
     const bad: TurnRequest<"claude"> = {
+      turnExecutionId: "00000000-0000-4000-8000-000000000003",
       sessionId: "mcode-t3",
       workspaceId: "workspace-1",
       threadId: "t3",

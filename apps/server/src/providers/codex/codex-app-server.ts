@@ -811,9 +811,11 @@ export class CodexAppServer extends EventEmitter {
       if (method === "thread/started") {
         const params = (notification as { params?: Record<string, unknown> }).params;
         // Accept both nested `thread.id` and flat `threadId` shapes
-        const thread = params?.thread as { id?: string } | undefined;
+        const thread = params?.thread as { id?: string; parentThreadId?: string } | undefined;
         const newThreadId = thread?.id ?? (typeof params?.threadId === "string" ? params.threadId : undefined);
-        if (newThreadId && newThreadId !== this._threadId) {
+        const parentThreadId = thread?.parentThreadId
+          ?? (typeof params?.parentThreadId === "string" ? params.parentThreadId : undefined);
+        if (newThreadId && (!this._threadId || !parentThreadId) && newThreadId !== this._threadId) {
           logger.info("Codex thread ID rotated via thread/started", {
             old: this._threadId,
             new: newThreadId,

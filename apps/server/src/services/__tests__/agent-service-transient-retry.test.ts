@@ -78,6 +78,8 @@ function buildService(): {
   const providerEmitter = new EventEmitter();
   const sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as unknown as { sendTurn: typeof sendTurn }).sendTurn = sendTurn;
+  const stopSession = vi.fn().mockResolvedValue(undefined);
+  (providerEmitter as unknown as { stopSession: typeof stopSession }).stopSession = stopSession;
   // Implementing discardSession makes the fake provider ISessionEvictable, so
   // the retry path force-evicts the pooled session before re-dispatch.
   const discardSession = vi.fn();
@@ -211,6 +213,11 @@ function buildService(): {
   };
 }
 
+function synthesizedTurnCompleteEvents(events: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return events.filter((event) => event.type === "turnComplete"
+    && (event.reason === "message_received" || event.reason === "provider_stream_exhausted"));
+}
+
 describe("AgentService transient-failure auto-retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -316,8 +323,40 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(fatalSuppressedDuringAttempt).toBe(false);
     // Fire-and-forget providers keep the window armed until TurnComplete.
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
+  });
+
+  it("terminalizes exhausted provider retries with the active turn identity", async () => {
+    const { service, sendTurn, providerEmitter, threadRepo } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    const terminalEvents = events.filter((event) => event.type === "error" || event.type === "ended");
+    expect(terminalEvents).toHaveLength(2);
+    expect(terminalEvents[0]?.turnExecutionId).toEqual(expect.any(String));
+    expect(terminalEvents[1]?.turnExecutionId).toBe(terminalEvents[0]?.turnExecutionId);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+    expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "errored");
   });
 
   it("swallows the failed attempt's trailing Ended so the UI's running state survives the retry", async () => {
@@ -330,10 +369,11 @@ describe("AgentService transient-failure auto-retry", () => {
     // suppression so it never tears down the spinner before the retry streams.
     let endedSuppressedDuringAttempt: boolean | undefined;
     sendTurn
-      .mockImplementationOnce(() => {
+      .mockImplementationOnce((request: TurnRequest) => {
         providerEmitter.emit("event", {
           type: "error",
           threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
           error: "read ECONNRESET",
         });
         endedSuppressedDuringAttempt = service.shouldSuppressTurnEnded(THREAD_ID);
@@ -352,7 +392,15 @@ describe("AgentService transient-failure auto-retry", () => {
 
     // The trailing Ended was armed for suppression during the failed attempt...
     expect(endedSuppressedDuringAttempt).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
   });
 
@@ -401,6 +449,300 @@ describe("AgentService transient-failure auto-retry", () => {
 
     // Give-up disarms the retry window so the terminal error is visible.
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
+  });
+
+  it("synthesizes completion when a matching provider stream ends after a final response", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockImplementationOnce((request: TurnRequest) => {
+      providerEmitter.emit("event", {
+        type: "message",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+        content: "done",
+        tokens: null,
+      });
+      providerEmitter.emit("event", {
+        type: "ended",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+      });
+      return Promise.resolve();
+    });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    const executionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
+    expect(events.find((event) => event.type === "turnComplete")?.turnExecutionId).toBe(executionId);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+  });
+
+  it("does not synthesize a second terminal event after an explicit completion", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockImplementationOnce((request: TurnRequest) => {
+      providerEmitter.emit("event", {
+        type: "message",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+        content: "done",
+        tokens: null,
+      });
+      return Promise.resolve();
+    });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+    });
+
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
+    expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+  });
+
+  it("fences child Ended events and clears the final-response marker for the next turn", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockImplementation((request: TurnRequest) => {
+      if (sendTurn.mock.calls.length === 1) {
+        providerEmitter.emit("event", {
+          type: "message",
+          threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
+          content: "done",
+          tokens: null,
+        });
+        providerEmitter.emit("event", {
+          type: "ended",
+          threadId: THREAD_ID,
+          turnExecutionId: "child-execution",
+        });
+      }
+      providerEmitter.emit("event", {
+        type: "ended",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+      });
+      return Promise.resolve();
+    });
+
+    const command = {
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default" as const,
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude" as const,
+    };
+    await service.sendMessage(command);
+    await service.sendMessage(command);
+
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "error")).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+  });
+
+  it("keeps a stream that reports an error on the error path", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockImplementationOnce((request: TurnRequest) => {
+      providerEmitter.emit("event", {
+        type: "error",
+        threadId: THREAD_ID,
+        turnExecutionId: request.turnExecutionId,
+        error: "stream failed",
+      });
+      return Promise.resolve();
+    });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    expect(events.filter((event) => event.type === "error")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+  });
+
+  it("does not turn a stopped turn into a successful fallback", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    await service.stopSession(THREAD_ID);
+
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+    });
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("cancelled");
+  });
+
+  it("ignores stale Message events and completes only the matching execution", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: "child-execution",
+      content: "child",
+      tokens: null,
+    });
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "root",
+      tokens: null,
+    });
+    await Promise.resolve();
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+  });
+
+  it("does not treat a post-turn goal receipt as a new completion", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "done",
+      tokens: null,
+    });
+    await Promise.resolve();
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "Goal achieved in 1s.",
+      tokens: null,
+    });
+
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+  });
+
+  it("leaves compaction-owned messages running until compaction finishes", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    providerEmitter.emit("event", {
+      type: "compacting",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      active: true,
+    });
+    providerEmitter.emit("event", {
+      type: "message",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "compaction result",
+      tokens: null,
+    });
+    await Promise.resolve();
+
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    providerEmitter.emit("event", {
+      type: "compacting",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      active: false,
+    });
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
   });
 
   it("swallows discardSession's trailing Ended when sendTurn rejects without emitting Error", async () => {
@@ -508,9 +850,11 @@ describe("AgentService transient-failure auto-retry", () => {
       attachments: [],
       provider: "claude",
     });
+    const initialTurnExecutionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
     providerEmitter.emit("event", {
       type: "error",
       threadId: THREAD_ID,
+      turnExecutionId: initialTurnExecutionId,
       error: "read ECONNRESET",
     });
     await evictionReady;
@@ -557,6 +901,7 @@ describe("AgentService transient-failure auto-retry", () => {
     providerEmitter.emit("event", {
       type: "error",
       threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
       error: "read ECONNRESET",
     });
     await new Promise((r) => setTimeout(r, 0));
@@ -565,21 +910,67 @@ describe("AgentService transient-failure auto-retry", () => {
     expect((sendTurn.mock.calls[1][0] as TurnRequest).resumeFrom).toBeUndefined();
   });
 
+  it("retries when a failed completion emits an identified transient Error", async () => {
+    const { service, sendTurn, providerEmitter, threadRepo } = buildService();
+    service.init();
+    sendTurn.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const turnExecutionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
+
+    providerEmitter.emit("event", {
+      type: "error",
+      threadId: THREAD_ID,
+      error: "stream disconnected before completion: error sending request for url (http://127.0.0.1:3845/mcp)",
+      turnExecutionId,
+    });
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      outcome: "errored",
+      turnExecutionId,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(sendTurn).toHaveBeenCalledTimes(2);
+    expect((sendTurn.mock.calls[1][0] as TurnRequest).resumeFrom).toBeUndefined();
+    expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "errored");
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      turnExecutionId: (sendTurn.mock.calls[1][0] as TurnRequest).turnExecutionId,
+    });
+    expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
+  });
+
   it("swallows a failed attempt's TurnComplete during the retry window", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
     service.init();
 
     let turnCompleteSuppressedDuringAttempt: boolean | undefined;
     sendTurn
-      .mockImplementationOnce(() => {
+      .mockImplementationOnce((request: TurnRequest) => {
         providerEmitter.emit("event", {
           type: "error",
           threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
           error: "read ECONNRESET",
         });
         providerEmitter.emit("event", {
           type: "turnComplete",
           threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
           reason: "end_turn",
           costUsd: null,
           tokensIn: 0,
@@ -600,7 +991,15 @@ describe("AgentService transient-failure auto-retry", () => {
     });
 
     expect(turnCompleteSuppressedDuringAttempt).toBe(true);
-    providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
     expect(service.shouldSuppressTurnComplete(THREAD_ID)).toBe(false);
   });
 

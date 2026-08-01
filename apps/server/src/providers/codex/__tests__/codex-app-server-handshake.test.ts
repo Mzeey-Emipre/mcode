@@ -317,6 +317,26 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     });
   }, 10_000);
 
+  it("does not rotate the root thread id for a spawned child thread", async () => {
+    const { child } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-root" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+
+    await server.start();
+    child.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "thread/started",
+      params: {
+        thread: { id: "thread-child", parentThreadId: "thread-root" },
+      },
+    }) + "\n");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(server.threadId).toBe("thread-root");
+    await server.kill();
+  }, 10_000);
+
   it("(d) kills the spawned child via taskkill on Windows so a failed start leaves no orphan", async () => {
     harnessFakeServer(rejectInitialize);
 

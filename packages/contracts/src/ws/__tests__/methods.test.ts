@@ -2,6 +2,55 @@ import { describe, expect, it } from "vitest";
 import { MAX_THREAD_SUBSCRIPTIONS, WS_METHODS } from "../methods.js";
 
 describe("thread switching WebSocket contracts", () => {
+  it("requires an authoritative runtime snapshot for the first-turn result", () => {
+    const method = WS_METHODS()["agent.createAndSend"];
+    const thread = {
+      id: "thread-1",
+      workspace_id: "workspace-1",
+      title: "First turn",
+      status: "active",
+      mode: "direct",
+      worktree_path: null,
+      branch: "main",
+      checkout_state: "named",
+      base_branch: null,
+      worktree_managed: false,
+      issue_number: null,
+      pr_number: null,
+      pr_status: null,
+      sdk_session_id: null,
+      created_at: "2026-08-01T00:00:00.000Z",
+      updated_at: "2026-08-01T00:00:00.000Z",
+      model: "gpt-5.5",
+      provider: "codex",
+      deleted_at: null,
+      last_context_tokens: null,
+      context_window: null,
+      reasoning_level: null,
+      interaction_mode: null,
+      orchestration_mode: null,
+      permission_mode: null,
+      context_window_mode: null,
+      thinking: null,
+      codex_fast_mode: null,
+      copilot_agent: null,
+      default_open_in_app: null,
+      parent_thread_id: null,
+      forked_from_message_id: null,
+      last_compact_summary: null,
+    };
+
+    expect(method.result.safeParse(thread).success).toBe(false);
+    expect(method.result.safeParse({
+      ...thread,
+      runtimeSnapshot: {
+        threadId: "thread-1",
+        turnExecutionId: "00000000-0000-4000-8000-000000000001",
+        phase: "running",
+      },
+    }).success).toBe(true);
+  });
+
   it("registers bounded conversation.tail params and result", () => {
     const method = WS_METHODS()["conversation.tail"];
 

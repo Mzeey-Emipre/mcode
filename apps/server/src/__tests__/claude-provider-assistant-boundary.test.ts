@@ -82,6 +82,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-boundary-final",
       threadId: "thread-boundary-final",
       message: "hi",
@@ -125,6 +126,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-boundary-preamble",
       threadId: "thread-boundary-preamble",
       message: "read file",
@@ -167,6 +169,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     });
 
     await provider.sendTurn({
+      turnExecutionId: "test-execution",
       sessionId: "mcode-thread-boundary-no-text",
       threadId: "thread-boundary-no-text",
       message: "go",
@@ -179,5 +182,135 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(boundaries).toHaveLength(0);
+  });
+
+  it("keeps queued execution identity behind an internal result continuation", async () => {
+    let releaseContinuation!: () => void;
+    const continuationReleased = new Promise<void>((resolve) => {
+      releaseContinuation = resolve;
+    });
+    let resolveTurnComplete!: () => void;
+    const turnCompleteSeen = new Promise<void>((resolve) => {
+      resolveTurnComplete = resolve;
+    });
+    let resolveBText!: () => void;
+    const bTextSeen = new Promise<void>((resolve) => {
+      resolveBText = resolve;
+    });
+    const events: Array<{ type: string; turnExecutionId?: string; delta?: string }> = [];
+
+    mockQuery.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+      const iterator = prompt[Symbol.asyncIterator]();
+      let stage = 0;
+      const gen: AsyncGenerator<Record<string, unknown>, void> = {
+        async next() {
+          switch (stage++) {
+            case 0:
+              await iterator.next();
+              return { value: { type: "system", subtype: "init", session_id: "sdk-ordering" }, done: false };
+            case 1:
+              return {
+                value: {
+                  type: "assistant",
+                  message: { content: [{ type: "text", text: "A" }], stop_reason: "end_turn" },
+                },
+                done: false,
+              };
+            case 2:
+              return { value: { type: "result", is_error: false, result: "A", usage: { output_tokens: 1 } }, done: false };
+            case 3:
+              await continuationReleased;
+              return {
+                value: {
+                  type: "stream_event",
+                  event: { type: "content_block_delta", delta: { type: "text_delta", text: "A continuation" } },
+                },
+                done: false,
+              };
+            case 4:
+              await iterator.next();
+              return {
+                value: {
+                  type: "assistant",
+                  message: { content: [{ type: "text", text: "B" }], stop_reason: "end_turn" },
+                },
+                done: false,
+              };
+            case 5:
+              return {
+                value: {
+                  type: "stream_event",
+                  event: { type: "content_block_delta", delta: { type: "text_delta", text: "B started" } },
+                },
+                done: false,
+              };
+            case 6:
+              return { value: { type: "result", is_error: false, result: "B", usage: { output_tokens: 1 } }, done: false };
+            default:
+              return { value: undefined as never, done: true };
+          }
+        },
+        async return() {
+          return { value: undefined as never, done: true };
+        },
+        async throw(error: unknown) {
+          throw error;
+        },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+      return Object.assign(gen, { ...queryMethodStubs(), close: vi.fn() });
+    });
+
+    provider.on("event", (event: { type: string; turnExecutionId?: string; delta?: string }) => {
+      events.push(event);
+      if (event.type === AgentEventType.TurnComplete && event.turnExecutionId === "A") {
+        resolveTurnComplete();
+      }
+      if (event.type === AgentEventType.TextDelta && event.delta === "B started") {
+        resolveBText();
+      }
+    });
+
+    await provider.sendTurn({
+      turnExecutionId: "A",
+      sessionId: "mcode-thread-ordering",
+      threadId: "thread-ordering",
+      message: "first",
+      cwd: "/tmp",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+    await turnCompleteSeen;
+
+    await provider.sendTurn({
+      turnExecutionId: "B",
+      sessionId: "mcode-thread-ordering",
+      threadId: "thread-ordering",
+      message: "second",
+      cwd: "/tmp",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+    releaseContinuation();
+    await bTextSeen;
+
+    const continuation = events.find(
+      (event) => event.type === AgentEventType.TextDelta && event.delta === "A continuation",
+    );
+    expect(continuation?.turnExecutionId).toBe("A");
+    expect(
+      events.some(
+        (event) => event.type === AgentEventType.TurnStarted && event.turnExecutionId === "B",
+      ),
+    ).toBe(true);
+    expect(
+      events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "B started")?.turnExecutionId,
+    ).toBe("B");
   });
 });

@@ -2,6 +2,7 @@ import React from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentEvent } from "@mcode/contracts";
 import { Composer } from "../Composer";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
@@ -324,7 +325,14 @@ describe("Composer checkout confirmation", () => {
     (mockTransport.getCurrentBranch as ReturnType<typeof vi.fn>).mockResolvedValue("main");
     (mockTransport.checkoutBranch as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      createMockThread({ id: "thread-created", workspace_id: "ws-1", branch: "feature/base" }),
+      {
+        ...createMockThread({ id: "thread-created", workspace_id: "ws-1", branch: "feature/base" }),
+        runtimeSnapshot: {
+          threadId: "thread-created",
+          turnExecutionId: "exec-test",
+          phase: "running",
+        },
+      },
     );
   });
 
@@ -930,5 +938,39 @@ describe("Composer checkout confirmation", () => {
       },
     ]);
     expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(true);
+  });
+
+  it("keeps rendered stop control through stale A terminal and B text", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-1", workspace_id: workspace.id });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({ currentThreadId: thread.id, runningThreadIds: new Set([thread.id]) });
+    useThreadStore.setState({
+      records: seedThreadRecord(thread.id, { runtimePhase: "running", turnExecutionId: "exec-b" }),
+    });
+
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+    expect(screen.getByLabelText("Stop agent")).toBeInTheDocument();
+
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+    act(() => {
+      handleAgentEvent({ type: "ended", threadId: thread.id, turnExecutionId: "exec-a" } as AgentEvent);
+      handleAgentEvent({ type: "textDelta", threadId: thread.id, delta: "B text", turnExecutionId: "exec-b" } as AgentEvent);
+    });
+    expect(screen.getByLabelText("Stop agent")).toBeInTheDocument();
+
+    act(() => {
+      handleAgentEvent({ type: "ended", threadId: thread.id, turnExecutionId: "exec-b" } as AgentEvent);
+    });
+    await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
   });
 });

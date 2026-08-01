@@ -75,6 +75,7 @@ import type {
   PullRequestMergeResult,
   SendMessageInput,
   CreateAndSendInput,
+  AgentStopResult,
   ThreadControlIdentity,
   ThreadControlReadResult,
   ThreadControlUserSendInput,
@@ -295,7 +296,7 @@ export interface McodeTransport {
   // Agent commands
   sendMessage(input: SendMessageInput): Promise<void>;
   createAndSendMessage(input: CreateAndSendInput): Promise<CreateAndSendResult>;
-  stopAgent(threadId: string): Promise<void>;
+  stopAgent(threadId: string): Promise<AgentStopResult>;
   /** Respond to a tool permission request from the agent. */
   respondToPermission(requestId: string, decision: PermissionDecision): Promise<void>;
   /** List pending permission requests for a thread (used to re-hydrate after reconnect). */
@@ -320,11 +321,10 @@ export interface McodeTransport {
   saveClipboardFile(data: ArrayBuffer, mimeType: string, fileName: string): Promise<AttachmentMeta | null>;
   getActiveAgentCount(): Promise<number>;
   /**
-   * Returns the thread IDs with live agent sessions on the server.
-   * Called on WebSocket (re)connect to reconcile runningThreadIds after the
-   * optimistic client-side set was lost (reload, new tab, reconnect).
+   * Returns runtime snapshots for live sessions, used to reconcile optimistic
+   * running state after reload, reconnect, or a new tab.
    */
-  listRunning(): Promise<string[]>;
+  listRunning(): Promise<import("@mcode/contracts").TurnRuntimeSnapshot[]>;
   /** Subscribe this client connection to push events for the active thread. */
   subscribeThread(threadId: string): Promise<void>;
   /** Remove this client connection's push subscription for a thread. */
