@@ -15,6 +15,7 @@ import { AgentService } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
 import { ProviderAvailabilityService } from "../provider-availability-service.js";
+import { isTurnScopedEvent } from "../turn-runtime.js";
 import type { GitService } from "../git-service.js";
 import type { AttachmentService } from "../attachment-service.js";
 import type { SnapshotService } from "../snapshot-service.js";
@@ -158,6 +159,32 @@ function buildService(db: Database.Database) {
       container.resolve(NarrativeStore),
       container.resolve(PlanQuestionService),
   );
+
+  // Provider adapters always stamp turn-scoped events with the active execution
+  // identity. Keep direct event fixtures on that same boundary, including the
+  // post-turn receipt and auto-resume cases covered below.
+  const turnRuntime = (svc as unknown as {
+    turnRuntime: {
+      start: (threadId: string) => { turnExecutionId: string };
+      snapshot: (threadId: string) => { turnExecutionId: string | null; phase: string } | undefined;
+    };
+  }).turnRuntime;
+  const emit = providerStub.emit.bind(providerStub);
+  providerStub.emit = ((eventName: string, event?: unknown, ...args: unknown[]) => {
+    if (eventName === "event" && event && typeof event === "object"
+      && isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
+      && !(event as { turnExecutionId?: string }).turnExecutionId) {
+      const threadId = (event as { threadId: string }).threadId;
+      const current = turnRuntime.snapshot(threadId);
+      const active = current?.phase === "running" || current?.phase === "finalizing";
+      const shouldStartNewTurn = !current
+        || (event as { type?: string }).type === AgentEventType.TurnStarted && !active
+        || (event as { type?: string }).type === AgentEventType.Message && !active;
+      const runtime = shouldStartNewTurn ? turnRuntime.start(threadId) : current;
+      event = { ...(event as Record<string, unknown>), turnExecutionId: runtime?.turnExecutionId };
+    }
+    return emit(eventName, event, ...args);
+  }) as typeof providerStub.emit;
 
   return { svc, threadRepo, workspaceRepo, messageRepo, providerStub, nonGoalStub };
 }

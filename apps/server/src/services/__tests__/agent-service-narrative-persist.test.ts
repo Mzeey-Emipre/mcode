@@ -6,6 +6,7 @@ import type { Thread, IProviderRegistry, Message } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
+import { isTurnScopedEvent } from "../turn-runtime.js";
 import type { ThreadRepo } from "../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../repositories/message-repo.js";
@@ -200,6 +201,26 @@ function build(): Built {
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
   );
   service.init();
+  // Provider adapters always stamp turn-scoped events with the active execution
+  // identity. Keep this fixture aligned with that production boundary while
+  // leaving each test focused on the narrative payload it emits.
+  const turnRuntime = (service as unknown as {
+    turnRuntime: { start: (threadId: string) => { turnExecutionId: string }; snapshot: (threadId: string) => {
+      turnExecutionId: string | null;
+      phase: string;
+    } | undefined };
+  }).turnRuntime;
+  turnRuntime.start(THREAD_ID);
+  const emit = providerEmitter.emit.bind(providerEmitter);
+  providerEmitter.emit = ((eventName: string, event?: unknown, ...args: unknown[]) => {
+    if (eventName === "event" && event && typeof event === "object"
+      && isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
+      && !(event as { turnExecutionId?: string }).turnExecutionId) {
+      const runtime = turnRuntime.snapshot(THREAD_ID);
+      event = { ...(event as Record<string, unknown>), turnExecutionId: runtime?.turnExecutionId };
+    }
+    return emit(eventName, event, ...args);
+  }) as typeof providerEmitter.emit;
   // Prime per-thread state without running sendMessage's full path. The buffers
   // now live in NarrativeStore; seed them via the same public entry points
   // sendMessage uses (beginTurn + resetTurnCounters).
