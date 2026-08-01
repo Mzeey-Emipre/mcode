@@ -274,7 +274,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       el.addEventListener("load", onLoad);
       return () => {
         el.removeEventListener("load", onLoad);
-        useBrowserAutomationStore.getState().unregisterTarget(threadId, tabId);
+        useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
       };
     }
     if (!window.desktopBridge?.preview?.adoptWebview) return;
@@ -307,7 +307,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       } catch {
         /* webview gone */
       }
-      useBrowserAutomationStore.getState().unregisterTarget(threadId, tabId);
+      useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
       void window.desktopBridge?.preview?.releaseWebview?.({ threadId, tabId });
     };
   }, [threadId, tabId, workspaceId]);

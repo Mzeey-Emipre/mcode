@@ -14,6 +14,7 @@ import {
 } from "../browserAutomationStore";
 import { selectBrowserAutomationWorkspaceIds } from "@/components/panels/BrowserAutomationHost";
 import { reconcileWarmPreviewScopes } from "@/components/panels/RightPanel";
+import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 
 function target(
   workspaceId: string,
@@ -127,6 +128,32 @@ describe("browser automation renderer scope", () => {
     expect(useBrowserAutomationStore.getState().activeRequests.has(
       browserAutomationRequestKey(newestRequestId, BROWSER_AUTOMATION_MAX_PENDING_REQUESTS),
     )).toBe(false);
+  });
+
+  it("does not reattach a detached target after a late refresh", () => {
+    const workspaceId = "workspace-late-refresh";
+    const threadId = "thread-late-refresh";
+    const tabId = "tab-late-refresh";
+    const key = browserAutomationTargetKey(threadId, tabId);
+    const store = useBrowserAutomationStore.getState();
+
+    store.unregisterTarget(threadId, tabId);
+    store.registerTarget(workspaceId, threadId, tabId);
+    const attachedRevision = useBrowserAutomationStore.getState().liveTargets.get(key)?.revision;
+    expect(attachedRevision).toBeDefined();
+
+    store.refreshTarget(threadId, tabId);
+    expect(useBrowserAutomationStore.getState().liveTargets.get(key)?.revision).toBe(
+      attachedRevision! + 1,
+    );
+
+    store.detachTarget(threadId, tabId);
+    store.refreshTarget(threadId, tabId);
+
+    expect(useBrowserAutomationStore.getState().liveTargets.has(key)).toBe(false);
+    expect(browserTargetRegistry.get(threadId, tabId)?.attached).toBe(false);
+
+    store.unregisterTarget(threadId, tabId);
   });
 
   it("routes authoritative thread and workspace cleanup to exact host scopes", () => {

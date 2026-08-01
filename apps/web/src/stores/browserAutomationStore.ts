@@ -4,6 +4,7 @@ import type {
 } from "@mcode/contracts";
 import { BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
 import { create } from "zustand";
+import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 
 /** Maximum number of inactive, non-busy Browser targets retained warm. */
 export const BROWSER_AUTOMATION_WARM_TARGET_LIMIT = 3;
@@ -36,7 +37,10 @@ interface BrowserAutomationState {
   readonly hostedScopeIds: ReadonlySet<string>;
   registerTarget: (workspaceId: string, threadId: string, tabId: string) => void;
   refreshTarget: (threadId: string, tabId: string) => void;
+  detachTarget: (threadId: string, tabId: string) => void;
   unregisterTarget: (threadId: string, tabId: string) => void;
+  releaseThreadTargets: (threadId: string) => void;
+  releaseWorkspaceTargets: (workspaceId: string) => void;
   setController: (state: BrowserAutomationControllerState) => void;
   setControllerForTarget: (
     threadId: string,
@@ -82,31 +86,37 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
   registerTarget: (workspaceId, threadId, tabId) =>
     set((state) => {
       const key = browserAutomationTargetKey(threadId, tabId);
-      const current = state.liveTargets.get(key);
+      const previous = browserTargetRegistry.get(threadId, tabId);
+      if (previous?.attached && !state.liveTargets.has(key)) {
+        browserTargetRegistry.releaseTarget(threadId, tabId);
+      }
+      const current = browserTargetRegistry.register(workspaceId, threadId, tabId);
       const liveTargets = new Map(state.liveTargets);
       liveTargets.set(key, {
         workspaceId,
         threadId,
         tabId,
-        revision: (current?.revision ?? 0) + 1,
-        lastUsedAt: Date.now(),
+        revision: current.revision,
+        lastUsedAt: current.lastUsedAt,
       });
       return { liveTargets };
     }),
   refreshTarget: (threadId, tabId) =>
     set((state) => {
       const key = browserAutomationTargetKey(threadId, tabId);
-      const current = state.liveTargets.get(key);
+      if (!state.liveTargets.has(key)) return state;
+      const current = browserTargetRegistry.refresh(threadId, tabId);
       if (!current) return state;
       const liveTargets = new Map(state.liveTargets);
       liveTargets.set(key, {
         ...current,
-        revision: current.revision + 1,
+        revision: current.revision,
         lastUsedAt: Date.now(),
       });
       return { liveTargets };
     }),
-  unregisterTarget: (threadId, tabId) =>
+  detachTarget: (threadId, tabId) => {
+    browserTargetRegistry.detach(threadId, tabId);
     set((state) => {
       const key = browserAutomationTargetKey(threadId, tabId);
       if (!state.liveTargets.has(key)) return state;
@@ -117,7 +127,54 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const viewportByTarget = new Map(state.viewportByTarget);
       viewportByTarget.delete(key);
       return { liveTargets, controllers, viewportByTarget };
-    }),
+    });
+  },
+  unregisterTarget: (threadId, tabId) => {
+    browserTargetRegistry.releaseTarget(threadId, tabId);
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      if (!state.liveTargets.has(key)) return state;
+      const liveTargets = new Map(state.liveTargets);
+      liveTargets.delete(key);
+      const controllers = new Map(state.controllers);
+      controllers.delete(key);
+      const viewportByTarget = new Map(state.viewportByTarget);
+      viewportByTarget.delete(key);
+      return { liveTargets, controllers, viewportByTarget };
+    });
+  },
+  releaseThreadTargets: (threadId) => {
+    browserTargetRegistry.releaseThread(threadId);
+    set((state) => {
+      const liveTargets = new Map(state.liveTargets);
+      const controllers = new Map(state.controllers);
+      const viewportByTarget = new Map(state.viewportByTarget);
+      for (const target of state.liveTargets.values()) {
+        if (target.threadId !== threadId) continue;
+        const key = browserAutomationTargetKey(target.threadId, target.tabId);
+        liveTargets.delete(key);
+        controllers.delete(key);
+        viewportByTarget.delete(key);
+      }
+      return { liveTargets, controllers, viewportByTarget };
+    });
+  },
+  releaseWorkspaceTargets: (workspaceId) => {
+    browserTargetRegistry.releaseWorkspace(workspaceId);
+    set((state) => {
+      const liveTargets = new Map(state.liveTargets);
+      const controllers = new Map(state.controllers);
+      const viewportByTarget = new Map(state.viewportByTarget);
+      for (const target of state.liveTargets.values()) {
+        if (target.workspaceId !== workspaceId) continue;
+        const key = browserAutomationTargetKey(target.threadId, target.tabId);
+        liveTargets.delete(key);
+        controllers.delete(key);
+        viewportByTarget.delete(key);
+      }
+      return { liveTargets, controllers, viewportByTarget };
+    });
+  },
   setController: (controller) =>
     set((state) => {
       const target = resolveBrowserAutomationControllerTarget(state.liveTargets.values(), controller);
@@ -192,11 +249,13 @@ export function onBrowserAutomationScopeRelease(listener: ScopeReleaseListener):
 
 /** Release the persistent Browser surface owned by one deleted thread. */
 export function releaseBrowserAutomationThreadScope(threadId: string): void {
+  useBrowserAutomationStore.getState().releaseThreadTargets(threadId);
   for (const listener of scopeReleaseListeners) listener({ threadId });
 }
 
 /** Release all persistent Browser surfaces owned by one deleted workspace. */
 export function releaseBrowserAutomationWorkspaceScopes(workspaceId: string): void {
+  useBrowserAutomationStore.getState().releaseWorkspaceTargets(workspaceId);
   for (const listener of scopeReleaseListeners) listener({ workspaceId });
 }
 

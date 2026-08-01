@@ -961,6 +961,16 @@ automation. A host advertises only tabs that it currently owns and can stop
 advertising a tab when that page is replaced, discarded, or closed.
 _Avoid_: treating a saved Preview tab record as a live automation target
 
+The host routes every Browser v1 command through one client-side
+`BrowserSessionDriver`. The driver selects the web or Electron runtime adapter;
+the adapter owns runtime execution while the Electron kernel retains Chromium
+and CDP mechanics. `BrowserTargetRegistry` owns logical target identity outside
+React. React attaches or detaches runtime handles and projects registry state;
+ordinary remounts do not release a logical target. Authoritative tab, thread,
+and workspace deletion releases the record. The broker remains responsible for
+credentials, routing, cancellation, capacity, and liveness, while MCP remains
+schema and authority translation.
+
 ### Browser controller
 The current actor with control of a Preview tab: the user, an agent, or neither.
 Direct user input takes control from the agent and stops the active Browser

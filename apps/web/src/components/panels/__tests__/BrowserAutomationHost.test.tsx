@@ -74,6 +74,7 @@ vi.mock("../webBrowserInteractionExecutor", async (importOriginal) => {
 
 import { BrowserAutomationHost, isBrowserAutomationWebRuntimeEnabled } from "../BrowserAutomationHost";
 import { BrowserAutomationRecorder } from "../browserAutomationRecorder";
+import { BrowserSessionDriver } from "@/services/browser-automation/browserSessionDriver";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -246,6 +247,36 @@ describe("BrowserAutomationHost", () => {
     expect(isBrowserAutomationWebRuntimeEnabled({})).toBe(false);
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "0" })).toBe(false);
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "1" })).toBe(true);
+  });
+
+  it("enters BrowserSessionDriver for broker-dispatched web and Electron commands", async () => {
+    execute.mockResolvedValue(successResponse(dispatch(1, 91).request));
+    const driverExecute = vi.spyOn(BrowserSessionDriver.prototype, "execute");
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: dispatch(1, 91) }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(driverExecute).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ operation: "status" }) }), expect.any(AbortSignal));
+    view.unmount();
+    driverExecute.mockRestore();
+    execute.mockReset();
+  });
+
+  it("enters BrowserSessionDriver before web adapter dispatch", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const driverExecute = vi.spyOn(BrowserSessionDriver.prototype, "execute");
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(dispatch(1, 92).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: dispatch(1, 92) }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(driverExecute).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ operation: "status" }) }), expect.any(AbortSignal));
+    view.unmount();
+    driverExecute.mockRestore();
+    webExecutor.executeWebBrowserDispatch.mockReset();
   });
 
   it("carries an initial web open URL into the visible preview state", async () => {

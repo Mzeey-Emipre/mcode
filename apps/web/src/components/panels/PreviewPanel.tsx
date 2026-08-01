@@ -1559,7 +1559,7 @@ function WebRuntimePreview({
       WEB_RUNTIME_PREVIEW_TAB_ID,
     );
     return () => {
-      useBrowserAutomationStore.getState().unregisterTarget(
+      useBrowserAutomationStore.getState().detachTarget(
         threadId,
         WEB_RUNTIME_PREVIEW_TAB_ID,
       );

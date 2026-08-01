@@ -28,8 +28,6 @@ import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
 import {
-  executeWebInteraction,
-  observeWebHumanInput,
   resolveSameOriginFrame,
 } from "./webBrowserInteractionExecutor";
 import { PreviewPanel, WEB_RUNTIME_PREVIEW_TAB_ID } from "./PreviewPanel";
@@ -40,6 +38,8 @@ import {
 } from "./browserAutomationRuntime";
 import { executeWebBrowserDispatch } from "./browserAutomationWebExecutor";
 import { captureVisibleWebLocation, sanitizeWebLocation } from "./web-browser-automation/capture";
+import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "@/services/browser-automation/browserSessionDriver";
+import { WebBrowserSessionAdapter } from "@/services/browser-automation/webBrowserSessionAdapter";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
@@ -486,6 +486,7 @@ export function BrowserAutomationHost() {
   const requestAbortRef = useRef(new Map<string, AbortController>());
   const webAbortRef = useRef(new Map<string, AbortController>());
   const webObserverRef = useRef(new Map<string, () => void>());
+  const webHumanCancelRef = useRef(new Map<string, () => void>());
   const webNavigationRef = useRef(new Map<string, WebNavigationExpectation>());
   const bootstrapPendingRef = useRef(new Set<string>());
   const bootstrapAbortRef = useRef(new Map<string, AbortController>());
@@ -493,6 +494,37 @@ export function BrowserAutomationHost() {
   const priorLiveTargetKeysRef = useRef(new Set<string>());
   const priorLiveTargetRevisionsRef = useRef(new Map<string, number>());
   const cancelledRef = useRef(new Set<string>());
+  const sessionDriverRef = useRef<BrowserSessionDriver | null>(null);
+  if (!sessionDriverRef.current) {
+    const webAdapter = new WebBrowserSessionAdapter({
+      resolveDocument: (dispatch) => {
+        const selector = `iframe[data-thread-id="${escapeWebSelector(dispatch.target.threadId)}"][data-tab-id="${escapeWebSelector(dispatch.target.tabId)}"]`;
+        for (const iframe of document.querySelectorAll<HTMLIFrameElement>(selector)) {
+          const resolved = resolveSameOriginFrame(iframe);
+          if (resolved) return resolved.document;
+        }
+        return null;
+      },
+      resolveSignal: (dispatch, signal) => webAbortRef.current.get(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence))?.signal ?? signal,
+      getControlEpoch: (dispatch) => {
+        const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+        return useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
+      },
+      getTargetGeneration: (dispatch) => {
+        const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+        return useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision ?? 0;
+      },
+      onHumanInput: (dispatch) => webHumanCancelRef.current.get(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence))?.(),
+      onObserver: (dispatch, dispose) => webObserverRef.current.set(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence), dispose),
+      executeNonInteraction: (dispatch, signal) => executeBrowserDispatch(undefined, recorderRef.current, dispatch, signal),
+    });
+    sessionDriverRef.current = new BrowserSessionDriver({
+      web: webAdapter,
+      electron: new ElectronBrowserSessionAdapter(
+        (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal),
+      ),
+    });
+  }
   const stableHostId = useMemo(hostId, []);
   const [backgroundScopes, setBackgroundScopes] = useState<readonly BackgroundBrowserScope[]>([]);
   const backgroundScopesRef = useRef<readonly BackgroundBrowserScope[]>([]);
@@ -819,31 +851,21 @@ export function BrowserAutomationHost() {
           "human-interrupted",
         ).catch(() => undefined);
       };
+      if (webDispatch) webHumanCancelRef.current.set(key, cancelForHuman);
       const executeWeb = async (): Promise<BrowserAutomationResponse> => {
         if (staleAtStart) {
           return failureResponse(dispatch.request, !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration ? "STALE_TARGET_GENERATION" : "STALE_CONTROL_EPOCH", "Browser operation is stale");
         }
         if (!operationAbort) return failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser target is unavailable");
-        const selector = `iframe[data-thread-id="${escapeWebSelector(dispatch.target.threadId)}"][data-tab-id="${escapeWebSelector(dispatch.target.tabId)}"]`;
-        const targetDocument = resolveSameOriginFrame(document.querySelector<HTMLIFrameElement>(selector));
-        if (!targetDocument) return failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser target is unavailable");
-        webObserverRef.current.set(key, observeWebHumanInput(targetDocument.document, cancelForHuman));
-        return executeWebInteraction(targetDocument.document, dispatch, {
-          signal: operationAbort.signal,
-          deadline: dispatch.request.deadline,
-          expectedControlEpoch: dispatch.request.expectedControlEpoch,
-          targetGeneration: dispatch.target.targetGeneration,
-          getControlEpoch: () => useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch,
-          getTargetGeneration: () => useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision ?? 0,
-        });
+        return sessionDriverRef.current!.execute(dispatch, controller.signal);
       };
       const executeWebOpen = async (): Promise<BrowserAutomationResponse> => {
         if (!webOpenRequest || dispatch.request.operation !== "open" || !dispatch.request.args.url) {
-          return executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal);
+          return sessionDriverRef.current!.execute(dispatch, controller.signal);
         }
         const requestedUrl = normalizeWebPreviewUrl(dispatch.request.args.url);
         if (!requestedUrl || !isSameOriginWebPreviewUrl(requestedUrl)) {
-          return executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal);
+          return sessionDriverRef.current!.execute(dispatch, controller.signal);
         }
         const currentTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
         if (!currentTarget || currentTarget.revision !== dispatch.target.targetGeneration) {
@@ -896,14 +918,14 @@ export function BrowserAutomationHost() {
             args: { activate: dispatch.request.args.activate },
           },
         };
-        return executeBrowserDispatch(bridge, recorderRef.current, executionDispatch, controller.signal);
+        return sessionDriverRef.current!.execute(executionDispatch, controller.signal);
       };
       const operation = webDispatch
         ? executeWeb()
         : webOpenRequest
           ? executeWebOpen()
         : bridge || webExecutorDispatch
-          ? executeBrowserDispatch(bridge, recorderRef.current, dispatch, controller.signal)
+          ? sessionDriverRef.current!.execute(dispatch, controller.signal)
           : Promise.resolve(failureResponse(dispatch.request, "UNSUPPORTED_OPERATION", WEB_AUTOMATION_UNAVAILABLE_REASON));
       const guardedOperation = operation.then((response) => {
         if (!bridge && webAutomationEnabled && (webDispatch || webOpenRequest || webNavigateRequest)) {
@@ -947,6 +969,7 @@ export function BrowserAutomationHost() {
       }).catch(() => undefined).finally(() => {
         webObserverRef.current.get(key)?.();
         webObserverRef.current.delete(key);
+        webHumanCancelRef.current.delete(key);
         webAbortRef.current.delete(key);
         webNavigationRef.current.delete(key);
         if (inFlightRef.current.get(key) === dispatch) inFlightRef.current.delete(key);
@@ -1176,7 +1199,7 @@ export function BrowserAutomationHost() {
               },
             }
           : dispatch;
-        const response = await executeBrowserDispatch(bridge, recorderRef.current, executionDispatch, controller.signal);
+        const response = await sessionDriverRef.current!.execute(executionDispatch, controller.signal);
         await restoreBackgroundContext();
         if (leaseRef.current === lease && !cancelledRef.current.has(key)) {
           await getTransport().respondToBrowserAutomationRequest(
@@ -1307,6 +1330,7 @@ export function BrowserAutomationHost() {
     for (const dispose of webObserverRef.current.values()) dispose();
     webAbortRef.current.clear();
     webObserverRef.current.clear();
+    webHumanCancelRef.current.clear();
   }, []);
 
   return backgroundScopes.map((scope) => (

@@ -201,6 +201,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     get().setLiveChrome(scopeId, null);
     const r = await tabs.close(scopeId, tabId);
     if (!r.ok) return;
+    useBrowserAutomationStore.getState().unregisterTarget(scopeId, tabId);
     // Closing the last page collapses the Browser tab. The host always recreates
     // a blank fallback page in its returned set, but the tab is gone from the
     // rail, so drop the scope's set rather than leave that fallback as a phantom
