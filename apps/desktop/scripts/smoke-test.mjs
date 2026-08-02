@@ -29,6 +29,10 @@ import {
   findClaudeSdkCliPath,
   expectedClaudeSdkCliPath,
 } from "../../../scripts/build-server-dev-bundle.mjs";
+import {
+  classifySmokeOutcome,
+  getSmokeTimeoutMs,
+} from "./smoke-test-config.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
@@ -37,7 +41,6 @@ const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
 const serverRequire = createRequire(resolve(desktopRoot, "..", "server", "package.json"));
 
 const SMOKE_PORT = 19899;
-const TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 300;
 
 // ---------------------------------------------------------------------------
@@ -176,6 +179,16 @@ if (found.binding) {
   console.log(`[smoke-test] SQLite binding: ${found.binding}`);
 }
 
+const sdkTarget = bundleOnly
+  ? { platform: process.platform, arch: process.arch }
+  : inferPackagedSdkTarget(found.server);
+const timeoutMs = getSmokeTimeoutMs({
+  hostPlatform: process.platform,
+  hostArch: process.arch,
+  targetPlatform: sdkTarget.platform,
+  targetArch: sdkTarget.arch,
+});
+
 if (!bundleOnly) {
   if (!found.koffi || !existsSync(found.koffi)) {
     console.error(`[smoke-test] ERROR: koffi native module missing at ${found.koffi}`);
@@ -184,7 +197,6 @@ if (!bundleOnly) {
   }
   console.log(`[smoke-test] koffi module: ${found.koffi}`);
 
-  const sdkTarget = inferPackagedSdkTarget(found.server);
   const claudeCli = findClaudeSdkCliPath(found.server, sdkTarget.platform, sdkTarget.arch);
   if (!claudeCli) {
     const expected = expectedClaudeSdkCliPath(found.server, sdkTarget.platform, sdkTarget.arch);
@@ -345,7 +357,7 @@ const exitPromise = new Promise((resolve) => {
   });
 });
 
-const deadline = Date.now() + TIMEOUT_MS;
+const deadline = Date.now() + timeoutMs;
 let healthy = false;
 
 while (Date.now() < deadline && !exited) {
@@ -360,6 +372,11 @@ while (Date.now() < deadline && !exited) {
   }
   await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
 }
+
+const outcome = classifySmokeOutcome({
+  healthy,
+  exitedAtDeadline: exited,
+});
 
 // ---------------------------------------------------------------------------
 // Report and cleanup
@@ -377,17 +394,17 @@ await exitPromise;
 // Clean up temp data directory
 try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* ok */ }
 
-if (healthy) {
+if (outcome === "healthy") {
   console.log("[smoke-test] PASS: Server started and /health returned 200.");
   process.exit(0);
-} else if (exited) {
+} else if (outcome === "crashed") {
   console.error("[smoke-test] FAIL: Server crashed before becoming ready.");
   if (serverStderr) {
     console.error("[smoke-test] Last stderr output:\n" + serverStderr.slice(-2000));
   }
   process.exit(1);
 } else {
-  console.error(`[smoke-test] FAIL: Server did not respond within ${TIMEOUT_MS / 1000}s.`);
+  console.error(`[smoke-test] FAIL: Server did not respond within ${timeoutMs / 1000}s.`);
   if (serverStderr) {
     console.error("[smoke-test] Last stderr output:\n" + serverStderr.slice(-2000));
   }
