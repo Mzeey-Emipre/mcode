@@ -10,7 +10,16 @@ export class WebBrowserSemanticRegistry {
   /** Returns a stable identity for one element, preferring its real DOM identity. */
   register(ownerDocument: Document, element: Element, preferredId?: string): string {
     const existing = this.idsByElement.get(element);
-    if (existing) return existing;
+    if (existing) {
+      const retained = this.elementsById.get(existing);
+      if (retained === element && element.ownerDocument === ownerDocument && element.isConnected) return existing;
+      if (!retained && element.ownerDocument === ownerDocument && element.isConnected) {
+        this.retain(existing, element);
+        return existing;
+      }
+      this.idsByElement.delete(element);
+      if (retained === element) this.elementsById.delete(existing);
+    }
     const usablePreferred = preferredId && preferredId.length <= MAX_SEMANTIC_ID_CHARS
       ? preferredId
       : undefined;
@@ -18,6 +27,11 @@ export class WebBrowserSemanticRegistry {
     const id = usablePreferred && (!preferredOwner || preferredOwner === element)
       ? usablePreferred
       : this.nextSyntheticIdFor(ownerDocument);
+    this.retain(id, element);
+    return id;
+  }
+
+  private retain(id: string, element: Element): void {
     this.idsByElement.set(element, id);
     this.elementsById.set(id, element);
     while (this.elementsById.size > MAX_REGISTERED_ELEMENTS) {
@@ -25,7 +39,6 @@ export class WebBrowserSemanticRegistry {
       if (oldest === undefined) break;
       this.elementsById.delete(oldest);
     }
-    return id;
   }
 
   /** Resolves a registry identity only while its element remains in the same document. */
