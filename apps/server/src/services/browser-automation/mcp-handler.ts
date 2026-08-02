@@ -105,6 +105,50 @@ const commonProperties = {
   expectedControlEpoch: { type: "integer", minimum: 0, description: "Control epoch returned by browser_status." },
 } as const;
 
+const actTargetSchema = {
+  oneOf: [
+    { type: "object", properties: { semanticId: { type: "string", minLength: 1, maxLength: 1_024 } }, required: ["semanticId"], additionalProperties: false },
+    { type: "object", properties: { role: { type: "string", minLength: 1, maxLength: 128 }, accessibleName: { type: "string", minLength: 1, maxLength: 1_024 } }, required: ["role", "accessibleName"], additionalProperties: false },
+    { type: "object", properties: { cssSelector: { type: "string", minLength: 1, maxLength: 4_096 } }, required: ["cssSelector"], additionalProperties: false },
+    { type: "object", properties: { x: { type: "number", minimum: 0, maximum: 100_000 }, y: { type: "number", minimum: 0, maximum: 100_000 } }, required: ["x", "y"], additionalProperties: false },
+  ],
+} as const;
+
+const actTimeoutSchema = { type: "integer", minimum: 1, maximum: 60_000 } as const;
+
+function actStepSchema(
+  operation: string,
+  properties: Record<string, unknown>,
+  required: readonly string[] = [],
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: { operation: { const: operation }, ...properties },
+    required: ["operation", ...required],
+    additionalProperties: false,
+    ...extra,
+  };
+}
+
+const actStepVariants = [
+  actStepSchema("navigate", { url: { type: "string", format: "uri", minLength: 1, maxLength: 2_048 } }, ["url"]),
+  actStepSchema("back", {}),
+  actStepSchema("forward", {}),
+  actStepSchema("reload", {}),
+  actStepSchema("resize", { width: { type: "integer", minimum: 320, maximum: 7_680 }, height: { type: "integer", minimum: 240, maximum: 4_320 } }, ["width", "height"]),
+  actStepSchema("hover", { target: actTargetSchema, timeoutMs: actTimeoutSchema }, ["target"]),
+  actStepSchema("click", { target: actTargetSchema, button: { enum: ["left", "middle", "right"], default: "left" }, clickCount: { enum: [1, 2], default: 1 }, timeoutMs: actTimeoutSchema }, ["target"]),
+  actStepSchema("drag", { source: actTargetSchema, target: actTargetSchema, timeoutMs: actTimeoutSchema }, ["source", "target"]),
+  actStepSchema("type", { target: actTargetSchema, text: { type: "string", maxLength: 16_384 }, clear: { type: "boolean", default: false }, submit: { type: "boolean", default: false }, timeoutMs: actTimeoutSchema }, ["text"]),
+  actStepSchema("press", { key: { type: "string", minLength: 1, maxLength: 64 }, modifiers: { type: "array", items: { enum: ["Alt", "Control", "Meta", "Shift"] }, maxItems: 4, default: [] }, timeoutMs: actTimeoutSchema }, ["key"]),
+  actStepSchema("scroll", { target: actTargetSchema, deltaX: { type: "number", minimum: -100_000, maximum: 100_000, default: 0 }, deltaY: { type: "number", minimum: -100_000, maximum: 100_000 }, timeoutMs: actTimeoutSchema }, ["deltaY"]),
+  actStepSchema("wait", { durationMs: { type: "integer", minimum: 1, maximum: 60_000 } }, ["durationMs"]),
+  actStepSchema("assert", { target: actTargetSchema, text: { type: "string", minLength: 1, maxLength: 1_024 }, url: { type: "string", format: "uri", minLength: 1, maxLength: 2_048 } }, [], { anyOf: [{ required: ["target"] }, { required: ["text"] }, { required: ["url"] }] }),
+  actStepSchema("recordingStart", {}),
+  actStepSchema("recordingStop", {}),
+];
+
 function inputSchema(operation: BrowserAutomationOperation): Record<string, unknown> {
   const schemas: Record<BrowserAutomationOperation, Record<string, unknown>> = {
     inspect: { includeScreenshot: { type: "boolean", default: false }, includeDiagnostics: { type: "boolean", default: false } },
@@ -112,7 +156,7 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
       idempotencyKey: { type: "string", minLength: 1, maxLength: 256 },
       observationRef: { type: "string", minLength: 1, maxLength: 256 },
       deadlineMs: { type: "integer", minimum: 1, maximum: 60000 },
-      steps: { type: "array", minItems: 1, maxItems: 8, items: { type: "object" } },
+      steps: { type: "array", minItems: 1, maxItems: 8, items: { oneOf: actStepVariants } },
     },
     status: {},
     open: {
