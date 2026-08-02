@@ -261,25 +261,25 @@ describe("BrowserAutomationKernel", () => {
     });
   });
 
-  it("returns bounded browser_inspect state with positive revision and fresh observation", async () => {
+  it("returns mechanical browser_inspect facts without public semantic metadata", async () => {
     const first = await kernel.execute(event(), payload(request("inspect", {}, { requestId: "inspect-first" })));
     const second = await kernel.execute(event(), payload(request("inspect", {}, { requestId: "inspect-second" })));
     expect(first).toMatchObject({
       ok: true,
       result: {
         operation: "inspect",
-        readiness: { ready: true, state: "ready" },
         target: { threadId: "thread", tabId: "tab", sticky: true },
         tabs: [{ threadId: "thread", tabId: "tab" }],
         snapshot: { visibleText: "Example" },
-        capabilityRevision: expect.any(Number),
-        observationRef: expect.any(String),
       },
     });
     if (!first.ok || !second.ok || first.result.operation !== "inspect" || second.result.operation !== "inspect") throw new Error("Expected inspect results");
-    expect(first.result.capabilityRevision).toBeGreaterThan(0);
-    expect(second.result.observationRef).not.toBe(first.result.observationRef);
-    expect(first.result.guidance.length).toBeLessThanOrEqual(4_000);
+    expect(first.result).not.toHaveProperty("capabilities");
+    expect(first.result).not.toHaveProperty("guidance");
+    expect(first.result).not.toHaveProperty("capabilityRevision");
+    expect(first.result).not.toHaveProperty("observationRef");
+    expect(first.result).not.toHaveProperty("readiness");
+    expect(second.result).not.toHaveProperty("capabilityRevision");
   });
 
   it("keeps capabilityRevision stable across navigation", async () => {
@@ -287,7 +287,7 @@ describe("BrowserAutomationKernel", () => {
     await kernel.execute(event(), payload(request("navigate", { url: "https://example.test/next" }, { requestId: "revision-navigation" })));
     const after = await kernel.execute(event(), payload(request("status", {}, { requestId: "revision-after" })));
     if (!before.ok || !after.ok || before.result.operation !== "status" || after.result.operation !== "status") throw new Error("Expected status results");
-    expect(after.result.capabilityRevision).toBe(before.result.capabilityRevision);
+    expect(after.result.capabilityRevision).toBeUndefined();
   });
 
   it("reports a bounded sanitized non-HTTP page-initiated location", async () => {

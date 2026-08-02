@@ -12,13 +12,13 @@ import {
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
   BROWSER_AUTOMATION_MAX_RESULT_BYTES,
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS,
-  BROWSER_AUTOMATION_OPERATIONS,
   BrowserAutomationResponseSchema,
   BrowserAutomationHostDispatchSchema,
   type BrowserAutomationOperation,
   type BrowserAutomationErrorCode,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
+  type BrowserAutomationResult,
   type BrowserAutomationTarget,
   type BrowserAutomationHostDispatchTarget,
   type BrowserAutomationHostDispatch,
@@ -109,6 +109,9 @@ interface TargetState {
   actions: OldestFirstRingBuffer<ActionEntry>;
   dispose: () => void;
 }
+
+type MechanicalInspectResult = Omit<Extract<BrowserAutomationResult, { operation: "inspect" }>, "readiness" | "observationRef" | "capabilities" | "guidance" | "capabilityRevision">;
+type MechanicalStatusResult = Omit<Extract<BrowserAutomationResult, { operation: "status" }>, "capabilities" | "capabilityRevision">;
 
 interface ResolvedTarget {
   state: TargetState;
@@ -1184,12 +1187,8 @@ export class BrowserAutomationKernel {
         const diagnostics = request.args.includeDiagnostics
           ? state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).map((entry) => entry.text)
           : undefined;
-        const humanControl = state.controller.controller === "human";
-        return {
+        const mechanical: MechanicalInspectResult = {
           operation: "inspect",
-          readiness: humanControl
-            ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
-            : { ready: true, state: "ready" },
           target: { threadId: state.threadId, tabId: state.tabId, targetGeneration: state.targetGeneration, sticky: true },
           tabs: [{
             desktopInstanceId: "electron",
@@ -1202,16 +1201,11 @@ export class BrowserAutomationKernel {
             focused: webContents.isFocused(),
             lastUsedAt: Date.now(),
           }],
-          snapshot,
-          ...(screenshot ? { screenshot } : {}),
+          snapshot: snapshot as MechanicalInspectResult["snapshot"],
+          ...(screenshot ? { screenshot: screenshot as NonNullable<MechanicalInspectResult["screenshot"]> } : {}),
           ...(diagnostics ? { diagnostics } : {}),
-          observationRef: randomUUID(),
-          capabilityRevision: state.capabilityRevision,
-          capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
-          guidance: humanControl
-            ? "Visible Preview under human control. Yield to user before effects."
-            : "Visible Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.",
         };
+        return mechanical;
       }
       case "status":
         {
@@ -1225,7 +1219,7 @@ export class BrowserAutomationKernel {
           if (!Number.isFinite(width) || !Number.isFinite(height)) {
             throw new KernelError("TAB_UNAVAILABLE", "Browser viewport is unavailable", true);
           }
-        return {
+        const mechanical: MechanicalStatusResult = {
           operation: "status",
           available: true,
           active: getSession(resolved.window).tabsByThread.get(state.threadId)?.activeTabId === state.tabId,
@@ -1238,9 +1232,8 @@ export class BrowserAutomationKernel {
             height: Math.max(1, Math.min(10_000, Math.round(height))),
           },
           controller: state.controller,
-          capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
-          capabilityRevision: state.capabilityRevision,
         };
+        return mechanical;
         }
       case "open":
       case "navigate": {

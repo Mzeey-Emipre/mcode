@@ -130,6 +130,68 @@ describe("BrowserAutomationBroker", () => {
     }, authorization("mismatch"))).toThrow("runtime does not match");
   });
 
+  it("derives bounded inspect metadata from descriptor, credential, host, and target state", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    } }));
+    const hostSocket = socket("inspect-authority");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("inspect-authority", "workspace-a"),
+      executorDescriptor: {
+        ...registration("inspect-authority", "workspace-a").executorDescriptor,
+        constraints: { maxTabs: 1, maxSnapshotChars: 4, maxDiagnostics: 1 },
+      },
+      capabilities: [
+        { operation: "inspect", available: true },
+        { operation: "status", available: true },
+      ],
+    }, authorization("inspect-authority")).generation;
+    updateTargets(broker, hostSocket, "inspect-authority", generation, ["thread-a"]);
+    const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["inspect", "status"] as const };
+    const pending = broker.execute(scope, { ...request(scope), operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: true } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const dispatch = deliveries.find((delivery) => delivery.channel === "browserAutomation.request")!.data.dispatch;
+    const target = dispatch.target;
+    broker.respond(hostSocket, "inspect-authority", generation, {
+      contractVersion: 1,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: true,
+      result: {
+        operation: "inspect",
+        tabs: [target, { ...target, tabId: "extra-tab" }],
+        snapshot: {
+          url: "https://example.test/",
+          title: "Fixture",
+          loading: false,
+          visibleText: "123456",
+          visibleTextTruncation: { truncated: false },
+          elements: [], elementsTruncation: { truncated: false },
+          accessibility: [], accessibilityTruncation: { truncated: false },
+          console: [], consoleTruncation: { truncated: false },
+          network: [], networkTruncation: { truncated: false },
+          actions: [], actionsTruncation: { truncated: false },
+        },
+        diagnostics: ["one", "two"],
+      },
+    });
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: {
+        operation: "inspect",
+        tabs: [{ tabId: "tab-thread-a" }],
+        snapshot: { visibleText: "1234", visibleTextTruncation: { truncated: true, originalCount: 6, reason: "character-limit" } },
+        diagnostics: ["one"],
+        capabilities: ["inspect", "status"],
+        capabilityRevision: 1,
+        guidance: expect.stringContaining("electron"),
+        observationRef: expect.any(String),
+      },
+    });
+  });
+
   it("never cross-routes two threads across workspace-scoped hosts", async () => {
     const deliveries: Array<{ socket: WebSocket; data: any }> = [];
     const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (target, channel, data) => {

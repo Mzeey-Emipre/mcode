@@ -969,16 +969,16 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
   z.discriminatedUnion("operation", [
     z.object({
       operation: z.literal("inspect"),
-      readiness: BrowserAutomationInspectReadinessSchema(),
+      readiness: BrowserAutomationInspectReadinessSchema().optional(),
       target: BrowserAutomationInspectTargetSchema().optional(),
       tabs: z.array(BrowserAutomationHostDispatchTargetSchema()).max(BROWSER_AUTOMATION_MAX_INSPECT_TABS),
       snapshot: BrowserAutomationSnapshotSchema().optional(),
       screenshot: BrowserAutomationScreenshotSchema().optional(),
       diagnostics: z.array(z.string().max(SHORT_TEXT_MAX)).max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).optional(),
-      observationRef: idSchema,
-      capabilityRevision: z.number().int().positive(),
-      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 1),
-      guidance: z.string().max(BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS),
+      observationRef: idSchema.optional(),
+      capabilityRevision: z.number().int().positive().optional(),
+      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 1).optional(),
+      guidance: z.string().max(BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS).optional(),
     }).strict(),
     z.object({
       operation: z.literal("status"),
@@ -990,7 +990,7 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
       focused: z.boolean(),
       viewport: z.object({ width: z.number().int().min(1).max(10_000), height: z.number().int().min(1).max(10_000) }).strict(),
       controller: BrowserAutomationControllerStateSchema().optional(),
-      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 1),
+      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 1).optional(),
       capabilityRevision: z.number().int().positive().optional(),
     }).strict(),
     z.object({

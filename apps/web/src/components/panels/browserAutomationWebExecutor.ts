@@ -9,7 +9,6 @@ import {
 } from "@mcode/contracts";
 import { captureVisibleWebScreenshot } from "./web-browser-automation/capture";
 
-const WEB_CAPABILITIES = ["inspect", "status", "open", "navigate", "snapshot", "screenshot"] as const;
 const WEB_SNAPSHOT_MAX_SCAN_NODES = 8_192;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT = 1_024;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES = 256;
@@ -46,6 +45,8 @@ function popSnapshotNode(stack: SnapshotNode[], budget: SnapshotBudget): Snapsho
 }
 
 type WebIframe = HTMLIFrameElement & { dataset: DOMStringMap };
+type MechanicalInspectResult = Omit<Extract<BrowserAutomationResult, { operation: "inspect" }>, "readiness" | "observationRef" | "capabilities" | "guidance" | "capabilityRevision">;
+type MechanicalStatusResult = Omit<Extract<BrowserAutomationResult, { operation: "status" }>, "capabilities" | "capabilityRevision">;
 
 type WebFailureCode =
   | "CROSS_ORIGIN"
@@ -436,28 +437,19 @@ async function inspect(dispatch: BrowserAutomationHostDispatch, iframe: WebIfram
   const observed = snapshot({ ...dispatch, request: { ...dispatch.request, operation: "snapshot", args: { includeScreenshot: false, timeoutMs: 15_000 } } } as BrowserAutomationHostDispatch, iframe, signal);
   if (!observed.ok) return observed;
   if (observed.result.operation !== "snapshot") return failure(dispatch, "UNSUPPORTED_OPERATION", "Web Preview snapshot response was invalid");
-  const humanControl = dispatch.target.controller?.controller === "human";
   const screenshotResult = dispatch.request.args.includeScreenshot
     ? await captureVisibleWebScreenshot({ iframe, maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH, deadline: dispatch.request.deadline, signal })
     : null;
   if (screenshotResult && !screenshotResult.ok) return failure(dispatch, screenshotResult.code === "TIMEOUT" ? "DEADLINE_EXCEEDED" : screenshotResult.code, "Web Preview screenshot failed");
-  return response(dispatch, {
+  const mechanical: MechanicalInspectResult = {
     operation: "inspect",
-    readiness: humanControl
-      ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
-      : { ready: true, state: "ready" },
     target: { threadId: dispatch.target.threadId, tabId: dispatch.target.tabId, targetGeneration: dispatch.target.targetGeneration, sticky: true },
     tabs: [dispatch.target],
     snapshot: observed.result.snapshot,
     ...(screenshotResult?.ok ? { screenshot: screenshotResult.value } : {}),
     ...(dispatch.request.args.includeDiagnostics ? { diagnostics: [] } : {}),
-    observationRef: globalThis.crypto.randomUUID(),
-    capabilityRevision: 1,
-    capabilities: [...WEB_CAPABILITIES],
-    guidance: (humanControl
-      ? "Visible Preview under human control. Yield to user before effects."
-      : "Visible same-origin Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.").slice(0, 4_000),
-  });
+  };
+  return response(dispatch, mechanical);
 }
 
 function screenshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
@@ -488,7 +480,7 @@ export async function executeWebBrowserDispatch(
   const { request } = dispatch;
   if (request.operation === "status") {
     const document = currentDocument(iframe);
-    return response(dispatch, {
+    const mechanical: MechanicalStatusResult = {
       operation: "status",
       available: true,
       active: true,
@@ -497,9 +489,8 @@ export async function executeWebBrowserDispatch(
       loading: document?.readyState !== "complete",
       focused: true,
       viewport: { width: iframe.clientWidth || 1, height: iframe.clientHeight || 1 },
-      capabilities: [...WEB_CAPABILITIES],
-      capabilityRevision: 1,
-    });
+    };
+    return response(dispatch, mechanical);
   }
   if (request.operation === "inspect") return inspect(dispatch, iframe, signal);
   if (request.operation === "navigate" || request.operation === "open") {

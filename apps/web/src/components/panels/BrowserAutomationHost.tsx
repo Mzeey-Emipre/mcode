@@ -531,7 +531,12 @@ export function BrowserAutomationHost() {
   const registered = useBrowserAutomationStore((state) => state.registered);
   const leaseRef = useRef<HostLease | null>(null);
   const shutdownLeaseRef = useRef<HostLease | null>(null);
-  const capabilityRevisionRef = useRef(1);
+  const executorDescriptor = useMemo(() => ({
+    runtime: window.desktopBridge?.preview?.automation ? "electron" as const : "web" as const,
+    operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS] as BrowserAutomationOperation[],
+    constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+    capabilityRevision: 1,
+  }), []);
   const recorderRef = useRef(new BrowserAutomationRecorder());
   const registrationEpochRef = useRef(0);
   const inFlightRef = useRef(new Map<string, BrowserAutomationHostDispatch>());
@@ -575,7 +580,7 @@ export function BrowserAutomationHost() {
     });
     sessionDriverRef.current = new BrowserSessionDriver({
       web: webAdapter,
-      getCapabilityRevision: () => capabilityRevisionRef.current,
+      getCapabilityRevision: () => executorDescriptor.capabilityRevision,
       electron: new ElectronBrowserSessionAdapter(
         (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal),
       ),
@@ -669,19 +674,14 @@ export function BrowserAutomationHost() {
     void transport.registerBrowserAutomationHost({
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
       hostId: stableHostId,
-      runtime: desktopAutomation ? "electron" : "web",
+      runtime: executorDescriptor.runtime,
       desktopInstanceId: "pending-desktop",
       worktreeIdentity: desktopAutomation ? "pending-worktree" : worktreeIdentity,
       workspaceIds,
       ...(activeTarget && !desktopAutomation && webAutomationEnabled ? {
         targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
       } : {}),
-      executorDescriptor: {
-        runtime: desktopAutomation ? "electron" : "web",
-        operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
-        constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
-        capabilityRevision: 1,
-      },
+      executorDescriptor,
       capabilities: [{ operation: "inspect", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
           const available = operation === "click" || operation === "type" ||

@@ -23,6 +23,23 @@ describe("BrowserSessionDriver", () => {
     expect(web).not.toHaveBeenCalled();
   });
 
+  it("rechecks revision at the last adapter boundary", async () => {
+    const web = vi.fn().mockResolvedValue(response);
+    let revisionReads = 0;
+    const driver = new BrowserSessionDriver({
+      web: { execute: web },
+      electron: { execute: web },
+      isElectron: () => false,
+      getCapabilityRevision: () => (++revisionReads === 1 ? 1 : 2),
+    });
+    const result = await driver.execute({
+      connection: { capabilityRevision: 1 },
+      request: { contractVersion: 1, requestId: "last-boundary", sequence: 1, operation: "status" },
+    } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(result).toMatchObject({ ok: false, error: { code: "CAPABILITY_CHANGED", effect: "none", recovery: "inspect" } });
+    expect(web).not.toHaveBeenCalled();
+  });
+
   it("routes the same command boundary to each runtime adapter", async () => {
     const web = vi.fn().mockResolvedValue(response);
     const electron = vi.fn().mockResolvedValue(response);

@@ -221,12 +221,31 @@ function shapeNegotiatedResponse(
   if (!response.ok) return response;
   const descriptor = pending.host.registration.executorDescriptor;
   const allowed = new Set(pending.credentialOperations);
+  const liveHostCapabilities = new Set(
+    pending.host.registration.capabilities
+      .filter((capability) => capability.available)
+      .map((capability) => capability.operation),
+  );
+  const negotiatedCapabilities = descriptor.operations.filter((operation) =>
+    allowed.has(operation) && liveHostCapabilities.has(operation),
+  );
   if (response.result.operation === "inspect") {
     const targetReady = pending.target !== undefined;
-    const negotiatedCapabilities = response.result.capabilities.filter((operation) => descriptor.operations.includes(operation) && allowed.has(operation));
     const guidance = pending.target?.controller?.controller === "human"
       ? "Visible Preview under human control. Yield to user before effects."
       : `Visible browser executor (${descriptor.runtime}) supports: ${negotiatedCapabilities.join(", ") || "none"}.`;
+    const snapshot = response.result.snapshot && response.result.snapshot.visibleText.length > descriptor.constraints.maxSnapshotChars
+      ? {
+          ...response.result.snapshot,
+          visibleText: response.result.snapshot.visibleText.slice(0, descriptor.constraints.maxSnapshotChars),
+          visibleTextTruncation: {
+            truncated: true as const,
+            originalCount: response.result.snapshot.visibleText.length,
+            reason: "character-limit" as const,
+          },
+        }
+      : response.result.snapshot;
+    const diagnostics = response.result.diagnostics?.slice(0, descriptor.constraints.maxDiagnostics);
     return {
       ...response,
       result: {
@@ -235,8 +254,14 @@ function shapeNegotiatedResponse(
           ? { ready: false, state: "target-unavailable", reason: "Visible browser target is unavailable" }
           : pending.target?.controller?.controller === "human"
             ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
-            : response.result.readiness,
-        tabs: response.result.tabs.slice(0, descriptor.constraints.maxTabs),
+            : { ready: true, state: "ready" },
+        target: pending.target
+          ? { threadId: pending.target.threadId, tabId: pending.target.tabId, targetGeneration: pending.target.targetGeneration, sticky: true }
+          : undefined,
+        tabs: (pending.target ? [pending.target] : response.result.tabs).slice(0, descriptor.constraints.maxTabs),
+        snapshot,
+        ...(diagnostics ? { diagnostics } : {}),
+        observationRef: randomUUID(),
         capabilities: negotiatedCapabilities,
         capabilityRevision: descriptor.capabilityRevision,
         guidance: guidance.slice(0, 4_000),
@@ -244,15 +269,11 @@ function shapeNegotiatedResponse(
     };
   }
   if (response.result.operation === "status") {
-    const negotiatedCapabilities = response.result.capabilities.filter((operation) =>
-      descriptor.operations.includes(operation) &&
-      allowed.has(operation) &&
-      pending.host.registration.capabilities.some((capability) => capability.operation === operation && capability.available),
-    );
     return {
       ...response,
       result: {
         ...response.result,
+        controller: pending.target?.controller,
         capabilities: negotiatedCapabilities,
         capabilityRevision: descriptor.capabilityRevision,
       },
@@ -501,15 +522,6 @@ export class BrowserAutomationBroker {
         key,
         pending,
         failure(pending.request, "INVALID_REQUEST", "Browser response operation does not match its request", false),
-      );
-      return;
-    }
-    if (negotiatedResponse.ok && (negotiatedResponse.result.operation === "inspect" || negotiatedResponse.result.operation === "status") &&
-      negotiatedResponse.result.capabilityRevision !== host.registration.executorDescriptor.capabilityRevision) {
-      this.settle(
-        key,
-        pending,
-        failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false),
       );
       return;
     }
@@ -779,6 +791,11 @@ export class BrowserAutomationBroker {
       };
       this.pending.set(key, pending);
       host.pending++;
+      const preflightError = this.revalidatePendingBeforeSend(pending);
+      if (preflightError) {
+        this.settle(key, pending, preflightError);
+        return;
+      }
       const sent = this.trySend(host.socket, "browserAutomation.request", {
         hostId: host.registration.hostId,
         generation: host.generation,
@@ -952,6 +969,39 @@ export class BrowserAutomationBroker {
     );
   }
 
+  private revalidatePendingBeforeSend(pending: PendingRequest): BrowserAutomationResponse | null {
+    const host = pending.host;
+    if (this.hostsBySocket.get(host.socket) !== host) {
+      return failure(pending.request, "HOST_UNAVAILABLE", "Browser host changed before delivery", true);
+    }
+    if (!pending.credentialOperations.includes(pending.request.operation)) {
+      return failure(pending.request, "FORBIDDEN", "Browser operation is no longer allowed by this credential", false);
+    }
+    if (pending.request.deadline <= this.now()) {
+      return failure(pending.request, "DEADLINE_EXCEEDED", "Browser request deadline has elapsed", true);
+    }
+    if (pending.dispatch && pending.dispatch.connection.capabilityRevision !== host.registration.executorDescriptor.capabilityRevision) {
+      return failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false);
+    }
+    if (!this.supportsOperation(host, pending.request)) {
+      return failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false);
+    }
+    if (pending.target) {
+      const currentTarget = host.targets.get(targetKey(pending.target));
+      if (!currentTarget) return failure(pending.request, "TAB_UNAVAILABLE", "Browser target changed before delivery", true);
+      if (!targetsMatch(currentTarget, pending.target)) {
+        return failure(pending.request, "STALE_TARGET_GENERATION", "Browser target changed before delivery", true);
+      }
+      if (
+        currentTarget.controller?.controller !== pending.target.controller?.controller ||
+        currentTarget.controller?.controlEpoch !== pending.target.controller?.controlEpoch
+      ) {
+        return failure(pending.request, "HUMAN_INTERRUPTED", "Browser controller changed before delivery", true);
+      }
+    }
+    return null;
+  }
+
   private resolveBootstrapHost(
     claims: BrowserAutomationCredentialClaims,
     request: BrowserAutomationRequest,
@@ -990,6 +1040,11 @@ export class BrowserAutomationBroker {
       const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now(), credentialOperations: [request.operation] };
       this.pending.set(key, pending);
       host.pending++;
+      const preflightError = this.revalidatePendingBeforeSend(pending);
+      if (preflightError) {
+        this.settle(key, pending, preflightError);
+        return;
+      }
       const sent = this.trySend(host.socket, "browserAutomation.bootstrap", {
         hostId: host.registration.hostId,
         generation: host.generation,
