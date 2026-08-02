@@ -16,12 +16,13 @@ import type {
 
 const MAX_BODY_BYTES = 256 * 1_024;
 const MCP_PROTOCOL_VERSIONS = ["2025-03-26", "2024-11-05"] as const;
-const TOOL_NAME_TO_OPERATION = new Map<string, BrowserAutomationOperation>(
-  [["browser_inspect", "inspect" as BrowserAutomationOperation] as const, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => [
+const TOOL_NAME_TO_OPERATION = new Map<string, BrowserAutomationOperation>([
+  ["browser_inspect", "inspect" as BrowserAutomationOperation],
+  ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => [
     BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
     operation,
-  ] as const)]),
-);
+  ] as const),
+]);
 
 type JsonRpcId = string | number | null;
 

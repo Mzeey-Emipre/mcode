@@ -107,6 +107,30 @@ describe("BrowserAutomationMcpHandler", () => {
     ]);
   });
 
+  it("discovers and routes browser_inspect for an authorized credential", async () => {
+    const inspect = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "inspect-provider",
+      mcodeSessionId: "inspect-mcode",
+      threadId: "thread-inspect",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "observe",
+      allowedOperations: ["inspect"],
+    });
+    const listed = await post(
+      JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }),
+      `Bearer ${inspect.token}`,
+    );
+    expect((await listed.json() as any).result.tools.map((tool: any) => tool.name)).toEqual(["browser_inspect"]);
+    const called = await post(
+      JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "browser_inspect" } }),
+      `Bearer ${inspect.token}`,
+    );
+    expect(called.status).toBe(200);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ threadId: "thread-inspect" }), expect.objectContaining({ operation: "inspect" }));
+  });
+
   it("binds tool requests to credential scope instead of accepting caller scope", async () => {
     const response = await post(JSON.stringify({ jsonrpc: "2.0", id: "call", method: "tools/call", params: { name: "browser_status" } }));
     expect(response.status).toBe(200);

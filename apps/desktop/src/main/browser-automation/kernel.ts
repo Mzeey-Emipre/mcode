@@ -1193,7 +1193,7 @@ export class BrowserAutomationKernel {
           }],
           snapshot,
           observationRef: randomUUID(),
-          capabilityRevision: state.semanticGeneration,
+          capabilityRevision: Math.max(1, state.semanticGeneration),
           capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
           guidance: "Visible Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.",
         };
@@ -1224,7 +1224,7 @@ export class BrowserAutomationKernel {
           },
           controller: state.controller,
           capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
-          capabilityRevision: state.semanticGeneration,
+          capabilityRevision: Math.max(1, state.semanticGeneration),
         };
         }
       case "open":

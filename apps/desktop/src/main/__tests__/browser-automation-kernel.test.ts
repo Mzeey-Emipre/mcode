@@ -261,6 +261,27 @@ describe("BrowserAutomationKernel", () => {
     });
   });
 
+  it("returns bounded browser_inspect state with positive revision and fresh observation", async () => {
+    const first = await kernel.execute(event(), payload(request("inspect", {}, { requestId: "inspect-first" })));
+    const second = await kernel.execute(event(), payload(request("inspect", {}, { requestId: "inspect-second" })));
+    expect(first).toMatchObject({
+      ok: true,
+      result: {
+        operation: "inspect",
+        readiness: { ready: true, state: "ready" },
+        target: { threadId: "thread", tabId: "tab", sticky: true },
+        tabs: [{ threadId: "thread", tabId: "tab" }],
+        snapshot: { visibleText: "Example" },
+        capabilityRevision: expect.any(Number),
+        observationRef: expect.any(String),
+      },
+    });
+    if (!first.ok || !second.ok || first.result.operation !== "inspect" || second.result.operation !== "inspect") throw new Error("Expected inspect results");
+    expect(first.result.capabilityRevision).toBeGreaterThan(0);
+    expect(second.result.observationRef).not.toBe(first.result.observationRef);
+    expect(first.result.guidance.length).toBeLessThanOrEqual(4_000);
+  });
+
   it("reports a bounded sanitized non-HTTP page-initiated location", async () => {
     currentWebContents!.url = "data:text/html,secret-page-payload";
     await expect(kernel.execute(event(), payload(request("status")))).resolves.toMatchObject({

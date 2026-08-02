@@ -252,6 +252,33 @@ describe("browser automation operation contract", () => {
       observationRef: "observation-1",
     })).toMatchObject({ observationRef: "observation-1" });
   });
+
+  it("accepts bounded browser_inspect readiness, sticky target, revision, and guidance", () => {
+    const parsed = BrowserAutomationRequestSchema().parse({
+      ...requestBase,
+      operation: "inspect",
+      args: { includeScreenshot: false, includeDiagnostics: false },
+    });
+    expect(parsed.operation).toBe("inspect");
+    const response = BrowserAutomationResponseSchema().safeParse({
+      contractVersion: 1,
+      requestId: "inspect-request",
+      sequence: 1,
+      ok: true,
+      result: {
+        operation: "inspect",
+        readiness: { ready: true, state: "ready" },
+        target: { threadId: "thread-1", tabId: "tab-1", targetGeneration: 1, sticky: true },
+        tabs: [{ desktopInstanceId: "desktop-1", windowId: 1, connectionGeneration: 1, threadId: "thread-1", tabId: "tab-1", targetGeneration: 1, active: true, focused: true, lastUsedAt: 1 }],
+        snapshot,
+        observationRef: "observation-inspect",
+        capabilityRevision: 1,
+        capabilities: ["inspect", "status"],
+        guidance: "Use browser_inspect on visible Preview.",
+      },
+    });
+    expect(response.success).toBe(true);
+  });
 });
 
 describe("browser automation boundaries", () => {
