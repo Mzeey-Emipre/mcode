@@ -85,6 +85,31 @@ describe("BrowserAutomationMcpHandler", () => {
     });
   });
 
+  it("discovers browser_act with bounded required arguments and rejects invalid batches before broker execution", async () => {
+    const act = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "act-provider",
+      mcodeSessionId: "act-mcode",
+      threadId: "thread-act",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "interact",
+      allowedOperations: ["act"],
+    });
+    const listed = await post(JSON.stringify({ jsonrpc: "2.0", id: 10, method: "tools/list", params: {} }), `Bearer ${act.token}`);
+    const tool = (await listed.json() as any).result.tools[0];
+    expect(tool.name).toBe("browser_act");
+    expect(tool.inputSchema.required).toEqual(expect.arrayContaining(["idempotencyKey", "observationRef", "deadlineMs", "steps"]));
+    const invalid = await post(JSON.stringify({
+      jsonrpc: "2.0", id: 11, method: "tools/call", params: {
+        name: "browser_act",
+        arguments: { idempotencyKey: "key", observationRef: "obs", deadlineMs: 1_000, steps: [] },
+      },
+    }), `Bearer ${act.token}`);
+    expect((await invalid.json() as any).error.code).toBe(-32602);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("advertises only the operations allowed by the authenticated credential", async () => {
     const observe = credentials.issue({
       providerId: "cursor",

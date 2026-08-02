@@ -732,4 +732,23 @@ describe("browser automation boundaries", () => {
       }).success,
     ).toBe(true);
   });
+
+  it("bounds browser_act batches and rejects malformed later steps before effects", () => {
+    const valid = {
+      ...requestBase,
+      operation: "act",
+      args: {
+        idempotencyKey: "act-key",
+        observationRef: "observation-1",
+        deadlineMs: 1_000,
+        steps: [{ operation: "click", target }],
+      },
+    };
+    expect(BrowserAutomationRequestSchema().safeParse(valid).success).toBe(true);
+    expect(BrowserAutomationRequestSchema().safeParse({ ...valid, args: { ...valid.args, steps: [] } }).success).toBe(false);
+    expect(BrowserAutomationRequestSchema().safeParse({ ...valid, args: { ...valid.args, steps: Array.from({ length: 9 }, () => valid.args.steps[0]) } }).success).toBe(false);
+    expect(BrowserAutomationRequestSchema().safeParse({ ...valid, args: { ...valid.args, deadlineMs: 0 } }).success).toBe(false);
+    expect(BrowserAutomationRequestSchema().safeParse({ ...valid, args: { ...valid.args, deadlineMs: 60_001 } }).success).toBe(false);
+    expect(BrowserAutomationRequestSchema().safeParse({ ...valid, args: { ...valid.args, steps: [valid.args.steps[0], { operation: "click", target, clickCount: 4 }] } }).success).toBe(false);
+  });
 });

@@ -1297,6 +1297,34 @@ describe("BrowserAutomationBroker", () => {
     expect(deliveries.filter(({ channel }) => channel === "browserAutomation.bootstrap")).toHaveLength(3);
   });
 
+  it("serializes browser_act per provider session and joins exact duplicates", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => { deliveries.push({ channel, data }); return true; } }));
+    const hostSocket = socket("act-lock");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("act-lock", "workspace-a"),
+      executorDescriptor: { ...registration("act-lock", "workspace-a").executorDescriptor, operations: ["inspect", "act"] },
+      capabilities: [{ operation: "act", available: true }],
+    }, authorization("act-lock")).generation;
+    broker.updateTargets(hostSocket, "act-lock", generation, [statusTarget("act-lock", generation)]);
+    const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["act" as const] };
+    const makeAct = (requestId: string, key: string, sequence: number) => broker.execute(scope, {
+      ...request(scope, sequence), requestId, operation: "act", args: { idempotencyKey: key, observationRef: "obs", deadlineMs: 10_000, steps: [{ operation: "click", target: { role: "button", accessibleName: "Save" } }] },
+    });
+    const first = makeAct("act-1", "same", 1);
+    const joined = makeAct("act-2", "same", 2);
+    const busy = makeAct("act-3", "different", 3);
+    await expect(busy).resolves.toMatchObject({ ok: false, error: { code: "BROWSER_BUSY", effect: "none", recovery: "wait" } });
+    const delivery = deliveries.find(({ channel }) => channel === "browserAutomation.request")!;
+    broker.respond(hostSocket, "act-lock", generation, {
+      contractVersion: 1, requestId: delivery.data.dispatch.request.requestId, sequence: delivery.data.dispatch.request.sequence, ok: true,
+      result: { operation: "act", outcome: "completed", stoppingPosition: 1, effect: "complete", recovery: "inspect", receipts: [{ index: 0, operation: "click", status: "applied" }], finalObservation: { observationRef: "next", hostRevision: generation, documentRevision: 0, controlRevision: 0, capabilityRevision: 1, observationRevision: 1 }, nextObservationRef: "next" },
+    }, delivery.data.dispatch.target);
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(joined).resolves.toMatchObject({ ok: true, requestId: "act-2" });
+    expect(deliveries.filter(({ channel }) => channel === "browserAutomation.request")).toHaveLength(1);
+  });
+
   it("drops keyed open replay when its host reconnects", async () => {
     const deliveries: Array<{ channel: string; data: any }> = [];
     const broker = new BrowserAutomationBroker(options({
