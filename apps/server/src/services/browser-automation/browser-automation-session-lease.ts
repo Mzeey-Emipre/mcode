@@ -10,6 +10,7 @@ import {
 } from "./credential-registry.js";
 
 const OBSERVE_OPERATIONS = new Set<BrowserAutomationOperation>([
+  "inspect",
   "status",
   "snapshot",
   "screenshot",
@@ -97,7 +98,7 @@ function allowedOperations(
   capability: BrowserAutomationPermissionCapability,
 ): readonly BrowserAutomationOperation[] {
   if (capability === "observe") {
-    return BROWSER_AUTOMATION_OPERATIONS.filter((operation) => OBSERVE_OPERATIONS.has(operation));
+    return ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => OBSERVE_OPERATIONS.has(operation))];
   }
   if (capability === "interact") {
     return BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "evaluate");

@@ -1176,9 +1176,18 @@ export class BrowserAutomationKernel {
     switch (request.operation) {
       case "inspect": {
         const snapshot = await this.captureSnapshot(resolved, false);
+        const screenshot = request.args.includeScreenshot
+          ? await this.captureScreenshot(webContents, 1_280)
+          : undefined;
+        const diagnostics = request.args.includeDiagnostics
+          ? state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).map((entry) => entry.text)
+          : undefined;
+        const humanControl = state.controller.controller === "human";
         return {
           operation: "inspect",
-          readiness: { ready: true, state: "ready" },
+          readiness: humanControl
+            ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
+            : { ready: true, state: "ready" },
           target: { threadId: state.threadId, tabId: state.tabId, targetGeneration: state.targetGeneration, sticky: true },
           tabs: [{
             desktopInstanceId: "electron",
@@ -1192,10 +1201,14 @@ export class BrowserAutomationKernel {
             lastUsedAt: Date.now(),
           }],
           snapshot,
+          ...(screenshot ? { screenshot } : {}),
+          ...(diagnostics ? { diagnostics } : {}),
           observationRef: randomUUID(),
           capabilityRevision: Math.max(1, state.semanticGeneration),
           capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
-          guidance: "Visible Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.",
+          guidance: humanControl
+            ? "Visible Preview under human control. Yield to user before effects."
+            : "Visible Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.",
         };
       }
       case "status":

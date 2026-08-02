@@ -432,15 +432,21 @@ function snapshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, si
   });
 }
 
-function inspect(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): BrowserAutomationResponse {
+async function inspect(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
   const observed = snapshot({ ...dispatch, request: { ...dispatch.request, operation: "snapshot", args: { includeScreenshot: false, timeoutMs: 15_000 } } } as BrowserAutomationHostDispatch, iframe, signal);
   if (!observed.ok) return observed;
+  const screenshotResult = dispatch.request.args.includeScreenshot
+    ? await captureVisibleWebScreenshot({ iframe, maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH, deadline: dispatch.request.deadline, signal })
+    : null;
+  if (screenshotResult && !screenshotResult.ok) return failure(dispatch, screenshotResult.code === "TIMEOUT" ? "DEADLINE_EXCEEDED" : screenshotResult.code, "Web Preview screenshot failed");
   return response(dispatch, {
     operation: "inspect",
     readiness: { ready: true, state: "ready" },
     target: { threadId: dispatch.target.threadId, tabId: dispatch.target.tabId, targetGeneration: dispatch.target.targetGeneration, sticky: true },
     tabs: [dispatch.target],
     snapshot: observed.result.snapshot,
+    ...(screenshotResult?.ok ? { screenshot: screenshotResult.value } : {}),
+    ...(dispatch.request.args.includeDiagnostics ? { diagnostics: [] } : {}),
     observationRef: globalThis.crypto.randomUUID(),
     capabilityRevision: 1,
     capabilities: [...WEB_CAPABILITIES],

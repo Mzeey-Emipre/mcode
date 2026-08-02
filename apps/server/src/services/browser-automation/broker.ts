@@ -107,7 +107,7 @@ function failure(
       retryable,
       stage: code === "TAB_UNAVAILABLE" ? "allocation" : "transport",
       effect: code === "TAB_UNAVAILABLE" ? "unknown" : "none",
-      recovery: retryable ? "retry" : "manual",
+      recovery: code === "CAPABILITY_CHANGED" ? "inspect" : retryable ? "retry" : "manual",
       correlationId: randomUUID(),
     },
   };
@@ -286,9 +286,6 @@ export class BrowserAutomationBroker {
     if (registration.runtime !== "web" && registration.targetIdentity) {
       throw new Error("Browser automation target identity is reserved for web hosts");
     }
-    if (registration.executorDescriptor && registration.executorDescriptor.runtime !== registration.runtime) {
-      throw new Error("Browser automation executor descriptor runtime does not match host runtime");
-    }
     if (
       !authorization ||
       registration.workspaceIds.some((workspaceId) => !authorization.allowedWorkspaceIds.includes(workspaceId))
@@ -329,6 +326,12 @@ export class BrowserAutomationBroker {
         existingOwner.registration.worktreeIdentity !== trustedRegistration.worktreeIdentity
       ) {
         throw new Error("Browser automation host ID is already registered");
+      }
+      if (existingOwner.registration.executorDescriptor?.capabilityRevision !== registration.executorDescriptor?.capabilityRevision) {
+        for (const [key, pending] of this.pending) {
+          if (pending.host !== existingOwner) continue;
+          this.settle(key, pending, failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false));
+        }
       }
       this.disconnect(existingOwner.socket);
     }
@@ -442,6 +445,16 @@ export class BrowserAutomationBroker {
         key,
         pending,
         failure(pending.request, "INVALID_REQUEST", "Browser response operation does not match its request", false),
+      );
+      return;
+    }
+    if (response.ok && (response.result.operation === "inspect" || response.result.operation === "status") &&
+      response.result.capabilityRevision !== undefined &&
+      response.result.capabilityRevision !== host.registration.executorDescriptor.capabilityRevision) {
+      this.settle(
+        key,
+        pending,
+        failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false),
       );
       return;
     }
@@ -672,6 +685,7 @@ export class BrowserAutomationBroker {
         windowId: target.windowId,
         connectionGeneration: target.connectionGeneration,
         targetGeneration: target.targetGeneration,
+        capabilityRevision: host.registration.executorDescriptor.capabilityRevision,
       },
       request,
       target,
@@ -875,6 +889,8 @@ export class BrowserAutomationBroker {
   }
 
   private supportsOperation(host: RegisteredHost, request: BrowserAutomationRequest): boolean {
+    const descriptor = host.registration.executorDescriptor;
+    if (!descriptor.operations.includes(request.operation)) return false;
     return host.registration.capabilities.some(
       (capability) => capability.operation === request.operation && capability.available,
     );

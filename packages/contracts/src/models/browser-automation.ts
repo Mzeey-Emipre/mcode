@@ -681,7 +681,12 @@ export const BrowserAutomationHostRegistrationSchema = lazySchema(() =>
       worktreeIdentity: idSchema,
       workspaceIds: z.array(idSchema).min(1).max(32),
       targetIdentity: BrowserAutomationTargetIdentitySchema().optional(),
-      executorDescriptor: BrowserAutomationExecutorDescriptorSchema().optional(),
+      executorDescriptor: BrowserAutomationExecutorDescriptorSchema().default({
+        runtime: "electron",
+        operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+        constraints: { maxTabs: BROWSER_AUTOMATION_MAX_INSPECT_TABS, maxSnapshotChars: BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS, maxDiagnostics: BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES },
+        capabilityRevision: 1,
+      }),
       capabilities: z
         .array(BrowserAutomationHostCapabilitySchema())
         .min(1)
@@ -751,6 +756,7 @@ export const BrowserAutomationHostDispatchSchema = lazySchema(() =>
           windowId: z.number().int().positive(),
           connectionGeneration: z.number().int().positive(),
           targetGeneration: z.number().int().nonnegative(),
+          capabilityRevision: z.number().int().positive().optional(),
         })
         .strict(),
       request: BrowserAutomationRequestSchema(),
@@ -816,9 +822,9 @@ export const BrowserAutomationCredentialClaimsSchema = lazySchema(() =>
       providerSessionId: idSchema,
       providerInstanceId: idSchema,
       operations: z
-        .array(z.enum(BROWSER_AUTOMATION_OPERATIONS))
+        .array(browserOperationSchema)
         .min(1)
-        .max(BROWSER_AUTOMATION_OPERATIONS.length),
+        .max(BROWSER_AUTOMATION_OPERATIONS.length + 1),
       issuedAt: z.number().int().nonnegative(),
       expiresAt: z.number().int().nonnegative(),
     })
@@ -1045,6 +1051,7 @@ export const BROWSER_AUTOMATION_ERROR_CODES = [
   "TAB_UNAVAILABLE",
   "DEBUGGER_CONFLICT",
   "STALE_TARGET_GENERATION",
+  "CAPABILITY_CHANGED",
   "STALE_CONTROL_EPOCH",
   "HUMAN_INTERRUPTED",
   "OPERATION_CANCELLED",
@@ -1070,7 +1077,7 @@ export const BrowserAutomationErrorSchema = lazySchema(() =>
       retryable: z.boolean(),
       stage: z.enum(["validation", "authorization", "allocation", "observation", "effect", "recovery", "transport"]).optional(),
       effect: z.enum(["none", "created", "closed", "preserved", "unknown"]).optional(),
-      recovery: z.enum(["none", "retry", "refresh", "reopen", "manual"]).optional(),
+      recovery: z.enum(["none", "retry", "refresh", "reopen", "manual", "inspect", "yield_to_user"]).optional(),
       correlationId: idSchema.optional(),
     })
     .strict(),
