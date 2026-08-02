@@ -116,6 +116,50 @@ function statusResult() {
   };
 }
 
+function statusTarget(hostId: string, generation: number, targetGeneration = 0, controller?: { tabId: string; controller: "none" | "human" | "agent"; controlEpoch: number }) {
+  return {
+    desktopInstanceId: `desktop-${hostId}`,
+    windowId: 1,
+    connectionGeneration: generation,
+    threadId: "thread-a",
+    tabId: "tab-thread-a",
+    targetGeneration,
+    active: true,
+    focused: true,
+    lastUsedAt: 1,
+    ...(controller ? { controller } : {}),
+  };
+}
+
+function pendingStatusWithMutation(mutation: (broker: BrowserAutomationBroker, socket: WebSocket, generation: number, scope: BrowserAutomationCredentialClaims) => void) {
+  const deliveries: Array<{ channel: string; data: any }> = [];
+  let armed = false;
+  let nowCalls = 0;
+  let broker!: BrowserAutomationBroker;
+  const hostSocket = socket("drift-host");
+  const optionsWithMutation = options({
+    now: () => {
+      nowCalls++;
+      if (armed && nowCalls === 8) {
+        armed = false;
+        mutation(broker, hostSocket, generation, scope);
+      }
+      return 10;
+    },
+    send: (_target, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    },
+  });
+  broker = new BrowserAutomationBroker(optionsWithMutation);
+  const generation = broker.registerHost(hostSocket, registration("drift-host", "workspace-a"), authorization("drift-host")).generation;
+  broker.updateTargets(hostSocket, "drift-host", generation, [statusTarget("drift-host", generation)]);
+  const scope = claims("thread-a", "workspace-a");
+  armed = true;
+  const pending = broker.execute(scope, request(scope));
+  return { broker, hostSocket, generation, pending, deliveries, scope };
+}
+
 describe("BrowserAutomationBroker", () => {
   it("rejects an explicitly mismatched executor descriptor runtime", () => {
     const broker = new BrowserAutomationBroker(options());
@@ -190,6 +234,88 @@ describe("BrowserAutomationBroker", () => {
         observationRef: expect.any(String),
       },
     });
+  });
+
+  it("restricts browser_status to descriptor, credential, host, and controller state", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    } }));
+    const hostSocket = socket("restricted-status");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("restricted-status", "workspace-a"),
+      capabilities: [
+        { operation: "status", available: true },
+        { operation: "snapshot", available: true },
+      ],
+    }, authorization("restricted-status")).generation;
+    broker.updateTargets(hostSocket, "restricted-status", generation, [statusTarget("restricted-status", generation, 0, { tabId: "tab-thread-a", controller: "human", controlEpoch: 4 })]);
+    const scope = claims("thread-a", "workspace-a");
+    const pending = broker.execute(scope, request(scope));
+    expect(broker.status().pending).toBe(1);
+    const delivery = deliveries.find((entry) => entry.channel === "browserAutomation.request")!;
+    broker.respond(hostSocket, "restricted-status", generation, {
+      contractVersion: 1,
+      requestId: delivery.data.dispatch.request.requestId,
+      sequence: delivery.data.dispatch.request.sequence,
+      ok: true,
+      result: { ...statusResult(), capabilities: ["status", "snapshot", "inspect"] },
+    });
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: {
+        operation: "status",
+        capabilities: ["status"],
+        capabilityRevision: 1,
+        controller: { controller: "human", controlEpoch: 4 },
+      },
+    });
+  });
+
+  it("rejects descriptor revision drift before transport send", async () => {
+    const replacement = socket("drift-revision-replacement");
+    const scenario = pendingStatusWithMutation((broker, _socket, _generation) => {
+      broker.registerHost(replacement, {
+        ...registration("drift-host", "workspace-a"),
+        executorDescriptor: { ...registration("drift-host", "workspace-a").executorDescriptor, capabilityRevision: 2 },
+      }, authorization("drift-host"));
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE", effect: "none", recovery: "retry" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
+  it("rejects credential operation drift before transport send", async () => {
+    const scenario = pendingStatusWithMutation((_broker, _socket, _generation, scope) => {
+      Reflect.set(scope.allowedOperations, "length", 0);
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "FORBIDDEN", effect: "none", recovery: "manual" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
+  it("rejects sticky host replacement before transport send", async () => {
+    const replacement = socket("drift-route-replacement");
+    const scenario = pendingStatusWithMutation((broker, _socket, _generation) => {
+      broker.registerHost(replacement, registration("drift-host", "workspace-a"), authorization("drift-host"));
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE", effect: "none", recovery: "retry" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
+  it("rejects target generation drift before transport send", async () => {
+    const scenario = pendingStatusWithMutation((broker, socket, generation) => {
+      broker.updateTargets(socket, "drift-host", generation, [statusTarget("drift-host", generation, 1)]);
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION", effect: "none", recovery: "retry" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
+  it("rejects controller drift before transport send", async () => {
+    const scenario = pendingStatusWithMutation((broker, socket, generation) => {
+      broker.updateTargets(socket, "drift-host", generation, [statusTarget("drift-host", generation, 0, { tabId: "tab-thread-a", controller: "human", controlEpoch: 2 })]);
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HUMAN_INTERRUPTED", effect: "none", recovery: "retry" } });
+    expect(scenario.deliveries).toHaveLength(0);
   });
 
   it("never cross-routes two threads across workspace-scoped hosts", async () => {
