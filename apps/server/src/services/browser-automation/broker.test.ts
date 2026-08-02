@@ -205,6 +205,7 @@ describe("BrowserAutomationBroker", () => {
       ok: true,
       result: {
         operation: "inspect",
+        observationRef: "driver-issued",
         tabs: [target, { ...target, tabId: "extra-tab" }],
         snapshot: {
           url: "https://example.test/",
@@ -231,9 +232,45 @@ describe("BrowserAutomationBroker", () => {
         capabilities: ["inspect", "status"],
         capabilityRevision: 1,
         guidance: expect.stringContaining("electron"),
-        observationRef: expect.any(String),
+        observationRef: "driver-issued",
       },
     });
+  });
+
+  it("does not advertise act when an act-capable host omits its observation reference", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    } }));
+    const hostSocket = socket("act-without-observation");
+    const base = registration("act-without-observation", "workspace-a");
+    const generation = broker.registerHost(hostSocket, {
+      ...base,
+      executorDescriptor: { ...base.executorDescriptor, operations: ["inspect", "act"] },
+      capabilities: [
+        { operation: "inspect", available: true },
+        { operation: "act", available: true },
+      ],
+    }, authorization("act-without-observation")).generation;
+    updateTargets(broker, hostSocket, "act-without-observation", generation, ["thread-a"]);
+    const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["inspect", "act"] as const };
+    const pending = broker.execute(scope, { ...request(scope), operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const dispatch = deliveries.find((delivery) => delivery.channel === "browserAutomation.request")!.data.dispatch;
+    const target = dispatch.target;
+    broker.respond(hostSocket, "act-without-observation", generation, {
+      contractVersion: 1,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: true,
+      result: { operation: "inspect", tabs: [target] },
+    });
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: { operation: "inspect", capabilities: ["inspect"] },
+    });
+    await expect(pending).resolves.not.toHaveProperty("result.observationRef");
   });
 
   it("restricts browser_status to descriptor, credential, host, and controller state", async () => {
@@ -1295,6 +1332,34 @@ describe("BrowserAutomationBroker", () => {
     }, replacementTarget);
     await expect(afterClose).resolves.toMatchObject({ ok: true, result: { observationRef: "obs-a2" } });
     expect(deliveries.filter(({ channel }) => channel === "browserAutomation.bootstrap")).toHaveLength(3);
+  });
+
+  it("serializes browser_act per provider session and joins exact duplicates", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => { deliveries.push({ channel, data }); return true; } }));
+    const hostSocket = socket("act-lock");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("act-lock", "workspace-a"),
+      executorDescriptor: { ...registration("act-lock", "workspace-a").executorDescriptor, operations: ["inspect", "act"] },
+      capabilities: [{ operation: "act", available: true }],
+    }, authorization("act-lock")).generation;
+    broker.updateTargets(hostSocket, "act-lock", generation, [statusTarget("act-lock", generation)]);
+    const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["act" as const] };
+    const makeAct = (requestId: string, key: string, sequence: number) => broker.execute(scope, {
+      ...request(scope, sequence), requestId, operation: "act", args: { idempotencyKey: key, observationRef: "obs", deadlineMs: 10_000, steps: [{ operation: "click", target: { role: "button", accessibleName: "Save" } }] },
+    });
+    const first = makeAct("act-1", "same", 1);
+    const joined = makeAct("act-2", "same", 2);
+    const busy = makeAct("act-3", "different", 3);
+    await expect(busy).resolves.toMatchObject({ ok: false, error: { code: "BROWSER_BUSY", effect: "none", recovery: "wait" } });
+    const delivery = deliveries.find(({ channel }) => channel === "browserAutomation.request")!;
+    broker.respond(hostSocket, "act-lock", generation, {
+      contractVersion: 1, requestId: delivery.data.dispatch.request.requestId, sequence: delivery.data.dispatch.request.sequence, ok: true,
+      result: { operation: "act", outcome: "completed", stoppingPosition: 1, effect: "complete", recovery: "inspect", receipts: [{ index: 0, operation: "click", status: "applied" }], finalObservation: { observationRef: "next", hostRevision: generation, documentRevision: 0, controlRevision: 0, capabilityRevision: 1, observationRevision: 1 }, nextObservationRef: "next" },
+    }, delivery.data.dispatch.target);
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(joined).resolves.toMatchObject({ ok: true, requestId: "act-2" });
+    expect(deliveries.filter(({ channel }) => channel === "browserAutomation.request")).toHaveLength(1);
   });
 
   it("drops keyed open replay when its host reconnects", async () => {

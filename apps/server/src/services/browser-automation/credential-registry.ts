@@ -84,10 +84,10 @@ function validateScope(scope: BrowserAutomationCredentialScope): void {
   if (ids.some((value) => value.length < 1 || value.length > 256)) {
     throw new Error("Browser automation credential scope contains an invalid identifier");
   }
-  const supported = new Set<BrowserAutomationOperation>([...BROWSER_AUTOMATION_OPERATIONS, "inspect"]);
+  const supported = new Set<BrowserAutomationOperation>([...BROWSER_AUTOMATION_OPERATIONS, "inspect", "act"]);
   if (
     scope.allowedOperations.length < 1 ||
-    scope.allowedOperations.length > BROWSER_AUTOMATION_OPERATIONS.length + 1 ||
+    scope.allowedOperations.length > BROWSER_AUTOMATION_OPERATIONS.length + 2 ||
     new Set(scope.allowedOperations).size !== scope.allowedOperations.length ||
     scope.allowedOperations.some((operation) => !supported.has(operation))
   ) {

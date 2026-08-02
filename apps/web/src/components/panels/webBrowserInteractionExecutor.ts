@@ -4,6 +4,7 @@ import type {
   BrowserAutomationResponse,
   BrowserAutomationTarget,
 } from "@mcode/contracts";
+import { getWebBrowserSemanticRegistry } from "./webBrowserSemanticRegistry";
 
 const MAX_TARGET_SCAN = 1_024;
 const MAX_METADATA_CHARS = 2_048;
@@ -101,11 +102,13 @@ export function resolveWebTarget(ownerDocument: Document, target: BrowserAutomat
     } else if ("semanticId" in target) {
       element = ownerDocument.getElementById(target.semanticId);
       if (!element) element = ownerDocument.querySelector<HTMLElement>(`[data-automation-id="${escapeSelector(target.semanticId)}"]`);
+      if (!element) element = getWebBrowserSemanticRegistry(ownerDocument).resolve(ownerDocument, target.semanticId);
     } else if ("role" in target) {
       let scanned = 0;
-      for (const candidate of ownerDocument.querySelectorAll<HTMLElement>("[role]")) {
+      for (const candidate of ownerDocument.querySelectorAll<HTMLElement>("button,input,select,textarea,[role]")) {
         if (++scanned > MAX_TARGET_SCAN) break;
-        if (candidate.getAttribute("role") === target.role && accessibleName(candidate) === target.accessibleName) {
+        const role = candidate.getAttribute("role") || candidate.localName?.toLowerCase();
+        if (role === target.role && accessibleName(candidate) === target.accessibleName) {
           element = candidate;
           break;
         }

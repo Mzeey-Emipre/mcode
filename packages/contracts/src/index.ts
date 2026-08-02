@@ -419,6 +419,7 @@ export {
   BROWSER_AUTOMATION_MAX_RECORDING_BYTES,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
   BROWSER_AUTOMATION_MAX_TYPED_TEXT_CHARS,
+  BROWSER_AUTOMATION_ACT_MAX_STEPS,
   BROWSER_AUTOMATION_MAX_INSPECT_TABS,
   BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS,
   BROWSER_AUTOMATION_OPERATIONS,
@@ -452,6 +453,9 @@ export {
   BrowserAutomationExecutorDescriptorSchema,
   BrowserAutomationInspectTargetSchema,
   BrowserAutomationInspectReadinessSchema,
+  BrowserAutomationActStepSchema,
+  BrowserAutomationObservationBindingSchema,
+  BrowserAutomationActResultSchema,
 } from "./models/browser-automation.js";
 export type {
   BrowserAutomationOperation,
@@ -474,6 +478,9 @@ export type {
   BrowserAutomationHostRuntime,
   BrowserAutomationTargetIdentity,
   BrowserAutomationExecutorDescriptor,
+  BrowserAutomationActStep,
+  BrowserAutomationObservationBinding,
+  BrowserAutomationActResult,
 } from "./models/browser-automation.js";
 
 // Events

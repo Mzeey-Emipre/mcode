@@ -533,7 +533,7 @@ export function BrowserAutomationHost() {
   const shutdownLeaseRef = useRef<HostLease | null>(null);
   const executorDescriptor = useMemo(() => ({
     runtime: window.desktopBridge?.preview?.automation ? "electron" as const : "web" as const,
-    operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS] as BrowserAutomationOperation[],
+    operations: ["inspect", "act", ...BROWSER_AUTOMATION_OPERATIONS] as BrowserAutomationOperation[],
     constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
     capabilityRevision: 1,
   }), []);
@@ -584,6 +584,9 @@ export function BrowserAutomationHost() {
       electron: new ElectronBrowserSessionAdapter(
         (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal),
       ),
+      supportedActOperations: window.desktopBridge?.preview?.automation
+        ? ["navigate", "click", "type", "press", "scroll"]
+        : ["navigate", "click", "type"],
     });
   }
   const addPersistentWebTab = (tab: PersistentAutomationWebTab): void => {
@@ -682,7 +685,7 @@ export function BrowserAutomationHost() {
         targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
       } : {}),
       executorDescriptor,
-      capabilities: [{ operation: "inspect", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
+      capabilities: [{ operation: "inspect", available: true }, { operation: "act", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
           const available = operation === "click" || operation === "type" ||
             operation === "status" || operation === "open" || operation === "navigate" ||

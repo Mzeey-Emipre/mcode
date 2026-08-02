@@ -53,6 +53,13 @@ describe("web browser interaction executor", () => {
     expect(clicked).toHaveBeenCalledOnce();
   });
 
+  it("resolves native controls through their implicit role", () => {
+    document.body.innerHTML = "<button>Save</button>";
+    const button = document.querySelector("button")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    expect(resolveWebTarget(document, { role: "button", accessibleName: "Save" })).toMatchObject({ ok: true, element: button });
+  });
+
   it("cancels click during the scheduling frame before dispatching events", async () => {
     document.body.innerHTML = '<button id="save">Save</button>';
     const button = document.querySelector("button") as HTMLButtonElement;
