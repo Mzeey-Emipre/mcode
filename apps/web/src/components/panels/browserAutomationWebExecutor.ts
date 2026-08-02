@@ -9,7 +9,7 @@ import {
 } from "@mcode/contracts";
 import { captureVisibleWebScreenshot } from "./web-browser-automation/capture";
 
-const WEB_CAPABILITIES = ["status", "open", "navigate", "snapshot", "screenshot"] as const;
+const WEB_CAPABILITIES = ["inspect", "status", "open", "navigate", "snapshot", "screenshot"] as const;
 const WEB_SNAPSHOT_MAX_SCAN_NODES = 8_192;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT = 1_024;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES = 256;
@@ -432,6 +432,22 @@ function snapshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, si
   });
 }
 
+function inspect(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): BrowserAutomationResponse {
+  const observed = snapshot({ ...dispatch, request: { ...dispatch.request, operation: "snapshot", args: { includeScreenshot: false, timeoutMs: 15_000 } } } as BrowserAutomationHostDispatch, iframe, signal);
+  if (!observed.ok) return observed;
+  return response(dispatch, {
+    operation: "inspect",
+    readiness: { ready: true, state: "ready" },
+    target: { threadId: dispatch.target.threadId, tabId: dispatch.target.tabId, targetGeneration: dispatch.target.targetGeneration, sticky: true },
+    tabs: [dispatch.target],
+    snapshot: observed.result.snapshot,
+    observationRef: globalThis.crypto.randomUUID(),
+    capabilityRevision: 1,
+    capabilities: [...WEB_CAPABILITIES],
+    guidance: `Visible same-origin Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.`.slice(0, 4_000),
+  });
+}
+
 function screenshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
   const maxWidth = dispatch.request.operation === "screenshot" && typeof dispatch.request.args.maxWidth === "number"
     ? dispatch.request.args.maxWidth
@@ -470,8 +486,10 @@ export async function executeWebBrowserDispatch(
       focused: true,
       viewport: { width: iframe.clientWidth || 1, height: iframe.clientHeight || 1 },
       capabilities: [...WEB_CAPABILITIES],
+      capabilityRevision: 1,
     });
   }
+  if (request.operation === "inspect") return inspect(dispatch, iframe, signal);
   if (request.operation === "navigate" || request.operation === "open") {
     const url = request.operation === "navigate" ? request.args.url : request.args.url;
     if (url) {

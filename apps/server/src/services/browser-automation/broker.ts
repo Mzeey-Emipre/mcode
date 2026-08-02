@@ -286,6 +286,9 @@ export class BrowserAutomationBroker {
     if (registration.runtime !== "web" && registration.targetIdentity) {
       throw new Error("Browser automation target identity is reserved for web hosts");
     }
+    if (registration.executorDescriptor && registration.executorDescriptor.runtime !== registration.runtime) {
+      throw new Error("Browser automation executor descriptor runtime does not match host runtime");
+    }
     if (
       !authorization ||
       registration.workspaceIds.some((workspaceId) => !authorization.allowedWorkspaceIds.includes(workspaceId))

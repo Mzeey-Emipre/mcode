@@ -1174,6 +1174,30 @@ export class BrowserAutomationKernel {
     const { state, webContents } = resolved;
     const base = () => ({ url: redactBrowserLocation(webContents.getURL()), title: redactBrowserText(webContents.getTitle(), 4_096), controlEpoch: state.controlEpoch });
     switch (request.operation) {
+      case "inspect": {
+        const snapshot = await this.captureSnapshot(resolved, false);
+        return {
+          operation: "inspect",
+          readiness: { ready: true, state: "ready" },
+          target: { threadId: state.threadId, tabId: state.tabId, targetGeneration: state.targetGeneration, sticky: true },
+          tabs: [{
+            desktopInstanceId: "electron",
+            windowId: state.windowId,
+            connectionGeneration: 1,
+            threadId: state.threadId,
+            tabId: state.tabId,
+            targetGeneration: state.targetGeneration,
+            active: getSession(resolved.window).tabsByThread.get(state.threadId)?.activeTabId === state.tabId,
+            focused: webContents.isFocused(),
+            lastUsedAt: Date.now(),
+          }],
+          snapshot,
+          observationRef: randomUUID(),
+          capabilityRevision: state.semanticGeneration,
+          capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
+          guidance: "Visible Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.",
+        };
+      }
       case "status":
         {
           const viewportValue = asRecord(await boundedRace(
@@ -1199,7 +1223,8 @@ export class BrowserAutomationKernel {
             height: Math.max(1, Math.min(10_000, Math.round(height))),
           },
           controller: state.controller,
-          capabilities: BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop"),
+          capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
+          capabilityRevision: state.semanticGeneration,
         };
         }
       case "open":

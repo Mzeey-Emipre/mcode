@@ -8,6 +8,7 @@ const DEFAULT_IDLE_TTL_MS = 30 * 60_000;
 const DEFAULT_ABSOLUTE_TTL_MS = 8 * 60 * 60_000;
 const DEFAULT_MAX_CREDENTIALS = 256;
 const OBSERVE_OPERATIONS = new Set<BrowserAutomationOperation>([
+  "inspect",
   "status",
   "snapshot",
   "screenshot",
@@ -83,10 +84,10 @@ function validateScope(scope: BrowserAutomationCredentialScope): void {
   if (ids.some((value) => value.length < 1 || value.length > 256)) {
     throw new Error("Browser automation credential scope contains an invalid identifier");
   }
-  const supported = new Set<BrowserAutomationOperation>(BROWSER_AUTOMATION_OPERATIONS);
+  const supported = new Set<BrowserAutomationOperation>([...BROWSER_AUTOMATION_OPERATIONS, "inspect"]);
   if (
     scope.allowedOperations.length < 1 ||
-    scope.allowedOperations.length > BROWSER_AUTOMATION_OPERATIONS.length ||
+    scope.allowedOperations.length > BROWSER_AUTOMATION_OPERATIONS.length + 1 ||
     new Set(scope.allowedOperations).size !== scope.allowedOperations.length ||
     scope.allowedOperations.some((operation) => !supported.has(operation))
   ) {

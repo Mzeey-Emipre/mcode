@@ -17,10 +17,10 @@ import type {
 const MAX_BODY_BYTES = 256 * 1_024;
 const MCP_PROTOCOL_VERSIONS = ["2025-03-26", "2024-11-05"] as const;
 const TOOL_NAME_TO_OPERATION = new Map<string, BrowserAutomationOperation>(
-  BROWSER_AUTOMATION_OPERATIONS.map((operation) => [
+  [["browser_inspect", "inspect" as BrowserAutomationOperation] as const, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => [
     BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
     operation,
-  ]),
+  ] as const)]),
 );
 
 type JsonRpcId = string | number | null;
@@ -105,6 +105,7 @@ const commonProperties = {
 
 function inputSchema(operation: BrowserAutomationOperation): Record<string, unknown> {
   const schemas: Record<BrowserAutomationOperation, Record<string, unknown>> = {
+    inspect: { includeScreenshot: { type: "boolean", default: false }, includeDiagnostics: { type: "boolean", default: false } },
     status: {},
     open: {
       url: { type: "string", format: "uri" },

@@ -97,7 +97,8 @@ export const BROWSER_AUTOMATION_OPERATIONS = [
 ] as const;
 
 /** One browser automation operation identifier. */
-export type BrowserAutomationOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[number];
+export type BrowserAutomationOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[number] | "inspect";
+const browserOperationSchema = z.union([z.enum(BROWSER_AUTOMATION_OPERATIONS), z.literal("inspect")]);
 
 /** Provider-facing MCP tool annotations for one operation. */
 export interface BrowserAutomationOperationAnnotations {
@@ -192,7 +193,54 @@ export const BROWSER_AUTOMATION_OPERATION_METADATA = {
     mcpName: "browser_recording_stop",
     annotations: input,
   },
-} as const satisfies Record<BrowserAutomationOperation, BrowserAutomationOperationMetadata>;
+} as unknown as Record<BrowserAutomationOperation, BrowserAutomationOperationMetadata>;
+
+// Browser v2 inspect stays separate from legacy operation iteration so older
+// clients continue receiving the v1 operation list unchanged.
+Object.defineProperty(BROWSER_AUTOMATION_OPERATION_METADATA, "inspect", {
+  enumerable: false,
+  value: {
+    operation: "inspect",
+    mcpName: "browser_inspect",
+    annotations: readOnly,
+  } satisfies BrowserAutomationOperationMetadata,
+});
+
+/** Maximum tabs returned by one browser_inspect response. */
+export const BROWSER_AUTOMATION_MAX_INSPECT_TABS = 32;
+/** Maximum generated guidance characters returned by browser_inspect. */
+export const BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS = 4_000;
+
+/** Canonical runtime executor descriptor shared by registration and inspection. */
+export const BrowserAutomationExecutorDescriptorSchema = lazySchema(() =>
+  z.object({
+    runtime: BrowserAutomationHostRuntimeSchema,
+    operations: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 1),
+    constraints: z.object({
+      maxTabs: z.number().int().positive().max(BROWSER_AUTOMATION_MAX_INSPECT_TABS),
+      maxSnapshotChars: z.number().int().positive().max(BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS),
+      maxDiagnostics: z.number().int().positive().max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES),
+    }).strict(),
+    capabilityRevision: z.number().int().positive(),
+  }).strict(),
+);
+/** Canonical runtime executor descriptor type. */
+export type BrowserAutomationExecutorDescriptor = z.infer<ReturnType<typeof BrowserAutomationExecutorDescriptorSchema>>;
+
+/** Bounded sticky target summary returned by browser_inspect. */
+export const BrowserAutomationInspectTargetSchema = lazySchema(() => z.object({
+  threadId: idSchema,
+  tabId: idSchema,
+  targetGeneration: z.number().int().nonnegative(),
+  sticky: z.literal(true),
+}).strict());
+
+/** Bounded readiness state returned by browser_inspect. */
+export const BrowserAutomationInspectReadinessSchema = lazySchema(() => z.object({
+  ready: z.boolean(),
+  state: z.enum(["ready", "host-unavailable", "target-unavailable", "recovering", "human-control"]),
+  reason: z.string().max(SHORT_TEXT_MAX).optional(),
+}).strict());
 
 /** Validates a browser URL that cannot carry credentials or leave HTTP(S). */
 export const BrowserAutomationUrlSchema = lazySchema(() =>
@@ -438,7 +486,7 @@ export const BrowserAutomationActionEntrySchema = lazySchema(() =>
   z
     .object({
       timestamp: z.number().int().nonnegative(),
-      operation: z.enum(BROWSER_AUTOMATION_OPERATIONS),
+      operation: browserOperationSchema,
       outcome: z.enum(["started", "succeeded", "failed", "interrupted"]),
       detail: z.string().max(SHORT_TEXT_MAX).optional(),
     })
@@ -601,7 +649,7 @@ export type BrowserAutomationTargetIdentity = z.infer<
 export const BrowserAutomationHostCapabilitySchema = lazySchema(() =>
   z
     .object({
-      operation: z.enum(BROWSER_AUTOMATION_OPERATIONS),
+      operation: browserOperationSchema,
       available: z.boolean(),
       unavailableReason: z.string().max(SHORT_TEXT_MAX).optional(),
     })
@@ -633,10 +681,11 @@ export const BrowserAutomationHostRegistrationSchema = lazySchema(() =>
       worktreeIdentity: idSchema,
       workspaceIds: z.array(idSchema).min(1).max(32),
       targetIdentity: BrowserAutomationTargetIdentitySchema().optional(),
+      executorDescriptor: BrowserAutomationExecutorDescriptorSchema().optional(),
       capabilities: z
         .array(BrowserAutomationHostCapabilitySchema())
         .min(1)
-        .max(BROWSER_AUTOMATION_OPERATIONS.length),
+        .max(BROWSER_AUTOMATION_OPERATIONS.length + 1),
       maxPendingRequests: z
         .number()
         .int()
@@ -822,6 +871,10 @@ const requestVariant = <T extends BrowserAutomationOperation>(
 /** Versioned, scoped request envelope for every browser operation. */
 export const BrowserAutomationRequestSchema = lazySchema(() =>
   z.discriminatedUnion("operation", [
+    requestVariant("inspect", z.object({
+      includeScreenshot: z.boolean().default(false),
+      includeDiagnostics: z.boolean().default(false),
+    }).strict()),
     requestVariant("status", emptyArgs),
     requestVariant(
       "open",
@@ -913,6 +966,19 @@ const actionResult = <T extends BrowserAutomationOperation>(operation: T) =>
 export const BrowserAutomationResultSchema = lazySchema(() =>
   z.discriminatedUnion("operation", [
     z.object({
+      operation: z.literal("inspect"),
+      readiness: BrowserAutomationInspectReadinessSchema(),
+      target: BrowserAutomationInspectTargetSchema().optional(),
+      tabs: z.array(BrowserAutomationHostDispatchTargetSchema()).max(BROWSER_AUTOMATION_MAX_INSPECT_TABS),
+      snapshot: BrowserAutomationSnapshotSchema().optional(),
+      screenshot: BrowserAutomationScreenshotSchema().optional(),
+      diagnostics: z.array(z.string().max(SHORT_TEXT_MAX)).max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).optional(),
+      observationRef: idSchema,
+      capabilityRevision: z.number().int().positive(),
+      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 1),
+      guidance: z.string().max(BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS),
+    }).strict(),
+    z.object({
       operation: z.literal("status"),
       available: z.boolean(),
       active: z.boolean(),
@@ -922,7 +988,8 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
       focused: z.boolean(),
       viewport: z.object({ width: z.number().int().min(1).max(10_000), height: z.number().int().min(1).max(10_000) }).strict(),
       controller: BrowserAutomationControllerStateSchema().optional(),
-      capabilities: z.array(z.enum(BROWSER_AUTOMATION_OPERATIONS)).max(BROWSER_AUTOMATION_OPERATIONS.length),
+      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 1),
+      capabilityRevision: z.number().int().positive().optional(),
     }).strict(),
     z.object({
       operation: z.literal("open"),

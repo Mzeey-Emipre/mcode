@@ -674,7 +674,13 @@ export function BrowserAutomationHost() {
       ...(activeTarget && !desktopAutomation && webAutomationEnabled ? {
         targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
       } : {}),
-      capabilities: BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
+      executorDescriptor: {
+        runtime: desktopAutomation ? "electron" : "web",
+        operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+        constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+        capabilityRevision: 1,
+      },
+      capabilities: [{ operation: "inspect", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
           const available = operation === "click" || operation === "type" ||
             operation === "status" || operation === "open" || operation === "navigate" ||
@@ -691,7 +697,7 @@ export function BrowserAutomationHost() {
         return unavailableReason
           ? { operation, available: false, unavailableReason }
           : { operation, available: true };
-      }),
+      })],
       maxPendingRequests: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
       connectedAt: Date.now(),
     }).then((result) => {
