@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
+  BROWSER_AUTOMATION_OPERATIONS,
   BrowserAutomationHostDispatchSchema,
   type BrowserAutomationHostRegistration,
   type BrowserAutomationRequest,
@@ -58,6 +59,12 @@ function registration(hostId: string, workspaceId: string): BrowserAutomationHos
     desktopInstanceId: `desktop-${hostId}`,
     worktreeIdentity: "worktree-a",
     workspaceIds: [workspaceId],
+    executorDescriptor: {
+      runtime: "electron",
+      operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+      constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+      capabilityRevision: 1,
+    },
     capabilities: [{ operation: "status", available: true }],
     maxPendingRequests: 2,
     connectedAt: 1,
@@ -109,7 +116,208 @@ function statusResult() {
   };
 }
 
+function statusTarget(hostId: string, generation: number, targetGeneration = 0, controller?: { tabId: string; controller: "none" | "human" | "agent"; controlEpoch: number }) {
+  return {
+    desktopInstanceId: `desktop-${hostId}`,
+    windowId: 1,
+    connectionGeneration: generation,
+    threadId: "thread-a",
+    tabId: "tab-thread-a",
+    targetGeneration,
+    active: true,
+    focused: true,
+    lastUsedAt: 1,
+    ...(controller ? { controller } : {}),
+  };
+}
+
+function pendingStatusWithMutation(mutation: (broker: BrowserAutomationBroker, socket: WebSocket, generation: number, scope: BrowserAutomationCredentialClaims) => void) {
+  const deliveries: Array<{ channel: string; data: any }> = [];
+  let armed = false;
+  let nowCalls = 0;
+  let broker!: BrowserAutomationBroker;
+  const hostSocket = socket("drift-host");
+  const optionsWithMutation = options({
+    now: () => {
+      nowCalls++;
+      if (armed && nowCalls === 8) {
+        armed = false;
+        mutation(broker, hostSocket, generation, scope);
+      }
+      return 10;
+    },
+    send: (_target, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    },
+  });
+  broker = new BrowserAutomationBroker(optionsWithMutation);
+  const generation = broker.registerHost(hostSocket, registration("drift-host", "workspace-a"), authorization("drift-host")).generation;
+  broker.updateTargets(hostSocket, "drift-host", generation, [statusTarget("drift-host", generation)]);
+  const scope = claims("thread-a", "workspace-a");
+  armed = true;
+  const pending = broker.execute(scope, request(scope));
+  return { broker, hostSocket, generation, pending, deliveries, scope };
+}
+
 describe("BrowserAutomationBroker", () => {
+  it("rejects an explicitly mismatched executor descriptor runtime", () => {
+    const broker = new BrowserAutomationBroker(options());
+    expect(() => broker.registerHost(socket("mismatch"), {
+      ...registration("mismatch", "workspace-a"),
+      executorDescriptor: {
+        runtime: "web",
+        operations: ["inspect"],
+        constraints: { maxTabs: 1, maxSnapshotChars: 100, maxDiagnostics: 1 },
+        capabilityRevision: 1,
+      },
+    }, authorization("mismatch"))).toThrow("runtime does not match");
+  });
+
+  it("derives bounded inspect metadata from descriptor, credential, host, and target state", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    } }));
+    const hostSocket = socket("inspect-authority");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("inspect-authority", "workspace-a"),
+      executorDescriptor: {
+        ...registration("inspect-authority", "workspace-a").executorDescriptor,
+        constraints: { maxTabs: 1, maxSnapshotChars: 4, maxDiagnostics: 1 },
+      },
+      capabilities: [
+        { operation: "inspect", available: true },
+        { operation: "status", available: true },
+      ],
+    }, authorization("inspect-authority")).generation;
+    updateTargets(broker, hostSocket, "inspect-authority", generation, ["thread-a"]);
+    const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["inspect", "status"] as const };
+    const pending = broker.execute(scope, { ...request(scope), operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: true } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const dispatch = deliveries.find((delivery) => delivery.channel === "browserAutomation.request")!.data.dispatch;
+    const target = dispatch.target;
+    broker.respond(hostSocket, "inspect-authority", generation, {
+      contractVersion: 1,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: true,
+      result: {
+        operation: "inspect",
+        tabs: [target, { ...target, tabId: "extra-tab" }],
+        snapshot: {
+          url: "https://example.test/",
+          title: "Fixture",
+          loading: false,
+          visibleText: "123456",
+          visibleTextTruncation: { truncated: false },
+          elements: [], elementsTruncation: { truncated: false },
+          accessibility: [], accessibilityTruncation: { truncated: false },
+          console: [], consoleTruncation: { truncated: false },
+          network: [], networkTruncation: { truncated: false },
+          actions: [], actionsTruncation: { truncated: false },
+        },
+        diagnostics: ["one", "two"],
+      },
+    });
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: {
+        operation: "inspect",
+        tabs: [{ tabId: "tab-thread-a" }],
+        snapshot: { visibleText: "1234", visibleTextTruncation: { truncated: true, originalCount: 6, reason: "character-limit" } },
+        diagnostics: ["one"],
+        capabilities: ["inspect", "status"],
+        capabilityRevision: 1,
+        guidance: expect.stringContaining("electron"),
+        observationRef: expect.any(String),
+      },
+    });
+  });
+
+  it("restricts browser_status to descriptor, credential, host, and controller state", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    } }));
+    const hostSocket = socket("restricted-status");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("restricted-status", "workspace-a"),
+      capabilities: [
+        { operation: "status", available: true },
+        { operation: "snapshot", available: true },
+      ],
+    }, authorization("restricted-status")).generation;
+    broker.updateTargets(hostSocket, "restricted-status", generation, [statusTarget("restricted-status", generation, 0, { tabId: "tab-thread-a", controller: "human", controlEpoch: 4 })]);
+    const scope = claims("thread-a", "workspace-a");
+    const pending = broker.execute(scope, request(scope));
+    expect(broker.status().pending).toBe(1);
+    const delivery = deliveries.find((entry) => entry.channel === "browserAutomation.request")!;
+    broker.respond(hostSocket, "restricted-status", generation, {
+      contractVersion: 1,
+      requestId: delivery.data.dispatch.request.requestId,
+      sequence: delivery.data.dispatch.request.sequence,
+      ok: true,
+      result: { ...statusResult(), capabilities: ["status", "snapshot", "inspect"] },
+    });
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: {
+        operation: "status",
+        capabilities: ["status"],
+        capabilityRevision: 1,
+        controller: { controller: "human", controlEpoch: 4 },
+      },
+    });
+  });
+
+  it("rejects descriptor revision drift before transport send", async () => {
+    const replacement = socket("drift-revision-replacement");
+    const scenario = pendingStatusWithMutation((broker, _socket, _generation) => {
+      broker.registerHost(replacement, {
+        ...registration("drift-host", "workspace-a"),
+        executorDescriptor: { ...registration("drift-host", "workspace-a").executorDescriptor, capabilityRevision: 2 },
+      }, authorization("drift-host"));
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE", effect: "none", recovery: "retry" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
+  it("rejects credential operation drift before transport send", async () => {
+    const scenario = pendingStatusWithMutation((_broker, _socket, _generation, scope) => {
+      Reflect.set(scope.allowedOperations, "length", 0);
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "FORBIDDEN", effect: "none", recovery: "manual" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
+  it("rejects sticky host replacement before transport send", async () => {
+    const replacement = socket("drift-route-replacement");
+    const scenario = pendingStatusWithMutation((broker, _socket, _generation) => {
+      broker.registerHost(replacement, registration("drift-host", "workspace-a"), authorization("drift-host"));
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE", effect: "none", recovery: "retry" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
+  it("rejects target generation drift before transport send", async () => {
+    const scenario = pendingStatusWithMutation((broker, socket, generation) => {
+      broker.updateTargets(socket, "drift-host", generation, [statusTarget("drift-host", generation, 1)]);
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION", effect: "none", recovery: "retry" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
+  it("rejects controller drift before transport send", async () => {
+    const scenario = pendingStatusWithMutation((broker, socket, generation) => {
+      broker.updateTargets(socket, "drift-host", generation, [statusTarget("drift-host", generation, 0, { tabId: "tab-thread-a", controller: "human", controlEpoch: 2 })]);
+    });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HUMAN_INTERRUPTED", effect: "none", recovery: "retry" } });
+    expect(scenario.deliveries).toHaveLength(0);
+  });
+
   it("never cross-routes two threads across workspace-scoped hosts", async () => {
     const deliveries: Array<{ socket: WebSocket; data: any }> = [];
     const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (target, channel, data) => {
@@ -156,6 +364,10 @@ describe("BrowserAutomationBroker", () => {
     const generation = broker.registerHost(hostSocket, {
       ...registration("web", "workspace-a"),
       runtime: "web",
+      executorDescriptor: {
+        ...registration("web", "workspace-a").executorDescriptor,
+        runtime: "web",
+      },
       targetIdentity: {
         worktreeIdentity: "worktree-a",
         connectionId: "desktop-web",

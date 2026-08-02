@@ -251,6 +251,23 @@ describe("web browser automation executor", () => {
     target.remove();
   });
 
+  it("returns mechanical inspect facts without public semantic metadata", async () => {
+    const target = iframe();
+    const result = await executeWebBrowserDispatch(
+      dispatch("inspect", { includeScreenshot: false, includeDiagnostics: true }),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ ok: true, result: { operation: "inspect", tabs: [{ tabId: "tab-1" }], snapshot: expect.any(Object) } });
+    if (result.ok && result.result.operation === "inspect") {
+      expect(result.result).not.toHaveProperty("capabilities");
+      expect(result.result).not.toHaveProperty("guidance");
+      expect(result.result).not.toHaveProperty("capabilityRevision");
+      expect(result.result).not.toHaveProperty("observationRef");
+      expect(result.result).not.toHaveProperty("readiness");
+    }
+    target.remove();
+  });
+
   it("rejects full-page screenshots before capture", async () => {
     const target = iframe();
     vi.mocked(captureVisibleWebScreenshot).mockClear();

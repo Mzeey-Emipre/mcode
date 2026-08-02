@@ -252,6 +252,33 @@ describe("browser automation operation contract", () => {
       observationRef: "observation-1",
     })).toMatchObject({ observationRef: "observation-1" });
   });
+
+  it("accepts bounded browser_inspect readiness, sticky target, revision, and guidance", () => {
+    const parsed = BrowserAutomationRequestSchema().parse({
+      ...requestBase,
+      operation: "inspect",
+      args: { includeScreenshot: false, includeDiagnostics: false },
+    });
+    expect(parsed.operation).toBe("inspect");
+    const response = BrowserAutomationResponseSchema().safeParse({
+      contractVersion: 1,
+      requestId: "inspect-request",
+      sequence: 1,
+      ok: true,
+      result: {
+        operation: "inspect",
+        readiness: { ready: true, state: "ready" },
+        target: { threadId: "thread-1", tabId: "tab-1", targetGeneration: 1, sticky: true },
+        tabs: [{ desktopInstanceId: "desktop-1", windowId: 1, connectionGeneration: 1, threadId: "thread-1", tabId: "tab-1", targetGeneration: 1, active: true, focused: true, lastUsedAt: 1 }],
+        snapshot,
+        observationRef: "observation-inspect",
+        capabilityRevision: 1,
+        capabilities: ["inspect", "status"],
+        guidance: "Use browser_inspect on visible Preview.",
+      },
+    });
+    expect(response.success).toBe(true);
+  });
 });
 
 describe("browser automation boundaries", () => {
@@ -533,6 +560,12 @@ describe("browser automation boundaries", () => {
       desktopInstanceId: "desktop-1",
       worktreeIdentity: "worktree-1",
       workspaceIds: ["workspace-1"],
+      executorDescriptor: {
+        runtime: "electron",
+        operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+        constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+        capabilityRevision: 1,
+      },
       capabilities: [{ operation: "status", available: true }],
       maxPendingRequests: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
       connectedAt: 1,
@@ -570,6 +603,12 @@ describe("browser automation boundaries", () => {
         threadId: "thread-a",
         tabId: "tab-a",
         generation: 1,
+      },
+      executorDescriptor: {
+        runtime: "web",
+        operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+        constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+        capabilityRevision: 1,
       },
       capabilities: [{ operation: "status", available: false, unavailableReason: "disabled" }],
       maxPendingRequests: 1,

@@ -749,6 +749,25 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
+  it("shares one executor descriptor between registration and the live driver revision getter", async () => {
+    execute.mockResolvedValue(successResponse(dispatch(1, 98).request));
+    const driverExecute = vi.spyOn(BrowserSessionDriver.prototype, "execute");
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const registration = harness.transport.registerBrowserAutomationHost.mock.calls[0]?.[0];
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: dispatch(1, 98) }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    const instance = driverExecute.mock.instances[0] as unknown as {
+      options: { getCapabilityRevision?: () => number };
+    };
+    expect(instance.options.getCapabilityRevision?.()).toBe(registration.executorDescriptor.capabilityRevision);
+    registration.executorDescriptor.capabilityRevision = 7;
+    expect(instance.options.getCapabilityRevision?.()).toBe(7);
+    view.unmount();
+    driverExecute.mockRestore();
+  });
+
   it("routes web screenshots to the registered target", async () => {
     delete window.desktopBridge;
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");

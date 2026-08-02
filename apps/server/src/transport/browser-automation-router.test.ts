@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WebSocket } from "ws";
-import { BROWSER_AUTOMATION_CONTRACT_VERSION } from "@mcode/contracts";
+import { BROWSER_AUTOMATION_CONTRACT_VERSION, BROWSER_AUTOMATION_OPERATIONS } from "@mcode/contracts";
 import { BrowserAutomationBroker } from "../services/browser-automation/broker.js";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
 
@@ -15,6 +15,12 @@ function registration(
     desktopInstanceId,
     worktreeIdentity,
     workspaceIds,
+    executorDescriptor: {
+      runtime: "electron",
+      operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+      constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+      capabilityRevision: 1,
+    },
     capabilities: [{ operation: "status", available: true }],
     maxPendingRequests: 2,
     connectedAt: 1,
@@ -96,6 +102,10 @@ describe("browser automation router authorization", () => {
     const webRegistration = {
       ...registration("desktop-web", ["workspace-a"], "worktree-trusted"),
       runtime: "web",
+      executorDescriptor: {
+        ...registration("desktop-web", ["workspace-a"], "worktree-trusted").executorDescriptor,
+        runtime: "web",
+      },
       targetIdentity: {
         worktreeIdentity: "worktree-trusted",
         connectionId: "pending-desktop",

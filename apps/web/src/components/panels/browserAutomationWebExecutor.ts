@@ -9,7 +9,6 @@ import {
 } from "@mcode/contracts";
 import { captureVisibleWebScreenshot } from "./web-browser-automation/capture";
 
-const WEB_CAPABILITIES = ["status", "open", "navigate", "snapshot", "screenshot"] as const;
 const WEB_SNAPSHOT_MAX_SCAN_NODES = 8_192;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT = 1_024;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT_NODES = 256;
@@ -46,6 +45,8 @@ function popSnapshotNode(stack: SnapshotNode[], budget: SnapshotBudget): Snapsho
 }
 
 type WebIframe = HTMLIFrameElement & { dataset: DOMStringMap };
+type MechanicalInspectResult = Omit<Extract<BrowserAutomationResult, { operation: "inspect" }>, "readiness" | "observationRef" | "capabilities" | "guidance" | "capabilityRevision">;
+type MechanicalStatusResult = Omit<Extract<BrowserAutomationResult, { operation: "status" }>, "capabilities" | "capabilityRevision">;
 
 type WebFailureCode =
   | "CROSS_ORIGIN"
@@ -432,6 +433,25 @@ function snapshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, si
   });
 }
 
+async function inspect(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
+  const observed = snapshot({ ...dispatch, request: { ...dispatch.request, operation: "snapshot", args: { includeScreenshot: false, timeoutMs: 15_000 } } } as BrowserAutomationHostDispatch, iframe, signal);
+  if (!observed.ok) return observed;
+  if (observed.result.operation !== "snapshot") return failure(dispatch, "UNSUPPORTED_OPERATION", "Web Preview snapshot response was invalid");
+  const screenshotResult = dispatch.request.args.includeScreenshot
+    ? await captureVisibleWebScreenshot({ iframe, maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH, deadline: dispatch.request.deadline, signal })
+    : null;
+  if (screenshotResult && !screenshotResult.ok) return failure(dispatch, screenshotResult.code === "TIMEOUT" ? "DEADLINE_EXCEEDED" : screenshotResult.code, "Web Preview screenshot failed");
+  const mechanical: MechanicalInspectResult = {
+    operation: "inspect",
+    target: { threadId: dispatch.target.threadId, tabId: dispatch.target.tabId, targetGeneration: dispatch.target.targetGeneration, sticky: true },
+    tabs: [dispatch.target],
+    snapshot: observed.result.snapshot,
+    ...(screenshotResult?.ok ? { screenshot: screenshotResult.value } : {}),
+    ...(dispatch.request.args.includeDiagnostics ? { diagnostics: [] } : {}),
+  };
+  return response(dispatch, mechanical);
+}
+
 function screenshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
   const maxWidth = dispatch.request.operation === "screenshot" && typeof dispatch.request.args.maxWidth === "number"
     ? dispatch.request.args.maxWidth
@@ -460,7 +480,7 @@ export async function executeWebBrowserDispatch(
   const { request } = dispatch;
   if (request.operation === "status") {
     const document = currentDocument(iframe);
-    return response(dispatch, {
+    const mechanical: MechanicalStatusResult = {
       operation: "status",
       available: true,
       active: true,
@@ -469,9 +489,10 @@ export async function executeWebBrowserDispatch(
       loading: document?.readyState !== "complete",
       focused: true,
       viewport: { width: iframe.clientWidth || 1, height: iframe.clientHeight || 1 },
-      capabilities: [...WEB_CAPABILITIES],
-    });
+    };
+    return response(dispatch, mechanical);
   }
+  if (request.operation === "inspect") return inspect(dispatch, iframe, signal);
   if (request.operation === "navigate" || request.operation === "open") {
     const url = request.operation === "navigate" ? request.args.url : request.args.url;
     if (url) {

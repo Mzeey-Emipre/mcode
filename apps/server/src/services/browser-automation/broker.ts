@@ -14,6 +14,7 @@ import {
   type BrowserAutomationHostDispatch,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
+  type BrowserAutomationOperation,
 } from "@mcode/contracts";
 import { sendToClient } from "../../transport/push.js";
 import type { BrowserAutomationCredentialClaims } from "./credential-registry.js";
@@ -38,6 +39,7 @@ interface PendingRequest {
   resolve: (response: BrowserAutomationResponse) => void;
   timer: ReturnType<typeof setTimeout>;
   startedAt: number;
+  credentialOperations: readonly BrowserAutomationOperation[];
 }
 
 interface OpenReplayRecord {
@@ -107,7 +109,7 @@ function failure(
       retryable,
       stage: code === "TAB_UNAVAILABLE" ? "allocation" : "transport",
       effect: code === "TAB_UNAVAILABLE" ? "unknown" : "none",
-      recovery: retryable ? "retry" : "manual",
+      recovery: code === "CAPABILITY_CHANGED" ? "inspect" : retryable ? "retry" : "manual",
       correlationId: randomUUID(),
     },
   };
@@ -212,6 +214,74 @@ function responseWasTruncated(response: BrowserAutomationResponse): boolean {
   );
 }
 
+function shapeNegotiatedResponse(
+  response: BrowserAutomationResponse,
+  pending: PendingRequest,
+): BrowserAutomationResponse {
+  if (!response.ok) return response;
+  const descriptor = pending.host.registration.executorDescriptor;
+  const allowed = new Set(pending.credentialOperations);
+  const liveHostCapabilities = new Set(
+    pending.host.registration.capabilities
+      .filter((capability) => capability.available)
+      .map((capability) => capability.operation),
+  );
+  const negotiatedCapabilities = descriptor.operations.filter((operation) =>
+    allowed.has(operation) && liveHostCapabilities.has(operation),
+  );
+  if (response.result.operation === "inspect") {
+    const targetReady = pending.target !== undefined;
+    const guidance = pending.target?.controller?.controller === "human"
+      ? "Visible Preview under human control. Yield to user before effects."
+      : `Visible browser executor (${descriptor.runtime}) supports: ${negotiatedCapabilities.join(", ") || "none"}.`;
+    const snapshot = response.result.snapshot && response.result.snapshot.visibleText.length > descriptor.constraints.maxSnapshotChars
+      ? {
+          ...response.result.snapshot,
+          visibleText: response.result.snapshot.visibleText.slice(0, descriptor.constraints.maxSnapshotChars),
+          visibleTextTruncation: {
+            truncated: true as const,
+            originalCount: response.result.snapshot.visibleText.length,
+            reason: "character-limit" as const,
+          },
+        }
+      : response.result.snapshot;
+    const diagnostics = response.result.diagnostics?.slice(0, descriptor.constraints.maxDiagnostics);
+    return {
+      ...response,
+      result: {
+        ...response.result,
+        readiness: !targetReady
+          ? { ready: false, state: "target-unavailable", reason: "Visible browser target is unavailable" }
+          : pending.target?.controller?.controller === "human"
+            ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
+            : { ready: true, state: "ready" },
+        target: pending.target
+          ? { threadId: pending.target.threadId, tabId: pending.target.tabId, targetGeneration: pending.target.targetGeneration, sticky: true }
+          : undefined,
+        tabs: (pending.target ? [pending.target] : response.result.tabs).slice(0, descriptor.constraints.maxTabs),
+        snapshot,
+        ...(diagnostics ? { diagnostics } : {}),
+        observationRef: randomUUID(),
+        capabilities: negotiatedCapabilities,
+        capabilityRevision: descriptor.capabilityRevision,
+        guidance: guidance.slice(0, 4_000),
+      },
+    };
+  }
+  if (response.result.operation === "status") {
+    return {
+      ...response,
+      result: {
+        ...response.result,
+        controller: pending.target?.controller,
+        capabilities: negotiatedCapabilities,
+        capabilityRevision: descriptor.capabilityRevision,
+      },
+    };
+  }
+  return response;
+}
+
 /** Routes scoped browser requests to one sticky, capability-compatible renderer host. */
 export class BrowserAutomationBroker {
   private readonly hostsBySocket = new Map<WebSocket, RegisteredHost>();
@@ -280,6 +350,12 @@ export class BrowserAutomationBroker {
     authorization: BrowserAutomationHostConnectionAuthorization | null,
   ): { generation: number; desktopInstanceId: string } {
     const registration = BrowserAutomationHostRegistrationSchema().parse(input);
+    const rawDescriptor = typeof input === "object" && input !== null
+      ? (input as { executorDescriptor?: { runtime?: unknown } }).executorDescriptor
+      : undefined;
+    if (rawDescriptor && rawDescriptor.runtime !== registration.runtime) {
+      throw new Error("Browser automation executor descriptor runtime does not match host runtime");
+    }
     if (registration.runtime === "web" && authorization?.allowWebRuntime !== true) {
       throw new Error("Browser automation web host registration is disabled");
     }
@@ -326,6 +402,12 @@ export class BrowserAutomationBroker {
         existingOwner.registration.worktreeIdentity !== trustedRegistration.worktreeIdentity
       ) {
         throw new Error("Browser automation host ID is already registered");
+      }
+      if (existingOwner.registration.executorDescriptor?.capabilityRevision !== registration.executorDescriptor?.capabilityRevision) {
+        for (const [key, pending] of this.pending) {
+          if (pending.host !== existingOwner) continue;
+          this.settle(key, pending, failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false));
+        }
       }
       this.disconnect(existingOwner.socket);
     }
@@ -434,7 +516,8 @@ export class BrowserAutomationBroker {
     const key = pendingKey(host, response.requestId, response.sequence);
     const pending = this.pending.get(key);
     if (!pending) return;
-    if (response.ok && response.result.operation !== pending.request.operation) {
+    const negotiatedResponse = shapeNegotiatedResponse(response, pending);
+    if (negotiatedResponse.ok && negotiatedResponse.result.operation !== pending.request.operation) {
       this.settle(
         key,
         pending,
@@ -442,7 +525,7 @@ export class BrowserAutomationBroker {
       );
       return;
     }
-    if (response.ok && !pending.target) {
+    if (negotiatedResponse.ok && !pending.target) {
       if (!responseTarget) {
         this.settle(
           key,
@@ -481,7 +564,7 @@ export class BrowserAutomationBroker {
       );
       return;
     }
-    this.settle(key, pending, response);
+    this.settle(key, pending, negotiatedResponse);
   }
 
   /** Interrupts a pending request after a human or host-side stop signal. */
@@ -669,6 +752,7 @@ export class BrowserAutomationBroker {
         windowId: target.windowId,
         connectionGeneration: target.connectionGeneration,
         targetGeneration: target.targetGeneration,
+        capabilityRevision: host.registration.executorDescriptor.capabilityRevision,
       },
       request,
       target,
@@ -703,9 +787,15 @@ export class BrowserAutomationBroker {
         resolve,
         timer,
         startedAt: this.now(),
+        credentialOperations: claims.allowedOperations,
       };
       this.pending.set(key, pending);
       host.pending++;
+      const preflightError = this.revalidatePendingBeforeSend(pending);
+      if (preflightError) {
+        this.settle(key, pending, preflightError);
+        return;
+      }
       const sent = this.trySend(host.socket, "browserAutomation.request", {
         hostId: host.registration.hostId,
         generation: host.generation,
@@ -872,9 +962,44 @@ export class BrowserAutomationBroker {
   }
 
   private supportsOperation(host: RegisteredHost, request: BrowserAutomationRequest): boolean {
+    const descriptor = host.registration.executorDescriptor;
+    if (!descriptor.operations.includes(request.operation)) return false;
     return host.registration.capabilities.some(
       (capability) => capability.operation === request.operation && capability.available,
     );
+  }
+
+  private revalidatePendingBeforeSend(pending: PendingRequest): BrowserAutomationResponse | null {
+    const host = pending.host;
+    if (this.hostsBySocket.get(host.socket) !== host) {
+      return failure(pending.request, "HOST_UNAVAILABLE", "Browser host changed before delivery", true);
+    }
+    if (!pending.credentialOperations.includes(pending.request.operation)) {
+      return failure(pending.request, "FORBIDDEN", "Browser operation is no longer allowed by this credential", false);
+    }
+    if (pending.request.deadline <= this.now()) {
+      return failure(pending.request, "DEADLINE_EXCEEDED", "Browser request deadline has elapsed", true);
+    }
+    if (pending.dispatch && pending.dispatch.connection.capabilityRevision !== host.registration.executorDescriptor.capabilityRevision) {
+      return failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false);
+    }
+    if (!this.supportsOperation(host, pending.request)) {
+      return failure(pending.request, "CAPABILITY_CHANGED", "Browser executor capabilities changed; inspect before retrying", false);
+    }
+    if (pending.target) {
+      const currentTarget = host.targets.get(targetKey(pending.target));
+      if (!currentTarget) return failure(pending.request, "TAB_UNAVAILABLE", "Browser target changed before delivery", true);
+      if (!targetsMatch(currentTarget, pending.target)) {
+        return failure(pending.request, "STALE_TARGET_GENERATION", "Browser target changed before delivery", true);
+      }
+      if (
+        currentTarget.controller?.controller !== pending.target.controller?.controller ||
+        currentTarget.controller?.controlEpoch !== pending.target.controller?.controlEpoch
+      ) {
+        return failure(pending.request, "HUMAN_INTERRUPTED", "Browser controller changed before delivery", true);
+      }
+    }
+    return null;
   }
 
   private resolveBootstrapHost(
@@ -912,9 +1037,14 @@ export class BrowserAutomationBroker {
         this.settle(key, pending, failure(request, "DEADLINE_EXCEEDED", "Browser request timed out", true));
       }, timeoutMs);
       timer.unref?.();
-      const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now() };
+      const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now(), credentialOperations: [request.operation] };
       this.pending.set(key, pending);
       host.pending++;
+      const preflightError = this.revalidatePendingBeforeSend(pending);
+      if (preflightError) {
+        this.settle(key, pending, preflightError);
+        return;
+      }
       const sent = this.trySend(host.socket, "browserAutomation.bootstrap", {
         hostId: host.registration.hostId,
         generation: host.generation,

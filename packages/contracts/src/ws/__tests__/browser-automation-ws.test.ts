@@ -13,6 +13,12 @@ function registration() {
     desktopInstanceId: "desktop-a",
     worktreeIdentity: "worktree-a",
     workspaceIds: ["workspace-a"],
+    executorDescriptor: {
+      runtime: "electron",
+      operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+      constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+      capabilityRevision: 1,
+    },
     capabilities: BROWSER_AUTOMATION_OPERATIONS.map((operation) => ({ operation, available: true })),
     maxPendingRequests: 4,
     connectedAt: 1,

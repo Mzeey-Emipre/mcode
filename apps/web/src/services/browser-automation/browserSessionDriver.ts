@@ -44,6 +44,7 @@ export interface BrowserSessionDriverOptions {
   readonly web: BrowserSessionRuntimeAdapter;
   readonly electron: BrowserSessionRuntimeAdapter;
   readonly isElectron?: () => boolean;
+  readonly getCapabilityRevision?: () => number;
 }
 
 /**
@@ -64,15 +65,17 @@ export class BrowserSessionDriver {
     dispatch: BrowserAutomationHostDispatch,
     signal: AbortSignal,
   ): Promise<BrowserAutomationResponse> {
+    const initialDrift = this.revisionDrift(dispatch);
+    if (initialDrift) return Promise.resolve(initialDrift);
     if (dispatch.request?.operation !== "open") {
-      return (this.isElectron() ? this.options.electron : this.options.web).execute(dispatch, signal);
+      return this.executeAdapter(dispatch, signal);
     }
 
     // Legacy/internal bootstrap callers without the v2 key retain the exact
     // dispatch object and adapter contract. Authenticated MCP opens always
     // carry idempotencyKey and enter the v2 lifecycle below.
     if (dispatch.request.args.idempotencyKey === undefined) {
-      return (this.isElectron() ? this.options.electron : this.options.web).execute(dispatch, signal);
+      return this.executeAdapter(dispatch, signal);
     }
 
     this.pruneIdempotency();
@@ -128,8 +131,7 @@ export class BrowserSessionDriver {
         },
       },
     } as OpenDispatch;
-    const promise = (this.isElectron() ? this.options.electron : this.options.web)
-      .execute(normalized, signal)
+    const promise = this.executeAdapter(normalized, signal)
       .then((response) => this.withObservationRef(response));
     this.idempotency.set(scopeKey, {
       fingerprint,
@@ -165,6 +167,37 @@ export class BrowserSessionDriver {
   private withObservationRef(response: BrowserAutomationResponse): BrowserAutomationResponse {
     if (!response.ok || response.result.operation !== "open" || response.result.observationRef) return response;
     return { ...response, result: { ...response.result, observationRef: globalThis.crypto.randomUUID() } };
+  }
+
+  private executeAdapter(
+    dispatch: BrowserAutomationHostDispatch,
+    signal: AbortSignal,
+  ): Promise<BrowserAutomationResponse> {
+    const drift = this.revisionDrift(dispatch);
+    if (drift) return Promise.resolve(drift);
+    return (this.isElectron() ? this.options.electron : this.options.web).execute(dispatch, signal);
+  }
+
+  private revisionDrift(dispatch: BrowserAutomationHostDispatch): BrowserAutomationResponse | null {
+    const expectedRevision = dispatch.connection?.capabilityRevision;
+    const currentRevision = this.options.getCapabilityRevision?.();
+    if (expectedRevision !== undefined && currentRevision !== undefined && expectedRevision !== currentRevision) {
+      return {
+        contractVersion: dispatch.request.contractVersion,
+        requestId: dispatch.request.requestId,
+        sequence: dispatch.request.sequence,
+        ok: false,
+        error: {
+          code: "CAPABILITY_CHANGED",
+          message: "Browser executor capabilities changed; inspect before retrying",
+          retryable: false,
+          stage: "validation",
+          effect: "none",
+          recovery: "inspect",
+        },
+      };
+    }
+    return null;
   }
 
   private pruneIdempotency(): void {

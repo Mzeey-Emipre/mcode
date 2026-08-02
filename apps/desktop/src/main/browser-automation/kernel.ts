@@ -12,13 +12,13 @@ import {
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
   BROWSER_AUTOMATION_MAX_RESULT_BYTES,
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS,
-  BROWSER_AUTOMATION_OPERATIONS,
   BrowserAutomationResponseSchema,
   BrowserAutomationHostDispatchSchema,
   type BrowserAutomationOperation,
   type BrowserAutomationErrorCode,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
+  type BrowserAutomationResult,
   type BrowserAutomationTarget,
   type BrowserAutomationHostDispatchTarget,
   type BrowserAutomationHostDispatch,
@@ -90,6 +90,7 @@ interface TargetState {
   webContents: WebContents;
   targetGeneration: number;
   semanticGeneration: number;
+  capabilityRevision: number;
   controlEpoch: number;
   controller: BrowserAutomationControllerState;
   syntheticInputDepth: number;
@@ -108,6 +109,9 @@ interface TargetState {
   actions: OldestFirstRingBuffer<ActionEntry>;
   dispose: () => void;
 }
+
+type MechanicalInspectResult = Omit<Extract<BrowserAutomationResult, { operation: "inspect" }>, "readiness" | "observationRef" | "capabilities" | "guidance" | "capabilityRevision">;
+type MechanicalStatusResult = Omit<Extract<BrowserAutomationResult, { operation: "status" }>, "capabilities" | "capabilityRevision">;
 
 interface ResolvedTarget {
   state: TargetState;
@@ -1023,6 +1027,7 @@ export class BrowserAutomationKernel {
       webContents,
       targetGeneration: generation,
       semanticGeneration: 0,
+      capabilityRevision: 1,
       controlEpoch: 0,
       controller: { tabId, controller: "none", controlEpoch: 0 },
       syntheticInputDepth: 0,
@@ -1115,7 +1120,7 @@ export class BrowserAutomationKernel {
       tabId: state.tabId,
       controller,
       controlEpoch: state.controlEpoch,
-      ...(request ? { providerSessionId: request.providerSessionId, operation: request.operation } : {}),
+      ...(request && request.operation !== "inspect" ? { providerSessionId: request.providerSessionId, operation: request.operation } : {}),
       ...(pointer ? { pointer } : {}),
     };
     state.controller = payload;
@@ -1174,6 +1179,34 @@ export class BrowserAutomationKernel {
     const { state, webContents } = resolved;
     const base = () => ({ url: redactBrowserLocation(webContents.getURL()), title: redactBrowserText(webContents.getTitle(), 4_096), controlEpoch: state.controlEpoch });
     switch (request.operation) {
+      case "inspect": {
+        const snapshot = await this.captureSnapshot(resolved, false);
+        const screenshot = request.args.includeScreenshot
+          ? await this.captureScreenshot(webContents, 1_280)
+          : undefined;
+        const diagnostics = request.args.includeDiagnostics
+          ? state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).map((entry) => entry.text)
+          : undefined;
+        const mechanical: MechanicalInspectResult = {
+          operation: "inspect",
+          target: { threadId: state.threadId, tabId: state.tabId, targetGeneration: state.targetGeneration, sticky: true },
+          tabs: [{
+            desktopInstanceId: "electron",
+            windowId: state.windowId,
+            connectionGeneration: 1,
+            threadId: state.threadId,
+            tabId: state.tabId,
+            targetGeneration: state.targetGeneration,
+            active: getSession(resolved.window).tabsByThread.get(state.threadId)?.activeTabId === state.tabId,
+            focused: webContents.isFocused(),
+            lastUsedAt: Date.now(),
+          }],
+          snapshot: snapshot as MechanicalInspectResult["snapshot"],
+          ...(screenshot ? { screenshot: screenshot as NonNullable<MechanicalInspectResult["screenshot"]> } : {}),
+          ...(diagnostics ? { diagnostics } : {}),
+        };
+        return mechanical;
+      }
       case "status":
         {
           const viewportValue = asRecord(await boundedRace(
@@ -1186,7 +1219,7 @@ export class BrowserAutomationKernel {
           if (!Number.isFinite(width) || !Number.isFinite(height)) {
             throw new KernelError("TAB_UNAVAILABLE", "Browser viewport is unavailable", true);
           }
-        return {
+        const mechanical: MechanicalStatusResult = {
           operation: "status",
           available: true,
           active: getSession(resolved.window).tabsByThread.get(state.threadId)?.activeTabId === state.tabId,
@@ -1199,8 +1232,8 @@ export class BrowserAutomationKernel {
             height: Math.max(1, Math.min(10_000, Math.round(height))),
           },
           controller: state.controller,
-          capabilities: BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop"),
         };
+        return mechanical;
         }
       case "open":
       case "navigate": {
