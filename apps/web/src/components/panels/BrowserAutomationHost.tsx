@@ -764,6 +764,7 @@ export function BrowserAutomationHost() {
         active: candidate.threadId === useWorkspaceStore.getState().activeThreadId,
         focused: candidate.threadId === useWorkspaceStore.getState().activeThreadId,
         lastUsedAt: candidate.lastUsedAt,
+        controller: useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.threadId, candidate.tabId)),
       } satisfies BrowserAutomationHostDispatchTarget));
       if (leaseRef.current === lease) {
         void getTransport().updateBrowserAutomationHostTargets(
@@ -785,6 +786,7 @@ export function BrowserAutomationHost() {
         ...described.target,
         desktopInstanceId: lease.desktopInstanceId,
         connectionGeneration: lease.generation,
+        controller: useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.threadId, candidate.tabId)),
       } satisfies BrowserAutomationHostDispatchTarget;
     })).then((resolved) => {
       if (cancelled || leaseRef.current !== lease) return;

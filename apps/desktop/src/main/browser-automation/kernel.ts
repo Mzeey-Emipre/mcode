@@ -90,6 +90,7 @@ interface TargetState {
   webContents: WebContents;
   targetGeneration: number;
   semanticGeneration: number;
+  capabilityRevision: number;
   controlEpoch: number;
   controller: BrowserAutomationControllerState;
   syntheticInputDepth: number;
@@ -1023,6 +1024,7 @@ export class BrowserAutomationKernel {
       webContents,
       targetGeneration: generation,
       semanticGeneration: 0,
+      capabilityRevision: 1,
       controlEpoch: 0,
       controller: { tabId, controller: "none", controlEpoch: 0 },
       syntheticInputDepth: 0,
@@ -1204,7 +1206,7 @@ export class BrowserAutomationKernel {
           ...(screenshot ? { screenshot } : {}),
           ...(diagnostics ? { diagnostics } : {}),
           observationRef: randomUUID(),
-          capabilityRevision: Math.max(1, state.semanticGeneration),
+          capabilityRevision: state.capabilityRevision,
           capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
           guidance: humanControl
             ? "Visible Preview under human control. Yield to user before effects."
@@ -1237,7 +1239,7 @@ export class BrowserAutomationKernel {
           },
           controller: state.controller,
           capabilities: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "resize" && operation !== "recordingStart" && operation !== "recordingStop")],
-          capabilityRevision: Math.max(1, state.semanticGeneration),
+          capabilityRevision: state.capabilityRevision,
         };
         }
       case "open":

@@ -110,6 +110,19 @@ function statusResult() {
 }
 
 describe("BrowserAutomationBroker", () => {
+  it("rejects an explicitly mismatched executor descriptor runtime", () => {
+    const broker = new BrowserAutomationBroker(options());
+    expect(() => broker.registerHost(socket("mismatch"), {
+      ...registration("mismatch", "workspace-a"),
+      executorDescriptor: {
+        runtime: "web",
+        operations: ["inspect"],
+        constraints: { maxTabs: 1, maxSnapshotChars: 100, maxDiagnostics: 1 },
+        capabilityRevision: 1,
+      },
+    }, authorization("mismatch"))).toThrow("runtime does not match");
+  });
+
   it("never cross-routes two threads across workspace-scoped hosts", async () => {
     const deliveries: Array<{ socket: WebSocket; data: any }> = [];
     const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (target, channel, data) => {

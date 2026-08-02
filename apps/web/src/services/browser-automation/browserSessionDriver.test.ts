@@ -7,6 +7,22 @@ const response = {} as BrowserAutomationResponse;
 const dispatch = {} as BrowserAutomationHostDispatch;
 
 describe("BrowserSessionDriver", () => {
+  it("fails before adapter execution when descriptor revision drifts", async () => {
+    const web = vi.fn().mockResolvedValue(response);
+    const driver = new BrowserSessionDriver({
+      web: { execute: web },
+      electron: { execute: web },
+      isElectron: () => false,
+      getCapabilityRevision: () => 2,
+    });
+    const result = await driver.execute({
+      connection: { capabilityRevision: 1 },
+      request: { contractVersion: 1, requestId: "drift", sequence: 1 },
+    } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(result).toMatchObject({ ok: false, error: { code: "CAPABILITY_CHANGED", effect: "none", recovery: "inspect" } });
+    expect(web).not.toHaveBeenCalled();
+  });
+
   it("routes the same command boundary to each runtime adapter", async () => {
     const web = vi.fn().mockResolvedValue(response);
     const electron = vi.fn().mockResolvedValue(response);

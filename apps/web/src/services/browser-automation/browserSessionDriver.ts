@@ -44,6 +44,7 @@ export interface BrowserSessionDriverOptions {
   readonly web: BrowserSessionRuntimeAdapter;
   readonly electron: BrowserSessionRuntimeAdapter;
   readonly isElectron?: () => boolean;
+  readonly getCapabilityRevision?: () => number;
 }
 
 /**
@@ -64,6 +65,24 @@ export class BrowserSessionDriver {
     dispatch: BrowserAutomationHostDispatch,
     signal: AbortSignal,
   ): Promise<BrowserAutomationResponse> {
+    const expectedRevision = dispatch.connection?.capabilityRevision;
+    const currentRevision = this.options.getCapabilityRevision?.();
+    if (expectedRevision !== undefined && currentRevision !== undefined && expectedRevision !== currentRevision) {
+      return Promise.resolve({
+        contractVersion: dispatch.request.contractVersion,
+        requestId: dispatch.request.requestId,
+        sequence: dispatch.request.sequence,
+        ok: false,
+        error: {
+          code: "CAPABILITY_CHANGED",
+          message: "Browser executor capabilities changed; inspect before retrying",
+          retryable: false,
+          stage: "validation",
+          effect: "none",
+          recovery: "inspect",
+        },
+      });
+    }
     if (dispatch.request?.operation !== "open") {
       return (this.isElectron() ? this.options.electron : this.options.web).execute(dispatch, signal);
     }

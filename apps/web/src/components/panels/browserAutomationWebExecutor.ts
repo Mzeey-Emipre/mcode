@@ -435,13 +435,16 @@ function snapshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, si
 async function inspect(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
   const observed = snapshot({ ...dispatch, request: { ...dispatch.request, operation: "snapshot", args: { includeScreenshot: false, timeoutMs: 15_000 } } } as BrowserAutomationHostDispatch, iframe, signal);
   if (!observed.ok) return observed;
+  const humanControl = dispatch.target.controller?.controller === "human";
   const screenshotResult = dispatch.request.args.includeScreenshot
     ? await captureVisibleWebScreenshot({ iframe, maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH, deadline: dispatch.request.deadline, signal })
     : null;
   if (screenshotResult && !screenshotResult.ok) return failure(dispatch, screenshotResult.code === "TIMEOUT" ? "DEADLINE_EXCEEDED" : screenshotResult.code, "Web Preview screenshot failed");
   return response(dispatch, {
     operation: "inspect",
-    readiness: { ready: true, state: "ready" },
+    readiness: humanControl
+      ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
+      : { ready: true, state: "ready" },
     target: { threadId: dispatch.target.threadId, tabId: dispatch.target.tabId, targetGeneration: dispatch.target.targetGeneration, sticky: true },
     tabs: [dispatch.target],
     snapshot: observed.result.snapshot,
@@ -450,7 +453,9 @@ async function inspect(dispatch: BrowserAutomationHostDispatch, iframe: WebIfram
     observationRef: globalThis.crypto.randomUUID(),
     capabilityRevision: 1,
     capabilities: [...WEB_CAPABILITIES],
-    guidance: `Visible same-origin Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.`.slice(0, 4_000),
+    guidance: (humanControl
+      ? "Visible Preview under human control. Yield to user before effects."
+      : "Visible same-origin Preview ready. Use browser_inspect for bounded observation, then browser_snapshot or browser_screenshot as needed.").slice(0, 4_000),
   });
 }
 

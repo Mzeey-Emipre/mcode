@@ -282,6 +282,14 @@ describe("BrowserAutomationKernel", () => {
     expect(first.result.guidance.length).toBeLessThanOrEqual(4_000);
   });
 
+  it("keeps capabilityRevision stable across navigation", async () => {
+    const before = await kernel.execute(event(), payload(request("status", {}, { requestId: "revision-before" })));
+    await kernel.execute(event(), payload(request("navigate", { url: "https://example.test/next" }, { requestId: "revision-navigation" })));
+    const after = await kernel.execute(event(), payload(request("status", {}, { requestId: "revision-after" })));
+    if (!before.ok || !after.ok || before.result.operation !== "status" || after.result.operation !== "status") throw new Error("Expected status results");
+    expect(after.result.capabilityRevision).toBe(before.result.capabilityRevision);
+  });
+
   it("reports a bounded sanitized non-HTTP page-initiated location", async () => {
     currentWebContents!.url = "data:text/html,secret-page-payload";
     await expect(kernel.execute(event(), payload(request("status")))).resolves.toMatchObject({

@@ -14,6 +14,7 @@ import {
   type BrowserAutomationHostDispatch,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
+  type BrowserAutomationOperation,
 } from "@mcode/contracts";
 import { sendToClient } from "../../transport/push.js";
 import type { BrowserAutomationCredentialClaims } from "./credential-registry.js";
@@ -38,6 +39,7 @@ interface PendingRequest {
   resolve: (response: BrowserAutomationResponse) => void;
   timer: ReturnType<typeof setTimeout>;
   startedAt: number;
+  credentialOperations: readonly BrowserAutomationOperation[];
 }
 
 interface OpenReplayRecord {
@@ -212,6 +214,46 @@ function responseWasTruncated(response: BrowserAutomationResponse): boolean {
   );
 }
 
+function shapeNegotiatedResponse(
+  response: BrowserAutomationResponse,
+  pending: PendingRequest,
+): BrowserAutomationResponse {
+  if (!response.ok) return response;
+  const descriptor = pending.host.registration.executorDescriptor;
+  const allowed = new Set(pending.credentialOperations);
+  if (response.result.operation === "inspect") {
+    const targetReady = pending.target !== undefined;
+    return {
+      ...response,
+      result: {
+        ...response.result,
+        readiness: !targetReady
+          ? { ready: false, state: "target-unavailable", reason: "Visible browser target is unavailable" }
+          : pending.target?.controller?.controller === "human"
+            ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
+            : response.result.readiness,
+        tabs: response.result.tabs.slice(0, descriptor.constraints.maxTabs),
+        capabilities: response.result.capabilities.filter((operation) => descriptor.operations.includes(operation) && allowed.has(operation)),
+        capabilityRevision: descriptor.capabilityRevision,
+        guidance: (pending.target?.controller?.controller === "human"
+          ? "Visible Preview under human control. Yield to user before effects."
+          : response.result.guidance).slice(0, 4_000),
+      },
+    };
+  }
+  if (response.result.operation === "status") {
+    return {
+      ...response,
+      result: {
+        ...response.result,
+        capabilities: response.result.capabilities.filter((operation) => descriptor.operations.includes(operation) && pending.host.registration.capabilities.some((capability) => capability.operation === operation && capability.available)),
+        capabilityRevision: descriptor.capabilityRevision,
+      },
+    };
+  }
+  return response;
+}
+
 /** Routes scoped browser requests to one sticky, capability-compatible renderer host. */
 export class BrowserAutomationBroker {
   private readonly hostsBySocket = new Map<WebSocket, RegisteredHost>();
@@ -280,6 +322,12 @@ export class BrowserAutomationBroker {
     authorization: BrowserAutomationHostConnectionAuthorization | null,
   ): { generation: number; desktopInstanceId: string } {
     const registration = BrowserAutomationHostRegistrationSchema().parse(input);
+    const rawDescriptor = typeof input === "object" && input !== null
+      ? (input as { executorDescriptor?: { runtime?: unknown } }).executorDescriptor
+      : undefined;
+    if (rawDescriptor && rawDescriptor.runtime !== registration.runtime) {
+      throw new Error("Browser automation executor descriptor runtime does not match host runtime");
+    }
     if (registration.runtime === "web" && authorization?.allowWebRuntime !== true) {
       throw new Error("Browser automation web host registration is disabled");
     }
@@ -440,7 +488,8 @@ export class BrowserAutomationBroker {
     const key = pendingKey(host, response.requestId, response.sequence);
     const pending = this.pending.get(key);
     if (!pending) return;
-    if (response.ok && response.result.operation !== pending.request.operation) {
+    const negotiatedResponse = shapeNegotiatedResponse(response, pending);
+    if (negotiatedResponse.ok && negotiatedResponse.result.operation !== pending.request.operation) {
       this.settle(
         key,
         pending,
@@ -448,9 +497,8 @@ export class BrowserAutomationBroker {
       );
       return;
     }
-    if (response.ok && (response.result.operation === "inspect" || response.result.operation === "status") &&
-      response.result.capabilityRevision !== undefined &&
-      response.result.capabilityRevision !== host.registration.executorDescriptor.capabilityRevision) {
+    if (negotiatedResponse.ok && (negotiatedResponse.result.operation === "inspect" || negotiatedResponse.result.operation === "status") &&
+      negotiatedResponse.result.capabilityRevision !== host.registration.executorDescriptor.capabilityRevision) {
       this.settle(
         key,
         pending,
@@ -458,7 +506,7 @@ export class BrowserAutomationBroker {
       );
       return;
     }
-    if (response.ok && !pending.target) {
+    if (negotiatedResponse.ok && !pending.target) {
       if (!responseTarget) {
         this.settle(
           key,
@@ -497,7 +545,7 @@ export class BrowserAutomationBroker {
       );
       return;
     }
-    this.settle(key, pending, response);
+    this.settle(key, pending, negotiatedResponse);
   }
 
   /** Interrupts a pending request after a human or host-side stop signal. */
@@ -720,6 +768,7 @@ export class BrowserAutomationBroker {
         resolve,
         timer,
         startedAt: this.now(),
+        credentialOperations: claims.allowedOperations,
       };
       this.pending.set(key, pending);
       host.pending++;
@@ -931,7 +980,7 @@ export class BrowserAutomationBroker {
         this.settle(key, pending, failure(request, "DEADLINE_EXCEEDED", "Browser request timed out", true));
       }, timeoutMs);
       timer.unref?.();
-      const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now() };
+      const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now(), credentialOperations: [request.operation] };
       this.pending.set(key, pending);
       host.pending++;
       const sent = this.trySend(host.socket, "browserAutomation.bootstrap", {

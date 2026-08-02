@@ -729,6 +729,7 @@ export const BrowserAutomationHostDispatchTargetSchema = lazySchema(() =>
       active: z.boolean(),
       focused: z.boolean(),
       lastUsedAt: z.number().int().nonnegative(),
+      controller: BrowserAutomationControllerStateSchema().optional(),
     })
     .strict(),
 );
