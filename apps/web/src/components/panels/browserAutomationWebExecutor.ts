@@ -8,6 +8,7 @@ import {
   type BrowserAutomationResponse,
 } from "@mcode/contracts";
 import { captureVisibleWebScreenshot } from "./web-browser-automation/capture";
+import { getWebBrowserSemanticRegistry } from "./webBrowserSemanticRegistry";
 
 const WEB_SNAPSHOT_MAX_SCAN_NODES = 8_192;
 const WEB_SNAPSHOT_MAX_ELEMENT_TEXT = 1_024;
@@ -326,8 +327,9 @@ function collectBoundedSnapshot(document: Document): BoundedSnapshotData {
         const bounds = (element as HTMLElement).getBoundingClientRect();
         const accessibleName = element.getAttribute("aria-label")?.slice(0, WEB_SNAPSHOT_MAX_ELEMENT_TEXT) || boundedElementText(element, WEB_SNAPSHOT_MAX_ELEMENT_TEXT, budget);
         if (typeof accessibleName !== "string" && accessibleName.budgetExhausted) scanLimitReached = true;
+        const preferredSemanticId = element.id || element.getAttribute("data-automation-id") || undefined;
         elements.push({
-          semanticId: element.id || `element-${elements.length + 1}`,
+          semanticId: getWebBrowserSemanticRegistry(document).register(document, element, preferredSemanticId),
           role: element.getAttribute("role")?.slice(0, 128) || element.tagName.toLowerCase(),
           accessibleName: typeof accessibleName === "string" ? accessibleName : accessibleName.text,
           ...(("value" in element && typeof (element as HTMLInputElement).value === "string" &&

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationHostDispatch } from "@mcode/contracts";
 import { captureVisibleWebScreenshot } from "../web-browser-automation/capture";
 import { executeWebBrowserDispatch } from "../browserAutomationWebExecutor";
+import { executeWebInteraction, resolveWebTarget } from "../webBrowserInteractionExecutor";
 
 vi.mock("../web-browser-automation/capture", () => ({ captureVisibleWebScreenshot: vi.fn() }));
 
@@ -77,6 +78,39 @@ describe("web browser automation executor", () => {
       elements: [{ semanticId: "save-button", role: "button", accessibleName: "Save" }],
     } } });
     target.remove();
+  });
+
+  it("reuses a synthetic snapshot semantic id for a native control click", async () => {
+    document.body.innerHTML = `<button>Save</button>`;
+    const target = document.createElement("iframe");
+    target.dataset.threadId = "thread-1";
+    target.dataset.tabId = "tab-1";
+    document.body.append(target);
+    Object.defineProperty(target, "contentDocument", { configurable: true, value: document });
+    const page = document;
+    const button = page.querySelector("button")!;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ width: 80, height: 20 } as DOMRect);
+    const clicked = vi.fn();
+    button.addEventListener("click", clicked);
+    const snapshot = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
+    const semanticId = (snapshot as any).result.snapshot.elements[0].semanticId;
+    expect(semanticId).toMatch(/^element-/);
+    const result = await executeWebInteraction(page, dispatch("click", {
+      target: { semanticId }, button: "left", clickCount: 1, timeoutMs: 1_000,
+    }), {
+      signal: new AbortController().signal,
+      deadline: Date.now() + 1_000,
+      expectedControlEpoch: 0,
+      targetGeneration: 1,
+      getControlEpoch: () => 0,
+      getTargetGeneration: () => 1,
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(clicked).toHaveBeenCalledOnce();
+    button.remove();
+    expect(resolveWebTarget(page, { semanticId })).toMatchObject({ ok: false, code: "TARGET_NOT_FOUND" });
+    target.remove();
+    document.body.innerHTML = "";
   });
 
   it("scans hostile oversized DOM without whole-document query materialization", async () => {
