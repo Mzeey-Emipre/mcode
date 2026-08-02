@@ -18,6 +18,7 @@ const MAX_BODY_BYTES = 256 * 1_024;
 const MCP_PROTOCOL_VERSIONS = ["2025-03-26", "2024-11-05"] as const;
 const TOOL_NAME_TO_OPERATION = new Map<string, BrowserAutomationOperation>([
   ["browser_inspect", "inspect" as BrowserAutomationOperation],
+  ["browser_act", "act" as BrowserAutomationOperation],
   ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => [
     BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
     operation,
@@ -107,6 +108,12 @@ const commonProperties = {
 function inputSchema(operation: BrowserAutomationOperation): Record<string, unknown> {
   const schemas: Record<BrowserAutomationOperation, Record<string, unknown>> = {
     inspect: { includeScreenshot: { type: "boolean", default: false }, includeDiagnostics: { type: "boolean", default: false } },
+    act: {
+      idempotencyKey: { type: "string", minLength: 1, maxLength: 256 },
+      observationRef: { type: "string", minLength: 1, maxLength: 256 },
+      deadlineMs: { type: "integer", minimum: 1, maximum: 60000 },
+      steps: { type: "array", minItems: 1, maxItems: 8, items: { type: "object" } },
+    },
     status: {},
     open: {
       url: { type: "string", format: "uri" },
@@ -130,7 +137,7 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
     recordingStop: {},
   };
   const requiredByOperation: Partial<Record<BrowserAutomationOperation, string[]>> = {
-    open: ["idempotencyKey"], navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["expression"],
+    open: ["idempotencyKey"], act: ["idempotencyKey", "observationRef", "deadlineMs", "steps"], navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["expression"],
   };
   return {
     type: "object",

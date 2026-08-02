@@ -50,6 +50,12 @@ interface OpenReplayRecord {
   lastUsedAt: number;
 }
 
+interface ActReplayRecord {
+  readonly fingerprint: string;
+  readonly promise: Promise<BrowserAutomationResponse>;
+  lastUsedAt: number;
+}
+
 /** Content-free reliability counters for the browser automation broker. */
 export interface BrowserAutomationReliabilityCounters {
   dispatched: number;
@@ -107,9 +113,9 @@ function failure(
       code,
       message,
       retryable,
-      stage: code === "TAB_UNAVAILABLE" ? "allocation" : "transport",
+      stage: code === "TAB_UNAVAILABLE" || code === "BROWSER_BUSY" ? "allocation" : "transport",
       effect: code === "TAB_UNAVAILABLE" ? "unknown" : "none",
-      recovery: code === "CAPABILITY_CHANGED" ? "inspect" : retryable ? "retry" : "manual",
+      recovery: code === "BROWSER_BUSY" ? "wait" : code === "CAPABILITY_CHANGED" ? "inspect" : retryable ? "retry" : "manual",
       correlationId: randomUUID(),
     },
   };
@@ -158,6 +164,10 @@ function openReplayKey(
   const key = request.args?.idempotencyKey;
   if (!key) return null;
   return JSON.stringify([providerId, request.providerSessionId, request.workspaceId, request.threadId, key]);
+}
+
+function actReplayKey(providerId: string, request: Extract<BrowserAutomationRequest, { operation: "act" }>): string {
+  return JSON.stringify([providerId, request.providerSessionId, request.workspaceId, request.threadId, request.args.idempotencyKey]);
 }
 
 function targetsMatch(
@@ -296,6 +306,8 @@ export class BrowserAutomationBroker {
   private readonly maxHosts: number;
   private readonly maxTargets: number;
   private readonly openReplay = new Map<string, OpenReplayRecord>();
+  private readonly actReplay = new Map<string, ActReplayRecord>();
+  private readonly actMutations = new Map<string, string>();
   private nextGeneration = 1;
   private readonly reliability: BrowserAutomationReliabilityCounters = {
     dispatched: 0,
@@ -633,7 +645,9 @@ export class BrowserAutomationBroker {
       if (record.lastUsedAt < cutoff) this.openReplay.delete(replayKey);
     }
     const parsed = BrowserAutomationRequestSchema().safeParse(input);
-    if (!parsed.success || parsed.data.operation !== "open") return this.executeInternal(claims, input);
+    if (!parsed.success) return this.executeInternal(claims, input);
+    if (parsed.data.operation === "act") return this.executeAct(claims, parsed.data);
+    if (parsed.data.operation !== "open") return this.executeInternal(claims, input);
     const request = parsed.data;
     const key = request.args.idempotencyKey;
     if (!key) return this.executeInternal(claims, input);
@@ -671,6 +685,48 @@ export class BrowserAutomationBroker {
       resolveReplay(response);
       if (!response.ok && this.openReplay.get(replayKey) === replayRecord) this.openReplay.delete(replayKey);
     });
+    return promise;
+  }
+
+  private executeAct(
+    claims: BrowserAutomationCredentialClaims,
+    request: Extract<BrowserAutomationRequest, { operation: "act" }>,
+  ): Promise<BrowserAutomationResponse> {
+    const cutoff = this.now() - 30 * 60_000;
+    for (const [key, record] of this.actReplay) {
+      if (record.lastUsedAt < cutoff) this.actReplay.delete(key);
+    }
+    const replayKey = actReplayKey(claims.providerId, request);
+    const fingerprint = JSON.stringify({
+      observationRef: request.args.observationRef,
+      deadlineMs: request.args.deadlineMs,
+      steps: request.args.steps,
+    });
+    const existing = this.actReplay.get(replayKey);
+    if (existing) {
+      existing.lastUsedAt = this.now();
+      if (existing.fingerprint !== fingerprint) {
+        return Promise.resolve(failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_act arguments", false));
+      }
+      return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+    }
+    const sessionKey = JSON.stringify([claims.providerId, claims.providerSessionId]);
+    if (this.actMutations.has(sessionKey)) {
+      return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
+    }
+    const token = randomUUID();
+    this.actMutations.set(sessionKey, token);
+    const promise = this.executeInternal(claims, request)
+      .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
+      .finally(() => {
+        if (this.actMutations.get(sessionKey) === token) this.actMutations.delete(sessionKey);
+      });
+    this.actReplay.set(replayKey, { fingerprint, promise, lastUsedAt: this.now() });
+    while (this.actReplay.size > 256) {
+      const oldest = this.actReplay.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.actReplay.delete(oldest);
+    }
     return promise;
   }
 
@@ -842,6 +898,8 @@ export class BrowserAutomationBroker {
       );
     }
     this.pending.clear();
+    this.actReplay.clear();
+    this.actMutations.clear();
   }
 
   /** Returns bounded broker counts for status and tests. */
@@ -891,6 +949,11 @@ export class BrowserAutomationBroker {
       const parts = JSON.parse(key) as string[];
       if (parts[0] === providerId && parts[1] === providerSessionId) this.openReplay.delete(key);
     }
+    for (const key of this.actReplay.keys()) {
+      const parts = JSON.parse(key) as string[];
+      if (parts[0] === providerId && parts[1] === providerSessionId) this.actReplay.delete(key);
+    }
+    this.actMutations.delete(JSON.stringify([providerId, providerSessionId]));
     return removed;
   }
 

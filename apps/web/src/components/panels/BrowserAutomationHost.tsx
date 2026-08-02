@@ -533,7 +533,7 @@ export function BrowserAutomationHost() {
   const shutdownLeaseRef = useRef<HostLease | null>(null);
   const executorDescriptor = useMemo(() => ({
     runtime: window.desktopBridge?.preview?.automation ? "electron" as const : "web" as const,
-    operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS] as BrowserAutomationOperation[],
+    operations: ["inspect", "act", ...BROWSER_AUTOMATION_OPERATIONS] as BrowserAutomationOperation[],
     constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
     capabilityRevision: 1,
   }), []);
@@ -682,7 +682,7 @@ export function BrowserAutomationHost() {
         targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
       } : {}),
       executorDescriptor,
-      capabilities: [{ operation: "inspect", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
+      capabilities: [{ operation: "inspect", available: true }, { operation: "act", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
           const available = operation === "click" || operation === "type" ||
             operation === "status" || operation === "open" || operation === "navigate" ||
@@ -1039,17 +1039,20 @@ export function BrowserAutomationHost() {
       });
       void guardedOperation.then((response) => {
         if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
+        const outboundResponse = response.ok && response.result.operation === "inspect" && !response.result.observationRef
+          ? { ...response, result: { ...response.result, observationRef: globalThis.crypto.randomUUID() } }
+          : response;
         return webDispatch || webNavigateRequest || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
           ? getTransport().respondToBrowserAutomationRequest(
             lease.hostId,
             lease.generation,
-            response,
+            outboundResponse,
             dispatch.target,
           )
           : getTransport().respondToBrowserAutomationRequest(
             lease.hostId,
             lease.generation,
-            response,
+            outboundResponse,
           );
       }).catch(() => undefined).finally(() => {
         webObserverRef.current.get(key)?.();

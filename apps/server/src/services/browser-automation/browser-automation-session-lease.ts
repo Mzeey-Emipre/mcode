@@ -101,9 +101,9 @@ function allowedOperations(
     return ["inspect", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => OBSERVE_OPERATIONS.has(operation))];
   }
   if (capability === "interact") {
-    return BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "evaluate");
+    return ["act", ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "evaluate")];
   }
-  return [...BROWSER_AUTOMATION_OPERATIONS];
+  return ["act", ...BROWSER_AUTOMATION_OPERATIONS];
 }
 
 function validateConfiguration(configuration: BrowserAutomationSessionLeaseConfiguration): void {
