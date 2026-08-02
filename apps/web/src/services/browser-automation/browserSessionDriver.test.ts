@@ -59,6 +59,25 @@ describe("BrowserSessionDriver", () => {
     expect(replay).toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION" } });
   });
 
+  it("preserves a host-issued observation reference for the next act", async () => {
+    const execute = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => {
+      if (dispatch.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect", observationRef: "driver-issued" } } as unknown as BrowserAutomationResponse;
+      }
+      return { ok: true, result: { operation: dispatch.request.operation } } as unknown as BrowserAutomationResponse;
+    });
+    const driver = new BrowserSessionDriver({ web: { execute }, electron: { execute }, isElectron: () => false, supportedActOperations: ["click"] });
+    const inspect = await driver.execute({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: { threadId: "thread", tabId: "tab", targetGeneration: 1 },
+      request: { contractVersion: 1, requestId: "inspect-issued", sequence: 1, operation: "inspect", expectedControlEpoch: 0 },
+    } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(inspect).toMatchObject({ ok: true, result: { observationRef: "driver-issued" } });
+    await expect(driver.execute(actDispatch("driver-issued", [{ operation: "click", target: { cssSelector: "#save" } }]), new AbortController().signal))
+      .resolves.toMatchObject({ ok: true, result: { outcome: "completed" } });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects unsupported steps before the first adapter effect", async () => {
     const execute = vi.fn().mockResolvedValue({ ok: true, result: { operation: "click" } } as unknown as BrowserAutomationResponse);
     const driver = new BrowserSessionDriver({ web: { execute }, electron: { execute }, isElectron: () => false, supportedActOperations: ["click"] });

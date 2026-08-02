@@ -205,6 +205,7 @@ describe("BrowserAutomationBroker", () => {
       ok: true,
       result: {
         operation: "inspect",
+        observationRef: "driver-issued",
         tabs: [target, { ...target, tabId: "extra-tab" }],
         snapshot: {
           url: "https://example.test/",
@@ -231,9 +232,45 @@ describe("BrowserAutomationBroker", () => {
         capabilities: ["inspect", "status"],
         capabilityRevision: 1,
         guidance: expect.stringContaining("electron"),
-        observationRef: expect.any(String),
+        observationRef: "driver-issued",
       },
     });
+  });
+
+  it("does not advertise act when an act-capable host omits its observation reference", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    } }));
+    const hostSocket = socket("act-without-observation");
+    const base = registration("act-without-observation", "workspace-a");
+    const generation = broker.registerHost(hostSocket, {
+      ...base,
+      executorDescriptor: { ...base.executorDescriptor, operations: ["inspect", "act"] },
+      capabilities: [
+        { operation: "inspect", available: true },
+        { operation: "act", available: true },
+      ],
+    }, authorization("act-without-observation")).generation;
+    updateTargets(broker, hostSocket, "act-without-observation", generation, ["thread-a"]);
+    const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["inspect", "act"] as const };
+    const pending = broker.execute(scope, { ...request(scope), operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const dispatch = deliveries.find((delivery) => delivery.channel === "browserAutomation.request")!.data.dispatch;
+    const target = dispatch.target;
+    broker.respond(hostSocket, "act-without-observation", generation, {
+      contractVersion: 1,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: true,
+      result: { operation: "inspect", tabs: [target] },
+    });
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: { operation: "inspect", capabilities: ["inspect"] },
+    });
+    await expect(pending).resolves.not.toHaveProperty("result.observationRef");
   });
 
   it("restricts browser_status to descriptor, credential, host, and controller state", async () => {

@@ -240,10 +240,17 @@ function shapeNegotiatedResponse(
     allowed.has(operation) && liveHostCapabilities.has(operation),
   );
   if (response.result.operation === "inspect") {
+    const hostObservationRef = typeof response.result.observationRef === "string" && response.result.observationRef.length > 0
+      ? response.result.observationRef
+      : undefined;
+    const actReady = hostObservationRef !== undefined;
+    const advertisedCapabilities = actReady || !negotiatedCapabilities.includes("act")
+      ? negotiatedCapabilities
+      : negotiatedCapabilities.filter((operation) => operation !== "act");
     const targetReady = pending.target !== undefined;
     const guidance = pending.target?.controller?.controller === "human"
       ? "Visible Preview under human control. Yield to user before effects."
-      : `Visible browser executor (${descriptor.runtime}) supports: ${negotiatedCapabilities.join(", ") || "none"}.`;
+      : `Visible browser executor (${descriptor.runtime}) supports: ${advertisedCapabilities.join(", ") || "none"}.`;
     const snapshot = response.result.snapshot && response.result.snapshot.visibleText.length > descriptor.constraints.maxSnapshotChars
       ? {
           ...response.result.snapshot,
@@ -271,8 +278,12 @@ function shapeNegotiatedResponse(
         tabs: (pending.target ? [pending.target] : response.result.tabs).slice(0, descriptor.constraints.maxTabs),
         snapshot,
         ...(diagnostics ? { diagnostics } : {}),
-        observationRef: randomUUID(),
-        capabilities: negotiatedCapabilities,
+        ...(hostObservationRef
+          ? { observationRef: hostObservationRef }
+          : !negotiatedCapabilities.includes("act")
+            ? { observationRef: randomUUID() }
+            : {}),
+        capabilities: advertisedCapabilities,
         capabilityRevision: descriptor.capabilityRevision,
         guidance: guidance.slice(0, 4_000),
       },
