@@ -584,6 +584,9 @@ export function BrowserAutomationHost() {
       electron: new ElectronBrowserSessionAdapter(
         (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal),
       ),
+      supportedActOperations: window.desktopBridge?.preview?.automation
+        ? ["navigate", "click", "type", "press", "scroll"]
+        : ["navigate", "click", "type"],
     });
   }
   const addPersistentWebTab = (tab: PersistentAutomationWebTab): void => {
