@@ -223,6 +223,10 @@ function shapeNegotiatedResponse(
   const allowed = new Set(pending.credentialOperations);
   if (response.result.operation === "inspect") {
     const targetReady = pending.target !== undefined;
+    const negotiatedCapabilities = response.result.capabilities.filter((operation) => descriptor.operations.includes(operation) && allowed.has(operation));
+    const guidance = pending.target?.controller?.controller === "human"
+      ? "Visible Preview under human control. Yield to user before effects."
+      : `Visible browser executor (${descriptor.runtime}) supports: ${negotiatedCapabilities.join(", ") || "none"}.`;
     return {
       ...response,
       result: {
@@ -233,20 +237,23 @@ function shapeNegotiatedResponse(
             ? { ready: false, state: "human-control", reason: "Visible Preview is under human control" }
             : response.result.readiness,
         tabs: response.result.tabs.slice(0, descriptor.constraints.maxTabs),
-        capabilities: response.result.capabilities.filter((operation) => descriptor.operations.includes(operation) && allowed.has(operation)),
+        capabilities: negotiatedCapabilities,
         capabilityRevision: descriptor.capabilityRevision,
-        guidance: (pending.target?.controller?.controller === "human"
-          ? "Visible Preview under human control. Yield to user before effects."
-          : response.result.guidance).slice(0, 4_000),
+        guidance: guidance.slice(0, 4_000),
       },
     };
   }
   if (response.result.operation === "status") {
+    const negotiatedCapabilities = response.result.capabilities.filter((operation) =>
+      descriptor.operations.includes(operation) &&
+      allowed.has(operation) &&
+      pending.host.registration.capabilities.some((capability) => capability.operation === operation && capability.available),
+    );
     return {
       ...response,
       result: {
         ...response.result,
-        capabilities: response.result.capabilities.filter((operation) => descriptor.operations.includes(operation) && pending.host.registration.capabilities.some((capability) => capability.operation === operation && capability.available)),
+        capabilities: negotiatedCapabilities,
         capabilityRevision: descriptor.capabilityRevision,
       },
     };

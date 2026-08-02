@@ -531,6 +531,7 @@ export function BrowserAutomationHost() {
   const registered = useBrowserAutomationStore((state) => state.registered);
   const leaseRef = useRef<HostLease | null>(null);
   const shutdownLeaseRef = useRef<HostLease | null>(null);
+  const capabilityRevisionRef = useRef(1);
   const recorderRef = useRef(new BrowserAutomationRecorder());
   const registrationEpochRef = useRef(0);
   const inFlightRef = useRef(new Map<string, BrowserAutomationHostDispatch>());
@@ -574,6 +575,7 @@ export function BrowserAutomationHost() {
     });
     sessionDriverRef.current = new BrowserSessionDriver({
       web: webAdapter,
+      getCapabilityRevision: () => capabilityRevisionRef.current,
       electron: new ElectronBrowserSessionAdapter(
         (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal),
       ),
@@ -782,11 +784,12 @@ export function BrowserAutomationHost() {
         tabId: candidate.tabId,
       });
       if (!described.ok) return null;
+      const controller = useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.threadId, candidate.tabId));
       return {
         ...described.target,
         desktopInstanceId: lease.desktopInstanceId,
         connectionGeneration: lease.generation,
-        controller: useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.threadId, candidate.tabId)),
+        ...(controller ? { controller } : {}),
       } satisfies BrowserAutomationHostDispatchTarget;
     })).then((resolved) => {
       if (cancelled || leaseRef.current !== lease) return;

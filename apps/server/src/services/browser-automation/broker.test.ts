@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
+  BROWSER_AUTOMATION_OPERATIONS,
   BrowserAutomationHostDispatchSchema,
   type BrowserAutomationHostRegistration,
   type BrowserAutomationRequest,
@@ -58,6 +59,12 @@ function registration(hostId: string, workspaceId: string): BrowserAutomationHos
     desktopInstanceId: `desktop-${hostId}`,
     worktreeIdentity: "worktree-a",
     workspaceIds: [workspaceId],
+    executorDescriptor: {
+      runtime: "electron",
+      operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+      constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+      capabilityRevision: 1,
+    },
     capabilities: [{ operation: "status", available: true }],
     maxPendingRequests: 2,
     connectedAt: 1,
@@ -169,6 +176,10 @@ describe("BrowserAutomationBroker", () => {
     const generation = broker.registerHost(hostSocket, {
       ...registration("web", "workspace-a"),
       runtime: "web",
+      executorDescriptor: {
+        ...registration("web", "workspace-a").executorDescriptor,
+        runtime: "web",
+      },
       targetIdentity: {
         worktreeIdentity: "worktree-a",
         connectionId: "desktop-web",

@@ -435,6 +435,7 @@ function snapshot(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, si
 async function inspect(dispatch: BrowserAutomationHostDispatch, iframe: WebIframe, signal: AbortSignal): Promise<BrowserAutomationResponse> {
   const observed = snapshot({ ...dispatch, request: { ...dispatch.request, operation: "snapshot", args: { includeScreenshot: false, timeoutMs: 15_000 } } } as BrowserAutomationHostDispatch, iframe, signal);
   if (!observed.ok) return observed;
+  if (observed.result.operation !== "snapshot") return failure(dispatch, "UNSUPPORTED_OPERATION", "Web Preview snapshot response was invalid");
   const humanControl = dispatch.target.controller?.controller === "human";
   const screenshotResult = dispatch.request.args.includeScreenshot
     ? await captureVisibleWebScreenshot({ iframe, maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH, deadline: dispatch.request.deadline, signal })

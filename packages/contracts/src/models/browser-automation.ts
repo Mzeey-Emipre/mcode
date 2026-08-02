@@ -681,12 +681,7 @@ export const BrowserAutomationHostRegistrationSchema = lazySchema(() =>
       worktreeIdentity: idSchema,
       workspaceIds: z.array(idSchema).min(1).max(32),
       targetIdentity: BrowserAutomationTargetIdentitySchema().optional(),
-      executorDescriptor: BrowserAutomationExecutorDescriptorSchema().default({
-        runtime: "electron",
-        operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
-        constraints: { maxTabs: BROWSER_AUTOMATION_MAX_INSPECT_TABS, maxSnapshotChars: BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS, maxDiagnostics: BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES },
-        capabilityRevision: 1,
-      }),
+      executorDescriptor: BrowserAutomationExecutorDescriptorSchema(),
       capabilities: z
         .array(BrowserAutomationHostCapabilitySchema())
         .min(1)

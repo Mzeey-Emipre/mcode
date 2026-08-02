@@ -1117,7 +1117,7 @@ export class BrowserAutomationKernel {
       tabId: state.tabId,
       controller,
       controlEpoch: state.controlEpoch,
-      ...(request ? { providerSessionId: request.providerSessionId, operation: request.operation } : {}),
+      ...(request && request.operation !== "inspect" ? { providerSessionId: request.providerSessionId, operation: request.operation } : {}),
       ...(pointer ? { pointer } : {}),
     };
     state.controller = payload;
