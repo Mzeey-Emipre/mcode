@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BROWSER_AUTOMATION_OPERATIONS } from "@mcode/contracts";
 import {
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseScope,
@@ -56,6 +57,24 @@ describe("BrowserAutomationSessionLease", () => {
     expect(lease.credentials.authenticate(second.token)?.threadId).toBe("thread-b");
     expect(lease.credentials.authenticate(rotated.token)?.allowedOperations).toContain("evaluate");
     expect(lease.status()).toEqual({ active: 2, pending: 0 });
+  });
+
+  it("grants inspect before act for mutation-capable leases without duplicates", () => {
+    const lease = configuredLease();
+    const interact = lease.issue(scope({ permissionCapability: "interact" }))!;
+    const privileged = lease.issue(scope({
+      permissionCapability: "privileged",
+      providerId: "privileged-provider",
+      mcodeSessionId: "privileged-mcode",
+    }))!;
+
+    expect(interact.allowedOperations.slice(0, 2)).toEqual(["inspect", "act"]);
+    expect(interact.allowedOperations).not.toContain("evaluate");
+    expect(new Set(interact.allowedOperations).size).toBe(interact.allowedOperations.length);
+    expect(privileged.allowedOperations.slice(0, 2)).toEqual(["inspect", "act"]);
+    expect(privileged.allowedOperations).toContain("evaluate");
+    expect(privileged.allowedOperations).toEqual(["inspect", "act", ...BROWSER_AUTOMATION_OPERATIONS]);
+    expect(new Set(privileged.allowedOperations).size).toBe(privileged.allowedOperations.length);
   });
 
   it("cleans a staged scope when registry issuance fails", () => {
