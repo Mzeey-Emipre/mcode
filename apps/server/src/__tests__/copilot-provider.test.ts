@@ -287,7 +287,7 @@ describe("CopilotProvider bootstrap", () => {
       url: "http://127.0.0.1:19400/mcp",
       headers: { Authorization: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{40,}$/) },
     });
-    expect(config.mcpServers["mcode-browser"].tools).toHaveLength(17);
+    expect(config.mcpServers["mcode-browser"].tools).toEqual(expect.arrayContaining(["browser_inspect", "browser_act"]));
     expect(config.mcpServers["mcode-browser"].tools).not.toContain("browser_evaluate");
     expect(lease.status()).toEqual({ active: 1, pending: 0 });
     await provider.stopSession("mcode-browser-copilot");

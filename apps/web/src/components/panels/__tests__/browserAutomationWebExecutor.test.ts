@@ -93,8 +93,11 @@ describe("web browser automation executor", () => {
     const clicked = vi.fn();
     button.addEventListener("click", clicked);
     const snapshot = await executeWebBrowserDispatch(dispatch("snapshot", { includeScreenshot: false }), new AbortController().signal);
-    const semanticId = (snapshot as any).result.snapshot.elements[0].semanticId;
+    const snapshotData = snapshot.ok && snapshot.result.operation === "snapshot" ? snapshot.result.snapshot : null;
+    expect(snapshotData).not.toBeNull();
+    const semanticId = snapshotData?.elements[0]?.semanticId;
     expect(semanticId).toMatch(/^element-/);
+    if (!semanticId) throw new Error("Snapshot did not return a semantic element identity");
     const result = await executeWebInteraction(page, dispatch("click", {
       target: { semanticId }, button: "left", clickCount: 1, timeoutMs: 1_000,
     }), {
