@@ -792,7 +792,10 @@ export class BrowserAutomationKernel {
       return { ok: false, error: "invalid-target" };
     }
     try {
-      const resolved = this.resolveCurrentTarget(event, threadId, tabId, true);
+      // Bootstrap-created native tabs are owned by main and are not renderer
+      // adopted webviews. Resolve their native WebContents so targetless opens
+      // can describe and dispatch without activating the visible panel.
+      const resolved = this.resolveCurrentTarget(event, threadId, tabId, false);
       const tabSet = getSession(resolved.window).tabsByThread.get(threadId);
       const tab = tabSet?.tabs.find((candidate) => candidate.id === tabId);
       return {
@@ -1232,7 +1235,11 @@ export class BrowserAutomationKernel {
             state.automationNavigationDepth -= 1;
           }
         }
-        return { operation: request.operation, ...base() };
+        return {
+          operation: request.operation,
+          ...base(),
+          ...(request.operation === "open" ? { observationRef: randomUUID() } : {}),
+        };
       }
       case "resize":
         throw new KernelError("UNSUPPORTED_OPERATION", "Renderer-hosted browser resize is unavailable", false);
@@ -1918,7 +1925,15 @@ export class BrowserAutomationKernel {
       requestId: request?.requestId ?? "invalid-request",
       sequence: request?.sequence ?? 0,
       ok: false,
-      error: { code: mapped.code, message: redactBrowserText(mapped.message), retryable: mapped.retryable },
+      error: {
+        code: mapped.code,
+        message: redactBrowserText(mapped.message),
+        retryable: mapped.retryable,
+        stage: mapped.code === "TAB_UNAVAILABLE" ? "allocation" : "effect",
+        effect: mapped.code === "TAB_UNAVAILABLE" ? "unknown" : "none",
+        recovery: mapped.retryable ? "retry" : "manual",
+        correlationId: randomUUID(),
+      },
     };
   }
 }

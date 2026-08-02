@@ -89,7 +89,7 @@ interface PreviewTabsState {
   updateTabChrome: (scopeId: string, tabId: string, chrome: PreviewLiveChrome) => void;
 
   /** Create a new page and optionally suppress human-focused omnibox behavior. */
-  createPage: (scopeId: string, options?: { readonly focusOmnibox?: boolean }) => Promise<string | null>;
+  createPage: (scopeId: string, options?: { readonly focusOmnibox?: boolean; readonly activate?: boolean }) => Promise<string | null>;
   /** Activate (switch to) a page within the scope's browser. */
   activatePage: (scopeId: string, tabId: string) => Promise<void>;
   /**
@@ -167,13 +167,15 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
   createPage: async (scopeId, options) => {
     const tabs = bridgeTabs();
     if (!tabs) return null;
-    const r = await tabs.create(scopeId, true);
+    const r = await tabs.create(scopeId, options?.activate ?? true);
     if (r.ok) {
       get().setTabSet(scopeId, r.data.tabs);
       useBrowserAutomationStore.getState().refreshTarget(scopeId, r.data.tabId);
       // A freshly-created page is empty; drop the cursor into the URL field so
       // the user can type immediately (matches the panel-open shortcut's UX).
-      if (options?.focusOmnibox !== false) usePreviewFocusStore.getState().requestOmniboxFocus();
+      if (options?.focusOmnibox !== false && (options?.activate ?? true)) {
+        usePreviewFocusStore.getState().requestOmniboxFocus();
+      }
       return r.data.tabId;
     }
     return null;

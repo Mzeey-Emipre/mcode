@@ -41,6 +41,7 @@ const RECORDING_MAX_BASE64_CHARS =
   Math.ceil(BROWSER_AUTOMATION_MAX_RECORDING_BYTES / 3) * 4;
 
 const idSchema = z.string().trim().min(1).max(ID_MAX);
+const idempotencyKeySchema = z.string().trim().min(1).max(ID_MAX);
 const timeoutSchema = z
   .number()
   .int()
@@ -824,7 +825,13 @@ export const BrowserAutomationRequestSchema = lazySchema(() =>
     requestVariant("status", emptyArgs),
     requestVariant(
       "open",
-      z.object({ url: BrowserAutomationUrlSchema().optional(), activate: z.boolean().default(true) }).strict(),
+      z.object({
+        url: BrowserAutomationUrlSchema().optional(),
+        // `activate` is retained as an ignored wire field for older clients;
+        // BrowserSessionDriver never uses it to change visible selection.
+        activate: z.boolean().optional(),
+        idempotencyKey: idempotencyKeySchema.optional(),
+      }).strict(),
     ),
     requestVariant("navigate", urlArgs),
     requestVariant(
@@ -917,7 +924,13 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
       controller: BrowserAutomationControllerStateSchema().optional(),
       capabilities: z.array(z.enum(BROWSER_AUTOMATION_OPERATIONS)).max(BROWSER_AUTOMATION_OPERATIONS.length),
     }).strict(),
-    actionResult("open"),
+    z.object({
+      operation: z.literal("open"),
+      url: BrowserAutomationOutputLocationSchema(),
+      title: z.string().max(4_096),
+      controlEpoch: z.number().int().nonnegative(),
+      observationRef: idSchema.optional(),
+    }).strict(),
     actionResult("navigate"),
     z.object({ operation: z.literal("resize"), width: z.number().int().positive(), height: z.number().int().positive(), controlEpoch: z.number().int().nonnegative() }).strict(),
     z.object({ operation: z.literal("snapshot"), snapshot: BrowserAutomationSnapshotSchema(), controlEpoch: z.number().int().nonnegative() }).strict(),
@@ -956,6 +969,7 @@ export type BrowserAutomationResult = z.infer<ReturnType<typeof BrowserAutomatio
 /** Stable browser automation error codes returned across process boundaries. */
 export const BROWSER_AUTOMATION_ERROR_CODES = [
   "INVALID_REQUEST",
+  "IDEMPOTENCY_CONFLICT",
   "UNAUTHORIZED",
   "FORBIDDEN",
   "UNSUPPORTED_OPERATION",
@@ -987,6 +1001,10 @@ export const BrowserAutomationErrorSchema = lazySchema(() =>
       code: z.enum(BROWSER_AUTOMATION_ERROR_CODES),
       message: z.string().min(1).max(SHORT_TEXT_MAX),
       retryable: z.boolean(),
+      stage: z.enum(["validation", "authorization", "allocation", "observation", "effect", "recovery", "transport"]).optional(),
+      effect: z.enum(["none", "created", "closed", "preserved", "unknown"]).optional(),
+      recovery: z.enum(["none", "retry", "refresh", "reopen", "manual"]).optional(),
+      correlationId: idSchema.optional(),
     })
     .strict(),
 );
