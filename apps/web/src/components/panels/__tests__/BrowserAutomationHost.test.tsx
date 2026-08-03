@@ -7,6 +7,7 @@ import {
 } from "@mcode/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useThreadStore } from "@/stores/threadStore";
 import {
   interruptBrowserAutomationTarget,
   releaseBrowserAutomationThreadScope,
@@ -185,16 +186,19 @@ describe("BrowserAutomationHost", () => {
   const finishRendererOperation = vi.fn();
   const cancel = vi.fn();
   const interrupt = vi.fn();
+  const releaseAgentControl = vi.fn();
   const describeTarget = vi.fn();
   const createTab = vi.fn();
   const closeTab = vi.fn();
   const listTabs = vi.fn();
+  let controllerChanged: ((state: BrowserAutomationControllerState) => void) | null;
   let nextGeneration: number;
 
   beforeEach(() => {
     vi.clearAllMocks();
     harness.listeners.clear();
     sessionStorage.clear();
+    controllerChanged = null;
     nextGeneration = 1;
     harness.transport.registerBrowserAutomationHost.mockImplementation(async () => {
       const generation = nextGeneration++;
@@ -210,6 +214,14 @@ describe("BrowserAutomationHost", () => {
     });
     cancel.mockResolvedValue(true);
     interrupt.mockResolvedValue(true);
+    releaseAgentControl.mockImplementation(async (target: { tabId: string; controlEpoch: number }) => {
+      controllerChanged?.({
+        tabId: target.tabId,
+        controller: "none",
+        controlEpoch: target.controlEpoch,
+      });
+      return true;
+    });
     beginRendererOperation.mockResolvedValue({ ok: true, leaseId: "renderer-lease" });
     finishRendererOperation.mockResolvedValue(true);
     closeTab.mockResolvedValue({ ok: true, data: { threadId: "thread-1", activeTabId: "tab-1", tabs: [] } });
@@ -222,10 +234,14 @@ describe("BrowserAutomationHost", () => {
           finishRendererOperation,
           cancel,
           interrupt,
+          releaseAgentControl,
           describeTarget,
           getMediaSourceId: vi.fn(),
-          onControllerChanged(_callback: (state: BrowserAutomationControllerState) => void) {
-            return () => undefined;
+          onControllerChanged(callback: (state: BrowserAutomationControllerState) => void) {
+            controllerChanged = callback;
+            return () => {
+              if (controllerChanged === callback) controllerChanged = null;
+            };
           },
         },
         tabs: {
@@ -241,6 +257,7 @@ describe("BrowserAutomationHost", () => {
       workspaces: [{ id: "workspace-1" }] as never,
     });
     useConnectionStore.setState({ status: "connected" });
+    useThreadStore.setState({ runningThreadIds: new Set() });
     useBrowserAutomationStore.setState({
       liveTargets: new Map(),
       controllers: new Map(),
@@ -338,6 +355,60 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
     driverExecute.mockRestore();
     execute.mockReset();
+  });
+
+  it("keeps Electron agent control visible between Browser calls while the turn is running", async () => {
+    useThreadStore.setState({ runningThreadIds: new Set(["thread-1"]) });
+    const request = dispatch(1, 96);
+    request.request = {
+      ...request.request,
+      operation: "navigate",
+      args: { url: "https://example.test/next" },
+    } as never;
+    execute.mockImplementation(async () => {
+      controllerChanged?.({
+        tabId: "tab-1",
+        controller: "agent",
+        controlEpoch: 0,
+        providerSessionId: "provider-session",
+        operation: "navigate",
+      });
+      return {
+        contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+        requestId: request.request.requestId,
+        sequence: request.request.sequence,
+        ok: true,
+        result: {
+          operation: "navigate",
+          url: "https://example.test/next",
+          title: "Example",
+          controlEpoch: 0,
+        },
+      } as BrowserAutomationResponse;
+    });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    await waitFor(() => expect(controllerChanged).not.toBeNull());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: request }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      JSON.stringify(["thread-1", "tab-1"]),
+    )).toMatchObject({ controller: "agent", controlEpoch: 0 });
+
+    act(() => useThreadStore.setState({ runningThreadIds: new Set() }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().controllers.get(
+      JSON.stringify(["thread-1", "tab-1"]),
+    )).toMatchObject({ controller: "none", controlEpoch: 0 }));
+    expect(releaseAgentControl).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      tabId: "tab-1",
+      controlEpoch: 0,
+      providerSessionId: "provider-session",
+    });
+    view.unmount();
   });
 
   it("settles driver-owned tabs when the broker releases a provider session", async () => {
@@ -1273,6 +1344,7 @@ describe("BrowserAutomationHost", () => {
   });
 
   it("bootstraps open from zero targets, reveals Browser, creates a tab, and navigates it", async () => {
+    useThreadStore.setState({ runningThreadIds: new Set(["thread-1"]) });
     useBrowserAutomationStore.setState({ liveTargets: new Map() });
     createTab.mockImplementation(async (threadId: string) => {
       useBrowserAutomationStore.getState().registerTarget("workspace-1", threadId, "created-tab");
@@ -1293,6 +1365,13 @@ describe("BrowserAutomationHost", () => {
       expect(
         usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.tabs[0]?.url,
       ).toBe("about:blank");
+      controllerChanged?.({
+        tabId: "created-tab",
+        controller: "agent",
+        controlEpoch: 0,
+        providerSessionId: value.request.providerSessionId,
+        operation: "open",
+      });
       return {
         contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
         requestId: value.request.requestId,
@@ -1335,6 +1414,9 @@ describe("BrowserAutomationHost", () => {
       expect.objectContaining({ ok: true }),
       expect.objectContaining({ tabId: "created-tab", targetGeneration: 1 }),
     );
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      JSON.stringify(["thread-1", "created-tab"]),
+    )).toMatchObject({ controller: "agent", operation: "open" });
     view.unmount();
   });
 

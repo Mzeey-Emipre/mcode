@@ -234,4 +234,29 @@ describe("browser automation renderer scope", () => {
     )).toEqual({ tabId: "tab-a", controller: "agent", controlEpoch: 3 });
     unsubscribe();
   });
+
+  it("shows agent control on only the latest Browser page in one thread", () => {
+    const store = useBrowserAutomationStore.getState();
+    store.registerTarget("workspace-agent", "thread-agent", "tab-first");
+    store.registerTarget("workspace-agent", "thread-agent", "tab-second");
+    store.setControllerForTarget("thread-agent", "tab-first", {
+      tabId: "tab-first",
+      controller: "agent",
+      controlEpoch: 1,
+    });
+    store.setControllerForTarget("thread-agent", "tab-second", {
+      tabId: "tab-second",
+      controller: "agent",
+      controlEpoch: 2,
+    });
+
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      browserAutomationTargetKey("thread-agent", "tab-first"),
+    )).toEqual({ tabId: "tab-first", controller: "none", controlEpoch: 1 });
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      browserAutomationTargetKey("thread-agent", "tab-second"),
+    )).toEqual({ tabId: "tab-second", controller: "agent", controlEpoch: 2 });
+
+    store.releaseThreadTargets("thread-agent");
+  });
 });

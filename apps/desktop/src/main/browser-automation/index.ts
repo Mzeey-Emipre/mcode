@@ -11,6 +11,7 @@ export function registerBrowserAutomationHandlers(): void {
   ipcMain.handle("preview:automation.finish-renderer-operation", (event, payload: unknown) => kernel.finishRendererOperation(event, payload));
   ipcMain.handle("preview:automation.cancel", (_event, requestId: unknown) => kernel.cancel(requestId));
   ipcMain.handle("preview:automation.interrupt", (event, target: unknown) => kernel.interrupt(event, target));
+  ipcMain.handle("preview:automation.release-agent-control", (event, target: unknown) => kernel.releaseAgentControl(event, target));
   ipcMain.handle("preview:automation.describe-target", (event, target: unknown) => kernel.describeTarget(event, target));
   ipcMain.handle("preview:automation.media-source", (event, target: unknown) => kernel.getMediaSourceId(event, target));
   ipcMain.handle("preview:open-guest-devtools", (event, target: unknown) => kernel.openDevTools(event, target));

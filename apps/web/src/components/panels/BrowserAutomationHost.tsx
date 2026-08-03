@@ -15,6 +15,7 @@ import {
 } from "@mcode/contracts";
 import { getTransport, pushEmitter } from "@/transport";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   browserAutomationRequestKey,
@@ -99,6 +100,31 @@ function failureResponse(
       correlationId: globalThis.crypto.randomUUID(),
     },
   };
+}
+
+function projectAgentControl(dispatch: BrowserAutomationHostDispatch): void {
+  if (
+    window.desktopBridge?.preview?.automation ||
+    dispatch.request.operation === "status" ||
+    !useThreadStore.getState().runningThreadIds.has(dispatch.target.threadId)
+  ) return;
+  useBrowserAutomationStore.getState().setControllerForTarget(
+    dispatch.target.threadId,
+    dispatch.target.tabId,
+    {
+      tabId: dispatch.target.tabId,
+      controller: "agent",
+      controlEpoch: dispatch.request.expectedControlEpoch,
+      providerSessionId: dispatch.request.providerSessionId,
+      ...(dispatch.request.operation !== "inspect" &&
+      dispatch.request.operation !== "act" &&
+      dispatch.request.operation !== "tabs"
+        ? {
+            operation: dispatch.request.operation,
+          }
+        : {}),
+    },
+  );
 }
 
 async function afterBrowserLayout(): Promise<void> {
@@ -570,6 +596,7 @@ function PersistentAutomationPreviewSurface({
  */
 export function BrowserAutomationHost() {
   const connectionStatus = useConnectionStore((state) => state.status);
+  const runningThreadIds = useThreadStore((state) => state.runningThreadIds);
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
   const liveTargets = useBrowserAutomationStore((state) => state.liveTargets);
@@ -974,6 +1001,7 @@ export function BrowserAutomationHost() {
       inFlightRef.current.set(key, dispatch);
       const store = useBrowserAutomationStore.getState();
       store.setActiveRequest({ dispatch, startedAt: Date.now() });
+      projectAgentControl(dispatch);
       const controller = new AbortController();
       requestAbortRef.current.set(key, controller);
       const webDispatch = !bridge && webAutomationEnabled &&
@@ -1399,6 +1427,7 @@ export function BrowserAutomationHost() {
               },
             }
           : dispatch;
+        projectAgentControl(executionDispatch);
         const response = await sessionDriverRef.current!.execute(executionDispatch, controller.signal);
         await restoreBackgroundContext();
         if (leaseRef.current === lease && !cancelledRef.current.has(key)) {
@@ -1451,12 +1480,13 @@ export function BrowserAutomationHost() {
     const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge) return;
     return bridge.onControllerChanged((controller) => {
-      useBrowserAutomationStore.getState().setController(controller);
-      if (controller.controller !== "human") return;
+      const store = useBrowserAutomationStore.getState();
       const target = resolveBrowserAutomationControllerTarget(
-        useBrowserAutomationStore.getState().liveTargets.values(),
+        store.liveTargets.values(),
         controller,
       );
+      store.setController(controller);
+      if (controller.controller !== "human") return;
       if (!target) return;
       recorderRef.current.disposeTarget(target.threadId, target.tabId);
       for (const dispatch of inFlightRef.current.values()) {
@@ -1468,6 +1498,31 @@ export function BrowserAutomationHost() {
       }
     });
   }, [cancelHostedRequest]);
+
+  useEffect(() => {
+    const store = useBrowserAutomationStore.getState();
+    for (const [targetKey, controller] of store.controllers) {
+      if (controller.controller !== "agent") continue;
+      const target = store.liveTargets.get(targetKey);
+      if (!target || runningThreadIds.has(target.threadId)) continue;
+      if (!controller.providerSessionId) continue;
+      const bridge = window.desktopBridge?.preview?.automation;
+      if (bridge) {
+        void bridge.releaseAgentControl({
+          threadId: target.threadId,
+          tabId: target.tabId,
+          controlEpoch: controller.controlEpoch,
+          providerSessionId: controller.providerSessionId,
+        });
+      } else {
+        store.setControllerForTarget(target.threadId, target.tabId, {
+          tabId: target.tabId,
+          controller: "none",
+          controlEpoch: controller.controlEpoch,
+        });
+      }
+    }
+  }, [runningThreadIds]);
 
   useEffect(() => onBrowserAutomationInterruption((threadId, tabId, reason) => {
     recorderRef.current.disposeTarget(threadId, tabId);

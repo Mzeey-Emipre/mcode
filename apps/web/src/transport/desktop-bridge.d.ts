@@ -236,6 +236,13 @@ export interface PreviewAutomationBridge {
   >;
   /** Transfer one exact tab from agent control to the human. */
   interrupt(target: { threadId: string; tabId: string }): Promise<boolean>;
+  /** Clear retained agent presentation after its owning turn completes. */
+  releaseAgentControl(target: {
+    threadId: string;
+    tabId: string;
+    controlEpoch: number;
+    providerSessionId: string;
+  }): Promise<boolean>;
   /** Resolve desktop-main target identity without exposing WebContents. */
   describeTarget(target: {
     threadId: string;

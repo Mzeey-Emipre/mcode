@@ -87,7 +87,7 @@ export function resolveBrowserAutomationControllerTarget(
 }
 
 /** Shared renderer state for browser host discovery, control, and warm leases. */
-export const useBrowserAutomationStore = create<BrowserAutomationState>((set) => ({
+export const useBrowserAutomationStore = create<BrowserAutomationState>((set, get) => ({
   liveTargets: new Map(),
   lifecycleTabs: new Map(),
   controllers: new Map(),
@@ -212,19 +212,29 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       return { liveTargets, controllers, viewportByTarget, lifecycleTabs };
     });
   },
-  setController: (controller) =>
-    set((state) => {
-      const target = resolveBrowserAutomationControllerTarget(state.liveTargets.values(), controller);
-      if (!target) return state;
-      const controllers = new Map(state.controllers);
-      controllers.set(browserAutomationTargetKey(target.threadId, target.tabId), controller);
-      return { controllers };
-    }),
+  setController: (controller) => {
+    const target = resolveBrowserAutomationControllerTarget(get().liveTargets.values(), controller);
+    if (!target) return;
+    get().setControllerForTarget(target.threadId, target.tabId, controller);
+  },
   setControllerForTarget: (threadId, tabId, controller) =>
     set((state) => {
       const key = browserAutomationTargetKey(threadId, tabId);
       if (!state.liveTargets.has(key)) return state;
       const controllers = new Map(state.controllers);
+      if (controller.controller === "agent") {
+        for (const target of state.liveTargets.values()) {
+          if (target.threadId !== threadId || target.tabId === tabId) continue;
+          const otherKey = browserAutomationTargetKey(target.threadId, target.tabId);
+          const other = controllers.get(otherKey);
+          if (other?.controller !== "agent") continue;
+          controllers.set(otherKey, {
+            tabId: target.tabId,
+            controller: "none",
+            controlEpoch: other.controlEpoch,
+          });
+        }
+      }
       controllers.set(key, controller);
       return { controllers };
     }),
