@@ -5,6 +5,7 @@ import type {
   BrowserAutomationResponse,
   BrowserAutomationActStep,
 } from "@mcode/contracts";
+import { BROWSER_AUTOMATION_MAX_INSPECT_TABS as MAX_LIFECYCLE_TABS } from "@mcode/contracts";
 
 const MAX_IDEMPOTENCY_RECORDS = 256;
 const IDEMPOTENCY_TTL_MS = 30 * 60_000;
@@ -55,6 +56,15 @@ interface ProviderTabSession {
   readonly tabs: Map<string, ControlledTab>;
 }
 
+/** One lifecycle-backed Browser tab projected for renderer consumers. */
+export interface BrowserSessionLifecycleTab extends BrowserAutomationOwnedTab {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly providerSessionId: string;
+  readonly providerInstanceId: string;
+  readonly target: BrowserAutomationHostDispatchTarget;
+}
+
 /** Runtime implementation used by the client BrowserSessionDriver. */
 export interface BrowserSessionRuntimeAdapter {
   execute(
@@ -95,6 +105,8 @@ export interface BrowserSessionDriverOptions {
   readonly supportedActOperations?: readonly string[] | (() => readonly string[]);
   readonly webTabs?: BrowserSessionTabLifecycleAdapter;
   readonly electronTabs?: BrowserSessionTabLifecycleAdapter;
+  /** Receives the bounded lifecycle projection after ownership changes. */
+  readonly onLifecycleChange?: (tabs: readonly BrowserSessionLifecycleTab[]) => void;
 }
 
 /**
@@ -207,6 +219,7 @@ export class BrowserSessionDriver {
             ownership: "owned",
             target: dispatch.target,
           });
+          this.publishLifecycleProjectionInternal();
         }
         return this.withObservationRef(response);
       })
@@ -236,6 +249,11 @@ export class BrowserSessionDriver {
     this.tabIdempotency.clear();
   }
 
+  /** Publishes retained browser ownership after a host reconnects. */
+  publishLifecycleProjection(): void {
+    this.publishLifecycleProjectionInternal();
+  }
+
   /** Clears replay state bound to one browser target after that target closes or is replaced. */
   clearIdempotencyForTarget(threadId: string, tabId: string): void {
     for (const [key, record] of this.idempotency) {
@@ -245,6 +263,7 @@ export class BrowserSessionDriver {
       if (session.current?.threadId === threadId && session.current.tabId === tabId) session.current = null;
       session.tabs.delete(tabId);
     }
+    this.publishLifecycleProjectionInternal();
   }
 
   /** Returns the exact target selected by a successful lifecycle response. */
@@ -447,6 +466,8 @@ export class BrowserSessionDriver {
 
     if (request.args.action === "select" && liveTarget) {
       session.current = liveTarget;
+      const controlled = session.tabs.get(liveTarget.tabId);
+      if (controlled) session.tabs.set(liveTarget.tabId, { ...controlled, target: liveTarget });
     } else if (request.args.action === "claim" && liveTarget) {
       session.current = liveTarget;
       const controlled = session.tabs.get(liveTarget.tabId);
@@ -490,6 +511,8 @@ export class BrowserSessionDriver {
       }
       session.current = null;
     }
+
+    this.publishLifecycleProjectionInternal();
 
     const nextObservationRef = session.current ? globalThis.crypto.randomUUID() : undefined;
     if (session.current && nextObservationRef) {
@@ -632,6 +655,26 @@ export class BrowserSessionDriver {
       }
       this.tabSessions.delete(key);
     }
+    this.publishLifecycleProjectionInternal();
+  }
+
+  private publishLifecycleProjectionInternal(): void {
+    const observer = this.options.onLifecycleChange;
+    if (!observer) return;
+    const tabs: BrowserSessionLifecycleTab[] = [];
+    for (const session of this.tabSessions.values()) {
+      for (const tab of session.tabs.values()) {
+        if (tab.ownership === "released") continue;
+        tabs.push({
+          ...tab,
+          workspaceId: session.workspaceId,
+          threadId: tab.target.threadId,
+          providerSessionId: session.providerSessionId,
+          providerInstanceId: session.providerInstanceId,
+        });
+      }
+    }
+    observer(tabs.slice(0, MAX_LIFECYCLE_TABS));
   }
 
   private failure(

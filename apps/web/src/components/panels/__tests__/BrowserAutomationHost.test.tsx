@@ -73,9 +73,16 @@ vi.mock("../webBrowserInteractionExecutor", async (importOriginal) => {
   };
 });
 
-import { BrowserAutomationHost, isBrowserAutomationWebRuntimeEnabled } from "../BrowserAutomationHost";
+import {
+  BrowserAutomationHost,
+  isBrowserAutomationWebRuntimeEnabled,
+  readPersistentWebTabChrome,
+} from "../BrowserAutomationHost";
 import { BrowserAutomationRecorder } from "../browserAutomationRecorder";
-import { BrowserSessionDriver } from "@/services/browser-automation/browserSessionDriver";
+import {
+  BrowserSessionDriver,
+  type BrowserSessionLifecycleTab,
+} from "@/services/browser-automation/browserSessionDriver";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -238,11 +245,12 @@ describe("BrowserAutomationHost", () => {
       liveTargets: new Map(),
       controllers: new Map(),
       activeRequests: new Map(),
+      lifecycleTabs: new Map(),
       registered: false,
       viewportByTarget: new Map(),
       hostedScopeIds: new Set(),
     });
-    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     browserTargetRegistry.clear();
     useBrowserAutomationStore.getState().registerTarget(
       "workspace-1",
@@ -255,6 +263,67 @@ describe("BrowserAutomationHost", () => {
     expect(isBrowserAutomationWebRuntimeEnabled({})).toBe(false);
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "0" })).toBe(false);
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "1" })).toBe(true);
+  });
+
+  it("bounds same-origin persistent web chrome and avoids cross-origin reads", () => {
+    const iframe = document.createElement("iframe");
+    iframe.src = `${window.location.origin}/browser-automation-fixture.html`;
+    Object.defineProperty(iframe, "contentDocument", {
+      configurable: true,
+      value: {
+        title: "x".repeat(400),
+        location: { href: `${window.location.origin}/browser-automation-fixture.html?loaded=1` },
+      },
+    });
+    const sameOrigin = readPersistentWebTabChrome(iframe, "about:blank");
+    expect(sameOrigin.title).toHaveLength(240);
+    expect(sameOrigin.url).toContain("loaded=1");
+
+    const crossOrigin = document.createElement("iframe");
+    crossOrigin.src = "https://external.example/page";
+    const fallback = readPersistentWebTabChrome(crossOrigin, "https://external.example/page");
+    expect(fallback).toEqual({ title: null, url: "https://external.example/page" });
+  });
+
+  it("clears stale lifecycle rows across host replacement and republishes after reconnect", async () => {
+    const lifecycleTab: BrowserSessionLifecycleTab = {
+      tabId: "stale-tab",
+      provenance: "agent-created",
+      ownership: "owned",
+      target: {
+        desktopInstanceId: "desktop-1",
+        windowId: 7,
+        connectionGeneration: 1,
+        threadId: "thread-1",
+        tabId: "stale-tab",
+        targetGeneration: 3,
+        active: true,
+        focused: true,
+        lastUsedAt: 10,
+      },
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      providerSessionId: "provider-session",
+      providerInstanceId: "provider-instance",
+    };
+    useBrowserAutomationStore.getState().setLifecycleTabs([lifecycleTab]);
+    const publish = vi.spyOn(BrowserSessionDriver.prototype, "publishLifecycleProjection");
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    expect(publish).toHaveBeenCalledOnce();
+
+    act(() => useConnectionStore.setState({ status: "reconnecting" }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().lifecycleTabs).toHaveLength(0));
+
+    act(() => useConnectionStore.setState({ status: "connected" }));
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledTimes(2));
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(useBrowserAutomationStore.getState().lifecycleTabs).toHaveLength(0);
+
+    act(() => useBrowserAutomationStore.getState().setLifecycleTabs([lifecycleTab]));
+    view.unmount();
+    expect(useBrowserAutomationStore.getState().lifecycleTabs).toHaveLength(0);
+    publish.mockRestore();
   });
 
   it("enters BrowserSessionDriver for broker-dispatched web and Electron commands", async () => {
@@ -467,6 +536,69 @@ describe("BrowserAutomationHost", () => {
 
     expect(surface).toHaveAttribute("aria-hidden", "true");
     iframe.remove();
+    view.unmount();
+  });
+
+  it("projects an agent-owned web tab and reveals it through the Browser dock", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useBrowserAutomationStore.setState({ liveTargets: new Map() });
+    webExecutor.executeWebBrowserDispatch.mockImplementation(async (value: BrowserAutomationHostDispatch) => ({
+      contractVersion: value.request.contractVersion,
+      requestId: value.request.requestId,
+      sequence: value.request.sequence,
+      ok: true as const,
+      result: {
+        operation: "open" as const,
+        url: value.request.args.url ?? `${window.location.origin}/browser-automation-fixture.html`,
+        title: "Fixture",
+        controlEpoch: 0,
+      },
+    }));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openRequest = {
+      ...dispatch(1, 47).request,
+      operation: "open" as const,
+      args: {
+        url: `${window.location.origin}/browser-automation-fixture.html`,
+        idempotencyKey: "dock-web-open",
+        activate: false,
+      },
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    let iframe!: HTMLIFrameElement;
+    await waitFor(() => {
+      const value = document.querySelector<HTMLIFrameElement>(
+        '[data-automation-persistent-scope="thread-1"] iframe[data-tab-id^="web-agent-"]',
+      );
+      expect(value).not.toBeNull();
+      iframe = value!;
+    });
+    const tabId = iframe.dataset.tabId!;
+    await waitFor(() => expect(
+      usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.tabs.some((tab) => tab.id === tabId),
+    ).toBe(true));
+    markIframeLoaded(iframe);
+    window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+
+    const dock = document.createElement("div");
+    dock.dataset.automationPreviewDock = "thread-1";
+    dock.dataset.visible = "true";
+    Object.defineProperty(dock, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 40, top: 20, width: 640, height: 480, right: 680, bottom: 500, x: 40, y: 20, toJSON: () => ({}) }),
+    });
+    document.body.append(dock);
+    await act(async () => usePreviewTabsStore.getState().activatePage("thread-1", tabId));
+    await waitFor(() => expect(usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.activeTabId).toBe(tabId));
+    await waitFor(() => expect(iframe.style.pointerEvents).toBe("auto"));
+    expect(document.querySelector('[data-automation-persistent-scope="thread-1"]')).toHaveAttribute("aria-hidden", "false");
+
+    iframe.remove();
+    dock.remove();
     view.unmount();
   });
 
