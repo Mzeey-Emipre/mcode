@@ -303,6 +303,41 @@ describe("BrowserAutomationHost", () => {
     webExecutor.executeWebBrowserDispatch.mockReset();
   });
 
+  it("keeps evaluate out of the pure web descriptor, registration, and status capabilities", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const statusDispatch = dispatch(1, 93);
+    webExecutor.executeWebBrowserDispatch.mockResolvedValue(successResponse(statusDispatch.request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const registration = harness.transport.registerBrowserAutomationHost.mock.calls[0]?.[0];
+    expect(registration.executorDescriptor.operations).not.toContain("evaluate");
+    expect(registration.capabilities.map((capability: { operation: string }) => capability.operation)).not.toContain("evaluate");
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: statusDispatch }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    const status = harness.transport.respondToBrowserAutomationRequest.mock.calls[0]?.[2];
+    expect(status).toMatchObject({ ok: true, result: { operation: "status" } });
+    if (status.ok && status.result.operation === "status") expect(status.result.capabilities).not.toContain("evaluate");
+    view.unmount();
+  });
+
+  it("advertises evaluate in Electron descriptor, registration, and status capabilities", async () => {
+    execute.mockResolvedValue(successResponse(dispatch(1, 94).request));
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const registration = harness.transport.registerBrowserAutomationHost.mock.calls[0]?.[0];
+    expect(registration.executorDescriptor.operations).toContain("evaluate");
+    expect(registration.capabilities).toContainEqual({ operation: "evaluate", available: true });
+    const request = dispatch(1, 94);
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: request }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    const status = harness.transport.respondToBrowserAutomationRequest.mock.calls[0]?.[2];
+    expect(status).toMatchObject({ ok: true, result: { operation: "status", capabilities: expect.arrayContaining(["evaluate"]) } });
+    view.unmount();
+  });
+
   it("carries an initial web open URL into the visible preview state", async () => {
     delete window.desktopBridge;
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");

@@ -324,6 +324,51 @@ describe("AgentService narrative persistence", () => {
     expect(toolCalls[0].exitCode).toBe(1);
   });
 
+  it("persists privileged Browser evaluation without source, result, or artifacts", async () => {
+    const { providerEmitter, toolBulk } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "evaluate-1",
+      toolName: "mcp__mcode-browser__browser_evaluate",
+      toolInput: { expression: "globalThis.SECRET_SOURCE" },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      toolCallId: "evaluate-1",
+      output: '{"valueJson":"SECRET_RESULT"}',
+      isError: false,
+      outputTruncated: true,
+      outputTotalBytes: 999,
+      outputArtifactPath: "C:\\secret-result.txt",
+      toolInput: { expression: "globalThis.SECRET_SOURCE" },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(toolBulk).toHaveBeenCalledOnce();
+    const toolCalls: CreateToolCallRecordInput[] = toolBulk.mock.calls[0][0];
+    expect(toolCalls[0]).toMatchObject({
+      toolName: "mcp__mcode-browser__browser_evaluate",
+      inputSummary: "{}",
+      outputSummary: "",
+      outputTruncated: false,
+    });
+    expect(toolCalls[0].outputArtifactPath).toBeUndefined();
+    expect(JSON.stringify(toolCalls[0])).not.toContain("SECRET_SOURCE");
+    expect(JSON.stringify(toolCalls[0])).not.toContain("SECRET_RESULT");
+  });
+
   it("applies a TaskUpdate status transition to the persisted task by harness id", () => {
     const { providerEmitter, taskUpdate } = build();
 

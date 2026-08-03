@@ -48,7 +48,11 @@ describe("BrowserAutomationMcpHandler", () => {
     cancelFromProvider = vi.fn(() => false);
     handler = new BrowserAutomationMcpHandler({
       credentials,
-      broker: { execute, cancelFromProvider } as unknown as BrowserAutomationBroker,
+      broker: {
+        execute,
+        cancelFromProvider,
+        availableOperations: (claims: { allowedOperations: readonly string[] }) => claims.allowedOperations,
+      } as unknown as BrowserAutomationBroker,
       now: () => 1_000,
       maxSequenceEntries: 1,
     });
@@ -83,6 +87,12 @@ describe("BrowserAutomationMcpHandler", () => {
       destructiveHint: true,
       openWorldHint: true,
     });
+    expect(payload.result.tools.find((tool: any) => tool.name === "browser_evaluate").inputSchema.required).toEqual([
+      "idempotencyKey",
+      "observationRef",
+      "deadlineMs",
+      "expression",
+    ]);
   });
 
   it("discovers browser_act with bounded required arguments and rejects invalid batches before broker execution", async () => {
