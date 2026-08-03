@@ -167,7 +167,7 @@ export class BrowserSessionDriver {
     if (initialDrift) return Promise.resolve(initialDrift);
     if (dispatch.request?.operation === "evaluate") return this.executeEvaluate(dispatch, signal);
     if (dispatch.request?.operation === "act") return this.executeAct(dispatch, signal);
-    if (dispatch.request?.operation === "tabs") return this.executeTabs(dispatch);
+    if (dispatch.request?.operation === "tabs") return this.executeTabs(dispatch, signal);
     if (dispatch.request?.operation !== "open") {
       return this.executeAdapter(dispatch, signal);
     }
@@ -469,7 +469,7 @@ export class BrowserSessionDriver {
       request: { ...dispatch.request, deadline },
     };
     return this.options.electron.execute(boundedDispatch, signal)
-      .then((response) => this.evaluateResponse(dispatch, observation, response))
+      .then((response) => this.evaluateResponse(dispatch, observation, response, signal))
       .catch((cause: unknown) => this.evaluateEnvelope(dispatch, observation, {
         outcome: this.isCancellation(cause) ? "interrupted" : "failed",
         effect: "partial",
@@ -482,7 +482,10 @@ export class BrowserSessionDriver {
     dispatch: BrowserAutomationHostDispatch,
     observation: ObservationRecord,
     response: BrowserAutomationResponse,
+    signal: AbortSignal,
   ): BrowserAutomationResponse {
+    const boundary = this.evaluateCompletionBoundary(dispatch, observation, signal);
+    if (boundary) return boundary;
     if (!response.ok) {
       const interrupted = this.isCancellation(response.error.code);
       return this.evaluateEnvelope(dispatch, observation, {
@@ -514,6 +517,27 @@ export class BrowserSessionDriver {
       status: "applied",
       valueJson: response.result.valueJson,
     });
+  }
+
+  private evaluateCompletionBoundary(
+    dispatch: BrowserAutomationHostDispatch,
+    observation: ObservationRecord,
+    signal: AbortSignal,
+  ): BrowserAutomationResponse | null {
+    if (signal.aborted) {
+      return this.evaluateEnvelope(dispatch, observation, {
+        outcome: "interrupted",
+        effect: "partial",
+        status: "interrupted",
+        message: "Browser evaluation was interrupted before completion",
+      });
+    }
+    const drift = this.revisionDrift(dispatch);
+    if (drift) return drift;
+    if (!this.observationStillCurrent(dispatch, observation)) {
+      return this.operationFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation changed before browser_evaluate completed");
+    }
+    return null;
   }
 
   private evaluateEnvelope(
@@ -609,9 +633,12 @@ export class BrowserSessionDriver {
     };
   }
 
-  private executeTabs(dispatch: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> {
+  private executeTabs(dispatch: BrowserAutomationHostDispatch, signal: AbortSignal): Promise<BrowserAutomationResponse> {
     const request = dispatch.request as Extract<BrowserAutomationHostDispatch["request"], { operation: "tabs" }>;
     const sessionKey = this.sessionKey(dispatch);
+    if (signal.aborted) {
+      return Promise.resolve(this.tabCancellation(dispatch, "Browser tab mutation was interrupted before the effect"));
+    }
     const replayKey = JSON.stringify([request.providerSessionId, request.providerInstanceId, request.args.idempotencyKey]);
     const fingerprint = JSON.stringify(request.args);
     const replay = this.tabIdempotency.get(replayKey);
@@ -632,7 +659,7 @@ export class BrowserSessionDriver {
     }
     this.observations.delete(request.args.observationRef);
     this.activeTabMutations.add(sessionKey);
-    const promise = this.applyTabsMutation(dispatch, observation, capabilityRevision)
+    const promise = this.applyTabsMutation(dispatch, observation, capabilityRevision, signal)
       .finally(() => this.activeTabMutations.delete(sessionKey));
     this.tabIdempotency.set(replayKey, { fingerprint, lastUsedAt: Date.now(), promise });
     this.pruneIdempotency();
@@ -643,11 +670,18 @@ export class BrowserSessionDriver {
     dispatch: BrowserAutomationHostDispatch,
     observation: ObservationRecord,
     capabilityRevision: number,
+    signal: AbortSignal,
   ): Promise<BrowserAutomationResponse> {
     const request = dispatch.request as Extract<BrowserAutomationHostDispatch["request"], { operation: "tabs" }>;
     const session = this.tabSession(dispatch);
     const adapter = this.tabAdapter();
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before enumeration");
+    }
     const liveTargets = new Map((adapter ? await adapter.list(dispatch) : [dispatch.target]).map((target) => [target.tabId, target]));
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before the next effect");
+    }
     if (!this.observationStillCurrent(dispatch, observation)) {
       return this.failure(dispatch, "STALE_TARGET_GENERATION", "Browser generations changed before the next tab effect", "inspect");
     }
@@ -693,9 +727,18 @@ export class BrowserSessionDriver {
     } else if ((request.args.action === "release" || request.args.action === "close") && requestedTabId) {
       const controlled = session.tabs.get(requestedTabId);
       if (request.args.action === "close" && controlled?.provenance === "agent-created") {
+        if (signal.aborted) {
+          return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before closing the tab");
+        }
         await adapter?.close(controlled.target);
         session.tabs.delete(requestedTabId);
+        if (signal.aborted) {
+          return this.tabCancellation(dispatch, "Browser tab mutation was interrupted after closing the tab", "unknown");
+        }
       } else if (controlled) {
+        if (signal.aborted) {
+          return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before releasing the tab");
+        }
         session.tabs.set(requestedTabId, { ...controlled, ownership: "released", disposition: "release" });
       }
       if (session.current?.tabId === requestedTabId) session.current = null;
@@ -709,13 +752,26 @@ export class BrowserSessionDriver {
           ? requested === "handoff" || requested === "deliverable" ? requested : "release"
           : requested ?? "close";
         if (disposition === "close") {
+          if (signal.aborted) {
+            return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before closing the next tab");
+          }
           await adapter?.close(controlled.target);
           session.tabs.delete(tabId);
+          if (signal.aborted) {
+            return this.tabCancellation(dispatch, "Browser tab mutation was interrupted after closing a tab", "unknown");
+          }
         } else {
+          if (signal.aborted) {
+            return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before settling the next tab");
+          }
           session.tabs.set(tabId, { ...controlled, ownership: "released", disposition });
         }
       }
       session.current = null;
+    }
+
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before completion");
     }
 
     const nextObservationRef = session.current ? globalThis.crypto.randomUUID() : undefined;
@@ -883,4 +939,24 @@ export class BrowserSessionDriver {
     };
   }
 
+  private tabCancellation(
+    dispatch: BrowserAutomationHostDispatch,
+    message: string,
+    effect: "none" | "unknown" = "none",
+  ): BrowserAutomationResponse {
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: false,
+      error: {
+        code: "OPERATION_CANCELLED",
+        message,
+        retryable: false,
+        stage: "effect",
+        effect,
+        recovery: "inspect",
+      },
+    };
+  }
 }

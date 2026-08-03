@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BrowserAutomationHostDispatch, BrowserAutomationResponse } from "@mcode/contracts";
+import type { BrowserAutomationHostDispatch, BrowserAutomationHostDispatchTarget, BrowserAutomationResponse } from "@mcode/contracts";
 import { BrowserSessionDriver, ElectronBrowserSessionAdapter, getBrowserAutomationRuntimeOperations } from "./browserSessionDriver";
 import { WebBrowserSessionAdapter } from "./webBrowserSessionAdapter";
 
@@ -228,6 +228,41 @@ describe("BrowserSessionDriver", () => {
       },
     });
     expect(electron).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a deferred Electron evaluation when capability revision changes before completion", async () => {
+    let revision = 1;
+    let resolveEvaluate!: (response: BrowserAutomationResponse) => void;
+    const deferredEvaluate = new Promise<BrowserAutomationResponse>((resolve) => {
+      resolveEvaluate = resolve;
+    });
+    const electron = vi.fn((value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "inspect") {
+        return Promise.resolve({ ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse);
+      }
+      return deferredEvaluate;
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute: vi.fn() },
+      electron: { execute: electron },
+      isElectron: () => true,
+      getCapabilityRevision: () => revision,
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const pending = driver.execute(evaluateDispatch(observationRef), new AbortController().signal);
+    await Promise.resolve();
+    revision = 2;
+    resolveEvaluate({
+      ok: true,
+      result: { operation: "evaluate", valueJson: '"private"', controlEpoch: 0 },
+    } as unknown as BrowserAutomationResponse);
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "CAPABILITY_CHANGED", effect: "none", recovery: "inspect" },
+    });
+    expect(JSON.stringify(await pending)).not.toContain("private");
   });
 
   function actDispatch(observationRef: string, steps: unknown[], requestId = "act"): BrowserAutomationHostDispatch {
@@ -495,6 +530,85 @@ describe("BrowserSessionDriver", () => {
     await expect(first).resolves.toMatchObject({ ok: true });
     await expect(driver.execute(open("third-open", "tab-3", "key-3"), new AbortController().signal)).resolves.toMatchObject({ ok: true });
     expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops a tab close when cancellation arrives during lifecycle enumeration", async () => {
+    const target: BrowserAutomationHostDispatchTarget = {
+      desktopInstanceId: "desktop",
+      threadId: "thread",
+      tabId: "agent-tab",
+      windowId: 1,
+      connectionGeneration: 1,
+      targetGeneration: 1,
+      active: true,
+      focused: true,
+      lastUsedAt: 1,
+    };
+    let resolveList!: (targets: readonly BrowserAutomationHostDispatchTarget[]) => void;
+    const list = vi.fn(() => new Promise<readonly BrowserAutomationHostDispatchTarget[]>((resolve) => {
+      resolveList = resolve;
+    }));
+    const close = vi.fn();
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => ({
+      contractVersion: 1,
+      requestId: value.request.requestId,
+      sequence: value.request.sequence,
+      ok: true,
+      result: value.request.operation === "inspect"
+        ? { operation: "inspect", tabs: [target] }
+        : { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+    }) as unknown as BrowserAutomationResponse);
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      webTabs: { list, close },
+    });
+    const opened = await driver.execute({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target,
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId: "open",
+        sequence: 1,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "open",
+        args: { idempotencyKey: "open-key" },
+      },
+    } as BrowserAutomationHostDispatch, new AbortController().signal);
+    const observationRef = (opened as { result: { observationRef: string } }).result.observationRef;
+    const controller = new AbortController();
+    const pending = driver.execute({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target,
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId: "close",
+        sequence: 2,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "tabs",
+        args: { action: "close", tabId: "agent-tab", idempotencyKey: "close-key", observationRef },
+      },
+    } as unknown as BrowserAutomationHostDispatch, controller.signal);
+    expect(list).toHaveBeenCalledOnce();
+    controller.abort();
+    resolveList([target]);
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "OPERATION_CANCELLED", effect: "none", recovery: "inspect" },
+    });
+    expect(close).not.toHaveBeenCalled();
   });
 
   it("claims and releases user tabs without physically closing them", async () => {
