@@ -432,23 +432,56 @@ export function registerDesignModeHandlers(): void {
     },
   );
 
-  ipcMain.handle("preview:design.reset-viewport", (event) => {
+  ipcMain.handle("preview:design.reset-viewport", (event, payload: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
     const s = getSession(win);
     if (!s.view || s.view.webContents.isDestroyed())
       return { ok: false, error: "no-view" };
     if (!s.lastBounds) return { ok: false, error: "no-bounds" };
+    const parsedPayload = BrowserAutomationViewportRequestSchema().safeParse(payload ?? {});
+    if (!parsedPayload.success) return { ok: false, error: "invalid-viewport-reset-request" };
+    const request = parsedPayload.data;
     const activeThreadId = s.lastPreviewThreadId;
     const activeTabId = activeThreadId ? getActiveTab(s, activeThreadId).id : null;
-    const key = activeThreadId && activeTabId ? targetKey(activeThreadId, activeTabId) : null;
+    const resolvedThreadId = request.threadId ?? activeThreadId;
+    const resolvedTabId = request.tabId ?? activeTabId;
+    const key = resolvedThreadId && resolvedTabId ? targetKey(resolvedThreadId, resolvedTabId) : null;
+    const metadata: ViewportOperationMetadata = {
+      ...(request.operationId === undefined ? {} : { operationId: request.operationId }),
+      ...(request.source === undefined ? {} : { source: request.source }),
+      ...(request.targetGeneration === undefined ? {} : { targetGeneration: request.targetGeneration }),
+      ...(request.threadId === undefined ? {} : { threadId: request.threadId }),
+      ...(request.tabId === undefined ? {} : { tabId: request.tabId }),
+    };
+    const appliedBefore = currentViewportSize(s, key);
+    if (
+      (request.threadId !== undefined || request.tabId !== undefined) &&
+      (resolvedThreadId === null ||
+        resolvedTabId === null ||
+        resolvedThreadId !== activeThreadId ||
+        resolvedTabId !== activeTabId)
+    ) {
+      return { ok: false, error: "stale-target", ...viewportMetadata(metadata, appliedBefore) };
+    }
+    if (
+      request.targetGeneration !== undefined &&
+      key &&
+      (s.viewportTargetGenerationByTarget.get(key) ?? -1) > request.targetGeneration
+    ) {
+      return {
+        ok: false,
+        error: "stale-target-generation",
+        ...viewportMetadata(metadata, appliedBefore),
+      };
+    }
     if (key) {
       s.viewportAppliedByTarget.delete(key);
       s.viewportTargetGenerationByTarget.delete(key);
       s.viewportPresentationByTarget.delete(key);
     }
     applyViewportPresentation(s, s.lastBounds, activeThreadId, activeTabId);
-    return { ok: true };
+    return { ok: true, ...viewportMetadata(metadata, null) };
   });
 
   ipcMain.handle("preview:design.set-inspect", async (event, payload: { enabled?: boolean }) => {

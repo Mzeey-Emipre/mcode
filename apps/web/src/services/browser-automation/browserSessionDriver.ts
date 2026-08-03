@@ -29,6 +29,7 @@ interface IdempotencyRecord {
 }
 
 interface ObservationRecord {
+  readonly invalidationGenerations: ReadonlyMap<string, number>;
   readonly hostRevision: number;
   readonly documentRevision: number;
   readonly controlRevision: number;
@@ -107,6 +108,7 @@ export class BrowserSessionDriver {
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly tabIdempotency = new Map<string, TabReplayRecord>();
   private readonly observations = new Map<string, ObservationRecord>();
+  private readonly observationInvalidationGenerations = new Map<string, number>();
   private readonly tabSessions = new Map<string, ProviderTabSession>();
   private readonly activeTabMutations = new Set<string>();
 
@@ -234,16 +236,32 @@ export class BrowserSessionDriver {
   clearIdempotency(): void {
     this.idempotency.clear();
     this.tabIdempotency.clear();
+    this.observationInvalidationGenerations.clear();
   }
 
   /** Clears replay state bound to one browser target after that target closes or is replaced. */
   clearIdempotencyForTarget(threadId: string, tabId: string): void {
+    this.invalidateObservationsForTarget(threadId, tabId);
     for (const [key, record] of this.idempotency) {
       if (record.target.threadId === threadId && record.target.tabId === tabId) this.idempotency.delete(key);
     }
     for (const session of this.tabSessions.values()) {
       if (session.current?.threadId === threadId && session.current.tabId === tabId) session.current = null;
       session.tabs.delete(tabId);
+    }
+  }
+
+  /** Invalidate Browser observations for a target without changing its control epoch. */
+  invalidateObservationsForTarget(threadId: string, tabId: string): void {
+    const targetKey = this.observationTargetKey(threadId, tabId);
+    this.observationInvalidationGenerations.set(
+      targetKey,
+      (this.observationInvalidationGenerations.get(targetKey) ?? 0) + 1,
+    );
+    for (const [observationRef, observation] of this.observations) {
+      if ([...observation.targets.values()].some((target) => target.threadId === threadId && target.tabId === tabId)) {
+        this.observations.delete(observationRef);
+      }
     }
   }
 
@@ -279,6 +297,7 @@ export class BrowserSessionDriver {
   ): Promise<BrowserAutomationResponse> {
     const drift = this.revisionDrift(dispatch);
     if (drift) return Promise.resolve(drift);
+    const observationAdmission = this.captureObservationInvalidationGenerations(dispatch);
     return (this.isElectron() ? this.options.electron : this.options.web).execute(dispatch, signal)
       .then(async (response) => {
         let normalized = this.withObservationRef(response);
@@ -291,7 +310,7 @@ export class BrowserSessionDriver {
             };
           }
         }
-        return this.rememberObservation(normalized, dispatch);
+        return this.rememberObservation(normalized, dispatch, observationAdmission);
       });
   }
 
@@ -311,6 +330,7 @@ export class BrowserSessionDriver {
       ...currentBinding,
       capabilityRevision,
       observationRevision: 0,
+      invalidationGenerations: this.captureObservationInvalidationGenerations(dispatch),
       targets: new Map([[dispatch.target.tabId, dispatch.target]]),
     };
     if (!observation || observation.hostRevision !== currentBinding.hostRevision || observation.documentRevision !== currentBinding.documentRevision || observation.controlRevision !== currentBinding.controlRevision || observation.capabilityRevision !== currentBinding.capabilityRevision) {
@@ -370,7 +390,7 @@ export class BrowserSessionDriver {
         capabilityRevision,
         observationRevision: baseObservation.observationRevision + 1,
       };
-      this.observations.set(nextObservationRef, { hostRevision: finalObservation.hostRevision, documentRevision: finalObservation.documentRevision, controlRevision: finalObservation.controlRevision, capabilityRevision, observationRevision: finalObservation.observationRevision, targets: baseObservation.targets });
+      this.observations.set(nextObservationRef, { invalidationGenerations: baseObservation.invalidationGenerations, hostRevision: finalObservation.hostRevision, documentRevision: finalObservation.documentRevision, controlRevision: finalObservation.controlRevision, capabilityRevision, observationRevision: finalObservation.observationRevision, targets: baseObservation.targets });
       return {
         contractVersion: request.contractVersion,
         requestId: request.requestId,
@@ -494,6 +514,7 @@ export class BrowserSessionDriver {
     const nextObservationRef = session.current ? globalThis.crypto.randomUUID() : undefined;
     if (session.current && nextObservationRef) {
       this.observations.set(nextObservationRef, {
+        invalidationGenerations: observation.invalidationGenerations,
         hostRevision: session.current.connectionGeneration,
         documentRevision: session.current.targetGeneration,
         controlRevision: dispatch.request.expectedControlEpoch,
@@ -536,19 +557,42 @@ export class BrowserSessionDriver {
     return { contractVersion: dispatch.request.contractVersion, requestId: dispatch.request.requestId, sequence: dispatch.request.sequence, ok: false, error: { code, message, retryable: false, stage: "observation", effect: "none", recovery: "inspect" } };
   }
 
-  private rememberObservation(response: BrowserAutomationResponse, dispatch: BrowserAutomationHostDispatch): BrowserAutomationResponse {
+  private rememberObservation(
+    response: BrowserAutomationResponse,
+    dispatch: BrowserAutomationHostDispatch,
+    admission: ReadonlyMap<string, number>,
+  ): BrowserAutomationResponse {
     if (!response.ok || !response.result) return response;
     const result = response.result as { observationRef?: string; tabs?: BrowserAutomationHostDispatchTarget[] };
     if (!result.observationRef) return response;
+    const targets = result.tabs ?? (dispatch.target ? [dispatch.target] : []);
+    if (targets.some((target) => !this.observationAdmissionStillCurrent(admission, target))) return response;
     this.observations.set(result.observationRef, {
+      invalidationGenerations: admission,
       hostRevision: dispatch.connection?.connectionGeneration ?? 0,
       documentRevision: dispatch.target.targetGeneration,
       controlRevision: dispatch.request.expectedControlEpoch,
       capabilityRevision: dispatch.connection?.capabilityRevision ?? this.options.getCapabilityRevision?.() ?? 1,
       observationRevision: 0,
-      targets: new Map((result.tabs ?? [dispatch.target]).map((target) => [target.tabId, target])),
+      targets: new Map(targets.map((target) => [target.tabId, target])),
     });
     return response;
+  }
+
+  private captureObservationInvalidationGenerations(dispatch: BrowserAutomationHostDispatch): ReadonlyMap<string, number> {
+    const snapshot = new Map(this.observationInvalidationGenerations);
+    if (!dispatch.target) return snapshot;
+    const targetKey = this.observationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+    if (!snapshot.has(targetKey)) snapshot.set(targetKey, 0);
+    return snapshot;
+  }
+
+  private observationAdmissionStillCurrent(
+    admission: ReadonlyMap<string, number>,
+    target: BrowserAutomationHostDispatchTarget,
+  ): boolean {
+    const targetKey = this.observationTargetKey(target.threadId, target.tabId);
+    return (admission.get(targetKey) ?? 0) === (this.observationInvalidationGenerations.get(targetKey) ?? 0);
   }
 
   private currentObservationBinding(dispatch: BrowserAutomationHostDispatch, capabilityRevision: number): Pick<ObservationRecord, "hostRevision" | "documentRevision" | "controlRevision" | "capabilityRevision"> {
@@ -562,7 +606,7 @@ export class BrowserSessionDriver {
 
   private observationStillCurrent(dispatch: BrowserAutomationHostDispatch, observation: ObservationRecord): boolean {
     const current = this.currentObservationBinding(dispatch, observation.capabilityRevision);
-    return current.hostRevision === observation.hostRevision && current.documentRevision === observation.documentRevision && current.controlRevision === observation.controlRevision && current.capabilityRevision === observation.capabilityRevision;
+    return current.hostRevision === observation.hostRevision && current.documentRevision === observation.documentRevision && current.controlRevision === observation.controlRevision && current.capabilityRevision === observation.capabilityRevision && this.observationAdmissionStillCurrent(observation.invalidationGenerations, dispatch.target);
   }
 
   private revisionDrift(dispatch: BrowserAutomationHostDispatch): BrowserAutomationResponse | null {
@@ -599,6 +643,10 @@ export class BrowserSessionDriver {
 
   private sessionKey(dispatch: BrowserAutomationHostDispatch): string {
     return JSON.stringify([dispatch.request.providerSessionId, dispatch.request.providerInstanceId]);
+  }
+
+  private observationTargetKey(threadId: string, tabId: string): string {
+    return JSON.stringify([threadId, tabId]);
   }
 
   private tabSession(dispatch: BrowserAutomationHostDispatch): ProviderTabSession {

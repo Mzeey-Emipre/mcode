@@ -4,11 +4,8 @@ import {
   ArrowRight,
   ArrowUpRight,
   Camera,
-  Bot,
-  Hand,
   PenTool,
   RotateCw,
-  Square,
 } from "lucide-react";
 import type { BrowserAutomationControllerState } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
@@ -85,7 +82,7 @@ export interface BrowserHeaderProps {
   readonly automationController?: BrowserAutomationControllerState | null;
   /** True while the active tab owns an in-flight browser operation. */
   readonly automationBusy?: boolean;
-  /** Stop only the active tab's browser operation. */
+  /** Transfer the active tab back to human control from the overflow menu. */
   readonly onStopAutomation?: () => void;
   /** Transfer browser control when the human focuses the omnibox. */
   readonly onHumanFocus?: () => void;
@@ -329,38 +326,7 @@ export function BrowserHeader({
         </div>
       </div>
 
-      {/* Right cluster: page actions (loaded) + the overflow kebab. */}
-      {automationController && automationController.controller !== "none" ? (
-        <div
-          className={cn(
-            "flex h-7 shrink-0 items-center gap-1 rounded-sm border px-1.5 text-[11px] font-medium",
-            automationController.controller === "agent"
-              ? "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-              : "border-border/60 bg-muted/50 text-muted-foreground",
-          )}
-          role="status"
-          aria-live="polite"
-          data-testid="browser-controller-badge"
-        >
-          {automationController.controller === "agent" ? (
-            <Bot size={13} aria-hidden />
-          ) : (
-            <Hand size={13} aria-hidden />
-          )}
-          <span>{automationController.controller === "agent" ? "Agent" : "You"}</span>
-          {automationController.controller === "agent" && automationBusy && onStopAutomation ? (
-            <button
-              type="button"
-              className="ml-0.5 inline-flex size-5 items-center justify-center rounded-sm text-current hover:bg-amber-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={onStopAutomation}
-              aria-label="Stop browser automation"
-              title="Stop browser automation"
-            >
-              <Square size={10} fill="currentColor" aria-hidden />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      {/* Right cluster: page actions (loaded) plus overflow tools. */}
       {hasLoadedPage ? (
         <>
           <Tooltip>
@@ -445,6 +411,9 @@ export function BrowserHeader({
         onToggleViewportToolbar={onToggleViewportToolbar}
         viewportToolbarVisible={viewportToolbarVisible}
         suppressPreviewForOverlays={suppressPreviewForOverlays}
+        automationController={automationController}
+        automationBusy={automationBusy}
+        onStopAutomation={onStopAutomation}
       />
     </div>
   );

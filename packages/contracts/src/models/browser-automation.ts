@@ -25,6 +25,8 @@ export const BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH = 1_280;
 export const BROWSER_AUTOMATION_MIN_VIEWPORT_PX = 240;
 /** Maximum CSS viewport dimension accepted by browser resize operations. */
 export const BROWSER_AUTOMATION_MAX_VIEWPORT_PX = 2_560;
+/** Total CSS-pixel inset reserved around a responsive viewport canvas frame. */
+export const BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX = 64;
 /** Bounded viewport operation metadata shared by renderer and native hosts. */
 const viewportOperationMetadataShape = {
   operationId: z.string().trim().min(1).max(256).optional(),

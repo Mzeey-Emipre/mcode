@@ -65,6 +65,12 @@ interface BrowserAutomationState {
     targetGeneration: number,
     size: { readonly width: number; readonly height: number },
   ) => boolean;
+  resetViewportIfCurrent: (
+    threadId: string,
+    tabId: string,
+    coordinator: ViewportCoordinator,
+    targetGeneration: number,
+  ) => boolean;
   setViewportState: (
     threadId: string,
     tabId: string,
@@ -309,6 +315,23 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
     });
     return applied;
   },
+  resetViewportIfCurrent: (threadId, tabId, coordinator, targetGeneration) => {
+    let reset = false;
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      const liveTarget = state.liveTargets.get(key);
+      if (
+        !liveTarget ||
+        liveTarget.revision !== targetGeneration ||
+        state.viewportCoordinators.get(key) !== coordinator
+      ) return state;
+      const viewportByTarget = new Map(state.viewportByTarget);
+      viewportByTarget.delete(key);
+      reset = true;
+      return { viewportByTarget };
+    });
+    return reset;
+  },
   setViewportState: (threadId, tabId, viewportState, coordinator) =>
     set((state) => {
       const key = browserAutomationTargetKey(threadId, tabId);
@@ -321,7 +344,9 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const viewportStateByTarget = new Map(state.viewportStateByTarget);
       viewportStateByTarget.set(key, viewportState);
       const viewportByTarget = new Map(state.viewportByTarget);
-      viewportByTarget.set(key, viewportState.confirmed);
+      if (viewportState.mode === "responsive" || viewportByTarget.has(key)) {
+        viewportByTarget.set(key, viewportState.confirmed);
+      }
       return { viewportStateByTarget, viewportByTarget };
     }),
   setViewportCoordinator: (threadId, tabId, coordinator) =>
@@ -331,9 +356,10 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const viewportCoordinators = new Map(state.viewportCoordinators);
       viewportCoordinators.set(key, coordinator);
       const viewportStateByTarget = new Map(state.viewportStateByTarget);
-      viewportStateByTarget.set(key, coordinator.snapshot());
+      const snapshot = coordinator.snapshot();
+      viewportStateByTarget.set(key, snapshot);
       const viewportByTarget = new Map(state.viewportByTarget);
-      viewportByTarget.set(key, coordinator.snapshot().confirmed);
+      viewportByTarget.set(key, snapshot.confirmed);
       return { viewportCoordinators, viewportStateByTarget, viewportByTarget };
     }),
   clearViewportCoordinator: (threadId, tabId) =>
@@ -357,6 +383,8 @@ type InterruptionListener = (
 ) => void;
 const interruptionListeners = new Set<InterruptionListener>();
 const pendingInterruptions = new Map<string, Promise<boolean>>();
+type ObservationInvalidationListener = (threadId: string, tabId: string) => void;
+const observationInvalidationListeners = new Set<ObservationInvalidationListener>();
 
 /** Identifies persistent automation surfaces that must be released. */
 export type BrowserAutomationScopeRelease =
@@ -388,6 +416,19 @@ export function releaseBrowserAutomationWorkspaceScopes(workspaceId: string): vo
 export function onBrowserAutomationInterruption(listener: InterruptionListener): () => void {
   interruptionListeners.add(listener);
   return () => interruptionListeners.delete(listener);
+}
+
+/** Subscribe the Browser host to cooperative observation invalidation events. */
+export function onBrowserAutomationObservationInvalidation(
+  listener: ObservationInvalidationListener,
+): () => void {
+  observationInvalidationListeners.add(listener);
+  return () => observationInvalidationListeners.delete(listener);
+}
+
+/** Invalidate observations for one target without interrupting its active request. */
+export function invalidateBrowserAutomationObservationTarget(threadId: string, tabId: string): void {
+  for (const listener of observationInvalidationListeners) listener(threadId, tabId);
 }
 
 /** Transfer one exact target to the human after desktop-main accepts takeover. */

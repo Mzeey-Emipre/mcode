@@ -4,6 +4,7 @@ import {
   Cookie,
   EllipsisVertical,
   FileText,
+  Hand,
   Minus,
   Plus,
   RotateCw,
@@ -11,6 +12,7 @@ import {
   SquareDashedMousePointer,
   Trash2,
 } from "lucide-react";
+import type { BrowserAutomationControllerState } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -53,6 +55,12 @@ export interface BrowserOverflowMenuProps {
   readonly viewportToolbarVisible?: boolean;
   /** Whether this menu must hide the native preview layer while open. */
   readonly suppressPreviewForOverlays?: boolean;
+  /** Current controller for the active visible Browser tab. */
+  readonly automationController?: BrowserAutomationControllerState | null;
+  /** True while the active tab owns an in-flight browser operation. */
+  readonly automationBusy?: boolean;
+  /** Transfer the active tab back to human control. */
+  readonly onStopAutomation?: () => void;
 }
 
 /**
@@ -81,6 +89,8 @@ export function BrowserOverflowMenu({
   onToggleViewportToolbar,
   viewportToolbarVisible = false,
   suppressPreviewForOverlays = true,
+  automationController = null,
+  onStopAutomation,
 }: BrowserOverflowMenuProps) {
   const [open, setOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -191,6 +201,15 @@ export function BrowserOverflowMenu({
             {viewportToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
           </span>
         </DropdownMenuItem>
+        {automationController?.controller === "agent" && onStopAutomation ? (
+          <DropdownMenuItem
+            className="gap-2 px-3 py-1.5 text-xs"
+            onClick={onStopAutomation}
+          >
+            <Hand size={14} className="text-muted-foreground" aria-hidden />
+            Take control
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         {/* Zoom is a control row, not a closeable menu item: a plain div keeps
             the popup open so −/+ can be tapped repeatedly without dismissing it,

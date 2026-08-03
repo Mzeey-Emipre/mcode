@@ -179,7 +179,11 @@ vi.mock("node:fs/promises", async () => {
 
 import { BrowserWindow } from "electron";
 import { registerPreviewBrowserHandlers, disposePreviewForWindow } from "../preview/index.js";
-import { sessions } from "../preview/preview-session.js";
+import {
+  sessions,
+  viewportBoundsForTarget,
+  type PreviewSession,
+} from "../preview/preview-session.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -306,6 +310,21 @@ it("denies clipboard permissions and downloads in the preview partition", () => 
 // ---------------------------------------------------------------------------
 
 describe("preview-browser", () => {
+  describe("viewport presentation geometry", () => {
+    it("fits native presentation inside the shared responsive canvas inset", () => {
+      const session = {
+        viewportAppliedByTarget: new Map([[JSON.stringify(["thread", "tab"]), { width: 1_200, height: 800 }]]),
+        viewportPresentationByTarget: new Map([[JSON.stringify(["thread", "tab"]), "fit"]]),
+      } as PreviewSession;
+
+      expect(viewportBoundsForTarget(session, { x: 100, y: 100, width: 800, height: 600 }, "thread", "tab"))
+        .toEqual({
+          bounds: { x: 132, y: 154, width: 736, height: 491 },
+          scale: 736 / 1_200,
+        });
+    });
+  });
+
   describe("host shortcut forwarding", () => {
     it("reserves only the platform navigation chords from the preview guest", async () => {
       const cases = [
@@ -1735,12 +1754,12 @@ describe("preview-browser", () => {
       });
       expect(result).toMatchObject({ ok: true, data: { width: 393, height: 852 } });
       expect(view.setBounds).toHaveBeenCalledWith(
-        { x: 361, y: 100, width: 277, height: 600 },
+        { x: 376, y: 132, width: 247, height: 536 },
       );
       expect(view.webContents.enableDeviceEmulation).toHaveBeenCalledWith(expect.objectContaining({
         viewSize: { width: 393, height: 852 },
         screenSize: { width: 393, height: 852 },
-        scale: 600 / 852,
+        scale: 536 / 852,
       }));
     });
 
@@ -1798,12 +1817,12 @@ describe("preview-browser", () => {
       });
       expect(result).toMatchObject({ ok: true, data: { width: 2_560, height: 2_560 } });
       expect(view.setBounds).toHaveBeenCalledWith(
-        { x: 200, y: 100, width: 600, height: 600 },
+        { x: 232, y: 132, width: 536, height: 536 },
       );
       expect(view.webContents.enableDeviceEmulation).toHaveBeenCalledWith(expect.objectContaining({
         viewSize: { width: 2_560, height: 2_560 },
         screenSize: { width: 2_560, height: 2_560 },
-        scale: 600 / 2_560,
+        scale: 536 / 2_560,
       }));
     });
 
@@ -1887,13 +1906,13 @@ describe("preview-browser", () => {
       expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
         viewSize: { width: 1_200, height: 800 },
         screenSize: { width: 1_200, height: 800 },
-        scale: 0.5,
+        scale: 0.42,
       }));
       expect(view.setBounds).toHaveBeenLastCalledWith({
-        x: 100,
-        y: 100,
-        width: 600,
-        height: 400,
+        x: 148,
+        y: 132,
+        width: 504,
+        height: 336,
       });
     });
 
@@ -1932,13 +1951,13 @@ describe("preview-browser", () => {
       expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
         viewSize: { width: 1_200, height: 800 },
         screenSize: { width: 1_200, height: 800 },
-        scale: 2 / 3,
+        scale: 736 / 1_200,
       }));
       expect(view.setBounds).toHaveBeenLastCalledWith({
-        x: 100,
-        y: 133,
-        width: 800,
-        height: 533,
+        x: 132,
+        y: 154,
+        width: 736,
+        height: 491,
       });
 
       const actual = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
@@ -2005,7 +2024,7 @@ describe("preview-browser", () => {
       });
       view.setBounds.mockClear();
       const reset = await ipcHandlers["preview:design.reset-viewport"]!(fakeEvent(win), {});
-      expect(reset).toEqual({ ok: true });
+      expect(reset).toMatchObject({ ok: true, appliedViewport: null });
       expect(view.setBounds).toHaveBeenCalledWith(VALID_BOUNDS);
     });
 

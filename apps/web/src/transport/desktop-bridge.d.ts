@@ -290,7 +290,33 @@ interface PreviewDesignBridge {
   setPresentation(
     payload: BrowserAutomationViewportPresentationRequest,
   ): Promise<BrowserAutomationViewportPresentationResult>;
-  resetViewport(): Promise<{ ok: true } | { ok: false; error: string }>;
+  resetViewport(payload?: {
+    operationId?: string;
+    source?: "user" | "agent";
+    targetGeneration?: number;
+    threadId?: string;
+    tabId?: string;
+  }): Promise<
+    | {
+        ok: true;
+        appliedViewport: { width: number; height: number } | null;
+        operationId?: string;
+        source?: "user" | "agent";
+        targetGeneration?: number;
+        threadId?: string;
+        tabId?: string;
+      }
+    | {
+        ok: false;
+        error: string;
+        appliedViewport?: { width: number; height: number } | null;
+        operationId?: string;
+        source?: "user" | "agent";
+        targetGeneration?: number;
+        threadId?: string;
+        tabId?: string;
+      }
+  >;
   setInspect(
     enabled: boolean,
   ): Promise<{ ok: true } | { ok: false; error: string }>;

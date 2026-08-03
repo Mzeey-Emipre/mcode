@@ -121,4 +121,63 @@ describe("viewport coordinator factory", () => {
       presentationError: "Browser presentation host acknowledgement is stale",
     });
   });
+
+  it("routes user-owned Responsive and Regular transitions through the native host", async () => {
+    const setViewport = vi.fn(async (payload: {
+      readonly widthOverride: number;
+      readonly heightOverride: number;
+      readonly operationId: string;
+      readonly source: "user" | "agent";
+      readonly targetGeneration: number;
+    }) => ({
+      ok: true as const,
+      data: { width: payload.widthOverride, height: payload.heightOverride },
+      appliedViewport: { width: payload.widthOverride, height: payload.heightOverride },
+      operationId: payload.operationId,
+      source: payload.source,
+      targetGeneration: payload.targetGeneration,
+    }));
+    const resetViewport = vi.fn(async (payload: {
+      readonly operationId: string;
+      readonly source: "user" | "agent";
+      readonly targetGeneration: number;
+    }) => ({
+      ok: true as const,
+      appliedViewport: null,
+      operationId: payload.operationId,
+      source: payload.source,
+      targetGeneration: payload.targetGeneration,
+    }));
+    const coordinator = createViewportCoordinator({
+      target: { threadId: "thread-1", tabId: "tab-1" },
+      targetGeneration: 5,
+      initial: { width: 960, height: 640 },
+      nativeHost: () => ({
+        setViewport,
+        setPresentation: vi.fn(),
+        resetViewport,
+      }),
+    });
+
+    const responsive = await coordinator.requestUserMode("responsive");
+    expect(responsive).toMatchObject({ status: "applied", requested: { width: 960, height: 640 } });
+    expect(setViewport).toHaveBeenCalledWith(expect.objectContaining({
+      widthOverride: 960,
+      heightOverride: 640,
+      source: "user",
+      targetGeneration: 5,
+      threadId: "thread-1",
+      tabId: "tab-1",
+    }));
+
+    const regular = await coordinator.requestUserMode("regular");
+    expect(regular).toMatchObject({ status: "applied" });
+    expect(resetViewport).toHaveBeenCalledWith(expect.objectContaining({
+      source: "user",
+      targetGeneration: 5,
+      threadId: "thread-1",
+      tabId: "tab-1",
+    }));
+    expect(coordinator.snapshot().mode).toBe("regular");
+  });
 });

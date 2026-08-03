@@ -250,6 +250,40 @@ describe("browser automation renderer scope", () => {
     store.unregisterTarget(threadId, tabId);
   });
 
+  it("clears a current renderer viewport when Regular mode resets the host", () => {
+    const workspaceId = "workspace-viewport-reset";
+    const threadId = "thread-viewport-reset";
+    const tabId = "tab-viewport-reset";
+    const key = browserAutomationTargetKey(threadId, tabId);
+    const store = useBrowserAutomationStore.getState();
+    store.unregisterTarget(threadId, tabId);
+    store.registerTarget(workspaceId, threadId, tabId);
+    const target = useBrowserAutomationStore.getState().liveTargets.get(key)!;
+    const coordinator = new ViewportCoordinator({
+      initial: { width: 960, height: 640 },
+      targetGeneration: target.revision,
+      apply: async (operation) => ({ status: "applied", applied: operation.requested }),
+    });
+    store.setViewportCoordinator(threadId, tabId, coordinator);
+    store.applyViewportIfCurrent(threadId, tabId, coordinator, target.revision, {
+      width: 960,
+      height: 640,
+    });
+
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({
+      width: 960,
+      height: 640,
+    });
+    expect(store.resetViewportIfCurrent(threadId, tabId, coordinator, target.revision)).toBe(true);
+    store.setViewportState(threadId, tabId, {
+      ...coordinator.snapshot(),
+      mode: "regular",
+    }, coordinator);
+    expect(useBrowserAutomationStore.getState().viewportByTarget.has(key)).toBe(false);
+
+    store.unregisterTarget(threadId, tabId);
+  });
+
   it("routes authoritative thread and workspace cleanup to exact host scopes", () => {
     const listener = vi.fn();
     const unsubscribe = onBrowserAutomationScopeRelease(listener);

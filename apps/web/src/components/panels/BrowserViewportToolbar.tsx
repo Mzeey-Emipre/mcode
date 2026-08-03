@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RotateCw, X } from "lucide-react";
+import { Check, ChevronDown, RotateCw, Smartphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,6 +13,7 @@ import {
   VIEWPORT_PRESETS,
   ViewportCoordinator,
   type ViewportCoordinatorState,
+  type ViewportPresentation,
   type ViewportSize,
 } from "@/services/browser-automation/viewportCoordinator";
 
@@ -21,6 +22,7 @@ export interface BrowserViewportToolbarProps {
   readonly coordinator: ViewportCoordinator;
   readonly state: ViewportCoordinatorState;
   readonly onClose: () => void;
+  readonly scale?: number;
 }
 
 function parseDimension(value: string): number | null {
@@ -28,29 +30,37 @@ function parseDimension(value: string): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-/** Compact Variant B toolbar for Regular/Responsive viewport controls. */
+function sameSize(left: ViewportSize, right: ViewportSize): boolean {
+  return left.width === right.width && left.height === right.height;
+}
+
+/** Compact Variant B toolbar for responsive viewport controls. */
 export function BrowserViewportToolbar({
   coordinator,
   state,
   onClose,
+  scale = 1,
 }: BrowserViewportToolbarProps) {
   const requested = state.pending?.requested ?? state.confirmed;
   const [width, setWidth] = useState(String(requested.width));
   const [height, setHeight] = useState(String(requested.height));
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [scaleOpen, setScaleOpen] = useState(false);
 
   useEffect(() => {
     setWidth(String(requested.width));
     setHeight(String(requested.height));
   }, [requested.height, requested.width]);
 
-  const submitSize = (size: ViewportSize) => {
-    coordinator.setMode("responsive");
-    void coordinator.requestUserResize(size);
-  };
+  const selectedPreset = state.mode === "responsive"
+    ? VIEWPORT_PRESETS.find((preset) => sameSize(preset, requested))
+    : undefined;
+  const isLandscape = state.mode === "responsive" && requested.width > requested.height;
+  const scaleLabel = `${Math.round(scale * 100)}%`;
 
-  const setRegular = () => {
-    coordinator.setMode("regular");
-    void window.desktopBridge?.preview?.design?.resetViewport();
+  const submitSize = (size: ViewportSize) => {
+    coordinator.setUserMode("responsive");
+    void coordinator.requestUserResize(size);
   };
 
   const submitInputs = () => {
@@ -64,53 +74,56 @@ export function BrowserViewportToolbar({
     submitSize({ width: nextWidth, height: nextHeight });
   };
 
+  const setPresentation = (presentation: ViewportPresentation) => {
+    void coordinator.setPresentation(presentation);
+  };
+
   return (
     <div
       data-testid="browser-viewport-toolbar"
-      className="flex min-w-0 flex-none flex-wrap items-center gap-1.5 overflow-hidden border-t border-border/40 bg-background px-2 py-1.5 text-xs"
+      className="@container flex h-11 min-w-0 flex-none items-center gap-1 overflow-hidden border-t border-border/40 bg-background px-2 py-1.5 text-xs @max-[520px]:gap-0.5 @max-[520px]:px-1"
       aria-label="Browser viewport controls"
     >
-      <div className="flex shrink-0 items-center rounded-md border border-border/60 p-0.5">
-        <Button
-          type="button"
-          size="xs"
-          variant={state.mode === "regular" ? "secondary" : "ghost"}
-          onClick={setRegular}
-          aria-pressed={state.mode === "regular"}
-        >
-          Regular
-        </Button>
-        <Button
-          type="button"
-          size="xs"
-          variant={state.mode === "responsive" ? "secondary" : "ghost"}
-          onClick={() => coordinator.setMode("responsive")}
-          aria-pressed={state.mode === "responsive"}
-        >
-          Responsive
-        </Button>
-      </div>
-      <DropdownMenu>
+      <DropdownMenu open={presetOpen} onOpenChange={setPresetOpen}>
         <DropdownMenuTrigger
           render={
-            <Button type="button" size="xs" variant="outline" className="shrink-0">
-              Presets
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="min-w-0 max-w-40 shrink-0 justify-between gap-1 px-2 @max-[520px]:max-w-16 @max-[520px]:px-1"
+              aria-label="Viewport preset"
+              onClick={() => setPresetOpen((open) => !open)}
+            >
+              <span className="truncate">{selectedPreset?.label ?? "Responsive"}</span>
+              <ChevronDown size={13} aria-hidden />
             </Button>
           }
         />
-        <DropdownMenuContent align="start" className="min-w-[170px]">
+        <DropdownMenuContent align="start" className="min-w-[210px]">
+          <DropdownMenuItem
+            className="justify-between gap-3 text-xs"
+            onClick={() => { void coordinator.requestUserMode("responsive"); }}
+          >
+            <span>Responsive</span>
+            {!selectedPreset && <Check size={14} aria-hidden />}
+          </DropdownMenuItem>
           {VIEWPORT_PRESETS.map((preset) => (
             <DropdownMenuItem
               key={preset.id}
               className="justify-between gap-3 text-xs"
               onClick={() => submitSize(preset)}
             >
-              <span>{preset.label}</span>
+              <span className="min-w-0 truncate">{preset.label}</span>
+              <span className="shrink-0 font-mono text-muted-foreground">
+                {`${preset.width} × ${preset.height}`}
+              </span>
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      <div className="flex shrink-0 items-center gap-1">
+
+      <div className="flex min-w-0 shrink-0 items-center gap-1 @max-[520px]:gap-0.5">
         <label className="sr-only" htmlFor="browser-viewport-width">Viewport width</label>
         <Input
           id="browser-viewport-width"
@@ -122,7 +135,7 @@ export function BrowserViewportToolbar({
             if (event.key === "Enter") submitInputs();
           }}
           aria-label="Viewport width"
-          className="w-16 font-mono text-xs"
+          className="h-7 w-14 px-1.5 font-mono text-xs @max-[520px]:w-10 @max-[520px]:px-1"
         />
         <span className="text-muted-foreground" aria-hidden>×</span>
         <label className="sr-only" htmlFor="browser-viewport-height">Viewport height</label>
@@ -136,44 +149,64 @@ export function BrowserViewportToolbar({
             if (event.key === "Enter") submitInputs();
           }}
           aria-label="Viewport height"
-          className="w-16 font-mono text-xs"
+          className="h-7 w-14 px-1.5 font-mono text-xs @max-[520px]:w-10 @max-[520px]:px-1"
         />
       </div>
+
       <Button
         type="button"
         size="icon-xs"
         variant="ghost"
+        className="@max-[520px]:size-7"
         onClick={() => submitSize({ width: requested.height, height: requested.width })}
-        aria-label="Rotate viewport"
-        title="Rotate viewport"
+        aria-label={isLandscape ? "Rotate viewport to portrait" : "Rotate viewport to landscape"}
+        title={isLandscape ? "Rotate viewport to portrait" : "Rotate viewport to landscape"}
       >
-        <RotateCw size={14} aria-hidden />
+        <span className="relative inline-flex size-4 items-center justify-center">
+          <Smartphone className={cn("size-3.5 transition-transform", isLandscape && "rotate-90")} aria-hidden />
+          <RotateCw className="absolute -right-1 -bottom-1 size-2.5" aria-hidden />
+        </span>
       </Button>
-      <div className="flex shrink-0 items-center rounded-md border border-border/60 p-0.5">
-        <Button
-          type="button"
-          size="xs"
-          variant={state.presentation === "fit" ? "secondary" : "ghost"}
-          onClick={() => coordinator.setPresentation("fit")}
-          aria-pressed={state.presentation === "fit"}
-        >
-          Fit
-        </Button>
-        <Button
-          type="button"
-          size="xs"
-          variant={state.presentation === "actual" ? "secondary" : "ghost"}
-          onClick={() => coordinator.setPresentation("actual")}
-          aria-pressed={state.presentation === "actual"}
-        >
-          Actual
-        </Button>
-      </div>
+
+      <DropdownMenu open={scaleOpen} onOpenChange={setScaleOpen}>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="min-w-0 shrink-0 gap-1 px-2 @max-[520px]:max-w-12 @max-[520px]:px-1"
+              aria-label="Viewport scale and presentation"
+              onClick={() => setScaleOpen((open) => !open)}
+            >
+              {scaleLabel}
+              <ChevronDown size={13} aria-hidden />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="end" className="min-w-[150px]">
+          <DropdownMenuItem
+            className="justify-between gap-3 text-xs"
+            onClick={() => setPresentation("fit")}
+          >
+            <span>Fit to panel</span>
+            {state.presentation === "fit" && <Check size={14} aria-hidden />}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="justify-between gap-3 text-xs"
+            onClick={() => setPresentation("actual")}
+          >
+            <span>Actual size</span>
+            {state.presentation === "actual" && <Check size={14} aria-hidden />}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       <Button
         type="button"
         size="icon-xs"
         variant="ghost"
-        className={cn("ml-auto shrink-0")}
+        className="ml-auto shrink-0 @max-[520px]:ml-0 @max-[520px]:size-7"
         onClick={onClose}
         aria-label="Close viewport toolbar"
         title="Close viewport toolbar"

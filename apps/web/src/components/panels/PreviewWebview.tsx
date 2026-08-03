@@ -7,7 +7,7 @@ import {
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
 import {
-  interruptBrowserAutomationTarget,
+  invalidateBrowserAutomationObservationTarget,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 import {
@@ -146,7 +146,8 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     const coordinator = getOrCreateViewportCoordinator({
       existing: useBrowserAutomationStore.getState().viewportCoordinators.get(key),
       target: { threadId, tabId },
-      initial: useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? initialViewportRef.current,
+      initial: useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
+        useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? initialViewportRef.current,
       presentation: useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.presentation,
       targetGeneration,
       nativeHost: () => window.desktopBridge?.preview?.design,
@@ -158,6 +159,13 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           operation.targetGeneration,
           size,
         ),
+        resetViewport: (operation, coordinator) =>
+          useBrowserAutomationStore.getState().resetViewportIfCurrent(
+            threadId,
+            tabId,
+            coordinator,
+            operation.targetGeneration,
+          ),
         readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
         waitForLayout: waitForViewportLayout,
         isCurrent: (operation, coordinator) => {
@@ -166,7 +174,9 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
             current.liveTargets.get(key)?.revision === operation.targetGeneration;
         },
       },
-      readConfirmed: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+      readConfirmed: () =>
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
+        useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
       onStateChange: (state, coordinator) => useBrowserAutomationStore.getState().setViewportState(
         threadId,
         tabId,
@@ -444,7 +454,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       if (!message || typeof message !== "object" || Array.isArray(message)) return;
       const kind = (message as { kind?: unknown }).kind;
       if (typeof kind !== "string" || !HUMAN_INPUT_KINDS.has(kind)) return;
-      interruptBrowserAutomationTarget(threadId, tabId, "human-interrupted");
+      invalidateBrowserAutomationObservationTarget(threadId, tabId);
     };
     el.addEventListener("did-start-loading", onStart);
     el.addEventListener("dom-ready", onDomReady);

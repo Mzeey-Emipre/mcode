@@ -11,6 +11,35 @@ import type {
   BrowserAutomationViewportPresentationResult,
 } from "@mcode/contracts";
 
+type BrowserAutomationViewportResetPayload = {
+  operationId?: string;
+  source?: "user" | "agent";
+  targetGeneration?: number;
+  threadId?: string;
+  tabId?: string;
+};
+
+type BrowserAutomationViewportResetResult =
+  | {
+      ok: true;
+      appliedViewport: { width: number; height: number } | null;
+      operationId?: string;
+      source?: "user" | "agent";
+      targetGeneration?: number;
+      threadId?: string;
+      tabId?: string;
+    }
+  | {
+      ok: false;
+      error: string;
+      appliedViewport?: { width: number; height: number } | null;
+      operationId?: string;
+      source?: "user" | "agent";
+      targetGeneration?: number;
+      threadId?: string;
+      tabId?: string;
+    };
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Platform facts and allowlisted native window actions for the custom title bar. */
   window: {
@@ -395,8 +424,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ): Promise<BrowserAutomationViewportPresentationResult> {
         return ipcRenderer.invoke("preview:design.set-presentation", payload);
       },
-      resetViewport(): Promise<unknown> {
-        return ipcRenderer.invoke("preview:design.reset-viewport");
+      resetViewport(
+        payload?: BrowserAutomationViewportResetPayload,
+      ): Promise<BrowserAutomationViewportResetResult> {
+        return ipcRenderer.invoke("preview:design.reset-viewport", payload);
       },
       setInspect(enabled: boolean): Promise<unknown> {
         return ipcRenderer.invoke("preview:design.set-inspect", { enabled });

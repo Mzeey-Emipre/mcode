@@ -1965,7 +1965,7 @@ describe("BrowserAutomationHost", () => {
     frame.remove();
   });
 
-  it("cancels the exact web request on direct pointer takeover before click mutation", async () => {
+  it("invalidates observation on cooperative pointer input without interrupting the request", async () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     delete window.desktopBridge;
     const frame = document.createElement("iframe");
@@ -1986,10 +1986,16 @@ describe("BrowserAutomationHost", () => {
     clickDispatch.request = { ...clickDispatch.request, operation: "click", args: { target: { cssSelector: "#save" }, button: "left", clickCount: 1, timeoutMs: 1000 } } as never;
     frameDocument.addEventListener("mousedown", () => frameDocument.dispatchEvent(new frameDocument.defaultView!.Event("pointerdown", { bubbles: true })), true);
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: clickDispatch }));
-    await waitFor(() => expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(hostId, 1, clickDispatch.request.requestId, clickDispatch.request.sequence, "human-interrupted"));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests.size).toBe(0));
-    expect(clicked).not.toHaveBeenCalled();
-    expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
+    expect(clicked).toHaveBeenCalledOnce();
+    expect(harness.transport.cancelBrowserAutomationRequest).not.toHaveBeenCalled();
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: true, result: expect.objectContaining({ operation: "click" }) }),
+      clickDispatch.target,
+    );
     view.unmount();
     frame.remove();
   });

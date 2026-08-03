@@ -12,6 +12,7 @@ import type {
   McodeBrowserCaptureV2,
   PreviewPageStatus,
 } from "@mcode/contracts";
+import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts";
 import {
   pageStatusReducer,
   initialPageStatus,
@@ -265,9 +266,11 @@ export function viewportBoundsForTarget(
   const viewport = s.viewportAppliedByTarget.get(key);
   if (!viewport) return { bounds: panel, scale: 1 };
   const presentation = s.viewportPresentationByTarget.get(key) ?? "fit";
+  const fitWidth = Math.max(0, panel.width - BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX);
+  const fitHeight = Math.max(0, panel.height - BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX);
   const rawScale = presentation === "actual"
     ? 1
-    : Math.min(panel.width / viewport.width, panel.height / viewport.height);
+    : Math.min(fitWidth / viewport.width, fitHeight / viewport.height);
   const scale = presentation === "actual"
     ? 1
     : Math.min(1.25, Math.max(0.2, Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 0.2));

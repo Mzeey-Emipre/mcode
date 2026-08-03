@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 
+import { onBrowserAutomationObservationInvalidation } from "@/stores/browserAutomationStore";
 import { PreviewWebview, type PreviewWebviewHandle } from "../PreviewWebview";
 
 describe("PreviewWebview", () => {
@@ -44,11 +45,13 @@ describe("PreviewWebview", () => {
     delete window.desktopBridge;
   });
 
-  it("transfers exact tab control only for the trusted guest input channel", () => {
+  it("invalidates exact tab observations only for the trusted guest input channel", () => {
     const interrupt = vi.fn().mockResolvedValue(true);
+    const invalidate = vi.fn();
     window.desktopBridge = {
       preview: { automation: { interrupt } },
     } as unknown as NonNullable<typeof window.desktopBridge>;
+    const unsubscribe = onBrowserAutomationObservationInvalidation(invalidate);
     render(
       <PreviewWebview
         workspaceId="workspace-1"
@@ -74,8 +77,10 @@ describe("PreviewWebview", () => {
       channel: "untrusted-channel",
       args: [{ kind: "pointer" }],
     }));
-    expect(interrupt).toHaveBeenCalledOnce();
-    expect(interrupt).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
+    unsubscribe();
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(invalidate).toHaveBeenCalledWith("thread-1", "tab-1");
+    expect(interrupt).not.toHaveBeenCalled();
   });
 
   it("does not call Electron navigation methods before dom-ready", async () => {

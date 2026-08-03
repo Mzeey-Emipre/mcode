@@ -424,6 +424,7 @@ export {
   BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS,
   BROWSER_AUTOMATION_MIN_VIEWPORT_PX,
   BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+  BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX,
   BrowserAutomationViewportRequestSchema,
   BrowserAutomationViewportResultSchema,
   BrowserAutomationViewportPresentationRequestSchema,

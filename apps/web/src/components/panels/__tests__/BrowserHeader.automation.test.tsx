@@ -39,7 +39,7 @@ function renderHeader(overrides: Partial<BrowserHeaderProps> = {}) {
 }
 
 describe("BrowserHeader automation controls", () => {
-  it("shows agent control and stops only through the browser-local action", async () => {
+  it("keeps takeover in overflow instead of the header badge", async () => {
     const user = userEvent.setup();
     const onStopAutomation = vi.fn();
     renderHeader({
@@ -53,8 +53,27 @@ describe("BrowserHeader automation controls", () => {
       automationBusy: true,
       onStopAutomation,
     });
-    expect(screen.getByTestId("browser-controller-badge")).toHaveTextContent("Agent");
-    await user.click(screen.getByRole("button", { name: "Stop browser automation" }));
+    expect(screen.queryByTestId("browser-controller-badge")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    await user.click(await screen.findByText("Take control"));
+    expect(onStopAutomation).toHaveBeenCalledOnce();
+  });
+
+  it("keeps takeover available while an agent-owned tab is idle", async () => {
+    const user = userEvent.setup();
+    const onStopAutomation = vi.fn();
+    renderHeader({
+      automationController: {
+        tabId: "tab-1",
+        controller: "agent",
+        controlEpoch: 1,
+      },
+      automationBusy: false,
+      onStopAutomation,
+    });
+
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    await user.click(await screen.findByText("Take control"));
     expect(onStopAutomation).toHaveBeenCalledOnce();
   });
 

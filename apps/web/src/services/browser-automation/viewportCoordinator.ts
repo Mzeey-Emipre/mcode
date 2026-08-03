@@ -47,10 +47,25 @@ export interface ViewportHostOperation {
   readonly requested: ViewportSize;
 }
 
+/** One reset submitted to the active rendering host when Regular mode owns the target. */
+export interface ViewportHostResetOperation {
+  readonly operationId: string;
+  readonly source: ViewportSource;
+  readonly targetGeneration: number;
+  readonly requested: ViewportSize;
+}
+
 /** Host outcome returned after it has applied, rejected, or superseded an operation. */
 export interface ViewportHostResult {
   readonly status: "applied" | "stale" | "failed";
   readonly applied: ViewportSize;
+  readonly error?: string;
+}
+
+/** Host outcome returned after it removes an explicit responsive viewport. */
+export interface ViewportHostResetResult {
+  readonly status: "applied" | "stale" | "failed";
+  readonly applied: ViewportSize | null;
   readonly error?: string;
 }
 
@@ -102,6 +117,7 @@ export interface ViewportCoordinatorState {
   readonly userConfirmed: ViewportSize;
   readonly targetGeneration: number;
   readonly pending: ViewportHostOperation | null;
+  readonly pendingReset: ViewportHostResetOperation | null;
   readonly pendingPresentation: ViewportPresentationHostOperation | null;
   readonly presentationError: string | null;
   readonly agentActive: boolean;
@@ -122,6 +138,7 @@ export interface ViewportCanvasBounds {
 /** Host contract used by one coordinator instance. */
 export interface ViewportHost {
   apply(operation: ViewportHostOperation): Promise<ViewportHostResult>;
+  reset?(operation: ViewportHostResetOperation): Promise<ViewportHostResetResult>;
   applyPresentation?(
     operation: ViewportPresentationHostOperation,
   ): Promise<ViewportPresentationHostResult>;
@@ -130,6 +147,7 @@ export interface ViewportHost {
 /** Options for creating a viewport coordinator. */
 export interface ViewportCoordinatorOptions {
   readonly apply: ViewportHost["apply"];
+  readonly reset?: NonNullable<ViewportHost["reset"]>;
   readonly initial?: ViewportSize;
   readonly targetGeneration?: number;
   readonly mode?: ViewportMode;
@@ -181,6 +199,12 @@ interface PendingOperation {
   settled: boolean;
 }
 
+interface PendingResetOperation {
+  readonly operation: ViewportHostResetOperation;
+  resolve: (result: ViewportApplyResult) => void;
+  settled: boolean;
+}
+
 interface PendingPresentationOperation {
   readonly operation: ViewportPresentationHostOperation;
   resolve: (result: ViewportPresentationApplyResult) => void;
@@ -195,6 +219,7 @@ interface PendingPresentationOperation {
  */
 export class ViewportCoordinator {
   private readonly applyHost: ViewportHost["apply"];
+  private readonly resetHost: ViewportCoordinatorOptions["reset"];
   private readonly applyPresentationHost: ViewportCoordinatorOptions["applyPresentation"];
   private readonly operationIdFactory: NonNullable<ViewportCoordinatorOptions["operationId"]>;
   private confirmed: ViewportSize;
@@ -204,9 +229,11 @@ export class ViewportCoordinator {
   private presentation: ViewportPresentation;
   private targetGeneration: number;
   private pending: PendingOperation | null = null;
+  private pendingReset: PendingResetOperation | null = null;
   private pendingPresentation: PendingPresentationOperation | null = null;
   private presentationError: string | null = null;
   private superseded: PendingOperation[] = [];
+  private supersededResets: PendingResetOperation[] = [];
   private sequence = 0;
   private agentActive = false;
   private interrupted = false;
@@ -216,6 +243,7 @@ export class ViewportCoordinator {
   public constructor(options: ViewportCoordinatorOptions) {
     const initial = clampViewportSize(options.initial ?? DEFAULT_VIEWPORT_SIZE);
     this.applyHost = options.apply;
+    this.resetHost = options.reset;
     this.applyPresentationHost = options.applyPresentation;
     this.operationIdFactory = options.operationId ?? ((operation, sequence) =>
       `${operation.source}:${operation.targetGeneration}:${sequence}`);
@@ -243,6 +271,7 @@ export class ViewportCoordinator {
       userConfirmed: { ...this.userConfirmed },
       targetGeneration: this.targetGeneration,
       pending: this.pending ? { ...this.pending.operation, requested: { ...this.pending.requested } } : null,
+      pendingReset: this.pendingReset ? { ...this.pendingReset.operation, requested: { ...this.pendingReset.operation.requested } } : null,
       pendingPresentation: this.pendingPresentation
         ? { ...this.pendingPresentation.operation, requested: { ...this.pendingPresentation.operation.requested } }
         : null,
@@ -256,6 +285,21 @@ export class ViewportCoordinator {
     this.mode = mode;
     if (!this.agentActive) this.userMode = mode;
     return this.notify();
+  }
+
+  /** Select a user-owned mode while preserving any active agent control. */
+  public setUserMode(mode: ViewportMode): ViewportCoordinatorState {
+    this.mode = mode;
+    this.userMode = mode;
+    return this.notify();
+  }
+
+  /** Select a user-owned mode and reconcile the active host with that choice. */
+  public requestUserMode(mode: ViewportMode): Promise<ViewportApplyResult | null> {
+    if (mode === "responsive" && this.mode === "responsive") return Promise.resolve(null);
+    this.setUserMode(mode);
+    if (mode === "responsive") return this.requestResize("user", this.userConfirmed, {});
+    return this.requestReset("user", {});
   }
 
   /** Change Fit or Actual presentation after the active host confirms the request. */
@@ -308,6 +352,7 @@ export class ViewportCoordinator {
     this.targetGeneration = nextGeneration;
     this.interrupted = true;
     this.settlePending("stale");
+    this.settlePendingReset("stale");
     this.settlePendingPresentation("stale");
     this.flushSuperseded("stale");
     this.agentActive = false;
@@ -319,7 +364,7 @@ export class ViewportCoordinator {
     size: ViewportSize,
     identity: ViewportOperationIdentity = {},
   ): Promise<ViewportApplyResult> {
-    this.agentActive = false;
+    this.userMode = this.mode;
     this.interrupted = false;
     return this.requestResize("user", size, identity);
   }
@@ -350,6 +395,7 @@ export class ViewportCoordinator {
     this.agentActive = false;
     this.mode = this.userMode;
     this.notify();
+    if (this.userMode === "regular") return this.requestReset("user", {});
     if (sameSize(this.confirmed, this.userConfirmed)) return Promise.resolve(null);
     return this.requestResize("user", this.userConfirmed, {});
   }
@@ -359,6 +405,7 @@ export class ViewportCoordinator {
     this.interrupted = true;
     this.agentActive = false;
     this.settlePending("stale");
+    this.settlePendingReset("stale");
     this.settlePendingPresentation("stale");
     this.flushSuperseded("stale");
     this.notify();
@@ -381,6 +428,7 @@ export class ViewportCoordinator {
     };
 
     this.settlePending("superseded");
+    this.settlePendingReset("superseded");
     return new Promise<ViewportApplyResult>((resolve) => {
       const pending: PendingOperation = {
         operation,
@@ -393,6 +441,46 @@ export class ViewportCoordinator {
       this.pending = pending;
       this.notify();
       void this.apply(pending);
+    });
+  }
+
+  private requestReset(
+    source: ViewportSource,
+    identity: ViewportOperationIdentity,
+  ): Promise<ViewportApplyResult> {
+    const sequence = ++this.sequence;
+    const targetGeneration = identity.targetGeneration === undefined
+      ? this.targetGeneration
+      : Math.max(0, Math.trunc(identity.targetGeneration));
+    const requested = { ...this.userConfirmed };
+    const descriptor = { source, targetGeneration, requested };
+    const operation: ViewportHostResetOperation = {
+      ...descriptor,
+      operationId: identity.operationId ?? this.operationIdFactory(descriptor, sequence),
+    };
+
+    this.settlePending("superseded");
+    this.settlePendingReset("superseded");
+    return new Promise<ViewportApplyResult>((resolve) => {
+      const pending: PendingResetOperation = { operation, resolve, settled: false };
+      this.pendingReset = pending;
+      this.notify();
+      if (!this.resetHost) {
+        this.pendingReset = null;
+        this.notify();
+        this.resolveReset(pending, {
+          operationId: operation.operationId,
+          source,
+          targetGeneration,
+          requested,
+          applied: { ...this.confirmed },
+          status: "failed",
+          error: "Viewport reset host is unavailable",
+        });
+        this.flushSuperseded("superseded");
+        return;
+      }
+      void this.applyReset(pending);
     });
   }
 
@@ -467,6 +555,61 @@ export class ViewportCoordinator {
       status: !sameSize(applied, pending.requested) || pending.inputWasClamped ? "clamped" : "applied",
       error: hostResult.error,
     });
+    this.flushSuperseded("superseded");
+  }
+
+  private async applyReset(pending: PendingResetOperation): Promise<void> {
+    let hostResult: ViewportHostResetResult;
+    try {
+      hostResult = await this.resetHost!(pending.operation);
+    } catch (cause) {
+      hostResult = {
+        status: "failed",
+        applied: null,
+        error: cause instanceof Error ? cause.message : "Viewport reset host failed",
+      };
+    }
+
+    const current = this.pendingReset === pending && !pending.settled;
+    if (!current || this.interrupted || pending.operation.targetGeneration !== this.targetGeneration) {
+      if (pending.settled) return;
+      this.resolveReset(pending, {
+        operationId: pending.operation.operationId,
+        source: pending.operation.source,
+        targetGeneration: pending.operation.targetGeneration,
+        requested: pending.operation.requested,
+        applied: { ...this.confirmed },
+        status: this.interrupted ? "stale" : "superseded",
+      });
+      return;
+    }
+
+    this.pendingReset = null;
+    if (hostResult.status === "stale" || hostResult.status === "failed") {
+      this.resolveReset(pending, {
+        operationId: pending.operation.operationId,
+        source: pending.operation.source,
+        targetGeneration: pending.operation.targetGeneration,
+        requested: pending.operation.requested,
+        applied: hostResult.applied ?? { ...this.confirmed },
+        status: hostResult.status,
+        error: hostResult.error,
+      });
+      this.notify();
+      this.flushSuperseded(hostResult.status === "stale" ? "stale" : "superseded");
+      return;
+    }
+
+    this.resolveReset(pending, {
+      operationId: pending.operation.operationId,
+      source: pending.operation.source,
+      targetGeneration: pending.operation.targetGeneration,
+      requested: pending.operation.requested,
+      applied: hostResult.applied ?? { ...this.confirmed },
+      status: "applied",
+      error: hostResult.error,
+    });
+    this.notify();
     this.flushSuperseded("superseded");
   }
 
@@ -550,6 +693,26 @@ export class ViewportCoordinator {
     this.notify();
   }
 
+  private settlePendingReset(status: "stale" | "superseded"): void {
+    const pending = this.pendingReset;
+    if (!pending || pending.settled) return;
+    this.pendingReset = null;
+    if (status === "superseded") {
+      this.supersededResets.push(pending);
+      this.notify();
+      return;
+    }
+    this.resolveReset(pending, {
+      operationId: pending.operation.operationId,
+      source: pending.operation.source,
+      targetGeneration: pending.operation.targetGeneration,
+      requested: pending.operation.requested,
+      applied: { ...this.confirmed },
+      status,
+    });
+    this.notify();
+  }
+
   private settlePendingPresentation(status: "stale" | "superseded"): void {
     const pending = this.pendingPresentation;
     if (!pending || pending.settled) return;
@@ -564,7 +727,7 @@ export class ViewportCoordinator {
   }
 
   private flushSuperseded(status: "stale" | "superseded"): void {
-    if (this.superseded.length === 0) return;
+    if (this.superseded.length === 0 && this.supersededResets.length === 0) return;
     const pending = this.superseded.splice(0);
     for (const item of pending) {
       this.resolvePending(item, {
@@ -576,9 +739,26 @@ export class ViewportCoordinator {
         status,
       });
     }
+    const resets = this.supersededResets.splice(0);
+    for (const item of resets) {
+      this.resolveReset(item, {
+        operationId: item.operation.operationId,
+        source: item.operation.source,
+        targetGeneration: item.operation.targetGeneration,
+        requested: item.operation.requested,
+        applied: { ...this.confirmed },
+        status,
+      });
+    }
   }
 
   private resolvePending(pending: PendingOperation, result: ViewportApplyResult): void {
+    if (pending.settled) return;
+    pending.settled = true;
+    pending.resolve(result);
+  }
+
+  private resolveReset(pending: PendingResetOperation, result: ViewportApplyResult): void {
     if (pending.settled) return;
     pending.settled = true;
     pending.resolve(result);
