@@ -270,7 +270,7 @@ function createViewportHost(
 export function createViewportCoordinator(
   options: ViewportCoordinatorFactoryOptions,
 ): ViewportCoordinator {
-  const coordinator = new ViewportCoordinator({
+  const coordinator: ViewportCoordinator = new ViewportCoordinator({
     initial: options.initial,
     presentation: options.presentation,
     targetGeneration: options.targetGeneration,
@@ -289,7 +289,7 @@ export function createViewportCoordinator(
         appliedViewport: fallbackViewport(options),
       };
     },
-    apply: async (operation) => {
+    apply: async (operation): Promise<ViewportHostResult> => {
       return createViewportHost(options, coordinator)(operation);
     },
   });

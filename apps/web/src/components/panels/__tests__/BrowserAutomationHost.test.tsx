@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "@/stores/connectionStore";
 import {
+  browserAutomationTargetKey,
   interruptBrowserAutomationTarget,
   releaseBrowserAutomationThreadScope,
   useBrowserAutomationStore,
@@ -92,6 +93,8 @@ function dispatch(
 ): BrowserAutomationHostDispatch {
   const threadId = options.threadId ?? "thread-1";
   const tabId = options.tabId ?? "tab-1";
+  const targetGeneration = options.targetGeneration ??
+    useBrowserAutomationStore.getState().liveTargets.get(browserAutomationTargetKey(threadId, tabId))?.revision ?? 1;
   return {
     scope: {
       workspaceId: "workspace-1",
@@ -103,7 +106,7 @@ function dispatch(
       desktopInstanceId: `desktop-${generation}`,
       windowId: 7,
       connectionGeneration: generation,
-      targetGeneration: options.targetGeneration ?? 3,
+      targetGeneration,
     },
     request: {
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -124,7 +127,7 @@ function dispatch(
       connectionGeneration: generation,
       threadId,
       tabId,
-      targetGeneration: options.targetGeneration ?? 3,
+      targetGeneration,
       active: true,
       focused: true,
       lastUsedAt: 10,
@@ -240,6 +243,8 @@ describe("BrowserAutomationHost", () => {
       activeRequests: new Map(),
       registered: false,
       viewportByTarget: new Map(),
+      viewportStateByTarget: new Map(),
+      viewportCoordinators: new Map(),
       hostedScopeIds: new Set(),
     });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
