@@ -271,6 +271,22 @@ describe("BrowserAutomationHost", () => {
     execute.mockReset();
   });
 
+  it("settles driver-owned tabs when the broker releases a provider session", async () => {
+    const release = vi.spyOn(BrowserSessionDriver.prototype, "releaseProviderSession").mockResolvedValue();
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.sessionRelease", {
+      hostId,
+      generation: 1,
+      providerSessionId: "provider-session-1",
+      reason: "credential-revoked",
+    }));
+    await waitFor(() => expect(release).toHaveBeenCalledWith("provider-session-1"));
+    view.unmount();
+    release.mockRestore();
+  });
+
   it("enters BrowserSessionDriver before web adapter dispatch", async () => {
     delete window.desktopBridge;
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");

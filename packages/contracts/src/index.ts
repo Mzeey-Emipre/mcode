@@ -457,6 +457,9 @@ export {
   BrowserAutomationObservationBindingSchema,
   BrowserAutomationActResultSchema,
   BrowserAutomationEvaluateResultSchema,
+  BrowserAutomationTabsArgsSchema,
+  BrowserAutomationOwnedTabSchema,
+  BrowserAutomationTabsResultSchema,
 } from "./models/browser-automation.js";
 export type {
   BrowserAutomationOperation,
@@ -483,6 +486,9 @@ export type {
   BrowserAutomationObservationBinding,
   BrowserAutomationActResult,
   BrowserAutomationEvaluateResult,
+  BrowserAutomationTabsArgs,
+  BrowserAutomationOwnedTab,
+  BrowserAutomationTabsResult,
 } from "./models/browser-automation.js";
 
 // Events

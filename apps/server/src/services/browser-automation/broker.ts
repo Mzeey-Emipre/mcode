@@ -62,6 +62,12 @@ interface EvaluateReplayRecord {
   lastUsedAt: number;
 }
 
+interface TabsReplayRecord {
+  readonly fingerprint: string;
+  readonly promise: Promise<BrowserAutomationResponse>;
+  lastUsedAt: number;
+}
+
 /** Content-free reliability counters for the browser automation broker. */
 export interface BrowserAutomationReliabilityCounters {
   dispatched: number;
@@ -79,9 +85,12 @@ export interface BrowserAutomationReliabilityCounters {
 /** Function used by the broker to deliver a directed, validated push event. */
 export type BrowserAutomationDirectedSender = (
   socket: WebSocket,
-  channel: "browserAutomation.bootstrap" | "browserAutomation.request" | "browserAutomation.cancel",
+  channel: "browserAutomation.bootstrap" | "browserAutomation.request" | "browserAutomation.cancel" | "browserAutomation.sessionRelease",
   data: unknown,
 ) => boolean;
+
+/** Reason sent to a renderer when a provider-session-owned Browser lifecycle ends. */
+export type BrowserAutomationSessionReleaseReason = "credential-revoked" | "provider-session-ended";
 
 /** Server-derived identity and workspace scope expected for one renderer connection. */
 export interface BrowserAutomationHostConnectionAuthorization {
@@ -184,6 +193,14 @@ function hashExpression(expression: string): string {
   return createHash("sha256").update(expression, "utf8").digest("hex");
 }
 
+function tabsReplayKey(providerId: string, request: Extract<BrowserAutomationRequest, { operation: "tabs" }>): string {
+  return JSON.stringify([providerId, request.providerSessionId, request.workspaceId, request.threadId, request.args.idempotencyKey]);
+}
+
+function sessionRoutingKey(providerId: string, providerSessionId: string): string {
+  return JSON.stringify([providerId, providerSessionId]);
+}
+
 function targetsMatch(
   left: BrowserAutomationHostDispatchTarget,
   right: BrowserAutomationHostDispatchTarget,
@@ -277,6 +294,9 @@ function shapeNegotiatedResponse(
         }
       : response.result.snapshot;
     const diagnostics = response.result.diagnostics?.slice(0, descriptor.constraints.maxDiagnostics);
+    const inspectedTabs = pending.target
+      ? [pending.target, ...response.result.tabs.filter((tab) => tab.tabId !== pending.target?.tabId)]
+      : response.result.tabs;
     return {
       ...response,
       result: {
@@ -289,7 +309,7 @@ function shapeNegotiatedResponse(
         target: pending.target
           ? { threadId: pending.target.threadId, tabId: pending.target.tabId, targetGeneration: pending.target.targetGeneration, sticky: true }
           : undefined,
-        tabs: (pending.target ? [pending.target] : response.result.tabs).slice(0, descriptor.constraints.maxTabs),
+        tabs: inspectedTabs.slice(0, descriptor.constraints.maxTabs),
         snapshot,
         ...(diagnostics ? { diagnostics } : {}),
         ...(hostObservationRef
@@ -334,6 +354,8 @@ export class BrowserAutomationBroker {
   private readonly actReplay = new Map<string, ActReplayRecord>();
   private readonly evaluateReplay = new Map<string, EvaluateReplayRecord>();
   private readonly browserMutations = new Map<string, string>();
+  private readonly tabsReplay = new Map<string, TabsReplayRecord>();
+  private readonly sessionHosts = new Map<string, RegisteredHost>();
   private nextGeneration = 1;
   private readonly reliability: BrowserAutomationReliabilityCounters = {
     dispatched: 0,
@@ -600,7 +622,7 @@ export class BrowserAutomationBroker {
           }
         }
       }
-    } else if (responseTarget && pending.target && !targetsMatch(responseTarget, pending.target)) {
+    } else if (responseTarget && pending.target && !targetsMatch(responseTarget, pending.target) && !this.isTabsResponseTarget(pending, responseTarget)) {
       this.settle(
         key,
         pending,
@@ -614,6 +636,9 @@ export class BrowserAutomationBroker {
         ),
       );
       return;
+    }
+    if (negotiatedResponse.ok && pending.request.operation === "tabs" && negotiatedResponse.result.operation === "tabs") {
+      this.updateTabsAssignment(pending, negotiatedResponse.result, responseTarget);
     }
     this.settle(key, pending, negotiatedResponse);
   }
@@ -683,10 +708,17 @@ export class BrowserAutomationBroker {
     for (const [replayKey, record] of this.openReplay) {
       if (record.lastUsedAt < cutoff) this.openReplay.delete(replayKey);
     }
+    for (const [replayKey, record] of this.actReplay) {
+      if (record.lastUsedAt < cutoff) this.actReplay.delete(replayKey);
+    }
+    for (const [replayKey, record] of this.tabsReplay) {
+      if (record.lastUsedAt < cutoff) this.tabsReplay.delete(replayKey);
+    }
     const parsed = BrowserAutomationRequestSchema().safeParse(input);
     if (!parsed.success) return this.executeInternal(claims, input);
     if (parsed.data.operation === "act") return this.executeAct(claims, parsed.data);
     if (parsed.data.operation === "evaluate") return this.executeEvaluate(claims, parsed.data);
+    if (parsed.data.operation === "tabs") return this.executeTabs(claims, parsed.data);
     if (parsed.data.operation !== "open") return this.executeInternal(claims, input);
     const request = parsed.data;
     const key = request.args.idempotencyKey;
@@ -702,8 +734,17 @@ export class BrowserAutomationBroker {
       }
       return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
     }
+    const sessionKey = sessionRoutingKey(claims.providerId, claims.providerSessionId);
+    if (this.browserMutations.has(sessionKey)) {
+      return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
+    }
+    const mutationToken = randomUUID();
+    this.browserMutations.set(sessionKey, mutationToken);
+    const releaseMutation = (): void => {
+      if (this.browserMutations.get(sessionKey) === mutationToken) this.browserMutations.delete(sessionKey);
+    };
     const bootstrapHost = this.resolveBootstrapHost(claims, request);
-    if (!bootstrapHost) return this.executeInternal(claims, request);
+    if (!bootstrapHost) return this.executeInternal(claims, request).finally(releaseMutation);
     let resolveReplay!: (response: BrowserAutomationResponse) => void;
     const replayPromise = new Promise<BrowserAutomationResponse>((resolve) => {
       resolveReplay = resolve;
@@ -720,11 +761,45 @@ export class BrowserAutomationBroker {
       if (!oldest) break;
       this.openReplay.delete(oldest);
     }
-    const promise = this.executeInternal(claims, request);
+    const promise = this.executeInternal(claims, request).finally(releaseMutation);
     void promise.then((response) => {
       resolveReplay(response);
       if (!response.ok && this.openReplay.get(replayKey) === replayRecord) this.openReplay.delete(replayKey);
     });
+    return promise;
+  }
+
+  private executeTabs(
+    claims: BrowserAutomationCredentialClaims,
+    request: Extract<BrowserAutomationRequest, { operation: "tabs" }>,
+  ): Promise<BrowserAutomationResponse> {
+    const replayKey = tabsReplayKey(claims.providerId, request);
+    const fingerprint = JSON.stringify(request.args);
+    const existing = this.tabsReplay.get(replayKey);
+    if (existing) {
+      existing.lastUsedAt = this.now();
+      if (existing.fingerprint !== fingerprint) {
+        return Promise.resolve(failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_tabs arguments", false));
+      }
+      return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+    }
+    const sessionKey = sessionRoutingKey(claims.providerId, claims.providerSessionId);
+    if (this.browserMutations.has(sessionKey)) {
+      return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
+    }
+    const token = randomUUID();
+    this.browserMutations.set(sessionKey, token);
+    const promise = this.executeInternal(claims, request)
+      .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
+      .finally(() => {
+        if (this.browserMutations.get(sessionKey) === token) this.browserMutations.delete(sessionKey);
+      });
+    this.tabsReplay.set(replayKey, { fingerprint, promise, lastUsedAt: this.now() });
+    while (this.tabsReplay.size > 256) {
+      const oldest = this.tabsReplay.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.tabsReplay.delete(oldest);
+    }
     return promise;
   }
 
@@ -750,7 +825,7 @@ export class BrowserAutomationBroker {
       }
       return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
     }
-    const sessionKey = JSON.stringify([claims.providerId, claims.providerSessionId]);
+    const sessionKey = sessionRoutingKey(claims.providerId, claims.providerSessionId);
     if (this.browserMutations.has(sessionKey)) {
       return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
@@ -854,7 +929,9 @@ export class BrowserAutomationBroker {
     // original target.
     const assignment = request.operation === "open" && request.args.idempotencyKey !== undefined
       ? undefined
-      : this.resolveAssignment(claims, request);
+      : request.operation === "tabs"
+        ? this.resolveTabsAssignment(claims, request)
+        : this.resolveAssignment(claims, request);
     if (!assignment) {
       if (request.operation === "open") {
         const host = this.resolveBootstrapHost(claims, request);
@@ -863,6 +940,7 @@ export class BrowserAutomationBroker {
       return finishImmediately(failure(request, "TAB_UNAVAILABLE", "No authorized visible browser tab is available", true));
     }
     const { host, target } = assignment;
+    this.sessionHosts.set(sessionRoutingKey(claims.providerId, claims.providerSessionId), host);
     if (!this.supportsOperation(host, request)) {
       return finishImmediately(failure(
         request,
@@ -959,6 +1037,9 @@ export class BrowserAutomationBroker {
     for (const [key, assigned] of this.assignments) {
       if (assigned.host === host) this.assignments.delete(key);
     }
+    for (const [key, sessionHost] of this.sessionHosts) {
+      if (sessionHost === host) this.sessionHosts.delete(key);
+    }
     for (const [key, pending] of this.pending) {
       if (pending.host === host) {
         this.settle(
@@ -985,6 +1066,8 @@ export class BrowserAutomationBroker {
     this.actReplay.clear();
     this.evaluateReplay.clear();
     this.browserMutations.clear();
+    this.tabsReplay.clear();
+    this.sessionHosts.clear();
   }
 
   /** Returns bounded broker counts for status and tests. */
@@ -1021,8 +1104,23 @@ export class BrowserAutomationBroker {
   }
 
   /** Releases sticky routing state when a provider session closes or rotates credentials. */
-  releaseProviderSession(providerId: string, providerSessionId: string): number {
+  releaseProviderSession(
+    providerId: string,
+    providerSessionId: string,
+    reason: BrowserAutomationSessionReleaseReason = "credential-revoked",
+  ): number {
     let removed = 0;
+    const sessionKey = sessionRoutingKey(providerId, providerSessionId);
+    const sessionHost = this.sessionHosts.get(sessionKey);
+    if (sessionHost) {
+      this.trySend(sessionHost.socket, "browserAutomation.sessionRelease", {
+        hostId: sessionHost.registration.hostId,
+        generation: sessionHost.generation,
+        providerSessionId,
+        reason,
+      });
+      this.sessionHosts.delete(sessionKey);
+    }
     for (const key of this.assignments.keys()) {
       const [assignedProviderId, assignedProviderSessionId] = JSON.parse(key) as string[];
       if (
@@ -1064,7 +1162,11 @@ export class BrowserAutomationBroker {
       const parts = JSON.parse(key) as string[];
       if (parts[0] === providerId && parts[1] === providerSessionId) this.evaluateReplay.delete(key);
     }
-    this.browserMutations.delete(JSON.stringify([providerId, providerSessionId]));
+    for (const key of this.tabsReplay.keys()) {
+      const parts = JSON.parse(key) as string[];
+      if (parts[0] === providerId && parts[1] === providerSessionId) this.tabsReplay.delete(key);
+    }
+    this.browserMutations.delete(sessionRoutingKey(providerId, providerSessionId));
     return removed;
   }
 
@@ -1147,6 +1249,47 @@ export class BrowserAutomationBroker {
       )[0]?.host;
   }
 
+  private resolveTabsAssignment(
+    claims: BrowserAutomationCredentialClaims,
+    request: Extract<BrowserAutomationRequest, { operation: "tabs" }>,
+  ): { host: RegisteredHost; target: BrowserAutomationHostDispatchTarget } | undefined {
+    const action = request.args.action;
+    const assigned = this.assignments.get(assignmentKey(claims));
+    if (action !== "select" && action !== "claim" && assigned) {
+      const assignedTarget = assigned.host.targets.get(assigned.targetKey);
+      if (assignedTarget && this.matchesScope(assigned.host, claims)) {
+        assigned.lastUsedAt = this.now();
+        return { host: assigned.host, target: assignedTarget };
+      }
+      this.assignments.delete(assignmentKey(claims));
+    }
+    const requestedTabId = "tabId" in request.args ? request.args.tabId : undefined;
+    if (!requestedTabId) return undefined;
+    return this.resolveExplicitTarget(claims, request, requestedTabId);
+  }
+
+  private resolveExplicitTarget(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+    tabId: string,
+  ): { host: RegisteredHost; target: BrowserAutomationHostDispatchTarget } | undefined {
+    const sessionHost = this.sessionHosts.get(sessionRoutingKey(claims.providerId, claims.providerSessionId));
+    const candidates = [...this.hostsBySocket.values()]
+      .filter((host) => !sessionHost || host === sessionHost)
+      .filter((host) => this.canAccept(host, claims, request))
+      .flatMap((host) => [...host.targets.values()]
+        .filter((target) => target.threadId === claims.threadId && target.tabId === tabId)
+        .map((target) => ({ host, target })))
+      .sort((a, b) =>
+        Number(b.target.focused) - Number(a.target.focused) ||
+        Number(b.target.active) - Number(a.target.active) ||
+        b.target.lastUsedAt - a.target.lastUsedAt ||
+        a.host.pending - b.host.pending ||
+        a.host.generation - b.host.generation ||
+        a.target.windowId - b.target.windowId);
+    return candidates[0];
+  }
+
   private canAccept(
     host: RegisteredHost,
     claims: BrowserAutomationCredentialClaims,
@@ -1210,6 +1353,10 @@ export class BrowserAutomationBroker {
     claims: BrowserAutomationCredentialClaims,
     request: BrowserAutomationRequest,
   ): RegisteredHost | undefined {
+    const sessionHost = this.sessionHosts.get(sessionRoutingKey(claims.providerId, claims.providerSessionId));
+    if (sessionHost && this.hostsBySocket.get(sessionHost.socket) === sessionHost && this.canAccept(sessionHost, claims, request)) {
+      return sessionHost;
+    }
     return [...this.hostsBySocket.values()]
       .filter((host) => this.canAccept(host, claims, request))
       .sort((left, right) => left.pending - right.pending || left.generation - right.generation)[0];
@@ -1220,6 +1367,7 @@ export class BrowserAutomationBroker {
     providerId: string,
     request: BrowserAutomationRequest,
   ): Promise<BrowserAutomationResponse> {
+    this.sessionHosts.set(sessionRoutingKey(providerId, request.providerSessionId), host);
     const key = pendingKey(host, request.requestId, request.sequence);
     if (this.pending.has(key)) {
       const response = failure(request, "INVALID_REQUEST", "Browser request correlation is already pending", false);
@@ -1267,6 +1415,66 @@ export class BrowserAutomationBroker {
     const latencyMs = Math.max(0, this.now() - pending.startedAt);
     this.recordOutcome(response, latencyMs);
     pending.resolve(response);
+  }
+
+  private updateTabsAssignment(
+    pending: PendingRequest,
+    result: Extract<BrowserAutomationResponse, { ok: true }>['result'] & { operation: "tabs" },
+    responseTarget: BrowserAutomationHostDispatchTarget | undefined,
+  ): void {
+    const key = assignmentKeyParts(
+      pending.providerId,
+      pending.request.providerSessionId,
+      pending.host.registration.worktreeIdentity,
+      pending.request.workspaceId,
+      pending.request.threadId,
+    );
+    const target = responseTarget ?? pending.target;
+    if (target) pending.host.targets.set(targetKey(target), target);
+    if (result.action === "select" || result.action === "claim") {
+      const selectedTarget = result.currentTabId
+        ? pending.host.targets.get(JSON.stringify([pending.request.threadId, result.currentTabId])) ??
+          (target?.tabId === result.currentTabId ? target : undefined)
+        : target;
+      if (selectedTarget) this.storeAssignment(key, pending.host, selectedTarget);
+      else this.assignments.delete(key);
+      return;
+    }
+    if (!result.currentTabId) {
+      this.assignments.delete(key);
+      return;
+    }
+    const currentTarget = pending.host.targets.get(JSON.stringify([pending.request.threadId, result.currentTabId]));
+    if (currentTarget) {
+      this.storeAssignment(key, pending.host, currentTarget);
+    } else if (target?.tabId === result.currentTabId) {
+      this.storeAssignment(key, pending.host, target);
+    } else {
+      this.assignments.delete(key);
+    }
+  }
+
+  private isTabsResponseTarget(
+    pending: PendingRequest,
+    responseTarget: BrowserAutomationHostDispatchTarget,
+  ): boolean {
+    if (pending.request.operation !== "tabs") return false;
+    if (
+      responseTarget.desktopInstanceId !== pending.host.registration.desktopInstanceId ||
+      responseTarget.connectionGeneration !== pending.host.generation ||
+      responseTarget.threadId !== pending.request.threadId
+    ) return false;
+    const advertised = pending.host.targets.get(targetKey(responseTarget));
+    return advertised !== undefined && targetsMatch(advertised, responseTarget);
+  }
+
+  private storeAssignment(
+    key: string,
+    host: RegisteredHost,
+    target: BrowserAutomationHostDispatchTarget,
+  ): void {
+    while (this.assignments.size >= this.maxAssignments && !this.assignments.has(key)) this.evictOldestAssignment();
+    this.assignments.set(key, { host, targetKey: targetKey(target), lastUsedAt: this.now() });
   }
 
   private recordOutcome(response: BrowserAutomationResponse, latencyMs: number): void {
@@ -1388,7 +1596,7 @@ export class BrowserAutomationBroker {
 
   private trySend(
     socket: WebSocket,
-    channel: "browserAutomation.bootstrap" | "browserAutomation.request" | "browserAutomation.cancel",
+    channel: "browserAutomation.bootstrap" | "browserAutomation.request" | "browserAutomation.cancel" | "browserAutomation.sessionRelease",
     data: unknown,
   ): boolean {
     try {

@@ -1,5 +1,7 @@
 import type {
   BrowserAutomationHostDispatch,
+  BrowserAutomationHostDispatchTarget,
+  BrowserAutomationOwnedTab,
   BrowserAutomationResponse,
   BrowserAutomationActStep,
   BrowserAutomationEvaluateResult,
@@ -20,6 +22,7 @@ const SECRET_TEXT = /\b(password|token|secret|authorization|cookie|credential|se
 const WEB_RUNTIME_OPERATIONS = [
   "inspect",
   "act",
+  "tabs",
   "status",
   "open",
   "navigate",
@@ -44,6 +47,7 @@ export function getBrowserAutomationRuntimeOperations(
   return [
     "inspect",
     "act",
+    "tabs",
     ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) =>
       recordingAvailable || (operation !== "recordingStart" && operation !== "recordingStop"),
     ),
@@ -74,6 +78,25 @@ interface ObservationRecord {
   readonly controlRevision: number;
   readonly capabilityRevision: number;
   observationRevision: number;
+  readonly targets: ReadonlyMap<string, BrowserAutomationHostDispatchTarget>;
+}
+
+interface TabReplayRecord {
+  readonly fingerprint: string;
+  lastUsedAt: number;
+  readonly promise: Promise<BrowserAutomationResponse>;
+}
+
+interface ControlledTab extends BrowserAutomationOwnedTab {
+  target: BrowserAutomationHostDispatchTarget;
+}
+
+interface ProviderTabSession {
+  readonly workspaceId: string;
+  readonly providerSessionId: string;
+  readonly providerInstanceId: string;
+  current: BrowserAutomationHostDispatchTarget | null;
+  readonly tabs: Map<string, ControlledTab>;
 }
 
 /** Runtime implementation used by the client BrowserSessionDriver. */
@@ -82,6 +105,12 @@ export interface BrowserSessionRuntimeAdapter {
     dispatch: BrowserAutomationHostDispatch,
     signal: AbortSignal,
   ): Promise<BrowserAutomationResponse>;
+}
+
+/** Runtime mechanics used by the driver to enumerate and physically close Preview tabs. */
+export interface BrowserSessionTabLifecycleAdapter {
+  list(dispatch: BrowserAutomationHostDispatch): Promise<readonly BrowserAutomationHostDispatchTarget[]>;
+  close(target: BrowserAutomationHostDispatchTarget): Promise<void>;
 }
 
 /** Renderer-side adapter that forwards Browser v1 commands to Electron preload. */
@@ -108,6 +137,8 @@ export interface BrowserSessionDriverOptions {
   readonly getDocumentRevision?: (dispatch: BrowserAutomationHostDispatch) => number;
   readonly getControlRevision?: (dispatch: BrowserAutomationHostDispatch) => number;
   readonly supportedActOperations?: readonly string[] | (() => readonly string[]);
+  readonly webTabs?: BrowserSessionTabLifecycleAdapter;
+  readonly electronTabs?: BrowserSessionTabLifecycleAdapter;
 }
 
 /**
@@ -118,7 +149,10 @@ export interface BrowserSessionDriverOptions {
 export class BrowserSessionDriver {
   private readonly isElectron: () => boolean;
   private readonly idempotency = new Map<string, IdempotencyRecord>();
+  private readonly tabIdempotency = new Map<string, TabReplayRecord>();
   private readonly observations = new Map<string, ObservationRecord>();
+  private readonly tabSessions = new Map<string, ProviderTabSession>();
+  private readonly activeTabMutations = new Set<string>();
 
   constructor(private readonly options: BrowserSessionDriverOptions) {
     this.isElectron = options.isElectron ?? (() => typeof window !== "undefined" && typeof window.desktopBridge?.preview === "object");
@@ -133,6 +167,7 @@ export class BrowserSessionDriver {
     if (initialDrift) return Promise.resolve(initialDrift);
     if (dispatch.request?.operation === "evaluate") return this.executeEvaluate(dispatch, signal);
     if (dispatch.request?.operation === "act") return this.executeAct(dispatch, signal);
+    if (dispatch.request?.operation === "tabs") return this.executeTabs(dispatch);
     if (dispatch.request?.operation !== "open") {
       return this.executeAdapter(dispatch, signal);
     }
@@ -197,8 +232,30 @@ export class BrowserSessionDriver {
         },
       },
     } as OpenDispatch;
+    const mutationKey = this.sessionKey(dispatch);
+    if (this.activeTabMutations.has(mutationKey)) {
+      return Promise.resolve(this.failure(dispatch, "BROWSER_BUSY", "Another browser mutation is active for this provider session", "wait"));
+    }
+    this.activeTabMutations.add(mutationKey);
+    const session = this.tabSession(dispatch);
+    if ([...session.tabs.values()].filter((tab) => tab.provenance === "agent-created" && tab.ownership !== "released").length >= 3) {
+      this.activeTabMutations.delete(mutationKey);
+      return Promise.resolve(this.failure(dispatch, "BROWSER_BUSY", "This provider session already owns three agent-created tabs", "wait"));
+    }
     const promise = this.executeAdapter(normalized, signal)
-      .then((response) => this.withObservationRef(response));
+      .then((response) => {
+        if (response.ok) {
+          session.current = dispatch.target;
+          session.tabs.set(dispatch.target.tabId, {
+            tabId: dispatch.target.tabId,
+            provenance: "agent-created",
+            ownership: "owned",
+            target: dispatch.target,
+          });
+        }
+        return this.withObservationRef(response);
+      })
+      .finally(() => this.activeTabMutations.delete(mutationKey));
     this.idempotency.set(scopeKey, {
       fingerprint,
       target: {
@@ -221,6 +278,7 @@ export class BrowserSessionDriver {
   /** Clears bounded replay state when a provider session or host is released. */
   clearIdempotency(): void {
     this.idempotency.clear();
+    this.tabIdempotency.clear();
   }
 
   /** Clears replay state bound to one browser target after that target closes or is replaced. */
@@ -228,6 +286,31 @@ export class BrowserSessionDriver {
     for (const [key, record] of this.idempotency) {
       if (record.target.threadId === threadId && record.target.tabId === tabId) this.idempotency.delete(key);
     }
+    for (const session of this.tabSessions.values()) {
+      if (session.current?.threadId === threadId && session.current.tabId === tabId) session.current = null;
+      session.tabs.delete(tabId);
+    }
+  }
+
+  /** Returns the exact target selected by a successful lifecycle response. */
+  responseTarget(dispatch: BrowserAutomationHostDispatch, response: BrowserAutomationResponse): BrowserAutomationHostDispatchTarget {
+    if (!response.ok || response.result.operation !== "tabs") return dispatch.target;
+    return this.tabSessions.get(this.sessionKey(dispatch))?.current ?? dispatch.target;
+  }
+
+  /** Settles every tab owned or claimed by one terminated provider session. */
+  async releaseProviderSession(providerSessionId: string): Promise<void> {
+    await this.releaseSessions((session) => session.providerSessionId === providerSessionId);
+  }
+
+  /** Settles every tab owned or claimed by one deleted thread. */
+  async releaseThread(threadId: string): Promise<void> {
+    await this.releaseSessions((session) => [...session.tabs.values()].some((tab) => tab.target.threadId === threadId));
+  }
+
+  /** Settles every tab owned or claimed by one deleted workspace. */
+  async releaseWorkspace(workspaceId: string): Promise<void> {
+    await this.releaseSessions((session) => session.workspaceId === workspaceId);
   }
 
   private withObservationRef(response: BrowserAutomationResponse): BrowserAutomationResponse {
@@ -242,7 +325,19 @@ export class BrowserSessionDriver {
     const drift = this.revisionDrift(dispatch);
     if (drift) return Promise.resolve(drift);
     return (this.isElectron() ? this.options.electron : this.options.web).execute(dispatch, signal)
-      .then((response) => this.rememberObservation(this.withObservationRef(response), dispatch));
+      .then(async (response) => {
+        let normalized = this.withObservationRef(response);
+        if (normalized.ok && normalized.result?.operation === "inspect") {
+          const targets = await this.tabAdapter()?.list(dispatch);
+          if (targets) {
+            normalized = {
+              ...normalized,
+              result: { ...normalized.result, tabs: [...targets] },
+            };
+          }
+        }
+        return this.rememberObservation(normalized, dispatch);
+      });
   }
 
   private executeAct(
@@ -261,6 +356,7 @@ export class BrowserSessionDriver {
       ...currentBinding,
       capabilityRevision,
       observationRevision: 0,
+      targets: new Map([[dispatch.target.tabId, dispatch.target]]),
     };
     if (!observation || observation.hostRevision !== currentBinding.hostRevision || observation.documentRevision !== currentBinding.documentRevision || observation.controlRevision !== currentBinding.controlRevision || observation.capabilityRevision !== currentBinding.capabilityRevision) {
       return Promise.resolve(this.actFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation is stale; inspect before browser_act"));
@@ -319,7 +415,7 @@ export class BrowserSessionDriver {
         capabilityRevision,
         observationRevision: baseObservation.observationRevision + 1,
       };
-      this.observations.set(nextObservationRef, { hostRevision: finalObservation.hostRevision, documentRevision: finalObservation.documentRevision, controlRevision: finalObservation.controlRevision, capabilityRevision, observationRevision: finalObservation.observationRevision });
+      this.observations.set(nextObservationRef, { hostRevision: finalObservation.hostRevision, documentRevision: finalObservation.documentRevision, controlRevision: finalObservation.controlRevision, capabilityRevision, observationRevision: finalObservation.observationRevision, targets: baseObservation.targets });
       return {
         contractVersion: request.contractVersion,
         requestId: request.requestId,
@@ -448,6 +544,7 @@ export class BrowserSessionDriver {
       controlRevision: finalObservation.controlRevision,
       capabilityRevision: finalObservation.capabilityRevision,
       observationRevision: finalObservation.observationRevision,
+      targets: observation.targets,
     });
     const result: BrowserAutomationEvaluateResult = {
       operation: "evaluate",
@@ -512,6 +609,141 @@ export class BrowserSessionDriver {
     };
   }
 
+  private executeTabs(dispatch: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> {
+    const request = dispatch.request as Extract<BrowserAutomationHostDispatch["request"], { operation: "tabs" }>;
+    const sessionKey = this.sessionKey(dispatch);
+    const replayKey = JSON.stringify([request.providerSessionId, request.providerInstanceId, request.args.idempotencyKey]);
+    const fingerprint = JSON.stringify(request.args);
+    const replay = this.tabIdempotency.get(replayKey);
+    if (replay) {
+      replay.lastUsedAt = Date.now();
+      if (replay.fingerprint !== fingerprint) {
+        return Promise.resolve(this.failure(dispatch, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_tabs arguments", "manual"));
+      }
+      return replay.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+    }
+    if (this.activeTabMutations.has(sessionKey)) {
+      return Promise.resolve(this.failure(dispatch, "BROWSER_BUSY", "Another browser mutation is active for this provider session", "wait"));
+    }
+    const observation = this.observations.get(request.args.observationRef);
+    const capabilityRevision = this.options.getCapabilityRevision?.() ?? dispatch.connection?.capabilityRevision ?? 1;
+    if (!observation || !this.observationStillCurrent(dispatch, observation)) {
+      return Promise.resolve(this.failure(dispatch, "STALE_TARGET_GENERATION", "Browser observation is stale; inspect before browser_tabs", "inspect"));
+    }
+    this.observations.delete(request.args.observationRef);
+    this.activeTabMutations.add(sessionKey);
+    const promise = this.applyTabsMutation(dispatch, observation, capabilityRevision)
+      .finally(() => this.activeTabMutations.delete(sessionKey));
+    this.tabIdempotency.set(replayKey, { fingerprint, lastUsedAt: Date.now(), promise });
+    this.pruneIdempotency();
+    return promise;
+  }
+
+  private async applyTabsMutation(
+    dispatch: BrowserAutomationHostDispatch,
+    observation: ObservationRecord,
+    capabilityRevision: number,
+  ): Promise<BrowserAutomationResponse> {
+    const request = dispatch.request as Extract<BrowserAutomationHostDispatch["request"], { operation: "tabs" }>;
+    const session = this.tabSession(dispatch);
+    const adapter = this.tabAdapter();
+    const liveTargets = new Map((adapter ? await adapter.list(dispatch) : [dispatch.target]).map((target) => [target.tabId, target]));
+    if (!this.observationStillCurrent(dispatch, observation)) {
+      return this.failure(dispatch, "STALE_TARGET_GENERATION", "Browser generations changed before the next tab effect", "inspect");
+    }
+    const requestedTabId = request.args.action === "select" || request.args.action === "claim"
+      ? request.args.tabId
+      : request.args.action === "release" || request.args.action === "close"
+        ? request.args.tabId ?? session.current?.tabId
+        : undefined;
+    const observedTarget = requestedTabId ? observation.targets.get(requestedTabId) : undefined;
+    const liveTarget = requestedTabId ? liveTargets.get(requestedTabId) : undefined;
+    if (requestedTabId && (!observedTarget || !liveTarget || observedTarget.targetGeneration !== liveTarget.targetGeneration || observedTarget.connectionGeneration !== liveTarget.connectionGeneration)) {
+      return this.failure(dispatch, "STALE_TARGET_GENERATION", "The selected Browser tab changed after it was observed", "inspect");
+    }
+    if (request.args.action === "finalize") {
+      const staleControlledTab = [...session.tabs.values()].find((controlled) => {
+        const observed = observation.targets.get(controlled.tabId);
+        const live = liveTargets.get(controlled.tabId);
+        return !observed || !live || observed.targetGeneration !== live.targetGeneration || observed.connectionGeneration !== live.connectionGeneration;
+      });
+      if (staleControlledTab) {
+        return this.failure(dispatch, "STALE_TARGET_GENERATION", "A controlled Browser tab changed after it was observed", "inspect");
+      }
+    }
+
+    if (request.args.action === "select" && liveTarget) {
+      session.current = liveTarget;
+    } else if (request.args.action === "claim" && liveTarget) {
+      session.current = liveTarget;
+      const controlled = session.tabs.get(liveTarget.tabId);
+      session.tabs.set(liveTarget.tabId, controlled
+        ? {
+            ...controlled,
+            ownership: controlled.provenance === "agent-created" ? "owned" : "claimed",
+            disposition: undefined,
+            target: liveTarget,
+          }
+        : {
+            tabId: liveTarget.tabId,
+            provenance: "claimed-user",
+            ownership: "claimed",
+            target: liveTarget,
+          });
+    } else if ((request.args.action === "release" || request.args.action === "close") && requestedTabId) {
+      const controlled = session.tabs.get(requestedTabId);
+      if (request.args.action === "close" && controlled?.provenance === "agent-created") {
+        await adapter?.close(controlled.target);
+        session.tabs.delete(requestedTabId);
+      } else if (controlled) {
+        session.tabs.set(requestedTabId, { ...controlled, ownership: "released", disposition: "release" });
+      }
+      if (session.current?.tabId === requestedTabId) session.current = null;
+    } else if (request.args.action === "finalize") {
+      type Disposition = "close" | "release" | "handoff" | "deliverable";
+      const entries = request.args.dispositions as Array<{ tabId: string; disposition: Disposition }>;
+      const dispositions = new Map<string, Disposition>(entries.map((entry) => [entry.tabId, entry.disposition]));
+      for (const [tabId, controlled] of [...session.tabs]) {
+        const requested = dispositions.get(tabId);
+        const disposition = controlled.provenance === "claimed-user"
+          ? requested === "handoff" || requested === "deliverable" ? requested : "release"
+          : requested ?? "close";
+        if (disposition === "close") {
+          await adapter?.close(controlled.target);
+          session.tabs.delete(tabId);
+        } else {
+          session.tabs.set(tabId, { ...controlled, ownership: "released", disposition });
+        }
+      }
+      session.current = null;
+    }
+
+    const nextObservationRef = session.current ? globalThis.crypto.randomUUID() : undefined;
+    if (session.current && nextObservationRef) {
+      this.observations.set(nextObservationRef, {
+        hostRevision: session.current.connectionGeneration,
+        documentRevision: session.current.targetGeneration,
+        controlRevision: dispatch.request.expectedControlEpoch,
+        capabilityRevision,
+        observationRevision: observation.observationRevision + 1,
+        targets: new Map(liveTargets),
+      });
+    }
+    return {
+      contractVersion: request.contractVersion,
+      requestId: request.requestId,
+      sequence: request.sequence,
+      ok: true,
+      result: {
+        operation: "tabs",
+        action: request.args.action,
+        ...(session.current ? { currentTabId: session.current.tabId } : {}),
+        ...(nextObservationRef ? { observationRef: nextObservationRef } : {}),
+        tabs: [...session.tabs.values()].map(({ target: _target, ...tab }) => tab),
+      },
+    };
+  }
+
   private stepDispatch(dispatch: BrowserAutomationHostDispatch, step: BrowserAutomationActStep, deadline: number, index: number): BrowserAutomationHostDispatch {
     const { operation, ...args } = step as unknown as Record<string, unknown>;
     return {
@@ -533,7 +765,7 @@ export class BrowserSessionDriver {
 
   private rememberObservation(response: BrowserAutomationResponse, dispatch: BrowserAutomationHostDispatch): BrowserAutomationResponse {
     if (!response.ok || !response.result) return response;
-    const result = response.result as { observationRef?: string };
+    const result = response.result as { observationRef?: string; tabs?: BrowserAutomationHostDispatchTarget[] };
     if (!result.observationRef) return response;
     this.observations.set(result.observationRef, {
       hostRevision: dispatch.connection?.connectionGeneration ?? 0,
@@ -541,6 +773,7 @@ export class BrowserSessionDriver {
       controlRevision: dispatch.request.expectedControlEpoch,
       capabilityRevision: dispatch.connection?.capabilityRevision ?? this.options.getCapabilityRevision?.() ?? 1,
       observationRevision: 0,
+      targets: new Map((result.tabs ?? [dispatch.target]).map((target) => [target.tabId, target])),
     });
     return response;
   }
@@ -586,6 +819,68 @@ export class BrowserSessionDriver {
     for (const [key, record] of this.idempotency) {
       if (record.lastUsedAt < cutoff) this.idempotency.delete(key);
     }
+    for (const [key, record] of this.tabIdempotency) {
+      if (record.lastUsedAt < cutoff) this.tabIdempotency.delete(key);
+    }
+  }
+
+  private sessionKey(dispatch: BrowserAutomationHostDispatch): string {
+    return JSON.stringify([dispatch.request.providerSessionId, dispatch.request.providerInstanceId]);
+  }
+
+  private tabSession(dispatch: BrowserAutomationHostDispatch): ProviderTabSession {
+    const key = this.sessionKey(dispatch);
+    let session = this.tabSessions.get(key);
+    if (!session) {
+      session = {
+        workspaceId: dispatch.request.workspaceId,
+        providerSessionId: dispatch.request.providerSessionId,
+        providerInstanceId: dispatch.request.providerInstanceId,
+        current: null,
+        tabs: new Map(),
+      };
+      this.tabSessions.set(key, session);
+    }
+    return session;
+  }
+
+  private tabAdapter(): BrowserSessionTabLifecycleAdapter | undefined {
+    return this.isElectron() ? this.options.electronTabs : this.options.webTabs;
+  }
+
+  private async releaseSessions(predicate: (session: ProviderTabSession) => boolean): Promise<void> {
+    const adapter = this.tabAdapter();
+    for (const [key, session] of [...this.tabSessions]) {
+      if (!predicate(session)) continue;
+      for (const tab of session.tabs.values()) {
+        if (tab.provenance === "agent-created" && tab.ownership !== "released") {
+          await adapter?.close(tab.target);
+        }
+      }
+      this.tabSessions.delete(key);
+    }
+  }
+
+  private failure(
+    dispatch: BrowserAutomationHostDispatch,
+    code: "BROWSER_BUSY" | "IDEMPOTENCY_CONFLICT" | "STALE_TARGET_GENERATION",
+    message: string,
+    recovery: "wait" | "manual" | "inspect",
+  ): BrowserAutomationResponse {
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: false,
+      error: {
+        code,
+        message,
+        retryable: recovery === "wait",
+        stage: code === "STALE_TARGET_GENERATION" ? "observation" : code === "BROWSER_BUSY" ? "allocation" : "validation",
+        effect: "none",
+        recovery,
+      },
+    };
   }
 
 }
