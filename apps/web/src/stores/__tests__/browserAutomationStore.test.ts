@@ -15,6 +15,7 @@ import {
 import { selectBrowserAutomationWorkspaceIds } from "@/components/panels/BrowserAutomationHost";
 import { reconcileWarmPreviewScopes } from "@/components/panels/RightPanel";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
+import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
 
 function target(
   workspaceId: string,
@@ -152,6 +153,40 @@ describe("browser automation renderer scope", () => {
 
     expect(useBrowserAutomationStore.getState().liveTargets.has(key)).toBe(false);
     expect(browserTargetRegistry.get(threadId, tabId)?.attached).toBe(false);
+
+    store.unregisterTarget(threadId, tabId);
+  });
+
+  it("interrupts a detached viewport host and restores only confirmed state on remount", async () => {
+    const workspaceId = "workspace-viewport-remount";
+    const threadId = "thread-viewport-remount";
+    const tabId = "tab-viewport-remount";
+    const key = browserAutomationTargetKey(threadId, tabId);
+    const store = useBrowserAutomationStore.getState();
+    store.unregisterTarget(threadId, tabId);
+    store.registerTarget(workspaceId, threadId, tabId);
+    const target = useBrowserAutomationStore.getState().liveTargets.get(key)!;
+    let resolveHost!: (result: { status: "applied"; applied: { width: number; height: number } }) => void;
+    const coordinator = new ViewportCoordinator({
+      initial: { width: 1280, height: 800 },
+      targetGeneration: target.revision,
+      apply: () => new Promise((resolve) => { resolveHost = resolve; }),
+    });
+    store.setViewportCoordinator(threadId, tabId, coordinator);
+
+    const pending = coordinator.requestUserResize({ width: 900, height: 700 });
+    store.detachTarget(threadId, tabId);
+    expect(await pending).toMatchObject({ status: "stale", applied: { width: 1280, height: 800 } });
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({ width: 1280, height: 800 });
+
+    store.registerTarget(workspaceId, threadId, tabId);
+    const remounted = useBrowserAutomationStore.getState().liveTargets.get(key)!;
+    expect(remounted.revision).toBeGreaterThan(target.revision);
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({ width: 1280, height: 800 });
+
+    resolveHost({ status: "applied", applied: { width: 900, height: 700 } });
+    await Promise.resolve();
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({ width: 1280, height: 800 });
 
     store.unregisterTarget(threadId, tabId);
   });

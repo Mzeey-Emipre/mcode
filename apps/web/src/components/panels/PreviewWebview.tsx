@@ -12,9 +12,9 @@ import {
 } from "@/stores/browserAutomationStore";
 import {
   DEFAULT_VIEWPORT_SIZE,
-  ViewportCoordinator,
-  type ViewportHostOperation,
+  type ViewportCoordinator,
 } from "@/services/browser-automation/viewportCoordinator";
+import { getOrCreateViewportCoordinator } from "@/services/browser-automation/viewportCoordinatorFactory";
 
 const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
 const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
@@ -143,39 +143,31 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       existing.setTargetGeneration(targetGeneration);
       return existing;
     }
-    const registered = useBrowserAutomationStore
-      .getState()
-      .viewportCoordinators.get(key);
-    if (registered) {
-      coordinatorRef.current = registered;
-      registered.setTargetGeneration(targetGeneration);
-      return registered;
-    }
-    const current = useBrowserAutomationStore.getState().viewportByTarget.get(key);
-    const coordinator = new ViewportCoordinator({
-      initial: current ?? initialViewportRef.current,
+    const coordinator = getOrCreateViewportCoordinator({
+      existing: useBrowserAutomationStore.getState().viewportCoordinators.get(key),
+      target: { threadId, tabId },
+      initial: useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? initialViewportRef.current,
       targetGeneration,
-      apply: async (operation: ViewportHostOperation) => {
-        useBrowserAutomationStore.getState().setViewport(
+      nativeHost: () => window.desktopBridge?.preview?.design,
+      rendererHost: {
+        setViewport: (size) => useBrowserAutomationStore.getState().setViewport(
           threadId,
           tabId,
-          operation.requested.width,
-          operation.requested.height,
-        );
-        await waitForViewportLayout();
-        const applied = useBrowserAutomationStore.getState().viewportByTarget.get(key);
-        return {
-          status: applied ? "applied" as const : "failed" as const,
-          applied: applied ?? operation.requested,
-          ...(applied ? {} : { error: "Browser viewport target is unavailable" }),
-        };
+          size.width,
+          size.height,
+        ),
+        readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+        waitForLayout: waitForViewportLayout,
       },
-      onStateChange: (state) => {
-        useBrowserAutomationStore.getState().setViewportState(threadId, tabId, state);
-      },
+      readConfirmed: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+      onStateChange: (state) => useBrowserAutomationStore.getState().setViewportState(threadId, tabId, state),
+      onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
+        threadId,
+        tabId,
+        created,
+      ),
     });
     coordinatorRef.current = coordinator;
-    useBrowserAutomationStore.getState().setViewportCoordinator(threadId, tabId, coordinator);
     return coordinator;
   }, [tabId, threadId]);
 

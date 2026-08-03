@@ -106,9 +106,6 @@ export function BrowserViewportToolbar({
               onClick={() => submitSize(preset)}
             >
               <span>{preset.label}</span>
-              <span className="font-mono text-muted-foreground">
-                {preset.width}×{preset.height}
-              </span>
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>

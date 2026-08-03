@@ -64,6 +64,7 @@ describe("BrowserViewportToolbar", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Presets" }));
+    expect(screen.queryByText("393×852")).not.toBeInTheDocument();
     await user.click(await screen.findByText("iPhone 15 Pro"));
     await waitFor(() => expect(apply).toHaveBeenCalledWith(
       expect.objectContaining({ requested: { width: 393, height: 852 } }),

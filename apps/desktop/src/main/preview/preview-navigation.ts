@@ -16,6 +16,7 @@ import {
   isAllowedPreviewUrl,
   resetIdle,
   applyPageStatus,
+  applyViewportPresentation,
   setPreviewLoading,
   syncActiveTabFromSession,
 } from "./preview-session.js";
@@ -202,13 +203,13 @@ export function registerNavigationHandlers(): void {
       // switch this picks up the warm WebContentsView the user left behind,
       // so their scroll/form state survives.
       const view = ensureView(win, s);
-      view.setBounds(bounds);
+      const activeTab = tid != null ? getActiveTab(s, tid) : null;
+      applyViewportPresentation(s, bounds, tid, activeTab?.id ?? null);
       mountView(win, view);
 
       const wc = view.webContents;
       if (!wc.isDestroyed()) {
         const current = wc.getURL();
-        const activeTab = tid != null ? getActiveTab(s, tid) : null;
 
         // Decide whether to navigate. The principle: only navigate when the
         // view is blank/error (just created) and we have a URL worth loading.
@@ -348,7 +349,8 @@ export function registerNavigationHandlers(): void {
     if (!s.lastBounds) return;
     const url = s.resumePreviewUrl ?? "about:blank";
     const view = ensureView(win, s);
-    view.setBounds(s.lastBounds);
+    const activeTab = s.lastPreviewThreadId ? getActiveTab(s, s.lastPreviewThreadId) : null;
+    applyViewportPresentation(s, s.lastBounds, s.lastPreviewThreadId, activeTab?.id ?? null);
     mountView(win, view);
     setPreviewLoading(win, s, true);
     trustMainProcessFileNavigation(s, url);
@@ -373,7 +375,8 @@ export function registerNavigationHandlers(): void {
     if (!s.lastBounds) return;
     const url = s.resumePreviewUrl ?? "about:blank";
     const view = ensureView(win, s);
-    view.setBounds(s.lastBounds);
+    const activeTab = s.lastPreviewThreadId ? getActiveTab(s, s.lastPreviewThreadId) : null;
+    applyViewportPresentation(s, s.lastBounds, s.lastPreviewThreadId, activeTab?.id ?? null);
     mountView(win, view);
     setPreviewLoading(win, s, true);
     trustMainProcessFileNavigation(s, url);

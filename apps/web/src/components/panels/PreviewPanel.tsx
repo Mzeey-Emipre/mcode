@@ -88,11 +88,10 @@ import {
 import {
   calculateViewportPresentationScale,
   DEFAULT_VIEWPORT_SIZE,
-  MIN_VIEWPORT_CSS_PX,
-  ViewportCoordinator,
+  type ViewportCoordinator,
   type ViewportCoordinatorState,
-  type ViewportHostOperation,
 } from "@/services/browser-automation/viewportCoordinator";
+import { getOrCreateViewportCoordinator } from "@/services/browser-automation/viewportCoordinatorFactory";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -1936,76 +1935,39 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   const activeViewportCoordinator = automationViewportCoordinators.get(activeBrowserTargetKey);
   const [viewportToolbarOpen, setViewportToolbarOpen] = useState(false);
   useEffect(() => {
-    if (automationViewportCoordinators.has(activeBrowserTargetKey)) return;
     const target = automationLiveTargets.get(activeBrowserTargetKey);
     if (!target) return;
-    const initial = automationViewports.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE;
-    const coordinator = new ViewportCoordinator({
-      initial,
+    getOrCreateViewportCoordinator({
+      existing: automationViewportCoordinators.get(activeBrowserTargetKey),
+      target,
+      initial: automationViewports.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
       targetGeneration: target.revision,
-      apply: async (operation: ViewportHostOperation) => {
-        const design = window.desktopBridge?.preview?.design;
-        if (design) {
-          const nativeResult = await design.setViewport({
-            widthOverride: operation.requested.width,
-            heightOverride: operation.requested.height,
-            operationId: operation.operationId,
-            source: operation.source,
-            targetGeneration: operation.targetGeneration,
-            threadId,
-            tabId: activeWebviewTabId,
-          });
-          if (!nativeResult.ok) {
-            return {
-              status: nativeResult.error === "stale-target-generation" || nativeResult.error === "stale-target"
-                ? "stale" as const
-                : "failed" as const,
-              applied: nativeResult.appliedViewport ?? useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
-              error: nativeResult.error,
-            };
-          }
-          if (
-            nativeResult.operationId !== operation.operationId ||
-            nativeResult.source !== operation.source ||
-            nativeResult.targetGeneration !== operation.targetGeneration
-          ) {
-            return {
-              status: "stale" as const,
-              applied: nativeResult.appliedViewport ?? useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
-              error: "Browser viewport host acknowledgement is stale",
-            };
-          }
-          if (
-            nativeResult.data.width < MIN_VIEWPORT_CSS_PX ||
-            nativeResult.data.height < MIN_VIEWPORT_CSS_PX
-          ) {
-            return {
-              status: "failed" as const,
-              applied: useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
-              error: "Browser viewport host bounds are below the minimum size",
-            };
-          }
-          return { status: "applied" as const, applied: nativeResult.appliedViewport };
-        }
-        useBrowserAutomationStore.getState().setViewport(
+      nativeHost: () => window.desktopBridge?.preview?.design,
+      rendererHost: {
+        setViewport: (size) => useBrowserAutomationStore.getState().setViewport(
           threadId,
           activeWebviewTabId,
-          operation.requested.width,
-          operation.requested.height,
-        );
-        if (typeof requestAnimationFrame === "function") {
+          size.width,
+          size.height,
+        ),
+        readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? null,
+        waitForLayout: async () => {
+          if (typeof requestAnimationFrame !== "function") return;
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-        }
-        const applied = useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey);
-        return applied
-          ? { status: "applied" as const, applied }
-          : { status: "failed" as const, applied: operation.requested, error: "Browser viewport target is unavailable" };
+        },
       },
-      onStateChange: (nextState) => {
-        useBrowserAutomationStore.getState().setViewportState(threadId, activeWebviewTabId, nextState);
-      },
+      readConfirmed: () => useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? null,
+      onStateChange: (nextState) => useBrowserAutomationStore.getState().setViewportState(
+        threadId,
+        activeWebviewTabId,
+        nextState,
+      ),
+      onCreated: (coordinator) => useBrowserAutomationStore.getState().setViewportCoordinator(
+        threadId,
+        activeWebviewTabId,
+        coordinator,
+      ),
     });
-    useBrowserAutomationStore.getState().setViewportCoordinator(threadId, activeWebviewTabId, coordinator);
   }, [
     activeBrowserTargetKey,
     activeWebviewTabId,

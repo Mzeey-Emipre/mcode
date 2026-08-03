@@ -17,9 +17,16 @@ import { BrowserWindow, ipcMain } from "electron";
 import {
   BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
   BROWSER_AUTOMATION_MIN_VIEWPORT_PX,
+  BrowserAutomationViewportRequestSchema,
+  BrowserAutomationViewportResultSchema,
+  type BrowserAutomationViewportRequest,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { getActiveTab, getSession } from "./preview-session.js";
+import {
+  applyViewportPresentation,
+  getActiveTab,
+  getSession,
+} from "./preview-session.js";
 import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
 /** Built-in viewport presets surfaced to the design bar. */
@@ -30,7 +37,7 @@ export const DESIGN_VIEWPORT_PRESETS = [
 ] as const;
 export type DesignViewportPresetId = (typeof DESIGN_VIEWPORT_PRESETS)[number]["id"];
 
-type ViewportSource = "user" | "agent";
+type ViewportSource = NonNullable<BrowserAutomationViewportRequest["source"]>;
 
 interface ViewportOperationMetadata {
   readonly operationId?: string;
@@ -43,8 +50,6 @@ interface ViewportOperationMetadata {
 interface ViewportOperationResult extends ViewportOperationMetadata {
   readonly appliedViewport: { readonly width: number; readonly height: number } | null;
 }
-
-const MAX_VIEWPORT_OPERATION_ID_LENGTH = 256;
 
 function viewportMetadata(
   payload: ViewportOperationMetadata,
@@ -68,18 +73,21 @@ function currentViewportSize(
   session: ReturnType<typeof getSession>,
   key: string | null,
 ): { width: number; height: number } | null {
-  if (key) {
-    return session.viewportAppliedByTarget.get(key) ?? null;
-  }
-  if (!session.lastBounds) return null;
-  return { width: session.lastBounds.width, height: session.lastBounds.height };
-}
-
-function normaliseTargetId(value: unknown): string | null | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") return null;
-  const normalised = value.trim();
-  return normalised.length > 0 && normalised.length <= 256 ? normalised : null;
+  const size = key
+    ? session.viewportAppliedByTarget.get(key) ?? null
+    : session.lastBounds
+      ? { width: session.lastBounds.width, height: session.lastBounds.height }
+      : null;
+  if (!size) return null;
+  if (
+    !Number.isSafeInteger(size.width) ||
+    !Number.isSafeInteger(size.height) ||
+    size.width < BROWSER_AUTOMATION_MIN_VIEWPORT_PX ||
+    size.height < BROWSER_AUTOMATION_MIN_VIEWPORT_PX ||
+    size.width > BROWSER_AUTOMATION_MAX_VIEWPORT_PX ||
+    size.height > BROWSER_AUTOMATION_MAX_VIEWPORT_PX
+  ) return null;
+  return size;
 }
 
 function rememberAppliedViewport(
@@ -219,140 +227,128 @@ const ANNOTATION_GUARD_TEARDOWN_SCRIPT = String.raw`(() => {
 export function registerDesignModeHandlers(): void {
   ipcMain.handle(
     "preview:design.set-viewport",
-    (event, payload: {
-      presetId?: string;
-      widthOverride?: number;
-      heightOverride?: number;
-      operationId?: string;
-      source?: ViewportSource;
-      targetGeneration?: number;
-      threadId?: string;
-      tabId?: string;
-    }) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const s = getSession(win);
-      const rawOperationId = payload?.operationId;
-      const operationId = rawOperationId === undefined
-        ? undefined
-        : typeof rawOperationId === "string"
-          ? rawOperationId.trim()
+    (event, payload: unknown) => {
+      const parsedPayload = BrowserAutomationViewportRequestSchema().safeParse(payload);
+      if (!parsedPayload.success) {
+        return BrowserAutomationViewportResultSchema().parse({
+          ok: false,
+          error: "invalid-viewport-request",
+        });
+      }
+      return BrowserAutomationViewportResultSchema().parse((() => {
+        const request: BrowserAutomationViewportRequest = parsedPayload.data;
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+        const s = getSession(win);
+        const operationId = request.operationId;
+        const source = request.source;
+        const targetGeneration = request.targetGeneration;
+        const threadId = request.threadId;
+        const tabId = request.tabId;
+        const activeThreadId = s.lastPreviewThreadId;
+        const activeTabId = activeThreadId ? getActiveTab(s, activeThreadId).id : null;
+        const resolvedThreadId = threadId ?? activeThreadId;
+        const resolvedTabId = tabId ?? activeTabId;
+        const key = resolvedThreadId && resolvedTabId
+          ? targetKey(resolvedThreadId, resolvedTabId)
           : null;
-      if (
-        operationId === null ||
-        (operationId !== undefined &&
-          (operationId.length === 0 || operationId.length > MAX_VIEWPORT_OPERATION_ID_LENGTH))
-      ) {
-        return { ok: false, error: "invalid-operation-id" };
-      }
-      const source = payload?.source;
-      if (source !== undefined && source !== "user" && source !== "agent") {
-        return { ok: false, error: "invalid-operation-source" };
-      }
-      const targetGeneration = payload?.targetGeneration;
-      if (
-        targetGeneration !== undefined &&
-        (!Number.isSafeInteger(targetGeneration) || targetGeneration < 0)
-      ) {
-        return { ok: false, error: "invalid-target-generation" };
-      }
-      const threadId = normaliseTargetId(payload?.threadId);
-      const tabId = normaliseTargetId(payload?.tabId);
-      if (threadId === null || tabId === null) {
-        return { ok: false, error: "invalid-target" };
-      }
-      const activeThreadId = s.lastPreviewThreadId;
-      const activeTabId = activeThreadId ? getActiveTab(s, activeThreadId).id : null;
-      const resolvedThreadId = threadId ?? activeThreadId;
-      const resolvedTabId = tabId ?? activeTabId;
-      const key = resolvedThreadId && resolvedTabId
-        ? targetKey(resolvedThreadId, resolvedTabId)
-        : null;
-      const metadata: ViewportOperationMetadata = {
-        ...(operationId === undefined ? {} : { operationId }),
-        ...(source === undefined ? {} : { source }),
-        ...(targetGeneration === undefined ? {} : { targetGeneration }),
-        ...(threadId === undefined ? {} : { threadId }),
-        ...(tabId === undefined ? {} : { tabId }),
-      };
-      const appliedBefore = currentViewportSize(s, key);
-      if (
-        (threadId !== undefined || tabId !== undefined) &&
-        (resolvedThreadId === null ||
-          resolvedTabId === null ||
-          resolvedThreadId !== activeThreadId ||
-          resolvedTabId !== activeTabId)
-      ) {
-        return {
-          ok: false,
-          error: "stale-target",
-          ...viewportMetadata(metadata, appliedBefore),
+        const metadata: ViewportOperationMetadata = {
+          ...(operationId === undefined ? {} : { operationId }),
+          ...(source === undefined ? {} : { source }),
+          ...(targetGeneration === undefined ? {} : { targetGeneration }),
+          ...(threadId === undefined ? {} : { threadId }),
+          ...(tabId === undefined ? {} : { tabId }),
         };
-      }
-      if (
-        targetGeneration !== undefined &&
-        key &&
-        (s.viewportTargetGenerationByTarget.get(key) ?? -1) > targetGeneration
-      ) {
-        return {
-          ok: false,
-          error: "stale-target-generation",
-          ...viewportMetadata(metadata, appliedBefore),
-        };
-      }
-      if (!s.view || s.view.webContents.isDestroyed()) {
-        return { ok: false, error: "no-view", ...viewportMetadata(metadata, appliedBefore) };
-      }
-      if (!s.lastBounds) {
-        return { ok: false, error: "no-bounds", ...viewportMetadata(metadata, appliedBefore) };
-      }
-
-      let width: number;
-      let height: number;
-      if (payload?.presetId) {
-        const preset = DESIGN_VIEWPORT_PRESETS.find((p) => p.id === payload.presetId);
-        if (!preset) return { ok: false, error: "unknown-preset" };
-        width = preset.width;
-        height = preset.height;
-      } else {
-        const w = Number(payload?.widthOverride);
-        const h = Number(payload?.heightOverride);
-        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
-          return { ok: false, error: "invalid-dimensions", ...viewportMetadata(metadata, appliedBefore) };
+        const appliedBefore = currentViewportSize(s, key);
+        if (
+          (threadId !== undefined || tabId !== undefined) &&
+          (resolvedThreadId === null ||
+            resolvedTabId === null ||
+            resolvedThreadId !== activeThreadId ||
+            resolvedTabId !== activeTabId)
+        ) {
+          return {
+            ok: false,
+            error: "stale-target",
+            ...viewportMetadata(metadata, appliedBefore),
+          };
         }
+        if (
+          targetGeneration !== undefined &&
+          key &&
+          (s.viewportTargetGenerationByTarget.get(key) ?? -1) > targetGeneration
+        ) {
+          return {
+            ok: false,
+            error: "stale-target-generation",
+            ...viewportMetadata(metadata, appliedBefore),
+          };
+        }
+        if (!s.view || s.view.webContents.isDestroyed()) {
+          return { ok: false, error: "no-view", ...viewportMetadata(metadata, appliedBefore) };
+        }
+        if (!s.lastBounds) {
+          return { ok: false, error: "no-bounds", ...viewportMetadata(metadata, appliedBefore) };
+        }
+
+        let width: number;
+        let height: number;
+        if (request.presetId) {
+          const preset = DESIGN_VIEWPORT_PRESETS.find((p) => p.id === request.presetId);
+          if (!preset) return { ok: false, error: "unknown-preset" };
+          width = preset.width;
+          height = preset.height;
+        } else {
+          const w = request.widthOverride;
+          const h = request.heightOverride;
+          if (
+            typeof w !== "number" ||
+            typeof h !== "number" ||
+            !Number.isFinite(w) ||
+            !Number.isFinite(h) ||
+            w <= 0 ||
+            h <= 0
+          ) {
+            return { ok: false, error: "invalid-dimensions", ...viewportMetadata(metadata, appliedBefore) };
+          }
+          width = Math.min(
+            BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+            Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(w)),
+          );
+          height = Math.min(
+            BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+            Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(h)),
+          );
+        }
+
         width = Math.min(
           BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
-          Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(w)),
+          Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(width)),
         );
         height = Math.min(
           BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
-          Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(h)),
+          Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(height)),
         );
-      }
 
-      width = Math.min(
-        BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
-        Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(width)),
-      );
-      height = Math.min(
-        BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
-        Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(height)),
-      );
-
-      // Center the CSS viewport inside the panel. Its dimensions intentionally
-      // remain independent of panel size so resizing the panel only changes
-      // presentation space, not the page's CSS viewport.
-      const x = s.lastBounds.x + Math.floor((s.lastBounds.width - width) / 2);
-      const y = s.lastBounds.y + Math.floor((s.lastBounds.height - height) / 2);
-      try {
-        s.view.setBounds({ x, y, width, height });
-      } catch {
-        return { ok: false, error: "set-bounds-failed", ...viewportMetadata(metadata, appliedBefore) };
-      }
-      const appliedViewport = { width, height };
-      rememberAppliedViewport(s, key, appliedViewport);
-      rememberTargetGeneration(s, key, targetGeneration);
-      return { ok: true, data: { width, height }, ...viewportMetadata(metadata, appliedViewport) };
+        // Center the CSS viewport inside the panel. Its dimensions intentionally
+        // remain independent of panel size so resizing the panel only changes
+        // presentation space, not the page's CSS viewport.
+        const x = s.lastBounds.x + Math.floor((s.lastBounds.width - width) / 2);
+        const y = s.lastBounds.y + Math.floor((s.lastBounds.height - height) / 2);
+        try {
+          s.view.setBounds({ x, y, width, height });
+        } catch {
+          return { ok: false, error: "set-bounds-failed", ...viewportMetadata(metadata, appliedBefore) };
+        }
+        const appliedViewport = { width, height };
+        rememberAppliedViewport(s, key, appliedViewport);
+        rememberTargetGeneration(s, key, targetGeneration);
+        if (key && !s.viewportPresentationByTarget.has(key)) {
+          s.viewportPresentationByTarget.set(key, "fit");
+        }
+        applyViewportPresentation(s, s.lastBounds, resolvedThreadId, resolvedTabId, false);
+        return { ok: true, data: { width, height }, ...viewportMetadata(metadata, appliedViewport) };
+      })());
     },
   );
 
@@ -364,6 +360,7 @@ export function registerDesignModeHandlers(): void {
       return { ok: false, error: "no-view" };
     if (!s.lastBounds) return { ok: false, error: "no-bounds" };
     try {
+      s.view.webContents.setZoomFactor(1);
       s.view.setBounds(s.lastBounds);
     } catch {
       return { ok: false, error: "set-bounds-failed" };
@@ -371,7 +368,11 @@ export function registerDesignModeHandlers(): void {
     const activeThreadId = s.lastPreviewThreadId;
     const activeTabId = activeThreadId ? getActiveTab(s, activeThreadId).id : null;
     const key = activeThreadId && activeTabId ? targetKey(activeThreadId, activeTabId) : null;
-    rememberAppliedViewport(s, key, { width: s.lastBounds.width, height: s.lastBounds.height });
+    if (key) {
+      s.viewportAppliedByTarget.delete(key);
+      s.viewportTargetGenerationByTarget.delete(key);
+      s.viewportPresentationByTarget.delete(key);
+    }
     return { ok: true };
   });
 

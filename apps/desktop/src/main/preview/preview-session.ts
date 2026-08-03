@@ -30,6 +30,9 @@ export type CaptureFinishResult =
 /** CSS-pixel rectangle used for WebContentsView bounds and capture regions. */
 export type Bounds = { x: number; y: number; width: number; height: number };
 
+/** Presentation mode used when a confirmed CSS viewport is shown in the panel. */
+export type ViewportPresentation = "fit" | "actual";
+
 /**
  * Per-tab record held inside a thread's tab set. Phase A keeps a single backing
  * WebContentsView per session (see {@link PreviewSession.view}), so `view` here is
@@ -128,6 +131,8 @@ export interface PreviewSession {
   workspaceId: string | null;
   /** Renderer-confirmed responsive viewport dimensions by exact thread/tab target. */
   viewportAppliedByTarget: Map<string, { width: number; height: number }>;
+  /** Presentation mode for each exact responsive viewport target. */
+  viewportPresentationByTarget: Map<string, ViewportPresentation>;
   /** Target generation accepted by the responsive viewport host per exact target. */
   viewportTargetGenerationByTarget: Map<string, number>;
   /** Favicon URLs from the last page-favicon-updated event. */
@@ -177,6 +182,7 @@ export function getSession(win: BrowserWindow): PreviewSession {
       lastPreviewThreadId: null,
       workspaceId: null,
       viewportAppliedByTarget: new Map(),
+      viewportPresentationByTarget: new Map(),
       viewportTargetGenerationByTarget: new Map(),
       lastFavicons: [],
       lastCrashRecoveryAt: 0,
@@ -236,6 +242,65 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
     return tab;
   }
   return active;
+}
+
+function viewportTargetKey(threadId: string, tabId: string): string {
+  return JSON.stringify([threadId, tabId]);
+}
+
+/**
+ * Computes the native presentation bounds for one confirmed CSS viewport.
+ * Zoom scales the guest content while the returned bounds keep its CSS layout
+ * dimensions stable as the surrounding panel changes size.
+ */
+export function viewportBoundsForTarget(
+  s: PreviewSession,
+  panel: Bounds,
+  threadId: string | null,
+  tabId: string | null,
+): { bounds: Bounds; scale: number } {
+  if (!threadId || !tabId) return { bounds: panel, scale: 1 };
+  const key = viewportTargetKey(threadId, tabId);
+  const viewport = s.viewportAppliedByTarget.get(key);
+  if (!viewport) return { bounds: panel, scale: 1 };
+  const presentation = s.viewportPresentationByTarget.get(key) ?? "fit";
+  const rawScale = presentation === "actual"
+    ? 1
+    : Math.min(panel.width / viewport.width, panel.height / viewport.height);
+  const scale = presentation === "actual"
+    ? 1
+    : Math.min(1.25, Math.max(0.2, Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 0.2));
+  const width = presentation === "actual" ? viewport.width : Math.max(1, Math.round(viewport.width * scale));
+  const height = presentation === "actual" ? viewport.height : Math.max(1, Math.round(viewport.height * scale));
+  return {
+    bounds: {
+      x: panel.x + Math.floor((panel.width - width) / 2),
+      y: panel.y + Math.floor((panel.height - height) / 2),
+      width,
+      height,
+    },
+    scale,
+  };
+}
+
+/** Apply the current target presentation to the active native view. */
+export function applyViewportPresentation(
+  s: PreviewSession,
+  panel: Bounds,
+  threadId: string | null,
+  tabId: string | null,
+  updateBounds = true,
+): { bounds: Bounds; scale: number } {
+  const presentation = viewportBoundsForTarget(s, panel, threadId, tabId);
+  if (s.view && !s.view.webContents.isDestroyed()) {
+    try {
+      s.view.webContents.setZoomFactor(presentation.scale);
+      if (updateBounds) s.view.setBounds(presentation.bounds);
+    } catch {
+      // The view can disappear between the lifecycle check and the update.
+    }
+  }
+  return presentation;
 }
 
 /** Serializable view of a thread's tab set for IPC and renderer reconciliation. */

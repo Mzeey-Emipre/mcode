@@ -25,6 +25,68 @@ export const BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH = 1_280;
 export const BROWSER_AUTOMATION_MIN_VIEWPORT_PX = 240;
 /** Maximum CSS viewport dimension accepted by browser resize operations. */
 export const BROWSER_AUTOMATION_MAX_VIEWPORT_PX = 2_560;
+/** Bounded viewport operation metadata shared by renderer and native hosts. */
+const viewportOperationMetadataShape = {
+  operationId: z.string().trim().min(1).max(256).optional(),
+  source: z.enum(["user", "agent"]).optional(),
+  targetGeneration: z
+    .number()
+    .int()
+    .nonnegative()
+    .refine(Number.isSafeInteger, "Target generation must be a safe integer")
+    .optional(),
+  threadId: z.string().trim().min(1).max(256).optional(),
+  tabId: z.string().trim().min(1).max(256).optional(),
+};
+
+const viewportSizeSchema = z
+  .object({
+    width: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX),
+    height: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX),
+  })
+  .strict();
+
+/** Validates the native preview responsive viewport request at the IPC boundary. */
+export const BrowserAutomationViewportRequestSchema = lazySchema(() =>
+  z
+    .object({
+      presetId: z.string().trim().min(1).max(32).optional(),
+      widthOverride: z.number().finite().optional(),
+      heightOverride: z.number().finite().optional(),
+      ...viewportOperationMetadataShape,
+    })
+    .strict(),
+);
+/** Typed native preview responsive viewport request. */
+export type BrowserAutomationViewportRequest = z.infer<
+  ReturnType<typeof BrowserAutomationViewportRequestSchema>
+>;
+
+/** Validates native preview responsive viewport results returned over IPC. */
+export const BrowserAutomationViewportResultSchema = lazySchema(() =>
+  z.union([
+    z
+      .object({
+        ok: z.literal(true),
+        data: viewportSizeSchema,
+        appliedViewport: viewportSizeSchema,
+        ...viewportOperationMetadataShape,
+      })
+      .strict(),
+    z
+      .object({
+        ok: z.literal(false),
+        error: z.string().min(1).max(128),
+        appliedViewport: viewportSizeSchema.nullable().optional(),
+        ...viewportOperationMetadataShape,
+      })
+      .strict(),
+  ]),
+);
+/** Typed native preview responsive viewport result. */
+export type BrowserAutomationViewportResult = z.infer<
+  ReturnType<typeof BrowserAutomationViewportResultSchema>
+>;
 /** Maximum encoded success result size in bytes. */
 export const BROWSER_AUTOMATION_MAX_RESULT_BYTES = 512 * 1_024;
 /** Maximum decoded browser recording size in bytes. */

@@ -18,6 +18,7 @@ import {
   clearIdle,
   clearDiscardTimers,
   applyPageStatus,
+  applyViewportPresentation,
   setPreviewLoading,
   isAllowedPreviewUrl,
 } from "./preview-session.js";
@@ -388,7 +389,7 @@ export function ensureTabView(
       s.lastCrashRecoveryAt = now;
       const fresh = ensureTabView(win, s, tab);
       s.view = fresh;
-      if (s.lastBounds) fresh.setBounds(s.lastBounds);
+      if (s.lastBounds) applyViewportPresentation(s, s.lastBounds, tab.threadId, tab.id);
       mountView(win, fresh);
       setPreviewLoading(win, s, true);
       trustMainProcessFileNavigation(s, url);

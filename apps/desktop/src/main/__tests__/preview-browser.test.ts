@@ -1744,6 +1744,22 @@ describe("preview-browser", () => {
       expect(result).toMatchObject({ ok: false, error: "unknown-preset" });
     });
 
+    it("rejects malformed viewport IPC payloads before touching the session", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.setBounds.mockClear();
+
+      const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        operationId: 42,
+        widthOverride: 640,
+        heightOverride: 480,
+      });
+
+      expect(result).toEqual({ ok: false, error: "invalid-viewport-request" });
+      expect(view.setBounds).not.toHaveBeenCalled();
+    });
+
     it("setViewport with explicit dimensions clamps to the CSS viewport bounds", async () => {
       const win = createWindow();
       await showPreview(win);
@@ -1805,6 +1821,43 @@ describe("preview-browser", () => {
         tabId: activeTabId,
       });
       expect(view.setBounds).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves the CSS viewport while panel resize updates native presentation scale", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 1200,
+        heightOverride: 800,
+        operationId: "viewport-panel-resize",
+        source: "user",
+        targetGeneration: 3,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      view.setBounds.mockClear();
+      view.webContents.setZoomFactor.mockClear();
+
+      await ipcHandlers["preview:sync"]!(fakeEvent(win), {
+        visible: true,
+        bounds: { x: 100, y: 100, width: 600, height: 400 },
+        threadId: "thread-1",
+        workspaceId: "ws-1",
+      });
+
+      expect(sessions.get(win.id)!.viewportAppliedByTarget.get(
+        JSON.stringify(["thread-1", activeTabId]),
+      )).toEqual({ width: 1200, height: 800 });
+      expect(view.webContents.setZoomFactor).toHaveBeenLastCalledWith(0.5);
+      expect(view.setBounds).toHaveBeenLastCalledWith({
+        x: 100,
+        y: 100,
+        width: 600,
+        height: 400,
+      });
     });
 
     it("resetViewport restores the panel bounds", async () => {
