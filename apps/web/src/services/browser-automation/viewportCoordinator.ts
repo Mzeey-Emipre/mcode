@@ -54,6 +54,23 @@ export interface ViewportHostResult {
   readonly error?: string;
 }
 
+/** One presentation change submitted to the active rendering host. */
+export interface ViewportPresentationHostOperation {
+  readonly operationId: string;
+  readonly source: ViewportSource;
+  readonly targetGeneration: number;
+  readonly requested: ViewportSize;
+  readonly presentation: ViewportPresentation;
+}
+
+/** Host outcome returned after a presentation change is applied or rejected. */
+export interface ViewportPresentationHostResult {
+  readonly status: "applied" | "stale" | "failed";
+  readonly applied: ViewportPresentation;
+  readonly appliedViewport: ViewportSize | null;
+  readonly error?: string;
+}
+
 /** Result returned to a caller after the coordinator reconciles host state. */
 export interface ViewportApplyResult {
   readonly operationId: string;
@@ -65,6 +82,18 @@ export interface ViewportApplyResult {
   readonly error?: string;
 }
 
+/** Result returned to a caller after a presentation host acknowledgement. */
+export interface ViewportPresentationApplyResult {
+  readonly operationId: string;
+  readonly source: ViewportSource;
+  readonly targetGeneration: number;
+  readonly requested: ViewportPresentation;
+  readonly applied: ViewportPresentation;
+  readonly appliedViewport: ViewportSize | null;
+  readonly status: "applied" | "stale" | "failed" | "superseded";
+  readonly error?: string;
+}
+
 /** Snapshot of the state a viewport host should render. */
 export interface ViewportCoordinatorState {
   readonly mode: ViewportMode;
@@ -73,6 +102,8 @@ export interface ViewportCoordinatorState {
   readonly userConfirmed: ViewportSize;
   readonly targetGeneration: number;
   readonly pending: ViewportHostOperation | null;
+  readonly pendingPresentation: ViewportPresentationHostOperation | null;
+  readonly presentationError: string | null;
   readonly agentActive: boolean;
 }
 
@@ -91,6 +122,9 @@ export interface ViewportCanvasBounds {
 /** Host contract used by one coordinator instance. */
 export interface ViewportHost {
   apply(operation: ViewportHostOperation): Promise<ViewportHostResult>;
+  applyPresentation?(
+    operation: ViewportPresentationHostOperation,
+  ): Promise<ViewportPresentationHostResult>;
 }
 
 /** Options for creating a viewport coordinator. */
@@ -101,6 +135,7 @@ export interface ViewportCoordinatorOptions {
   readonly mode?: ViewportMode;
   readonly presentation?: ViewportPresentation;
   readonly operationId?: (operation: Omit<ViewportHostOperation, "operationId">, sequence: number) => string;
+  readonly applyPresentation?: NonNullable<ViewportHost["applyPresentation"]>;
   readonly onStateChange?: (state: ViewportCoordinatorState) => void;
 }
 
@@ -146,6 +181,12 @@ interface PendingOperation {
   settled: boolean;
 }
 
+interface PendingPresentationOperation {
+  readonly operation: ViewportPresentationHostOperation;
+  resolve: (result: ViewportPresentationApplyResult) => void;
+  settled: boolean;
+}
+
 /**
  * Coordinates user and agent viewport changes while retaining only host-confirmed dimensions.
  *
@@ -154,6 +195,7 @@ interface PendingOperation {
  */
 export class ViewportCoordinator {
   private readonly applyHost: ViewportHost["apply"];
+  private readonly applyPresentationHost: ViewportCoordinatorOptions["applyPresentation"];
   private readonly operationIdFactory: NonNullable<ViewportCoordinatorOptions["operationId"]>;
   private confirmed: ViewportSize;
   private userConfirmed: ViewportSize;
@@ -162,6 +204,8 @@ export class ViewportCoordinator {
   private presentation: ViewportPresentation;
   private targetGeneration: number;
   private pending: PendingOperation | null = null;
+  private pendingPresentation: PendingPresentationOperation | null = null;
+  private presentationError: string | null = null;
   private superseded: PendingOperation[] = [];
   private sequence = 0;
   private agentActive = false;
@@ -172,6 +216,7 @@ export class ViewportCoordinator {
   public constructor(options: ViewportCoordinatorOptions) {
     const initial = clampViewportSize(options.initial ?? DEFAULT_VIEWPORT_SIZE);
     this.applyHost = options.apply;
+    this.applyPresentationHost = options.applyPresentation;
     this.operationIdFactory = options.operationId ?? ((operation, sequence) =>
       `${operation.source}:${operation.targetGeneration}:${sequence}`);
     this.confirmed = initial;
@@ -198,6 +243,10 @@ export class ViewportCoordinator {
       userConfirmed: { ...this.userConfirmed },
       targetGeneration: this.targetGeneration,
       pending: this.pending ? { ...this.pending.operation, requested: { ...this.pending.requested } } : null,
+      pendingPresentation: this.pendingPresentation
+        ? { ...this.pendingPresentation.operation, requested: { ...this.pendingPresentation.operation.requested } }
+        : null,
+      presentationError: this.presentationError,
       agentActive: this.agentActive,
     };
   }
@@ -209,10 +258,42 @@ export class ViewportCoordinator {
     return this.notify();
   }
 
-  /** Change Fit or Actual presentation without changing the CSS viewport dimensions. */
-  public setPresentation(presentation: ViewportPresentation): ViewportCoordinatorState {
-    this.presentation = presentation;
-    return this.notify();
+  /** Change Fit or Actual presentation after the active host confirms the request. */
+  public setPresentation(presentation: ViewportPresentation): Promise<ViewportPresentationApplyResult> {
+    const sequence = ++this.sequence;
+    const descriptor = {
+      source: "user" as const,
+      targetGeneration: this.targetGeneration,
+      requested: { ...this.confirmed },
+    };
+    const operation: ViewportPresentationHostOperation = {
+      ...descriptor,
+      presentation,
+      operationId: this.operationIdFactory(descriptor, sequence),
+    };
+    this.settlePendingPresentation("superseded");
+    this.interrupted = false;
+
+    if (presentation === this.presentation && !this.applyPresentationHost) {
+      this.presentationError = null;
+      this.notify();
+      return Promise.resolve(this.presentationResult(operation, presentation, { ...this.confirmed }, "applied"));
+    }
+
+    if (!this.applyPresentationHost) {
+      this.presentation = presentation;
+      this.presentationError = null;
+      this.notify();
+      return Promise.resolve(this.presentationResult(operation, presentation, { ...this.confirmed }, "applied"));
+    }
+
+    return new Promise<ViewportPresentationApplyResult>((resolve) => {
+      const pending: PendingPresentationOperation = { operation, resolve, settled: false };
+      this.pendingPresentation = pending;
+      this.presentationError = null;
+      this.notify();
+      void this.applyPresentation(pending);
+    });
   }
 
   /** Return the visual scale for a viewport canvas, leaving Actual mode at one-to-one. */
@@ -227,6 +308,7 @@ export class ViewportCoordinator {
     this.targetGeneration = nextGeneration;
     this.interrupted = true;
     this.settlePending("stale");
+    this.settlePendingPresentation("stale");
     this.flushSuperseded("stale");
     this.agentActive = false;
     this.notify();
@@ -277,6 +359,7 @@ export class ViewportCoordinator {
     this.interrupted = true;
     this.agentActive = false;
     this.settlePending("stale");
+    this.settlePendingPresentation("stale");
     this.flushSuperseded("stale");
     this.notify();
   }
@@ -387,6 +470,66 @@ export class ViewportCoordinator {
     this.flushSuperseded("superseded");
   }
 
+  private async applyPresentation(pending: PendingPresentationOperation): Promise<void> {
+    let hostResult: ViewportPresentationHostResult;
+    try {
+      hostResult = await this.applyPresentationHost!(pending.operation);
+    } catch (cause) {
+      hostResult = {
+        status: "failed",
+        applied: this.presentation,
+        appliedViewport: { ...this.confirmed },
+        error: cause instanceof Error ? cause.message : "Viewport presentation host failed",
+      };
+    }
+
+    const current = this.pendingPresentation === pending && !pending.settled;
+    if (!current || this.interrupted || pending.operation.targetGeneration !== this.targetGeneration) {
+      if (pending.settled) return;
+      this.resolvePresentation(pending, this.presentationResult(
+        pending.operation,
+        this.presentation,
+        hostResult.appliedViewport ?? { ...this.confirmed },
+        this.interrupted ? "stale" : "superseded",
+        hostResult.error,
+      ));
+      return;
+    }
+
+    this.pendingPresentation = null;
+    if (hostResult.status === "applied" && hostResult.applied === pending.operation.presentation) {
+      this.presentation = hostResult.applied;
+      this.presentationError = null;
+      this.notify();
+      this.resolvePresentation(pending, this.presentationResult(
+        pending.operation,
+        hostResult.applied,
+        hostResult.appliedViewport,
+        "applied",
+      ));
+      return;
+    }
+
+    const status = hostResult.status === "stale" ||
+      (hostResult.status === "applied" && hostResult.applied !== pending.operation.presentation)
+      ? "stale"
+      : "failed";
+    const error = hostResult.error ?? (
+      status === "stale"
+        ? "Viewport presentation host acknowledgement is stale"
+        : "Viewport presentation host failed"
+    );
+    this.presentationError = error;
+    this.notify();
+    this.resolvePresentation(pending, this.presentationResult(
+      pending.operation,
+      this.presentation,
+      hostResult.appliedViewport ?? { ...this.confirmed },
+      status,
+      error,
+    ));
+  }
+
   private settlePending(status: "stale" | "superseded"): void {
     const pending = this.pending;
     if (!pending || pending.settled) return;
@@ -404,6 +547,19 @@ export class ViewportCoordinator {
       applied: { ...this.confirmed },
       status,
     });
+    this.notify();
+  }
+
+  private settlePendingPresentation(status: "stale" | "superseded"): void {
+    const pending = this.pendingPresentation;
+    if (!pending || pending.settled) return;
+    this.pendingPresentation = null;
+    this.resolvePresentation(pending, this.presentationResult(
+      pending.operation,
+      this.presentation,
+      { ...this.confirmed },
+      status,
+    ));
     this.notify();
   }
 
@@ -426,6 +582,34 @@ export class ViewportCoordinator {
     if (pending.settled) return;
     pending.settled = true;
     pending.resolve(result);
+  }
+
+  private resolvePresentation(
+    pending: PendingPresentationOperation,
+    result: ViewportPresentationApplyResult,
+  ): void {
+    if (pending.settled) return;
+    pending.settled = true;
+    pending.resolve(result);
+  }
+
+  private presentationResult(
+    operation: ViewportPresentationHostOperation,
+    applied: ViewportPresentation,
+    appliedViewport: ViewportSize | null,
+    status: ViewportPresentationApplyResult["status"],
+    error?: string,
+  ): ViewportPresentationApplyResult {
+    return {
+      operationId: operation.operationId,
+      source: operation.source,
+      targetGeneration: operation.targetGeneration,
+      requested: operation.presentation,
+      applied,
+      appliedViewport,
+      status,
+      ...(error === undefined ? {} : { error }),
+    };
   }
 
   private notify(): ViewportCoordinatorState {

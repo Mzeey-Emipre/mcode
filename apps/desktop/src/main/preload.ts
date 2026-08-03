@@ -377,14 +377,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         return () => ipcRenderer.removeListener("preview:automation.controller", listener);
       },
     },
-    /**
-     * Phase G design mode: stretch the panel to one of the named viewport
-     * presets ("phone" | "tablet" | "desktop") or pass explicit dimensions.
-     * Use design.reset() to restore the bounds the React shell last synced.
-     */
+    /** Phase G design mode: apply explicit CSS viewport dimensions. */
     design: {
       setViewport(payload: {
-        presetId?: string;
         widthOverride?: number;
         heightOverride?: number;
         operationId?: string;

@@ -1721,7 +1721,7 @@ describe("preview-browser", () => {
       }
     });
 
-    it("setViewport applies a named preset and centers within panel bounds", async () => {
+    it("setViewport applies the shared iPhone 15 Pro dimensions and centers within panel bounds", async () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
@@ -1730,26 +1730,27 @@ describe("preview-browser", () => {
 
       const ev = fakeEvent(win);
       const result = await ipcHandlers["preview:design.set-viewport"]!(ev, {
-        presetId: "phone",
+        widthOverride: 393,
+        heightOverride: 852,
       });
-      expect(result).toMatchObject({ ok: true, data: { width: 390, height: 844 } });
+      expect(result).toMatchObject({ ok: true, data: { width: 393, height: 852 } });
       expect(view.setBounds).toHaveBeenCalledWith(
         { x: 361, y: 100, width: 277, height: 600 },
       );
       expect(view.webContents.enableDeviceEmulation).toHaveBeenCalledWith(expect.objectContaining({
-        viewSize: { width: 390, height: 844 },
-        screenSize: { width: 390, height: 844 },
-        scale: 600 / 844,
+        viewSize: { width: 393, height: 852 },
+        screenSize: { width: 393, height: 852 },
+        scale: 600 / 852,
       }));
     });
 
-    it("setViewport rejects unknown preset", async () => {
+    it("setViewport rejects legacy preset payloads", async () => {
       const win = createWindow();
       await showPreview(win);
       const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
-        presetId: "fridge",
+        presetId: "phone",
       });
-      expect(result).toMatchObject({ ok: false, error: "unknown-preset" });
+      expect(result).toEqual({ ok: false, error: "invalid-viewport-request" });
     });
 
     it("rejects malformed viewport IPC payloads before touching the session", async () => {
@@ -1999,7 +2000,8 @@ describe("preview-browser", () => {
       await showPreview(win);
       const view = createdViews[0]!;
       await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
-        presetId: "phone",
+        widthOverride: 393,
+        heightOverride: 852,
       });
       view.setBounds.mockClear();
       const reset = await ipcHandlers["preview:design.reset-viewport"]!(fakeEvent(win), {});

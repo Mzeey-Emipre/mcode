@@ -256,12 +256,8 @@ export interface PreviewAutomationBridge {
   onControllerChanged(callback: (state: BrowserAutomationControllerState) => void): () => void;
 }
 
-/** Built-in viewport presets exposed by Phase G. */
-export type DesignViewportPresetId = "phone" | "tablet" | "desktop";
-
 interface PreviewDesignBridge {
   setViewport(payload: {
-    presetId?: DesignViewportPresetId;
     widthOverride?: number;
     heightOverride?: number;
     operationId?: string;

@@ -5,6 +5,8 @@ import {
   type ViewportCoordinatorOptions,
   type ViewportHostOperation,
   type ViewportHostResult,
+  type ViewportPresentationHostOperation,
+  type ViewportPresentationHostResult,
   type ViewportPresentation,
   type ViewportSize,
 } from "./viewportCoordinator";
@@ -120,12 +122,53 @@ function identityMatches(operation: ViewportHostOperation, result: ViewportNativ
 }
 
 function presentationIdentityMatches(
-  operation: ViewportHostOperation,
+  operation: ViewportPresentationHostOperation,
   result: ViewportNativePresentationResult,
 ): boolean {
   return result.operationId === operation.operationId &&
     result.source === operation.source &&
     result.targetGeneration === operation.targetGeneration;
+}
+
+function nativePresentationHost(
+  options: ViewportCoordinatorFactoryOptions,
+  nativeHost: ViewportNativeHost,
+): (operation: ViewportPresentationHostOperation) => Promise<ViewportPresentationHostResult> {
+  return async (operation) => {
+    const result = await nativeHost.setPresentation({
+      presentation: operation.presentation,
+      operationId: operation.operationId,
+      source: operation.source,
+      targetGeneration: operation.targetGeneration,
+      threadId: options.target.threadId,
+      tabId: options.target.tabId,
+    });
+    const appliedViewport = result.appliedViewport ?? fallbackViewport(options);
+    const appliedPresentation = result.presentation ?? options.presentation ?? "fit";
+    if (!result.ok) {
+      return {
+        status: result.error === "stale-target" || result.error === "stale-target-generation"
+          ? "stale"
+          : "failed",
+        applied: appliedPresentation,
+        appliedViewport,
+        error: result.error,
+      };
+    }
+    if (!presentationIdentityMatches(operation, result) || result.presentation !== operation.presentation) {
+      return {
+        status: "stale",
+        applied: appliedPresentation,
+        appliedViewport,
+        error: "Browser presentation host acknowledgement is stale",
+      };
+    }
+    return {
+      status: "applied",
+      applied: result.presentation,
+      appliedViewport,
+    };
+  };
 }
 
 function nativeViewportHost(
@@ -228,8 +271,6 @@ export function createViewportCoordinator(
   options: ViewportCoordinatorFactoryOptions,
 ): ViewportCoordinator {
   let coordinator: ViewportCoordinator | undefined;
-  let presentationSequence = 0;
-  let previousPresentation: ViewportPresentation = options.presentation ?? "fit";
   coordinator = new ViewportCoordinator({
     initial: options.initial,
     presentation: options.presentation,
@@ -238,33 +279,17 @@ export function createViewportCoordinator(
     onStateChange: (state) => {
       if (!coordinator) return;
       options.onStateChange?.(state, coordinator);
-      if (state.presentation === previousPresentation) return;
-      previousPresentation = state.presentation;
+    },
+    applyPresentation: async (operation) => {
       const nativeHost = options.nativeHost?.();
-      if (!nativeHost || typeof nativeHost.setPresentation !== "function") return;
-      const operation: ViewportHostOperation = {
-        operationId: options.operationId?.(
-          {
-            source: "user",
-            targetGeneration: state.targetGeneration,
-            requested: state.confirmed,
-          },
-          ++presentationSequence,
-        ) ?? `presentation:user:${state.targetGeneration}:${presentationSequence}`,
-        source: "user",
-        targetGeneration: state.targetGeneration,
-        requested: state.confirmed,
+      if (nativeHost && typeof nativeHost.setPresentation === "function") {
+        return nativePresentationHost(options, nativeHost)(operation);
+      }
+      return {
+        status: "applied",
+        applied: operation.presentation,
+        appliedViewport: fallbackViewport(options),
       };
-      void nativeHost.setPresentation({
-        presentation: state.presentation,
-        operationId: operation.operationId,
-        source: operation.source,
-        targetGeneration: operation.targetGeneration,
-        threadId: options.target.threadId,
-        tabId: options.target.tabId,
-      }).then((result) => {
-        if (!result.ok || !presentationIdentityMatches(operation, result)) return;
-      });
     },
     apply: async (operation) => {
       return createViewportHost(options, coordinator!)(operation);

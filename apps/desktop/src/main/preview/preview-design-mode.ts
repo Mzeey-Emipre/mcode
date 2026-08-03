@@ -32,14 +32,6 @@ import {
 } from "./preview-session.js";
 import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
-/** Built-in viewport presets surfaced to the design bar. */
-export const DESIGN_VIEWPORT_PRESETS = [
-  { id: "phone", label: "Phone", width: 390, height: 844 },
-  { id: "tablet", label: "Tablet", width: 1024, height: 768 },
-  { id: "desktop", label: "Desktop", width: 1440, height: 900 },
-] as const;
-export type DesignViewportPresetId = (typeof DESIGN_VIEWPORT_PRESETS)[number]["id"];
-
 type ViewportSource = NonNullable<BrowserAutomationViewportRequest["source"]>;
 
 interface ViewportOperationMetadata {
@@ -310,35 +302,27 @@ export function registerDesignModeHandlers(): void {
           return { ok: false, error: "no-bounds", ...viewportMetadata(metadata, appliedBefore) };
         }
 
-        let width: number;
-        let height: number;
-        if (request.presetId) {
-          const preset = DESIGN_VIEWPORT_PRESETS.find((p) => p.id === request.presetId);
-          if (!preset) return { ok: false, error: "unknown-preset" };
-          width = preset.width;
-          height = preset.height;
-        } else {
-          const w = request.widthOverride;
-          const h = request.heightOverride;
-          if (
-            typeof w !== "number" ||
-            typeof h !== "number" ||
-            !Number.isFinite(w) ||
-            !Number.isFinite(h) ||
-            w <= 0 ||
-            h <= 0
-          ) {
-            return { ok: false, error: "invalid-dimensions", ...viewportMetadata(metadata, appliedBefore) };
-          }
-          width = Math.min(
-            BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
-            Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(w)),
-          );
-          height = Math.min(
-            BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
-            Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(h)),
-          );
+        const w = request.widthOverride;
+        const h = request.heightOverride;
+        if (
+          typeof w !== "number" ||
+          typeof h !== "number" ||
+          !Number.isFinite(w) ||
+          !Number.isFinite(h) ||
+          w <= 0 ||
+          h <= 0
+        ) {
+          return { ok: false, error: "invalid-dimensions", ...viewportMetadata(metadata, appliedBefore) };
         }
+
+        let width = Math.min(
+          BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+          Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(w)),
+        );
+        let height = Math.min(
+          BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+          Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(h)),
+        );
 
         width = Math.min(
           BROWSER_AUTOMATION_MAX_VIEWPORT_PX,

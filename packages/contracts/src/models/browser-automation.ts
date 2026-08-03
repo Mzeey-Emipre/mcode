@@ -50,7 +50,6 @@ const viewportSizeSchema = z
 export const BrowserAutomationViewportRequestSchema = lazySchema(() =>
   z
     .object({
-      presetId: z.string().trim().min(1).max(32).optional(),
       widthOverride: z.number().finite().optional(),
       heightOverride: z.number().finite().optional(),
       ...viewportOperationMetadataShape,
