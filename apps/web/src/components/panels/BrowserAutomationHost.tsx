@@ -15,10 +15,13 @@ import {
 } from "@mcode/contracts";
 import { getTransport, pushEmitter } from "@/transport";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   browserAutomationRequestKey,
   browserAutomationTargetKey,
+  invalidateBrowserAutomationTargetObservation,
+  onBrowserAutomationObservationInvalidation,
   onBrowserAutomationInterruption,
   onBrowserAutomationScopeRelease,
   resolveBrowserAutomationControllerTarget,
@@ -97,6 +100,31 @@ function failureResponse(
       correlationId: globalThis.crypto.randomUUID(),
     },
   };
+}
+
+function projectAgentControl(dispatch: BrowserAutomationHostDispatch): void {
+  if (
+    window.desktopBridge?.preview?.automation ||
+    dispatch.request.operation === "status" ||
+    !useThreadStore.getState().runningThreadIds.has(dispatch.target.threadId)
+  ) return;
+  useBrowserAutomationStore.getState().setControllerForTarget(
+    dispatch.target.threadId,
+    dispatch.target.tabId,
+    {
+      tabId: dispatch.target.tabId,
+      controller: "agent",
+      controlEpoch: dispatch.request.expectedControlEpoch,
+      providerSessionId: dispatch.request.providerSessionId,
+      ...(dispatch.request.operation !== "inspect" &&
+      dispatch.request.operation !== "act" &&
+      dispatch.request.operation !== "tabs"
+        ? {
+            operation: dispatch.request.operation,
+          }
+        : {}),
+    },
+  );
 }
 
 async function afterBrowserLayout(): Promise<void> {
@@ -568,6 +596,7 @@ function PersistentAutomationPreviewSurface({
  */
 export function BrowserAutomationHost() {
   const connectionStatus = useConnectionStore((state) => state.status);
+  const runningThreadIds = useThreadStore((state) => state.runningThreadIds);
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
   const liveTargets = useBrowserAutomationStore((state) => state.liveTargets);
@@ -591,7 +620,6 @@ export function BrowserAutomationHost() {
   const requestAbortRef = useRef(new Map<string, AbortController>());
   const webAbortRef = useRef(new Map<string, AbortController>());
   const webObserverRef = useRef(new Map<string, () => void>());
-  const webHumanCancelRef = useRef(new Map<string, () => void>());
   const webNavigationRef = useRef(new Map<string, WebNavigationExpectation>());
   const bootstrapPendingRef = useRef(new Set<string>());
   const bootstrapAbortRef = useRef(new Map<string, AbortController>());
@@ -653,7 +681,7 @@ export function BrowserAutomationHost() {
         const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
         return useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision ?? 0;
       },
-      onHumanInput: (dispatch) => webHumanCancelRef.current.get(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence))?.(),
+      onHumanInput: (dispatch) => invalidateBrowserAutomationTargetObservation(dispatch.target.threadId, dispatch.target.tabId),
       onObserver: (dispatch, dispose) => webObserverRef.current.set(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence), dispose),
       executeNonInteraction: (dispatch, signal) => executeBrowserDispatch(undefined, recorderRef.current, dispatch, signal, executorDescriptor.operations),
     });
@@ -973,6 +1001,7 @@ export function BrowserAutomationHost() {
       inFlightRef.current.set(key, dispatch);
       const store = useBrowserAutomationStore.getState();
       store.setActiveRequest({ dispatch, startedAt: Date.now() });
+      projectAgentControl(dispatch);
       const controller = new AbortController();
       requestAbortRef.current.set(key, controller);
       const webDispatch = !bridge && webAutomationEnabled &&
@@ -1014,25 +1043,6 @@ export function BrowserAutomationHost() {
           }
         }
       }
-      const cancelForHuman = () => {
-        if (!operationAbort || cancelledRef.current.has(key)) return;
-        cancelledRef.current.add(key);
-        operationAbort.abort(new Error("Browser operation was interrupted by human input"));
-        const nextEpoch = (useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch) + 1;
-        useBrowserAutomationStore.getState().setControllerForTarget(
-          dispatch.target.threadId,
-          dispatch.target.tabId,
-          { tabId: dispatch.target.tabId, controller: "human", controlEpoch: nextEpoch },
-        );
-        void getTransport().cancelBrowserAutomationRequest(
-          lease.hostId,
-          lease.generation,
-          dispatch.request.requestId,
-          dispatch.request.sequence,
-          "human-interrupted",
-        ).catch(() => undefined);
-      };
-      if (webDispatch) webHumanCancelRef.current.set(key, cancelForHuman);
       const executeWeb = async (): Promise<BrowserAutomationResponse> => {
         if (staleAtStart) {
           return failureResponse(dispatch.request, !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration ? "STALE_TARGET_GENERATION" : "STALE_CONTROL_EPOCH", "Browser operation is stale");
@@ -1151,7 +1161,6 @@ export function BrowserAutomationHost() {
       }).catch(() => undefined).finally(() => {
         webObserverRef.current.get(key)?.();
         webObserverRef.current.delete(key);
-        webHumanCancelRef.current.delete(key);
         webAbortRef.current.delete(key);
         webNavigationRef.current.delete(key);
         if (inFlightRef.current.get(key) === dispatch) inFlightRef.current.delete(key);
@@ -1418,6 +1427,7 @@ export function BrowserAutomationHost() {
               },
             }
           : dispatch;
+        projectAgentControl(executionDispatch);
         const response = await sessionDriverRef.current!.execute(executionDispatch, controller.signal);
         await restoreBackgroundContext();
         if (leaseRef.current === lease && !cancelledRef.current.has(key)) {
@@ -1462,16 +1472,21 @@ export function BrowserAutomationHost() {
     });
   }, []);
 
+  useEffect(() => onBrowserAutomationObservationInvalidation((threadId, tabId) => {
+    sessionDriverRef.current?.invalidateTargetObservations(threadId, tabId);
+  }), []);
+
   useEffect(() => {
     const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge) return;
     return bridge.onControllerChanged((controller) => {
-      useBrowserAutomationStore.getState().setController(controller);
-      if (controller.controller !== "human") return;
+      const store = useBrowserAutomationStore.getState();
       const target = resolveBrowserAutomationControllerTarget(
-        useBrowserAutomationStore.getState().liveTargets.values(),
+        store.liveTargets.values(),
         controller,
       );
+      store.setController(controller);
+      if (controller.controller !== "human") return;
       if (!target) return;
       recorderRef.current.disposeTarget(target.threadId, target.tabId);
       for (const dispatch of inFlightRef.current.values()) {
@@ -1483,6 +1498,31 @@ export function BrowserAutomationHost() {
       }
     });
   }, [cancelHostedRequest]);
+
+  useEffect(() => {
+    const store = useBrowserAutomationStore.getState();
+    for (const [targetKey, controller] of store.controllers) {
+      if (controller.controller !== "agent") continue;
+      const target = store.liveTargets.get(targetKey);
+      if (!target || runningThreadIds.has(target.threadId)) continue;
+      if (!controller.providerSessionId) continue;
+      const bridge = window.desktopBridge?.preview?.automation;
+      if (bridge) {
+        void bridge.releaseAgentControl({
+          threadId: target.threadId,
+          tabId: target.tabId,
+          controlEpoch: controller.controlEpoch,
+          providerSessionId: controller.providerSessionId,
+        });
+      } else {
+        store.setControllerForTarget(target.threadId, target.tabId, {
+          tabId: target.tabId,
+          controller: "none",
+          controlEpoch: controller.controlEpoch,
+        });
+      }
+    }
+  }, [runningThreadIds]);
 
   useEffect(() => onBrowserAutomationInterruption((threadId, tabId, reason) => {
     recorderRef.current.disposeTarget(threadId, tabId);
@@ -1574,7 +1614,6 @@ export function BrowserAutomationHost() {
     for (const dispose of webObserverRef.current.values()) dispose();
     webAbortRef.current.clear();
     webObserverRef.current.clear();
-    webHumanCancelRef.current.clear();
     for (const tab of persistentWebTabsRef.current.values()) {
       usePreviewTabsStore.getState().removePersistentTab(tab.threadId, tab.tabId);
     }

@@ -454,6 +454,65 @@ describe("BrowserSessionDriver", () => {
     expect(result).toMatchObject({ ok: true, result: { outcome: "interrupted", effect: "partial", receipts: [{ index: 0, status: "applied" }, { index: 1, status: "interrupted" }] } });
     expect(execute).toHaveBeenCalledTimes(2);
   });
+
+  it("cooperatively stops an act batch after trusted human input invalidates its target", async () => {
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      }
+      driver.invalidateTargetObservations("thread", "tab");
+      return { ok: true, result: { operation: value.request.operation } } as unknown as BrowserAutomationResponse;
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      supportedActOperations: ["click", "type"],
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const result = await driver.execute(actDispatch(observationRef, [
+      { operation: "click", target: { cssSelector: "#save" } },
+      { operation: "type", text: "human-safe" },
+    ]), new AbortController().signal);
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        outcome: "interrupted",
+        effect: "partial",
+        receipts: [
+          { index: 0, operation: "click", status: "applied" },
+          { index: 1, operation: "type", status: "interrupted" },
+        ],
+      },
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears invalidation state for a read-only target when its provider session ends", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      ok: true,
+      result: { operation: "inspect" },
+    } as unknown as BrowserAutomationResponse);
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+    });
+
+    await driver.execute(inspectDispatch(), new AbortController().signal);
+    driver.invalidateTargetObservations("thread", "tab");
+    const interactionRevisions = (
+      driver as unknown as { humanInteractionRevisions: Map<string, number> }
+    ).humanInteractionRevisions;
+    expect(interactionRevisions.size).toBe(1);
+
+    await driver.releaseProviderSession("session");
+
+    expect(interactionRevisions.size).toBe(0);
+  });
+
   it("fails before adapter execution when descriptor revision drifts", async () => {
     const web = vi.fn().mockResolvedValue(response);
     const driver = new BrowserSessionDriver({
@@ -1007,10 +1066,18 @@ describe("BrowserSessionDriver", () => {
       expect.objectContaining({ tabId: "user-tab", provenance: "claimed-user", ownership: "claimed" }),
     ]));
 
+    driver.invalidateTargetObservations("thread", "agent-tab");
+    driver.invalidateTargetObservations("thread", "user-tab");
+    const interactionRevisions = (
+      driver as unknown as { humanInteractionRevisions: Map<string, number> }
+    ).humanInteractionRevisions;
+    expect(interactionRevisions.size).toBe(2);
+
     await driver.releaseProviderSession("session");
     expect(close).toHaveBeenCalledWith(agent);
     expect(close).not.toHaveBeenCalledWith(user);
     expect(projections.at(-1)).toEqual([]);
+    expect(interactionRevisions.size).toBe(0);
   });
 
   it("does not claim a target when a control operation fails or an observation is read-only", async () => {

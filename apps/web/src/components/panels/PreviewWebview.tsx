@@ -7,7 +7,7 @@ import {
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
 import {
-  interruptBrowserAutomationTarget,
+  invalidateBrowserAutomationTargetObservation,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 
@@ -372,7 +372,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       if (!message || typeof message !== "object" || Array.isArray(message)) return;
       const kind = (message as { kind?: unknown }).kind;
       if (typeof kind !== "string" || !HUMAN_INPUT_KINDS.has(kind)) return;
-      interruptBrowserAutomationTarget(threadId, tabId, "human-interrupted");
+      invalidateBrowserAutomationTargetObservation(threadId, tabId);
     };
     el.addEventListener("did-start-loading", onStart);
     el.addEventListener("dom-ready", onDomReady);

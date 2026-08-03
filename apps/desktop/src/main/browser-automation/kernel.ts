@@ -701,11 +701,6 @@ export class BrowserAutomationKernel {
           });
         } finally {
           this.rendererOperationLeases.delete(leaseId);
-          if (
-            state.controller.controller === "agent" &&
-            state.controller.providerSessionId === request!.providerSessionId &&
-            state.controller.operation === request!.operation
-          ) this.emitController(state, "none");
         }
       });
       const cancellation = { cancel: scheduled.cancel };
@@ -776,6 +771,33 @@ export class BrowserAutomationKernel {
       state.controller.controller === "human"
     ) return false;
     this.humanInterrupt(state);
+    return true;
+  }
+
+  /** Releases retained agent presentation after its owning turn completes. */
+  releaseAgentControl(event: IpcMainInvokeEvent, target: unknown): boolean {
+    const input = asRecord(target);
+    let threadId: string;
+    let tabId: string;
+    let providerSessionId: string;
+    try {
+      threadId = assertShortId(input.threadId, "threadId");
+      tabId = assertShortId(input.tabId, "tabId");
+      providerSessionId = assertShortId(input.providerSessionId, "providerSessionId");
+    } catch {
+      return false;
+    }
+    if (!Number.isInteger(input.controlEpoch) || (input.controlEpoch as number) < 0) return false;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    const state = this.targets.get(targetKey(win.id, threadId, tabId));
+    if (
+      !state ||
+      state.controller.controller !== "agent" ||
+      state.controlEpoch !== input.controlEpoch ||
+      state.controller.providerSessionId !== providerSessionId
+    ) return false;
+    this.emitController(state, "none");
     return true;
   }
 
@@ -1120,8 +1142,13 @@ export class BrowserAutomationKernel {
       tabId: state.tabId,
       controller,
       controlEpoch: state.controlEpoch,
-      ...(request && request.operation !== "inspect" && request.operation !== "act" && request.operation !== "tabs"
-        ? { providerSessionId: request.providerSessionId, operation: request.operation }
+      ...(request
+        ? {
+            providerSessionId: request.providerSessionId,
+            ...(request.operation !== "inspect" && request.operation !== "act" && request.operation !== "tabs"
+              ? { operation: request.operation }
+              : {}),
+          }
         : {}),
       ...(pointer ? { pointer } : {}),
     };
@@ -1168,12 +1195,6 @@ export class BrowserAutomationKernel {
         ]);
       }
       state.syntheticInputDepth = 0;
-      if (
-        request.operation !== "status" &&
-        state.controller.controller === "agent" &&
-        state.controller.providerSessionId === request.providerSessionId &&
-        state.controller.operation === request.operation
-      ) this.emitController(state, "none");
     }
   }
 

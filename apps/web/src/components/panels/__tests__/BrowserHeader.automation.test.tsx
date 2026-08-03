@@ -38,24 +38,11 @@ function renderHeader(overrides: Partial<BrowserHeaderProps> = {}) {
   return props;
 }
 
-describe("BrowserHeader automation controls", () => {
-  it("shows agent control and stops only through the browser-local action", async () => {
-    const user = userEvent.setup();
-    const onStopAutomation = vi.fn();
-    renderHeader({
-      automationController: {
-        tabId: "tab-1",
-        controller: "agent",
-        controlEpoch: 1,
-        providerSessionId: "provider-session",
-        operation: "click",
-      },
-      automationBusy: true,
-      onStopAutomation,
-    });
-    expect(screen.getByTestId("browser-controller-badge")).toHaveTextContent("Agent");
-    await user.click(screen.getByRole("button", { name: "Stop browser automation" }));
-    expect(onStopAutomation).toHaveBeenCalledOnce();
+describe("BrowserHeader", () => {
+  it("does not render a browser-local automation controller capsule", () => {
+    renderHeader();
+    expect(screen.queryByTestId("browser-controller-badge")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop browser automation" })).not.toBeInTheDocument();
   });
 
   it("opens adopted guest DevTools from the enabled menu item", async () => {
@@ -67,11 +54,4 @@ describe("BrowserHeader automation controls", () => {
     expect(onOpenDevTools).toHaveBeenCalledOnce();
   });
 
-  it("transfers control when the human focuses the browser omnibox", async () => {
-    const user = userEvent.setup();
-    const onHumanFocus = vi.fn();
-    renderHeader({ onHumanFocus });
-    await user.click(screen.getByRole("textbox", { name: "Preview URL" }));
-    expect(onHumanFocus).toHaveBeenCalledOnce();
-  });
 });

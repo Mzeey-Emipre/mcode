@@ -355,6 +355,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       interrupt(target: { threadId: string; tabId: string }): Promise<boolean> {
         return ipcRenderer.invoke("preview:automation.interrupt", target);
       },
+      releaseAgentControl(target: {
+        threadId: string;
+        tabId: string;
+        controlEpoch: number;
+        providerSessionId: string;
+      }): Promise<boolean> {
+        return ipcRenderer.invoke("preview:automation.release-agent-control", target);
+      },
       describeTarget(target: { threadId: string; tabId: string }): Promise<unknown> {
         return ipcRenderer.invoke("preview:automation.describe-target", target);
       },

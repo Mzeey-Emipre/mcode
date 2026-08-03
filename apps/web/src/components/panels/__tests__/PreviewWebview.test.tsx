@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 
 import { PreviewWebview, type PreviewWebviewHandle } from "../PreviewWebview";
+import {
+  onBrowserAutomationObservationInvalidation,
+} from "@/stores/browserAutomationStore";
 
 describe("PreviewWebview", () => {
   let canGoBack: Mock<() => boolean>;
@@ -44,10 +47,11 @@ describe("PreviewWebview", () => {
     delete window.desktopBridge;
   });
 
-  it("transfers exact tab control only for the trusted guest input channel", () => {
-    const interrupt = vi.fn().mockResolvedValue(true);
+  it("notifies only for the trusted guest input channel", () => {
+    const humanInput = vi.fn();
+    const unsubscribe = onBrowserAutomationObservationInvalidation(humanInput);
     window.desktopBridge = {
-      preview: { automation: { interrupt } },
+      preview: {},
     } as unknown as NonNullable<typeof window.desktopBridge>;
     render(
       <PreviewWebview
@@ -74,8 +78,9 @@ describe("PreviewWebview", () => {
       channel: "untrusted-channel",
       args: [{ kind: "pointer" }],
     }));
-    expect(interrupt).toHaveBeenCalledOnce();
-    expect(interrupt).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
+    expect(humanInput).toHaveBeenCalledOnce();
+    expect(humanInput).toHaveBeenCalledWith("thread-1", "tab-1");
+    unsubscribe();
   });
 
   it("does not call Electron navigation methods before dom-ready", async () => {
