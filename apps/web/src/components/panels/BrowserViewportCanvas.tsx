@@ -4,6 +4,7 @@ import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts"
 import { cn } from "@/lib/utils";
 import {
   clampViewportSize,
+  DEFAULT_VIEWPORT_SIZE,
   MAX_VIEWPORT_CSS_PX,
   MIN_VIEWPORT_CSS_PX,
   ViewportCoordinator,
@@ -16,14 +17,27 @@ type DragAxis = "width" | "height" | "both";
 
 /** Props for the responsive Browser viewport canvas and its resize affordances. */
 export interface BrowserViewportCanvasProps {
-  readonly coordinator: ViewportCoordinator;
-  readonly state: ViewportCoordinatorState;
+  readonly coordinator?: ViewportCoordinator;
+  readonly state?: ViewportCoordinatorState;
   readonly bounds: ViewportCanvasBounds;
   readonly scale: number;
   readonly children: ReactNode;
   readonly className?: string;
   readonly onUserViewportChange?: () => void;
 }
+
+const INACTIVE_VIEWPORT_STATE: ViewportCoordinatorState = {
+  mode: "regular",
+  presentation: "fit",
+  confirmed: DEFAULT_VIEWPORT_SIZE,
+  userConfirmed: DEFAULT_VIEWPORT_SIZE,
+  targetGeneration: 0,
+  pending: null,
+  pendingReset: null,
+  pendingPresentation: null,
+  presentationError: null,
+  agentActive: false,
+};
 
 interface DragStart {
   readonly x: number;
@@ -181,9 +195,10 @@ export function BrowserViewportCanvas({
   className,
   onUserViewportChange,
 }: BrowserViewportCanvasProps) {
-  const [currentState, setCurrentState] = useState(state);
-  useEffect(() => setCurrentState(state), [state]);
-  useEffect(() => coordinator.subscribe(setCurrentState), [coordinator]);
+  const resolvedState = state ?? INACTIVE_VIEWPORT_STATE;
+  const [currentState, setCurrentState] = useState(resolvedState);
+  useEffect(() => setCurrentState(resolvedState), [resolvedState]);
+  useEffect(() => coordinator?.subscribe(setCurrentState), [coordinator]);
   const responsive = currentState.mode === "responsive";
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
   const renderedWidth = Math.round(currentState.confirmed.width * safeScale);
@@ -234,7 +249,7 @@ export function BrowserViewportCanvas({
           >
             {children}
           </div>
-          {responsive ? (
+          {responsive && coordinator ? (
             <>
               <BrowserViewportDragHandle axis="width" coordinator={coordinator} state={currentState} scale={safeScale} onUserViewportChange={onUserViewportChange} />
               <BrowserViewportDragHandle axis="height" coordinator={coordinator} state={currentState} scale={safeScale} onUserViewportChange={onUserViewportChange} />

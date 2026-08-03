@@ -1765,20 +1765,16 @@ function WebRuntimePreview({
         ) : null
       ) : null}
       <div ref={surfaceRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-muted/10">
-        {viewportCoordinator && viewportState ? (
-          <BrowserViewportCanvas
-            coordinator={viewportCoordinator}
-            state={viewportState}
-            bounds={canvasBounds}
-            scale={responsiveViewportScale}
-            className="absolute inset-0"
-            onUserViewportChange={invalidateViewportObservation}
-          >
-            {previewContent}
-          </BrowserViewportCanvas>
-        ) : (
-          <div className="relative h-full w-full">{previewContent}</div>
-        )}
+        <BrowserViewportCanvas
+          coordinator={viewportCoordinator}
+          state={viewportState}
+          bounds={canvasBounds}
+          scale={responsiveViewportScale}
+          className="absolute inset-0"
+          onUserViewportChange={invalidateViewportObservation}
+        >
+          {previewContent}
+        </BrowserViewportCanvas>
       </div>
     </div>
   );
@@ -3055,20 +3051,16 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
               !webviewLayerInteractive && "pointer-events-none",
             )}
           >
-          {activeViewportCoordinator && activeViewportState ? (
-            <BrowserViewportCanvas
-              coordinator={activeViewportCoordinator}
-              state={activeViewportState}
-              bounds={viewportCanvasBounds}
-              scale={responsiveViewportScale}
-              className="absolute inset-0"
-              onUserViewportChange={invalidateActiveViewportObservation}
-            >
-              {warmWebviewLayer}
-            </BrowserViewportCanvas>
-          ) : (
-            <div className="relative h-full w-full">{warmWebviewLayer}</div>
-          )}
+          <BrowserViewportCanvas
+            coordinator={activeViewportCoordinator}
+            state={activeViewportState}
+            bounds={viewportCanvasBounds}
+            scale={responsiveViewportScale}
+            className="absolute inset-0"
+            onUserViewportChange={invalidateActiveViewportObservation}
+          >
+            {warmWebviewLayer}
+          </BrowserViewportCanvas>
           </div>
         ) : null}
         {activeAutomationController?.controller === "agent" && automationPointer ? (

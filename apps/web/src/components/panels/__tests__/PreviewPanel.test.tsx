@@ -5,7 +5,7 @@
  * 1. Unavailable state - when desktopBridge.preview is absent.
  * 2. Full panel state - when desktopBridge.preview is present (hooks mocked).
  */
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -1018,6 +1018,57 @@ describe("PreviewPanel: full panel state", () => {
           "https://google.com/",
         );
       });
+    } finally {
+      restoreWebviewMethods();
+    }
+  });
+
+  it("keeps one webview mounted while its viewport coordinator registers", async () => {
+    const threadId = "thread-adoption-stability";
+    const tabId = "tab-adoption-stability";
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: {
+        threadId,
+        activeTabId: tabId,
+        tabs: [
+          {
+            id: tabId,
+            threadId,
+            title: "Example",
+            url: "https://example.com",
+            faviconUrl: null,
+            warm: true,
+            active: true,
+          },
+        ],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "https://example.com" }),
+    );
+    let nextWebContentsId = 70;
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => "https://example.com",
+      getWebContentsId: () => ++nextWebContentsId,
+    });
+    const adoptWebview = vi.mocked(window.desktopBridge!.preview!.adoptWebview!);
+    const releaseWebview = vi.mocked(window.desktopBridge!.preview!.releaseWebview!);
+
+    try {
+      render(<PreviewPanel threadId={threadId} workspaceId="workspace-1" />);
+      const initialWebview = screen.getByTestId("preview-webview");
+
+      await waitFor(() => expect(adoptWebview).toHaveBeenCalled());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      expect(adoptWebview).toHaveBeenCalledTimes(1);
+      expect(releaseWebview).not.toHaveBeenCalled();
+      expect(screen.getByTestId("preview-webview")).toBe(initialWebview);
     } finally {
       restoreWebviewMethods();
     }
