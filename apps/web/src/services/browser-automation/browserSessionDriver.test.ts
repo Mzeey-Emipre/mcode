@@ -1,12 +1,235 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserAutomationHostDispatch, BrowserAutomationResponse } from "@mcode/contracts";
-import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "./browserSessionDriver";
+import { BrowserSessionDriver, ElectronBrowserSessionAdapter, getBrowserAutomationRuntimeOperations } from "./browserSessionDriver";
 import { WebBrowserSessionAdapter } from "./webBrowserSessionAdapter";
 
 const response = {} as BrowserAutomationResponse;
 const dispatch = {} as BrowserAutomationHostDispatch;
 
 describe("BrowserSessionDriver", () => {
+  function inspectDispatch(requestId = "inspect"): BrowserAutomationHostDispatch {
+    return {
+      connection: { connectionGeneration: 1, targetGeneration: 1, capabilityRevision: 1 },
+      target: { threadId: "thread", tabId: "tab", targetGeneration: 1, windowId: 1 },
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId,
+        sequence: 1,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "inspect",
+        args: { includeScreenshot: false, includeDiagnostics: false },
+      },
+    } as unknown as BrowserAutomationHostDispatch;
+  }
+
+  function evaluateDispatch(
+    observationRef: string,
+    options: { requestId?: string; deadline?: number; deadlineMs?: number } = {},
+  ): BrowserAutomationHostDispatch {
+    return {
+      connection: { connectionGeneration: 1, targetGeneration: 1, capabilityRevision: 1 },
+      target: { threadId: "thread", tabId: "tab", targetGeneration: 1, windowId: 1 },
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId: options.requestId ?? "evaluate",
+        sequence: 2,
+        deadline: options.deadline ?? Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "evaluate",
+        args: {
+          idempotencyKey: "evaluate-key",
+          observationRef,
+          deadlineMs: options.deadlineMs ?? 10_000,
+          expression: "document.title",
+          awaitPromise: true,
+          timeoutMs: 10_000,
+        },
+      },
+    } as unknown as BrowserAutomationHostDispatch;
+  }
+
+  it("derives truthful operation sets for each runtime", () => {
+    const webOperations = getBrowserAutomationRuntimeOperations("web");
+    const electronOperations = getBrowserAutomationRuntimeOperations("electron");
+    expect(webOperations).not.toContain("evaluate");
+    expect(electronOperations).toContain("evaluate");
+    expect(webOperations).toContain("act");
+    expect(electronOperations).toContain("inspect");
+  });
+
+  it("fails closed for web evaluate without invoking either runtime adapter", async () => {
+    const web = vi.fn();
+    const electron = vi.fn();
+    const driver = new BrowserSessionDriver({
+      web: { execute: web },
+      electron: { execute: electron },
+      isElectron: () => false,
+    });
+    const result = await driver.execute(evaluateDispatch("missing"), new AbortController().signal);
+    expect(result).toMatchObject({ ok: false, error: { code: "UNSUPPORTED_OPERATION", effect: "none" } });
+    expect(web).not.toHaveBeenCalled();
+    expect(electron).not.toHaveBeenCalled();
+  });
+
+  it("wraps an Electron raw evaluate success and consumes the observation", async () => {
+    const electron = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => {
+      if (dispatch.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      }
+      return {
+        contractVersion: 1,
+        requestId: dispatch.request.requestId,
+        sequence: dispatch.request.sequence,
+        ok: true,
+        result: { operation: "evaluate", valueJson: '"title"', controlEpoch: 0 },
+      } as BrowserAutomationResponse;
+    });
+    const web = vi.fn();
+    const driver = new BrowserSessionDriver({
+      web: { execute: web },
+      electron: { execute: electron },
+      isElectron: () => true,
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result?: { observationRef?: string } }).result?.observationRef;
+    const result = await driver.execute(evaluateDispatch(observationRef!), new AbortController().signal);
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        operation: "evaluate",
+        outcome: "completed",
+        stoppingPosition: 1,
+        effect: "complete",
+        recovery: "inspect",
+        receipts: [{ index: 0, operation: "evaluate", status: "applied" }],
+        valueJson: '"title"',
+        finalObservation: { observationRevision: 1 },
+        nextObservationRef: expect.any(String),
+      },
+    });
+    expect(web).not.toHaveBeenCalled();
+    expect(electron).toHaveBeenCalledTimes(2);
+    const nextObservationRef = (result as { result?: { nextObservationRef?: string } }).result?.nextObservationRef;
+    await expect(driver.execute(evaluateDispatch(observationRef!, { requestId: "replay" }), new AbortController().signal))
+      .resolves.toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION" } });
+    expect(nextObservationRef).toEqual(expect.any(String));
+  });
+
+  it("returns an interrupted envelope when the Electron adapter cancels", async () => {
+    const electron = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => {
+      if (dispatch.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      }
+      return {
+        contractVersion: 1,
+        requestId: dispatch.request.requestId,
+        sequence: dispatch.request.sequence,
+        ok: false,
+        error: { code: "OPERATION_CANCELLED", message: "cancelled", retryable: true },
+      } as BrowserAutomationResponse;
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute: vi.fn() },
+      electron: { execute: electron },
+      isElectron: () => true,
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const result = await driver.execute(evaluateDispatch(observationRef), new AbortController().signal);
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        operation: "evaluate",
+        outcome: "interrupted",
+        effect: "partial",
+        receipts: [{ index: 0, operation: "evaluate", status: "interrupted" }],
+        finalObservation: { observationRevision: 1 },
+        nextObservationRef: expect.any(String),
+      },
+    });
+  });
+
+  it("bounds the Electron evaluation deadline by deadlineMs", async () => {
+    const electron = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => {
+      if (dispatch.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      }
+      return { ok: true, result: { operation: "evaluate", valueJson: "null", controlEpoch: 0 } } as unknown as BrowserAutomationResponse;
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute: vi.fn() },
+      electron: { execute: electron },
+      isElectron: () => true,
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const startedAt = Date.now();
+    const originalDeadline = startedAt + 60_000;
+    await driver.execute(evaluateDispatch(observationRef, { deadline: originalDeadline, deadlineMs: 1_000 }), new AbortController().signal);
+    const evaluateRequest = electron.mock.calls[1]![0].request;
+    expect(evaluateRequest.deadline).toBeLessThan(originalDeadline);
+    expect(evaluateRequest.deadline).toBeGreaterThanOrEqual(startedAt + 900);
+    expect(evaluateRequest.deadline).toBeLessThanOrEqual(startedAt + 1_100);
+  });
+
+  it("stops before Electron evaluate when the live document revision changed", async () => {
+    let documentRevision = 1;
+    const electron = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => {
+      if (dispatch.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      }
+      return { ok: true, result: { operation: "evaluate", valueJson: "null", controlEpoch: 0 } } as unknown as BrowserAutomationResponse;
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute: vi.fn() },
+      electron: { execute: electron },
+      isElectron: () => true,
+      getDocumentRevision: () => documentRevision,
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    documentRevision = 2;
+    const result = await driver.execute(evaluateDispatch(observationRef), new AbortController().signal);
+    expect(result).toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION", effect: "none" } });
+    expect(electron).toHaveBeenCalledOnce();
+  });
+
+  it("stops before Electron evaluate when the request is already aborted", async () => {
+    const electron = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => {
+      if (dispatch.request.operation === "inspect") return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      return { ok: true, result: { operation: "evaluate", valueJson: "null", controlEpoch: 0 } } as unknown as BrowserAutomationResponse;
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute: vi.fn() },
+      electron: { execute: electron },
+      isElectron: () => true,
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const controller = new AbortController();
+    controller.abort(new Error("revoked"));
+    const result = await driver.execute(evaluateDispatch(observationRef), controller.signal);
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        operation: "evaluate",
+        outcome: "interrupted",
+        effect: "none",
+        receipts: [{ index: 0, operation: "evaluate", status: "interrupted" }],
+      },
+    });
+    expect(electron).toHaveBeenCalledOnce();
+  });
+
   function actDispatch(observationRef: string, steps: unknown[], requestId = "act"): BrowserAutomationHostDispatch {
     return {
       connection: { connectionGeneration: 1, capabilityRevision: 1 },

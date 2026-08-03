@@ -176,12 +176,19 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
     network: { failedOnly: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 200 } },
     accessibility: { root: { type: "object" }, limit: { type: "integer", minimum: 1, maximum: 1000 } },
     performance: { includeMemory: { type: "boolean" } },
-    evaluate: { expression: { type: "string", minLength: 1, maxLength: 65536 }, awaitPromise: { type: "boolean" }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
+    evaluate: {
+      idempotencyKey: { type: "string", minLength: 1, maxLength: 256 },
+      observationRef: { type: "string", minLength: 1, maxLength: 256 },
+      deadlineMs: { type: "integer", minimum: 1, maximum: 60000 },
+      expression: { type: "string", minLength: 1, maxLength: 65536 },
+      awaitPromise: { type: "boolean" },
+      timeoutMs: { type: "integer", minimum: 1, maximum: 60000 },
+    },
     recordingStart: { maxDurationMs: { type: "integer", minimum: 1000, maximum: 600000 } },
     recordingStop: {},
   };
   const requiredByOperation: Partial<Record<BrowserAutomationOperation, string[]>> = {
-    open: ["idempotencyKey"], act: ["idempotencyKey", "observationRef", "deadlineMs", "steps"], navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["expression"],
+    open: ["idempotencyKey"], act: ["idempotencyKey", "observationRef", "deadlineMs", "steps"], navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["idempotencyKey", "observationRef", "deadlineMs", "expression"],
   };
   return {
     type: "object",
@@ -343,7 +350,7 @@ export class BrowserAutomationMcpHandler {
       return { jsonrpc: "2.0", id, result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "mcode-browser", version: String(BROWSER_AUTOMATION_CONTRACT_VERSION) } } };
     }
     if (request.method === "tools/list") {
-      return { jsonrpc: "2.0", id, result: { tools: toolList(claims.allowedOperations) } };
+      return { jsonrpc: "2.0", id, result: { tools: toolList(this.broker.availableOperations(claims)) } };
     }
     if (request.method === "notifications/cancelled") {
       const cancelledId = request.params && typeof request.params === "object" && !Array.isArray(request.params)

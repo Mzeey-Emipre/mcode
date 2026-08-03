@@ -456,6 +456,7 @@ export {
   BrowserAutomationActStepSchema,
   BrowserAutomationObservationBindingSchema,
   BrowserAutomationActResultSchema,
+  BrowserAutomationEvaluateResultSchema,
 } from "./models/browser-automation.js";
 export type {
   BrowserAutomationOperation,
@@ -481,6 +482,7 @@ export type {
   BrowserAutomationActStep,
   BrowserAutomationObservationBinding,
   BrowserAutomationActResult,
+  BrowserAutomationEvaluateResult,
 } from "./models/browser-automation.js";
 
 // Events

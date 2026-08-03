@@ -61,7 +61,12 @@ const argsByOperation = {
   network: {},
   accessibility: {},
   performance: {},
-  evaluate: { expression: "document.title" },
+  evaluate: {
+    expression: "document.title",
+    idempotencyKey: "evaluate-key",
+    observationRef: "observation-1",
+    deadlineMs: 10_000,
+  },
   recordingStart: {},
   recordingStop: {},
 } satisfies Record<(typeof BROWSER_AUTOMATION_OPERATIONS)[number], object>;
@@ -138,7 +143,24 @@ const resultByOperation = {
     },
     controlEpoch: 1,
   },
-  evaluate: { operation: "evaluate", valueJson: "null", controlEpoch: 1 },
+  evaluate: {
+    operation: "evaluate",
+    outcome: "completed",
+    stoppingPosition: 1,
+    effect: "complete",
+    recovery: "inspect",
+    receipts: [{ index: 0, operation: "evaluate", status: "applied" }],
+    finalObservation: {
+      observationRef: "observation-2",
+      hostRevision: 1,
+      documentRevision: 1,
+      controlRevision: 0,
+      capabilityRevision: 1,
+      observationRevision: 1,
+    },
+    nextObservationRef: "observation-2",
+    valueJson: "null",
+  },
   recordingStart: {
     operation: "recordingStart",
     recordingId: "recording-1",
@@ -436,12 +458,22 @@ describe("browser automation boundaries", () => {
     expect(parse("type", { text: "a".repeat(BROWSER_AUTOMATION_MAX_TYPED_TEXT_CHARS + 1) })).toBe(
       false,
     );
-    expect(parse("evaluate", { expression: "a".repeat(BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES) })).toBe(
-      true,
-    );
+    const evaluateEnvelope = {
+      idempotencyKey: "evaluate-key",
+      observationRef: "observation-1",
+      deadlineMs: 10_000,
+    };
+    expect(parse("evaluate", {
+      ...evaluateEnvelope,
+      expression: "a".repeat(BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES),
+    })).toBe(true);
     expect(
-      parse("evaluate", { expression: "a".repeat(BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES + 1) }),
+      parse("evaluate", {
+        ...evaluateEnvelope,
+        expression: "a".repeat(BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES + 1),
+      }),
     ).toBe(false);
+    expect(parse("evaluate", { expression: "document.title" })).toBe(false);
     expect(parse("screenshot", { maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH })).toBe(true);
     expect(parse("screenshot", { maxWidth: BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH + 1 })).toBe(
       false,

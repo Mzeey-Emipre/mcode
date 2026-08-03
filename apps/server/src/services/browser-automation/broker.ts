@@ -1,5 +1,5 @@
 import type { WebSocket } from "ws";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
@@ -51,6 +51,12 @@ interface OpenReplayRecord {
 }
 
 interface ActReplayRecord {
+  readonly fingerprint: string;
+  readonly promise: Promise<BrowserAutomationResponse>;
+  lastUsedAt: number;
+}
+
+interface EvaluateReplayRecord {
   readonly fingerprint: string;
   readonly promise: Promise<BrowserAutomationResponse>;
   lastUsedAt: number;
@@ -168,6 +174,14 @@ function openReplayKey(
 
 function actReplayKey(providerId: string, request: Extract<BrowserAutomationRequest, { operation: "act" }>): string {
   return JSON.stringify([providerId, request.providerSessionId, request.workspaceId, request.threadId, request.args.idempotencyKey]);
+}
+
+function evaluateReplayKey(providerId: string, request: Extract<BrowserAutomationRequest, { operation: "evaluate" }>): string {
+  return JSON.stringify([providerId, request.providerSessionId, request.workspaceId, request.threadId, request.args.idempotencyKey]);
+}
+
+function hashExpression(expression: string): string {
+  return createHash("sha256").update(expression, "utf8").digest("hex");
 }
 
 function targetsMatch(
@@ -318,7 +332,8 @@ export class BrowserAutomationBroker {
   private readonly maxTargets: number;
   private readonly openReplay = new Map<string, OpenReplayRecord>();
   private readonly actReplay = new Map<string, ActReplayRecord>();
-  private readonly actMutations = new Map<string, string>();
+  private readonly evaluateReplay = new Map<string, EvaluateReplayRecord>();
+  private readonly browserMutations = new Map<string, string>();
   private nextGeneration = 1;
   private readonly reliability: BrowserAutomationReliabilityCounters = {
     dispatched: 0,
@@ -658,6 +673,7 @@ export class BrowserAutomationBroker {
     const parsed = BrowserAutomationRequestSchema().safeParse(input);
     if (!parsed.success) return this.executeInternal(claims, input);
     if (parsed.data.operation === "act") return this.executeAct(claims, parsed.data);
+    if (parsed.data.operation === "evaluate") return this.executeEvaluate(claims, parsed.data);
     if (parsed.data.operation !== "open") return this.executeInternal(claims, input);
     const request = parsed.data;
     const key = request.args.idempotencyKey;
@@ -722,21 +738,65 @@ export class BrowserAutomationBroker {
       return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
     }
     const sessionKey = JSON.stringify([claims.providerId, claims.providerSessionId]);
-    if (this.actMutations.has(sessionKey)) {
+    if (this.browserMutations.has(sessionKey)) {
       return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
     const token = randomUUID();
-    this.actMutations.set(sessionKey, token);
+    this.browserMutations.set(sessionKey, token);
     const promise = this.executeInternal(claims, request)
       .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
       .finally(() => {
-        if (this.actMutations.get(sessionKey) === token) this.actMutations.delete(sessionKey);
+        if (this.browserMutations.get(sessionKey) === token) this.browserMutations.delete(sessionKey);
       });
     this.actReplay.set(replayKey, { fingerprint, promise, lastUsedAt: this.now() });
     while (this.actReplay.size > 256) {
       const oldest = this.actReplay.keys().next().value as string | undefined;
       if (!oldest) break;
       this.actReplay.delete(oldest);
+    }
+    return promise;
+  }
+
+  private executeEvaluate(
+    claims: BrowserAutomationCredentialClaims,
+    request: Extract<BrowserAutomationRequest, { operation: "evaluate" }>,
+  ): Promise<BrowserAutomationResponse> {
+    const cutoff = this.now() - 30 * 60_000;
+    for (const [key, record] of this.evaluateReplay) {
+      if (record.lastUsedAt < cutoff) this.evaluateReplay.delete(key);
+    }
+    const replayKey = evaluateReplayKey(claims.providerId, request);
+    const fingerprint = JSON.stringify({
+      observationRef: request.args.observationRef,
+      deadlineMs: request.args.deadlineMs,
+      awaitPromise: request.args.awaitPromise,
+      timeoutMs: request.args.timeoutMs,
+      expressionSha256: hashExpression(request.args.expression),
+    });
+    const existing = this.evaluateReplay.get(replayKey);
+    if (existing) {
+      existing.lastUsedAt = this.now();
+      if (existing.fingerprint !== fingerprint) {
+        return Promise.resolve(failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_evaluate arguments", false));
+      }
+      return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+    }
+    const sessionKey = JSON.stringify([claims.providerId, claims.providerSessionId]);
+    if (this.browserMutations.has(sessionKey)) {
+      return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
+    }
+    const token = randomUUID();
+    this.browserMutations.set(sessionKey, token);
+    const promise = this.executeInternal(claims, request)
+      .catch(() => failure(request, "INTERNAL_ERROR", "Browser mutation failed before a terminal result was produced", false))
+      .finally(() => {
+        if (this.browserMutations.get(sessionKey) === token) this.browserMutations.delete(sessionKey);
+      });
+    this.evaluateReplay.set(replayKey, { fingerprint, promise, lastUsedAt: this.now() });
+    while (this.evaluateReplay.size > 256) {
+      const oldest = this.evaluateReplay.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.evaluateReplay.delete(oldest);
     }
     return promise;
   }
@@ -910,7 +970,8 @@ export class BrowserAutomationBroker {
     }
     this.pending.clear();
     this.actReplay.clear();
-    this.actMutations.clear();
+    this.evaluateReplay.clear();
+    this.browserMutations.clear();
   }
 
   /** Returns bounded broker counts for status and tests. */
@@ -922,6 +983,25 @@ export class BrowserAutomationBroker {
   /** Returns a snapshot of bounded reliability counters without page or credential data. */
   reliabilityStatus(): BrowserAutomationReliabilityCounters {
     return { ...this.reliability };
+  }
+
+  /** Returns the operations both the credential and its selected executor support. */
+  availableOperations(
+    claims: BrowserAutomationCredentialClaims,
+  ): readonly BrowserAutomationOperation[] {
+    const host = this.resolveSelectedHost(claims);
+    if (!host) return [];
+    const descriptorOperations = new Set(host.registration.executorDescriptor.operations);
+    const liveCapabilities = new Set(
+      host.registration.capabilities
+        .filter((capability) => capability.available)
+        .map((capability) => capability.operation),
+    );
+    return claims.allowedOperations.filter((operation) =>
+      descriptorOperations.has(operation) &&
+      liveCapabilities.has(operation) &&
+      (operation !== "evaluate" || host.registration.runtime === "electron"),
+    );
   }
 
   /** Releases sticky routing state when a provider session closes or rotates credentials. */
@@ -964,7 +1044,11 @@ export class BrowserAutomationBroker {
       const parts = JSON.parse(key) as string[];
       if (parts[0] === providerId && parts[1] === providerSessionId) this.actReplay.delete(key);
     }
-    this.actMutations.delete(JSON.stringify([providerId, providerSessionId]));
+    for (const key of this.evaluateReplay.keys()) {
+      const parts = JSON.parse(key) as string[];
+      if (parts[0] === providerId && parts[1] === providerSessionId) this.evaluateReplay.delete(key);
+    }
+    this.browserMutations.delete(JSON.stringify([providerId, providerSessionId]));
     return removed;
   }
 
@@ -1018,6 +1102,35 @@ export class BrowserAutomationBroker {
     return selected;
   }
 
+  private resolveSelectedHost(
+    claims: BrowserAutomationCredentialClaims,
+  ): RegisteredHost | undefined {
+    const key = assignmentKey(claims);
+    const assigned = this.assignments.get(key);
+    if (assigned) {
+      const assignedTarget = assigned.host.targets.get(assigned.targetKey);
+      if (assignedTarget && this.matchesScope(assigned.host, claims)) {
+        assigned.lastUsedAt = this.now();
+        return assigned.host;
+      }
+      this.assignments.delete(key);
+    }
+    return [...this.hostsBySocket.values()]
+      .filter((host) => this.matchesScope(host, claims))
+      .map((host) => ({
+        host,
+        target: [...host.targets.values()].find((target) => target.threadId === claims.threadId),
+      }))
+      .sort((left, right) =>
+        Number(Boolean(right.target)) - Number(Boolean(left.target)) ||
+        Number(right.target?.focused ?? false) - Number(left.target?.focused ?? false) ||
+        Number(right.target?.active ?? false) - Number(left.target?.active ?? false) ||
+        (right.target?.lastUsedAt ?? 0) - (left.target?.lastUsedAt ?? 0) ||
+        left.host.pending - right.host.pending ||
+        left.host.generation - right.host.generation,
+      )[0]?.host;
+  }
+
   private canAccept(
     host: RegisteredHost,
     claims: BrowserAutomationCredentialClaims,
@@ -1037,6 +1150,7 @@ export class BrowserAutomationBroker {
 
   private supportsOperation(host: RegisteredHost, request: BrowserAutomationRequest): boolean {
     const descriptor = host.registration.executorDescriptor;
+    if (request.operation === "evaluate" && host.registration.runtime !== "electron") return false;
     if (!descriptor.operations.includes(request.operation)) return false;
     return host.registration.capabilities.some(
       (capability) => capability.operation === request.operation && capability.available,

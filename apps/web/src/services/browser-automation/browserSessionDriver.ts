@@ -2,11 +2,53 @@ import type {
   BrowserAutomationHostDispatch,
   BrowserAutomationResponse,
   BrowserAutomationActStep,
+  BrowserAutomationEvaluateResult,
+  BrowserAutomationResult,
+  BrowserAutomationErrorCode,
+  BrowserAutomationOperation,
+  BrowserAutomationHostRuntime,
+} from "@mcode/contracts";
+import {
+  BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES,
+  BROWSER_AUTOMATION_OPERATIONS,
 } from "@mcode/contracts";
 
 const MAX_IDEMPOTENCY_RECORDS = 256;
 const IDEMPOTENCY_TTL_MS = 30 * 60_000;
 const SECRET_TEXT = /\b(password|token|secret|authorization|cookie|credential|session|api[_-]?key)\b\s*[:=]\s*[^,;\s]+/gi;
+
+const WEB_RUNTIME_OPERATIONS = [
+  "inspect",
+  "act",
+  "status",
+  "open",
+  "navigate",
+  "snapshot",
+  "screenshot",
+  "click",
+  "type",
+] as const satisfies readonly BrowserAutomationOperation[];
+
+/** Options that affect the operations a runtime can truthfully advertise. */
+export interface BrowserAutomationRuntimeOperationOptions {
+  readonly recordingAvailable?: boolean;
+}
+
+/** Returns the one operation set shared by runtime descriptors, status, and registration. */
+export function getBrowserAutomationRuntimeOperations(
+  runtime: BrowserAutomationHostRuntime,
+  options: BrowserAutomationRuntimeOperationOptions = {},
+): readonly BrowserAutomationOperation[] {
+  if (runtime === "web") return WEB_RUNTIME_OPERATIONS;
+  const recordingAvailable = options.recordingAvailable ?? true;
+  return [
+    "inspect",
+    "act",
+    ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) =>
+      recordingAvailable || (operation !== "recordingStart" && operation !== "recordingStop"),
+    ),
+  ];
+}
 
 function sanitizePublicDetail(value: unknown): string {
   return String(value ?? "")
@@ -89,6 +131,7 @@ export class BrowserSessionDriver {
   ): Promise<BrowserAutomationResponse> {
     const initialDrift = this.revisionDrift(dispatch);
     if (initialDrift) return Promise.resolve(initialDrift);
+    if (dispatch.request?.operation === "evaluate") return this.executeEvaluate(dispatch, signal);
     if (dispatch.request?.operation === "act") return this.executeAct(dispatch, signal);
     if (dispatch.request?.operation !== "open") {
       return this.executeAdapter(dispatch, signal);
@@ -286,6 +329,187 @@ export class BrowserSessionDriver {
       } as BrowserAutomationResponse;
     };
     return run();
+  }
+
+  private executeEvaluate(
+    dispatch: BrowserAutomationHostDispatch,
+    signal: AbortSignal,
+  ): Promise<BrowserAutomationResponse> {
+    if (!this.isElectron()) {
+      return Promise.resolve(this.operationFailure(dispatch, "UNSUPPORTED_OPERATION", "Browser evaluation requires the Electron runtime"));
+    }
+    const request = dispatch.request as Extract<BrowserAutomationHostDispatch["request"], { operation: "evaluate" }>;
+    const observation = this.observations.get(request.args.observationRef);
+    const capabilityRevision = this.options.getCapabilityRevision?.() ?? dispatch.connection?.capabilityRevision ?? 1;
+    const currentBinding = this.currentObservationBinding(dispatch, capabilityRevision);
+    if (!observation) {
+      return Promise.resolve(this.operationFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation is stale; inspect before browser_evaluate"));
+    }
+    if (
+      observation.hostRevision !== currentBinding.hostRevision ||
+      observation.documentRevision !== currentBinding.documentRevision ||
+      observation.controlRevision !== currentBinding.controlRevision ||
+      observation.capabilityRevision !== currentBinding.capabilityRevision
+    ) {
+      return Promise.resolve(this.operationFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation is stale; inspect before browser_evaluate"));
+    }
+    const deadline = Math.min(dispatch.request.deadline, Date.now() + request.args.deadlineMs);
+    if (signal.aborted || Date.now() >= deadline) {
+      this.observations.delete(request.args.observationRef);
+      return Promise.resolve(this.evaluateEnvelope(dispatch, observation, {
+        outcome: "interrupted",
+        effect: "none",
+        status: "interrupted",
+        message: signal.aborted ? "Browser evaluation was interrupted before the effect" : "Browser evaluation deadline elapsed before the effect",
+      }));
+    }
+    const finalDrift = this.revisionDrift(dispatch);
+    if (finalDrift || !this.observationStillCurrent(dispatch, observation)) {
+      return Promise.resolve(this.operationFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation changed before browser_evaluate"));
+    }
+    this.observations.delete(request.args.observationRef);
+    const boundedDispatch: BrowserAutomationHostDispatch = {
+      ...dispatch,
+      request: { ...dispatch.request, deadline },
+    };
+    return this.options.electron.execute(boundedDispatch, signal)
+      .then((response) => this.evaluateResponse(dispatch, observation, response))
+      .catch((cause: unknown) => this.evaluateEnvelope(dispatch, observation, {
+        outcome: this.isCancellation(cause) ? "interrupted" : "failed",
+        effect: "partial",
+        status: this.isCancellation(cause) ? "interrupted" : "failed",
+        message: sanitizePublicDetail(cause instanceof Error ? cause.message : cause),
+      }));
+  }
+
+  private evaluateResponse(
+    dispatch: BrowserAutomationHostDispatch,
+    observation: ObservationRecord,
+    response: BrowserAutomationResponse,
+  ): BrowserAutomationResponse {
+    if (!response.ok) {
+      const interrupted = this.isCancellation(response.error.code);
+      return this.evaluateEnvelope(dispatch, observation, {
+        outcome: interrupted ? "interrupted" : "failed",
+        effect: response.error.effect === "none" ? "none" : "partial",
+        status: interrupted ? "interrupted" : "failed",
+        message: sanitizePublicDetail(response.error.message),
+      });
+    }
+    if (response.result.operation !== "evaluate" || !this.isRawEvaluateResult(response.result)) {
+      return this.evaluateEnvelope(dispatch, observation, {
+        outcome: "failed",
+        effect: "partial",
+        status: "failed",
+        message: "Electron browser evaluation returned an invalid result",
+      });
+    }
+    if (new TextEncoder().encode(response.result.valueJson).byteLength > BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES) {
+      return this.evaluateEnvelope(dispatch, observation, {
+        outcome: "failed",
+        effect: "complete",
+        status: "failed",
+        message: "Evaluation result exceeds 64 KiB",
+      });
+    }
+    return this.evaluateEnvelope(dispatch, observation, {
+      outcome: "completed",
+      effect: "complete",
+      status: "applied",
+      valueJson: response.result.valueJson,
+    });
+  }
+
+  private evaluateEnvelope(
+    dispatch: BrowserAutomationHostDispatch,
+    observation: ObservationRecord,
+    outcome: {
+      readonly outcome: "completed" | "failed" | "interrupted";
+      readonly effect: "none" | "partial" | "complete";
+      readonly status: "applied" | "failed" | "interrupted";
+      readonly message?: string;
+      readonly valueJson?: string;
+    },
+  ): BrowserAutomationResponse {
+    const capabilityRevision = this.options.getCapabilityRevision?.() ?? observation.capabilityRevision;
+    const current = this.currentObservationBinding(dispatch, capabilityRevision);
+    const nextObservationRef = globalThis.crypto.randomUUID();
+    const finalObservation = {
+      observationRef: nextObservationRef,
+      hostRevision: current.hostRevision,
+      documentRevision: current.documentRevision,
+      controlRevision: current.controlRevision,
+      capabilityRevision: current.capabilityRevision,
+      observationRevision: observation.observationRevision + 1,
+    };
+    this.observations.set(nextObservationRef, {
+      hostRevision: finalObservation.hostRevision,
+      documentRevision: finalObservation.documentRevision,
+      controlRevision: finalObservation.controlRevision,
+      capabilityRevision: finalObservation.capabilityRevision,
+      observationRevision: finalObservation.observationRevision,
+    });
+    const result: BrowserAutomationEvaluateResult = {
+      operation: "evaluate",
+      outcome: outcome.outcome,
+      stoppingPosition: outcome.outcome === "completed" ? 1 : 0,
+      effect: outcome.effect,
+      recovery: "inspect",
+      receipts: [{
+        index: 0,
+        operation: "evaluate",
+        status: outcome.status,
+        ...(outcome.message ? { message: outcome.message.slice(0, 1_024) } : {}),
+      }],
+      finalObservation,
+      nextObservationRef,
+      ...(outcome.valueJson !== undefined ? { valueJson: outcome.valueJson } : {}),
+    };
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: true,
+      result,
+    };
+  }
+
+  private isRawEvaluateResult(
+    result: Extract<BrowserAutomationResult, { operation: "evaluate" }>,
+  ): result is Extract<BrowserAutomationResult, { operation: "evaluate"; valueJson: string; controlEpoch: number }> {
+    return result.operation === "evaluate" && typeof result.valueJson === "string" && !("outcome" in result);
+  }
+
+  private isCancellation(value: unknown): boolean {
+    if (typeof value === "string") {
+      return value === "OPERATION_CANCELLED" || value === "HUMAN_INTERRUPTED" || value === "DEADLINE_EXCEEDED";
+    }
+    if (typeof value === "object" && value !== null && "code" in value) {
+      const code = (value as { code?: unknown }).code;
+      return code === "OPERATION_CANCELLED" || code === "HUMAN_INTERRUPTED" || code === "DEADLINE_EXCEEDED";
+    }
+    return value instanceof Error && /cancel|interrupt|deadline|abort/i.test(value.message);
+  }
+
+  private operationFailure(
+    dispatch: BrowserAutomationHostDispatch,
+    code: Extract<BrowserAutomationErrorCode, "UNSUPPORTED_OPERATION" | "STALE_TARGET_GENERATION" | "CAPABILITY_CHANGED">,
+    message: string,
+  ): BrowserAutomationResponse {
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: false,
+      error: {
+        code,
+        message,
+        retryable: false,
+        stage: "observation",
+        effect: "none",
+        recovery: "inspect",
+      },
+    };
   }
 
   private stepDispatch(dispatch: BrowserAutomationHostDispatch, step: BrowserAutomationActStep, deadline: number, index: number): BrowserAutomationHostDispatch {
