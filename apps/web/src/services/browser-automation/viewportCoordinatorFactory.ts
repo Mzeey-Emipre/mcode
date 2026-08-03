@@ -270,14 +270,12 @@ function createViewportHost(
 export function createViewportCoordinator(
   options: ViewportCoordinatorFactoryOptions,
 ): ViewportCoordinator {
-  let coordinator: ViewportCoordinator | undefined;
-  coordinator = new ViewportCoordinator({
+  const coordinator = new ViewportCoordinator({
     initial: options.initial,
     presentation: options.presentation,
     targetGeneration: options.targetGeneration,
     operationId: options.operationId,
     onStateChange: (state) => {
-      if (!coordinator) return;
       options.onStateChange?.(state, coordinator);
     },
     applyPresentation: async (operation) => {
@@ -292,7 +290,7 @@ export function createViewportCoordinator(
       };
     },
     apply: async (operation) => {
-      return createViewportHost(options, coordinator!)(operation);
+      return createViewportHost(options, coordinator)(operation);
     },
   });
   return coordinator;
