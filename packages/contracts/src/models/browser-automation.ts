@@ -21,6 +21,10 @@ export const BROWSER_AUTOMATION_MAX_AX_NODES = 1_000;
 export const BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES = 200;
 /** Maximum screenshot width in CSS pixels. */
 export const BROWSER_AUTOMATION_MAX_SCREENSHOT_WIDTH = 1_280;
+/** Minimum CSS viewport dimension accepted by browser resize operations. */
+export const BROWSER_AUTOMATION_MIN_VIEWPORT_PX = 240;
+/** Maximum CSS viewport dimension accepted by browser resize operations. */
+export const BROWSER_AUTOMATION_MAX_VIEWPORT_PX = 2_560;
 /** Maximum encoded success result size in bytes. */
 export const BROWSER_AUTOMATION_MAX_RESULT_BYTES = 512 * 1_024;
 /** Maximum decoded browser recording size in bytes. */
@@ -897,7 +901,7 @@ export const BrowserAutomationActStepSchema = lazySchema(() => z.discriminatedUn
   z.object({ operation: z.literal("back") }).strict(),
   z.object({ operation: z.literal("forward") }).strict(),
   z.object({ operation: z.literal("reload") }).strict(),
-  z.object({ operation: z.literal("resize"), width: z.number().int().min(320).max(7_680), height: z.number().int().min(240).max(4_320) }).strict(),
+  z.object({ operation: z.literal("resize"), width: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX), height: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX) }).strict(),
   z.object({ operation: z.literal("hover"), ...actTarget.shape, timeoutMs: actTimeout }).strict(),
   z.object({ operation: z.literal("click"), ...actTarget.shape, button: z.enum(["left", "middle", "right"]).default("left"), clickCount: z.literal(2).or(z.literal(1)).default(1), timeoutMs: actTimeout }).strict(),
   z.object({ operation: z.literal("drag"), source: BrowserAutomationTargetSchema(), target: BrowserAutomationTargetSchema(), timeoutMs: actTimeout }).strict(),
@@ -994,7 +998,7 @@ export const BrowserAutomationRequestSchema = lazySchema(() =>
     requestVariant("navigate", urlArgs),
     requestVariant(
       "resize",
-      z.object({ width: z.number().int().min(320).max(7_680), height: z.number().int().min(240).max(4_320) }).strict(),
+      z.object({ width: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX), height: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX) }).strict(),
     ),
     requestVariant(
       "snapshot",
@@ -1229,6 +1233,10 @@ export const BrowserAutomationErrorSchema = lazySchema(() =>
       code: z.enum(BROWSER_AUTOMATION_ERROR_CODES),
       message: z.string().min(1).max(SHORT_TEXT_MAX),
       retryable: z.boolean(),
+      appliedViewport: z.object({
+        width: z.number().int().min(1).max(10_000),
+        height: z.number().int().min(1).max(10_000),
+      }).strict().optional(),
       stage: z.enum(["validation", "authorization", "allocation", "observation", "effect", "recovery", "transport"]).optional(),
       effect: z.enum(["none", "created", "closed", "preserved", "unknown"]).optional(),
       recovery: z.enum(["none", "retry", "refresh", "reopen", "manual", "inspect", "wait", "yield_to_user", "do_not_retry"]).optional(),

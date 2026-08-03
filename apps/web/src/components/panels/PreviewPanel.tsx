@@ -34,6 +34,7 @@ import { usePreviewFocusStore } from "@/stores/previewFocusStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { BrowserHeader } from "./BrowserHeader";
+import { BrowserViewportToolbar } from "./BrowserViewportToolbar";
 import { PreviewAnnotationHeader } from "./PreviewAnnotationHeader";
 import { LocalPortsEmptyState } from "./LocalPortsEmptyState";
 import { PreviewErrorPanel } from "./PreviewErrorPanel";
@@ -84,6 +85,14 @@ import {
   normalizeWebPreviewUrl,
   resolveWebPreviewState,
 } from "./browserAutomationRuntime";
+import {
+  calculateViewportPresentationScale,
+  DEFAULT_VIEWPORT_SIZE,
+  MIN_VIEWPORT_CSS_PX,
+  ViewportCoordinator,
+  type ViewportCoordinatorState,
+  type ViewportHostOperation,
+} from "@/services/browser-automation/viewportCoordinator";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -1539,18 +1548,46 @@ export interface PreviewPanelProps {
 function WebRuntimePreview({
   threadId,
   workspaceId,
+  viewportCoordinator,
+  viewportState,
+  viewportToolbarOpen,
+  onToggleViewportToolbar,
+  onCloseViewportToolbar,
 }: {
   readonly threadId: string;
   readonly workspaceId?: string | null;
+  readonly viewportCoordinator?: ViewportCoordinator;
+  readonly viewportState?: ViewportCoordinatorState;
+  readonly viewportToolbarOpen: boolean;
+  readonly onToggleViewportToolbar: () => void;
+  readonly onCloseViewportToolbar: () => void;
 }) {
   const storedUrl = useDiffStore((state) => state.previewUrlByThread[threadId] ?? "");
   const fixtureUrl = `${window.location.origin}${WEB_AUTOMATION_FIXTURE_URL}`;
   const [inputUrl, setInputUrl] = useState(storedUrl);
   const [src, setSrc] = useState<string | null>(() => normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
   const [crossOriginObserved, setCrossOriginObserved] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [canvasBounds, setCanvasBounds] = useState({ width: 0, height: 0 });
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const enabled = isBrowserAutomationWebRuntimeEnabled();
   const requestedState = resolveWebPreviewState(src, enabled);
   const state = crossOriginObserved ? "cross-origin" : requestedState;
+  const responsiveViewportSize =
+    viewportState?.mode === "responsive" ? viewportState.confirmed : null;
+  const responsiveViewportScale = responsiveViewportSize
+    ? calculateViewportPresentationScale(
+        responsiveViewportSize,
+        canvasBounds,
+        viewportState?.presentation ?? "fit",
+      )
+    : 1;
+  const responsiveCanvasWidth = responsiveViewportSize
+    ? Math.round(responsiveViewportSize.width * responsiveViewportScale)
+    : 0;
+  const responsiveCanvasHeight = responsiveViewportSize
+    ? Math.round(responsiveViewportSize.height * responsiveViewportScale)
+    : 0;
 
   useEffect(() => {
     useBrowserAutomationStore.getState().registerTarget(
@@ -1572,8 +1609,22 @@ function WebRuntimePreview({
     setCrossOriginObserved(false);
   }, [fixtureUrl, storedUrl]);
 
-  const navigate = (): void => {
-    const next = normalizeWebPreviewUrl(inputUrl);
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const update = () => setCanvasBounds({ width: surface.clientWidth, height: surface.clientHeight });
+    update();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null;
+    observer?.observe(surface);
+    window.addEventListener("resize", update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  const navigate = (candidate = inputUrl): void => {
+    const next = normalizeWebPreviewUrl(candidate);
     if (!next) {
       setSrc(null);
       setCrossOriginObserved(false);
@@ -1597,13 +1648,71 @@ function WebRuntimePreview({
     }
   };
 
+  const noOp = (): void => undefined;
+  const iframeStyle: CSSProperties | undefined = responsiveViewportSize
+    ? {
+        width: responsiveViewportSize.width,
+        height: responsiveViewportSize.height,
+        transform: `scale(${responsiveViewportScale})`,
+        transformOrigin: "top left",
+      }
+    : undefined;
+
   return (
     <div data-testid="web-runtime-preview" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <form className="flex items-center gap-2 border-b border-border/60 px-2 py-1.5" onSubmit={(event) => { event.preventDefault(); navigate(); }}>
-        <Input aria-label="Preview URL" value={inputUrl} onChange={(event) => setInputUrl(event.target.value)} placeholder="Enter an http(s) URL" />
-        <Button type="submit" size="sm">Open</Button>
-      </form>
-      <div className="relative min-h-0 min-w-0 flex-1 bg-muted/10">
+      <BrowserHeader
+        url={src ?? ""}
+        pageTitle={null}
+        faviconUrl={null}
+        hasLoadedPage={Boolean(src)}
+        canBack={false}
+        canFwd={false}
+        threadId=""
+        designModeActive={false}
+        elementPickBusy={false}
+        captureBusy={false}
+        regionBusy={false}
+        onNavigate={(url) => {
+          setInputUrl(url);
+          navigate(url);
+        }}
+        onGoBack={noOp}
+        onGoForward={noOp}
+        onReload={() => setSrc((current) => current ?? fixtureUrl)}
+        onOpenExternal={noOp}
+        onToggleDesign={noOp}
+        onScreenshot={noOp}
+        onNewPage={noOp}
+        onForceReload={() => setSrc((current) => current ?? fixtureUrl)}
+        onRegionCapture={noOp}
+        onDumpContent={noOp}
+        onClearCookies={noOp}
+        onClearCache={noOp}
+        onGetZoom={async () => zoom}
+        onSetZoom={async (factor) => {
+          const next = Math.min(2, Math.max(0.25, factor));
+          setZoom(next);
+          return next;
+        }}
+        onOpenDevTools={noOp}
+        onToggleViewportToolbar={onToggleViewportToolbar}
+        viewportToolbarVisible={viewportToolbarOpen || responsiveViewportSize !== null}
+        suppressPreviewForOverlays={false}
+      />
+      {viewportToolbarOpen || responsiveViewportSize ? (
+        viewportCoordinator && viewportState ? (
+          <BrowserViewportToolbar
+            coordinator={viewportCoordinator}
+            state={viewportState}
+            onClose={onCloseViewportToolbar}
+          />
+        ) : null
+      ) : null}
+      <div ref={surfaceRef} className={cn("relative min-h-0 min-w-0 flex-1 bg-muted/10", responsiveViewportSize ? "overflow-auto" : "overflow-hidden")}>
+        <div
+          className={cn("relative", responsiveViewportSize ? "mx-auto" : "h-full w-full")}
+          style={responsiveViewportSize ? { width: responsiveCanvasWidth, height: responsiveCanvasHeight } : undefined}
+        >
         {state === "same-origin" && src ? (
           <iframe
             title="Web browser preview"
@@ -1611,7 +1720,8 @@ function WebRuntimePreview({
             data-testid="web-runtime-preview-iframe"
             data-thread-id={threadId}
             data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
-            className="h-full w-full border-0"
+            className={cn("border-0", responsiveViewportSize ? "absolute left-0 top-0" : "h-full w-full")}
+            style={iframeStyle}
             referrerPolicy="no-referrer"
             onLoad={onIframeLoad}
           />
@@ -1623,7 +1733,8 @@ function WebRuntimePreview({
               data-testid="web-runtime-preview-iframe"
               data-thread-id={threadId}
               data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
-              className="h-full w-full border-0"
+              className={cn("border-0", responsiveViewportSize ? "absolute left-0 top-0" : "h-full w-full")}
+              style={iframeStyle}
               referrerPolicy="no-referrer"
               onLoad={onIframeLoad}
             />
@@ -1635,9 +1746,10 @@ function WebRuntimePreview({
           <div data-testid={`web-runtime-${state}`} className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
             {state === "disabled"
               ? "Web preview automation is disabled. Set MCODE_WEB_AUTOMATION=1 and restart agent:up to enable it."
-              : "Web preview is unavailable until an HTTP(S) same-origin target is loaded."}
+            : "Web preview is unavailable until an HTTP(S) same-origin target is loaded."}
           </div>
         )}
+        </div>
       </div>
     </div>
   );
@@ -1656,6 +1768,24 @@ function WebRuntimePreview({
 export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
+  const [viewportCanvasBounds, setViewportCanvasBounds] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const update = () => setViewportCanvasBounds({
+      width: surface.clientWidth,
+      height: surface.clientHeight,
+    });
+    update();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null;
+    observer?.observe(surface);
+    window.addEventListener("resize", update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
 
   const designModeActive = usePreviewDesignModeStore(
     (s) => s.modes[threadId] === true,
@@ -1785,6 +1915,106 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     }
   }, [bubbleFileOpen]);
 
+  // Subscribes the scope's tab set into usePreviewTabsStore and exposes the
+  // "New page" action for the header. Page switching/closing is driven from the
+  // activity rail (the page switcher), so this panel no longer renders a strip.
+  const tabs = usePreviewTabs(threadId);
+  const automationControllers = useBrowserAutomationStore((state) => state.controllers);
+  const automationActiveRequests = useBrowserAutomationStore((state) => state.activeRequests);
+  const automationLiveTargets = useBrowserAutomationStore((state) => state.liveTargets);
+  const automationViewports = useBrowserAutomationStore((state) => state.viewportByTarget);
+  const automationViewportStates = useBrowserAutomationStore((state) => state.viewportStateByTarget);
+  const automationViewportCoordinators = useBrowserAutomationStore((state) => state.viewportCoordinators);
+  const activeWebviewTabId =
+    tabs.tabSet?.activeTabId ??
+    (window.desktopBridge?.preview
+      ? PREVIEW_WEBVIEW_FALLBACK_TAB_ID
+      : WEB_RUNTIME_PREVIEW_TAB_ID);
+  const activeBrowserTargetKey = browserAutomationTargetKey(threadId, activeWebviewTabId);
+  const activeViewportState: ViewportCoordinatorState | undefined =
+    automationViewportStates.get(activeBrowserTargetKey);
+  const activeViewportCoordinator = automationViewportCoordinators.get(activeBrowserTargetKey);
+  const [viewportToolbarOpen, setViewportToolbarOpen] = useState(false);
+  useEffect(() => {
+    if (automationViewportCoordinators.has(activeBrowserTargetKey)) return;
+    const target = automationLiveTargets.get(activeBrowserTargetKey);
+    if (!target) return;
+    const initial = automationViewports.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE;
+    const coordinator = new ViewportCoordinator({
+      initial,
+      targetGeneration: target.revision,
+      apply: async (operation: ViewportHostOperation) => {
+        const design = window.desktopBridge?.preview?.design;
+        if (design) {
+          const nativeResult = await design.setViewport({
+            widthOverride: operation.requested.width,
+            heightOverride: operation.requested.height,
+            operationId: operation.operationId,
+            source: operation.source,
+            targetGeneration: operation.targetGeneration,
+            threadId,
+            tabId: activeWebviewTabId,
+          });
+          if (!nativeResult.ok) {
+            return {
+              status: nativeResult.error === "stale-target-generation" || nativeResult.error === "stale-target"
+                ? "stale" as const
+                : "failed" as const,
+              applied: nativeResult.appliedViewport ?? useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
+              error: nativeResult.error,
+            };
+          }
+          if (
+            nativeResult.operationId !== operation.operationId ||
+            nativeResult.source !== operation.source ||
+            nativeResult.targetGeneration !== operation.targetGeneration
+          ) {
+            return {
+              status: "stale" as const,
+              applied: nativeResult.appliedViewport ?? useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
+              error: "Browser viewport host acknowledgement is stale",
+            };
+          }
+          if (
+            nativeResult.data.width < MIN_VIEWPORT_CSS_PX ||
+            nativeResult.data.height < MIN_VIEWPORT_CSS_PX
+          ) {
+            return {
+              status: "failed" as const,
+              applied: useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
+              error: "Browser viewport host bounds are below the minimum size",
+            };
+          }
+          return { status: "applied" as const, applied: nativeResult.appliedViewport };
+        }
+        useBrowserAutomationStore.getState().setViewport(
+          threadId,
+          activeWebviewTabId,
+          operation.requested.width,
+          operation.requested.height,
+        );
+        if (typeof requestAnimationFrame === "function") {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+        const applied = useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey);
+        return applied
+          ? { status: "applied" as const, applied }
+          : { status: "failed" as const, applied: operation.requested, error: "Browser viewport target is unavailable" };
+      },
+      onStateChange: (nextState) => {
+        useBrowserAutomationStore.getState().setViewportState(threadId, activeWebviewTabId, nextState);
+      },
+    });
+    useBrowserAutomationStore.getState().setViewportCoordinator(threadId, activeWebviewTabId, coordinator);
+  }, [
+    activeBrowserTargetKey,
+    activeWebviewTabId,
+    automationLiveTargets,
+    automationViewports,
+    automationViewportCoordinators,
+    threadId,
+  ]);
+
   const omniboxFocusTick = usePreviewFocusStore((s) => s.omniboxFocusTick);
   const previewRenderingEngine = useSettingsStore(
     (s) => s.settings.preview.rendering.engine,
@@ -1850,15 +2080,6 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     pushSync: bridge.pushSync,
     onSuccess: onCaptureSuccess,
   });
-  // Subscribes the scope's tab set into usePreviewTabsStore and exposes the
-  // "New page" action for the header. Page switching/closing is driven from the
-  // activity rail (the page switcher), so this panel no longer renders a strip.
-  const tabs = usePreviewTabs(threadId);
-  const automationControllers = useBrowserAutomationStore((state) => state.controllers);
-  const automationActiveRequests = useBrowserAutomationStore((state) => state.activeRequests);
-  const automationViewports = useBrowserAutomationStore((state) => state.viewportByTarget);
-  const activeWebviewTabId =
-    tabs.tabSet?.activeTabId ?? PREVIEW_WEBVIEW_FALLBACK_TAB_ID;
   const activeWebviewTab = tabs.tabSet?.tabs.find(
     (tab) => tab.id === activeWebviewTabId,
   );
@@ -2410,7 +2631,21 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   const hasDesktopPreview = !!window.desktopBridge?.preview;
   const webRuntimeEnabled = isBrowserAutomationWebRuntimeEnabled();
   if (!hasDesktopPreview && webRuntimeEnabled) {
-    return <WebRuntimePreview key={threadId} threadId={threadId} workspaceId={workspaceId} />;
+    return (
+      <WebRuntimePreview
+        key={threadId}
+        threadId={threadId}
+        workspaceId={workspaceId}
+        viewportCoordinator={activeViewportCoordinator}
+        viewportState={activeViewportState}
+        viewportToolbarOpen={viewportToolbarOpen}
+        onToggleViewportToolbar={() => setViewportToolbarOpen((open) => !open)}
+        onCloseViewportToolbar={() => {
+          activeViewportCoordinator?.setMode("regular");
+          setViewportToolbarOpen(false);
+        }}
+      />
+    );
   }
   if (!hasDesktopPreview) {
     return (
@@ -2569,6 +2804,21 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     : undefined;
   const previewSurfaceWidth = surfaceRef.current?.clientWidth ?? 0;
   const showAnnotationCommandBar = designModeActive && bundleCount > 0;
+  const responsiveViewportSize =
+    activeViewportState?.mode === "responsive" ? activeViewportState.confirmed : null;
+  const responsiveViewportScale = responsiveViewportSize
+    ? calculateViewportPresentationScale(
+        responsiveViewportSize,
+        viewportCanvasBounds,
+        activeViewportState?.presentation ?? "fit",
+      )
+    : 1;
+  const responsiveCanvasWidth = responsiveViewportSize
+    ? Math.round(responsiveViewportSize.width * responsiveViewportScale)
+    : 0;
+  const responsiveCanvasHeight = responsiveViewportSize
+    ? Math.round(responsiveViewportSize.height * responsiveViewportScale)
+    : 0;
 
   return (
     <div
@@ -2646,6 +2896,8 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
                 tabId: activeWebviewTabId,
               });
             }}
+            onToggleViewportToolbar={() => setViewportToolbarOpen((open) => !open)}
+            viewportToolbarVisible={viewportToolbarOpen || activeViewportState?.mode === "responsive"}
             suppressPreviewForOverlays={!showWebviewPreview}
             automationController={activeAutomationController ?? null}
             automationBusy={activeAutomationRequest !== undefined}
@@ -2662,6 +2914,19 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
             }
           />
         )}
+        {viewportToolbarOpen || activeViewportState?.mode === "responsive" ? (
+          activeViewportCoordinator && activeViewportState ? (
+            <BrowserViewportToolbar
+              coordinator={activeViewportCoordinator}
+              state={activeViewportState}
+              onClose={() => {
+                activeViewportCoordinator.setMode("regular");
+                void window.desktopBridge?.preview?.design?.resetViewport();
+                setViewportToolbarOpen(false);
+              }}
+            />
+          ) : null
+        ) : null}
       </div>
 
       {effectiveNavError ? (
@@ -2684,7 +2949,10 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
         className={cn(
           "relative min-h-[min(40vh,20rem)] min-w-0 flex-1 basis-0",
           showWebviewPreview
-            ? "z-0 overflow-hidden rounded-tl-md"
+            ? cn(
+                "z-0 rounded-tl-md",
+                responsiveViewportSize ? "overflow-auto bg-muted/20" : "overflow-hidden",
+              )
             : "mx-2 mb-2 mt-1 rounded-md border border-border/40 bg-muted/10",
           showLocalPorts && "overflow-y-auto",
         )}
@@ -2732,44 +3000,71 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
           <div
             data-testid="preview-webview-surface"
             className={cn(
-              "absolute inset-0 z-0 overflow-hidden rounded-tl-md",
+              "absolute inset-0 z-0 rounded-tl-md",
+              responsiveViewportSize
+                ? "flex items-center justify-center overflow-auto"
+                : "overflow-hidden",
               !webviewLayerInteractive && "pointer-events-none",
             )}
           >
-            {warmWebviewTabs.map((tab) => (
-              <PreviewWebview
-                key={tab.id}
-                ref={(handle) => {
-                  webviewRefs.current[tab.id] = handle;
-                }}
-                threadId={threadId}
-                workspaceId={workspaceId ?? threadId}
-                tabId={tab.id}
-                src={tab.src}
-                viewport={automationViewports.get(browserAutomationTargetKey(threadId, tab.id))}
-                className={cn(
-                  "absolute inset-0 h-full w-full",
-                  tab.id === activeWebviewTabId
-                    ? "z-0 block"
-                    : "pointer-events-none -z-10 opacity-0",
-                )}
-                onPageStatus={(status) => {
-                  if (webRuntime) setTrackedWebviewSrc(tab.id, status.url);
-                  usePreviewTabsStore.getState().updateTabChrome(threadId, tab.id, {
-                    title: status.title,
-                    url: status.url,
-                    favicon: status.favicon,
-                  });
-                  if (tab.id !== activeWebviewTabId) return;
-                  onWebviewPageStatus(status);
-                }}
-                onNavigationStateChange={(state) => {
-                  if (tab.id !== activeWebviewTabId) return;
-                  setWebviewCanBack(state.canGoBack);
-                  setWebviewCanFwd(state.canGoForward);
-                }}
-              />
-            ))}
+            <div
+              data-testid={responsiveViewportSize ? "responsive-viewport-canvas" : undefined}
+              className={cn("relative", !responsiveViewportSize && "h-full w-full")}
+              style={
+                responsiveViewportSize
+                  ? {
+                      width: responsiveCanvasWidth,
+                      height: responsiveCanvasHeight,
+                      overflow: "hidden",
+                    }
+                  : undefined
+              }
+            >
+              {warmWebviewTabs.map((tab) => {
+                const tabViewport = automationViewports.get(
+                  browserAutomationTargetKey(threadId, tab.id),
+                );
+                return (
+                  <PreviewWebview
+                    key={tab.id}
+                    ref={(handle) => {
+                      webviewRefs.current[tab.id] = handle;
+                    }}
+                    threadId={threadId}
+                    workspaceId={workspaceId ?? threadId}
+                    tabId={tab.id}
+                    src={tab.src}
+                    viewport={tabViewport}
+                    presentationScale={
+                      tab.id === activeWebviewTabId ? responsiveViewportScale : 1
+                    }
+                    className={cn(
+                      responsiveViewportSize
+                        ? "absolute left-0 top-0"
+                        : "absolute inset-0 h-full w-full",
+                      tab.id === activeWebviewTabId
+                        ? "z-0 block"
+                        : "pointer-events-none -z-10 opacity-0",
+                    )}
+                    onPageStatus={(status) => {
+                      if (webRuntime) setTrackedWebviewSrc(tab.id, status.url);
+                      usePreviewTabsStore.getState().updateTabChrome(threadId, tab.id, {
+                        title: status.title,
+                        url: status.url,
+                        favicon: status.favicon,
+                      });
+                      if (tab.id !== activeWebviewTabId) return;
+                      onWebviewPageStatus(status);
+                    }}
+                    onNavigationStateChange={(state) => {
+                      if (tab.id !== activeWebviewTabId) return;
+                      setWebviewCanBack(state.canGoBack);
+                      setWebviewCanFwd(state.canGoForward);
+                    }}
+                  />
+                );
+              })}
+            </div>
           </div>
         ) : null}
         {activeAutomationController?.controller === "agent" && automationPointer ? (

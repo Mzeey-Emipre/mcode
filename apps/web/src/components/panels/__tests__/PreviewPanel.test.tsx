@@ -418,6 +418,30 @@ describe("PreviewPanel: unavailable state", () => {
       `${window.location.origin}/browser-automation-fixture.html`,
     );
   });
+
+  it("keeps the responsive toolbar available through the web Browser overflow menu", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const user = userEvent.setup();
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    await waitFor(() => {
+      expect(useBrowserAutomationStore.getState().viewportCoordinators.size).toBeGreaterThan(0);
+    });
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    const menu = await screen.findByTestId("browser-overflow-menu");
+    await user.click(within(menu).getByRole("menuitem", { name: "Show device toolbar" }));
+
+    const toolbar = await screen.findByTestId("browser-viewport-toolbar");
+    expect(toolbar).toBeInTheDocument();
+    await user.click(within(toolbar).getByRole("button", { name: "Responsive" }));
+    await waitFor(() => {
+      expect(
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(
+          JSON.stringify(["thread-1", "web-preview"]),
+        ),
+      ).toMatchObject({ mode: "responsive" });
+    });
+  });
 });
 
 describe("PreviewPanel: full panel state", () => {

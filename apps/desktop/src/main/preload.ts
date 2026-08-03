@@ -383,6 +383,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         presetId?: string;
         widthOverride?: number;
         heightOverride?: number;
+        operationId?: string;
+        source?: "user" | "agent";
+        targetGeneration?: number;
+        threadId?: string;
+        tabId?: string;
       }): Promise<unknown> {
         return ipcRenderer.invoke("preview:design.set-viewport", payload);
       },

@@ -75,6 +75,10 @@ export interface BrowserHeaderProps {
   readonly onSetZoom: (factor: number) => Promise<number>;
   /** Open detached DevTools for the active adopted guest. */
   readonly onOpenDevTools?: () => void;
+  /** Toggle the responsive viewport toolbar below this header. */
+  readonly onToggleViewportToolbar?: () => void;
+  /** Whether the responsive viewport toolbar is visible. */
+  readonly viewportToolbarVisible?: boolean;
   /** Whether overflow overlays must hide the native preview layer. */
   readonly suppressPreviewForOverlays?: boolean;
   /** Current controller for the active visible Browser tab. */
@@ -129,6 +133,8 @@ export function BrowserHeader({
   onGetZoom,
   onSetZoom,
   onOpenDevTools = () => undefined,
+  onToggleViewportToolbar,
+  viewportToolbarVisible = false,
   suppressPreviewForOverlays = true,
   automationController = null,
   automationBusy = false,
@@ -436,6 +442,8 @@ export function BrowserHeader({
         onGetZoom={onGetZoom}
         onSetZoom={onSetZoom}
         onOpenDevTools={onOpenDevTools}
+        onToggleViewportToolbar={onToggleViewportToolbar}
+        viewportToolbarVisible={viewportToolbarVisible}
         suppressPreviewForOverlays={suppressPreviewForOverlays}
       />
     </div>

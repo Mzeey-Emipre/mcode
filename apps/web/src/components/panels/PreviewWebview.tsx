@@ -10,6 +10,11 @@ import {
   interruptBrowserAutomationTarget,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import {
+  DEFAULT_VIEWPORT_SIZE,
+  ViewportCoordinator,
+  type ViewportHostOperation,
+} from "@/services/browser-automation/viewportCoordinator";
 
 const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
 const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
@@ -32,6 +37,8 @@ export interface PreviewWebviewProps {
   readonly src: string;
   readonly className?: string;
   readonly viewport?: { readonly width: number; readonly height: number };
+  /** Visual scale applied by Fit mode; CSS viewport dimensions remain unchanged. */
+  readonly presentationScale?: number;
   readonly onPageStatus?: (status: PreviewPageStatus) => void;
   readonly onNavigationStateChange?: (state: {
     canGoBack: boolean;
@@ -102,6 +109,11 @@ function isExpectedNavigationAbort(error: unknown): boolean {
   return candidate.code === "ERR_ABORTED" || candidate.errno === -3;
 }
 
+async function waitForViewportLayout(): Promise<void> {
+  if (typeof requestAnimationFrame !== "function") return;
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewProps>(
   function PreviewWebview(
     {
@@ -111,6 +123,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       src,
       className,
       viewport,
+      presentationScale = 1,
       onPageStatus,
       onNavigationStateChange,
     },
@@ -120,6 +133,51 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
   const domReadyRef = useRef(false);
   const pendingReloadRef = useRef(false);
   const faviconRef = useRef<string | null>(null);
+  const initialViewportRef = useRef(viewport ?? DEFAULT_VIEWPORT_SIZE);
+  const coordinatorRef = useRef<ViewportCoordinator | null>(null);
+
+  const ensureViewportCoordinator = useCallback((targetGeneration: number) => {
+    const key = JSON.stringify([threadId, tabId]);
+    const existing = coordinatorRef.current;
+    if (existing) {
+      existing.setTargetGeneration(targetGeneration);
+      return existing;
+    }
+    const registered = useBrowserAutomationStore
+      .getState()
+      .viewportCoordinators.get(key);
+    if (registered) {
+      coordinatorRef.current = registered;
+      registered.setTargetGeneration(targetGeneration);
+      return registered;
+    }
+    const current = useBrowserAutomationStore.getState().viewportByTarget.get(key);
+    const coordinator = new ViewportCoordinator({
+      initial: current ?? initialViewportRef.current,
+      targetGeneration,
+      apply: async (operation: ViewportHostOperation) => {
+        useBrowserAutomationStore.getState().setViewport(
+          threadId,
+          tabId,
+          operation.requested.width,
+          operation.requested.height,
+        );
+        await waitForViewportLayout();
+        const applied = useBrowserAutomationStore.getState().viewportByTarget.get(key);
+        return {
+          status: applied ? "applied" as const : "failed" as const,
+          applied: applied ?? operation.requested,
+          ...(applied ? {} : { error: "Browser viewport target is unavailable" }),
+        };
+      },
+      onStateChange: (state) => {
+        useBrowserAutomationStore.getState().setViewportState(threadId, tabId, state);
+      },
+    });
+    coordinatorRef.current = coordinator;
+    useBrowserAutomationStore.getState().setViewportCoordinator(threadId, tabId, coordinator);
+    return coordinator;
+  }, [tabId, threadId]);
 
   const readUrl = useCallback((): string | null => {
     const el = ref.current;
@@ -268,12 +326,17 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     if (isIframeElement(el)) {
       domReadyRef.current = true;
       useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
+      const revision = useBrowserAutomationStore.getState().liveTargets.get(
+        JSON.stringify([threadId, tabId]),
+      )?.revision ?? 1;
+      ensureViewportCoordinator(revision);
       const onLoad = () => {
         emitStatus("loaded");
       };
       el.addEventListener("load", onLoad);
       return () => {
         el.removeEventListener("load", onLoad);
+        coordinatorRef.current = null;
         useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
       };
     }
@@ -292,6 +355,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           }).then((result) => {
             if (cancelled || !result.ok) return;
             useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
+            const revision = useBrowserAutomationStore.getState().liveTargets.get(
+              JSON.stringify([threadId, tabId]),
+            )?.revision ?? 1;
+            ensureViewportCoordinator(revision);
           });
         }
       } catch {
@@ -307,10 +374,11 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       } catch {
         /* webview gone */
       }
+      coordinatorRef.current = null;
       useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
       void window.desktopBridge?.preview?.releaseWebview?.({ threadId, tabId });
     };
-  }, [threadId, tabId, workspaceId]);
+  }, [ensureViewportCoordinator, threadId, tabId, workspaceId]);
 
   useEffect(() => {
     const el = ref.current;
@@ -417,6 +485,8 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         height: viewport?.height ?? "100%",
         minWidth: 0,
         minHeight: 0,
+        transform: presentationScale === 1 ? undefined : `scale(${presentationScale})`,
+        transformOrigin: "top left",
       }}
     />
   );

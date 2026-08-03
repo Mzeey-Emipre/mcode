@@ -47,25 +47,20 @@ export interface BrowserOverflowMenuProps {
   readonly onSetZoom: (factor: number) => Promise<number>;
   /** Open detached DevTools for the adopted active guest. */
   readonly onOpenDevTools: () => void;
+  /** Toggle the responsive viewport toolbar below the Browser header. */
+  readonly onToggleViewportToolbar?: () => void;
+  /** Whether the responsive viewport toolbar is currently shown. */
+  readonly viewportToolbarVisible?: boolean;
   /** Whether this menu must hide the native preview layer while open. */
   readonly suppressPreviewForOverlays?: boolean;
-}
-
-/** "Soon" pill for menu entries that are planned but not yet wired. */
-function SoonTag() {
-  return (
-    <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
-      Soon
-    </span>
-  );
 }
 
 /**
  * Overflow menu for the browser header. Holds the rarely-used tools that the
  * minimal header deliberately omits, in the order set by the right-panel epic:
  * New page, Force reload, Dump page content, Region capture, Developer tools,
- * Show device toolbar (disabled "Soon" stub), Zoom, Clear cookies, and Clear
- * cache. Keeps the everyday header to back/forward, the
+ * Show device toolbar, Zoom, Clear cookies, and Clear cache. Keeps the everyday
+ * header to back/forward, the
  * URL, design, and screenshot.
  *
  * While open it suppresses the native Electron BrowserView (which paints above
@@ -83,6 +78,8 @@ export function BrowserOverflowMenu({
   onGetZoom,
   onSetZoom,
   onOpenDevTools,
+  onToggleViewportToolbar,
+  viewportToolbarVisible = false,
   suppressPreviewForOverlays = true,
 }: BrowserOverflowMenuProps) {
   const [open, setOpen] = useState(false);
@@ -185,14 +182,14 @@ export function BrowserOverflowMenu({
           Developer tools
         </DropdownMenuItem>
         <DropdownMenuItem
-          disabled
+          disabled={!onToggleViewportToolbar}
           className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs"
+          onClick={onToggleViewportToolbar}
         >
           <span className="flex items-center gap-2">
             <Smartphone size={14} className="text-muted-foreground" aria-hidden />
-            Show device toolbar
+            {viewportToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
           </span>
-          <SoonTag />
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {/* Zoom is a control row, not a closeable menu item: a plain div keeps

@@ -40,6 +40,13 @@ import { executeWebBrowserDispatch } from "./browserAutomationWebExecutor";
 import { captureVisibleWebLocation, sanitizeWebLocation } from "./web-browser-automation/capture";
 import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "@/services/browser-automation/browserSessionDriver";
 import { WebBrowserSessionAdapter } from "@/services/browser-automation/webBrowserSessionAdapter";
+import {
+  DEFAULT_VIEWPORT_SIZE,
+  MIN_VIEWPORT_CSS_PX,
+  ViewportCoordinator,
+  type ViewportApplyResult,
+  type ViewportHostOperation,
+} from "@/services/browser-automation/viewportCoordinator";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
@@ -80,6 +87,7 @@ function failureResponse(
   request: BrowserAutomationRequest,
   code: BrowserAutomationErrorCode,
   message: string,
+  appliedViewport?: { readonly width: number; readonly height: number },
 ): BrowserAutomationResponse {
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -90,6 +98,7 @@ function failureResponse(
       code,
       message,
       retryable: code !== "INVALID_REQUEST",
+      ...(appliedViewport ? { appliedViewport } : {}),
       stage: code === "TAB_UNAVAILABLE" ? "allocation" : "effect",
       effect: code === "TAB_UNAVAILABLE" ? "unknown" : "none",
       recovery: code === "TAB_UNAVAILABLE" ? "reopen" : "manual",
@@ -98,9 +107,172 @@ function failureResponse(
   };
 }
 
+function viewportFailureCode(status: ViewportApplyResult["status"]): BrowserAutomationErrorCode {
+  if (status === "stale") return "STALE_TARGET_GENERATION";
+  if (status === "superseded") return "OPERATION_CANCELLED";
+  return "INTERNAL_ERROR";
+}
+
+function resizeResponse(
+  dispatch: BrowserAutomationHostDispatch,
+  result: ViewportApplyResult,
+): BrowserAutomationResponse {
+  if (result.status !== "applied" && result.status !== "clamped") {
+    return failureResponse(
+      dispatch.request,
+      viewportFailureCode(result.status),
+      result.error ?? `Browser viewport resize ${result.status}`,
+      result.applied,
+    );
+  }
+  return {
+    contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+    requestId: dispatch.request.requestId,
+    sequence: dispatch.request.sequence,
+    ok: true,
+    result: {
+      operation: "resize",
+      width: result.applied.width,
+      height: result.applied.height,
+      controlEpoch: dispatch.request.expectedControlEpoch,
+    },
+  };
+}
+
+async function restoreCompletedAgentViewport(
+  dispatch: BrowserAutomationHostDispatch,
+  response: BrowserAutomationResponse,
+): Promise<void> {
+  if (dispatch.request.operation !== "act" || !response.ok) return;
+  const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
+    browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+  );
+  if (!coordinator?.snapshot().agentActive) return;
+  await coordinator.completeAgent();
+  useBrowserAutomationStore.getState().setViewportState(
+    dispatch.target.threadId,
+    dispatch.target.tabId,
+    coordinator.snapshot(),
+  );
+}
+
+async function completeViewportControlRun(
+  dispatch: BrowserAutomationHostDispatch,
+  response: BrowserAutomationResponse,
+): Promise<void> {
+  if (!response.ok) return;
+  const isCompletedAct = dispatch.request.operation === "act" &&
+    response.result.operation === "act" && response.result.outcome === "completed";
+  if (!isCompletedAct) return;
+  await restoreCompletedAgentViewport(dispatch, response);
+}
+
+function interruptViewportCoordinator(dispatch: BrowserAutomationHostDispatch): void {
+  const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
+    browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+  );
+  if (!coordinator) return;
+  coordinator.interrupt();
+  useBrowserAutomationStore.getState().setViewportState(
+    dispatch.target.threadId,
+    dispatch.target.tabId,
+    coordinator.snapshot(),
+  );
+}
+
 async function afterBrowserLayout(): Promise<void> {
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function ensureViewportCoordinator(
+  dispatch: BrowserAutomationHostDispatch,
+): ViewportCoordinator {
+  const key = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+  const state = useBrowserAutomationStore.getState();
+  const existing = state.viewportCoordinators.get(key);
+  if (existing) {
+    existing.setTargetGeneration(dispatch.target.targetGeneration);
+    return existing;
+  }
+  const initial = state.viewportByTarget.get(key) ?? DEFAULT_VIEWPORT_SIZE;
+  const coordinator = new ViewportCoordinator({
+    initial,
+    targetGeneration: dispatch.target.targetGeneration,
+    operationId: (_operation, sequence) => browserAutomationRequestKey(
+      dispatch.request.requestId,
+      dispatch.request.sequence + sequence,
+    ),
+    apply: async (operation: ViewportHostOperation) => {
+      const design = window.desktopBridge?.preview?.design;
+      if (design) {
+        const nativeResult = await design.setViewport({
+          widthOverride: operation.requested.width,
+          heightOverride: operation.requested.height,
+          operationId: operation.operationId,
+          source: operation.source,
+          targetGeneration: operation.targetGeneration,
+          threadId: dispatch.target.threadId,
+          tabId: dispatch.target.tabId,
+        });
+        if (!nativeResult.ok) {
+          return {
+            status: nativeResult.error === "stale-target-generation" || nativeResult.error === "stale-target"
+              ? "stale" as const
+              : "failed" as const,
+            applied: nativeResult.appliedViewport ?? useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? DEFAULT_VIEWPORT_SIZE,
+            error: nativeResult.error,
+          };
+        }
+        if (
+          nativeResult.operationId !== operation.operationId ||
+          nativeResult.source !== operation.source ||
+          nativeResult.targetGeneration !== operation.targetGeneration
+        ) {
+          return {
+            status: "stale" as const,
+            applied: nativeResult.appliedViewport ?? useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? DEFAULT_VIEWPORT_SIZE,
+            error: "Browser viewport host acknowledgement is stale",
+          };
+        }
+        if (
+          nativeResult.data.width < MIN_VIEWPORT_CSS_PX ||
+          nativeResult.data.height < MIN_VIEWPORT_CSS_PX
+        ) {
+          return {
+            status: "failed" as const,
+            applied: useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? DEFAULT_VIEWPORT_SIZE,
+            error: "Browser viewport host bounds are below the minimum size",
+          };
+        }
+        return { status: "applied" as const, applied: nativeResult.appliedViewport };
+      }
+      useBrowserAutomationStore.getState().setViewport(
+        dispatch.target.threadId,
+        dispatch.target.tabId,
+        operation.requested.width,
+        operation.requested.height,
+      );
+      await afterBrowserLayout();
+      const applied = useBrowserAutomationStore.getState().viewportByTarget.get(key);
+      return applied
+        ? { status: "applied" as const, applied }
+        : { status: "failed" as const, applied: operation.requested, error: "Browser viewport target is unavailable" };
+    },
+    onStateChange: (nextState) => {
+      useBrowserAutomationStore.getState().setViewportState(
+        dispatch.target.threadId,
+        dispatch.target.tabId,
+        nextState,
+      );
+    },
+  });
+  useBrowserAutomationStore.getState().setViewportCoordinator(
+    dispatch.target.threadId,
+    dispatch.target.tabId,
+    coordinator,
+  );
+  return coordinator;
 }
 
 function mountedWebIframe(dispatch: BrowserAutomationHostDispatch): HTMLIFrameElement | null {
@@ -117,6 +289,25 @@ async function executeBrowserDispatch(
   signal: AbortSignal,
 ): Promise<BrowserAutomationResponse> {
   if (!bridge) {
+    if (dispatch.request.operation === "resize") {
+      const coordinator = ensureViewportCoordinator(dispatch);
+      const result = await coordinator.requestAgentResize(
+        dispatch.request.args,
+        {
+          operationId: browserAutomationRequestKey(
+            dispatch.request.requestId,
+            dispatch.request.sequence,
+          ),
+          targetGeneration: dispatch.target.targetGeneration,
+        },
+      );
+      useBrowserAutomationStore.getState().setViewportState(
+        dispatch.target.threadId,
+        dispatch.target.tabId,
+        coordinator.snapshot(),
+      );
+      return resizeResponse(dispatch, result);
+    }
     const response = await executeWebBrowserDispatch(dispatch, signal);
     if (dispatch.request.operation !== "status" || !response.ok || response.result.operation !== "status") return response;
     const iframe = mountedWebIframe(dispatch);
@@ -144,29 +335,23 @@ async function executeBrowserDispatch(
     let response: BrowserAutomationResponse;
     try {
       if (dispatch.request.operation === "resize") {
-    useBrowserAutomationStore.getState().setViewport(
-      dispatch.target.threadId,
-      dispatch.target.tabId,
-      dispatch.request.args.width,
-      dispatch.request.args.height,
-    );
-    await afterBrowserLayout();
-    const key = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
-    const applied = useBrowserAutomationStore.getState().viewportByTarget.get(key);
-        if (!applied) {
-          response = failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser viewport target is unavailable");
-        } else response = {
-      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-      requestId: dispatch.request.requestId,
-      sequence: dispatch.request.sequence,
-      ok: true,
-      result: {
-        operation: "resize",
-        width: applied.width,
-        height: applied.height,
-        controlEpoch: dispatch.request.expectedControlEpoch,
-      },
-        };
+        const coordinator = ensureViewportCoordinator(dispatch);
+        const result = await coordinator.requestAgentResize(
+          dispatch.request.args,
+          {
+            operationId: browserAutomationRequestKey(
+              dispatch.request.requestId,
+              dispatch.request.sequence,
+            ),
+            targetGeneration: dispatch.target.targetGeneration,
+          },
+        );
+        useBrowserAutomationStore.getState().setViewportState(
+          dispatch.target.threadId,
+          dispatch.target.tabId,
+          coordinator.snapshot(),
+        );
+        response = resizeResponse(dispatch, result);
       } else if (dispatch.request.operation === "recordingStart") {
         response = await recorder.start(dispatch, bridge);
       } else {
@@ -660,6 +845,11 @@ export function BrowserAutomationHost() {
   ): void => {
     if (cancelledRef.current.has(key)) return;
     cancelledRef.current.add(key);
+    const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+    const viewportCoordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(targetKey);
+    if (viewportCoordinator?.snapshot().agentActive || dispatch.request.operation === "resize") {
+      interruptViewportCoordinator(dispatch);
+    }
     webAbortRef.current.get(key)?.abort(new Error(`Browser operation was cancelled: ${reason}`));
     recorderRef.current.cancel(dispatch);
     void window.desktopBridge?.preview?.automation?.cancel(dispatch.request.requestId);
@@ -963,6 +1153,7 @@ export function BrowserAutomationHost() {
       const cancelForHuman = () => {
         if (!operationAbort || cancelledRef.current.has(key)) return;
         cancelledRef.current.add(key);
+        interruptViewportCoordinator(dispatch);
         operationAbort.abort(new Error("Browser operation was interrupted by human input"));
         const nextEpoch = (useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch) + 1;
         useBrowserAutomationStore.getState().setControllerForTarget(
@@ -1081,19 +1272,21 @@ export function BrowserAutomationHost() {
       });
       void guardedOperation.then((response) => {
         if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
-        const responseTarget = sessionDriverRef.current!.responseTarget(dispatch, response);
-        return webDispatch || webNavigateRequest || dispatch.request.operation === "tabs" || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
-          ? getTransport().respondToBrowserAutomationRequest(
-            lease.hostId,
-            lease.generation,
-            response,
-            responseTarget,
-          )
-          : getTransport().respondToBrowserAutomationRequest(
-            lease.hostId,
-            lease.generation,
-            response,
-          );
+        return completeViewportControlRun(dispatch, response).then(() => {
+          const responseTarget = sessionDriverRef.current!.responseTarget(dispatch, response);
+          return webDispatch || webNavigateRequest || dispatch.request.operation === "tabs" || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
+            ? getTransport().respondToBrowserAutomationRequest(
+              lease.hostId,
+              lease.generation,
+              response,
+              responseTarget,
+            )
+            : getTransport().respondToBrowserAutomationRequest(
+              lease.hostId,
+              lease.generation,
+              response,
+            );
+        });
       }).catch(() => undefined).finally(() => {
         webObserverRef.current.get(key)?.();
         webObserverRef.current.delete(key);
@@ -1128,6 +1321,7 @@ export function BrowserAutomationHost() {
       }
       if (!inFlightRef.current.has(key) || cancelledRef.current.has(key)) return;
       cancelledRef.current.add(key);
+      interruptViewportCoordinator(inFlightRef.current.get(key)!);
       webAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
       recorderRef.current.cancel(inFlightRef.current.get(key)!);
       requestAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));

@@ -1744,17 +1744,67 @@ describe("preview-browser", () => {
       expect(result).toMatchObject({ ok: false, error: "unknown-preset" });
     });
 
-    it("setViewport with explicit dimensions clamps to panel bounds", async () => {
+    it("setViewport with explicit dimensions clamps to the CSS viewport bounds", async () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
       view.setBounds.mockClear();
-      // VALID_BOUNDS is 800x600; ask for 10000x10000 -> should clamp.
+      // VALID_BOUNDS is 800x600; CSS viewport bounds are independent of it.
       const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
         widthOverride: 10_000,
         heightOverride: 10_000,
       });
-      expect(result).toMatchObject({ ok: true, data: { width: 800, height: 600 } });
+      expect(result).toMatchObject({ ok: true, data: { width: 2_560, height: 2_560 } });
+      expect(view.setBounds).toHaveBeenCalledWith(
+        expect.objectContaining({ width: 2_560, height: 2_560 }),
+      );
+    });
+
+    it("echoes viewport operation identity and rejects stale generations", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+      view.setBounds.mockClear();
+      const applied = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 640,
+        heightOverride: 480,
+        operationId: "viewport-user-5",
+        source: "user",
+        targetGeneration: 5,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(applied).toMatchObject({
+        ok: true,
+        data: { width: 640, height: 480 },
+        operationId: "viewport-user-5",
+        source: "user",
+        targetGeneration: 5,
+        threadId: "thread-1",
+        tabId: activeTabId,
+        appliedViewport: { width: 640, height: 480 },
+      });
+      const stale = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 700,
+        heightOverride: 500,
+        operationId: "viewport-agent-4",
+        source: "agent",
+        targetGeneration: 4,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(stale).toMatchObject({
+        ok: false,
+        error: "stale-target-generation",
+        appliedViewport: { width: 640, height: 480 },
+        operationId: "viewport-agent-4",
+        source: "agent",
+        targetGeneration: 4,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(view.setBounds).toHaveBeenCalledTimes(1);
     });
 
     it("resetViewport restores the panel bounds", async () => {

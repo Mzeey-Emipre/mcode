@@ -5,6 +5,10 @@ import type {
 import { BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
 import { create } from "zustand";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
+import type {
+  ViewportCoordinator,
+  ViewportCoordinatorState,
+} from "@/services/browser-automation/viewportCoordinator";
 
 /** Maximum number of inactive, non-busy Browser targets retained warm. */
 export const BROWSER_AUTOMATION_WARM_TARGET_LIMIT = 3;
@@ -34,6 +38,8 @@ interface BrowserAutomationState {
   readonly registered: boolean;
   readonly status: BrowserAutomationHostStatus;
   readonly viewportByTarget: ReadonlyMap<string, { readonly width: number; readonly height: number }>;
+  readonly viewportStateByTarget: ReadonlyMap<string, ViewportCoordinatorState>;
+  readonly viewportCoordinators: ReadonlyMap<string, ViewportCoordinator>;
   readonly hostedScopeIds: ReadonlySet<string>;
   registerTarget: (workspaceId: string, threadId: string, tabId: string) => void;
   refreshTarget: (threadId: string, tabId: string) => void;
@@ -52,6 +58,9 @@ interface BrowserAutomationState {
   setRegistered: (registered: boolean) => void;
   setStatus: (status: BrowserAutomationHostStatus) => void;
   setViewport: (threadId: string, tabId: string, width: number, height: number) => void;
+  setViewportState: (threadId: string, tabId: string, state: ViewportCoordinatorState) => void;
+  setViewportCoordinator: (threadId: string, tabId: string, coordinator: ViewportCoordinator) => void;
+  clearViewportCoordinator: (threadId: string, tabId: string) => void;
   setHostedScopeIds: (scopeIds: ReadonlySet<string>) => void;
 }
 
@@ -82,6 +91,8 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
   registered: false,
   status: "unavailable",
   viewportByTarget: new Map(),
+  viewportStateByTarget: new Map(),
+  viewportCoordinators: new Map(),
   hostedScopeIds: new Set(),
   registerTarget: (workspaceId, threadId, tabId) =>
     set((state) => {
@@ -99,7 +110,14 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
         revision: current.revision,
         lastUsedAt: current.lastUsedAt,
       });
-      return { liveTargets };
+      if (state.liveTargets.has(key)) return { liveTargets };
+      const viewportByTarget = new Map(state.viewportByTarget);
+      viewportByTarget.delete(key);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.delete(key);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.delete(key);
+      return { liveTargets, viewportByTarget, viewportStateByTarget, viewportCoordinators };
     }),
   refreshTarget: (threadId, tabId) =>
     set((state) => {
@@ -126,7 +144,11 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       controllers.delete(key);
       const viewportByTarget = new Map(state.viewportByTarget);
       viewportByTarget.delete(key);
-      return { liveTargets, controllers, viewportByTarget };
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.delete(key);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.delete(key);
+      return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
     });
   },
   unregisterTarget: (threadId, tabId) => {
@@ -140,7 +162,11 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       controllers.delete(key);
       const viewportByTarget = new Map(state.viewportByTarget);
       viewportByTarget.delete(key);
-      return { liveTargets, controllers, viewportByTarget };
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.delete(key);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.delete(key);
+      return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
     });
   },
   releaseThreadTargets: (threadId) => {
@@ -149,14 +175,18 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const liveTargets = new Map(state.liveTargets);
       const controllers = new Map(state.controllers);
       const viewportByTarget = new Map(state.viewportByTarget);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
       for (const target of state.liveTargets.values()) {
         if (target.threadId !== threadId) continue;
         const key = browserAutomationTargetKey(target.threadId, target.tabId);
         liveTargets.delete(key);
         controllers.delete(key);
         viewportByTarget.delete(key);
+        viewportStateByTarget.delete(key);
+        viewportCoordinators.delete(key);
       }
-      return { liveTargets, controllers, viewportByTarget };
+      return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
     });
   },
   releaseWorkspaceTargets: (workspaceId) => {
@@ -165,14 +195,18 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const liveTargets = new Map(state.liveTargets);
       const controllers = new Map(state.controllers);
       const viewportByTarget = new Map(state.viewportByTarget);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
       for (const target of state.liveTargets.values()) {
         if (target.workspaceId !== workspaceId) continue;
         const key = browserAutomationTargetKey(target.threadId, target.tabId);
         liveTargets.delete(key);
         controllers.delete(key);
         viewportByTarget.delete(key);
+        viewportStateByTarget.delete(key);
+        viewportCoordinators.delete(key);
       }
-      return { liveTargets, controllers, viewportByTarget };
+      return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
     });
   },
   setController: (controller) =>
@@ -221,6 +255,38 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const viewportByTarget = new Map(state.viewportByTarget);
       viewportByTarget.set(key, { width, height });
       return { viewportByTarget };
+    }),
+  setViewportState: (threadId, tabId, viewportState) =>
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      if (!state.liveTargets.has(key)) return state;
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.set(key, viewportState);
+      const viewportByTarget = new Map(state.viewportByTarget);
+      viewportByTarget.set(key, viewportState.confirmed);
+      return { viewportStateByTarget, viewportByTarget };
+    }),
+  setViewportCoordinator: (threadId, tabId, coordinator) =>
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      if (!state.liveTargets.has(key)) return state;
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.set(key, coordinator);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.set(key, coordinator.snapshot());
+      const viewportByTarget = new Map(state.viewportByTarget);
+      viewportByTarget.set(key, coordinator.snapshot().confirmed);
+      return { viewportCoordinators, viewportStateByTarget, viewportByTarget };
+    }),
+  clearViewportCoordinator: (threadId, tabId) =>
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      if (!state.viewportCoordinators.has(key)) return state;
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.delete(key);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.delete(key);
+      return { viewportCoordinators, viewportStateByTarget };
     }),
 }));
 

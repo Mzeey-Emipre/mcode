@@ -262,9 +262,32 @@ interface PreviewDesignBridge {
     presetId?: DesignViewportPresetId;
     widthOverride?: number;
     heightOverride?: number;
+    operationId?: string;
+    source?: "user" | "agent";
+    targetGeneration?: number;
+    threadId?: string;
+    tabId?: string;
   }): Promise<
-    | { ok: true; data: { width: number; height: number } }
-    | { ok: false; error: string }
+    | {
+        ok: true;
+        data: { width: number; height: number };
+        operationId?: string;
+        source?: "user" | "agent";
+        targetGeneration?: number;
+        threadId?: string;
+        tabId?: string;
+        appliedViewport: { width: number; height: number };
+      }
+    | {
+        ok: false;
+        error: string;
+        operationId?: string;
+        source?: "user" | "agent";
+        targetGeneration?: number;
+        threadId?: string;
+        tabId?: string;
+        appliedViewport: { width: number; height: number } | null;
+      }
   >;
   resetViewport(): Promise<{ ok: true } | { ok: false; error: string }>;
   setInspect(

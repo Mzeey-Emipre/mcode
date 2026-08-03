@@ -126,6 +126,10 @@ export interface PreviewSession {
   lastPreviewThreadId: string | null;
   /** Active workspace id from the renderer; scopes spill files under getMcodeDir(). */
   workspaceId: string | null;
+  /** Renderer-confirmed responsive viewport dimensions by exact thread/tab target. */
+  viewportAppliedByTarget: Map<string, { width: number; height: number }>;
+  /** Target generation accepted by the responsive viewport host per exact target. */
+  viewportTargetGenerationByTarget: Map<string, number>;
   /** Favicon URLs from the last page-favicon-updated event. */
   lastFavicons: string[];
   /** Timestamp of the last renderer crash auto-recovery; used to rate-limit retries. */
@@ -172,6 +176,8 @@ export function getSession(win: BrowserWindow): PreviewSession {
       failedRequestBuffer: [],
       lastPreviewThreadId: null,
       workspaceId: null,
+      viewportAppliedByTarget: new Map(),
+      viewportTargetGenerationByTarget: new Map(),
       lastFavicons: [],
       lastCrashRecoveryAt: 0,
       trustedFileNavigationBudget: 0,
