@@ -98,7 +98,7 @@ describe("overlayDisplaySet", () => {
 
 describe("previewTabsStore", () => {
   beforeEach(() => {
-    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     usePreviewFocusStore.setState({ omniboxFocusTick: 0 });
     browserTargetRegistry.clear();
   });
@@ -247,5 +247,35 @@ describe("previewTabsStore", () => {
     await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
     expect(onLastClose).not.toHaveBeenCalled();
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeUndefined();
+  });
+
+  it("closes persistent web tabs with bridge-equivalent last-close behavior", async () => {
+    const persistent = page("web-agent-1", {
+      title: null,
+      url: "https://example.test/start",
+    });
+    const second = page("web-agent-2", {
+      title: null,
+      url: "https://example.test/second",
+    });
+    usePreviewTabsStore.getState().upsertPersistentTab(SCOPE, persistent);
+    usePreviewTabsStore.getState().upsertPersistentTab(SCOPE, second);
+
+    await usePreviewTabsStore.getState().activatePage(SCOPE, persistent.id);
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]?.activeTabId).toBe(persistent.id);
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]?.tabs[0]?.active).toBe(true);
+
+    const onLastClose = vi.fn();
+    await usePreviewTabsStore.getState().closePage(SCOPE, second.id, { onLastClose });
+    expect(onLastClose).not.toHaveBeenCalled();
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toMatchObject({
+      activeTabId: persistent.id,
+      tabs: [{ ...persistent, active: true }],
+    });
+
+    await usePreviewTabsStore.getState().closePage(SCOPE, persistent.id, { onLastClose });
+    expect(onLastClose).toHaveBeenCalledOnce();
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
+    expect(usePreviewTabsStore.getState().persistentTabIdsByScope[SCOPE]).toBeUndefined();
   });
 });

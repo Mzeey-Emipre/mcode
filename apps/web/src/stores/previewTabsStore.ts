@@ -1,6 +1,10 @@
 import { useMemo } from "react";
 import { create } from "zustand";
-import type { BrowserTabSet } from "@mcode/contracts";
+import {
+  BROWSER_TAB_INFO_STRING_MAX,
+  type BrowserTabInfo,
+  type BrowserTabSet,
+} from "@mcode/contracts";
 import { usePreviewFocusStore } from "./previewFocusStore";
 import { useBrowserAutomationStore } from "./browserAutomationStore";
 
@@ -48,6 +52,9 @@ function bridgeTabs(): PreviewTabsBridgeLike | undefined {
   return window.desktopBridge?.preview?.tabs as PreviewTabsBridgeLike | undefined;
 }
 
+/** Maximum number of renderer-persistent agent web tabs retained per thread. */
+export const MAX_PERSISTENT_WEB_TABS_PER_SCOPE = 3;
+
 /**
  * Overlays the active page's live chrome onto its entry in `tabSet`. Falls back
  * to the tab's own persisted chrome when a live field is null: the per-thread
@@ -80,9 +87,15 @@ interface PreviewTabsState {
   readonly tabSetByScope: Record<string, BrowserTabSet | null>;
   /** Live active-page chrome per scope, published by the mounted PreviewPanel. */
   readonly liveChromeByScope: Record<string, PreviewLiveChrome | null>;
+  /** Renderer-owned web tabs that can be activated without a desktop bridge. */
+  readonly persistentTabIdsByScope: Record<string, ReadonlySet<string>>;
 
   /** Reconcile a scope's tab set against a host snapshot (list / tabs-updated / mutation result). */
   setTabSet: (scopeId: string, set: BrowserTabSet | null) => void;
+  /** Add or update one bounded renderer-owned web tab without activating it. */
+  upsertPersistentTab: (scopeId: string, tab: BrowserTabInfo) => void;
+  /** Remove one renderer-owned web tab from its scope projection. */
+  removePersistentTab: (scopeId: string, tabId: string) => void;
   /** Publish (or clear) the active page's live chrome for a scope. */
   setLiveChrome: (scopeId: string, chrome: PreviewLiveChrome | null) => void;
   /** Merge renderer-observed chrome into one tab's persisted renderer mirror. */
@@ -120,11 +133,74 @@ export interface ClosePageOptions {
 export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
   tabSetByScope: {},
   liveChromeByScope: {},
+  persistentTabIdsByScope: {},
 
   setTabSet: (scopeId, value) =>
     set((s) => ({
       tabSetByScope: { ...s.tabSetByScope, [scopeId]: value },
     })),
+
+  upsertPersistentTab: (scopeId, tab) =>
+    set((s) => {
+      if (
+        tab.id.length > BROWSER_TAB_INFO_STRING_MAX.id ||
+        tab.threadId.length > BROWSER_TAB_INFO_STRING_MAX.threadId
+      ) return s;
+      const persistentIds = new Set(s.persistentTabIdsByScope[scopeId] ?? []);
+      if (!persistentIds.has(tab.id) && persistentIds.size >= MAX_PERSISTENT_WEB_TABS_PER_SCOPE) return s;
+      persistentIds.add(tab.id);
+      const current = s.tabSetByScope[scopeId] ?? {
+        threadId: scopeId,
+        activeTabId: null,
+        tabs: [],
+      } satisfies BrowserTabSet;
+      const nextTab: BrowserTabInfo = {
+        ...tab,
+        title: tab.title?.slice(0, BROWSER_TAB_INFO_STRING_MAX.title) ?? null,
+        url: tab.url?.slice(0, BROWSER_TAB_INFO_STRING_MAX.url) ?? null,
+        faviconUrl: tab.faviconUrl?.slice(0, BROWSER_TAB_INFO_STRING_MAX.faviconUrl) ?? null,
+        active: current.activeTabId === tab.id,
+      };
+      const tabs = current.tabs.some((candidate) => candidate.id === tab.id)
+        ? current.tabs.map((candidate) => candidate.id === tab.id ? nextTab : candidate)
+        : [...current.tabs, nextTab];
+      return {
+        tabSetByScope: {
+          ...s.tabSetByScope,
+          [scopeId]: { ...current, tabs },
+        },
+        persistentTabIdsByScope: {
+          ...s.persistentTabIdsByScope,
+          [scopeId]: persistentIds,
+        },
+      };
+    }),
+
+  removePersistentTab: (scopeId, tabId) =>
+    set((s) => {
+      const currentIds = s.persistentTabIdsByScope[scopeId];
+      if (!currentIds?.has(tabId)) return s;
+      const persistentIds = new Set(currentIds);
+      persistentIds.delete(tabId);
+      const persistentTabIdsByScope = { ...s.persistentTabIdsByScope };
+      if (persistentIds.size > 0) persistentTabIdsByScope[scopeId] = persistentIds;
+      else delete persistentTabIdsByScope[scopeId];
+      const current = s.tabSetByScope[scopeId];
+      if (!current) return { persistentTabIdsByScope };
+      const tabs = current.tabs.filter((tab) => tab.id !== tabId);
+      const activeTabId = current.activeTabId === tabId ? tabs[0]?.id ?? null : current.activeTabId;
+      return {
+        persistentTabIdsByScope,
+        tabSetByScope: {
+          ...s.tabSetByScope,
+          [scopeId]: {
+            ...current,
+            activeTabId,
+            tabs: tabs.map((tab) => ({ ...tab, active: tab.id === activeTabId })),
+          },
+        },
+      };
+    }),
 
   setLiveChrome: (scopeId, chrome) =>
     set((s) => {
@@ -183,7 +259,26 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
 
   activatePage: async (scopeId, tabId) => {
     const tabs = bridgeTabs();
-    if (!tabs) return;
+    if (!tabs) {
+      if (!get().persistentTabIdsByScope[scopeId]?.has(tabId)) return;
+      get().setLiveChrome(scopeId, null);
+      set((s) => {
+        const tabSet = s.tabSetByScope[scopeId];
+        if (!tabSet || !tabSet.tabs.some((tab) => tab.id === tabId)) return s;
+        return {
+          tabSetByScope: {
+            ...s.tabSetByScope,
+            [scopeId]: {
+              ...tabSet,
+              activeTabId: tabId,
+              tabs: tabSet.tabs.map((tab) => ({ ...tab, active: tab.id === tabId })),
+            },
+          },
+        };
+      });
+      useBrowserAutomationStore.getState().refreshTarget(scopeId, tabId);
+      return;
+    }
     // The newly-active page has not emitted its live chrome yet; clear the
     // stale overlay so it does not paint the prior page's favicon onto it.
     get().setLiveChrome(scopeId, null);
@@ -196,7 +291,17 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
 
   closePage: async (scopeId, tabId, opts) => {
     const tabs = bridgeTabs();
-    if (!tabs) return;
+    if (!tabs) {
+      if (!get().persistentTabIdsByScope[scopeId]?.has(tabId)) return;
+      const current = get().tabSetByScope[scopeId];
+      const isLast = !!current && current.tabs.length <= 1;
+      if (isLast) opts?.onLastClose?.();
+      get().setLiveChrome(scopeId, null);
+      get().removePersistentTab(scopeId, tabId);
+      useBrowserAutomationStore.getState().unregisterTarget(scopeId, tabId);
+      if (isLast) get().setTabSet(scopeId, null);
+      return;
+    }
     const current = get().tabSetByScope[scopeId];
     const isLast = !!current && current.tabs.length <= 1;
     if (isLast) opts?.onLastClose?.();
@@ -219,9 +324,11 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     set((s) => {
       const tabSetByScope = { ...s.tabSetByScope };
       const liveChromeByScope = { ...s.liveChromeByScope };
+      const persistentTabIdsByScope = { ...s.persistentTabIdsByScope };
       delete tabSetByScope[scopeId];
       delete liveChromeByScope[scopeId];
-      return { tabSetByScope, liveChromeByScope };
+      delete persistentTabIdsByScope[scopeId];
+      return { tabSetByScope, liveChromeByScope, persistentTabIdsByScope };
     });
   },
 }));

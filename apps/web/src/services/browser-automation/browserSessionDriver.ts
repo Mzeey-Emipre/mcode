@@ -14,10 +14,25 @@ import {
   BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES,
   BROWSER_AUTOMATION_OPERATIONS,
 } from "@mcode/contracts";
+import { BROWSER_AUTOMATION_MAX_INSPECT_TABS as MAX_LIFECYCLE_TABS } from "@mcode/contracts";
 
 const MAX_IDEMPOTENCY_RECORDS = 256;
 const IDEMPOTENCY_TTL_MS = 30 * 60_000;
 const SECRET_TEXT = /\b(password|token|secret|authorization|cookie|credential|session|api[_-]?key)\b\s*[:=]\s*[^,;\s]+/gi;
+const CONTROL_TAKING_OPERATIONS = new Set([
+  "navigate",
+  "resize",
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "evaluate",
+  "back",
+  "forward",
+  "reload",
+  "hover",
+  "drag",
+]);
 
 const WEB_RUNTIME_OPERATIONS = [
   "inspect",
@@ -99,6 +114,15 @@ interface ProviderTabSession {
   readonly tabs: Map<string, ControlledTab>;
 }
 
+/** One lifecycle-backed Browser tab projected for renderer consumers. */
+export interface BrowserSessionLifecycleTab extends BrowserAutomationOwnedTab {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly providerSessionId: string;
+  readonly providerInstanceId: string;
+  readonly target: BrowserAutomationHostDispatchTarget;
+}
+
 /** Runtime implementation used by the client BrowserSessionDriver. */
 export interface BrowserSessionRuntimeAdapter {
   execute(
@@ -139,6 +163,8 @@ export interface BrowserSessionDriverOptions {
   readonly supportedActOperations?: readonly string[] | (() => readonly string[]);
   readonly webTabs?: BrowserSessionTabLifecycleAdapter;
   readonly electronTabs?: BrowserSessionTabLifecycleAdapter;
+  /** Receives the bounded lifecycle projection after ownership changes. */
+  readonly onLifecycleChange?: (tabs: readonly BrowserSessionLifecycleTab[]) => void;
 }
 
 /**
@@ -252,6 +278,7 @@ export class BrowserSessionDriver {
             ownership: "owned",
             target: dispatch.target,
           });
+          this.publishLifecycleProjectionInternal();
         }
         return this.withObservationRef(response);
       })
@@ -281,6 +308,11 @@ export class BrowserSessionDriver {
     this.tabIdempotency.clear();
   }
 
+  /** Publishes retained browser ownership after a host reconnects. */
+  publishLifecycleProjection(): void {
+    this.publishLifecycleProjectionInternal();
+  }
+
   /** Clears replay state bound to one browser target after that target closes or is replaced. */
   clearIdempotencyForTarget(threadId: string, tabId: string): void {
     for (const [key, record] of this.idempotency) {
@@ -290,6 +322,7 @@ export class BrowserSessionDriver {
       if (session.current?.threadId === threadId && session.current.tabId === tabId) session.current = null;
       session.tabs.delete(tabId);
     }
+    this.publishLifecycleProjectionInternal();
   }
 
   /** Returns the exact target selected by a successful lifecycle response. */
@@ -321,6 +354,7 @@ export class BrowserSessionDriver {
   private executeAdapter(
     dispatch: BrowserAutomationHostDispatch,
     signal: AbortSignal,
+    options: { readonly implicitClaim?: boolean } = {},
   ): Promise<BrowserAutomationResponse> {
     const drift = this.revisionDrift(dispatch);
     if (drift) return Promise.resolve(drift);
@@ -335,6 +369,9 @@ export class BrowserSessionDriver {
               result: { ...normalized.result, tabs: [...targets] },
             };
           }
+        }
+        if (normalized.ok && options.implicitClaim !== false && this.isControlTakingOperation(dispatch.request.operation)) {
+          this.claimSuccessfulTarget(dispatch);
         }
         return this.rememberObservation(normalized, dispatch);
       });
@@ -388,7 +425,7 @@ export class BrowserSessionDriver {
           break;
         }
         const stepDispatch = this.stepDispatch(dispatch, step, deadline, index);
-        const response = await this.executeAdapter(stepDispatch, signal);
+        const response = await this.executeAdapter(stepDispatch, signal, { implicitClaim: false });
         if (!response.ok) {
           outcome = response.error.code === "OPERATION_CANCELLED" || response.error.code === "HUMAN_INTERRUPTED" || response.error.code === "DEADLINE_EXCEEDED" ? "interrupted" : "failed";
           stoppingPosition = index;
@@ -424,7 +461,13 @@ export class BrowserSessionDriver {
         result: { operation: "act", outcome, stoppingPosition, effect, recovery: outcome === "interrupted" ? "inspect" : "inspect", receipts, finalObservation, nextObservationRef },
       } as BrowserAutomationResponse;
     };
-    return run();
+    const hasControlTakingStep = request.args.steps.some((step: BrowserAutomationActStep) => this.isControlTakingOperation(step.operation));
+    return run().then((response) => {
+      if (response.ok && response.result.operation === "act" && response.result.outcome === "completed" && hasControlTakingStep) {
+        this.claimSuccessfulTarget(dispatch);
+      }
+      return response;
+    });
   }
 
   private executeEvaluate(
@@ -708,22 +751,10 @@ export class BrowserSessionDriver {
 
     if (request.args.action === "select" && liveTarget) {
       session.current = liveTarget;
-    } else if (request.args.action === "claim" && liveTarget) {
-      session.current = liveTarget;
       const controlled = session.tabs.get(liveTarget.tabId);
-      session.tabs.set(liveTarget.tabId, controlled
-        ? {
-            ...controlled,
-            ownership: controlled.provenance === "agent-created" ? "owned" : "claimed",
-            disposition: undefined,
-            target: liveTarget,
-          }
-        : {
-            tabId: liveTarget.tabId,
-            provenance: "claimed-user",
-            ownership: "claimed",
-            target: liveTarget,
-          });
+      if (controlled) session.tabs.set(liveTarget.tabId, { ...controlled, target: liveTarget });
+    } else if (request.args.action === "claim" && liveTarget) {
+      this.claimOrUpdateTab(session, liveTarget);
     } else if ((request.args.action === "release" || request.args.action === "close") && requestedTabId) {
       const controlled = session.tabs.get(requestedTabId);
       if (request.args.action === "close" && controlled?.provenance === "agent-created") {
@@ -762,6 +793,7 @@ export class BrowserSessionDriver {
     if (signal.aborted) {
       return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before completion");
     }
+    this.publishLifecycleProjectionInternal();
 
     const nextObservationRef = session.current ? globalThis.crypto.randomUUID() : undefined;
     if (session.current && nextObservationRef) {
@@ -787,6 +819,33 @@ export class BrowserSessionDriver {
         tabs: [...session.tabs.values()].map(({ target: _target, ...tab }) => tab),
       },
     };
+  }
+
+  private isControlTakingOperation(operation: string): boolean {
+    return CONTROL_TAKING_OPERATIONS.has(operation);
+  }
+
+  private claimSuccessfulTarget(dispatch: BrowserAutomationHostDispatch): void {
+    this.claimOrUpdateTab(this.tabSession(dispatch), dispatch.target);
+    this.publishLifecycleProjectionInternal();
+  }
+
+  private claimOrUpdateTab(session: ProviderTabSession, target: BrowserAutomationHostDispatchTarget): void {
+    const controlled = session.tabs.get(target.tabId);
+    session.current = target;
+    session.tabs.set(target.tabId, controlled
+      ? {
+          ...controlled,
+          ownership: controlled.provenance === "agent-created" ? "owned" : "claimed",
+          disposition: undefined,
+          target,
+        }
+      : {
+          tabId: target.tabId,
+          provenance: "claimed-user",
+          ownership: "claimed",
+          target,
+        });
   }
 
   private async closeControlledTab(
@@ -953,6 +1012,26 @@ export class BrowserSessionDriver {
       }
       this.tabSessions.delete(key);
     }
+    this.publishLifecycleProjectionInternal();
+  }
+
+  private publishLifecycleProjectionInternal(): void {
+    const observer = this.options.onLifecycleChange;
+    if (!observer) return;
+    const tabs: BrowserSessionLifecycleTab[] = [];
+    for (const session of this.tabSessions.values()) {
+      for (const tab of session.tabs.values()) {
+        if (tab.ownership === "released") continue;
+        tabs.push({
+          ...tab,
+          workspaceId: session.workspaceId,
+          threadId: tab.target.threadId,
+          providerSessionId: session.providerSessionId,
+          providerInstanceId: session.providerInstanceId,
+        });
+      }
+    }
+    observer(tabs.slice(0, MAX_LIFECYCLE_TABS));
   }
 
   private failure(
