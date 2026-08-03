@@ -203,7 +203,7 @@ describe("ThreadOverview branchless Create PR", () => {
     useOverviewStore.setState({ reserveSpace: false, requestedThreadId: null });
   });
 
-  it("renders available lifecycle-backed Browser rows and reveals the exact tab without navigation", async () => {
+  it("renders navigated live Browser rows and reveals the exact tab without navigation", async () => {
     const lifecycleTab = {
       workspaceId: "ws-1",
       threadId: "thread-1",
@@ -278,7 +278,7 @@ describe("ThreadOverview branchless Create PR", () => {
       liveTargets: useBrowserAutomationStore.getState().liveTargets,
       controllers: useBrowserAutomationStore.getState().controllers,
     });
-    expect(rows.map((row) => row.tab.id)).toEqual(["agent-tab", "claimed-tab"]);
+    expect(rows.map((row) => row.tab.id)).toEqual(["agent-tab", "claimed-tab", "ordinary-tab"]);
 
     const showRightPanel = vi.spyOn(useDiffStore.getState(), "showRightPanel");
     const setRightPanelTab = vi.spyOn(useDiffStore.getState(), "setRightPanelTab");
@@ -304,7 +304,7 @@ describe("ThreadOverview branchless Create PR", () => {
     expect(claimedRow).toBeInTheDocument();
     expect(claimedRow.querySelector('[data-testid="thread-overview-browser-agent-cursor"]')).not.toBeInTheDocument();
     expect(claimedRow.querySelector('img[src="https://claimed.test/favicon.ico"]')).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Ordinary page/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Browser, Ordinary page/ })).toBeInTheDocument();
     expect(screen.getByTestId("thread-overview-browser-address-agent-tab")).toHaveClass(
       "[mask-image:linear-gradient(to_right,transparent_0,black_1.25rem)]",
     );
@@ -325,6 +325,65 @@ describe("ThreadOverview branchless Create PR", () => {
 
     act(() => useBrowserAutomationStore.setState({ registered: false, status: "unavailable" }));
     expect(screen.queryByTestId("thread-overview-browser")).not.toBeInTheDocument();
+  });
+
+  it("filters empty and detached tabs while retaining released live tabs as user rows", () => {
+    const releasedLifecycle = {
+      workspaceId: "ws-1",
+      threadId: "thread-1",
+      tabId: "released-tab",
+      providerSessionId: "session-1",
+      providerInstanceId: "instance-1",
+      provenance: "claimed-user" as const,
+      ownership: "released" as const,
+      target: {
+        desktopInstanceId: "desktop-1",
+        windowId: 1,
+        connectionGeneration: 1,
+        threadId: "thread-1",
+        tabId: "released-tab",
+        targetGeneration: 1,
+        active: true,
+        focused: true,
+        lastUsedAt: 1,
+        controller: { tabId: "released-tab", controller: "agent" as const, controlEpoch: 1 },
+      },
+    } satisfies BrowserSessionLifecycleTab;
+    const tabSet = {
+      threadId: "thread-1",
+      activeTabId: "released-tab",
+      tabs: [
+        { id: "released-tab", threadId: "thread-1", title: "Released page", url: "https://released.test", faviconUrl: null, warm: true, active: true },
+        { id: "empty-tab", threadId: "thread-1", title: "Empty", url: "", faviconUrl: null, warm: true, active: false },
+        { id: "blank-tab", threadId: "thread-1", title: "Blank", url: "about:blank", faviconUrl: null, warm: true, active: false },
+        { id: "error-tab", threadId: "thread-1", title: "Error", url: "chrome-error://chromewebdata/", faviconUrl: null, warm: true, active: false },
+        { id: "wrong-thread-tab", threadId: "thread-2", title: "Wrong thread", url: "https://wrong-thread.test", faviconUrl: null, warm: true, active: false },
+        { id: "wrong-workspace-tab", threadId: "thread-1", title: "Wrong workspace", url: "https://wrong-workspace.test", faviconUrl: null, warm: true, active: false },
+        { id: "detached-tab", threadId: "thread-1", title: "Detached", url: "https://detached.test", faviconUrl: null, warm: true, active: false },
+      ],
+    };
+    const liveTargets = new Map([
+      [browserAutomationTargetKey("thread-1", "released-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "released-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("thread-1", "empty-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "empty-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("thread-1", "blank-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "blank-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("thread-1", "error-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "error-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("thread-1", "wrong-thread-tab"), { workspaceId: "ws-1", threadId: "thread-2", tabId: "wrong-thread-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("thread-1", "wrong-workspace-tab"), { workspaceId: "ws-2", threadId: "thread-1", tabId: "wrong-workspace-tab", revision: 1, lastUsedAt: 1 }],
+    ]);
+    const rows = getThreadOverviewBrowserTabs({
+      workspaceId: "ws-1",
+      threadId: "thread-1",
+      tabSet,
+      lifecycleTabs: new Map([["released", releasedLifecycle]]),
+      liveTargets,
+      controllers: new Map([
+        [browserAutomationTargetKey("thread-1", "released-tab"), { tabId: "released-tab", controller: "agent" as const, controlEpoch: 2 }],
+      ]),
+    });
+
+    expect(rows.map((row) => row.tab.id)).toEqual(["released-tab"]);
+    expect(rows[0]?.lifecycle?.ownership).toBe("released");
+    expect(rows[0]?.controller).toBeUndefined();
   });
 
   it("classifies only branchless worktrees as branch-name Create PR candidates", () => {

@@ -65,7 +65,12 @@ import { usePlanStore } from "@/stores/planStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
-import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
+import {
+  isEmptyPreviewTabUrl,
+  isModifierClick,
+  isPreviewableUrl,
+  openUrlInPreview,
+} from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { openSubagentsPanel } from "@/lib/open-subagent-detail";
@@ -181,16 +186,17 @@ const EMPTY_BROWSER_LIFECYCLE_TABS: ReadonlyMap<string, BrowserSessionLifecycleT
 const EMPTY_BROWSER_LIVE_TARGETS: ReadonlyMap<string, BrowserAutomationLiveTarget> = new Map();
 const EMPTY_BROWSER_CONTROLLERS: ReadonlyMap<string, BrowserAutomationControllerState> = new Map();
 
-/** One Browser tab row joined from lifecycle ownership, live target, and tab chrome. */
+/** One Browser tab row joined from a live target and tab chrome. */
 export interface ThreadOverviewBrowserTab {
   readonly tab: BrowserTabInfo;
-  readonly lifecycle: BrowserSessionLifecycleTab;
+  readonly lifecycle?: BrowserSessionLifecycleTab;
   readonly controller: BrowserAutomationControllerState["controller"] | undefined;
 }
 
 /**
- * Selects Browser rows for one exact workspace/thread scope from the bounded
- * lifecycle projection and currently available renderer sources.
+ * Selects navigated Browser rows for one exact workspace/thread scope. Live
+ * targets provide row membership; lifecycle state only supplies fallback
+ * controller metadata.
  */
 export function getThreadOverviewBrowserTabs({
   workspaceId,
@@ -207,40 +213,41 @@ export function getThreadOverviewBrowserTabs({
   liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>;
   controllers: ReadonlyMap<string, BrowserAutomationControllerState>;
 }): ThreadOverviewBrowserTab[] {
-  if (!tabSet) return [];
+  if (!tabSet || tabSet.threadId !== threadId) return [];
 
-  const rows: ThreadOverviewBrowserTab[] = [];
+  const lifecycleByTarget = new Map<string, BrowserSessionLifecycleTab>();
   for (const lifecycle of lifecycleTabs.values()) {
     if (
       lifecycle.workspaceId !== workspaceId ||
       lifecycle.threadId !== threadId ||
-      lifecycle.ownership === "released"
-    ) {
-      continue;
-    }
+      lifecycle.target.threadId !== threadId ||
+      lifecycle.target.tabId !== lifecycle.tabId
+    ) continue;
+    lifecycleByTarget.set(browserAutomationTargetKey(threadId, lifecycle.tabId), lifecycle);
+  }
 
-    const targetKey = browserAutomationTargetKey(threadId, lifecycle.tabId);
+  return tabSet.tabs.flatMap((tab) => {
+    if (tab.threadId !== threadId || isEmptyPreviewTabUrl(tab.url)) return [];
+    const targetKey = browserAutomationTargetKey(threadId, tab.id);
     const liveTarget = liveTargets.get(targetKey);
     if (
       !liveTarget ||
       liveTarget.workspaceId !== workspaceId ||
       liveTarget.threadId !== threadId ||
-      liveTarget.tabId !== lifecycle.tabId
+      liveTarget.tabId !== tab.id
     ) {
-      continue;
+      return [];
     }
-
-    const tab = tabSet.tabs.find((candidate) => candidate.id === lifecycle.tabId);
-    if (!tab) continue;
-
-    rows.push({
+    const lifecycle = lifecycleByTarget.get(targetKey);
+    const controller = lifecycle?.ownership === "released"
+      ? undefined
+      : controllers.get(targetKey)?.controller ?? lifecycle?.target.controller?.controller;
+    return [{
       tab,
-      lifecycle,
-      controller: controllers.get(targetKey)?.controller ?? lifecycle.target.controller?.controller,
-    });
-  }
-
-  return rows;
+      ...(lifecycle ? { lifecycle } : {}),
+      controller,
+    }];
+  });
 }
 
 /**
@@ -1169,7 +1176,7 @@ interface ThreadOverviewBrowserSectionProps {
   onOpen: (tabId: string) => void;
 }
 
-/** Renders lifecycle-backed Browser tabs that can be opened in this thread. */
+/** Renders navigated live Browser tabs that can be opened in this thread. */
 function ThreadOverviewBrowserSection({ rows, onOpen }: ThreadOverviewBrowserSectionProps) {
   if (rows.length === 0) return null;
 
