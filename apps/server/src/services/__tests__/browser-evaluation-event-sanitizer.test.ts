@@ -7,7 +7,9 @@ describe("BrowserEvaluationEventSanitizer", () => {
     "browser_evaluate",
     "mcp__mcode-browser__browser_evaluate",
   ])("removes evaluation source and result from %s events", (toolName) => {
-    const sanitizer = new BrowserEvaluationEventSanitizer();
+    const sanitizer = new BrowserEvaluationEventSanitizer(
+      (_threadId, toolCallId) => toolCallId === "call-1" ? toolName : undefined,
+    );
     const use = sanitizer.sanitize({
       type: AgentEventType.ToolUse,
       threadId: "thread-1",
@@ -48,5 +50,42 @@ describe("BrowserEvaluationEventSanitizer", () => {
     } satisfies AgentEvent;
 
     expect(sanitizer.sanitize(event)).toBe(event);
+  });
+
+  it("preserves unrelated results without retaining evaluation correlations", () => {
+    const evaluationToolNames = new Map<string, string>();
+    const sanitizer = new BrowserEvaluationEventSanitizer(
+      (_threadId, toolCallId) => evaluationToolNames.get(toolCallId),
+    );
+    for (let index = 0; index <= 1_024; index++) {
+      evaluationToolNames.set(`call-${index}`, "browser_evaluate");
+      sanitizer.sanitize({
+        type: AgentEventType.ToolUse,
+        threadId: "thread-overflow",
+        toolCallId: `call-${index}`,
+        toolName: "browser_evaluate",
+        toolInput: { expression: `globalThis.SECRET_${index}` },
+      });
+    }
+
+    const evaluationResult = sanitizer.sanitize({
+      type: AgentEventType.ToolResult,
+      threadId: "thread-overflow",
+      toolCallId: "call-0",
+      output: "SECRET_EVICTED_RESULT",
+      isError: false,
+      outputArtifactPath: "C:\\secret-result.txt",
+    });
+    const unrelatedResult = {
+      type: AgentEventType.ToolResult,
+      threadId: "thread-overflow",
+      toolCallId: "unrelated-call",
+      output: "ordinary output",
+      isError: false,
+    } satisfies AgentEvent;
+
+    expect(evaluationResult).toMatchObject({ output: "", toolInput: {} });
+    expect(evaluationResult).not.toHaveProperty("outputArtifactPath");
+    expect(sanitizer.sanitize(unrelatedResult)).toBe(unrelatedResult);
   });
 });

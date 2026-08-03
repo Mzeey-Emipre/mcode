@@ -195,6 +195,10 @@ describe("BrowserAutomationBroker", () => {
     };
 
     expect(broker.availableOperations(scope)).toEqual(["open", "evaluate"]);
+    expect(broker.availableOperations({
+      ...scope,
+      permissionCapability: "interact",
+    })).toEqual(["open"]);
   });
 
   it("never advertises evaluation through a web executor", () => {
@@ -1463,6 +1467,46 @@ describe("BrowserAutomationBroker", () => {
     const conflict = await makeEvaluate("evaluate-4", "same", "document.URL", 4);
     expect(conflict).toMatchObject({ ok: false, error: { code: "IDEMPOTENCY_CONFLICT" } });
     expect(conflict.ok && JSON.stringify(conflict)).toBe(false);
+  });
+
+  it("rejects a raw Electron evaluation result at the broker boundary", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {
+      deliveries.push({ channel, data });
+      return true;
+    } }));
+    const hostSocket = socket("raw-evaluate");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("raw-evaluate", "workspace-a"),
+      executorDescriptor: { ...registration("raw-evaluate", "workspace-a").executorDescriptor, operations: ["inspect", "evaluate"] },
+      capabilities: [{ operation: "evaluate", available: true }],
+    }, authorization("raw-evaluate")).generation;
+    broker.updateTargets(hostSocket, "raw-evaluate", generation, [statusTarget("raw-evaluate", generation)]);
+    const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "privileged" as const, allowedOperations: ["evaluate" as const] };
+    const pending = broker.execute(scope, {
+      ...request(scope),
+      operation: "evaluate",
+      args: {
+        idempotencyKey: "raw-evaluate-key",
+        observationRef: "observation-ref",
+        deadlineMs: 10_000,
+        expression: "globalThis.SECRET_SOURCE",
+        awaitPromise: true,
+        timeoutMs: 1_000,
+      },
+    });
+    const delivery = deliveries.find(({ channel }) => channel === "browserAutomation.request")!;
+    broker.respond(hostSocket, "raw-evaluate", generation, {
+      contractVersion: 1,
+      requestId: delivery.data.dispatch.request.requestId,
+      sequence: delivery.data.dispatch.request.sequence,
+      ok: true,
+      result: { operation: "evaluate", valueJson: "\"SECRET_RESULT\"", controlEpoch: 0 },
+    }, delivery.data.dispatch.target);
+
+    const result = await pending;
+    expect(result).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST", effect: "none" } });
+    expect(JSON.stringify(result)).not.toContain("SECRET_RESULT");
   });
 
   it("drops keyed open replay when its host reconnects", async () => {

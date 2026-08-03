@@ -253,7 +253,7 @@ function parseHarnessTaskId(output: string): string | null {
 export class AgentService {
   /** Canonical per-thread execution identity and lifecycle authority. */
   private readonly turnRuntime = new TurnRuntimeRegistry();
-  private readonly browserEvaluationEventSanitizer = new BrowserEvaluationEventSanitizer();
+  private readonly browserEvaluationEventSanitizer: BrowserEvaluationEventSanitizer;
   private readonly preparedProviderEvents = new WeakMap<object, AgentEvent | undefined>();
   private readonly activeSessionIds = new Set<string>();
   private readonly nativeGoalRefreshInFlight = new Set<string>();
@@ -431,6 +431,11 @@ export class AgentService {
     @inject(ThreadControlMutationReservationService)
     mutationReservations?: ThreadControlMutationReservationService,
   ) {
+    this.browserEvaluationEventSanitizer = new BrowserEvaluationEventSanitizer(
+      (threadId, toolCallId) => this.narrativeStore.getBufferedToolCalls(threadId)
+        .find((toolCall) => toolCall.toolCallId === toolCallId)
+        ?.toolName,
+    );
     this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
     this.turnFileTracker = new TurnFileTracker(
       (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),

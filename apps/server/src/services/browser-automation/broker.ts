@@ -563,6 +563,19 @@ export class BrowserAutomationBroker {
       );
       return;
     }
+    if (
+      negotiatedResponse.ok &&
+      pending.request.operation === "evaluate" &&
+      negotiatedResponse.result.operation === "evaluate" &&
+      !("outcome" in negotiatedResponse.result)
+    ) {
+      this.settle(
+        key,
+        pending,
+        failure(pending.request, "INVALID_REQUEST", "Browser evaluation response is missing its mutation envelope", false),
+      );
+      return;
+    }
     if (negotiatedResponse.ok && !pending.target) {
       if (!responseTarget) {
         this.settle(
@@ -1000,7 +1013,10 @@ export class BrowserAutomationBroker {
     return claims.allowedOperations.filter((operation) =>
       descriptorOperations.has(operation) &&
       liveCapabilities.has(operation) &&
-      (operation !== "evaluate" || host.registration.runtime === "electron"),
+      (operation !== "evaluate" || (
+        claims.permissionCapability === "privileged" &&
+        host.registration.runtime === "electron"
+      )),
     );
   }
 
