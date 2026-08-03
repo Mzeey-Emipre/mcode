@@ -13,6 +13,7 @@ import {
   Laptop,
   ListChecks,
   Menu,
+  MousePointer2,
   Plus,
   RefreshCw,
   Search,
@@ -50,6 +51,12 @@ import {
   getCiSummaryHeadline,
 } from "@/lib/ci-status";
 import { useDiffStore } from "@/stores/diffStore";
+import {
+  browserAutomationTargetKey,
+  useBrowserAutomationStore,
+  type BrowserAutomationLiveTarget,
+} from "@/stores/browserAutomationStore";
+import { usePreviewDisplayTabSet, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -58,7 +65,12 @@ import { usePlanStore } from "@/stores/planStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
-import { isModifierClick, isPreviewableUrl, openUrlInPreview } from "@/lib/open-url-in-preview";
+import {
+  isEmptyPreviewTabUrl,
+  isModifierClick,
+  isPreviewableUrl,
+  openUrlInPreview,
+} from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { openSubagentsPanel } from "@/lib/open-subagent-detail";
@@ -74,6 +86,9 @@ import {
   type Thread,
 } from "@/transport";
 import type {
+  BrowserAutomationControllerState,
+  BrowserTabInfo,
+  BrowserTabSet,
   ChecksStatus,
   Message,
   PlanRecord,
@@ -81,6 +96,7 @@ import type {
   QuotaCategory,
   TurnSnapshot,
 } from "@mcode/contracts";
+import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
 
 /** Stable empty messages reference so the closed Overview never re-renders on new messages. */
 const EMPTY_MESSAGES: Message[] = [];
@@ -165,6 +181,74 @@ const EMPTY_REPOSITORY: ThreadOverviewRepository = {
 
 const OVERVIEW_ROW_CLASS =
   "group h-8 w-full gap-3 px-2 text-left transition-[background-color,color,transform] duration-150 ease-out active:translate-y-px motion-reduce:transform-none";
+
+const EMPTY_BROWSER_LIFECYCLE_TABS: ReadonlyMap<string, BrowserSessionLifecycleTab> = new Map();
+const EMPTY_BROWSER_LIVE_TARGETS: ReadonlyMap<string, BrowserAutomationLiveTarget> = new Map();
+const EMPTY_BROWSER_CONTROLLERS: ReadonlyMap<string, BrowserAutomationControllerState> = new Map();
+
+/** One Browser tab row joined from a live target and tab chrome. */
+export interface ThreadOverviewBrowserTab {
+  readonly tab: BrowserTabInfo;
+  readonly lifecycle?: BrowserSessionLifecycleTab;
+  readonly controller: BrowserAutomationControllerState["controller"] | undefined;
+}
+
+/**
+ * Selects navigated Browser rows for one exact workspace/thread scope. Live
+ * targets provide row membership; lifecycle state only supplies fallback
+ * controller metadata.
+ */
+export function getThreadOverviewBrowserTabs({
+  workspaceId,
+  threadId,
+  tabSet,
+  lifecycleTabs,
+  liveTargets,
+  controllers,
+}: {
+  workspaceId: string;
+  threadId: string;
+  tabSet: BrowserTabSet | null;
+  lifecycleTabs: ReadonlyMap<string, BrowserSessionLifecycleTab>;
+  liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>;
+  controllers: ReadonlyMap<string, BrowserAutomationControllerState>;
+}): ThreadOverviewBrowserTab[] {
+  if (!tabSet || tabSet.threadId !== threadId) return [];
+
+  const lifecycleByTarget = new Map<string, BrowserSessionLifecycleTab>();
+  for (const lifecycle of lifecycleTabs.values()) {
+    if (
+      lifecycle.workspaceId !== workspaceId ||
+      lifecycle.threadId !== threadId ||
+      lifecycle.target.threadId !== threadId ||
+      lifecycle.target.tabId !== lifecycle.tabId
+    ) continue;
+    lifecycleByTarget.set(browserAutomationTargetKey(threadId, lifecycle.tabId), lifecycle);
+  }
+
+  return tabSet.tabs.flatMap((tab) => {
+    if (tab.threadId !== threadId || isEmptyPreviewTabUrl(tab.url)) return [];
+    const targetKey = browserAutomationTargetKey(threadId, tab.id);
+    const liveTarget = liveTargets.get(targetKey);
+    if (
+      !liveTarget ||
+      liveTarget.workspaceId !== workspaceId ||
+      liveTarget.threadId !== threadId ||
+      liveTarget.tabId !== tab.id
+    ) {
+      return [];
+    }
+    const lifecycle = lifecycleByTarget.get(targetKey);
+    const controller = lifecycle?.ownership === "released"
+      ? undefined
+      : controllers.get(targetKey)?.controller ?? lifecycle?.target.controller?.controller;
+    return [{
+      tab,
+      ...(lifecycle ? { lifecycle } : {}),
+      controller,
+    }];
+  });
+}
 
 /**
  * Derives the active thread's compact CI signal for the Overview trigger.
@@ -1087,6 +1171,73 @@ interface ThreadOverviewSourcesProps {
   onOpen: (event: React.MouseEvent, url: string) => void;
 }
 
+interface ThreadOverviewBrowserSectionProps {
+  rows: readonly ThreadOverviewBrowserTab[];
+  onOpen: (tabId: string) => void;
+}
+
+/** Renders navigated live Browser tabs that can be opened in this thread. */
+function ThreadOverviewBrowserSection({ rows, onOpen }: ThreadOverviewBrowserSectionProps) {
+  if (rows.length === 0) return null;
+
+  return (
+    <section aria-label="Browser" data-testid="thread-overview-browser">
+      <Separator className="my-1.5" />
+      <div className="px-2 pt-1 text-xs font-medium text-muted-foreground">Browser</div>
+      <div className="flex w-full flex-col gap-0.5">
+        {rows.map(({ tab, controller }) => {
+          const title = tab.title?.trim() || "Untitled page";
+          const address = tab.url?.trim() || "No address";
+          const isAgentControlled = controller === "agent";
+
+          return (
+            <Tooltip key={tab.id}>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    data-testid={`thread-overview-browser-tab-${tab.id}`}
+                    aria-label={`Browser, ${title}, ${address}${isAgentControlled ? ", agent controls" : ""}`}
+                    onClick={() => onOpen(tab.id)}
+                    className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-between")}
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      {isAgentControlled ? (
+                        <MousePointer2
+                          className="size-3.5 shrink-0 fill-primary text-primary"
+                          aria-label="Agent controls this Browser tab"
+                          data-testid="thread-overview-browser-agent-cursor"
+                        />
+                      ) : (
+                        <SiteFavicon
+                          src={tab.faviconUrl}
+                          fallback={<Globe size={14} className="text-muted-foreground" />}
+                        />
+                      )}
+                      <span className="min-w-0 truncate text-xs font-medium">{title}</span>
+                    </span>
+                    <span
+                      data-testid={`thread-overview-browser-address-${tab.id}`}
+                      className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-right font-mono text-xs tabular-nums text-muted-foreground [mask-image:linear-gradient(to_right,transparent_0,black_1.25rem)]"
+                    >
+                      {address}
+                    </span>
+                  </Button>
+                }
+              />
+              <TooltipContent side="top" className="max-w-xs break-all text-xs">
+                {address}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 /**
  * Renders the deduped external links the assistant produced this thread as a
  * compact favicon grid. Each chip shows its full URL on hover and reuses the
@@ -1602,6 +1753,42 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const openRequested = useOverviewStore(
     (state) => state.requestedThreadId === thread.id,
   );
+  const browserTabSet = usePreviewDisplayTabSet(open ? thread.id : null);
+  const browserLifecycleTabs = useBrowserAutomationStore((state) =>
+    open ? state.lifecycleTabs : EMPTY_BROWSER_LIFECYCLE_TABS,
+  );
+  const browserLiveTargets = useBrowserAutomationStore((state) =>
+    open ? state.liveTargets : EMPTY_BROWSER_LIVE_TARGETS,
+  );
+  const browserControllers = useBrowserAutomationStore((state) =>
+    open ? state.controllers : EMPTY_BROWSER_CONTROLLERS,
+  );
+  const browserHostStatus = useBrowserAutomationStore((state) => state.status);
+  const browserHostRegistered = useBrowserAutomationStore((state) => state.registered);
+  const browserTabs = useMemo(
+    () =>
+      open && browserHostRegistered && browserHostStatus === "registered"
+        ? getThreadOverviewBrowserTabs({
+            workspaceId: thread.workspace_id,
+            threadId: thread.id,
+            tabSet: browserTabSet,
+            lifecycleTabs: browserLifecycleTabs,
+            liveTargets: browserLiveTargets,
+            controllers: browserControllers,
+          })
+        : [],
+    [
+      browserControllers,
+      browserHostRegistered,
+      browserHostStatus,
+      browserLifecycleTabs,
+      browserLiveTargets,
+      browserTabSet,
+      open,
+      thread.id,
+      thread.workspace_id,
+    ],
+  );
 
   useEffect(() => {
     autoManagedRef.current = true;
@@ -1830,6 +2017,15 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     showRightPanelAdaptive(thread.workspace_id, thread.id);
     useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "tasks");
   }, [latestPlan, thread.id, thread.workspace_id]);
+
+  const openBrowserTab = useCallback(
+    (tabId: string) => {
+      showRightPanelAdaptive(thread.workspace_id, thread.id);
+      useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "preview");
+      void usePreviewTabsStore.getState().activatePage(thread.id, tabId);
+    },
+    [thread.id, thread.workspace_id],
+  );
 
   const openRepository = useCallback(() => {
     if (!repository.webUrl) return;
@@ -2196,6 +2392,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                   onOpenPr={handleOpenPr}
                 />
               </>
+            )}
+
+            {browserTabs.length > 0 && (
+              <ThreadOverviewBrowserSection rows={browserTabs} onOpen={openBrowserTab} />
             )}
 
             {sources.length > 0 && (

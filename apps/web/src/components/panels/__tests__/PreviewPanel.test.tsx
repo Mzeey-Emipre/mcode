@@ -505,7 +505,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewSuppressionStore.setState({ count: 0 });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
-    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     useDiffStore.setState({ previewUrlByThread: {} });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
@@ -525,7 +525,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewSuppressionStore.setState({ count: 0 });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
-    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockClear();
     mockUsePreviewTabs.mockClear();

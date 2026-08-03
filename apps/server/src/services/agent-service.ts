@@ -84,6 +84,7 @@ import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js
 import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
 import { TurnRuntimeRegistry } from "./turn-runtime.js";
 import type { TurnOutcome } from "./turn-outcome.js";
+import { BrowserEvaluationEventSanitizer } from "./browser-evaluation-event-sanitizer.js";
 
 /**
  * Escape special XML characters in a string to prevent injection into
@@ -252,6 +253,7 @@ function parseHarnessTaskId(output: string): string | null {
 export class AgentService {
   /** Canonical per-thread execution identity and lifecycle authority. */
   private readonly turnRuntime = new TurnRuntimeRegistry();
+  private readonly browserEvaluationEventSanitizer: BrowserEvaluationEventSanitizer;
   private readonly preparedProviderEvents = new WeakMap<object, AgentEvent | undefined>();
   private readonly activeSessionIds = new Set<string>();
   private readonly nativeGoalRefreshInFlight = new Set<string>();
@@ -429,6 +431,11 @@ export class AgentService {
     @inject(ThreadControlMutationReservationService)
     mutationReservations?: ThreadControlMutationReservationService,
   ) {
+    this.browserEvaluationEventSanitizer = new BrowserEvaluationEventSanitizer(
+      (threadId, toolCallId) => this.narrativeStore.getBufferedToolCalls(threadId)
+        .find((toolCall) => toolCall.toolCallId === toolCallId)
+        ?.toolName,
+    );
     this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
     this.turnFileTracker = new TurnFileTracker(
       (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
@@ -2188,7 +2195,10 @@ export class AgentService {
     if (this.preparedProviderEvents.has(event as object)) {
       return this.preparedProviderEvents.get(event as object);
     }
-    const normalized = this.turnRuntime.normalizeEvent(event);
+    const normalizedEvent = this.turnRuntime.normalizeEvent(event);
+    const normalized = normalizedEvent
+      ? this.browserEvaluationEventSanitizer.sanitize(normalizedEvent)
+      : undefined;
     this.preparedProviderEvents.set(event as object, normalized);
     return normalized;
   }

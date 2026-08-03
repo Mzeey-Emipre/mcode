@@ -50,7 +50,7 @@ describe("Workspace Behavior", () => {
       loading: false,
       error: null,
     });
-    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+    usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     usePreviewReferenceQueueStore.setState({ signal: 0, queueByThread: {} });
     useDiffStore.setState({
       rightPanelByThread: {},

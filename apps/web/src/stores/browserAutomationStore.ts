@@ -2,13 +2,14 @@ import type {
   BrowserAutomationControllerState,
   BrowserAutomationHostDispatch,
 } from "@mcode/contracts";
-import { BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
+import { BROWSER_AUTOMATION_MAX_INSPECT_TABS, BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
 import { create } from "zustand";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 import type {
   ViewportCoordinator,
   ViewportCoordinatorState,
 } from "@/services/browser-automation/viewportCoordinator";
+import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
 
 /** Maximum number of inactive, non-busy Browser targets retained warm. */
 export const BROWSER_AUTOMATION_WARM_TARGET_LIMIT = 3;
@@ -33,6 +34,7 @@ export interface BrowserAutomationActiveRequest {
 
 interface BrowserAutomationState {
   readonly liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>;
+  readonly lifecycleTabs: ReadonlyMap<string, BrowserSessionLifecycleTab>;
   readonly controllers: ReadonlyMap<string, BrowserAutomationControllerState>;
   readonly activeRequests: ReadonlyMap<string, BrowserAutomationActiveRequest>;
   readonly registered: boolean;
@@ -45,6 +47,7 @@ interface BrowserAutomationState {
   refreshTarget: (threadId: string, tabId: string) => void;
   detachTarget: (threadId: string, tabId: string) => void;
   unregisterTarget: (threadId: string, tabId: string) => void;
+  setLifecycleTabs: (tabs: readonly BrowserSessionLifecycleTab[]) => void;
   releaseThreadTargets: (threadId: string) => void;
   releaseWorkspaceTargets: (workspaceId: string) => void;
   setController: (state: BrowserAutomationControllerState) => void;
@@ -87,6 +90,15 @@ export function browserAutomationTargetKey(threadId: string, tabId: string): str
   return JSON.stringify([threadId, tabId]);
 }
 
+/** Stable key for one lifecycle-backed tab across workspace and thread scopes. */
+export function browserAutomationLifecycleKey(
+  workspaceId: string,
+  threadId: string,
+  tabId: string,
+): string {
+  return JSON.stringify([workspaceId, threadId, tabId]);
+}
+
 /** Stable key for one broker request correlation pair. */
 export function browserAutomationRequestKey(requestId: string, sequence: number): string {
   return JSON.stringify([requestId, sequence]);
@@ -108,6 +120,7 @@ function interruptViewportCoordinator(coordinator: ViewportCoordinator | undefin
 /** Shared renderer state for browser host discovery, control, and warm leases. */
 export const useBrowserAutomationStore = create<BrowserAutomationState>((set) => ({
   liveTargets: new Map(),
+  lifecycleTabs: new Map(),
   controllers: new Map(),
   activeRequests: new Map(),
   registered: false,
@@ -194,9 +207,32 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       viewportStateByTarget.delete(key);
       const viewportCoordinators = new Map(state.viewportCoordinators);
       viewportCoordinators.delete(key);
-      return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
+      const lifecycleTabs = new Map(state.lifecycleTabs);
+      for (const [lifecycleKey, tab] of lifecycleTabs) {
+        if (tab.threadId === threadId && tab.tabId === tabId) lifecycleTabs.delete(lifecycleKey);
+      }
+      return {
+        liveTargets,
+        controllers,
+        viewportByTarget,
+        viewportStateByTarget,
+        viewportCoordinators,
+        lifecycleTabs,
+      };
     });
   },
+  setLifecycleTabs: (tabs) =>
+    set(() => {
+      const lifecycleTabs = new Map<string, BrowserSessionLifecycleTab>();
+      for (const tab of tabs.slice(0, BROWSER_AUTOMATION_MAX_INSPECT_TABS)) {
+        if (tab.ownership === "released") continue;
+        lifecycleTabs.set(
+          browserAutomationLifecycleKey(tab.workspaceId, tab.threadId, tab.tabId),
+          tab,
+        );
+      }
+      return { lifecycleTabs };
+    }),
   releaseThreadTargets: (threadId) => {
     for (const target of useBrowserAutomationStore.getState().liveTargets.values()) {
       if (target.threadId === threadId) {
@@ -212,6 +248,7 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const viewportByTarget = new Map(state.viewportByTarget);
       const viewportStateByTarget = new Map(state.viewportStateByTarget);
       const viewportCoordinators = new Map(state.viewportCoordinators);
+      const lifecycleTabs = new Map(state.lifecycleTabs);
       for (const target of state.liveTargets.values()) {
         if (target.threadId !== threadId) continue;
         const key = browserAutomationTargetKey(target.threadId, target.tabId);
@@ -221,7 +258,17 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
         viewportStateByTarget.delete(key);
         viewportCoordinators.delete(key);
       }
-      return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
+      for (const [lifecycleKey, tab] of lifecycleTabs) {
+        if (tab.threadId === threadId) lifecycleTabs.delete(lifecycleKey);
+      }
+      return {
+        liveTargets,
+        controllers,
+        viewportByTarget,
+        viewportStateByTarget,
+        viewportCoordinators,
+        lifecycleTabs,
+      };
     });
   },
   releaseWorkspaceTargets: (workspaceId) => {
@@ -239,6 +286,7 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const viewportByTarget = new Map(state.viewportByTarget);
       const viewportStateByTarget = new Map(state.viewportStateByTarget);
       const viewportCoordinators = new Map(state.viewportCoordinators);
+      const lifecycleTabs = new Map(state.lifecycleTabs);
       for (const target of state.liveTargets.values()) {
         if (target.workspaceId !== workspaceId) continue;
         const key = browserAutomationTargetKey(target.threadId, target.tabId);
@@ -248,7 +296,17 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
         viewportStateByTarget.delete(key);
         viewportCoordinators.delete(key);
       }
-      return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
+      for (const [lifecycleKey, tab] of lifecycleTabs) {
+        if (tab.workspaceId === workspaceId) lifecycleTabs.delete(lifecycleKey);
+      }
+      return {
+        liveTargets,
+        controllers,
+        viewportByTarget,
+        viewportStateByTarget,
+        viewportCoordinators,
+        lifecycleTabs,
+      };
     });
   },
   setController: (controller) =>

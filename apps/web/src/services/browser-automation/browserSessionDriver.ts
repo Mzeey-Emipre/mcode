@@ -4,11 +4,70 @@ import type {
   BrowserAutomationOwnedTab,
   BrowserAutomationResponse,
   BrowserAutomationActStep,
+  BrowserAutomationEvaluateResult,
+  BrowserAutomationResult,
+  BrowserAutomationErrorCode,
+  BrowserAutomationOperation,
+  BrowserAutomationHostRuntime,
 } from "@mcode/contracts";
+import {
+  BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES,
+  BROWSER_AUTOMATION_OPERATIONS,
+} from "@mcode/contracts";
+import { BROWSER_AUTOMATION_MAX_INSPECT_TABS as MAX_LIFECYCLE_TABS } from "@mcode/contracts";
 
 const MAX_IDEMPOTENCY_RECORDS = 256;
 const IDEMPOTENCY_TTL_MS = 30 * 60_000;
 const SECRET_TEXT = /\b(password|token|secret|authorization|cookie|credential|session|api[_-]?key)\b\s*[:=]\s*[^,;\s]+/gi;
+const CONTROL_TAKING_OPERATIONS = new Set([
+  "navigate",
+  "resize",
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "evaluate",
+  "back",
+  "forward",
+  "reload",
+  "hover",
+  "drag",
+]);
+
+const WEB_RUNTIME_OPERATIONS = [
+  "inspect",
+  "act",
+  "tabs",
+  "status",
+  "open",
+  "navigate",
+  "snapshot",
+  "screenshot",
+  "click",
+  "type",
+] as const satisfies readonly BrowserAutomationOperation[];
+
+/** Options that affect the operations a runtime can truthfully advertise. */
+export interface BrowserAutomationRuntimeOperationOptions {
+  readonly recordingAvailable?: boolean;
+}
+
+/** Returns the one operation set shared by runtime descriptors, status, and registration. */
+export function getBrowserAutomationRuntimeOperations(
+  runtime: BrowserAutomationHostRuntime,
+  options: BrowserAutomationRuntimeOperationOptions = {},
+): readonly BrowserAutomationOperation[] {
+  if (runtime === "web") return WEB_RUNTIME_OPERATIONS;
+  const recordingAvailable = options.recordingAvailable ?? true;
+  return [
+    "inspect",
+    "act",
+    "tabs",
+    ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) =>
+      recordingAvailable || (operation !== "recordingStart" && operation !== "recordingStop"),
+    ),
+  ];
+}
 
 function sanitizePublicDetail(value: unknown): string {
   return String(value ?? "")
@@ -56,6 +115,15 @@ interface ProviderTabSession {
   readonly tabs: Map<string, ControlledTab>;
 }
 
+/** One lifecycle-backed Browser tab projected for renderer consumers. */
+export interface BrowserSessionLifecycleTab extends BrowserAutomationOwnedTab {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly providerSessionId: string;
+  readonly providerInstanceId: string;
+  readonly target: BrowserAutomationHostDispatchTarget;
+}
+
 /** Runtime implementation used by the client BrowserSessionDriver. */
 export interface BrowserSessionRuntimeAdapter {
   execute(
@@ -96,6 +164,8 @@ export interface BrowserSessionDriverOptions {
   readonly supportedActOperations?: readonly string[] | (() => readonly string[]);
   readonly webTabs?: BrowserSessionTabLifecycleAdapter;
   readonly electronTabs?: BrowserSessionTabLifecycleAdapter;
+  /** Receives the bounded lifecycle projection after ownership changes. */
+  readonly onLifecycleChange?: (tabs: readonly BrowserSessionLifecycleTab[]) => void;
 }
 
 /**
@@ -123,8 +193,9 @@ export class BrowserSessionDriver {
   ): Promise<BrowserAutomationResponse> {
     const initialDrift = this.revisionDrift(dispatch);
     if (initialDrift) return Promise.resolve(initialDrift);
+    if (dispatch.request?.operation === "evaluate") return this.executeEvaluate(dispatch, signal);
     if (dispatch.request?.operation === "act") return this.executeAct(dispatch, signal);
-    if (dispatch.request?.operation === "tabs") return this.executeTabs(dispatch);
+    if (dispatch.request?.operation === "tabs") return this.executeTabs(dispatch, signal);
     if (dispatch.request?.operation !== "open") {
       return this.executeAdapter(dispatch, signal);
     }
@@ -209,6 +280,7 @@ export class BrowserSessionDriver {
             ownership: "owned",
             target: dispatch.target,
           });
+          this.publishLifecycleProjectionInternal();
         }
         return this.withObservationRef(response);
       })
@@ -239,6 +311,11 @@ export class BrowserSessionDriver {
     this.observationInvalidationGenerations.clear();
   }
 
+  /** Publishes retained browser ownership after a host reconnects. */
+  publishLifecycleProjection(): void {
+    this.publishLifecycleProjectionInternal();
+  }
+
   /** Clears replay state bound to one browser target after that target closes or is replaced. */
   clearIdempotencyForTarget(threadId: string, tabId: string): void {
     this.invalidateObservationsForTarget(threadId, tabId);
@@ -249,6 +326,7 @@ export class BrowserSessionDriver {
       if (session.current?.threadId === threadId && session.current.tabId === tabId) session.current = null;
       session.tabs.delete(tabId);
     }
+    this.publishLifecycleProjectionInternal();
   }
 
   /** Invalidate Browser observations for a target without changing its control epoch. */
@@ -294,6 +372,7 @@ export class BrowserSessionDriver {
   private executeAdapter(
     dispatch: BrowserAutomationHostDispatch,
     signal: AbortSignal,
+    options: { readonly implicitClaim?: boolean } = {},
   ): Promise<BrowserAutomationResponse> {
     const drift = this.revisionDrift(dispatch);
     if (drift) return Promise.resolve(drift);
@@ -309,6 +388,9 @@ export class BrowserSessionDriver {
               result: { ...normalized.result, tabs: [...targets] },
             };
           }
+        }
+        if (normalized.ok && options.implicitClaim !== false && this.isControlTakingOperation(dispatch.request.operation)) {
+          this.claimSuccessfulTarget(dispatch);
         }
         return this.rememberObservation(normalized, dispatch, observationAdmission);
       });
@@ -363,7 +445,7 @@ export class BrowserSessionDriver {
           break;
         }
         const stepDispatch = this.stepDispatch(dispatch, step, deadline, index);
-        const response = await this.executeAdapter(stepDispatch, signal);
+        const response = await this.executeAdapter(stepDispatch, signal, { implicitClaim: false });
         if (!response.ok) {
           outcome = response.error.code === "OPERATION_CANCELLED" || response.error.code === "HUMAN_INTERRUPTED" || response.error.code === "DEADLINE_EXCEEDED" ? "interrupted" : "failed";
           stoppingPosition = index;
@@ -399,12 +481,228 @@ export class BrowserSessionDriver {
         result: { operation: "act", outcome, stoppingPosition, effect, recovery: outcome === "interrupted" ? "inspect" : "inspect", receipts, finalObservation, nextObservationRef },
       } as BrowserAutomationResponse;
     };
-    return run();
+    const hasControlTakingStep = request.args.steps.some((step: BrowserAutomationActStep) => this.isControlTakingOperation(step.operation));
+    return run().then((response) => {
+      if (response.ok && response.result.operation === "act" && response.result.outcome === "completed" && hasControlTakingStep) {
+        this.claimSuccessfulTarget(dispatch);
+      }
+      return response;
+    });
   }
 
-  private executeTabs(dispatch: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> {
+  private executeEvaluate(
+    dispatch: BrowserAutomationHostDispatch,
+    signal: AbortSignal,
+  ): Promise<BrowserAutomationResponse> {
+    if (!this.isElectron()) {
+      return Promise.resolve(this.operationFailure(dispatch, "UNSUPPORTED_OPERATION", "Browser evaluation requires the Electron runtime"));
+    }
+    const request = dispatch.request as Extract<BrowserAutomationHostDispatch["request"], { operation: "evaluate" }>;
+    const observation = this.observations.get(request.args.observationRef);
+    const capabilityRevision = this.options.getCapabilityRevision?.() ?? dispatch.connection?.capabilityRevision ?? 1;
+    const currentBinding = this.currentObservationBinding(dispatch, capabilityRevision);
+    if (!observation) {
+      return Promise.resolve(this.operationFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation is stale; inspect before browser_evaluate"));
+    }
+    if (
+      observation.hostRevision !== currentBinding.hostRevision ||
+      observation.documentRevision !== currentBinding.documentRevision ||
+      observation.controlRevision !== currentBinding.controlRevision ||
+      observation.capabilityRevision !== currentBinding.capabilityRevision
+    ) {
+      return Promise.resolve(this.operationFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation is stale; inspect before browser_evaluate"));
+    }
+    const deadline = Math.min(dispatch.request.deadline, Date.now() + request.args.deadlineMs);
+    if (signal.aborted || Date.now() >= deadline) {
+      this.observations.delete(request.args.observationRef);
+      return Promise.resolve(this.evaluateEnvelope(dispatch, observation, {
+        outcome: "interrupted",
+        effect: "none",
+        status: "interrupted",
+        message: signal.aborted ? "Browser evaluation was interrupted before the effect" : "Browser evaluation deadline elapsed before the effect",
+      }));
+    }
+    const finalDrift = this.revisionDrift(dispatch);
+    if (finalDrift || !this.observationStillCurrent(dispatch, observation)) {
+      return Promise.resolve(this.operationFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation changed before browser_evaluate"));
+    }
+    this.observations.delete(request.args.observationRef);
+    const boundedDispatch: BrowserAutomationHostDispatch = {
+      ...dispatch,
+      request: { ...dispatch.request, deadline },
+    };
+    return this.options.electron.execute(boundedDispatch, signal)
+      .then((response) => this.evaluateResponse(dispatch, observation, response, signal))
+      .catch((cause: unknown) => this.evaluateEnvelope(dispatch, observation, {
+        outcome: this.isCancellation(cause) ? "interrupted" : "failed",
+        effect: "partial",
+        status: this.isCancellation(cause) ? "interrupted" : "failed",
+        message: sanitizePublicDetail(cause instanceof Error ? cause.message : cause),
+      }));
+  }
+
+  private evaluateResponse(
+    dispatch: BrowserAutomationHostDispatch,
+    observation: ObservationRecord,
+    response: BrowserAutomationResponse,
+    signal: AbortSignal,
+  ): BrowserAutomationResponse {
+    const boundary = this.evaluateCompletionBoundary(dispatch, observation, signal);
+    if (boundary) return boundary;
+    if (!response.ok) {
+      const interrupted = this.isCancellation(response.error.code);
+      return this.evaluateEnvelope(dispatch, observation, {
+        outcome: interrupted ? "interrupted" : "failed",
+        effect: response.error.effect === "none" ? "none" : "partial",
+        status: interrupted ? "interrupted" : "failed",
+        message: sanitizePublicDetail(response.error.message),
+      });
+    }
+    if (response.result.operation !== "evaluate" || !this.isRawEvaluateResult(response.result)) {
+      return this.evaluateEnvelope(dispatch, observation, {
+        outcome: "failed",
+        effect: "partial",
+        status: "failed",
+        message: "Electron browser evaluation returned an invalid result",
+      });
+    }
+    if (new TextEncoder().encode(response.result.valueJson).byteLength > BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES) {
+      return this.evaluateEnvelope(dispatch, observation, {
+        outcome: "failed",
+        effect: "complete",
+        status: "failed",
+        message: "Evaluation result exceeds 64 KiB",
+      });
+    }
+    return this.evaluateEnvelope(dispatch, observation, {
+      outcome: "completed",
+      effect: "complete",
+      status: "applied",
+      valueJson: response.result.valueJson,
+    });
+  }
+
+  private evaluateCompletionBoundary(
+    dispatch: BrowserAutomationHostDispatch,
+    observation: ObservationRecord,
+    signal: AbortSignal,
+  ): BrowserAutomationResponse | null {
+    if (signal.aborted) {
+      return this.evaluateEnvelope(dispatch, observation, {
+        outcome: "interrupted",
+        effect: "partial",
+        status: "interrupted",
+        message: "Browser evaluation was interrupted before completion",
+      });
+    }
+    const drift = this.revisionDrift(dispatch);
+    if (drift) return drift;
+    if (!this.observationStillCurrent(dispatch, observation)) {
+      return this.operationFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation changed before browser_evaluate completed");
+    }
+    return null;
+  }
+
+  private evaluateEnvelope(
+    dispatch: BrowserAutomationHostDispatch,
+    observation: ObservationRecord,
+    outcome: {
+      readonly outcome: "completed" | "failed" | "interrupted";
+      readonly effect: "none" | "partial" | "complete";
+      readonly status: "applied" | "failed" | "interrupted";
+      readonly message?: string;
+      readonly valueJson?: string;
+    },
+  ): BrowserAutomationResponse {
+    const capabilityRevision = this.options.getCapabilityRevision?.() ?? observation.capabilityRevision;
+    const current = this.currentObservationBinding(dispatch, capabilityRevision);
+    const nextObservationRef = globalThis.crypto.randomUUID();
+    const finalObservation = {
+      observationRef: nextObservationRef,
+      hostRevision: current.hostRevision,
+      documentRevision: current.documentRevision,
+      controlRevision: current.controlRevision,
+      capabilityRevision: current.capabilityRevision,
+      observationRevision: observation.observationRevision + 1,
+    };
+    this.observations.set(nextObservationRef, {
+      invalidationGenerations: observation.invalidationGenerations,
+      hostRevision: finalObservation.hostRevision,
+      documentRevision: finalObservation.documentRevision,
+      controlRevision: finalObservation.controlRevision,
+      capabilityRevision: finalObservation.capabilityRevision,
+      observationRevision: finalObservation.observationRevision,
+      targets: observation.targets,
+    });
+    const result: BrowserAutomationEvaluateResult = {
+      operation: "evaluate",
+      outcome: outcome.outcome,
+      stoppingPosition: outcome.outcome === "completed" ? 1 : 0,
+      effect: outcome.effect,
+      recovery: "inspect",
+      receipts: [{
+        index: 0,
+        operation: "evaluate",
+        status: outcome.status,
+        ...(outcome.message ? { message: outcome.message.slice(0, 1_024) } : {}),
+      }],
+      finalObservation,
+      nextObservationRef,
+      ...(outcome.valueJson !== undefined ? { valueJson: outcome.valueJson } : {}),
+    };
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: true,
+      result,
+    };
+  }
+
+  private isRawEvaluateResult(
+    result: Extract<BrowserAutomationResult, { operation: "evaluate" }>,
+  ): result is Extract<BrowserAutomationResult, { operation: "evaluate"; valueJson: string; controlEpoch: number }> {
+    return result.operation === "evaluate" && typeof result.valueJson === "string" && !("outcome" in result);
+  }
+
+  private isCancellation(value: unknown): boolean {
+    if (typeof value === "string") {
+      return value === "OPERATION_CANCELLED" || value === "HUMAN_INTERRUPTED" || value === "DEADLINE_EXCEEDED";
+    }
+    if (typeof value === "object" && value !== null && "code" in value) {
+      const code = (value as { code?: unknown }).code;
+      return code === "OPERATION_CANCELLED" || code === "HUMAN_INTERRUPTED" || code === "DEADLINE_EXCEEDED";
+    }
+    return value instanceof Error && /cancel|interrupt|deadline|abort/i.test(value.message);
+  }
+
+  private operationFailure(
+    dispatch: BrowserAutomationHostDispatch,
+    code: Extract<BrowserAutomationErrorCode, "UNSUPPORTED_OPERATION" | "STALE_TARGET_GENERATION" | "CAPABILITY_CHANGED">,
+    message: string,
+  ): BrowserAutomationResponse {
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: false,
+      error: {
+        code,
+        message,
+        retryable: false,
+        stage: "observation",
+        effect: "none",
+        recovery: "inspect",
+      },
+    };
+  }
+
+  private executeTabs(dispatch: BrowserAutomationHostDispatch, signal: AbortSignal): Promise<BrowserAutomationResponse> {
     const request = dispatch.request as Extract<BrowserAutomationHostDispatch["request"], { operation: "tabs" }>;
     const sessionKey = this.sessionKey(dispatch);
+    if (signal.aborted) {
+      return Promise.resolve(this.tabCancellation(dispatch, "Browser tab mutation was interrupted before the effect"));
+    }
     const replayKey = JSON.stringify([request.providerSessionId, request.providerInstanceId, request.args.idempotencyKey]);
     const fingerprint = JSON.stringify(request.args);
     const replay = this.tabIdempotency.get(replayKey);
@@ -425,7 +723,7 @@ export class BrowserSessionDriver {
     }
     this.observations.delete(request.args.observationRef);
     this.activeTabMutations.add(sessionKey);
-    const promise = this.applyTabsMutation(dispatch, observation, capabilityRevision)
+    const promise = this.applyTabsMutation(dispatch, observation, capabilityRevision, signal)
       .finally(() => this.activeTabMutations.delete(sessionKey));
     this.tabIdempotency.set(replayKey, { fingerprint, lastUsedAt: Date.now(), promise });
     this.pruneIdempotency();
@@ -436,11 +734,18 @@ export class BrowserSessionDriver {
     dispatch: BrowserAutomationHostDispatch,
     observation: ObservationRecord,
     capabilityRevision: number,
+    signal: AbortSignal,
   ): Promise<BrowserAutomationResponse> {
     const request = dispatch.request as Extract<BrowserAutomationHostDispatch["request"], { operation: "tabs" }>;
     const session = this.tabSession(dispatch);
     const adapter = this.tabAdapter();
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before enumeration");
+    }
     const liveTargets = new Map((adapter ? await adapter.list(dispatch) : [dispatch.target]).map((target) => [target.tabId, target]));
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before the next effect");
+    }
     if (!this.observationStillCurrent(dispatch, observation)) {
       return this.failure(dispatch, "STALE_TARGET_GENERATION", "Browser generations changed before the next tab effect", "inspect");
     }
@@ -467,28 +772,19 @@ export class BrowserSessionDriver {
 
     if (request.args.action === "select" && liveTarget) {
       session.current = liveTarget;
-    } else if (request.args.action === "claim" && liveTarget) {
-      session.current = liveTarget;
       const controlled = session.tabs.get(liveTarget.tabId);
-      session.tabs.set(liveTarget.tabId, controlled
-        ? {
-            ...controlled,
-            ownership: controlled.provenance === "agent-created" ? "owned" : "claimed",
-            disposition: undefined,
-            target: liveTarget,
-          }
-        : {
-            tabId: liveTarget.tabId,
-            provenance: "claimed-user",
-            ownership: "claimed",
-            target: liveTarget,
-          });
+      if (controlled) session.tabs.set(liveTarget.tabId, { ...controlled, target: liveTarget });
+    } else if (request.args.action === "claim" && liveTarget) {
+      this.claimOrUpdateTab(session, liveTarget);
     } else if ((request.args.action === "release" || request.args.action === "close") && requestedTabId) {
       const controlled = session.tabs.get(requestedTabId);
       if (request.args.action === "close" && controlled?.provenance === "agent-created") {
-        await adapter?.close(controlled.target);
-        session.tabs.delete(requestedTabId);
+        const closeResult = await this.closeControlledTab(dispatch, session, adapter, requestedTabId, controlled, signal);
+        if (closeResult) return closeResult;
       } else if (controlled) {
+        if (signal.aborted) {
+          return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before releasing the tab");
+        }
         session.tabs.set(requestedTabId, { ...controlled, ownership: "released", disposition: "release" });
       }
       if (session.current?.tabId === requestedTabId) session.current = null;
@@ -502,14 +798,23 @@ export class BrowserSessionDriver {
           ? requested === "handoff" || requested === "deliverable" ? requested : "release"
           : requested ?? "close";
         if (disposition === "close") {
-          await adapter?.close(controlled.target);
-          session.tabs.delete(tabId);
+          const closeResult = await this.closeControlledTab(dispatch, session, adapter, tabId, controlled, signal);
+          if (closeResult) return closeResult;
         } else {
+          if (signal.aborted) {
+            return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before settling the next tab");
+          }
           session.tabs.set(tabId, { ...controlled, ownership: "released", disposition });
+          if (session.current?.tabId === tabId) session.current = null;
         }
       }
       session.current = null;
     }
+
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before completion");
+    }
+    this.publishLifecycleProjectionInternal();
 
     const nextObservationRef = session.current ? globalThis.crypto.randomUUID() : undefined;
     if (session.current && nextObservationRef) {
@@ -534,6 +839,82 @@ export class BrowserSessionDriver {
         ...(session.current ? { currentTabId: session.current.tabId } : {}),
         ...(nextObservationRef ? { observationRef: nextObservationRef } : {}),
         tabs: [...session.tabs.values()].map(({ target: _target, ...tab }) => tab),
+      },
+    };
+  }
+
+  private isControlTakingOperation(operation: string): boolean {
+    return CONTROL_TAKING_OPERATIONS.has(operation);
+  }
+
+  private claimSuccessfulTarget(dispatch: BrowserAutomationHostDispatch): void {
+    this.claimOrUpdateTab(this.tabSession(dispatch), dispatch.target);
+    this.publishLifecycleProjectionInternal();
+  }
+
+  private claimOrUpdateTab(session: ProviderTabSession, target: BrowserAutomationHostDispatchTarget): void {
+    const controlled = session.tabs.get(target.tabId);
+    session.current = target;
+    session.tabs.set(target.tabId, controlled
+      ? {
+          ...controlled,
+          ownership: controlled.provenance === "agent-created" ? "owned" : "claimed",
+          disposition: undefined,
+          target,
+        }
+      : {
+          tabId: target.tabId,
+          provenance: "claimed-user",
+          ownership: "claimed",
+          target,
+        });
+  }
+
+  private async closeControlledTab(
+    dispatch: BrowserAutomationHostDispatch,
+    session: ProviderTabSession,
+    adapter: BrowserSessionTabLifecycleAdapter | undefined,
+    tabId: string,
+    controlled: ControlledTab,
+    signal: AbortSignal,
+  ): Promise<BrowserAutomationResponse | null> {
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before closing the tab");
+    }
+    try {
+      await adapter?.close(controlled.target);
+    } catch (cause) {
+      return this.tabCloseFailure(dispatch, cause, signal);
+    }
+    session.tabs.delete(tabId);
+    if (session.current?.tabId === tabId) session.current = null;
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted after closing the tab", "unknown");
+    }
+    return null;
+  }
+
+  private tabCloseFailure(
+    dispatch: BrowserAutomationHostDispatch,
+    cause: unknown,
+    signal: AbortSignal,
+  ): BrowserAutomationResponse {
+    if (signal.aborted || this.isCancellation(cause)) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted while closing the tab", "unknown");
+    }
+    const detail = sanitizePublicDetail(cause instanceof Error ? cause.message : cause);
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: false,
+      error: {
+        code: "TAB_UNAVAILABLE",
+        message: detail ? `Browser tab close failed: ${detail}` : "Browser tab close failed",
+        retryable: true,
+        stage: "effect",
+        effect: "unknown",
+        recovery: "inspect",
       },
     };
   }
@@ -680,6 +1061,26 @@ export class BrowserSessionDriver {
       }
       this.tabSessions.delete(key);
     }
+    this.publishLifecycleProjectionInternal();
+  }
+
+  private publishLifecycleProjectionInternal(): void {
+    const observer = this.options.onLifecycleChange;
+    if (!observer) return;
+    const tabs: BrowserSessionLifecycleTab[] = [];
+    for (const session of this.tabSessions.values()) {
+      for (const tab of session.tabs.values()) {
+        if (tab.ownership === "released") continue;
+        tabs.push({
+          ...tab,
+          workspaceId: session.workspaceId,
+          threadId: tab.target.threadId,
+          providerSessionId: session.providerSessionId,
+          providerInstanceId: session.providerInstanceId,
+        });
+      }
+    }
+    observer(tabs.slice(0, MAX_LIFECYCLE_TABS));
   }
 
   private failure(
@@ -704,4 +1105,24 @@ export class BrowserSessionDriver {
     };
   }
 
+  private tabCancellation(
+    dispatch: BrowserAutomationHostDispatch,
+    message: string,
+    effect: "none" | "unknown" = "none",
+  ): BrowserAutomationResponse {
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: false,
+      error: {
+        code: "OPERATION_CANCELLED",
+        message,
+        retryable: false,
+        stage: "effect",
+        effect,
+        recovery: "inspect",
+      },
+    };
+  }
 }

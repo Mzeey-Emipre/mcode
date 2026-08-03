@@ -187,6 +187,14 @@ function request(
   args: Record<string, unknown> = {},
   overrides: { requestId?: string; threadId?: string; expectedControlEpoch?: number } = {},
 ): BrowserAutomationRequest {
+  const requestArgs = operation === "evaluate"
+    ? {
+        idempotencyKey: overrides.requestId ?? "evaluate-key",
+        observationRef: "observation-ref",
+        deadlineMs: 10_000,
+        ...args,
+      }
+    : args;
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
     workspaceId: "workspace",
@@ -198,7 +206,7 @@ function request(
     deadline: Date.now() + 10_000,
     expectedControlEpoch: overrides.expectedControlEpoch ?? 0,
     operation,
-    args,
+    args: requestArgs,
   } as BrowserAutomationRequest;
 }
 

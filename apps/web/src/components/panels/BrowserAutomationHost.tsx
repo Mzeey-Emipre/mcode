@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
-  BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_TAB_INFO_STRING_MAX,
   BrowserAutomationHostDispatchSchema,
   BrowserAutomationRequestSchema,
   type BrowserAutomationHostDispatch,
@@ -39,7 +39,11 @@ import {
 } from "./browserAutomationRuntime";
 import { executeWebBrowserDispatch } from "./browserAutomationWebExecutor";
 import { captureVisibleWebLocation, sanitizeWebLocation } from "./web-browser-automation/capture";
-import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "@/services/browser-automation/browserSessionDriver";
+import {
+  BrowserSessionDriver,
+  ElectronBrowserSessionAdapter,
+  getBrowserAutomationRuntimeOperations,
+} from "@/services/browser-automation/browserSessionDriver";
 import { WebBrowserSessionAdapter } from "@/services/browser-automation/webBrowserSessionAdapter";
 import {
   type ViewportApplyResult,
@@ -47,9 +51,6 @@ import {
 import { getOrCreateViewportCoordinator } from "@/services/browser-automation/viewportCoordinatorFactory";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
-const UNAVAILABLE_OPERATIONS = new Map<BrowserAutomationOperation, string>([
-]);
-
 const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
 
 export { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
@@ -253,7 +254,12 @@ async function executeBrowserDispatch(
   recorder: BrowserAutomationRecorder,
   dispatch: BrowserAutomationHostDispatch,
   signal: AbortSignal,
+  runtimeOperations?: readonly BrowserAutomationOperation[],
 ): Promise<BrowserAutomationResponse> {
+  const operations = runtimeOperations ?? getBrowserAutomationRuntimeOperations(
+    bridge ? "electron" : "web",
+    { recordingAvailable: bridge ? recordingAvailable() : false },
+  );
   if (!bridge) {
     if (dispatch.request.operation === "resize") {
       const coordinator = ensureViewportCoordinator(dispatch);
@@ -289,9 +295,9 @@ async function executeBrowserDispatch(
       }
       const location = captureVisibleWebLocation(iframe);
       if (!location.ok) return failureResponse(dispatch.request, location.code, "Visible preview is cross-origin");
-      return { ...response, result: { ...response.result, url: location.value } };
+      return { ...response, result: { ...response.result, url: location.value, capabilities: [...operations] } };
     }
-    return { ...response, result: { ...response.result, url: sanitizeWebLocation(response.result.url) } };
+    return { ...response, result: { ...response.result, url: sanitizeWebLocation(response.result.url), capabilities: [...operations] } };
   }
   const rendererOwned = dispatch.request.operation === "resize" ||
     dispatch.request.operation === "recordingStart" ||
@@ -343,9 +349,7 @@ async function executeBrowserDispatch(
     ...response,
     result: {
       ...response.result,
-      capabilities: BROWSER_AUTOMATION_OPERATIONS.filter((operation) =>
-        recordingAvailable() || (operation !== "recordingStart" && operation !== "recordingStop"),
-      ),
+      capabilities: [...operations],
     },
   };
 }
@@ -564,8 +568,34 @@ function findAutomationDock(threadId: string): HTMLElement | null {
     ) ?? null;
 }
 
+/** Reads bounded same-origin web chrome and returns a safe URL fallback otherwise. */
+export function readPersistentWebTabChrome(
+  frame: HTMLIFrameElement,
+  fallbackUrl: string,
+): { readonly title: string | null; readonly url: string } {
+  try {
+    const frameUrl = new URL(frame.src, window.location.href);
+    if (frameUrl.origin !== window.location.origin) return { title: null, url: fallbackUrl };
+    const document = frame.contentDocument;
+    return {
+      title: document?.title?.slice(0, BROWSER_TAB_INFO_STRING_MAX.title) || null,
+      url: (document?.location?.href || frameUrl.href).slice(0, BROWSER_TAB_INFO_STRING_MAX.url),
+    };
+  } catch {
+    return { title: null, url: fallbackUrl };
+  }
+}
+
 /** Keeps one exact automation PreviewPanel mounted while moving it into its visible dock. */
-function PersistentAutomationWebTab({ tab }: { readonly tab: PersistentAutomationWebTab }) {
+function PersistentAutomationWebTab({
+  tab,
+  layout,
+}: {
+  readonly tab: PersistentAutomationWebTab;
+  readonly layout: PersistentSurfaceLayout;
+}) {
+  const activeTabId = usePreviewTabsStore((state) => state.tabSetByScope[tab.threadId]?.activeTabId ?? null);
+  const visible = layout.visible && activeTabId === tab.tabId;
   useEffect(() => {
     useBrowserAutomationStore.getState().registerTarget(tab.workspaceId, tab.threadId, tab.tabId);
     return () => useBrowserAutomationStore.getState().detachTarget(tab.threadId, tab.tabId);
@@ -577,15 +607,28 @@ function PersistentAutomationWebTab({ tab }: { readonly tab: PersistentAutomatio
       src={tab.url}
       data-thread-id={tab.threadId}
       data-tab-id={tab.tabId}
-      onLoad={() => useBrowserAutomationStore.getState().refreshTarget(tab.threadId, tab.tabId)}
+      aria-hidden={!visible}
+      inert={!visible ? true : undefined}
+      onLoad={(event) => {
+        const frame = event.currentTarget;
+        const chrome = readPersistentWebTabChrome(frame, tab.url);
+        usePreviewTabsStore.getState().updateTabChrome(tab.threadId, tab.tabId, {
+          title: chrome.title,
+          url: chrome.url,
+          favicon: null,
+        });
+        useBrowserAutomationStore.getState().refreshTarget(tab.threadId, tab.tabId);
+      }}
       style={{
         position: "fixed",
-        left: -20_000,
-        top: 0,
-        width: 1_280,
-        height: 720,
+        left: visible ? layout.left : -20_000,
+        top: visible ? layout.top : 0,
+        width: layout.width,
+        height: layout.height,
         border: 0,
-        pointerEvents: "none",
+        pointerEvents: visible ? "auto" : "none",
+        visibility: visible ? "visible" : "hidden",
+        zIndex: visible ? 31 : undefined,
       }}
       referrerPolicy="no-referrer"
     />
@@ -667,7 +710,7 @@ function PersistentAutomationPreviewSurface({
       />
       {webTabs
         .filter((tab) => tab.threadId === scope.threadId)
-        .map((tab) => <PersistentAutomationWebTab key={tab.tabId} tab={tab} />)}
+        .map((tab) => <PersistentAutomationWebTab key={tab.tabId} tab={tab} layout={layout} />)}
     </div>
   );
 }
@@ -684,12 +727,17 @@ export function BrowserAutomationHost() {
   const registered = useBrowserAutomationStore((state) => state.registered);
   const leaseRef = useRef<HostLease | null>(null);
   const shutdownLeaseRef = useRef<HostLease | null>(null);
-  const executorDescriptor = useMemo(() => ({
-    runtime: window.desktopBridge?.preview?.automation ? "electron" as const : "web" as const,
-    operations: ["inspect", "act", "tabs", ...BROWSER_AUTOMATION_OPERATIONS] as BrowserAutomationOperation[],
-    constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
-    capabilityRevision: 1,
-  }), []);
+  const executorDescriptor = useMemo(() => {
+    const runtime = window.desktopBridge?.preview?.automation ? "electron" as const : "web" as const;
+    return {
+      runtime,
+      operations: [...getBrowserAutomationRuntimeOperations(runtime, {
+        recordingAvailable: runtime === "electron" ? recordingAvailable() : false,
+      })],
+      constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
+      capabilityRevision: 1,
+    };
+  }, []);
   const recorderRef = useRef(new BrowserAutomationRecorder());
   const registrationEpochRef = useRef(0);
   const inFlightRef = useRef(new Map<string, BrowserAutomationHostDispatch>());
@@ -762,13 +810,22 @@ export function BrowserAutomationHost() {
         dispatch.target.tabId,
       ),
       onObserver: (dispatch, dispose) => webObserverRef.current.set(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence), dispose),
-      executeNonInteraction: (dispatch, signal) => executeBrowserDispatch(undefined, recorderRef.current, dispatch, signal),
+      executeNonInteraction: (dispatch, signal) => executeBrowserDispatch(undefined, recorderRef.current, dispatch, signal, executorDescriptor.operations),
     });
     sessionDriverRef.current = new BrowserSessionDriver({
       web: webAdapter,
       getCapabilityRevision: () => executorDescriptor.capabilityRevision,
+      getHostRevision: () => leaseRef.current?.generation ?? 0,
+      getDocumentRevision: (dispatch) => executorDescriptor.runtime === "web"
+        ? useBrowserAutomationStore.getState().liveTargets.get(
+          browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+        )?.revision ?? dispatch.target.targetGeneration
+        : dispatch.target.targetGeneration,
+      getControlRevision: (dispatch) => useBrowserAutomationStore.getState().controllers.get(
+        browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+      )?.controlEpoch ?? dispatch.target.controller?.controlEpoch ?? dispatch.request.expectedControlEpoch,
       electron: new ElectronBrowserSessionAdapter(
-        (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal),
+        (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal, executorDescriptor.operations),
       ),
       supportedActOperations: window.desktopBridge?.preview?.automation
         ? ["navigate", "click", "type", "press", "scroll"]
@@ -781,10 +838,20 @@ export function BrowserAutomationHost() {
         list: listLifecycleTargets,
         close: async (target) => usePreviewTabsStore.getState().closePage(target.threadId, target.tabId),
       },
+      onLifecycleChange: (tabs) => useBrowserAutomationStore.getState().setLifecycleTabs(tabs),
     });
   }
   const addPersistentWebTab = (tab: PersistentAutomationWebTab): void => {
     persistentWebTabsRef.current.set(tab.tabId, tab);
+    usePreviewTabsStore.getState().upsertPersistentTab(tab.threadId, {
+      id: tab.tabId,
+      threadId: tab.threadId,
+      title: null,
+      url: tab.url,
+      faviconUrl: null,
+      warm: true,
+      active: false,
+    });
     setPersistentWebTabsRevision((value) => value + 1);
   };
   const removePersistentWebTab = (tabId: string): void => {
@@ -794,6 +861,7 @@ export function BrowserAutomationHost() {
     for (const [key, value] of agentOpenTabsRef.current) {
       if (value === tabId) agentOpenTabsRef.current.delete(key);
     }
+    usePreviewTabsStore.getState().removePersistentTab(tab.threadId, tab.tabId);
     useBrowserAutomationStore.getState().unregisterTarget(tab.threadId, tabId);
     setPersistentWebTabsRevision((value) => value + 1);
   };
@@ -869,6 +937,7 @@ export function BrowserAutomationHost() {
       return;
     }
     const epoch = ++registrationEpochRef.current;
+    useBrowserAutomationStore.getState().setLifecycleTabs([]);
     const transport = getTransport();
     const liveTargetSnapshot = useBrowserAutomationStore.getState().liveTargets;
     const activeTarget = [...liveTargetSnapshot.values()].find((target) => target.workspaceId === activeWorkspaceId);
@@ -884,24 +953,7 @@ export function BrowserAutomationHost() {
         targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
       } : {}),
       executorDescriptor,
-      capabilities: [{ operation: "inspect", available: true }, { operation: "act", available: true }, { operation: "tabs", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
-        if (!desktopAutomation) {
-          const available = operation === "click" || operation === "type" ||
-            operation === "status" || operation === "open" || operation === "navigate" ||
-            operation === "snapshot" || operation === "screenshot";
-          return available
-            ? { operation, available: true }
-            : { operation, available: false, unavailableReason: WEB_AUTOMATION_UNAVAILABLE_REASON };
-        }
-        const recordingUnavailable =
-          (operation === "recordingStart" || operation === "recordingStop") &&
-          !recordingAvailable();
-        const unavailableReason = UNAVAILABLE_OPERATIONS.get(operation) ??
-          (recordingUnavailable ? "Visible tab recording is unavailable in this renderer" : undefined);
-        return unavailableReason
-          ? { operation, available: false, unavailableReason }
-          : { operation, available: true };
-      })],
+      capabilities: executorDescriptor.operations.map((operation) => ({ operation, available: true })),
       maxPendingRequests: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
       connectedAt: Date.now(),
     }).then((result) => {
@@ -915,6 +967,7 @@ export function BrowserAutomationHost() {
       shutdownLeaseRef.current = leaseRef.current;
       useBrowserAutomationStore.getState().setRegistered(true);
       useBrowserAutomationStore.getState().setStatus("registered");
+      sessionDriverRef.current?.publishLifecycleProjection();
     }).catch(() => {
       if (registrationEpochRef.current === epoch) {
         leaseRef.current = null;
@@ -944,6 +997,7 @@ export function BrowserAutomationHost() {
         registrationEpochRef.current += 1;
         leaseRef.current = null;
         sessionDriverRef.current?.clearIdempotency();
+        useBrowserAutomationStore.getState().setLifecycleTabs([]);
         agentOpenTabsRef.current.clear();
         useBrowserAutomationStore.getState().setRegistered(false);
         useBrowserAutomationStore.getState().setStatus("unavailable");
@@ -1371,6 +1425,11 @@ export function BrowserAutomationHost() {
             ...currentScopes.filter((scope) => scope !== evicted),
             { threadId: request.threadId, workspaceId: request.workspaceId },
           ];
+          if (evicted) {
+            for (const tab of persistentWebTabsRef.current.values()) {
+              if (tab.threadId === evicted.threadId) removePersistentWebTab(tab.tabId);
+            }
+          }
           backgroundScopesRef.current = nextScopes;
           useBrowserAutomationStore.getState().setHostedScopeIds(
             new Set(nextScopes.map((scope) => scope.threadId)),
@@ -1662,8 +1721,12 @@ export function BrowserAutomationHost() {
     for (const dispose of webObserverRef.current.values()) dispose();
     webAbortRef.current.clear();
     webObserverRef.current.clear();
+    for (const tab of persistentWebTabsRef.current.values()) {
+      usePreviewTabsStore.getState().removePersistentTab(tab.threadId, tab.tabId);
+    }
     persistentWebTabsRef.current.clear();
     sessionDriverRef.current?.clearIdempotency();
+    useBrowserAutomationStore.getState().setLifecycleTabs([]);
     agentOpenTabsRef.current.clear();
   }, []);
 

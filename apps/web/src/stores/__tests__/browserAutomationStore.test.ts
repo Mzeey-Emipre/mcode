@@ -12,6 +12,7 @@ import {
   type BrowserAutomationActiveRequest,
   type BrowserAutomationLiveTarget,
 } from "../browserAutomationStore";
+import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
 import { selectBrowserAutomationWorkspaceIds } from "@/components/panels/BrowserAutomationHost";
 import { reconcileWarmPreviewScopes } from "@/components/panels/RightPanel";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
@@ -28,6 +29,48 @@ function target(
 }
 
 describe("browser automation renderer scope", () => {
+  it("projects lifecycle-backed tabs by exact workspace/thread/tab tuple and releases their scope", () => {
+    const lifecycleTab = {
+      workspaceId: "workspace-a",
+      threadId: "thread-a",
+      tabId: "tab-a",
+      providerSessionId: "session-a",
+      providerInstanceId: "instance-a",
+      provenance: "claimed-user",
+      ownership: "claimed",
+      target: {
+        desktopInstanceId: "desktop-a",
+        windowId: 1,
+        connectionGeneration: 1,
+        threadId: "thread-a",
+        tabId: "tab-a",
+        targetGeneration: 1,
+        active: false,
+        focused: false,
+        lastUsedAt: 1,
+      },
+    } satisfies BrowserSessionLifecycleTab;
+    useBrowserAutomationStore.getState().setLifecycleTabs([
+      lifecycleTab,
+      { ...lifecycleTab, workspaceId: "workspace-b", threadId: "thread-b", tabId: "tab-b", target: { ...lifecycleTab.target, threadId: "thread-b", tabId: "tab-b" } },
+    ]);
+
+    const lifecycle = useBrowserAutomationStore.getState().lifecycleTabs;
+    expect(lifecycle).toHaveLength(2);
+    expect([...lifecycle.values()].map((tab) => [tab.workspaceId, tab.threadId, tab.tabId])).toEqual([
+      ["workspace-a", "thread-a", "tab-a"],
+      ["workspace-b", "thread-b", "tab-b"],
+    ]);
+
+    useBrowserAutomationStore.getState().releaseThreadTargets("thread-a");
+    expect([...useBrowserAutomationStore.getState().lifecycleTabs.values()]).toEqual([
+      expect.objectContaining({ workspaceId: "workspace-b", threadId: "thread-b", tabId: "tab-b" }),
+    ]);
+
+    useBrowserAutomationStore.getState().releaseWorkspaceTargets("workspace-b");
+    expect(useBrowserAutomationStore.getState().lifecycleTabs).toHaveLength(0);
+  });
+
   it("uses collision-proof tuple keys for adversarial external ids", () => {
     expect(browserAutomationTargetKey("a\u0000b", "c")).not.toBe(
       browserAutomationTargetKey("a", "b\u0000c"),

@@ -1036,10 +1036,14 @@ export const BrowserAutomationObservationBindingSchema = lazySchema(() => z.obje
 /** Typed observation binding. */
 export type BrowserAutomationObservationBinding = z.infer<ReturnType<typeof BrowserAutomationObservationBindingSchema>>;
 
-const actArgs = z.object({
+const mutationArgs = {
   idempotencyKey: idempotencyKeySchema,
   observationRef: idSchema,
   deadlineMs: z.number().int().min(1).max(BROWSER_AUTOMATION_MAX_TIMEOUT_MS),
+} as const;
+
+const actArgs = z.object({
+  ...mutationArgs,
   steps: z.array(BrowserAutomationActStepSchema()).min(1).max(BROWSER_AUTOMATION_ACT_MAX_STEPS),
 }).strict();
 
@@ -1154,7 +1158,12 @@ export const BrowserAutomationRequestSchema = lazySchema(() =>
     ),
     requestVariant(
       "evaluate",
-      z.object({ expression: z.string().min(1).refine((value) => utf8Length(value) <= BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES, "Expression exceeds 64 KiB"), awaitPromise: z.boolean().default(true), timeoutMs: timeoutSchema }).strict(),
+      z.object({
+        ...mutationArgs,
+        expression: z.string().min(1).refine((value) => utf8Length(value) <= BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES, "Expression exceeds 64 KiB"),
+        awaitPromise: z.boolean().default(true),
+        timeoutMs: timeoutSchema,
+      }).strict(),
     ),
     requestVariant(
       "recordingStart",
@@ -1177,20 +1186,15 @@ const actionResultFields = {
 const actionResult = <T extends BrowserAutomationOperation>(operation: T) =>
   z.object({ operation: z.literal(operation), ...actionResultFields }).strict();
 
-const actReceiptSchema = z.object({
+/** One content-free receipt for a bounded Browser mutation step. */
+export const BrowserAutomationMutationReceiptSchema = lazySchema(() => z.object({
   index: z.number().int().nonnegative(),
   operation: z.string().min(1).max(32),
   status: z.enum(["applied", "satisfied", "failed", "interrupted", "skipped"]),
   message: z.string().max(SHORT_TEXT_MAX).optional(),
-}).strict();
-const actObservationSchema = z.object({
-  observationRef: idSchema,
-  hostRevision: z.number().int().nonnegative(),
-  documentRevision: z.number().int().nonnegative(),
-  controlRevision: z.number().int().nonnegative(),
-  capabilityRevision: z.number().int().positive(),
-  observationRevision: z.number().int().nonnegative(),
-}).strict();
+}).strict());
+/** Typed content-free receipt for a bounded Browser mutation step. */
+export type BrowserAutomationMutationReceipt = z.infer<ReturnType<typeof BrowserAutomationMutationReceiptSchema>>;
 
 /** Structured result for one bounded browser_act batch. */
 export const BrowserAutomationActResultSchema = lazySchema(() => z.object({
@@ -1199,12 +1203,35 @@ export const BrowserAutomationActResultSchema = lazySchema(() => z.object({
   stoppingPosition: z.number().int().nonnegative(),
   effect: z.enum(["none", "partial", "complete"]),
   recovery: z.enum(["inspect", "reopen", "wait", "yield_to_user", "do_not_retry"]),
-  receipts: z.array(actReceiptSchema).max(BROWSER_AUTOMATION_ACT_MAX_STEPS),
-  finalObservation: actObservationSchema,
+  receipts: z.array(BrowserAutomationMutationReceiptSchema()).max(BROWSER_AUTOMATION_ACT_MAX_STEPS),
+  finalObservation: BrowserAutomationObservationBindingSchema(),
   nextObservationRef: idSchema.optional(),
 }).strict());
 /** Typed browser_act result. */
 export type BrowserAutomationActResult = z.infer<ReturnType<typeof BrowserAutomationActResultSchema>>;
+
+/** Structured result for one privileged browser_evaluate mutation. */
+export const BrowserAutomationEvaluateResultSchema = lazySchema(() => z.object({
+  operation: z.literal("evaluate"),
+  outcome: z.enum(["completed", "failed", "interrupted"]),
+  stoppingPosition: z.number().int().min(0).max(1),
+  effect: z.enum(["none", "partial", "complete"]),
+  recovery: z.enum(["inspect", "reopen", "wait", "yield_to_user", "do_not_retry"]),
+  receipts: z.array(BrowserAutomationMutationReceiptSchema()).length(1),
+  finalObservation: BrowserAutomationObservationBindingSchema(),
+  nextObservationRef: idSchema.optional(),
+  valueJson: z.string().refine((value) => utf8Length(value) <= BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES, "Evaluation result exceeds 64 KiB").optional(),
+}).strict().superRefine((value, context) => {
+  if (value.outcome === "completed" && value.valueJson === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Completed evaluation requires a bounded result",
+      path: ["valueJson"],
+    });
+  }
+}));
+/** Typed browser_evaluate mutation result. */
+export type BrowserAutomationEvaluateResult = z.infer<ReturnType<typeof BrowserAutomationEvaluateResultSchema>>;
 
 /** Normalized ownership state for one tab controlled by a provider session. */
 export const BrowserAutomationOwnedTabSchema = lazySchema(() => z.object({
@@ -1229,7 +1256,7 @@ export type BrowserAutomationTabsResult = z.infer<ReturnType<typeof BrowserAutom
 
 /** Exhaustive operation-specific browser success result. */
 export const BrowserAutomationResultSchema = lazySchema(() =>
-  z.discriminatedUnion("operation", [
+  z.union([
     z.object({
       operation: z.literal("inspect"),
       readiness: BrowserAutomationInspectReadinessSchema().optional(),
@@ -1276,7 +1303,10 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
     z.object({ operation: z.literal("network"), entries: z.array(BrowserAutomationNetworkEntrySchema()).max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES), truncation: BrowserAutomationTruncationSchema() }).strict(),
     z.object({ operation: z.literal("accessibility"), nodes: z.array(BrowserAutomationAccessibilityNodeSchema()).max(BROWSER_AUTOMATION_MAX_AX_NODES), truncation: BrowserAutomationTruncationSchema() }).strict(),
     z.object({ operation: z.literal("performance"), metrics: BrowserAutomationPerformanceMetricsSchema(), controlEpoch: z.number().int().nonnegative() }).strict(),
+    // The Electron kernel returns this internal result to BrowserSessionDriver,
+    // which wraps it in the public mutation envelope before broker delivery.
     z.object({ operation: z.literal("evaluate"), valueJson: z.string().refine((value) => utf8Length(value) <= BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES, "Evaluation result exceeds 64 KiB"), controlEpoch: z.number().int().nonnegative() }).strict(),
+    BrowserAutomationEvaluateResultSchema(),
     z.object({ operation: z.literal("recordingStart"), recordingId: idSchema, startedAt: z.number().int().nonnegative(), controlEpoch: z.number().int().nonnegative() }).strict(),
     z.object({ operation: z.literal("recordingStop"), recordingId: idSchema, mediaType: z.literal("video/webm"), dataBase64: z.string().max(RECORDING_MAX_BASE64_CHARS).refine((value) => { const size = decodedBase64Size(value); return size !== null && size <= BROWSER_AUTOMATION_MAX_RECORDING_BYTES; }, "Recording must be valid base64 within 512 KiB decoded"), durationMs: z.number().int().nonnegative().max(RECORDING_MAX_DURATION_MS), truncation: BrowserAutomationTruncationSchema(), controlEpoch: z.number().int().nonnegative() }).strict(),
     BrowserAutomationActResultSchema(),
