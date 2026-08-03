@@ -270,6 +270,25 @@ type InterruptionListener = (
 const interruptionListeners = new Set<InterruptionListener>();
 const pendingInterruptions = new Map<string, Promise<boolean>>();
 
+type ObservationInvalidationListener = (threadId: string, tabId: string) => void;
+const observationInvalidationListeners = new Set<ObservationInvalidationListener>();
+
+/** Subscribe to trusted human input without changing Browser controller state. */
+export function onBrowserAutomationObservationInvalidation(
+  listener: ObservationInvalidationListener,
+): () => void {
+  observationInvalidationListeners.add(listener);
+  return () => observationInvalidationListeners.delete(listener);
+}
+
+/** Notify Browser automation listeners that one target received trusted human input. */
+export function invalidateBrowserAutomationTargetObservation(
+  threadId: string,
+  tabId: string,
+): void {
+  for (const listener of observationInvalidationListeners) listener(threadId, tabId);
+}
+
 /** Identifies persistent automation surfaces that must be released. */
 export type BrowserAutomationScopeRelease =
   | { readonly threadId: string; readonly workspaceId?: never }

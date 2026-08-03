@@ -19,6 +19,8 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   browserAutomationRequestKey,
   browserAutomationTargetKey,
+  invalidateBrowserAutomationTargetObservation,
+  onBrowserAutomationObservationInvalidation,
   onBrowserAutomationInterruption,
   onBrowserAutomationScopeRelease,
   resolveBrowserAutomationControllerTarget,
@@ -591,7 +593,6 @@ export function BrowserAutomationHost() {
   const requestAbortRef = useRef(new Map<string, AbortController>());
   const webAbortRef = useRef(new Map<string, AbortController>());
   const webObserverRef = useRef(new Map<string, () => void>());
-  const webHumanCancelRef = useRef(new Map<string, () => void>());
   const webNavigationRef = useRef(new Map<string, WebNavigationExpectation>());
   const bootstrapPendingRef = useRef(new Set<string>());
   const bootstrapAbortRef = useRef(new Map<string, AbortController>());
@@ -653,7 +654,7 @@ export function BrowserAutomationHost() {
         const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
         return useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision ?? 0;
       },
-      onHumanInput: (dispatch) => webHumanCancelRef.current.get(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence))?.(),
+      onHumanInput: (dispatch) => invalidateBrowserAutomationTargetObservation(dispatch.target.threadId, dispatch.target.tabId),
       onObserver: (dispatch, dispose) => webObserverRef.current.set(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence), dispose),
       executeNonInteraction: (dispatch, signal) => executeBrowserDispatch(undefined, recorderRef.current, dispatch, signal, executorDescriptor.operations),
     });
@@ -1014,25 +1015,6 @@ export function BrowserAutomationHost() {
           }
         }
       }
-      const cancelForHuman = () => {
-        if (!operationAbort || cancelledRef.current.has(key)) return;
-        cancelledRef.current.add(key);
-        operationAbort.abort(new Error("Browser operation was interrupted by human input"));
-        const nextEpoch = (useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch) + 1;
-        useBrowserAutomationStore.getState().setControllerForTarget(
-          dispatch.target.threadId,
-          dispatch.target.tabId,
-          { tabId: dispatch.target.tabId, controller: "human", controlEpoch: nextEpoch },
-        );
-        void getTransport().cancelBrowserAutomationRequest(
-          lease.hostId,
-          lease.generation,
-          dispatch.request.requestId,
-          dispatch.request.sequence,
-          "human-interrupted",
-        ).catch(() => undefined);
-      };
-      if (webDispatch) webHumanCancelRef.current.set(key, cancelForHuman);
       const executeWeb = async (): Promise<BrowserAutomationResponse> => {
         if (staleAtStart) {
           return failureResponse(dispatch.request, !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration ? "STALE_TARGET_GENERATION" : "STALE_CONTROL_EPOCH", "Browser operation is stale");
@@ -1151,7 +1133,6 @@ export function BrowserAutomationHost() {
       }).catch(() => undefined).finally(() => {
         webObserverRef.current.get(key)?.();
         webObserverRef.current.delete(key);
-        webHumanCancelRef.current.delete(key);
         webAbortRef.current.delete(key);
         webNavigationRef.current.delete(key);
         if (inFlightRef.current.get(key) === dispatch) inFlightRef.current.delete(key);
@@ -1462,6 +1443,10 @@ export function BrowserAutomationHost() {
     });
   }, []);
 
+  useEffect(() => onBrowserAutomationObservationInvalidation((threadId, tabId) => {
+    sessionDriverRef.current?.invalidateTargetObservations(threadId, tabId);
+  }), []);
+
   useEffect(() => {
     const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge) return;
@@ -1574,7 +1559,6 @@ export function BrowserAutomationHost() {
     for (const dispose of webObserverRef.current.values()) dispose();
     webAbortRef.current.clear();
     webObserverRef.current.clear();
-    webHumanCancelRef.current.clear();
     for (const tab of persistentWebTabsRef.current.values()) {
       usePreviewTabsStore.getState().removePersistentTab(tab.threadId, tab.tabId);
     }

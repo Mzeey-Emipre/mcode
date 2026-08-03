@@ -4,6 +4,8 @@ import {
   browserAutomationRequestKey,
   browserAutomationTargetKey,
   onBrowserAutomationScopeRelease,
+  invalidateBrowserAutomationTargetObservation,
+  onBrowserAutomationObservationInvalidation,
   releaseBrowserAutomationThreadScope,
   releaseBrowserAutomationWorkspaceScopes,
   resolveBrowserAutomationControllerTarget,
@@ -211,5 +213,25 @@ describe("browser automation renderer scope", () => {
     unsubscribe();
     releaseBrowserAutomationThreadScope("thread-b");
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("notifies exact human-input listeners without changing controller state", () => {
+    useBrowserAutomationStore.getState().registerTarget("workspace-a", "thread-a", "tab-a");
+    useBrowserAutomationStore.getState().setControllerForTarget("thread-a", "tab-a", {
+      tabId: "tab-a",
+      controller: "agent",
+      controlEpoch: 3,
+    });
+    const listener = vi.fn();
+    const unsubscribe = onBrowserAutomationObservationInvalidation(listener);
+
+    invalidateBrowserAutomationTargetObservation("thread-a", "tab-a");
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith("thread-a", "tab-a");
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      browserAutomationTargetKey("thread-a", "tab-a"),
+    )).toEqual({ tabId: "tab-a", controller: "agent", controlEpoch: 3 });
+    unsubscribe();
   });
 });

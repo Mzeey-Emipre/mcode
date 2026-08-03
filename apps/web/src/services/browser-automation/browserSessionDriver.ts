@@ -47,6 +47,10 @@ const WEB_RUNTIME_OPERATIONS = [
   "type",
 ] as const satisfies readonly BrowserAutomationOperation[];
 
+function observationTargetKey(threadId: string, tabId: string): string {
+  return JSON.stringify([threadId, tabId]);
+}
+
 /** Options that affect the operations a runtime can truthfully advertise. */
 export interface BrowserAutomationRuntimeOperationOptions {
   readonly recordingAvailable?: boolean;
@@ -92,6 +96,12 @@ interface ObservationRecord {
   readonly documentRevision: number;
   readonly controlRevision: number;
   readonly capabilityRevision: number;
+  readonly humanInteractionRevision: number;
+  readonly targetKey: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly providerSessionId: string;
+  readonly providerInstanceId: string;
   observationRevision: number;
   readonly targets: ReadonlyMap<string, BrowserAutomationHostDispatchTarget>;
 }
@@ -112,6 +122,12 @@ interface ProviderTabSession {
   readonly providerInstanceId: string;
   current: BrowserAutomationHostDispatchTarget | null;
   readonly tabs: Map<string, ControlledTab>;
+}
+
+interface HumanInteractionScope {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly providerSessionId: string;
 }
 
 /** One lifecycle-backed Browser tab projected for renderer consumers. */
@@ -160,6 +176,7 @@ export interface BrowserSessionDriverOptions {
   readonly getHostRevision?: (dispatch: BrowserAutomationHostDispatch) => number;
   readonly getDocumentRevision?: (dispatch: BrowserAutomationHostDispatch) => number;
   readonly getControlRevision?: (dispatch: BrowserAutomationHostDispatch) => number;
+  readonly getHumanInteractionRevision?: (dispatch: BrowserAutomationHostDispatch) => number;
   readonly supportedActOperations?: readonly string[] | (() => readonly string[]);
   readonly webTabs?: BrowserSessionTabLifecycleAdapter;
   readonly electronTabs?: BrowserSessionTabLifecycleAdapter;
@@ -177,6 +194,8 @@ export class BrowserSessionDriver {
   private readonly idempotency = new Map<string, IdempotencyRecord>();
   private readonly tabIdempotency = new Map<string, TabReplayRecord>();
   private readonly observations = new Map<string, ObservationRecord>();
+  private readonly humanInteractionRevisions = new Map<string, number>();
+  private readonly humanInteractionScopes = new Map<string, HumanInteractionScope>();
   private readonly tabSessions = new Map<string, ProviderTabSession>();
   private readonly activeTabMutations = new Set<string>();
 
@@ -306,6 +325,25 @@ export class BrowserSessionDriver {
   clearIdempotency(): void {
     this.idempotency.clear();
     this.tabIdempotency.clear();
+    this.observations.clear();
+    this.humanInteractionRevisions.clear();
+    this.humanInteractionScopes.clear();
+  }
+
+  /** Invalidates observations for one target after trusted human input. */
+  invalidateTargetObservations(threadId: string, tabId: string): void {
+    const targetKey = observationTargetKey(threadId, tabId);
+    this.humanInteractionRevisions.set(
+      targetKey,
+      (this.humanInteractionRevisions.get(targetKey) ?? 0) + 1,
+    );
+    for (const [observationRef, observation] of this.observations) {
+      if (observation.targetKey === targetKey || [...observation.targets.values()].some(
+        (target) => observationTargetKey(target.threadId, target.tabId) === targetKey,
+      )) {
+        this.observations.delete(observationRef);
+      }
+    }
   }
 
   /** Publishes retained browser ownership after a host reconnects. */
@@ -315,6 +353,8 @@ export class BrowserSessionDriver {
 
   /** Clears replay state bound to one browser target after that target closes or is replaced. */
   clearIdempotencyForTarget(threadId: string, tabId: string): void {
+    this.invalidateTargetObservations(threadId, tabId);
+    this.clearHumanInteractionTarget(observationTargetKey(threadId, tabId));
     for (const [key, record] of this.idempotency) {
       if (record.target.threadId === threadId && record.target.tabId === tabId) this.idempotency.delete(key);
     }
@@ -333,16 +373,22 @@ export class BrowserSessionDriver {
 
   /** Settles every tab owned or claimed by one terminated provider session. */
   async releaseProviderSession(providerSessionId: string): Promise<void> {
+    this.clearObservations((observation) => observation.providerSessionId === providerSessionId);
+    this.clearHumanInteractionScopes((scope) => scope.providerSessionId === providerSessionId);
     await this.releaseSessions((session) => session.providerSessionId === providerSessionId);
   }
 
   /** Settles every tab owned or claimed by one deleted thread. */
   async releaseThread(threadId: string): Promise<void> {
+    this.clearObservations((observation) => observation.threadId === threadId);
+    this.clearHumanInteractionScopes((scope) => scope.threadId === threadId);
     await this.releaseSessions((session) => [...session.tabs.values()].some((tab) => tab.target.threadId === threadId));
   }
 
   /** Settles every tab owned or claimed by one deleted workspace. */
   async releaseWorkspace(workspaceId: string): Promise<void> {
+    this.clearObservations((observation) => observation.workspaceId === workspaceId);
+    this.clearHumanInteractionScopes((scope) => scope.workspaceId === workspaceId);
     await this.releaseSessions((session) => session.workspaceId === workspaceId);
   }
 
@@ -392,10 +438,16 @@ export class BrowserSessionDriver {
     const baseObservation = observation ?? {
       ...currentBinding,
       capabilityRevision,
+      humanInteractionRevision: this.currentHumanInteractionRevision(dispatch),
+      targetKey: observationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+      workspaceId: dispatch.request.workspaceId,
+      threadId: dispatch.request.threadId,
+      providerSessionId: dispatch.request.providerSessionId,
+      providerInstanceId: dispatch.request.providerInstanceId,
       observationRevision: 0,
       targets: new Map([[dispatch.target.tabId, dispatch.target]]),
     };
-    if (!observation || observation.hostRevision !== currentBinding.hostRevision || observation.documentRevision !== currentBinding.documentRevision || observation.controlRevision !== currentBinding.controlRevision || observation.capabilityRevision !== currentBinding.capabilityRevision) {
+    if (!observation || observation.hostRevision !== currentBinding.hostRevision || observation.documentRevision !== currentBinding.documentRevision || observation.controlRevision !== currentBinding.controlRevision || observation.capabilityRevision !== currentBinding.capabilityRevision || observation.humanInteractionRevision !== this.currentHumanInteractionRevision(dispatch)) {
       return Promise.resolve(this.actFailure(dispatch, "STALE_TARGET_GENERATION", "Browser observation is stale; inspect before browser_act"));
     }
     this.observations.delete(request.args.observationRef);
@@ -420,7 +472,7 @@ export class BrowserSessionDriver {
         if (drift || !this.observationStillCurrent(dispatch, baseObservation)) {
           outcome = "interrupted";
           stoppingPosition = index;
-          receipts.push({ index, operation: step.operation, status: "interrupted", message: "Browser capability revision changed" });
+          receipts.push({ index, operation: step.operation, status: "interrupted", message: "Browser observation was invalidated" });
           for (let skipped = index + 1; skipped < request.args.steps.length; skipped += 1) receipts.push({ index: skipped, operation: request.args.steps[skipped]!.operation, status: "skipped" });
           break;
         }
@@ -452,7 +504,20 @@ export class BrowserSessionDriver {
         capabilityRevision,
         observationRevision: baseObservation.observationRevision + 1,
       };
-      this.observations.set(nextObservationRef, { hostRevision: finalObservation.hostRevision, documentRevision: finalObservation.documentRevision, controlRevision: finalObservation.controlRevision, capabilityRevision, observationRevision: finalObservation.observationRevision, targets: baseObservation.targets });
+      this.observations.set(nextObservationRef, {
+        hostRevision: finalObservation.hostRevision,
+        documentRevision: finalObservation.documentRevision,
+        controlRevision: finalObservation.controlRevision,
+        capabilityRevision,
+        humanInteractionRevision: baseObservation.humanInteractionRevision,
+        targetKey: baseObservation.targetKey,
+        workspaceId: baseObservation.workspaceId,
+        threadId: baseObservation.threadId,
+        providerSessionId: baseObservation.providerSessionId,
+        providerInstanceId: baseObservation.providerInstanceId,
+        observationRevision: finalObservation.observationRevision,
+        targets: baseObservation.targets,
+      });
       return {
         contractVersion: request.contractVersion,
         requestId: request.requestId,
@@ -610,6 +675,12 @@ export class BrowserSessionDriver {
       documentRevision: finalObservation.documentRevision,
       controlRevision: finalObservation.controlRevision,
       capabilityRevision: finalObservation.capabilityRevision,
+      humanInteractionRevision: observation.humanInteractionRevision,
+      targetKey: observation.targetKey,
+      workspaceId: observation.workspaceId,
+      threadId: observation.threadId,
+      providerSessionId: observation.providerSessionId,
+      providerInstanceId: observation.providerInstanceId,
       observationRevision: finalObservation.observationRevision,
       targets: observation.targets,
     });
@@ -802,6 +873,12 @@ export class BrowserSessionDriver {
         documentRevision: session.current.targetGeneration,
         controlRevision: dispatch.request.expectedControlEpoch,
         capabilityRevision,
+        humanInteractionRevision: this.currentHumanInteractionRevisionForTarget(session.current.threadId, session.current.tabId),
+        targetKey: observationTargetKey(session.current.threadId, session.current.tabId),
+        workspaceId: dispatch.request.workspaceId,
+        threadId: session.current.threadId,
+        providerSessionId: dispatch.request.providerSessionId,
+        providerInstanceId: dispatch.request.providerInstanceId,
         observationRevision: observation.observationRevision + 1,
         targets: new Map(liveTargets),
       });
@@ -925,6 +1002,12 @@ export class BrowserSessionDriver {
       documentRevision: dispatch.target.targetGeneration,
       controlRevision: dispatch.request.expectedControlEpoch,
       capabilityRevision: dispatch.connection?.capabilityRevision ?? this.options.getCapabilityRevision?.() ?? 1,
+      humanInteractionRevision: this.currentHumanInteractionRevision(dispatch),
+      targetKey: observationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+      workspaceId: dispatch.request.workspaceId,
+      threadId: dispatch.request.threadId,
+      providerSessionId: dispatch.request.providerSessionId,
+      providerInstanceId: dispatch.request.providerInstanceId,
       observationRevision: 0,
       targets: new Map((result.tabs ?? [dispatch.target]).map((target) => [target.tabId, target])),
     });
@@ -940,9 +1023,50 @@ export class BrowserSessionDriver {
     };
   }
 
+  private currentHumanInteractionRevision(dispatch: BrowserAutomationHostDispatch): number {
+    this.humanInteractionScopes.set(
+      observationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+      {
+        workspaceId: dispatch.request.workspaceId,
+        threadId: dispatch.target.threadId,
+        providerSessionId: dispatch.request.providerSessionId,
+      },
+    );
+    return this.currentHumanInteractionRevisionForTarget(dispatch.target.threadId, dispatch.target.tabId, dispatch);
+  }
+
+  private currentHumanInteractionRevisionForTarget(
+    threadId: string,
+    tabId: string,
+    dispatch?: BrowserAutomationHostDispatch,
+  ): number {
+    const targetRevision = this.humanInteractionRevisions.get(observationTargetKey(threadId, tabId)) ?? 0;
+    const externalRevision = dispatch ? this.options.getHumanInteractionRevision?.(dispatch) : undefined;
+    return Math.max(targetRevision, externalRevision ?? 0);
+  }
+
   private observationStillCurrent(dispatch: BrowserAutomationHostDispatch, observation: ObservationRecord): boolean {
     const current = this.currentObservationBinding(dispatch, observation.capabilityRevision);
-    return current.hostRevision === observation.hostRevision && current.documentRevision === observation.documentRevision && current.controlRevision === observation.controlRevision && current.capabilityRevision === observation.capabilityRevision;
+    return current.hostRevision === observation.hostRevision && current.documentRevision === observation.documentRevision && current.controlRevision === observation.controlRevision && current.capabilityRevision === observation.capabilityRevision && this.currentHumanInteractionRevision(dispatch) === observation.humanInteractionRevision;
+  }
+
+  private clearObservations(predicate: (observation: ObservationRecord) => boolean): void {
+    for (const [observationRef, observation] of this.observations) {
+      if (predicate(observation)) this.observations.delete(observationRef);
+    }
+  }
+
+  private clearHumanInteractionTarget(targetKey: string): void {
+    this.humanInteractionRevisions.delete(targetKey);
+    this.humanInteractionScopes.delete(targetKey);
+  }
+
+  private clearHumanInteractionScopes(
+    predicate: (scope: HumanInteractionScope) => boolean,
+  ): void {
+    for (const [targetKey, scope] of this.humanInteractionScopes) {
+      if (predicate(scope)) this.clearHumanInteractionTarget(targetKey);
+    }
   }
 
   private revisionDrift(dispatch: BrowserAutomationHostDispatch): BrowserAutomationResponse | null {
@@ -1005,7 +1129,15 @@ export class BrowserSessionDriver {
     const adapter = this.tabAdapter();
     for (const [key, session] of [...this.tabSessions]) {
       if (!predicate(session)) continue;
+      if (session.current) {
+        this.clearHumanInteractionTarget(
+          observationTargetKey(session.current.threadId, session.current.tabId),
+        );
+      }
       for (const tab of session.tabs.values()) {
+        this.clearHumanInteractionTarget(
+          observationTargetKey(tab.target.threadId, tab.target.tabId),
+        );
         if (tab.provenance === "agent-created" && tab.ownership !== "released") {
           await adapter?.close(tab.target);
         }

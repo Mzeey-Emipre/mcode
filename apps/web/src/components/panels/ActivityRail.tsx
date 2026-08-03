@@ -5,7 +5,15 @@ import type {
   ReactNode,
 } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Globe, Maximize2, Minimize2, PanelRight, Plus, X } from "lucide-react";
+import {
+  Globe,
+  Maximize2,
+  Minimize2,
+  MousePointer2,
+  PanelRight,
+  Plus,
+  X,
+} from "lucide-react";
 import type { BrowserTabInfo, BrowserTabSet } from "@mcode/contracts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,7 +34,10 @@ import {
   type PanelTabType,
 } from "@/lib/panel-tabs";
 import type { RightPanelTab, RightPanelTabInstance } from "@/stores/diffStore";
-import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
+import {
+  browserAutomationTargetKey,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
 import { cn } from "@/lib/utils";
 
 /** Legacy task completion payload kept for tab API compatibility. */
@@ -350,6 +361,11 @@ function BrowserPageRailTab({
   onClose: (pageId: string) => void;
 }) {
   const label = pageLabel(page);
+  const agentControlled = useBrowserAutomationStore(
+    (state) =>
+      state.controllers.get(browserAutomationTargetKey(page.threadId, page.id))
+        ?.controller === "agent",
+  );
   return (
     <div className="group relative w-full">
       <Button
@@ -362,7 +378,7 @@ function BrowserPageRailTab({
         // The live page (active, and Browser owns the panel) is the current
         // page in the switcher; expose that beyond the visual lamp.
         aria-current={active && browserActive ? "page" : undefined}
-        aria-label={`Browser page: ${label}`}
+        aria-label={`Browser page: ${label}${agentControlled ? ", agent controls Browser" : ""}`}
         title={expanded ? undefined : label}
         onClick={() => onSelect(page.id)}
         className={cn(
@@ -374,7 +390,14 @@ function BrowserPageRailTab({
               : "text-foreground/70 hover:bg-card/60 hover:text-foreground",
         )}
       >
-        {page.faviconUrl ? (
+        {agentControlled ? (
+          <MousePointer2
+            data-testid="browser-agent-control-indicator"
+            size={17}
+            className="text-amber-500"
+            aria-hidden
+          />
+        ) : page.faviconUrl ? (
           <img src={page.faviconUrl} alt="" width={17} height={17} className="rounded-[3px]" />
         ) : (
           <Globe size={17} />
@@ -661,14 +684,6 @@ export function ActivityRail({
       if (!pointerWithinRef.current && !focusWithin) setExpanded(false);
     }, RAIL_COLLAPSE_DELAY_MS);
   }, [clearCollapseTimer, clearExpandTimer]);
-
-  const incrementPreviewSuppression = usePreviewSuppressionStore((s) => s.increment);
-  const decrementPreviewSuppression = usePreviewSuppressionStore((s) => s.decrement);
-  useEffect(() => {
-    if (!expanded) return;
-    incrementPreviewSuppression();
-    return () => decrementPreviewSuppression();
-  }, [decrementPreviewSuppression, expanded, incrementPreviewSuppression]);
 
   useEffect(
     () => () => {

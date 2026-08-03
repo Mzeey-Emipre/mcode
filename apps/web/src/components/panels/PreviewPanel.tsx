@@ -18,6 +18,7 @@ import {
   Globe,
   GripVertical,
   Link2,
+  MousePointer2,
   Pipette,
   SlidersHorizontal,
   Trash2,
@@ -75,7 +76,7 @@ import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
 import { useWorkspaceThread } from "@/stores/workspace-selectors";
 import {
   browserAutomationTargetKey,
-  interruptBrowserAutomationTarget,
+  invalidateBrowserAutomationTargetObservation,
   selectWarmBrowserTabIds,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
@@ -1899,19 +1900,8 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   const activeAutomationController = automationControllers.get(
     browserAutomationTargetKey(threadId, activeWebviewTabId),
   );
-  const activeAutomationRequest = [...automationActiveRequests.values()].find(
-    ({ dispatch }) =>
-      dispatch.target.threadId === threadId && dispatch.target.tabId === activeWebviewTabId,
-  );
-  const automationPointer = (() => {
-    if (activeAutomationController?.pointer) return activeAutomationController.pointer;
-    const request = activeAutomationRequest?.dispatch.request;
-    if (!request || !("target" in request.args)) return null;
-    const target = request.args.target;
-    return target && "x" in target && "y" in target
-      ? { x: target.x, y: target.y }
-      : null;
-  })();
+  const agentControlsBrowser = activeAutomationController?.controller === "agent";
+  const automationPointer = activeAutomationController?.pointer ?? null;
   const activeWebviewRef = useCallback(
     (): PreviewWebviewHandle | null =>
       webviewRefs.current[activeWebviewTabId] ?? null,
@@ -2608,30 +2598,30 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
             regionBusy={capture.regionBusy}
             focusRequest={omniboxFocusTick}
             onNavigate={(url) => {
-              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveNavigate(url);
             }}
             onGoBack={() => {
-              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveGoBack();
             }}
             onGoForward={() => {
-              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveGoForward();
             }}
             onReload={() => {
-              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveReload();
             }}
             onOpenExternal={effectiveOpenExternal}
             onToggleDesign={onToggleDesignMode}
             onScreenshot={capture.onAddPictureReference}
             onNewPage={() => {
-              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               tabs.newTab();
             }}
             onForceReload={() => {
-              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveForceReload();
             }}
             onRegionCapture={capture.onAddRegionPictureReference}
@@ -2647,19 +2637,6 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
               });
             }}
             suppressPreviewForOverlays={!showWebviewPreview}
-            automationController={activeAutomationController ?? null}
-            automationBusy={activeAutomationRequest !== undefined}
-            onHumanFocus={() => {
-              if (activeAutomationController?.controller !== "agent") return;
-              interruptBrowserAutomationTarget(threadId, activeWebviewTabId, "human-interrupted");
-            }}
-            onStopAutomation={() =>
-              interruptBrowserAutomationTarget(
-                threadId,
-                activeWebviewTabId,
-                "user-stopped",
-              )
-            }
           />
         )}
       </div>
@@ -2772,13 +2749,34 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
             ))}
           </div>
         ) : null}
-        {activeAutomationController?.controller === "agent" && automationPointer ? (
+        {agentControlsBrowser ? (
           <div
-            data-testid="browser-automation-pointer"
-            className="pointer-events-none absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-amber-500 shadow-sm motion-reduce:transition-none"
-            style={{ left: automationPointer.x, top: automationPointer.y }}
-            aria-hidden
-          />
+            data-testid="browser-automation-overlay"
+            className="pointer-events-none absolute inset-0 z-20"
+            style={{
+              boxShadow: [
+                "inset 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent)",
+                "inset 0 0 28px color-mix(in oklab, var(--primary) 12%, transparent)",
+                "0 0 20px color-mix(in oklab, var(--primary) 10%, transparent)",
+              ].join(", "),
+            }}
+          >
+            <span className="sr-only" role="status" aria-live="polite">
+              Agent controls Browser
+            </span>
+            {automationPointer ? (
+              <MousePointer2
+                data-testid="browser-automation-pointer"
+                className="absolute size-5 fill-primary text-primary motion-reduce:transition-none"
+                style={{
+                  left: automationPointer.x,
+                  top: automationPointer.y,
+                  filter: "drop-shadow(0 0 5px color-mix(in oklab, var(--primary) 72%, transparent)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.35))",
+                }}
+                aria-hidden
+              />
+            ) : null}
+          </div>
         ) : null}
         {visiblePageAnnotations.map((annotation) => {
           const targetLabel =
