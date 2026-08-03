@@ -290,7 +290,8 @@ export function registerNavigationHandlers(): void {
       }
 
       const view = ensureView(win, s);
-      view.setBounds(s.lastBounds);
+      const activeTab = s.lastPreviewThreadId ? getActiveTab(s, s.lastPreviewThreadId) : null;
+      applyViewportPresentation(s, s.lastBounds, s.lastPreviewThreadId, activeTab?.id ?? null);
       mountView(win, view);
       logger.info("Preview: user navigated", { url: target });
       setPreviewLoading(win, s, true);

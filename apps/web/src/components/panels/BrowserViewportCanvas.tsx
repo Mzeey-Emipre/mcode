@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { MoveHorizontal } from "lucide-react";
 import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,7 @@ export interface BrowserViewportCanvasProps {
   readonly scale: number;
   readonly children: ReactNode;
   readonly className?: string;
+  readonly onUserViewportChange?: () => void;
 }
 
 interface DragStart {
@@ -64,25 +65,38 @@ function resizeFromKeyboard(axis: DragAxis, size: ViewportSize, event: KeyboardE
 function BrowserViewportDragHandle({
   axis,
   coordinator,
+  state,
   scale,
+  onUserViewportChange,
 }: {
   readonly axis: DragAxis;
   readonly coordinator: ViewportCoordinator;
+  readonly state: ViewportCoordinatorState;
   readonly scale: number;
+  readonly onUserViewportChange?: () => void;
 }) {
   const startRef = useRef<DragStart | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const pendingSizeRef = useRef<ViewportSize | null>(null);
 
   const requestResize = (size: ViewportSize): void => {
+    onUserViewportChange?.();
     coordinator.setMode("responsive");
     void coordinator.requestUserResize(size);
   };
+
+  useEffect(() => () => {
+    if (frameRef.current !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(frameRef.current);
+    }
+  }, []);
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>): void => {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     startRef.current = {
       x: event.clientX,
       y: event.clientY,
-      size: coordinator.snapshot().confirmed,
+      size: state.confirmed,
     };
   };
 
@@ -90,18 +104,37 @@ function BrowserViewportDragHandle({
     const start = startRef.current;
     if (!start) return;
     if (event.currentTarget.hasPointerCapture && !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    requestResize(resizeFromPointer(axis, start, event, scale));
+    const nextSize = resizeFromPointer(axis, start, event, scale);
+    if (typeof requestAnimationFrame !== "function") {
+      requestResize(nextSize);
+      return;
+    }
+    pendingSizeRef.current = nextSize;
+    if (frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      const pending = pendingSizeRef.current;
+      pendingSizeRef.current = null;
+      if (pending) requestResize(pending);
+    });
   };
 
   const onPointerUp = (event: PointerEvent<HTMLDivElement>): void => {
     startRef.current = null;
+    if (frameRef.current !== null) {
+      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    const pending = pendingSizeRef.current;
+    pendingSizeRef.current = null;
+    if (pending) requestResize(pending);
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     }
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    const next = resizeFromKeyboard(axis, coordinator.snapshot().confirmed, event);
+    const next = resizeFromKeyboard(axis, state.confirmed, event);
     if (!next) return;
     event.preventDefault();
     requestResize(next);
@@ -115,7 +148,7 @@ function BrowserViewportDragHandle({
       aria-orientation={axis === "height" ? "horizontal" : "vertical"}
       aria-valuemin={MIN_VIEWPORT_CSS_PX}
       aria-valuemax={MAX_VIEWPORT_CSS_PX}
-      aria-valuenow={coordinator.snapshot().confirmed[axis === "height" ? "height" : "width"]}
+      aria-valuenow={state.confirmed[axis === "height" ? "height" : "width"]}
       className={cn(
         "absolute z-20 flex items-center justify-center text-muted-foreground opacity-60 outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
         axis === "width" && "inset-y-8 -right-4 w-8 cursor-ew-resize",
@@ -146,10 +179,15 @@ export function BrowserViewportCanvas({
   scale,
   children,
   className,
+  onUserViewportChange,
 }: BrowserViewportCanvasProps) {
+  const [currentState, setCurrentState] = useState(state);
+  useEffect(() => setCurrentState(state), [state]);
+  useEffect(() => coordinator.subscribe(setCurrentState), [coordinator]);
+  const responsive = currentState.mode === "responsive";
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
-  const renderedWidth = Math.round(state.confirmed.width * safeScale);
-  const renderedHeight = Math.round(state.confirmed.height * safeScale);
+  const renderedWidth = Math.round(currentState.confirmed.width * safeScale);
+  const renderedHeight = Math.round(currentState.confirmed.height * safeScale);
   const stageWidth = Math.max(renderedWidth + BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX, Number.isFinite(bounds.width) ? bounds.width : 0);
   const stageHeight = Math.max(renderedHeight + BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX, Number.isFinite(bounds.height) ? bounds.height : 0);
 
@@ -157,33 +195,52 @@ export function BrowserViewportCanvas({
     <div
       data-testid="browser-viewport-stage"
       className={cn(
-        "relative h-full min-h-0 bg-muted/30",
-        state.presentation === "actual" ? "overflow-auto" : "overflow-hidden",
+        "relative h-full min-h-0",
+        responsive && "bg-muted/30",
+        responsive && currentState.presentation === "actual" ? "overflow-auto" : "overflow-hidden",
         className,
       )}
     >
       <div
         className="flex min-h-full min-w-full items-center justify-center"
         style={{
-          width: stageWidth,
-          height: stageHeight,
-          padding: BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX / 2,
+          width: responsive ? stageWidth : "100%",
+          height: responsive ? stageHeight : "100%",
+          padding: responsive ? BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX / 2 : 0,
         }}
       >
         <div
           data-testid="responsive-viewport-canvas"
-          className="relative flex-none overflow-visible rounded-md border border-border bg-background shadow-sm"
-          style={{ width: renderedWidth, height: renderedHeight }}
+          className={cn(
+            "relative flex-none",
+            responsive && "overflow-visible rounded-md border border-border bg-background shadow-sm",
+          )}
+          style={{
+            width: responsive ? renderedWidth : "100%",
+            height: responsive ? renderedHeight : "100%",
+          }}
         >
           <div
-            className="absolute left-0 top-0 overflow-hidden rounded-md"
-            style={{ width: state.confirmed.width, height: state.confirmed.height }}
+            className={cn(
+              "absolute left-0 top-0 overflow-hidden",
+              responsive && "rounded-md",
+            )}
+            style={{
+              width: responsive ? currentState.confirmed.width : "100%",
+              height: responsive ? currentState.confirmed.height : "100%",
+              transform: responsive ? `scale(${safeScale})` : undefined,
+              transformOrigin: "top left",
+            }}
           >
             {children}
           </div>
-          <BrowserViewportDragHandle axis="width" coordinator={coordinator} scale={safeScale} />
-          <BrowserViewportDragHandle axis="height" coordinator={coordinator} scale={safeScale} />
-          <BrowserViewportDragHandle axis="both" coordinator={coordinator} scale={safeScale} />
+          {responsive ? (
+            <>
+              <BrowserViewportDragHandle axis="width" coordinator={coordinator} state={currentState} scale={safeScale} onUserViewportChange={onUserViewportChange} />
+              <BrowserViewportDragHandle axis="height" coordinator={coordinator} state={currentState} scale={safeScale} onUserViewportChange={onUserViewportChange} />
+              <BrowserViewportDragHandle axis="both" coordinator={coordinator} state={currentState} scale={safeScale} onUserViewportChange={onUserViewportChange} />
+            </>
+          ) : null}
         </div>
       </div>
     </div>

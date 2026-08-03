@@ -186,7 +186,9 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const viewportByTarget = new Map(state.viewportByTarget);
       if (viewportState) {
         viewportStateByTarget.set(key, viewportState);
-        viewportByTarget.set(key, viewportState.confirmed);
+        if (viewportState.mode === "responsive" || viewportByTarget.has(key)) {
+          viewportByTarget.set(key, viewportState.confirmed);
+        }
       }
       return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
     });
@@ -234,9 +236,10 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       return { lifecycleTabs };
     }),
   releaseThreadTargets: (threadId) => {
-    for (const target of useBrowserAutomationStore.getState().liveTargets.values()) {
+    const current = useBrowserAutomationStore.getState();
+    for (const target of current.liveTargets.values()) {
       if (target.threadId === threadId) {
-        interruptViewportCoordinator(useBrowserAutomationStore.getState().viewportCoordinators.get(
+        interruptViewportCoordinator(current.viewportCoordinators.get(
           browserAutomationTargetKey(target.threadId, target.tabId),
         ));
       }
@@ -272,9 +275,10 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
     });
   },
   releaseWorkspaceTargets: (workspaceId) => {
-    for (const target of useBrowserAutomationStore.getState().liveTargets.values()) {
+    const current = useBrowserAutomationStore.getState();
+    for (const target of current.liveTargets.values()) {
       if (target.workspaceId === workspaceId) {
-        interruptViewportCoordinator(useBrowserAutomationStore.getState().viewportCoordinators.get(
+        interruptViewportCoordinator(current.viewportCoordinators.get(
           browserAutomationTargetKey(target.threadId, target.tabId),
         ));
       }
@@ -417,7 +421,9 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set) =>
       const snapshot = coordinator.snapshot();
       viewportStateByTarget.set(key, snapshot);
       const viewportByTarget = new Map(state.viewportByTarget);
-      viewportByTarget.set(key, snapshot.confirmed);
+      if (snapshot.mode === "responsive" || viewportByTarget.has(key)) {
+        viewportByTarget.set(key, snapshot.confirmed);
+      }
       return { viewportCoordinators, viewportStateByTarget, viewportByTarget };
     }),
   clearViewportCoordinator: (threadId, tabId) =>

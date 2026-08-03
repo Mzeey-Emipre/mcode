@@ -17,6 +17,7 @@ import {
 import { BROWSER_AUTOMATION_MAX_INSPECT_TABS as MAX_LIFECYCLE_TABS } from "@mcode/contracts";
 
 const MAX_IDEMPOTENCY_RECORDS = 256;
+const MAX_OBSERVATION_INVALIDATION_TARGETS = 256;
 const IDEMPOTENCY_TTL_MS = 30 * 60_000;
 const SECRET_TEXT = /\b(password|token|secret|authorization|cookie|credential|session|api[_-]?key)\b\s*[:=]\s*[^,;\s]+/gi;
 const CONTROL_TAKING_OPERATIONS = new Set([
@@ -332,10 +333,17 @@ export class BrowserSessionDriver {
   /** Invalidate Browser observations for a target without changing its control epoch. */
   invalidateObservationsForTarget(threadId: string, tabId: string): void {
     const targetKey = this.observationTargetKey(threadId, tabId);
+    const nextGeneration = (this.observationInvalidationGenerations.get(targetKey) ?? 0) + 1;
+    this.observationInvalidationGenerations.delete(targetKey);
     this.observationInvalidationGenerations.set(
       targetKey,
-      (this.observationInvalidationGenerations.get(targetKey) ?? 0) + 1,
+      nextGeneration,
     );
+    while (this.observationInvalidationGenerations.size > MAX_OBSERVATION_INVALIDATION_TARGETS) {
+      const oldest = this.observationInvalidationGenerations.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.observationInvalidationGenerations.delete(oldest);
+    }
     for (const [observationRef, observation] of this.observations) {
       if ([...observation.targets.values()].some((target) => target.threadId === threadId && target.tabId === tabId)) {
         this.observations.delete(observationRef);

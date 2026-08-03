@@ -1,3 +1,11 @@
+import type {
+  BrowserAutomationViewportPresentationRequest,
+  BrowserAutomationViewportPresentationResult,
+  BrowserAutomationViewportRequest,
+  BrowserAutomationViewportResetRequest,
+  BrowserAutomationViewportResetResult,
+  BrowserAutomationViewportResult,
+} from "@mcode/contracts";
 import {
   DEFAULT_VIEWPORT_SIZE,
   MIN_VIEWPORT_CSS_PX,
@@ -10,6 +18,7 @@ import {
   type ViewportPresentationHostOperation,
   type ViewportPresentationHostResult,
   type ViewportPresentation,
+  type ViewportMode,
   type ViewportSize,
 } from "./viewportCoordinator";
 
@@ -20,88 +29,19 @@ export interface ViewportCoordinatorTarget {
 }
 
 /** Native design-mode result used by the shared viewport host adapter. */
-export type ViewportNativeHostResult =
-  | {
-      readonly ok: true;
-      readonly data: ViewportSize;
-      readonly appliedViewport: ViewportSize;
-      readonly operationId?: string;
-      readonly source?: "user" | "agent";
-      readonly targetGeneration?: number;
-    }
-  | {
-      readonly ok: false;
-      readonly error: string;
-      readonly appliedViewport: ViewportSize | null;
-      readonly operationId?: string;
-      readonly source?: "user" | "agent";
-      readonly targetGeneration?: number;
-  };
+export type ViewportNativeHostResult = BrowserAutomationViewportResult;
 
 /** Native acknowledgement returned after Regular mode removes an explicit viewport. */
-export type ViewportNativeResetResult =
-  | {
-      readonly ok: true;
-      readonly appliedViewport: ViewportSize | null;
-      readonly operationId?: string;
-      readonly source?: "user" | "agent";
-      readonly targetGeneration?: number;
-    }
-  | {
-      readonly ok: false;
-      readonly error: string;
-      readonly appliedViewport?: ViewportSize | null;
-      readonly operationId?: string;
-      readonly source?: "user" | "agent";
-      readonly targetGeneration?: number;
-    };
+export type ViewportNativeResetResult = BrowserAutomationViewportResetResult;
 
 /** Native acknowledgement returned after a Fit or Actual presentation change. */
-export type ViewportNativePresentationResult =
-  | {
-      readonly ok: true;
-      readonly presentation: ViewportPresentation;
-      readonly appliedViewport: ViewportSize;
-      readonly operationId?: string;
-      readonly source?: "user" | "agent";
-      readonly targetGeneration?: number;
-    }
-  | {
-      readonly ok: false;
-      readonly error: string;
-      readonly presentation?: ViewportPresentation;
-      readonly appliedViewport?: ViewportSize | null;
-      readonly operationId?: string;
-      readonly source?: "user" | "agent";
-      readonly targetGeneration?: number;
-    };
+export type ViewportNativePresentationResult = BrowserAutomationViewportPresentationResult;
 
 /** Native design-mode surface required by the viewport host adapter. */
 export interface ViewportNativeHost {
-  setViewport(payload: {
-    readonly widthOverride: number;
-    readonly heightOverride: number;
-    readonly operationId: string;
-    readonly source: "user" | "agent";
-    readonly targetGeneration: number;
-    readonly threadId: string;
-    readonly tabId: string;
-  }): Promise<ViewportNativeHostResult>;
-  setPresentation(payload: {
-    readonly presentation: ViewportPresentation;
-    readonly operationId: string;
-    readonly source: "user" | "agent";
-    readonly targetGeneration: number;
-    readonly threadId: string;
-    readonly tabId: string;
-  }): Promise<ViewportNativePresentationResult>;
-  resetViewport?(payload: {
-    readonly operationId: string;
-    readonly source: "user" | "agent";
-    readonly targetGeneration: number;
-    readonly threadId: string;
-    readonly tabId: string;
-  }): Promise<ViewportNativeResetResult>;
+  setViewport(payload: BrowserAutomationViewportRequest): Promise<ViewportNativeHostResult>;
+  setPresentation(payload: BrowserAutomationViewportPresentationRequest): Promise<ViewportNativePresentationResult>;
+  resetViewport?(payload: BrowserAutomationViewportResetRequest): Promise<ViewportNativeResetResult>;
 }
 
 /** Renderer-owned viewport surface used when no native design host exists. */
@@ -125,6 +65,7 @@ export interface ViewportCoordinatorFactoryOptions {
   readonly target: ViewportCoordinatorTarget;
   readonly targetGeneration: number;
   readonly initial?: ViewportSize;
+  readonly mode?: ViewportMode;
   readonly presentation?: ViewportPresentation;
   readonly nativeHost?: () => ViewportNativeHost | undefined;
   readonly rendererHost?: ViewportRendererHost;
@@ -142,14 +83,48 @@ export interface GetOrCreateViewportCoordinatorOptions extends ViewportCoordinat
   readonly onCreated?: (coordinator: ViewportCoordinator) => void;
 }
 
+/** Wait for a bounded number of browser layout frames without outliving a viewport request. */
+export async function waitForViewportLayout(frameCount = 1, timeoutMs = 250): Promise<void> {
+  if (typeof requestAnimationFrame !== "function") return;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let observedFrames = 0;
+    let frameId: number | null = null;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      globalThis.clearTimeout(timeoutId);
+      if (frameId !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frameId);
+      resolve();
+    };
+    const onFrame = (): void => {
+      observedFrames += 1;
+      if (observedFrames >= frameCount) {
+        finish();
+        return;
+      }
+      frameId = requestAnimationFrame(onFrame);
+    };
+    const timeoutId = globalThis.setTimeout(finish, timeoutMs);
+    frameId = requestAnimationFrame(onFrame);
+  });
+}
+
 function fallbackViewport(options: ViewportCoordinatorFactoryOptions): ViewportSize {
   return options.readConfirmed?.() ?? options.initial ?? DEFAULT_VIEWPORT_SIZE;
+}
+
+function isStaleNativeViewportError(error: string): boolean {
+  return error === "stale-target" ||
+    error === "stale-target-generation" ||
+    error === "stale-operation-generation";
 }
 
 function identityMatches(operation: ViewportHostOperation, result: ViewportNativeHostResult): boolean {
   return result.operationId === operation.operationId &&
     result.source === operation.source &&
-    result.targetGeneration === operation.targetGeneration;
+    result.targetGeneration === operation.targetGeneration &&
+    result.operationGeneration === operation.operationGeneration;
 }
 
 function presentationIdentityMatches(
@@ -158,7 +133,8 @@ function presentationIdentityMatches(
 ): boolean {
   return result.operationId === operation.operationId &&
     result.source === operation.source &&
-    result.targetGeneration === operation.targetGeneration;
+    result.targetGeneration === operation.targetGeneration &&
+    result.operationGeneration === operation.operationGeneration;
 }
 
 function resetIdentityMatches(
@@ -167,7 +143,8 @@ function resetIdentityMatches(
 ): boolean {
   return result.operationId === operation.operationId &&
     result.source === operation.source &&
-    result.targetGeneration === operation.targetGeneration;
+    result.targetGeneration === operation.targetGeneration &&
+    result.operationGeneration === operation.operationGeneration;
 }
 
 function nativePresentationHost(
@@ -180,6 +157,7 @@ function nativePresentationHost(
       operationId: operation.operationId,
       source: operation.source,
       targetGeneration: operation.targetGeneration,
+      operationGeneration: operation.operationGeneration,
       threadId: options.target.threadId,
       tabId: options.target.tabId,
     });
@@ -187,9 +165,7 @@ function nativePresentationHost(
     const appliedPresentation = result.presentation ?? options.presentation ?? "fit";
     if (!result.ok) {
       return {
-        status: result.error === "stale-target" || result.error === "stale-target-generation"
-          ? "stale"
-          : "failed",
+        status: isStaleNativeViewportError(result.error) ? "stale" : "failed",
         applied: appliedPresentation,
         appliedViewport,
         error: result.error,
@@ -223,15 +199,14 @@ function nativeViewportHost(
       operationId: operation.operationId,
       source: operation.source,
       targetGeneration: operation.targetGeneration,
+      operationGeneration: operation.operationGeneration,
       threadId: options.target.threadId,
       tabId: options.target.tabId,
     });
     const applied = result.appliedViewport ?? fallback;
     if (!result.ok) {
       return {
-        status: result.error === "stale-target" || result.error === "stale-target-generation"
-          ? "stale"
-          : "failed",
+        status: isStaleNativeViewportError(result.error) ? "stale" : "failed",
         applied,
         error: result.error,
       };
@@ -270,14 +245,13 @@ function nativeResetHost(
       operationId: operation.operationId,
       source: operation.source,
       targetGeneration: operation.targetGeneration,
+      operationGeneration: operation.operationGeneration,
       threadId: options.target.threadId,
       tabId: options.target.tabId,
     });
     if (!result.ok) {
       return {
-        status: result.error === "stale-target" || result.error === "stale-target-generation"
-          ? "stale"
-          : "failed",
+        status: isStaleNativeViewportError(result.error) ? "stale" : "failed",
         applied: result.appliedViewport ?? null,
         error: result.error,
       };
@@ -383,6 +357,7 @@ export function createViewportCoordinator(
 ): ViewportCoordinator {
   const coordinator: ViewportCoordinator = new ViewportCoordinator({
     initial: options.initial,
+    mode: options.mode,
     presentation: options.presentation,
     targetGeneration: options.targetGeneration,
     operationId: options.operationId,
@@ -418,7 +393,10 @@ export function createViewportCoordinator(
   return coordinator;
 }
 
-/** Reuse a target coordinator or register one created by the shared factory. */
+/**
+ * Reuse a target coordinator or register one created by the shared factory.
+ * Reuse updates only target generation; the initial operation and host closures remain authoritative.
+ */
 export function getOrCreateViewportCoordinator(
   options: GetOrCreateViewportCoordinatorOptions,
 ): ViewportCoordinator {

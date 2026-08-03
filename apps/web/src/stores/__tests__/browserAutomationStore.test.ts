@@ -201,7 +201,7 @@ describe("browser automation renderer scope", () => {
     store.unregisterTarget(threadId, tabId);
   });
 
-  it("interrupts a detached viewport host and restores only confirmed state on remount", async () => {
+  it("interrupts a detached viewport host without creating a Regular-mode viewport on remount", async () => {
     const workspaceId = "workspace-viewport-remount";
     const threadId = "thread-viewport-remount";
     const tabId = "tab-viewport-remount";
@@ -221,16 +221,17 @@ describe("browser automation renderer scope", () => {
     const pending = coordinator.requestUserResize({ width: 900, height: 700 });
     store.detachTarget(threadId, tabId);
     expect(await pending).toMatchObject({ status: "stale", applied: { width: 1280, height: 800 } });
-    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({ width: 1280, height: 800 });
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
+    expect(useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed).toEqual({ width: 1280, height: 800 });
 
     store.registerTarget(workspaceId, threadId, tabId);
     const remounted = useBrowserAutomationStore.getState().liveTargets.get(key)!;
     expect(remounted.revision).toBeGreaterThan(target.revision);
-    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({ width: 1280, height: 800 });
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
 
     resolveHost({ status: "applied", applied: { width: 900, height: 700 } });
     await Promise.resolve();
-    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({ width: 1280, height: 800 });
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
 
     store.unregisterTarget(threadId, tabId);
   });
@@ -278,17 +279,11 @@ describe("browser automation renderer scope", () => {
     store.detachTarget(threadId, tabId);
     store.registerTarget(workspaceId, threadId, tabId);
     lateWrite();
-    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({
-      width: 1280,
-      height: 800,
-    });
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
 
     releaseLayout();
     await pending;
-    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({
-      width: 1280,
-      height: 800,
-    });
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
 
     store.unregisterTarget(threadId, tabId);
   });

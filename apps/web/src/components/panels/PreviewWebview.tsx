@@ -7,14 +7,17 @@ import {
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
 import {
+  browserAutomationTargetKey,
   invalidateBrowserAutomationObservationTarget,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 import {
   DEFAULT_VIEWPORT_SIZE,
-  type ViewportCoordinator,
 } from "@/services/browser-automation/viewportCoordinator";
-import { getOrCreateViewportCoordinator } from "@/services/browser-automation/viewportCoordinatorFactory";
+import {
+  getOrCreateViewportCoordinator,
+  waitForViewportLayout,
+} from "@/services/browser-automation/viewportCoordinatorFactory";
 
 const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
 const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
@@ -37,8 +40,6 @@ export interface PreviewWebviewProps {
   readonly src: string;
   readonly className?: string;
   readonly viewport?: { readonly width: number; readonly height: number };
-  /** Visual scale applied by Fit mode; CSS viewport dimensions remain unchanged. */
-  readonly presentationScale?: number;
   readonly onPageStatus?: (status: PreviewPageStatus) => void;
   readonly onNavigationStateChange?: (state: {
     canGoBack: boolean;
@@ -109,11 +110,6 @@ function isExpectedNavigationAbort(error: unknown): boolean {
   return candidate.code === "ERR_ABORTED" || candidate.errno === -3;
 }
 
-async function waitForViewportLayout(): Promise<void> {
-  if (typeof requestAnimationFrame !== "function") return;
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-}
-
 export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewProps>(
   function PreviewWebview(
     {
@@ -123,7 +119,6 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       src,
       className,
       viewport,
-      presentationScale = 1,
       onPageStatus,
       onNavigationStateChange,
     },
@@ -134,21 +129,17 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
   const pendingReloadRef = useRef(false);
   const faviconRef = useRef<string | null>(null);
   const initialViewportRef = useRef(viewport ?? DEFAULT_VIEWPORT_SIZE);
-  const coordinatorRef = useRef<ViewportCoordinator | null>(null);
-
   const ensureViewportCoordinator = useCallback((targetGeneration: number) => {
-    const key = JSON.stringify([threadId, tabId]);
-    const existing = coordinatorRef.current;
-    if (existing) {
-      existing.setTargetGeneration(targetGeneration);
-      return existing;
-    }
+    const key = browserAutomationTargetKey(threadId, tabId);
+    const store = useBrowserAutomationStore.getState();
+    const existing = store.viewportCoordinators.get(key);
     const coordinator = getOrCreateViewportCoordinator({
-      existing: useBrowserAutomationStore.getState().viewportCoordinators.get(key),
+      existing,
       target: { threadId, tabId },
-      initial: useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
-        useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? initialViewportRef.current,
-      presentation: useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.presentation,
+      initial: store.viewportStateByTarget.get(key)?.confirmed ??
+        store.viewportByTarget.get(key) ?? initialViewportRef.current,
+      mode: store.viewportStateByTarget.get(key)?.mode,
+      presentation: store.viewportStateByTarget.get(key)?.presentation,
       targetGeneration,
       nativeHost: () => window.desktopBridge?.preview?.design,
       rendererHost: {
@@ -189,7 +180,6 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         created,
       ),
     });
-    coordinatorRef.current = coordinator;
     return coordinator;
   }, [tabId, threadId]);
 
@@ -341,7 +331,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       domReadyRef.current = true;
       useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
       const revision = useBrowserAutomationStore.getState().liveTargets.get(
-        JSON.stringify([threadId, tabId]),
+        browserAutomationTargetKey(threadId, tabId),
       )?.revision ?? 1;
       ensureViewportCoordinator(revision);
       const onLoad = () => {
@@ -350,7 +340,6 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       el.addEventListener("load", onLoad);
       return () => {
         el.removeEventListener("load", onLoad);
-        coordinatorRef.current = null;
         useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
       };
     }
@@ -370,7 +359,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
             if (cancelled || !result.ok) return;
             useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
             const revision = useBrowserAutomationStore.getState().liveTargets.get(
-              JSON.stringify([threadId, tabId]),
+              browserAutomationTargetKey(threadId, tabId),
             )?.revision ?? 1;
             ensureViewportCoordinator(revision);
           });
@@ -388,7 +377,6 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       } catch {
         /* webview gone */
       }
-      coordinatorRef.current = null;
       useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
       void window.desktopBridge?.preview?.releaseWebview?.({ threadId, tabId });
     };
@@ -499,8 +487,6 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         height: viewport?.height ?? "100%",
         minWidth: 0,
         minHeight: 0,
-        transform: presentationScale === 1 ? undefined : `scale(${presentationScale})`,
-        transformOrigin: "top left",
       }}
     />
   );

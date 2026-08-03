@@ -84,6 +84,7 @@ import {
   BrowserSessionDriver,
   type BrowserSessionLifecycleTab,
 } from "@/services/browser-automation/browserSessionDriver";
+import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -343,6 +344,65 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
     driverExecute.mockRestore();
     execute.mockReset();
+  });
+
+  it("returns a failure when a completed act cannot restore the user viewport", async () => {
+    const coordinator = new ViewportCoordinator({
+      apply: async (operation) => ({ status: "applied", applied: operation.requested }),
+      reset: async () => ({
+        status: "failed",
+        applied: { width: 1_200, height: 800 },
+        error: "native reset failed",
+      }),
+      initial: { width: 800, height: 600 },
+      targetGeneration: 1,
+    });
+    await coordinator.requestAgentResize({ width: 1_200, height: 800 });
+    useBrowserAutomationStore.getState().setViewportCoordinator("thread-1", "tab-1", coordinator);
+    useBrowserAutomationStore.getState().setViewportState(
+      "thread-1",
+      "tab-1",
+      coordinator.snapshot(),
+      coordinator,
+    );
+
+    const actDispatch = {
+      ...dispatch(1, 92),
+      request: {
+        ...dispatch(1, 92).request,
+        operation: "act",
+        args: {
+          idempotencyKey: "restore-failure",
+          observationRef: "observation-1",
+          deadlineMs: 1_000,
+          steps: [{ operation: "click", target: { cssSelector: "#button" } }],
+        },
+      },
+    } as BrowserAutomationHostDispatch;
+    const completedResponse = {
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: actDispatch.request.requestId,
+      sequence: actDispatch.request.sequence,
+      ok: true,
+      result: { operation: "act", outcome: "completed" },
+    } as unknown as BrowserAutomationResponse;
+    const driverExecute = vi.spyOn(BrowserSessionDriver.prototype, "execute")
+      .mockResolvedValue(completedResponse);
+
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: actDispatch }));
+
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest.mock.calls[0]?.[2]).toMatchObject({
+      ok: false,
+      error: { code: "INTERNAL_ERROR", message: "native reset failed" },
+    });
+    expect(coordinator.snapshot()).toMatchObject({ mode: "responsive", agentActive: false });
+
+    view.unmount();
+    driverExecute.mockRestore();
   });
 
   it("settles driver-owned tabs when the broker releases a provider session", async () => {

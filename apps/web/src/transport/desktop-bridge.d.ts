@@ -8,6 +8,10 @@ import type {
   BrowserTabSet,
   BrowserAutomationViewportPresentationRequest,
   BrowserAutomationViewportPresentationResult,
+  BrowserAutomationViewportRequest,
+  BrowserAutomationViewportResult,
+  BrowserAutomationViewportResetRequest,
+  BrowserAutomationViewportResetResult,
   McodeBrowserCapture,
   PreviewPageStatus,
 } from "@mcode/contracts";
@@ -257,66 +261,11 @@ export interface PreviewAutomationBridge {
 }
 
 interface PreviewDesignBridge {
-  setViewport(payload: {
-    widthOverride?: number;
-    heightOverride?: number;
-    operationId?: string;
-    source?: "user" | "agent";
-    targetGeneration?: number;
-    threadId?: string;
-    tabId?: string;
-  }): Promise<
-    | {
-        ok: true;
-        data: { width: number; height: number };
-        operationId?: string;
-        source?: "user" | "agent";
-        targetGeneration?: number;
-        threadId?: string;
-        tabId?: string;
-        appliedViewport: { width: number; height: number };
-      }
-    | {
-        ok: false;
-        error: string;
-        operationId?: string;
-        source?: "user" | "agent";
-        targetGeneration?: number;
-        threadId?: string;
-        tabId?: string;
-        appliedViewport: { width: number; height: number } | null;
-      }
-  >;
+  setViewport(payload: BrowserAutomationViewportRequest): Promise<BrowserAutomationViewportResult>;
   setPresentation(
     payload: BrowserAutomationViewportPresentationRequest,
   ): Promise<BrowserAutomationViewportPresentationResult>;
-  resetViewport(payload?: {
-    operationId?: string;
-    source?: "user" | "agent";
-    targetGeneration?: number;
-    threadId?: string;
-    tabId?: string;
-  }): Promise<
-    | {
-        ok: true;
-        appliedViewport: { width: number; height: number } | null;
-        operationId?: string;
-        source?: "user" | "agent";
-        targetGeneration?: number;
-        threadId?: string;
-        tabId?: string;
-      }
-    | {
-        ok: false;
-        error: string;
-        appliedViewport?: { width: number; height: number } | null;
-        operationId?: string;
-        source?: "user" | "agent";
-        targetGeneration?: number;
-        threadId?: string;
-        tabId?: string;
-      }
-  >;
+  resetViewport(payload: BrowserAutomationViewportResetRequest): Promise<BrowserAutomationViewportResetResult>;
   setInspect(
     enabled: boolean,
   ): Promise<{ ok: true } | { ok: false; error: string }>;

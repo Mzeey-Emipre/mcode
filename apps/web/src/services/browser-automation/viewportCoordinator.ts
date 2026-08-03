@@ -1,8 +1,13 @@
+import {
+  BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+  BROWSER_AUTOMATION_MIN_VIEWPORT_PX,
+} from "@mcode/contracts";
+
 /** Lower bound for a renderer CSS viewport dimension. */
-export const MIN_VIEWPORT_CSS_PX = 240;
+export const MIN_VIEWPORT_CSS_PX = BROWSER_AUTOMATION_MIN_VIEWPORT_PX;
 
 /** Upper bound for a renderer CSS viewport dimension. */
-export const MAX_VIEWPORT_CSS_PX = 2_560;
+export const MAX_VIEWPORT_CSS_PX = BROWSER_AUTOMATION_MAX_VIEWPORT_PX;
 
 /** Initial viewport used when a target has no confirmed user size yet. */
 export const DEFAULT_VIEWPORT_SIZE = Object.freeze({ width: 1_280, height: 800 });
@@ -44,6 +49,7 @@ export interface ViewportHostOperation {
   readonly operationId: string;
   readonly source: ViewportSource;
   readonly targetGeneration: number;
+  readonly operationGeneration: number;
   readonly requested: ViewportSize;
 }
 
@@ -52,6 +58,7 @@ export interface ViewportHostResetOperation {
   readonly operationId: string;
   readonly source: ViewportSource;
   readonly targetGeneration: number;
+  readonly operationGeneration: number;
   readonly requested: ViewportSize;
 }
 
@@ -74,6 +81,7 @@ export interface ViewportPresentationHostOperation {
   readonly operationId: string;
   readonly source: ViewportSource;
   readonly targetGeneration: number;
+  readonly operationGeneration: number;
   readonly requested: ViewportSize;
   readonly presentation: ViewportPresentation;
 }
@@ -91,6 +99,7 @@ export interface ViewportApplyResult {
   readonly operationId: string;
   readonly source: ViewportSource;
   readonly targetGeneration: number;
+  readonly operationGeneration: number;
   readonly requested: ViewportSize;
   readonly applied: ViewportSize;
   readonly status: "applied" | "clamped" | "stale" | "failed" | "superseded";
@@ -102,6 +111,7 @@ export interface ViewportPresentationApplyResult {
   readonly operationId: string;
   readonly source: ViewportSource;
   readonly targetGeneration: number;
+  readonly operationGeneration: number;
   readonly requested: ViewportPresentation;
   readonly applied: ViewportPresentation;
   readonly appliedViewport: ViewportSize | null;
@@ -289,16 +299,21 @@ export class ViewportCoordinator {
 
   /** Select a user-owned mode while preserving any active agent control. */
   public setUserMode(mode: ViewportMode): ViewportCoordinatorState {
-    this.mode = mode;
     this.userMode = mode;
+    if (!this.agentActive) this.mode = mode;
     return this.notify();
   }
 
   /** Select a user-owned mode and reconcile the active host with that choice. */
   public requestUserMode(mode: ViewportMode): Promise<ViewportApplyResult | null> {
     if (mode === "responsive" && this.mode === "responsive") return Promise.resolve(null);
-    this.setUserMode(mode);
-    if (mode === "responsive") return this.requestResize("user", this.userConfirmed, {});
+    this.userMode = mode;
+    if (mode === "responsive") {
+      this.mode = mode;
+      this.notify();
+      return this.requestResize("user", this.userConfirmed, {});
+    }
+    this.notify();
     return this.requestReset("user", {});
   }
 
@@ -308,6 +323,7 @@ export class ViewportCoordinator {
     const descriptor = {
       source: "user" as const,
       targetGeneration: this.targetGeneration,
+      operationGeneration: sequence,
       requested: { ...this.confirmed },
     };
     const operation: ViewportPresentationHostOperation = {
@@ -365,7 +381,6 @@ export class ViewportCoordinator {
     identity: ViewportOperationIdentity = {},
   ): Promise<ViewportApplyResult> {
     this.userMode = this.mode;
-    this.interrupted = false;
     return this.requestResize("user", size, identity);
   }
 
@@ -375,7 +390,6 @@ export class ViewportCoordinator {
     identity: ViewportOperationIdentity = {},
   ): Promise<ViewportApplyResult> {
     this.agentActive = true;
-    this.interrupted = false;
     this.mode = "responsive";
     this.notify();
     return this.requestResize("agent", size, identity);
@@ -390,18 +404,25 @@ export class ViewportCoordinator {
   }
 
   /** Restore the latest confirmed user viewport after a normal agent completion. */
-  public completeAgent(): Promise<ViewportApplyResult | null> {
+  public completeAgent(identity: ViewportOperationIdentity = {}): Promise<ViewportApplyResult | null> {
     if (!this.agentActive) return Promise.resolve(null);
     this.agentActive = false;
-    this.mode = this.userMode;
+    if (this.userMode === "regular") {
+      this.notify();
+      return this.requestReset("user", identity);
+    }
+    this.mode = "responsive";
     this.notify();
-    if (this.userMode === "regular") return this.requestReset("user", {});
     if (sameSize(this.confirmed, this.userConfirmed)) return Promise.resolve(null);
-    return this.requestResize("user", this.userConfirmed, {});
+    return this.requestResize("user", this.userConfirmed, identity);
   }
 
   /** Invalidate pending operations while preserving the last host-confirmed state. */
   public interrupt(): void {
+    const reconcileHost = this.agentActive || this.pending?.source === "agent" ||
+      this.pendingReset?.operation.source === "agent" ||
+      this.pendingPresentation?.operation.source === "agent";
+    const confirmedBeforeInterruption = { ...this.confirmed };
     this.interrupted = true;
     this.agentActive = false;
     this.settlePending("stale");
@@ -409,6 +430,7 @@ export class ViewportCoordinator {
     this.settlePendingPresentation("stale");
     this.flushSuperseded("stale");
     this.notify();
+    if (reconcileHost) void this.requestResize("user", confirmedBeforeInterruption, {});
   }
 
   private requestResize(
@@ -416,12 +438,13 @@ export class ViewportCoordinator {
     input: ViewportSize,
     identity: ViewportOperationIdentity,
   ): Promise<ViewportApplyResult> {
+    this.interrupted = false;
     const requested = clampViewportSize(input);
     const sequence = ++this.sequence;
     const targetGeneration = identity.targetGeneration === undefined
       ? this.targetGeneration
       : Math.max(0, Math.trunc(identity.targetGeneration));
-    const descriptor = { source, targetGeneration, requested };
+    const descriptor = { source, targetGeneration, operationGeneration: sequence, requested };
     const operation: ViewportHostOperation = {
       ...descriptor,
       operationId: identity.operationId ?? this.operationIdFactory(descriptor, sequence),
@@ -448,12 +471,13 @@ export class ViewportCoordinator {
     source: ViewportSource,
     identity: ViewportOperationIdentity,
   ): Promise<ViewportApplyResult> {
+    this.interrupted = false;
     const sequence = ++this.sequence;
     const targetGeneration = identity.targetGeneration === undefined
       ? this.targetGeneration
       : Math.max(0, Math.trunc(identity.targetGeneration));
     const requested = { ...this.userConfirmed };
-    const descriptor = { source, targetGeneration, requested };
+    const descriptor = { source, targetGeneration, operationGeneration: sequence, requested };
     const operation: ViewportHostResetOperation = {
       ...descriptor,
       operationId: identity.operationId ?? this.operationIdFactory(descriptor, sequence),
@@ -472,6 +496,7 @@ export class ViewportCoordinator {
           operationId: operation.operationId,
           source,
           targetGeneration,
+          operationGeneration: operation.operationGeneration,
           requested,
           applied: { ...this.confirmed },
           status: "failed",
@@ -503,6 +528,7 @@ export class ViewportCoordinator {
         operationId: pending.operation.operationId,
         source: pending.source,
         targetGeneration: pending.operation.targetGeneration,
+        operationGeneration: pending.operation.operationGeneration,
         requested: pending.requested,
         applied: { ...this.confirmed },
         status: this.interrupted ? "stale" : "superseded",
@@ -516,6 +542,7 @@ export class ViewportCoordinator {
         operationId: pending.operation.operationId,
         source: pending.source,
         targetGeneration: pending.operation.targetGeneration,
+        operationGeneration: pending.operation.operationGeneration,
         requested: pending.requested,
         applied: { ...applied },
         status: "stale",
@@ -531,6 +558,7 @@ export class ViewportCoordinator {
         operationId: pending.operation.operationId,
         source: pending.source,
         targetGeneration: pending.operation.targetGeneration,
+        operationGeneration: pending.operation.operationGeneration,
         requested: pending.requested,
         applied: { ...applied },
         status: "failed",
@@ -550,6 +578,7 @@ export class ViewportCoordinator {
       operationId: pending.operation.operationId,
       source: pending.source,
       targetGeneration: pending.operation.targetGeneration,
+      operationGeneration: pending.operation.operationGeneration,
       requested: pending.requested,
       applied,
       status: !sameSize(applied, pending.requested) || pending.inputWasClamped ? "clamped" : "applied",
@@ -577,6 +606,7 @@ export class ViewportCoordinator {
         operationId: pending.operation.operationId,
         source: pending.operation.source,
         targetGeneration: pending.operation.targetGeneration,
+        operationGeneration: pending.operation.operationGeneration,
         requested: pending.operation.requested,
         applied: { ...this.confirmed },
         status: this.interrupted ? "stale" : "superseded",
@@ -590,6 +620,7 @@ export class ViewportCoordinator {
         operationId: pending.operation.operationId,
         source: pending.operation.source,
         targetGeneration: pending.operation.targetGeneration,
+        operationGeneration: pending.operation.operationGeneration,
         requested: pending.operation.requested,
         applied: hostResult.applied ?? { ...this.confirmed },
         status: hostResult.status,
@@ -600,10 +631,12 @@ export class ViewportCoordinator {
       return;
     }
 
+    this.mode = "regular";
     this.resolveReset(pending, {
       operationId: pending.operation.operationId,
       source: pending.operation.source,
       targetGeneration: pending.operation.targetGeneration,
+      operationGeneration: pending.operation.operationGeneration,
       requested: pending.operation.requested,
       applied: hostResult.applied ?? { ...this.confirmed },
       status: "applied",
@@ -686,6 +719,7 @@ export class ViewportCoordinator {
       operationId: pending.operation.operationId,
       source: pending.source,
       targetGeneration: pending.operation.targetGeneration,
+      operationGeneration: pending.operation.operationGeneration,
       requested: pending.requested,
       applied: { ...this.confirmed },
       status,
@@ -706,6 +740,7 @@ export class ViewportCoordinator {
       operationId: pending.operation.operationId,
       source: pending.operation.source,
       targetGeneration: pending.operation.targetGeneration,
+      operationGeneration: pending.operation.operationGeneration,
       requested: pending.operation.requested,
       applied: { ...this.confirmed },
       status,
@@ -734,6 +769,7 @@ export class ViewportCoordinator {
         operationId: item.operation.operationId,
         source: item.source,
         targetGeneration: item.operation.targetGeneration,
+        operationGeneration: item.operation.operationGeneration,
         requested: item.requested,
         applied: { ...this.confirmed },
         status,
@@ -745,6 +781,7 @@ export class ViewportCoordinator {
         operationId: item.operation.operationId,
         source: item.operation.source,
         targetGeneration: item.operation.targetGeneration,
+        operationGeneration: item.operation.operationGeneration,
         requested: item.operation.requested,
         applied: { ...this.confirmed },
         status,
@@ -784,6 +821,7 @@ export class ViewportCoordinator {
       operationId: operation.operationId,
       source: operation.source,
       targetGeneration: operation.targetGeneration,
+      operationGeneration: operation.operationGeneration,
       requested: operation.presentation,
       applied,
       appliedViewport,

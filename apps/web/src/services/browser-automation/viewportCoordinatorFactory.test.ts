@@ -8,6 +8,7 @@ describe("viewport coordinator factory", () => {
       readonly operationId: string;
       readonly source: "user" | "agent";
       readonly targetGeneration: number;
+      readonly operationGeneration: number;
       readonly threadId: string;
       readonly tabId: string;
     }) => ({
@@ -17,6 +18,9 @@ describe("viewport coordinator factory", () => {
       operationId: payload.operationId,
       source: payload.source,
       targetGeneration: payload.targetGeneration,
+      operationGeneration: payload.operationGeneration,
+      threadId: payload.threadId,
+      tabId: payload.tabId,
     }));
     const coordinator = createViewportCoordinator({
       target: { threadId: "thread-1", tabId: "tab-1" },
@@ -30,6 +34,9 @@ describe("viewport coordinator factory", () => {
           operationId: payload.operationId,
           source: payload.source,
           targetGeneration: payload.targetGeneration,
+          operationGeneration: payload.operationGeneration,
+          threadId: payload.threadId,
+          tabId: payload.tabId,
         })),
         setPresentation,
       }),
@@ -89,6 +96,9 @@ describe("viewport coordinator factory", () => {
       readonly operationId: string;
       readonly source: "user" | "agent";
       readonly targetGeneration: number;
+      readonly operationGeneration: number;
+      readonly threadId: string;
+      readonly tabId: string;
     }) => ({
       ok: true as const,
       presentation: "fit" as const,
@@ -96,6 +106,9 @@ describe("viewport coordinator factory", () => {
       operationId: `${payload.operationId}-stale`,
       source: payload.source,
       targetGeneration: payload.targetGeneration,
+      operationGeneration: payload.operationGeneration,
+      threadId: payload.threadId,
+      tabId: payload.tabId,
     }));
     const coordinator = createViewportCoordinator({
       target: { threadId: "thread-1", tabId: "tab-1" },
@@ -129,6 +142,9 @@ describe("viewport coordinator factory", () => {
       readonly operationId: string;
       readonly source: "user" | "agent";
       readonly targetGeneration: number;
+      readonly operationGeneration: number;
+      readonly threadId: string;
+      readonly tabId: string;
     }) => ({
       ok: true as const,
       data: { width: payload.widthOverride, height: payload.heightOverride },
@@ -136,17 +152,26 @@ describe("viewport coordinator factory", () => {
       operationId: payload.operationId,
       source: payload.source,
       targetGeneration: payload.targetGeneration,
+      operationGeneration: payload.operationGeneration,
+      threadId: payload.threadId,
+      tabId: payload.tabId,
     }));
     const resetViewport = vi.fn(async (payload: {
       readonly operationId: string;
       readonly source: "user" | "agent";
       readonly targetGeneration: number;
+      readonly operationGeneration: number;
+      readonly threadId: string;
+      readonly tabId: string;
     }) => ({
       ok: true as const,
       appliedViewport: null,
       operationId: payload.operationId,
       source: payload.source,
       targetGeneration: payload.targetGeneration,
+      operationGeneration: payload.operationGeneration,
+      threadId: payload.threadId,
+      tabId: payload.tabId,
     }));
     const coordinator = createViewportCoordinator({
       target: { threadId: "thread-1", tabId: "tab-1" },

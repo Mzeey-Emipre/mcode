@@ -7,38 +7,13 @@
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 import type {
+  BrowserAutomationViewportRequest,
+  BrowserAutomationViewportResult,
   BrowserAutomationViewportPresentationRequest,
   BrowserAutomationViewportPresentationResult,
+  BrowserAutomationViewportResetRequest,
+  BrowserAutomationViewportResetResult,
 } from "@mcode/contracts";
-
-type BrowserAutomationViewportResetPayload = {
-  operationId?: string;
-  source?: "user" | "agent";
-  targetGeneration?: number;
-  threadId?: string;
-  tabId?: string;
-};
-
-type BrowserAutomationViewportResetResult =
-  | {
-      ok: true;
-      appliedViewport: { width: number; height: number } | null;
-      operationId?: string;
-      source?: "user" | "agent";
-      targetGeneration?: number;
-      threadId?: string;
-      tabId?: string;
-    }
-  | {
-      ok: false;
-      error: string;
-      appliedViewport?: { width: number; height: number } | null;
-      operationId?: string;
-      source?: "user" | "agent";
-      targetGeneration?: number;
-      threadId?: string;
-      tabId?: string;
-    };
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Platform facts and allowlisted native window actions for the custom title bar. */
@@ -408,15 +383,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
     /** Phase G design mode: apply explicit CSS viewport dimensions. */
     design: {
-      setViewport(payload: {
-        widthOverride?: number;
-        heightOverride?: number;
-        operationId?: string;
-        source?: "user" | "agent";
-        targetGeneration?: number;
-        threadId?: string;
-        tabId?: string;
-      }): Promise<unknown> {
+      setViewport(
+        payload: BrowserAutomationViewportRequest,
+      ): Promise<BrowserAutomationViewportResult> {
         return ipcRenderer.invoke("preview:design.set-viewport", payload);
       },
       setPresentation(
@@ -425,7 +394,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         return ipcRenderer.invoke("preview:design.set-presentation", payload);
       },
       resetViewport(
-        payload?: BrowserAutomationViewportResetPayload,
+        payload: BrowserAutomationViewportResetRequest,
       ): Promise<BrowserAutomationViewportResetResult> {
         return ipcRenderer.invoke("preview:design.reset-viewport", payload);
       },

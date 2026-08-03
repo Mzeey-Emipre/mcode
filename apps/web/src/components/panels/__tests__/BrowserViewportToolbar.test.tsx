@@ -101,4 +101,31 @@ describe("BrowserViewportToolbar", () => {
     await user.click(screen.getByRole("button", { name: "Close viewport toolbar" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("toggles each controlled menu from its trigger", async () => {
+    const user = userEvent.setup();
+    const coordinator = createCoordinator(async (operation) => ({
+      status: "applied",
+      applied: operation.requested,
+    }));
+    render(
+      <BrowserViewportToolbar
+        coordinator={coordinator}
+        state={coordinator.snapshot()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const presetTrigger = screen.getByRole("button", { name: "Viewport preset" });
+    await user.click(presetTrigger);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await user.click(presetTrigger);
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+
+    const scaleTrigger = screen.getByRole("button", { name: "Viewport scale and presentation" });
+    await user.click(scaleTrigger);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await user.click(scaleTrigger);
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+  });
 });

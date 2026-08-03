@@ -106,6 +106,7 @@ describe("ViewportCoordinator", () => {
   it("restores the latest user-selected mode after agent completion", async () => {
     const coordinator = new ViewportCoordinator({
       apply: async (operation) => ({ status: "applied", applied: operation.requested }),
+      reset: async () => ({ status: "applied", applied: null }),
       initial: { width: 800, height: 600 },
       targetGeneration: 1,
     });
@@ -114,7 +115,7 @@ describe("ViewportCoordinator", () => {
     coordinator.setUserMode("regular");
 
     expect(coordinator.snapshot().agentActive).toBe(true);
-    expect(coordinator.snapshot().mode).toBe("regular");
+    expect(coordinator.snapshot().mode).toBe("responsive");
     await coordinator.completeAgent();
     expect(coordinator.snapshot().mode).toBe("regular");
   });
@@ -185,10 +186,31 @@ describe("ViewportCoordinator", () => {
     });
   });
 
+  it("keeps Responsive mode when the host rejects a Regular reset", async () => {
+    const coordinator = new ViewportCoordinator({
+      apply: async (operation) => ({ status: "applied", applied: operation.requested }),
+      reset: async () => ({ status: "failed", applied: { width: 960, height: 640 } }),
+      initial: { width: 960, height: 640 },
+      mode: "responsive",
+      targetGeneration: 1,
+    });
+
+    const result = await coordinator.requestUserMode("regular");
+
+    expect(result).toMatchObject({ status: "failed", applied: { width: 960, height: 640 } });
+    expect(coordinator.snapshot().mode).toBe("responsive");
+  });
+
   it("preserves the confirmed state and rejects late agent acknowledgements after interruption", async () => {
     const pending = deferred<ViewportHostResult>();
+    const operations: ViewportHostOperation[] = [];
     const coordinator = new ViewportCoordinator({
-      apply: () => pending.promise,
+      apply: (hostOperation) => {
+        operations.push(hostOperation);
+        return operations.length === 1
+          ? pending.promise
+          : Promise.resolve({ status: "applied", applied: hostOperation.requested });
+      },
       initial: { width: 800, height: 600 },
       targetGeneration: 2,
     });
@@ -201,6 +223,13 @@ describe("ViewportCoordinator", () => {
     expect(result.status).toBe("stale");
     expect(result.applied).toEqual({ width: 800, height: 600 });
     expect(coordinator.snapshot().confirmed).toEqual({ width: 800, height: 600 });
+    expect(operations).toHaveLength(2);
+    expect(operations[1]).toMatchObject({
+      source: "user",
+      targetGeneration: 2,
+      requested: { width: 800, height: 600 },
+    });
+    expect(operations[1]!.operationGeneration).toBeGreaterThan(operations[0]!.operationGeneration);
   });
 
   it("keeps presentation scale separate from CSS viewport dimensions", () => {

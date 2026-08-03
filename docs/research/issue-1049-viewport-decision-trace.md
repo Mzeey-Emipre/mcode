@@ -2,9 +2,9 @@
 
 ## Current verdict
 
-The current implementation, commit `23c591dd` plus the remediation working-tree diff, now matches the binding viewport model and accepted Variant B at the code and web-UI levels. It includes the exact presets and bounds, the accepted compact toolbar, keyboard and pointer drag handles, cooperative user-input invalidation, Regular-mode restore and reset, and acknowledged native or renderer host operations.
+The current remediation diff matches the binding viewport model and accepted Variant B at the code and web-UI levels. It includes the exact presets and bounds, the accepted compact toolbar, keyboard and pointer drag handles, cooperative user-input invalidation, Regular-mode restore and reset, acknowledged native or renderer host operations, and stable preview mounting while the mode changes.
 
-The implementation still lacks complete live acceptance evidence. A Playwright CLI run passed the web viewport flow, but no live Electron run has proved the native path after the remediation. No provider-driven live run has proved normal completion restore or explicit interruption. Focused tests support those paths, but tests do not replace the live checks required by [issue #1049](https://github.com/Mzeey-Empire/mcode/issues/1049).
+The implementation still lacks complete live acceptance evidence. The in-app Browser run passed the web viewport flow, including close and hide/remount behavior after the stable-mount repair. No provider-driven live run has proved normal completion restore or explicit interruption. Focused tests support those paths, but tests do not replace the live checks required by [issue #1049](https://github.com/Mzeey-Empire/mcode/issues/1049).
 
 ## Source and decision chain
 
@@ -14,7 +14,7 @@ The binding chain is:
 2. The earlier [web-development specification](../specs/2026-07-28-browser-automation-web-dev.md) establishes `BrowserSessionDriver`, registry-owned logical lifetime outside React, broker authority, same-origin web limits, and web/Electron adapter separation.
 3. [Wayfinder #1029](https://github.com/Mzeey-Empire/mcode/issues/1029) closed all ten child decisions, then explicitly collapsed them into [specification #1042](https://github.com/Mzeey-Empire/mcode/issues/1042) in [comment 5150345996](https://github.com/Mzeey-Empire/mcode/issues/1029#issuecomment-5150345996).
 4. #1042 makes the closed Wayfinder map and its resolutions authoritative. It also defines precedence: the later viewport decision refines earlier generic human-input wording. Ordinary cooperative input invalidates an observation; only explicit Stop or Take control advances control generation and interrupts execution.
-5. #1049 is the implementation ticket. Its blockers, [#1046](https://github.com/Mzeey-Empire/mcode/issues/1046) and [#1047](https://github.com/Mzeey-Empire/mcode/issues/1047), supply the admitted-step, receipt, generation, interruption, sticky-tab, provenance, and cleanup semantics that viewport operations must join.
+5. \#1049 is the implementation ticket. Its blockers, [#1046](https://github.com/Mzeey-Empire/mcode/issues/1046) and [#1047](https://github.com/Mzeey-Empire/mcode/issues/1047), supply the admitted-step, receipt, generation, interruption, sticky-tab, provenance, and cleanup semantics that viewport operations must join.
 6. [Viewport decision #1038](https://github.com/Mzeey-Empire/mcode/issues/1038#issuecomment-5148684503) owns viewport state and lifecycle semantics. [Prototype decision #1039](https://github.com/Mzeey-Empire/mcode/issues/1039#issuecomment-5149916700) owns the accepted visual treatment. The immutable accepted artifact is commit [`0592b9426cce8f0efc9c3f22c2c1baeeae9913a3`](https://github.com/Mzeey-Empire/mcode/commit/0592b9426cce8f0efc9c3f22c2c1baeeae9913a3), especially [`BrowserViewportPrototype.tsx`](https://github.com/Mzeey-Empire/mcode/blob/0592b9426cce8f0efc9c3f22c2c1baeeae9913a3/apps/web/src/components/panels/BrowserViewportPrototype.tsx).
 
 The connected prototype decisions constrain, but do not redefine, viewport mechanics. [#1033](https://github.com/Mzeey-Empire/mcode/issues/1033#issuecomment-5149493062) permits an amber perimeter, cursor, and Browser rail icon during agent control, with no Browser header badge or local Stop capsule. [#1037](https://github.com/Mzeey-Empire/mcode/issues/1037#issuecomment-5149666428) keeps background Browser discovery in Thread Overview. [#1040](https://github.com/Mzeey-Empire/mcode/issues/1040#issuecomment-5149966875) assigns chronological receipts to the narrative timeline. The viewport toolbar must not become an agent-status or recovery surface.
@@ -63,18 +63,18 @@ The prototype is binding for these meanings, not for production component struct
 | Explicit takeover only | The header badge and local Stop capsule were removed from [`BrowserHeader.tsx`](../../apps/web/src/components/panels/BrowserHeader.tsx). The overflow menu now exposes the existing explicit `Take control` path in [`BrowserOverflowMenu.tsx`](../../apps/web/src/components/panels/BrowserOverflowMenu.tsx#L190-L214). | Implemented. |
 | User restore point | `requestUserResize()` preserves active agent control while updating user-owned mode and confirmed size in [`viewportCoordinator.ts`](../../apps/web/src/services/browser-automation/viewportCoordinator.ts#L363-L383). | Implemented. |
 | Regular restore and reset | `completeAgent()` restores the latest user mode. Regular mode submits a reset operation instead of only changing React state in [`viewportCoordinator.ts`](../../apps/web/src/services/browser-automation/viewportCoordinator.ts#L393-L401). Toolbar close uses the same coordinator path in [`PreviewPanel.tsx`](../../apps/web/src/components/panels/PreviewPanel.tsx#L3004-L3013). | Implemented. |
-| Acknowledged host operations | [`viewportCoordinatorFactory.ts`](../../apps/web/src/services/browser-automation/viewportCoordinatorFactory.ts#L161-L213) checks operation identity on native acknowledgements. The same factory routes presentation and reset through native or renderer adapters, and mirrors an applied native reset into renderer state at [lines 392 to 413](../../apps/web/src/services/browser-automation/viewportCoordinatorFactory.ts#L392-L413). | Implemented. |
+| Acknowledged host operations | [`viewportCoordinatorFactory.ts`](../../apps/web/src/services/browser-automation/viewportCoordinatorFactory.ts#L161-L213) checks operation identity and monotonic operation generation on native acknowledgements. The desktop host retains generation tombstones across reset, and interruption submits a newer reconciliation operation for the last confirmed viewport. The same factory routes presentation and reset through native or renderer adapters. | Implemented. |
 | Confirmed tab state | The store retains per-tab confirmed state across detach/remount and clears it on unregister/close in [`browserAutomationStore.ts`](../../apps/web/src/stores/browserAutomationStore.ts#L152-L192). | Implemented. |
 
 The diff also adds focused coverage for the canvas, toolbar, cooperative invalidation, completion restore, reset acknowledgements, stale and superseded reset outcomes, native presentation, and per-tab lifecycle. These tests lock in the corrected behavior but do not satisfy the live Electron and provider gates.
 
 ## Verification evidence
 
-#1049 requires live web and Electron checks for user resize, agent resize, panel resize, tab switching, hiding, remounting, normal completion, and interruption. #1034 adds the shared live tracer story for resize, background activity, narrative rendering, and return to visible control. The local UI guide separately requires interaction, keyboard, accessibility, responsive-width, console, and visual checks, plus focused tests and `bun run verify` at [lines 59 to 86](../guides/ui-components.md#L59-L86).
+\#1049 requires live web and Electron checks for user resize, agent resize, panel resize, tab switching, hiding, remounting, normal completion, and interruption. #1034 adds the shared live tracer story for resize, background activity, narrative rendering, and return to visible control. The local UI guide separately requires interaction, keyboard, accessibility, responsive-width, console, and visual checks, plus focused tests and `bun run verify` at [lines 59 to 86](../guides/ui-components.md#L59-L86).
 
 ### Web live pass
 
-The Playwright CLI suite passed one test with zero unexpected, skipped, or flaky results. The primary result is [results.json](../../.dev/verification/issue-1049-playwright-cli/results.json); [errors.json](../../.dev/verification/issue-1049-playwright-cli/errors.json) is empty. The live test exercised:
+The Playwright CLI suite passed one test with zero unexpected, skipped, or flaky results. The primary result is [results.json](../../.dev/verification/issue-1049-playwright-cli/results.json); [errors.json](../../.dev/verification/issue-1049-playwright-cli/errors.json) is empty. A later in-app Browser run repeated the binding controls against the same-origin fixture and exercised:
 
 - iPhone 15 Pro preset selection and confirmed 393 x 852 inputs;
 - custom 100 x 3000 input clamped to 240 x 2560;
@@ -83,17 +83,26 @@ The Playwright CLI suite passed one test with zero unexpected, skipped, or flaky
 - keyboard and pointer resize-handle paths;
 - a 500 x 700 narrow viewport with every visible toolbar control contained inside the 452 x 44 toolbar;
 - no document-level horizontal scroll;
-- close returning the Browser to Regular mode and removing the device toolbar.
+- close returning the Browser to Regular mode and removing the device toolbar;
+- Browser hide/remount preserving the confirmed 393 x 852 viewport;
+- panel maximization changing Fit scale from 47 percent to 103 percent while the confirmed viewport stayed 852 x 393.
 
 The containment assertion recorded no offending controls in [bounds.json](../../.dev/verification/issue-1049-playwright-cli/bounds.json). Screenshots in the same evidence directory capture the preset, clamped, and narrow states.
 
 ### Evidence still required
 
-- **Electron:** The previous [Electron live attempt](../../.dev/verification/electron-live-blocker.md) produced no usable interaction. The current native presentation and reset acknowledgement paths remain unproven in a live Electron window.
+- **Electron:** The current worktree reached the Electron startup path, but another development instance occupied the default server port. The server-manager health check then observed that other instance before this worktree's lock was available, so the current native viewport UI never became usable. Desktop control was stopped from the keyboard after the startup error.
 - **Provider lifecycle:** No live provider turn has proved agent resize, a cooperative user viewport change followed by normal completion restore, or explicit interruption with late-operation rejection.
-- **Cross-state lifecycle:** The new CLI flow does not cover live native tab switching, Browser hiding/remounting during an active provider run, background activity, or narrative receipts.
+- **Cross-state lifecycle:** The live flow does not cover native tab switching, Browser hiding/remounting during an active provider run, background activity, or narrative receipts.
 
-These are verification gaps, not known code defects. #1049's complete live acceptance gate remains open until those paths run successfully.
+These are verification gaps, not known code defects. \#1049's complete live acceptance gate remains open until those paths run successfully.
+
+### Repository gates
+
+- Monorepo typechecking passed across all six packages.
+- The focused web suites passed 117 tests, and the exact PreviewPanel regression proved that the same iframe remains mounted while Responsive mode opens and closes.
+- The desktop viewport suite passed 86 tests, including stale-operation admission across more than 128 live tabs. The contracts suite passed 301 tests.
+- `bun run verify` passed typechecking and linting. Its unit-test phase timed out after eight unrelated sidebar-search tests failed because this runner had no usable `localStorage`. The issue-specific viewport suites passed independently. The full gate evidence is in [manifest.json](../../.dev/verification/runs/2026-08-03T21-19-04-050Z-35908-8b1b9ef9/manifest.json).
 
 ## Background and superseded material
 

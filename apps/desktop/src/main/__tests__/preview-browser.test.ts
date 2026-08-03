@@ -1748,9 +1748,16 @@ describe("preview-browser", () => {
       view.setBounds.mockClear();
 
       const ev = fakeEvent(win);
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
       const result = await ipcHandlers["preview:design.set-viewport"]!(ev, {
         widthOverride: 393,
         heightOverride: 852,
+        operationId: "viewport-iphone-15-pro",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
       });
       expect(result).toMatchObject({ ok: true, data: { width: 393, height: 852 } });
       expect(view.setBounds).toHaveBeenCalledWith(
@@ -1810,10 +1817,17 @@ describe("preview-browser", () => {
       const view = createdViews[0]!;
       view.webContents.getURL.mockReturnValue("https://example.com");
       view.setBounds.mockClear();
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
       // VALID_BOUNDS is 800x600; CSS viewport bounds are independent of it.
       const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
         widthOverride: 10_000,
         heightOverride: 10_000,
+        operationId: "viewport-clamped",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
       });
       expect(result).toMatchObject({ ok: true, data: { width: 2_560, height: 2_560 } });
       expect(view.setBounds).toHaveBeenCalledWith(
@@ -1839,6 +1853,7 @@ describe("preview-browser", () => {
         operationId: "viewport-user-5",
         source: "user",
         targetGeneration: 5,
+        operationGeneration: 1,
         threadId: "thread-1",
         tabId: activeTabId,
       });
@@ -1848,6 +1863,7 @@ describe("preview-browser", () => {
         operationId: "viewport-user-5",
         source: "user",
         targetGeneration: 5,
+        operationGeneration: 1,
         threadId: "thread-1",
         tabId: activeTabId,
         appliedViewport: { width: 640, height: 480 },
@@ -1858,6 +1874,7 @@ describe("preview-browser", () => {
         operationId: "viewport-agent-4",
         source: "agent",
         targetGeneration: 4,
+        operationGeneration: 2,
         threadId: "thread-1",
         tabId: activeTabId,
       });
@@ -1868,10 +1885,70 @@ describe("preview-browser", () => {
         operationId: "viewport-agent-4",
         source: "agent",
         targetGeneration: 4,
+        operationGeneration: 2,
         threadId: "thread-1",
         tabId: activeTabId,
       });
       expect(view.setBounds).toHaveBeenCalledTimes(1);
+    });
+
+    it("retains stale-operation rejection for every live preview tab", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const session = sessions.get(win.id)!;
+      const set = session.tabsByThread.get("thread-1")!;
+      const originalTab = set.tabs[0]!;
+
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 640,
+        heightOverride: 480,
+        operationId: "viewport-original-newer",
+        source: "user",
+        targetGeneration: 5,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: originalTab.id,
+      });
+
+      for (let index = 0; index < 128; index += 1) {
+        const tabId = `viewport-live-${index}`;
+        set.tabs.push({
+          id: tabId,
+          threadId: "thread-1",
+          view: null,
+          resumeUrl: null,
+          title: null,
+          faviconUrl: null,
+          lastActiveAt: Date.now(),
+          viewportTargetGeneration: null,
+          viewportOperationGeneration: null,
+        });
+        set.activeTabId = tabId;
+        await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+          widthOverride: 640,
+          heightOverride: 480,
+          operationId: `viewport-live-${index}`,
+          source: "user",
+          targetGeneration: 1,
+          operationGeneration: 1,
+          threadId: "thread-1",
+          tabId,
+        });
+      }
+
+      set.activeTabId = originalTab.id;
+      const stale = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 700,
+        heightOverride: 500,
+        operationId: "viewport-original-stale",
+        source: "agent",
+        targetGeneration: 4,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: originalTab.id,
+      });
+
+      expect(stale).toMatchObject({ ok: false, error: "stale-target-generation" });
     });
 
     it("preserves the CSS viewport while panel resize updates native presentation scale", async () => {
@@ -1887,6 +1964,7 @@ describe("preview-browser", () => {
         operationId: "viewport-panel-resize",
         source: "user",
         targetGeneration: 3,
+        operationGeneration: 1,
         threadId: "thread-1",
         tabId: activeTabId,
       });
@@ -1929,6 +2007,7 @@ describe("preview-browser", () => {
         operationId: "viewport-presentation-base",
         source: "user",
         targetGeneration: 3,
+        operationGeneration: 1,
         threadId: "thread-1",
         tabId: activeTabId,
       });
@@ -1940,6 +2019,7 @@ describe("preview-browser", () => {
         operationId: "viewport-presentation-fit",
         source: "user",
         targetGeneration: 3,
+        operationGeneration: 2,
         threadId: "thread-1",
         tabId: activeTabId,
       });
@@ -1965,6 +2045,7 @@ describe("preview-browser", () => {
         operationId: "viewport-presentation-actual",
         source: "user",
         targetGeneration: 3,
+        operationGeneration: 3,
         threadId: "thread-1",
         tabId: activeTabId,
       });
@@ -1995,7 +2076,10 @@ describe("preview-browser", () => {
       await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
         widthOverride: 1_200,
         heightOverride: 800,
+        operationId: "viewport-presentation-generation",
+        source: "user",
         targetGeneration: 5,
+        operationGeneration: 1,
         threadId: "thread-1",
         tabId: activeTabId,
       });
@@ -2006,6 +2090,7 @@ describe("preview-browser", () => {
         operationId: "viewport-presentation-stale",
         source: "agent",
         targetGeneration: 4,
+        operationGeneration: 2,
         threadId: "thread-1",
         tabId: activeTabId,
       });
@@ -2018,14 +2103,45 @@ describe("preview-browser", () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
       await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
         widthOverride: 393,
         heightOverride: 852,
+        operationId: "viewport-before-reset",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
       });
       view.setBounds.mockClear();
-      const reset = await ipcHandlers["preview:design.reset-viewport"]!(fakeEvent(win), {});
+      const reset = await ipcHandlers["preview:design.reset-viewport"]!(fakeEvent(win), {
+        operationId: "viewport-reset",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
       expect(reset).toMatchObject({ ok: true, appliedViewport: null });
       expect(view.setBounds).toHaveBeenCalledWith(VALID_BOUNDS);
+
+      const lateResize = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 700,
+        heightOverride: 500,
+        operationId: "viewport-late-after-reset",
+        source: "agent",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(lateResize).toMatchObject({
+        ok: false,
+        error: "stale-operation-generation",
+        appliedViewport: null,
+      });
+      expect(view.setBounds).toHaveBeenCalledTimes(1);
     });
 
     it("setInspect runs executeJavaScript on the guest", async () => {

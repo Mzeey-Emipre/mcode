@@ -427,6 +427,7 @@ describe("PreviewPanel: unavailable state", () => {
     await waitFor(() => {
       expect(useBrowserAutomationStore.getState().viewportCoordinators.size).toBeGreaterThan(0);
     });
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
     await user.click(screen.getByRole("button", { name: "More browser tools" }));
     const menu = await screen.findByTestId("browser-overflow-menu");
     await user.click(within(menu).getByRole("menuitem", { name: "Show device toolbar" }));
@@ -442,6 +443,18 @@ describe("PreviewPanel: unavailable state", () => {
         ),
       ).toMatchObject({ mode: "responsive" });
     });
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toBe(iframe);
+
+    await user.click(within(toolbar).getByRole("button", { name: "Close viewport toolbar" }));
+    await waitFor(() => {
+      expect(
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(
+          JSON.stringify(["thread-1", "web-preview"]),
+        ),
+      ).toMatchObject({ mode: "regular" });
+    });
+    expect(screen.queryByTestId("browser-viewport-toolbar")).not.toBeInTheDocument();
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toBe(iframe);
   });
 });
 

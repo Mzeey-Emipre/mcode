@@ -429,6 +429,8 @@ export function ensureView(win: BrowserWindow, s: PreviewSession): WebContentsVi
     title: null,
     faviconUrl: null,
     lastActiveAt: Date.now(),
+    viewportTargetGeneration: null,
+    viewportOperationGeneration: null,
   };
   const view = ensureTabView(win, s, synthetic);
   s.view = view;

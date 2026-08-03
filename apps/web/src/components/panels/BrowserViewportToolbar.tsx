@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
+  clampViewportSize,
   VIEWPORT_PRESETS,
   ViewportCoordinator,
   type ViewportCoordinatorState,
@@ -22,6 +23,7 @@ export interface BrowserViewportToolbarProps {
   readonly coordinator: ViewportCoordinator;
   readonly state: ViewportCoordinatorState;
   readonly onClose: () => void;
+  readonly onUserViewportChange?: () => void;
   readonly scale?: number;
 }
 
@@ -39,6 +41,7 @@ export function BrowserViewportToolbar({
   coordinator,
   state,
   onClose,
+  onUserViewportChange,
   scale = 1,
 }: BrowserViewportToolbarProps) {
   const requested = state.pending?.requested ?? state.confirmed;
@@ -59,8 +62,10 @@ export function BrowserViewportToolbar({
   const scaleLabel = `${Math.round(scale * 100)}%`;
 
   const submitSize = (size: ViewportSize) => {
+    setPresetOpen(false);
+    onUserViewportChange?.();
     coordinator.setUserMode("responsive");
-    void coordinator.requestUserResize(size);
+    void coordinator.requestUserResize(clampViewportSize(size));
   };
 
   const submitInputs = () => {
@@ -75,6 +80,8 @@ export function BrowserViewportToolbar({
   };
 
   const setPresentation = (presentation: ViewportPresentation) => {
+    setScaleOpen(false);
+    onUserViewportChange?.();
     void coordinator.setPresentation(presentation);
   };
 
@@ -103,7 +110,11 @@ export function BrowserViewportToolbar({
         <DropdownMenuContent align="start" className="min-w-[210px]">
           <DropdownMenuItem
             className="justify-between gap-3 text-xs"
-            onClick={() => { void coordinator.requestUserMode("responsive"); }}
+            onClick={() => {
+              setPresetOpen(false);
+              onUserViewportChange?.();
+              void coordinator.requestUserMode("responsive");
+            }}
           >
             <span>Responsive</span>
             {!selectedPreset && <Check size={14} aria-hidden />}
@@ -207,7 +218,10 @@ export function BrowserViewportToolbar({
         size="icon-xs"
         variant="ghost"
         className="ml-auto shrink-0 @max-[520px]:ml-0 @max-[520px]:size-7"
-        onClick={onClose}
+        onClick={() => {
+          onUserViewportChange?.();
+          onClose();
+        }}
         aria-label="Close viewport toolbar"
         title="Close viewport toolbar"
       >

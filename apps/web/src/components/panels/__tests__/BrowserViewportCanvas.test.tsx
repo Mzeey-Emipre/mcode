@@ -14,6 +14,7 @@ function setup() {
   }));
   const coordinator = new ViewportCoordinator({
     initial: { width: 800, height: 600 },
+    mode: "responsive",
     targetGeneration: 1,
     apply,
   });

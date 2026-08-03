@@ -27,18 +27,30 @@ export const BROWSER_AUTOMATION_MIN_VIEWPORT_PX = 240;
 export const BROWSER_AUTOMATION_MAX_VIEWPORT_PX = 2_560;
 /** Total CSS-pixel inset reserved around a responsive viewport canvas frame. */
 export const BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX = 64;
-/** Bounded viewport operation metadata shared by renderer and native hosts. */
-const viewportOperationMetadataShape = {
-  operationId: z.string().trim().min(1).max(256).optional(),
-  source: z.enum(["user", "agent"]).optional(),
+const viewportOperationIdentityShape = {
+  operationId: z.string().trim().min(1).max(256),
+  source: z.enum(["user", "agent"]),
   targetGeneration: z
     .number()
     .int()
     .nonnegative()
-    .refine(Number.isSafeInteger, "Target generation must be a safe integer")
-    .optional(),
-  threadId: z.string().trim().min(1).max(256).optional(),
-  tabId: z.string().trim().min(1).max(256).optional(),
+    .refine(Number.isSafeInteger, "Target generation must be a safe integer"),
+  operationGeneration: z
+    .number()
+    .int()
+    .nonnegative()
+    .refine(Number.isSafeInteger, "Operation generation must be a safe integer"),
+  threadId: z.string().trim().min(1).max(256),
+  tabId: z.string().trim().min(1).max(256),
+};
+
+const viewportOperationMetadataShape = {
+  operationId: viewportOperationIdentityShape.operationId.optional(),
+  source: viewportOperationIdentityShape.source.optional(),
+  targetGeneration: viewportOperationIdentityShape.targetGeneration.optional(),
+  operationGeneration: viewportOperationIdentityShape.operationGeneration.optional(),
+  threadId: viewportOperationIdentityShape.threadId.optional(),
+  tabId: viewportOperationIdentityShape.tabId.optional(),
 };
 
 const viewportSizeSchema = z
@@ -52,9 +64,9 @@ const viewportSizeSchema = z
 export const BrowserAutomationViewportRequestSchema = lazySchema(() =>
   z
     .object({
-      widthOverride: z.number().finite().optional(),
-      heightOverride: z.number().finite().optional(),
-      ...viewportOperationMetadataShape,
+      widthOverride: z.number().finite().positive(),
+      heightOverride: z.number().finite().positive(),
+      ...viewportOperationIdentityShape,
     })
     .strict(),
 );
@@ -68,13 +80,22 @@ export const BrowserAutomationViewportPresentationRequestSchema = lazySchema(() 
   z
     .object({
       presentation: z.enum(["fit", "actual"]),
-      ...viewportOperationMetadataShape,
+      ...viewportOperationIdentityShape,
     })
     .strict(),
 );
 /** Typed native preview viewport presentation request. */
 export type BrowserAutomationViewportPresentationRequest = z.infer<
   ReturnType<typeof BrowserAutomationViewportPresentationRequestSchema>
+>;
+
+/** Validates a native request to return one target to Regular viewport mode. */
+export const BrowserAutomationViewportResetRequestSchema = lazySchema(() =>
+  z.object(viewportOperationIdentityShape).strict(),
+);
+/** Typed native request to return one target to Regular viewport mode. */
+export type BrowserAutomationViewportResetRequest = z.infer<
+  ReturnType<typeof BrowserAutomationViewportResetRequestSchema>
 >;
 
 /** Validates native preview responsive viewport results returned over IPC. */
@@ -85,7 +106,7 @@ export const BrowserAutomationViewportResultSchema = lazySchema(() =>
         ok: z.literal(true),
         data: viewportSizeSchema,
         appliedViewport: viewportSizeSchema,
-        ...viewportOperationMetadataShape,
+        ...viewportOperationIdentityShape,
       })
       .strict(),
     z
@@ -111,7 +132,7 @@ export const BrowserAutomationViewportPresentationResultSchema = lazySchema(() =
         ok: z.literal(true),
         presentation: z.enum(["fit", "actual"]),
         appliedViewport: viewportSizeSchema,
-        ...viewportOperationMetadataShape,
+        ...viewportOperationIdentityShape,
       })
       .strict(),
     z
@@ -128,6 +149,27 @@ export const BrowserAutomationViewportPresentationResultSchema = lazySchema(() =
 /** Typed native preview viewport presentation result. */
 export type BrowserAutomationViewportPresentationResult = z.infer<
   ReturnType<typeof BrowserAutomationViewportPresentationResultSchema>
+>;
+
+/** Validates native acknowledgements for returning to Regular viewport mode. */
+export const BrowserAutomationViewportResetResultSchema = lazySchema(() =>
+  z.union([
+    z.object({
+      ok: z.literal(true),
+      appliedViewport: z.null(),
+      ...viewportOperationIdentityShape,
+    }).strict(),
+    z.object({
+      ok: z.literal(false),
+      error: z.string().min(1).max(128),
+      appliedViewport: viewportSizeSchema.nullable().optional(),
+      ...viewportOperationMetadataShape,
+    }).strict(),
+  ]),
+);
+/** Typed native acknowledgement for returning to Regular viewport mode. */
+export type BrowserAutomationViewportResetResult = z.infer<
+  ReturnType<typeof BrowserAutomationViewportResetResultSchema>
 >;
 /** Maximum encoded success result size in bytes. */
 export const BROWSER_AUTOMATION_MAX_RESULT_BYTES = 512 * 1_024;
@@ -1368,8 +1410,8 @@ export const BrowserAutomationErrorSchema = lazySchema(() =>
       message: z.string().min(1).max(SHORT_TEXT_MAX),
       retryable: z.boolean(),
       appliedViewport: z.object({
-        width: z.number().int().min(1).max(10_000),
-        height: z.number().int().min(1).max(10_000),
+        width: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX),
+        height: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX),
       }).strict().optional(),
       stage: z.enum(["validation", "authorization", "allocation", "observation", "effect", "recovery", "transport"]).optional(),
       effect: z.enum(["none", "created", "closed", "preserved", "unknown"]).optional(),

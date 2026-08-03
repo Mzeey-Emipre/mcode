@@ -96,7 +96,10 @@ import {
   type ViewportCoordinator,
   type ViewportCoordinatorState,
 } from "@/services/browser-automation/viewportCoordinator";
-import { getOrCreateViewportCoordinator } from "@/services/browser-automation/viewportCoordinatorFactory";
+import {
+  getOrCreateViewportCoordinator,
+  waitForViewportLayout,
+} from "@/services/browser-automation/viewportCoordinatorFactory";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -1655,14 +1658,51 @@ function WebRuntimePreview({
   };
 
   const noOp = (): void => undefined;
+  const invalidateViewportObservation = (): void => {
+    invalidateBrowserAutomationObservationTarget(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+  };
   const iframeStyle: CSSProperties | undefined = responsiveViewportSize
     ? {
         width: responsiveViewportSize.width,
         height: responsiveViewportSize.height,
-        transform: `scale(${responsiveViewportScale})`,
-        transformOrigin: "top left",
       }
     : undefined;
+  const previewContent = state === "same-origin" && src ? (
+    <iframe
+      title="Web browser preview"
+      src={src}
+      data-testid="web-runtime-preview-iframe"
+      data-thread-id={threadId}
+      data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
+      className={cn("border-0", responsiveViewportSize ? "absolute left-0 top-0" : "h-full w-full")}
+      style={iframeStyle}
+      referrerPolicy="no-referrer"
+      onLoad={onIframeLoad}
+    />
+  ) : state === "cross-origin" && src ? (
+    <>
+      <iframe
+        title="Cross-origin web preview"
+        src={src}
+        data-testid="web-runtime-preview-iframe"
+        data-thread-id={threadId}
+        data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
+        className={cn("border-0", responsiveViewportSize ? "absolute left-0 top-0" : "h-full w-full")}
+        style={iframeStyle}
+        referrerPolicy="no-referrer"
+        onLoad={onIframeLoad}
+      />
+      <div data-testid="web-runtime-cross-origin" className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-amber-500/40 bg-background/95 px-3 py-2 text-xs text-amber-700 shadow-sm">
+        Cross-origin preview is visible, but web automation and DOM access are unsupported.
+      </div>
+    </>
+  ) : (
+    <div data-testid={`web-runtime-${state}`} className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
+      {state === "disabled"
+        ? "Web preview automation is disabled. Set MCODE_WEB_AUTOMATION=1 and restart agent:up to enable it."
+        : "Web preview is unavailable until an HTTP(S) same-origin target is loaded."}
+    </div>
+  );
 
   return (
     <div data-testid="web-runtime-preview" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -1720,94 +1760,24 @@ function WebRuntimePreview({
             state={viewportState}
             scale={responsiveViewportScale}
             onClose={onCloseViewportToolbar}
+            onUserViewportChange={invalidateViewportObservation}
           />
         ) : null
       ) : null}
-      <div ref={surfaceRef} className={cn("relative min-h-0 min-w-0 flex-1 bg-muted/10", responsiveViewportSize ? "overflow-auto" : "overflow-hidden")}>
-        {responsiveViewportSize && viewportCoordinator && viewportState ? (
+      <div ref={surfaceRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-muted/10">
+        {viewportCoordinator && viewportState ? (
           <BrowserViewportCanvas
             coordinator={viewportCoordinator}
             state={viewportState}
             bounds={canvasBounds}
             scale={responsiveViewportScale}
             className="absolute inset-0"
+            onUserViewportChange={invalidateViewportObservation}
           >
-            {state === "same-origin" && src ? (
-              <iframe
-                title="Web browser preview"
-                src={src}
-                data-testid="web-runtime-preview-iframe"
-                data-thread-id={threadId}
-                data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
-                className="absolute left-0 top-0 border-0"
-                style={iframeStyle}
-                referrerPolicy="no-referrer"
-                onLoad={onIframeLoad}
-              />
-            ) : state === "cross-origin" && src ? (
-              <>
-                <iframe
-                  title="Cross-origin web preview"
-                  src={src}
-                  data-testid="web-runtime-preview-iframe"
-                  data-thread-id={threadId}
-                  data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
-                  className="absolute left-0 top-0 border-0"
-                  style={iframeStyle}
-                  referrerPolicy="no-referrer"
-                  onLoad={onIframeLoad}
-                />
-                <div data-testid="web-runtime-cross-origin" className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-amber-500/40 bg-background/95 px-3 py-2 text-xs text-amber-700 shadow-sm">
-                  Cross-origin preview is visible, but web automation and DOM access are unsupported.
-                </div>
-              </>
-            ) : (
-              <div data-testid={`web-runtime-${state}`} className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-                {state === "disabled"
-                  ? "Web preview automation is disabled. Set MCODE_WEB_AUTOMATION=1 and restart agent:up to enable it."
-                  : "Web preview is unavailable until an HTTP(S) same-origin target is loaded."}
-              </div>
-            )}
+            {previewContent}
           </BrowserViewportCanvas>
         ) : (
-          <div className="relative h-full w-full">
-            {state === "same-origin" && src ? (
-          <iframe
-            title="Web browser preview"
-            src={src}
-            data-testid="web-runtime-preview-iframe"
-            data-thread-id={threadId}
-            data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
-            className={cn("border-0", responsiveViewportSize ? "absolute left-0 top-0" : "h-full w-full")}
-            style={iframeStyle}
-            referrerPolicy="no-referrer"
-            onLoad={onIframeLoad}
-          />
-        ) : state === "cross-origin" && src ? (
-          <>
-            <iframe
-              title="Cross-origin web preview"
-              src={src}
-              data-testid="web-runtime-preview-iframe"
-              data-thread-id={threadId}
-              data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
-              className={cn("border-0", responsiveViewportSize ? "absolute left-0 top-0" : "h-full w-full")}
-              style={iframeStyle}
-              referrerPolicy="no-referrer"
-              onLoad={onIframeLoad}
-            />
-            <div data-testid="web-runtime-cross-origin" className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-amber-500/40 bg-background/95 px-3 py-2 text-xs text-amber-700 shadow-sm">
-              Cross-origin preview is visible, but web automation and DOM access are unsupported.
-            </div>
-          </>
-        ) : (
-          <div data-testid={`web-runtime-${state}`} className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-            {state === "disabled"
-              ? "Web preview automation is disabled. Set MCODE_WEB_AUTOMATION=1 and restart agent:up to enable it."
-            : "Web preview is unavailable until an HTTP(S) same-origin target is loaded."}
-          </div>
-            )}
-          </div>
+          <div className="relative h-full w-full">{previewContent}</div>
         )}
       </div>
     </div>
@@ -1995,6 +1965,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   const activeViewportCoordinator = automationViewportCoordinators.get(activeBrowserTargetKey);
   const [viewportToolbarOpen, setViewportToolbarOpen] = useState(false);
   useEffect(() => {
+    if (window.desktopBridge?.preview) return;
     const target = automationLiveTargets.get(activeBrowserTargetKey);
     if (!target) return;
     getOrCreateViewportCoordinator({
@@ -2002,6 +1973,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
       target,
       initial: automationViewportStates.get(activeBrowserTargetKey)?.confirmed ??
         automationViewports.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
+      mode: automationViewportStates.get(activeBrowserTargetKey)?.mode,
       presentation: automationViewportStates.get(activeBrowserTargetKey)?.presentation,
       targetGeneration: target.revision,
       nativeHost: () => window.desktopBridge?.preview?.design,
@@ -2020,10 +1992,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
           operation.targetGeneration,
         ),
         readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? null,
-        waitForLayout: async () => {
-          if (typeof requestAnimationFrame !== "function") return;
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-        },
+        waitForLayout: waitForViewportLayout,
         isCurrent: (operation, coordinator) => {
           const current = useBrowserAutomationStore.getState();
           return current.viewportCoordinators.get(activeBrowserTargetKey) === coordinator &&
@@ -2053,6 +2022,19 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     automationViewportCoordinators,
     threadId,
   ]);
+  const invalidateActiveViewportObservation = useCallback((): void => {
+    invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+  }, [activeWebviewTabId, threadId]);
+  const toggleViewportToolbar = useCallback((): void => {
+    const next = !(viewportToolbarOpen || activeViewportState?.mode === "responsive");
+    setViewportToolbarOpen(next);
+    invalidateActiveViewportObservation();
+    void activeViewportCoordinator?.requestUserMode(next ? "responsive" : "regular");
+  }, [activeViewportCoordinator, activeViewportState?.mode, invalidateActiveViewportObservation, viewportToolbarOpen]);
+  const closeViewportToolbar = useCallback((): void => {
+    void activeViewportCoordinator?.requestUserMode("regular");
+    setViewportToolbarOpen(false);
+  }, [activeViewportCoordinator]);
 
   const omniboxFocusTick = usePreviewFocusStore((s) => s.omniboxFocusTick);
   const previewRenderingEngine = useSettingsStore(
@@ -2678,16 +2660,8 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
         viewportCoordinator={activeViewportCoordinator}
         viewportState={activeViewportState}
         viewportToolbarOpen={viewportToolbarOpen}
-        onToggleViewportToolbar={() =>
-          setViewportToolbarOpen((open) => {
-            const next = !open;
-            if (next) void activeViewportCoordinator?.requestUserMode("responsive");
-            return next;
-          })}
-        onCloseViewportToolbar={() => {
-          void activeViewportCoordinator?.requestUserMode("regular");
-          setViewportToolbarOpen(false);
-        }}
+        onToggleViewportToolbar={toggleViewportToolbar}
+        onCloseViewportToolbar={closeViewportToolbar}
       />
     );
   }
@@ -2872,9 +2846,6 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
         tabId={tab.id}
         src={tab.src}
         viewport={tabViewportState?.mode === "responsive" ? tabViewport : undefined}
-        presentationScale={
-          tab.id === activeWebviewTabId ? responsiveViewportScale : 1
-        }
         className={cn(
           responsiveViewportSize
             ? "absolute left-0 top-0"
@@ -2978,12 +2949,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
                 tabId: activeWebviewTabId,
               });
             }}
-            onToggleViewportToolbar={() =>
-              setViewportToolbarOpen((open) => {
-                const next = !open;
-                if (next) void activeViewportCoordinator?.requestUserMode("responsive");
-                return next;
-              })}
+            onToggleViewportToolbar={toggleViewportToolbar}
             viewportToolbarVisible={viewportToolbarOpen || activeViewportState?.mode === "responsive"}
             suppressPreviewForOverlays={!showWebviewPreview}
             automationController={activeAutomationController ?? null}
@@ -3007,10 +2973,8 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
               coordinator={activeViewportCoordinator}
               state={activeViewportState}
               scale={responsiveViewportScale}
-              onClose={() => {
-                void activeViewportCoordinator.requestUserMode("regular");
-                setViewportToolbarOpen(false);
-              }}
+              onClose={closeViewportToolbar}
+              onUserViewportChange={invalidateActiveViewportObservation}
             />
           ) : null
         ) : null}
@@ -3087,20 +3051,18 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
           <div
             data-testid="preview-webview-surface"
             className={cn(
-              "absolute inset-0 z-0 rounded-tl-md",
-              responsiveViewportSize
-                ? "flex items-center justify-center overflow-auto"
-                : "overflow-hidden",
+              "absolute inset-0 z-0 overflow-hidden rounded-tl-md",
               !webviewLayerInteractive && "pointer-events-none",
             )}
           >
-          {responsiveViewportSize && activeViewportCoordinator && activeViewportState ? (
+          {activeViewportCoordinator && activeViewportState ? (
             <BrowserViewportCanvas
               coordinator={activeViewportCoordinator}
               state={activeViewportState}
               bounds={viewportCanvasBounds}
               scale={responsiveViewportScale}
               className="absolute inset-0"
+              onUserViewportChange={invalidateActiveViewportObservation}
             >
               {warmWebviewLayer}
             </BrowserViewportCanvas>

@@ -50,6 +50,10 @@ export interface TabState {
   faviconUrl: string | null;
   /** Epoch ms when this tab was last activated. Drives memory-saver LRU ordering (ADR 0002). */
   lastActiveAt: number;
+  /** Latest viewport target generation admitted while this tab remains live. */
+  viewportTargetGeneration: number | null;
+  /** Latest viewport operation generation admitted for the current target generation. */
+  viewportOperationGeneration: number | null;
   /**
    * True for a page the user explicitly opened as a new, blank tab. Such a tab
    * must stay on its empty "Enter a URL" state and must NOT adopt the thread's
@@ -135,8 +139,6 @@ export interface PreviewSession {
   viewportAppliedByTarget: Map<string, { width: number; height: number }>;
   /** Presentation mode for each exact responsive viewport target. */
   viewportPresentationByTarget: Map<string, ViewportPresentation>;
-  /** Target generation accepted by the responsive viewport host per exact target. */
-  viewportTargetGenerationByTarget: Map<string, number>;
   /** Favicon URLs from the last page-favicon-updated event. */
   lastFavicons: string[];
   /** Timestamp of the last renderer crash auto-recovery; used to rate-limit retries. */
@@ -185,7 +187,6 @@ export function getSession(win: BrowserWindow): PreviewSession {
       workspaceId: null,
       viewportAppliedByTarget: new Map(),
       viewportPresentationByTarget: new Map(),
-      viewportTargetGenerationByTarget: new Map(),
       lastFavicons: [],
       lastCrashRecoveryAt: 0,
       trustedFileNavigationBudget: 0,
@@ -215,6 +216,8 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
       title: null,
       faviconUrl: isActiveThread ? (s.lastFavicons[0] ?? null) : null,
       lastActiveAt: Date.now(),
+      viewportTargetGeneration: null,
+      viewportOperationGeneration: null,
     };
     set = { threadId, tabs: [firstTab], activeTabId: tabId };
     s.tabsByThread.set(threadId, set);
@@ -238,6 +241,8 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
       title: null,
       faviconUrl: null,
       lastActiveAt: Date.now(),
+      viewportTargetGeneration: null,
+      viewportOperationGeneration: null,
     };
     set.tabs.push(tab);
     set.activeTabId = id;
@@ -246,7 +251,8 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
   return active;
 }
 
-function viewportTargetKey(threadId: string, tabId: string): string {
+/** Stable key for one native preview target's viewport state. */
+export function viewportTargetKey(threadId: string, tabId: string): string {
   return JSON.stringify([threadId, tabId]);
 }
 
@@ -297,18 +303,14 @@ export function applyViewportPresentation(
 ): { bounds: Bounds; scale: number } {
   const presentation = viewportBoundsForTarget(s, panel, threadId, tabId);
   if (s.view && !s.view.webContents.isDestroyed()) {
-    try {
-      const key = threadId && tabId ? viewportTargetKey(threadId, tabId) : null;
-      const viewport = key ? s.viewportAppliedByTarget.get(key) : undefined;
-      applyPreviewViewportEmulation(s.view.webContents, {
-        active: viewport !== undefined,
-        cssViewport: viewport ?? panel,
-        scale: presentation.scale,
-      });
-      if (updateBounds) s.view.setBounds(presentation.bounds);
-    } catch {
-      // The view can disappear between the lifecycle check and the update.
-    }
+    const key = threadId && tabId ? viewportTargetKey(threadId, tabId) : null;
+    const viewport = key ? s.viewportAppliedByTarget.get(key) : undefined;
+    applyPreviewViewportEmulation(s.view.webContents, {
+      active: viewport !== undefined,
+      cssViewport: viewport ?? panel,
+      scale: presentation.scale,
+    });
+    if (updateBounds) s.view.setBounds(presentation.bounds);
   }
   return presentation;
 }

@@ -90,6 +90,7 @@ export function BrowserOverflowMenu({
   viewportToolbarVisible = false,
   suppressPreviewForOverlays = true,
   automationController = null,
+  automationBusy = false,
   onStopAutomation,
 }: BrowserOverflowMenuProps) {
   const [open, setOpen] = useState(false);
@@ -205,6 +206,7 @@ export function BrowserOverflowMenu({
           <DropdownMenuItem
             className="gap-2 px-3 py-1.5 text-xs"
             onClick={onStopAutomation}
+            disabled={automationBusy}
           >
             <Hand size={14} className="text-muted-foreground" aria-hidden />
             Take control
