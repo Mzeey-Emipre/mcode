@@ -147,20 +147,32 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       existing: useBrowserAutomationStore.getState().viewportCoordinators.get(key),
       target: { threadId, tabId },
       initial: useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? initialViewportRef.current,
+      presentation: useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.presentation,
       targetGeneration,
       nativeHost: () => window.desktopBridge?.preview?.design,
       rendererHost: {
-        setViewport: (size) => useBrowserAutomationStore.getState().setViewport(
+        setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
           threadId,
           tabId,
-          size.width,
-          size.height,
+          coordinator,
+          operation.targetGeneration,
+          size,
         ),
         readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
         waitForLayout: waitForViewportLayout,
+        isCurrent: (operation, coordinator) => {
+          const current = useBrowserAutomationStore.getState();
+          return current.viewportCoordinators.get(key) === coordinator &&
+            current.liveTargets.get(key)?.revision === operation.targetGeneration;
+        },
       },
       readConfirmed: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
-      onStateChange: (state) => useBrowserAutomationStore.getState().setViewportState(threadId, tabId, state),
+      onStateChange: (state, coordinator) => useBrowserAutomationStore.getState().setViewportState(
+        threadId,
+        tabId,
+        state,
+        coordinator,
+      ),
       onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
         threadId,
         tabId,

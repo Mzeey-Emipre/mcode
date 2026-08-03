@@ -289,6 +289,7 @@ export function ensureTabView(
   });
   view.webContents.on("did-finish-load", () => {
     if (isActiveView()) {
+      if (s.lastBounds) applyViewportPresentation(s, s.lastBounds, tab.threadId, tab.id);
       void injectPreviewScrollbarStyles(s);
     }
   });

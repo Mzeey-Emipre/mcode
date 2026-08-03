@@ -64,6 +64,8 @@ function makeWebContentsView() {
     session: previewPartition,
     getZoomFactor: vi.fn().mockReturnValue(1),
     setZoomFactor: vi.fn(),
+    enableDeviceEmulation: vi.fn(),
+    disableDeviceEmulation: vi.fn(),
     on: vi.fn(),
     once: vi.fn(),
     removeListener: vi.fn(),
@@ -1723,6 +1725,7 @@ describe("preview-browser", () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
       view.setBounds.mockClear();
 
       const ev = fakeEvent(win);
@@ -1731,8 +1734,13 @@ describe("preview-browser", () => {
       });
       expect(result).toMatchObject({ ok: true, data: { width: 390, height: 844 } });
       expect(view.setBounds).toHaveBeenCalledWith(
-        expect.objectContaining({ width: 390, height: 844 }),
+        { x: 361, y: 100, width: 277, height: 600 },
       );
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenCalledWith(expect.objectContaining({
+        viewSize: { width: 390, height: 844 },
+        screenSize: { width: 390, height: 844 },
+        scale: 600 / 844,
+      }));
     });
 
     it("setViewport rejects unknown preset", async () => {
@@ -1748,6 +1756,7 @@ describe("preview-browser", () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
       view.setBounds.mockClear();
 
       const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
@@ -1760,10 +1769,26 @@ describe("preview-browser", () => {
       expect(view.setBounds).not.toHaveBeenCalled();
     });
 
+    it("rejects malformed presentation IPC payloads before applying native state", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.enableDeviceEmulation.mockClear();
+
+      const result = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "zoom",
+        targetGeneration: 1,
+      });
+
+      expect(result).toEqual({ ok: false, error: "invalid-viewport-presentation-request" });
+      expect(view.webContents.enableDeviceEmulation).not.toHaveBeenCalled();
+    });
+
     it("setViewport with explicit dimensions clamps to the CSS viewport bounds", async () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
       view.setBounds.mockClear();
       // VALID_BOUNDS is 800x600; CSS viewport bounds are independent of it.
       const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
@@ -1772,14 +1797,20 @@ describe("preview-browser", () => {
       });
       expect(result).toMatchObject({ ok: true, data: { width: 2_560, height: 2_560 } });
       expect(view.setBounds).toHaveBeenCalledWith(
-        expect.objectContaining({ width: 2_560, height: 2_560 }),
+        { x: 200, y: 100, width: 600, height: 600 },
       );
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenCalledWith(expect.objectContaining({
+        viewSize: { width: 2_560, height: 2_560 },
+        screenSize: { width: 2_560, height: 2_560 },
+        scale: 600 / 2_560,
+      }));
     });
 
     it("echoes viewport operation identity and rejects stale generations", async () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
       const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
       view.setBounds.mockClear();
       const applied = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
@@ -1827,6 +1858,7 @@ describe("preview-browser", () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
       const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
 
       await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
@@ -1839,7 +1871,7 @@ describe("preview-browser", () => {
         tabId: activeTabId,
       });
       view.setBounds.mockClear();
-      view.webContents.setZoomFactor.mockClear();
+      view.webContents.enableDeviceEmulation.mockClear();
 
       await ipcHandlers["preview:sync"]!(fakeEvent(win), {
         visible: true,
@@ -1851,13 +1883,115 @@ describe("preview-browser", () => {
       expect(sessions.get(win.id)!.viewportAppliedByTarget.get(
         JSON.stringify(["thread-1", activeTabId]),
       )).toEqual({ width: 1200, height: 800 });
-      expect(view.webContents.setZoomFactor).toHaveBeenLastCalledWith(0.5);
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 1_200, height: 800 },
+        screenSize: { width: 1_200, height: 800 },
+        scale: 0.5,
+      }));
       expect(view.setBounds).toHaveBeenLastCalledWith({
         x: 100,
         y: 100,
         width: 600,
         height: 400,
       });
+    });
+
+    it("applies Fit and Actual presentation through native emulation IPC", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 1_200,
+        heightOverride: 800,
+        operationId: "viewport-presentation-base",
+        source: "user",
+        targetGeneration: 3,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      view.webContents.enableDeviceEmulation.mockClear();
+      view.setBounds.mockClear();
+
+      const fit = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "fit",
+        operationId: "viewport-presentation-fit",
+        source: "user",
+        targetGeneration: 3,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(fit).toMatchObject({
+        ok: true,
+        presentation: "fit",
+        appliedViewport: { width: 1_200, height: 800 },
+      });
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 1_200, height: 800 },
+        screenSize: { width: 1_200, height: 800 },
+        scale: 2 / 3,
+      }));
+      expect(view.setBounds).toHaveBeenLastCalledWith({
+        x: 100,
+        y: 133,
+        width: 800,
+        height: 533,
+      });
+
+      const actual = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "actual",
+        operationId: "viewport-presentation-actual",
+        source: "user",
+        targetGeneration: 3,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(actual).toMatchObject({
+        ok: true,
+        presentation: "actual",
+        appliedViewport: { width: 1_200, height: 800 },
+      });
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 1_200, height: 800 },
+        screenSize: { width: 1_200, height: 800 },
+        scale: 1,
+      }));
+      expect(view.setBounds).toHaveBeenLastCalledWith({
+        x: -100,
+        y: 0,
+        width: 1_200,
+        height: 800,
+      });
+    });
+
+    it("rejects stale native presentation requests before applying them", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 1_200,
+        heightOverride: 800,
+        targetGeneration: 5,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      view.webContents.enableDeviceEmulation.mockClear();
+
+      const result = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "actual",
+        operationId: "viewport-presentation-stale",
+        source: "agent",
+        targetGeneration: 4,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+
+      expect(result).toMatchObject({ ok: false, error: "stale-target-generation" });
+      expect(view.webContents.enableDeviceEmulation).not.toHaveBeenCalled();
     });
 
     it("resetViewport restores the panel bounds", async () => {

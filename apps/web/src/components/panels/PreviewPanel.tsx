@@ -1941,26 +1941,34 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
       existing: automationViewportCoordinators.get(activeBrowserTargetKey),
       target,
       initial: automationViewports.get(activeBrowserTargetKey) ?? DEFAULT_VIEWPORT_SIZE,
+      presentation: automationViewportStates.get(activeBrowserTargetKey)?.presentation,
       targetGeneration: target.revision,
       nativeHost: () => window.desktopBridge?.preview?.design,
       rendererHost: {
-        setViewport: (size) => useBrowserAutomationStore.getState().setViewport(
+        setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
           threadId,
           activeWebviewTabId,
-          size.width,
-          size.height,
+          coordinator,
+          operation.targetGeneration,
+          size,
         ),
         readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? null,
         waitForLayout: async () => {
           if (typeof requestAnimationFrame !== "function") return;
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         },
+        isCurrent: (operation, coordinator) => {
+          const current = useBrowserAutomationStore.getState();
+          return current.viewportCoordinators.get(activeBrowserTargetKey) === coordinator &&
+            current.liveTargets.get(activeBrowserTargetKey)?.revision === operation.targetGeneration;
+        },
       },
       readConfirmed: () => useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? null,
-      onStateChange: (nextState) => useBrowserAutomationStore.getState().setViewportState(
+      onStateChange: (nextState, coordinator) => useBrowserAutomationStore.getState().setViewportState(
         threadId,
         activeWebviewTabId,
         nextState,
+        coordinator,
       ),
       onCreated: (coordinator) => useBrowserAutomationStore.getState().setViewportCoordinator(
         threadId,
@@ -1973,6 +1981,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     activeWebviewTabId,
     automationLiveTargets,
     automationViewports,
+    automationViewportStates,
     automationViewportCoordinators,
     threadId,
   ]);

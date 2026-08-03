@@ -6,6 +6,8 @@ import type {
   BrowserAutomationResponse,
   BrowserPerfCounters,
   BrowserTabSet,
+  BrowserAutomationViewportPresentationRequest,
+  BrowserAutomationViewportPresentationResult,
   McodeBrowserCapture,
   PreviewPageStatus,
 } from "@mcode/contracts";
@@ -289,6 +291,9 @@ interface PreviewDesignBridge {
         appliedViewport: { width: number; height: number } | null;
       }
   >;
+  setPresentation(
+    payload: BrowserAutomationViewportPresentationRequest,
+  ): Promise<BrowserAutomationViewportPresentationResult>;
   resetViewport(): Promise<{ ok: true } | { ok: false; error: string }>;
   setInspect(
     enabled: boolean,

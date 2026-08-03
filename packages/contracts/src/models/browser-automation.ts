@@ -62,6 +62,20 @@ export type BrowserAutomationViewportRequest = z.infer<
   ReturnType<typeof BrowserAutomationViewportRequestSchema>
 >;
 
+/** Validates a native preview viewport presentation request at the IPC boundary. */
+export const BrowserAutomationViewportPresentationRequestSchema = lazySchema(() =>
+  z
+    .object({
+      presentation: z.enum(["fit", "actual"]),
+      ...viewportOperationMetadataShape,
+    })
+    .strict(),
+);
+/** Typed native preview viewport presentation request. */
+export type BrowserAutomationViewportPresentationRequest = z.infer<
+  ReturnType<typeof BrowserAutomationViewportPresentationRequestSchema>
+>;
+
 /** Validates native preview responsive viewport results returned over IPC. */
 export const BrowserAutomationViewportResultSchema = lazySchema(() =>
   z.union([
@@ -86,6 +100,33 @@ export const BrowserAutomationViewportResultSchema = lazySchema(() =>
 /** Typed native preview responsive viewport result. */
 export type BrowserAutomationViewportResult = z.infer<
   ReturnType<typeof BrowserAutomationViewportResultSchema>
+>;
+
+/** Validates native preview viewport presentation results returned over IPC. */
+export const BrowserAutomationViewportPresentationResultSchema = lazySchema(() =>
+  z.union([
+    z
+      .object({
+        ok: z.literal(true),
+        presentation: z.enum(["fit", "actual"]),
+        appliedViewport: viewportSizeSchema,
+        ...viewportOperationMetadataShape,
+      })
+      .strict(),
+    z
+      .object({
+        ok: z.literal(false),
+        error: z.string().min(1).max(128),
+        presentation: z.enum(["fit", "actual"]).optional(),
+        appliedViewport: viewportSizeSchema.nullable().optional(),
+        ...viewportOperationMetadataShape,
+      })
+      .strict(),
+  ]),
+);
+/** Typed native preview viewport presentation result. */
+export type BrowserAutomationViewportPresentationResult = z.infer<
+  ReturnType<typeof BrowserAutomationViewportPresentationResultSchema>
 >;
 /** Maximum encoded success result size in bytes. */
 export const BROWSER_AUTOMATION_MAX_RESULT_BYTES = 512 * 1_024;

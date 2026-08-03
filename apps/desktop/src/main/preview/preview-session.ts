@@ -18,6 +18,7 @@ import {
   type PageStatusEvent,
 } from "./page-status-reducer.js";
 import { bumpPerf } from "./preview-perf.js";
+import { applyPreviewViewportEmulation } from "../preview-device-emulation.js";
 
 /**
  * Result of a picture-reference capture; defined here so PreviewSession can reference
@@ -250,8 +251,8 @@ function viewportTargetKey(threadId: string, tabId: string): string {
 
 /**
  * Computes the native presentation bounds for one confirmed CSS viewport.
- * Zoom scales the guest content while the returned bounds keep its CSS layout
- * dimensions stable as the surrounding panel changes size.
+ * Device emulation scales the guest content while its fixed CSS viewport stays
+ * independent from the surrounding panel size.
  */
 export function viewportBoundsForTarget(
   s: PreviewSession,
@@ -294,7 +295,13 @@ export function applyViewportPresentation(
   const presentation = viewportBoundsForTarget(s, panel, threadId, tabId);
   if (s.view && !s.view.webContents.isDestroyed()) {
     try {
-      s.view.webContents.setZoomFactor(presentation.scale);
+      const key = threadId && tabId ? viewportTargetKey(threadId, tabId) : null;
+      const viewport = key ? s.viewportAppliedByTarget.get(key) : undefined;
+      applyPreviewViewportEmulation(s.view.webContents, {
+        active: viewport !== undefined,
+        cssViewport: viewport ?? panel,
+        scale: presentation.scale,
+      });
       if (updateBounds) s.view.setBounds(presentation.bounds);
     } catch {
       // The view can disappear between the lifecycle check and the update.

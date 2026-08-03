@@ -16,6 +16,7 @@ import { selectBrowserAutomationWorkspaceIds } from "@/components/panels/Browser
 import { reconcileWarmPreviewScopes } from "@/components/panels/RightPanel";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
+import { createViewportCoordinator } from "@/services/browser-automation/viewportCoordinatorFactory";
 
 function target(
   workspaceId: string,
@@ -187,6 +188,64 @@ describe("browser automation renderer scope", () => {
     resolveHost({ status: "applied", applied: { width: 900, height: 700 } });
     await Promise.resolve();
     expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({ width: 1280, height: 800 });
+
+    store.unregisterTarget(threadId, tabId);
+  });
+
+  it("does not let a late renderer write update a remounted target", async () => {
+    const workspaceId = "workspace-viewport-late-renderer";
+    const threadId = "thread-viewport-late-renderer";
+    const tabId = "tab-viewport-late-renderer";
+    const key = browserAutomationTargetKey(threadId, tabId);
+    const store = useBrowserAutomationStore.getState();
+    store.unregisterTarget(threadId, tabId);
+    store.registerTarget(workspaceId, threadId, tabId);
+    const target = useBrowserAutomationStore.getState().liveTargets.get(key)!;
+    let releaseLayout!: () => void;
+    let lateWrite!: () => void;
+    const coordinator = createViewportCoordinator({
+      target: { threadId, tabId },
+      initial: { width: 1280, height: 800 },
+      targetGeneration: target.revision,
+      rendererHost: {
+        setViewport: (size, operation, currentCoordinator) => {
+          lateWrite = () => store.applyViewportIfCurrent(
+            threadId,
+            tabId,
+            currentCoordinator,
+            operation.targetGeneration,
+            size,
+          );
+          return true;
+        },
+        readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+        waitForLayout: () => new Promise<void>((resolve) => { releaseLayout = resolve; }),
+      },
+      onStateChange: (state, currentCoordinator) => store.setViewportState(
+        threadId,
+        tabId,
+        state,
+        currentCoordinator,
+      ),
+    });
+    store.setViewportCoordinator(threadId, tabId, coordinator);
+
+    const pending = coordinator.requestUserResize({ width: 900, height: 700 });
+    await Promise.resolve();
+    store.detachTarget(threadId, tabId);
+    store.registerTarget(workspaceId, threadId, tabId);
+    lateWrite();
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({
+      width: 1280,
+      height: 800,
+    });
+
+    releaseLayout();
+    await pending;
+    expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toEqual({
+      width: 1280,
+      height: 800,
+    });
 
     store.unregisterTarget(threadId, tabId);
   });

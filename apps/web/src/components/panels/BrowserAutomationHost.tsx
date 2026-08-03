@@ -150,6 +150,7 @@ async function restoreCompletedAgentViewport(
     dispatch.target.threadId,
     dispatch.target.tabId,
     coordinator.snapshot(),
+    coordinator,
   );
 }
 
@@ -174,6 +175,7 @@ function interruptViewportCoordinator(dispatch: BrowserAutomationHostDispatch): 
     dispatch.target.threadId,
     dispatch.target.tabId,
     coordinator.snapshot(),
+    coordinator,
   );
 }
 
@@ -192,27 +194,35 @@ function ensureViewportCoordinator(
     existing,
     target: dispatch.target,
     initial: state.viewportByTarget.get(key),
+    presentation: state.viewportStateByTarget.get(key)?.presentation,
     targetGeneration: dispatch.target.targetGeneration,
     nativeHost: () => window.desktopBridge?.preview?.design,
     rendererHost: {
-      setViewport: (size) => useBrowserAutomationStore.getState().setViewport(
+      setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
         dispatch.target.threadId,
         dispatch.target.tabId,
-        size.width,
-        size.height,
+        coordinator,
+        operation.targetGeneration,
+        size,
       ),
       readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
       waitForLayout: afterBrowserLayout,
+      isCurrent: (operation, coordinator) => {
+        const current = useBrowserAutomationStore.getState();
+        return current.viewportCoordinators.get(key) === coordinator &&
+          current.liveTargets.get(key)?.revision === operation.targetGeneration;
+      },
     },
     readConfirmed: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
     operationId: (_operation, sequence) => browserAutomationRequestKey(
       dispatch.request.requestId,
       dispatch.request.sequence + sequence,
     ),
-    onStateChange: (nextState) => useBrowserAutomationStore.getState().setViewportState(
+    onStateChange: (nextState, coordinator) => useBrowserAutomationStore.getState().setViewportState(
       dispatch.target.threadId,
       dispatch.target.tabId,
       nextState,
+      coordinator,
     ),
     onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
       dispatch.target.threadId,
@@ -253,6 +263,7 @@ async function executeBrowserDispatch(
         dispatch.target.threadId,
         dispatch.target.tabId,
         coordinator.snapshot(),
+        coordinator,
       );
       return resizeResponse(dispatch, result);
     }
@@ -298,6 +309,7 @@ async function executeBrowserDispatch(
           dispatch.target.threadId,
           dispatch.target.tabId,
           coordinator.snapshot(),
+          coordinator,
         );
         response = resizeResponse(dispatch, result);
       } else if (dispatch.request.operation === "recordingStart") {

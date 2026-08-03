@@ -6,6 +6,10 @@
  */
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+import type {
+  BrowserAutomationViewportPresentationRequest,
+  BrowserAutomationViewportPresentationResult,
+} from "@mcode/contracts";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Platform facts and allowlisted native window actions for the custom title bar. */
@@ -390,6 +394,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         tabId?: string;
       }): Promise<unknown> {
         return ipcRenderer.invoke("preview:design.set-viewport", payload);
+      },
+      setPresentation(
+        payload: BrowserAutomationViewportPresentationRequest,
+      ): Promise<BrowserAutomationViewportPresentationResult> {
+        return ipcRenderer.invoke("preview:design.set-presentation", payload);
       },
       resetViewport(): Promise<unknown> {
         return ipcRenderer.invoke("preview:design.reset-viewport");
