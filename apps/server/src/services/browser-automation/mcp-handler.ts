@@ -19,6 +19,7 @@ const MCP_PROTOCOL_VERSIONS = ["2025-03-26", "2024-11-05"] as const;
 const TOOL_NAME_TO_OPERATION = new Map<string, BrowserAutomationOperation>([
   ["browser_inspect", "inspect" as BrowserAutomationOperation],
   ["browser_act", "act" as BrowserAutomationOperation],
+  ["browser_tabs", "tabs" as BrowserAutomationOperation],
   ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => [
     BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
     operation,
@@ -149,6 +150,61 @@ const actStepVariants = [
   actStepSchema("recordingStop", {}),
 ];
 
+const tabsMutationProperties = {
+  idempotencyKey: { type: "string", minLength: 1, maxLength: 256 },
+  observationRef: { type: "string", minLength: 1, maxLength: 256 },
+  ...commonProperties,
+} as const;
+
+const tabsMutationVariants = [
+  {
+    type: "object",
+    properties: { ...tabsMutationProperties, action: { const: "select" }, tabId: { type: "string", minLength: 1, maxLength: 256 } },
+    required: ["action", "tabId", "idempotencyKey", "observationRef"],
+    additionalProperties: false,
+  },
+  {
+    type: "object",
+    properties: { ...tabsMutationProperties, action: { const: "claim" }, tabId: { type: "string", minLength: 1, maxLength: 256 } },
+    required: ["action", "tabId", "idempotencyKey", "observationRef"],
+    additionalProperties: false,
+  },
+  {
+    type: "object",
+    properties: { ...tabsMutationProperties, action: { const: "release" }, tabId: { type: "string", minLength: 1, maxLength: 256 } },
+    required: ["action", "idempotencyKey", "observationRef"],
+    additionalProperties: false,
+  },
+  {
+    type: "object",
+    properties: { ...tabsMutationProperties, action: { const: "close" }, tabId: { type: "string", minLength: 1, maxLength: 256 } },
+    required: ["action", "idempotencyKey", "observationRef"],
+    additionalProperties: false,
+  },
+  {
+    type: "object",
+    properties: {
+      ...tabsMutationProperties,
+      action: { const: "finalize" },
+      dispositions: {
+        type: "array",
+        maxItems: 32,
+        items: {
+          type: "object",
+          properties: {
+            tabId: { type: "string", minLength: 1, maxLength: 256 },
+            disposition: { enum: ["close", "release", "handoff", "deliverable"] },
+          },
+          required: ["tabId", "disposition"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["action", "dispositions", "idempotencyKey", "observationRef"],
+    additionalProperties: false,
+  },
+];
+
 function inputSchema(operation: BrowserAutomationOperation): Record<string, unknown> {
   const schemas: Record<BrowserAutomationOperation, Record<string, unknown>> = {
     inspect: { includeScreenshot: { type: "boolean", default: false }, includeDiagnostics: { type: "boolean", default: false } },
@@ -179,10 +235,12 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
     evaluate: { expression: { type: "string", minLength: 1, maxLength: 65536 }, awaitPromise: { type: "boolean" }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
     recordingStart: { maxDurationMs: { type: "integer", minimum: 1000, maximum: 600000 } },
     recordingStop: {},
+    tabs: { oneOf: tabsMutationVariants },
   };
   const requiredByOperation: Partial<Record<BrowserAutomationOperation, string[]>> = {
     open: ["idempotencyKey"], act: ["idempotencyKey", "observationRef", "deadlineMs", "steps"], navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["expression"],
   };
+  if (operation === "tabs") return { oneOf: tabsMutationVariants };
   return {
     type: "object",
     properties: { ...commonProperties, ...schemas[operation] },

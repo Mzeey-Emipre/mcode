@@ -82,4 +82,19 @@ describe("browser automation WebSocket contracts", () => {
       reason: "deadline-exceeded",
     }).success).toBe(true);
   });
+
+  it("directs provider-session cleanup to the owning Browser host", () => {
+    expect(WS_CHANNELS["browserAutomation.sessionRelease"].safeParse({
+      hostId: "host-a",
+      generation: 1,
+      providerSessionId: "provider-a",
+      reason: "credential-revoked",
+    }).success).toBe(true);
+    expect(WS_CHANNELS["browserAutomation.sessionRelease"].safeParse({
+      hostId: "host-a",
+      generation: 1,
+      providerSessionId: "provider-a",
+      reason: "unknown",
+    }).success).toBe(false);
+  });
 });

@@ -99,8 +99,13 @@ export const BROWSER_AUTOMATION_OPERATIONS = [
 ] as const;
 
 /** One browser automation operation identifier. */
-export type BrowserAutomationOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[number] | "inspect" | "act";
-const browserOperationSchema = z.union([z.enum(BROWSER_AUTOMATION_OPERATIONS), z.literal("inspect"), z.literal("act")]);
+export type BrowserAutomationOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[number] | "inspect" | "act" | "tabs";
+const browserOperationSchema = z.union([
+  z.enum(BROWSER_AUTOMATION_OPERATIONS),
+  z.literal("inspect"),
+  z.literal("act"),
+  z.literal("tabs"),
+]);
 
 /** Provider-facing MCP tool annotations for one operation. */
 export interface BrowserAutomationOperationAnnotations {
@@ -215,6 +220,14 @@ Object.defineProperty(BROWSER_AUTOMATION_OPERATION_METADATA, "act", {
     annotations: input,
   } satisfies BrowserAutomationOperationMetadata,
 });
+Object.defineProperty(BROWSER_AUTOMATION_OPERATION_METADATA, "tabs", {
+  enumerable: false,
+  value: {
+    operation: "tabs",
+    mcpName: "browser_tabs",
+    annotations: { ...input, idempotent: true },
+  } satisfies BrowserAutomationOperationMetadata,
+});
 
 /** Maximum tabs returned by one browser_inspect response. */
 export const BROWSER_AUTOMATION_MAX_INSPECT_TABS = 32;
@@ -225,7 +238,7 @@ export const BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS = 4_000;
 export const BrowserAutomationExecutorDescriptorSchema = lazySchema(() =>
   z.object({
     runtime: BrowserAutomationHostRuntimeSchema,
-    operations: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 2),
+    operations: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 3),
     constraints: z.object({
       maxTabs: z.number().int().positive().max(BROWSER_AUTOMATION_MAX_INSPECT_TABS),
       maxSnapshotChars: z.number().int().positive().max(BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS),
@@ -695,7 +708,7 @@ export const BrowserAutomationHostRegistrationSchema = lazySchema(() =>
       capabilities: z
         .array(BrowserAutomationHostCapabilitySchema())
         .min(1)
-        .max(BROWSER_AUTOMATION_OPERATIONS.length + 2),
+        .max(BROWSER_AUTOMATION_OPERATIONS.length + 3),
       maxPendingRequests: z
         .number()
         .int()
@@ -830,7 +843,7 @@ export const BrowserAutomationCredentialClaimsSchema = lazySchema(() =>
       operations: z
         .array(browserOperationSchema)
         .min(1)
-        .max(BROWSER_AUTOMATION_OPERATIONS.length + 2),
+        .max(BROWSER_AUTOMATION_OPERATIONS.length + 3),
       issuedAt: z.number().int().nonnegative(),
       expiresAt: z.number().int().nonnegative(),
     })
@@ -922,6 +935,39 @@ const actArgs = z.object({
   steps: z.array(BrowserAutomationActStepSchema()).min(1).max(BROWSER_AUTOMATION_ACT_MAX_STEPS),
 }).strict();
 
+const tabsMutationBase = {
+  idempotencyKey: idempotencyKeySchema,
+  observationRef: idSchema,
+};
+
+const tabsArgs = z.union([
+  z.object({ ...tabsMutationBase, action: z.literal("select"), tabId: idSchema }).strict(),
+  z.object({ ...tabsMutationBase, action: z.literal("claim"), tabId: idSchema }).strict(),
+  z.object({ ...tabsMutationBase, action: z.literal("release"), tabId: idSchema.optional() }).strict(),
+  z.object({ ...tabsMutationBase, action: z.literal("close"), tabId: idSchema.optional() }).strict(),
+  z.object({
+    ...tabsMutationBase,
+    action: z.literal("finalize"),
+    dispositions: z.array(z.object({
+      tabId: idSchema,
+      disposition: z.enum(["close", "release", "handoff", "deliverable"]),
+    }).strict()).max(BROWSER_AUTOMATION_MAX_INSPECT_TABS),
+  }).strict().superRefine((value, context) => {
+    if (new Set(value.dispositions.map((entry) => entry.tabId)).size !== value.dispositions.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Browser tab dispositions must identify unique tabs",
+        path: ["dispositions"],
+      });
+    }
+  }),
+]);
+
+/** One explicit Browser tab lifecycle mutation. */
+export const BrowserAutomationTabsArgsSchema = lazySchema(() => tabsArgs);
+/** Typed Browser tab lifecycle mutation. */
+export type BrowserAutomationTabsArgs = z.infer<ReturnType<typeof BrowserAutomationTabsArgsSchema>>;
+
 const requestVariant = <T extends BrowserAutomationOperation>(
   operation: T,
   args: z.ZodTypeAny,
@@ -1008,6 +1054,7 @@ export const BrowserAutomationRequestSchema = lazySchema(() =>
     ),
     requestVariant("recordingStop", emptyArgs),
     requestVariant("act", actArgs),
+    requestVariant("tabs", tabsArgs),
   ]),
 );
 
@@ -1051,6 +1098,27 @@ export const BrowserAutomationActResultSchema = lazySchema(() => z.object({
 /** Typed browser_act result. */
 export type BrowserAutomationActResult = z.infer<ReturnType<typeof BrowserAutomationActResultSchema>>;
 
+/** Normalized ownership state for one tab controlled by a provider session. */
+export const BrowserAutomationOwnedTabSchema = lazySchema(() => z.object({
+  tabId: idSchema,
+  provenance: z.enum(["agent-created", "claimed-user"]),
+  ownership: z.enum(["owned", "claimed", "released"]),
+  disposition: z.enum(["close", "release", "handoff", "deliverable"]).optional(),
+}).strict());
+/** Typed normalized Browser tab ownership state. */
+export type BrowserAutomationOwnedTab = z.infer<ReturnType<typeof BrowserAutomationOwnedTabSchema>>;
+
+/** Structured result for one browser_tabs lifecycle mutation. */
+export const BrowserAutomationTabsResultSchema = lazySchema(() => z.object({
+  operation: z.literal("tabs"),
+  action: z.enum(["select", "claim", "release", "close", "finalize"]),
+  currentTabId: idSchema.optional(),
+  observationRef: idSchema.optional(),
+  tabs: z.array(BrowserAutomationOwnedTabSchema()).max(BROWSER_AUTOMATION_MAX_INSPECT_TABS),
+}).strict());
+/** Typed browser_tabs result. */
+export type BrowserAutomationTabsResult = z.infer<ReturnType<typeof BrowserAutomationTabsResultSchema>>;
+
 /** Exhaustive operation-specific browser success result. */
 export const BrowserAutomationResultSchema = lazySchema(() =>
   z.discriminatedUnion("operation", [
@@ -1064,7 +1132,7 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
       diagnostics: z.array(z.string().max(SHORT_TEXT_MAX)).max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).optional(),
       observationRef: idSchema.optional(),
       capabilityRevision: z.number().int().positive().optional(),
-      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 2).optional(),
+      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 3).optional(),
       guidance: z.string().max(BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS).optional(),
     }).strict(),
     z.object({
@@ -1077,7 +1145,7 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
       focused: z.boolean(),
       viewport: z.object({ width: z.number().int().min(1).max(10_000), height: z.number().int().min(1).max(10_000) }).strict(),
       controller: BrowserAutomationControllerStateSchema().optional(),
-      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 2).optional(),
+      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 3).optional(),
       capabilityRevision: z.number().int().positive().optional(),
     }).strict(),
     z.object({
@@ -1104,6 +1172,7 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
     z.object({ operation: z.literal("recordingStart"), recordingId: idSchema, startedAt: z.number().int().nonnegative(), controlEpoch: z.number().int().nonnegative() }).strict(),
     z.object({ operation: z.literal("recordingStop"), recordingId: idSchema, mediaType: z.literal("video/webm"), dataBase64: z.string().max(RECORDING_MAX_BASE64_CHARS).refine((value) => { const size = decodedBase64Size(value); return size !== null && size <= BROWSER_AUTOMATION_MAX_RECORDING_BYTES; }, "Recording must be valid base64 within 512 KiB decoded"), durationMs: z.number().int().nonnegative().max(RECORDING_MAX_DURATION_MS), truncation: BrowserAutomationTruncationSchema(), controlEpoch: z.number().int().nonnegative() }).strict(),
     BrowserAutomationActResultSchema(),
+    BrowserAutomationTabsResultSchema(),
   ]).superRefine((value, context) => {
     if (value.operation === "console" || value.operation === "network") {
       validateTruncation(value.truncation, value.entries.length, context, ["truncation"]);

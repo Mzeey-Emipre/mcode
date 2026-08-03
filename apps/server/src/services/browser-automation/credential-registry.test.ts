@@ -106,6 +106,21 @@ describe("BrowserAutomationCredentialRegistry", () => {
     expect(() => registry.issue({ ...scope(), permissionCapability: "observe", allowedOperations: ["click"] })).toThrow();
   });
 
+  it("allows browser_tabs only for mutation-capable credentials", () => {
+    const registry = new BrowserAutomationCredentialRegistry();
+    const interact = registry.issue({
+      ...scope(),
+      permissionCapability: "interact",
+      allowedOperations: ["tabs"],
+    });
+    expect(registry.authenticate(interact.token)?.allowedOperations).toEqual(["tabs"]);
+    expect(() => registry.issue({
+      ...scope(),
+      permissionCapability: "observe",
+      allowedOperations: ["tabs"],
+    })).toThrow();
+  });
+
   it("stays bounded under concurrent issuance", async () => {
     const registry = new BrowserAutomationCredentialRegistry({ maxCredentials: 16 });
     await Promise.all(

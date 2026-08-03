@@ -233,4 +233,203 @@ describe("BrowserSessionDriver", () => {
     await driver.execute(makeDispatch("fresh", "https://example.test/", 2), new AbortController().signal);
     expect(execute).toHaveBeenCalledTimes(4);
   });
+
+  it("serializes fresh opens with browser_tabs at the driver boundary", async () => {
+    let resolveFirst!: (response: BrowserAutomationResponse) => void;
+    const firstResponse = new Promise<BrowserAutomationResponse>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const success = {
+      contractVersion: 1,
+      requestId: "open",
+      sequence: 1,
+      ok: true,
+      result: { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+    } as BrowserAutomationResponse;
+    const execute = vi.fn()
+      .mockImplementationOnce(() => firstResponse)
+      .mockResolvedValue(success);
+    const driver = new BrowserSessionDriver({ web: { execute }, electron: { execute }, isElectron: () => false });
+    const open = (requestId: string, tabId: string, idempotencyKey: string) => ({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: { threadId: "thread", tabId, windowId: 1, connectionGeneration: 1, targetGeneration: 1 },
+      request: {
+        contractVersion: 1, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance",
+        requestId, sequence: 1, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: "open", args: { idempotencyKey },
+      },
+    }) as BrowserAutomationHostDispatch;
+    const first = driver.execute(open("first-open", "tab-1", "key-1"), new AbortController().signal);
+    const concurrentOpen = await driver.execute(open("second-open", "tab-2", "key-2"), new AbortController().signal);
+    const concurrentTabs = await driver.execute({ ...open("tabs", "tab-1", "tabs-key"), request: {
+      ...open("tabs", "tab-1", "tabs-key").request,
+      operation: "tabs",
+      args: { action: "close", idempotencyKey: "tabs-key", observationRef: "unobserved" },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(concurrentOpen).toMatchObject({ ok: false, error: { code: "BROWSER_BUSY" } });
+    expect(concurrentTabs).toMatchObject({ ok: false, error: { code: "BROWSER_BUSY" } });
+    expect(execute).toHaveBeenCalledOnce();
+    resolveFirst(success);
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(driver.execute(open("third-open", "tab-3", "key-3"), new AbortController().signal)).resolves.toMatchObject({ ok: true });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("claims and releases user tabs without physically closing them", async () => {
+    const current = { threadId: "thread", tabId: "agent-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 1 };
+    const user = { threadId: "thread", tabId: "user-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 4 };
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => ({
+      contractVersion: 1,
+      requestId: value.request.requestId,
+      sequence: value.request.sequence,
+      ok: true,
+      result: value.request.operation === "inspect"
+        ? { operation: "inspect", tabs: [current, user] }
+        : { operation: value.request.operation, url: "about:blank", title: "", controlEpoch: 0 },
+    }) as BrowserAutomationResponse);
+    const close = vi.fn();
+    const driver = new BrowserSessionDriver({
+      web: { execute }, electron: { execute }, isElectron: () => false,
+      webTabs: { list: async () => [current, user] as never, close },
+    });
+    const base = {
+      scope: { workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance" },
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: current,
+    };
+    const inspect = await driver.execute({ ...base, request: {
+      contractVersion: 1, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance",
+      requestId: "inspect-tabs", sequence: 1, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const claimDispatch = { ...base, request: {
+      contractVersion: 1, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance",
+      requestId: "claim", sequence: 2, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: "tabs",
+      args: { action: "claim", tabId: "user-tab", idempotencyKey: "claim-key", observationRef },
+    } } as BrowserAutomationHostDispatch;
+    const claim = await driver.execute(claimDispatch, new AbortController().signal);
+    expect(claim).toMatchObject({ ok: true, result: { operation: "tabs", currentTabId: "user-tab", tabs: [{ tabId: "user-tab", provenance: "claimed-user", ownership: "claimed" }] } });
+    expect(driver.responseTarget(claimDispatch, claim)).toMatchObject({ tabId: "user-tab", targetGeneration: 4 });
+    const nextObservationRef = (claim as { result: { observationRef: string } }).result.observationRef;
+    const closed = await driver.execute({ ...base, target: user, request: {
+      contractVersion: 1, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance",
+      requestId: "close-user", sequence: 3, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: "tabs",
+      args: { action: "close", idempotencyKey: "close-user-key", observationRef: nextObservationRef },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(closed).toMatchObject({ ok: true, result: { tabs: [{ tabId: "user-tab", ownership: "released", disposition: "release" }] } });
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("closes omitted agent tabs at finalization and preserves deliverables across session cleanup", async () => {
+    const liveTargets = new Map<string, BrowserAutomationHostDispatch["target"]>();
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "open") liveTargets.set(value.target.tabId, value.target);
+      return {
+        contractVersion: 1, requestId: value.request.requestId, sequence: value.request.sequence, ok: true,
+        result: value.request.operation === "inspect"
+          ? { operation: "inspect", tabs: [...liveTargets.values()] }
+          : { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+      } as BrowserAutomationResponse;
+    });
+    const close = vi.fn();
+    const driver = new BrowserSessionDriver({
+      web: { execute }, electron: { execute }, isElectron: () => false,
+      webTabs: { list: async () => [...liveTargets.values()], close },
+    });
+    const open = (tabId: string, key: string) => ({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: { threadId: "thread", tabId, windowId: 1, connectionGeneration: 1, targetGeneration: 1 },
+      request: { contractVersion: 1, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance", requestId: key, sequence: 1, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: "open", args: { idempotencyKey: key } },
+    }) as BrowserAutomationHostDispatch;
+    await driver.execute(open("tab-1", "open-1"), new AbortController().signal);
+    await driver.execute(open("tab-2", "open-2"), new AbortController().signal);
+    await driver.execute(open("tab-3", "open-3"), new AbortController().signal);
+    const fourth = await driver.execute(open("tab-4", "open-4"), new AbortController().signal);
+    expect(fourth).toMatchObject({ ok: false, error: { code: "BROWSER_BUSY" } });
+    const inspect = await driver.execute({ ...open("tab-1", "inspect"), request: {
+      ...open("tab-1", "inspect").request,
+      operation: "inspect",
+      args: { includeScreenshot: false, includeDiagnostics: false },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const claimed = await driver.execute({ ...open("tab-1", "claim-agent"), request: {
+      ...open("tab-1", "claim-agent").request,
+      operation: "tabs",
+      args: { action: "claim", tabId: "tab-1", idempotencyKey: "claim-agent-key", observationRef },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(claimed).toMatchObject({ ok: true, result: { operation: "tabs", action: "claim" } });
+    expect((claimed as { result: { tabs: unknown[] } }).result.tabs).toContainEqual(expect.objectContaining({
+      tabId: "tab-1",
+      provenance: "agent-created",
+      ownership: "owned",
+    }));
+    const claimObservationRef = (claimed as { result: { observationRef: string } }).result.observationRef;
+    liveTargets.set("tab-2", { ...liveTargets.get("tab-2")!, targetGeneration: 2 });
+    const stale = await driver.execute({ ...open("tab-1", "stale-finalize"), request: {
+      ...open("tab-1", "stale-finalize").request,
+      operation: "tabs",
+      args: { action: "finalize", idempotencyKey: "stale-finalize-key", observationRef: claimObservationRef, dispositions: [] },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(stale).toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION", effect: "none" } });
+    expect(close).not.toHaveBeenCalled();
+    const refreshed = await driver.execute({ ...open("tab-1", "refresh"), request: {
+      ...open("tab-1", "refresh").request,
+      operation: "inspect",
+      args: { includeScreenshot: false, includeDiagnostics: false },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    const refreshedObservationRef = (refreshed as { result: { observationRef: string } }).result.observationRef;
+    const finalized = await driver.execute({ ...open("tab-1", "finalize"), request: {
+      ...open("tab-1", "finalize").request,
+      operation: "tabs",
+      args: { action: "finalize", idempotencyKey: "finalize-key", observationRef: refreshedObservationRef, dispositions: [{ tabId: "tab-1", disposition: "deliverable" }] },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(finalized).toMatchObject({ ok: true, result: { tabs: [{ tabId: "tab-1", disposition: "deliverable", ownership: "released" }] } });
+    expect(close.mock.calls.map(([target]) => target.tabId).sort()).toEqual(["tab-2", "tab-3"]);
+    await driver.releaseProviderSession("session");
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("normalizes web and Electron ownership outcomes while using runtime-specific cleanup", async () => {
+    const run = async (electronRuntime: boolean) => {
+      const webClose = vi.fn();
+      const electronClose = vi.fn();
+      const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => ({
+        contractVersion: 1,
+        requestId: value.request.requestId,
+        sequence: value.request.sequence,
+        ok: true,
+        result: { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+      }) as BrowserAutomationResponse);
+      const driver = new BrowserSessionDriver({
+        web: { execute }, electron: { execute }, isElectron: () => electronRuntime,
+        webTabs: { list: async (value) => [value.target], close: webClose },
+        electronTabs: { list: async (value) => [value.target], close: electronClose },
+      });
+      const opened = {
+        connection: { connectionGeneration: 1, capabilityRevision: 1 },
+        target: { threadId: "thread", tabId: "agent-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 1 },
+        request: {
+          contractVersion: 1, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance",
+          requestId: "open", sequence: 1, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: "open", args: { idempotencyKey: "open-key" },
+        },
+      } as BrowserAutomationHostDispatch;
+      const openResponse = await driver.execute(opened, new AbortController().signal);
+      const observationRef = (openResponse as { result: { observationRef: string } }).result.observationRef;
+      const result = await driver.execute({ ...opened, request: {
+        ...opened.request,
+        requestId: "finalize",
+        operation: "tabs",
+        args: { action: "finalize", idempotencyKey: "finalize-key", observationRef, dispositions: [] },
+      } } as BrowserAutomationHostDispatch, new AbortController().signal);
+      return { result, webClose, electronClose };
+    };
+
+    const web = await run(false);
+    const electron = await run(true);
+    expect(web.result).toEqual(electron.result);
+    expect(web.result).toMatchObject({ ok: true, result: { operation: "tabs", action: "finalize", tabs: [] } });
+    expect(web.webClose).toHaveBeenCalledOnce();
+    expect(web.electronClose).not.toHaveBeenCalled();
+    expect(electron.electronClose).toHaveBeenCalledOnce();
+    expect(electron.webClose).not.toHaveBeenCalled();
+  });
 });

@@ -195,6 +195,87 @@ describe("browser automation operation contract", () => {
     }
   });
 
+  it("defines browser_tabs as the idempotent Browser v2 lifecycle surface", () => {
+    expect(BROWSER_AUTOMATION_OPERATION_METADATA.tabs).toEqual({
+      operation: "tabs",
+      mcpName: "browser_tabs",
+      annotations: {
+        readOnly: false,
+        destructive: true,
+        idempotent: true,
+        openWorld: false,
+        privileged: false,
+      },
+    });
+    expect(Object.keys(BROWSER_AUTOMATION_OPERATION_METADATA)).not.toContain("tabs");
+
+    for (const args of [
+      { action: "select", tabId: "tab-2" },
+      { action: "claim", tabId: "tab-2" },
+      { action: "release" },
+      { action: "close" },
+      {
+        action: "finalize",
+        dispositions: [
+          { tabId: "tab-1", disposition: "deliverable" },
+          { tabId: "tab-2", disposition: "handoff" },
+        ],
+      },
+    ]) {
+      expect(BrowserAutomationRequestSchema().safeParse({
+        ...requestBase,
+        operation: "tabs",
+        args: {
+          ...args,
+          idempotencyKey: `tabs-${args.action}`,
+          observationRef: "observation-1",
+        },
+      }).success).toBe(true);
+    }
+
+    expect(BrowserAutomationRequestSchema().safeParse({
+      ...requestBase,
+      operation: "tabs",
+      args: { action: "close", idempotencyKey: "tabs-close" },
+    }).success).toBe(false);
+    expect(BrowserAutomationRequestSchema().safeParse({
+      ...requestBase,
+      operation: "tabs",
+      args: {
+        action: "finalize",
+        idempotencyKey: "tabs-finalize",
+        observationRef: "observation-1",
+        dispositions: [
+          { tabId: "tab-1", disposition: "close" },
+          { tabId: "tab-1", disposition: "deliverable" },
+        ],
+      },
+    }).success).toBe(false);
+  });
+
+  it("validates normalized browser_tabs ownership outcomes", () => {
+    expect(BrowserAutomationResultSchema().safeParse({
+      operation: "tabs",
+      action: "finalize",
+      currentTabId: "tab-2",
+      observationRef: "observation-2",
+      tabs: [
+        {
+          tabId: "tab-1",
+          provenance: "agent-created",
+          ownership: "released",
+          disposition: "deliverable",
+        },
+        {
+          tabId: "tab-2",
+          provenance: "claimed-user",
+          ownership: "claimed",
+          disposition: "handoff",
+        },
+      ],
+    }).success).toBe(true);
+  });
+
   it.each(BROWSER_AUTOMATION_OPERATIONS)("parses a scoped %s request", (operation) => {
     const parsed = BrowserAutomationRequestSchema().parse({
       ...requestBase,

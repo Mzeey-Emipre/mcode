@@ -533,7 +533,7 @@ export function BrowserAutomationHost() {
   const shutdownLeaseRef = useRef<HostLease | null>(null);
   const executorDescriptor = useMemo(() => ({
     runtime: window.desktopBridge?.preview?.automation ? "electron" as const : "web" as const,
-    operations: ["inspect", "act", ...BROWSER_AUTOMATION_OPERATIONS] as BrowserAutomationOperation[],
+    operations: ["inspect", "act", "tabs", ...BROWSER_AUTOMATION_OPERATIONS] as BrowserAutomationOperation[],
     constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
     capabilityRevision: 1,
   }), []);
@@ -554,6 +554,37 @@ export function BrowserAutomationHost() {
   const persistentWebTabsRef = useRef(new Map<string, PersistentAutomationWebTab>());
   const agentOpenTabsRef = useRef(new Map<string, string>());
   const [, setPersistentWebTabsRevision] = useState(0);
+  const listLifecycleTargets = async (
+    dispatch: BrowserAutomationHostDispatch,
+  ): Promise<readonly BrowserAutomationHostDispatchTarget[]> => {
+    const lease = leaseRef.current;
+    if (!lease) return [];
+    const candidates = [...useBrowserAutomationStore.getState().liveTargets.values()]
+      .filter((target) => target.threadId === dispatch.request.threadId);
+    const bridge = window.desktopBridge?.preview?.automation;
+    if (!bridge) {
+      return candidates.map((target) => ({
+        desktopInstanceId: lease.desktopInstanceId,
+        windowId: 1,
+        connectionGeneration: lease.generation,
+        threadId: target.threadId,
+        tabId: target.tabId,
+        targetGeneration: Math.max(1, target.revision),
+        active: false,
+        focused: false,
+        lastUsedAt: target.lastUsedAt,
+      }));
+    }
+    const described = await Promise.all(candidates.map((target) => bridge.describeTarget({
+      threadId: target.threadId,
+      tabId: target.tabId,
+    })));
+    return described.flatMap((result) => result.ok ? [{
+      ...result.target,
+      desktopInstanceId: lease.desktopInstanceId,
+      connectionGeneration: lease.generation,
+    }] : []);
+  };
   const sessionDriverRef = useRef<BrowserSessionDriver | null>(null);
   if (!sessionDriverRef.current) {
     const webAdapter = new WebBrowserSessionAdapter({
@@ -587,6 +618,14 @@ export function BrowserAutomationHost() {
       supportedActOperations: window.desktopBridge?.preview?.automation
         ? ["navigate", "click", "type", "press", "scroll"]
         : ["navigate", "click", "type"],
+      webTabs: {
+        list: listLifecycleTargets,
+        close: async (target) => removePersistentWebTab(target.tabId),
+      },
+      electronTabs: {
+        list: listLifecycleTargets,
+        close: async (target) => usePreviewTabsStore.getState().closePage(target.threadId, target.tabId),
+      },
     });
   }
   const addPersistentWebTab = (tab: PersistentAutomationWebTab): void => {
@@ -685,7 +724,7 @@ export function BrowserAutomationHost() {
         targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
       } : {}),
       executorDescriptor,
-      capabilities: [{ operation: "inspect", available: true }, { operation: "act", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
+      capabilities: [{ operation: "inspect", available: true }, { operation: "act", available: true }, { operation: "tabs", available: true }, ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => {
         if (!desktopAutomation) {
           const available = operation === "click" || operation === "type" ||
             operation === "status" || operation === "open" || operation === "navigate" ||
@@ -1042,12 +1081,13 @@ export function BrowserAutomationHost() {
       });
       void guardedOperation.then((response) => {
         if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
-        return webDispatch || webNavigateRequest || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
+        const responseTarget = sessionDriverRef.current!.responseTarget(dispatch, response);
+        return webDispatch || webNavigateRequest || dispatch.request.operation === "tabs" || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
           ? getTransport().respondToBrowserAutomationRequest(
             lease.hostId,
             lease.generation,
             response,
-            dispatch.target,
+            responseTarget,
           )
           : getTransport().respondToBrowserAutomationRequest(
             lease.hostId,
@@ -1399,6 +1439,8 @@ export function BrowserAutomationHost() {
   useEffect(() => onBrowserAutomationScopeRelease((release) => {
     const matches = (threadId: string, workspaceId: string): boolean =>
       release.threadId !== undefined ? threadId === release.threadId : workspaceId === release.workspaceId;
+    if (release.threadId !== undefined) void sessionDriverRef.current?.releaseThread(release.threadId);
+    else void sessionDriverRef.current?.releaseWorkspace(release.workspaceId);
     const nextScopes = backgroundScopesRef.current.filter(
       (scope) => !matches(scope.threadId, scope.workspaceId),
     );
@@ -1432,6 +1474,16 @@ export function BrowserAutomationHost() {
       cancelHostedRequest(key, dispatch, "host-shutdown", lease);
     }
   }), [cancelHostedRequest]);
+
+  useEffect(() => pushEmitter.on("browserAutomation.sessionRelease", (input) => {
+    const payload = input as { hostId?: unknown; generation?: unknown; providerSessionId?: unknown };
+    const lease = leaseRef.current;
+    if (
+      !lease || payload.hostId !== lease.hostId || payload.generation !== lease.generation ||
+      typeof payload.providerSessionId !== "string"
+    ) return;
+    void sessionDriverRef.current?.releaseProviderSession(payload.providerSessionId);
+  }), []);
 
   useEffect(() => () => {
     // Registration cleanup runs before this effect during unmount, so retain
