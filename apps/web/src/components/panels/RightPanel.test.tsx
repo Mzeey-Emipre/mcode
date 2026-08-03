@@ -1,7 +1,7 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { activatePreviewPage, previewTabSet } = vi.hoisted(() => ({
+const { activatePreviewPage, previewTabSet, previewTabsBridge } = vi.hoisted(() => ({
   activatePreviewPage: vi.fn(),
   previewTabSet: { current: null as {
     threadId: string;
@@ -16,6 +16,11 @@ const { activatePreviewPage, previewTabSet } = vi.hoisted(() => ({
       active: boolean;
     }>;
   } | null },
+  previewTabsBridge: {
+    list: vi.fn(),
+    onUpdated: vi.fn(),
+    updatedListener: { current: null as ((payload: unknown) => void) | null },
+  },
 }));
 
 vi.mock("./ActivityRail", () => ({
@@ -45,7 +50,15 @@ vi.mock("@/components/terminal/TerminalPoolSlotContext", () => ({
 }));
 vi.mock("@/stores/previewTabsStore", () => ({
   usePreviewDisplayTabSet: () => previewTabSet.current,
-  usePreviewTabsStore: { getState: () => ({ activatePage: activatePreviewPage, closePage: vi.fn() }) },
+  usePreviewTabsStore: {
+    getState: () => ({
+      activatePage: activatePreviewPage,
+      closePage: vi.fn(),
+      setTabSet: (_scopeId: string, tabSet: typeof previewTabSet.current) => {
+        previewTabSet.current = tabSet;
+      },
+    }),
+  },
 }));
 vi.mock("@/lib/ensure-terminal", () => ({ createTerminalForScope: vi.fn() }));
 vi.mock("@/lib/right-panel-layout", () => ({ toggleRightPanelAdaptive: vi.fn() }));
@@ -61,6 +74,25 @@ describe("RightPanel", () => {
   beforeEach(() => {
     previewTabSet.current = null;
     activatePreviewPage.mockReset();
+    previewTabsBridge.list.mockReset();
+    previewTabsBridge.list.mockResolvedValue({ ok: true, data: null });
+    previewTabsBridge.updatedListener.current = null;
+    previewTabsBridge.onUpdated.mockReset();
+    previewTabsBridge.onUpdated.mockImplementation((listener: (payload: unknown) => void) => {
+      previewTabsBridge.updatedListener.current = listener;
+      return vi.fn();
+    });
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: {
+        preview: {
+          tabs: {
+            list: previewTabsBridge.list,
+            onUpdated: previewTabsBridge.onUpdated,
+          },
+        },
+      },
+    });
     useWorkspaceStore.setState({ activeWorkspaceId: "workspace-1", activeThreadId: null });
     useTerminalStore.setState({ terminals: {}, terminalPanelByThread: {}, ptyToThread: {} });
     useDiffStore.setState({
@@ -164,6 +196,69 @@ describe("RightPanel", () => {
       activeTab: "preview",
     });
     expect(activatePreviewPage).toHaveBeenCalledWith("workspace-1", "browser-tab-1");
+  });
+
+  it("subscribes while empty so an Electron-created Browser page replaces the default screen", async () => {
+    const { rerender } = render(<RightPanel />);
+
+    act(() => useDiffStore.getState().showRightPanel("workspace-1"));
+    expect(screen.getByTestId("panel-empty-state")).toBeInTheDocument();
+
+    await waitFor(() => expect(previewTabsBridge.updatedListener.current).toBeTypeOf("function"));
+    act(() => {
+      previewTabsBridge.updatedListener.current?.({
+        threadId: "workspace-1",
+        activeTabId: "browser-tab-1",
+        tabs: [{
+          id: "browser-tab-1",
+          threadId: "workspace-1",
+          title: "Agent page",
+          url: "https://example.test",
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        }],
+      });
+    });
+    rerender(<RightPanel />);
+
+    expect(screen.queryByTestId("panel-empty-state")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
+  });
+
+  it("replaces an already-visible default screen when Electron publishes a Browser page", async () => {
+    useDiffStore.setState({
+      rightPanelFallbackByWorkspace: {
+        "workspace-1": createRightPanelState({
+          visible: true,
+          width: 400,
+          openTabs: [],
+        }),
+      },
+    });
+    const { rerender } = render(<RightPanel />);
+    expect(screen.getByTestId("panel-empty-state")).toBeInTheDocument();
+
+    await waitFor(() => expect(previewTabsBridge.updatedListener.current).toBeTypeOf("function"));
+    act(() => {
+      previewTabsBridge.updatedListener.current?.({
+        threadId: "workspace-1",
+        activeTabId: "browser-tab-1",
+        tabs: [{
+          id: "browser-tab-1",
+          threadId: "workspace-1",
+          title: "Agent page",
+          url: "https://example.test",
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        }],
+      });
+    });
+    rerender(<RightPanel />);
+
+    expect(screen.queryByTestId("panel-empty-state")).not.toBeInTheDocument();
+    expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
   });
 
   it("does not let a background Browser page alter an existing active panel tab", () => {

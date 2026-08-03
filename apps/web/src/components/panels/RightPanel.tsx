@@ -18,10 +18,7 @@ import { ActivityRail, type ScopeProgress } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
 import { PreviewPanel } from "@/components/panels/PreviewPanel";
-import {
-  usePreviewDisplayTabSet,
-  usePreviewTabsStore,
-} from "@/stores/previewTabsStore";
+import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
 import { createTerminalForScope } from "@/lib/ensure-terminal";
 import {
@@ -37,6 +34,7 @@ import {
   BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import { usePreviewTabSet } from "./hooks/usePreviewTabs";
 
 /** One thread/workspace Browser panel retained by the warm LRU pool. */
 export interface WarmPreviewScope {
@@ -152,9 +150,6 @@ export function RightPanel() {
       ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId)
       : false,
   );
-  const previousPanelVisible = useRef(panelVisible);
-  const panelWasJustOpened = panelVisible && !previousPanelVisible.current;
-  const [awaitingBrowserReveal, setAwaitingBrowserReveal] = useState(false);
 
   // The Terminal and Preview tabs bind to the active thread, or to the
   // workspace itself in the threadless new-thread view (where they run against
@@ -194,15 +189,13 @@ export function RightPanel() {
   // page entries (and the active-page favicon glyph) even while another tab is
   // active. Null in web builds with no bridge, where the rail keeps the single
   // Browser glyph.
-  const browserTabSet = usePreviewDisplayTabSet(panelScopeId);
+  const browserTabSet = usePreviewTabSet(panelScopeId);
 
-  // A Browser tab can be created while this panel is hidden. Keep that agent
-  // activity background-only, then project the existing Browser tab on the
-  // first render after a human opens an otherwise empty panel. The layout
-  // effect persists the projection after the derived render has prevented the
-  // empty-state flash.
+  // Keep hidden agent activity background-only. Once the human can see an
+  // otherwise empty panel, project any recorded Browser page immediately,
+  // including a page published after the default screen was already visible.
   const revealExistingPreview =
-    (panelWasJustOpened || awaitingBrowserReveal) &&
+    panelVisible &&
     openTabs.length === 0 &&
     (browserTabSet?.tabs.length ?? 0) > 0;
   const renderedTabInstances = revealExistingPreview
@@ -211,15 +204,6 @@ export function RightPanel() {
   const renderedOpenTabs = renderedTabInstances.map((instance) => instance.type);
   const renderedActiveTabId = revealExistingPreview ? "singleton:preview" : activeTabId;
   const renderedActiveTab = revealExistingPreview ? "preview" : activeTab;
-
-  useLayoutEffect(() => {
-    previousPanelVisible.current = panelVisible;
-    if (!panelVisible || openTabs.length > 0 || revealExistingPreview) {
-      setAwaitingBrowserReveal(false);
-    } else if (panelWasJustOpened) {
-      setAwaitingBrowserReveal(true);
-    }
-  }, [openTabs.length, panelVisible, panelWasJustOpened, revealExistingPreview]);
 
   useLayoutEffect(() => {
     if (!revealExistingPreview || !activeWorkspaceId) return;
