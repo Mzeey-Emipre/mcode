@@ -187,8 +187,14 @@ export class BrowserSessionDriver {
         },
       },
     } as OpenDispatch;
+    const mutationKey = this.sessionKey(dispatch);
+    if (this.activeTabMutations.has(mutationKey)) {
+      return Promise.resolve(this.failure(dispatch, "BROWSER_BUSY", "Another browser mutation is active for this provider session", "wait"));
+    }
+    this.activeTabMutations.add(mutationKey);
     const session = this.tabSession(dispatch);
     if ([...session.tabs.values()].filter((tab) => tab.provenance === "agent-created" && tab.ownership !== "released").length >= 3) {
+      this.activeTabMutations.delete(mutationKey);
       return Promise.resolve(this.failure(dispatch, "BROWSER_BUSY", "This provider session already owns three agent-created tabs", "wait"));
     }
     const promise = this.executeAdapter(normalized, signal)
@@ -203,7 +209,8 @@ export class BrowserSessionDriver {
           });
         }
         return this.withObservationRef(response);
-      });
+      })
+      .finally(() => this.activeTabMutations.delete(mutationKey));
     this.idempotency.set(scopeKey, {
       fingerprint,
       target: {

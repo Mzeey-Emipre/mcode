@@ -234,6 +234,46 @@ describe("BrowserSessionDriver", () => {
     expect(execute).toHaveBeenCalledTimes(4);
   });
 
+  it("serializes fresh opens with browser_tabs at the driver boundary", async () => {
+    let resolveFirst!: (response: BrowserAutomationResponse) => void;
+    const firstResponse = new Promise<BrowserAutomationResponse>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const success = {
+      contractVersion: 1,
+      requestId: "open",
+      sequence: 1,
+      ok: true,
+      result: { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+    } as BrowserAutomationResponse;
+    const execute = vi.fn()
+      .mockImplementationOnce(() => firstResponse)
+      .mockResolvedValue(success);
+    const driver = new BrowserSessionDriver({ web: { execute }, electron: { execute }, isElectron: () => false });
+    const open = (requestId: string, tabId: string, idempotencyKey: string) => ({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: { threadId: "thread", tabId, windowId: 1, connectionGeneration: 1, targetGeneration: 1 },
+      request: {
+        contractVersion: 1, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance",
+        requestId, sequence: 1, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: "open", args: { idempotencyKey },
+      },
+    }) as BrowserAutomationHostDispatch;
+    const first = driver.execute(open("first-open", "tab-1", "key-1"), new AbortController().signal);
+    const concurrentOpen = await driver.execute(open("second-open", "tab-2", "key-2"), new AbortController().signal);
+    const concurrentTabs = await driver.execute({ ...open("tabs", "tab-1", "tabs-key"), request: {
+      ...open("tabs", "tab-1", "tabs-key").request,
+      operation: "tabs",
+      args: { action: "close", idempotencyKey: "tabs-key", observationRef: "unobserved" },
+    } } as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(concurrentOpen).toMatchObject({ ok: false, error: { code: "BROWSER_BUSY" } });
+    expect(concurrentTabs).toMatchObject({ ok: false, error: { code: "BROWSER_BUSY" } });
+    expect(execute).toHaveBeenCalledOnce();
+    resolveFirst(success);
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(driver.execute(open("third-open", "tab-3", "key-3"), new AbortController().signal)).resolves.toMatchObject({ ok: true });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   it("claims and releases user tabs without physically closing them", async () => {
     const current = { threadId: "thread", tabId: "agent-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 1 };
     const user = { threadId: "thread", tabId: "user-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 4 };
