@@ -10,6 +10,20 @@ import { BROWSER_AUTOMATION_MAX_INSPECT_TABS as MAX_LIFECYCLE_TABS } from "@mcod
 const MAX_IDEMPOTENCY_RECORDS = 256;
 const IDEMPOTENCY_TTL_MS = 30 * 60_000;
 const SECRET_TEXT = /\b(password|token|secret|authorization|cookie|credential|session|api[_-]?key)\b\s*[:=]\s*[^,;\s]+/gi;
+const CONTROL_TAKING_OPERATIONS = new Set([
+  "navigate",
+  "resize",
+  "click",
+  "type",
+  "press",
+  "scroll",
+  "evaluate",
+  "back",
+  "forward",
+  "reload",
+  "hover",
+  "drag",
+]);
 
 function sanitizePublicDetail(value: unknown): string {
   return String(value ?? "")
@@ -295,6 +309,7 @@ export class BrowserSessionDriver {
   private executeAdapter(
     dispatch: BrowserAutomationHostDispatch,
     signal: AbortSignal,
+    options: { readonly implicitClaim?: boolean } = {},
   ): Promise<BrowserAutomationResponse> {
     const drift = this.revisionDrift(dispatch);
     if (drift) return Promise.resolve(drift);
@@ -309,6 +324,9 @@ export class BrowserSessionDriver {
               result: { ...normalized.result, tabs: [...targets] },
             };
           }
+        }
+        if (normalized.ok && options.implicitClaim !== false && this.isControlTakingOperation(dispatch.request.operation)) {
+          this.claimSuccessfulTarget(dispatch);
         }
         return this.rememberObservation(normalized, dispatch);
       });
@@ -362,7 +380,7 @@ export class BrowserSessionDriver {
           break;
         }
         const stepDispatch = this.stepDispatch(dispatch, step, deadline, index);
-        const response = await this.executeAdapter(stepDispatch, signal);
+        const response = await this.executeAdapter(stepDispatch, signal, { implicitClaim: false });
         if (!response.ok) {
           outcome = response.error.code === "OPERATION_CANCELLED" || response.error.code === "HUMAN_INTERRUPTED" || response.error.code === "DEADLINE_EXCEEDED" ? "interrupted" : "failed";
           stoppingPosition = index;
@@ -398,7 +416,13 @@ export class BrowserSessionDriver {
         result: { operation: "act", outcome, stoppingPosition, effect, recovery: outcome === "interrupted" ? "inspect" : "inspect", receipts, finalObservation, nextObservationRef },
       } as BrowserAutomationResponse;
     };
-    return run();
+    const hasControlTakingStep = request.args.steps.some((step: BrowserAutomationActStep) => this.isControlTakingOperation(step.operation));
+    return run().then((response) => {
+      if (response.ok && response.result.operation === "act" && response.result.outcome === "completed" && hasControlTakingStep) {
+        this.claimSuccessfulTarget(dispatch);
+      }
+      return response;
+    });
   }
 
   private executeTabs(dispatch: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> {
@@ -469,21 +493,7 @@ export class BrowserSessionDriver {
       const controlled = session.tabs.get(liveTarget.tabId);
       if (controlled) session.tabs.set(liveTarget.tabId, { ...controlled, target: liveTarget });
     } else if (request.args.action === "claim" && liveTarget) {
-      session.current = liveTarget;
-      const controlled = session.tabs.get(liveTarget.tabId);
-      session.tabs.set(liveTarget.tabId, controlled
-        ? {
-            ...controlled,
-            ownership: controlled.provenance === "agent-created" ? "owned" : "claimed",
-            disposition: undefined,
-            target: liveTarget,
-          }
-        : {
-            tabId: liveTarget.tabId,
-            provenance: "claimed-user",
-            ownership: "claimed",
-            target: liveTarget,
-          });
+      this.claimOrUpdateTab(session, liveTarget);
     } else if ((request.args.action === "release" || request.args.action === "close") && requestedTabId) {
       const controlled = session.tabs.get(requestedTabId);
       if (request.args.action === "close" && controlled?.provenance === "agent-created") {
@@ -538,6 +548,33 @@ export class BrowserSessionDriver {
         tabs: [...session.tabs.values()].map(({ target: _target, ...tab }) => tab),
       },
     };
+  }
+
+  private isControlTakingOperation(operation: string): boolean {
+    return CONTROL_TAKING_OPERATIONS.has(operation);
+  }
+
+  private claimSuccessfulTarget(dispatch: BrowserAutomationHostDispatch): void {
+    this.claimOrUpdateTab(this.tabSession(dispatch), dispatch.target);
+    this.publishLifecycleProjectionInternal();
+  }
+
+  private claimOrUpdateTab(session: ProviderTabSession, target: BrowserAutomationHostDispatchTarget): void {
+    const controlled = session.tabs.get(target.tabId);
+    session.current = target;
+    session.tabs.set(target.tabId, controlled
+      ? {
+          ...controlled,
+          ownership: controlled.provenance === "agent-created" ? "owned" : "claimed",
+          disposition: undefined,
+          target,
+        }
+      : {
+          tabId: target.tabId,
+          provenance: "claimed-user",
+          ownership: "claimed",
+          target,
+        });
   }
 
   private stepDispatch(dispatch: BrowserAutomationHostDispatch, step: BrowserAutomationActStep, deadline: number, index: number): BrowserAutomationHostDispatch {

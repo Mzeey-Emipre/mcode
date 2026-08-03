@@ -323,6 +323,146 @@ describe("BrowserSessionDriver", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
+  it("implicitly claims a user tab after browser_navigate and leaves it open during release", async () => {
+    const agent = { threadId: "thread", tabId: "agent-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 1 };
+    const user = { threadId: "thread", tabId: "user-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 4 };
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => ({
+      contractVersion: 1,
+      requestId: value.request.requestId,
+      sequence: value.request.sequence,
+      ok: true,
+      result: { operation: value.request.operation },
+    }) as BrowserAutomationResponse);
+    const close = vi.fn();
+    const projections: BrowserSessionLifecycleTab[][] = [];
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      webTabs: { list: async () => [agent, user] as never, close },
+      onLifecycleChange: (tabs) => projections.push([...tabs]),
+    });
+    const open = await driver.execute({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: agent,
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId: "open-agent",
+        sequence: 1,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "open",
+        args: { idempotencyKey: "open-agent-key" },
+      },
+    } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(open).toMatchObject({ ok: true });
+
+    const navigateAgent = await driver.execute({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: agent,
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId: "navigate-agent",
+        sequence: 2,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "navigate",
+        args: { url: "https://example.test/agent" },
+      },
+    } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(navigateAgent).toMatchObject({ ok: true, result: { operation: "navigate" } });
+    expect(projections.at(-1)).toEqual([
+      expect.objectContaining({ tabId: "agent-tab", provenance: "agent-created", ownership: "owned" }),
+    ]);
+
+    const navigate = await driver.execute({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: user,
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId: "navigate-user",
+        sequence: 3,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "navigate",
+        args: { url: "https://example.test/preview" },
+      },
+    } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(navigate).toMatchObject({ ok: true, result: { operation: "navigate" } });
+    expect(projections.at(-1)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tabId: "agent-tab", provenance: "agent-created", ownership: "owned" }),
+      expect.objectContaining({ tabId: "user-tab", provenance: "claimed-user", ownership: "claimed" }),
+    ]));
+
+    await driver.releaseProviderSession("session");
+    expect(close).toHaveBeenCalledWith(agent);
+    expect(close).not.toHaveBeenCalledWith(user);
+    expect(projections.at(-1)).toEqual([]);
+  });
+
+  it("does not claim a target when a control operation fails or an observation is read-only", async () => {
+    const user = { threadId: "thread", tabId: "user-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 4 };
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "navigate") {
+        return {
+          contractVersion: 1,
+          requestId: value.request.requestId,
+          sequence: value.request.sequence,
+          ok: false,
+          error: { code: "OPERATION_FAILED", message: "navigation failed", retryable: false, stage: "execution", effect: "none", recovery: "inspect" },
+        } as unknown as BrowserAutomationResponse;
+      }
+      return {
+        contractVersion: 1,
+        requestId: value.request.requestId,
+        sequence: value.request.sequence,
+        ok: true,
+        result: { operation: value.request.operation },
+      } as unknown as BrowserAutomationResponse;
+    });
+    const projections: BrowserSessionLifecycleTab[][] = [];
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      webTabs: { list: async () => [user] as never, close: vi.fn() },
+      onLifecycleChange: (tabs) => projections.push([...tabs]),
+    });
+    const base = {
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: user,
+      request: {
+        contractVersion: 1,
+        workspaceId: "workspace",
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        sequence: 1,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+      },
+    };
+    const failed = await driver.execute({ ...base, request: { ...base.request, requestId: "navigate-failed", operation: "navigate", args: { url: "https://example.test/failed" } } } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    const observed = await driver.execute({ ...base, request: { ...base.request, requestId: "inspect-read-only", operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } } } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    const recording = await driver.execute({ ...base, request: { ...base.request, requestId: "recording-read-only", operation: "recordingStart", args: {} } } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    expect(failed).toMatchObject({ ok: false, error: { code: "OPERATION_FAILED" } });
+    expect(observed).toMatchObject({ ok: true, result: { operation: "inspect" } });
+    expect(recording).toMatchObject({ ok: true, result: { operation: "recordingStart" } });
+    expect(projections).toEqual([]);
+  });
+
   it("publishes lifecycle projection changes for agent-owned and claimed tabs", async () => {
     const current = { threadId: "thread", tabId: "agent-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 1 };
     const user = { threadId: "thread", tabId: "user-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 4 };
