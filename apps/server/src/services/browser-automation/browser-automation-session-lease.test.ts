@@ -73,8 +73,18 @@ describe("BrowserAutomationSessionLease", () => {
     expect(new Set(interact.allowedOperations).size).toBe(interact.allowedOperations.length);
     expect(privileged.allowedOperations.slice(0, 2)).toEqual(["inspect", "act"]);
     expect(privileged.allowedOperations).toContain("evaluate");
-    expect(privileged.allowedOperations).toEqual(["inspect", "act", ...BROWSER_AUTOMATION_OPERATIONS]);
+    expect(privileged.allowedOperations).toEqual(["inspect", "act", "tabs", ...BROWSER_AUTOMATION_OPERATIONS]);
     expect(new Set(privileged.allowedOperations).size).toBe(privileged.allowedOperations.length);
+  });
+
+  it("advertises browser_tabs for interact and privileged leases, but not observe", () => {
+    const lease = configuredLease();
+    const observe = lease.issue(lease.stage({ ...scope(), permissionCapability: "observe" }))!;
+    const interact = lease.issue(lease.stage({ ...scope(), permissionCapability: "interact", providerSessionId: "interact-session" }))!;
+    const privileged = lease.issue(lease.stage({ ...scope(), permissionCapability: "privileged", providerSessionId: "privileged-session" }))!;
+    expect(observe.allowedOperations).not.toContain("tabs");
+    expect(interact.allowedOperations).toContain("tabs");
+    expect(privileged.allowedOperations).toContain("tabs");
   });
 
   it("cleans a staged scope when registry issuance fails", () => {

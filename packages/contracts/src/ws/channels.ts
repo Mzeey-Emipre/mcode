@@ -49,6 +49,15 @@ export const WS_CHANNELS = {
       reason: z.enum(["deadline-exceeded", "client-disconnected", "provider-cancelled", "user-stopped"]),
     })
     .strict(),
+  /** Settles every tab owned or claimed by one terminated provider session. */
+  "browserAutomation.sessionRelease": z
+    .object({
+      hostId: z.string().min(1).max(256),
+      generation: z.number().int().positive(),
+      providerSessionId: z.string().min(1).max(256),
+      reason: z.enum(["credential-revoked", "provider-session-ended"]),
+    })
+    .strict(),
   "agent.event": AgentEventSchema(),
   /**
    * @deprecated Legacy JSON format retained for backward compatibility.

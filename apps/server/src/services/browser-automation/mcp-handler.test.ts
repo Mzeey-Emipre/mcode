@@ -127,6 +127,38 @@ describe("BrowserAutomationMcpHandler", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("advertises and routes browser_tabs actions for an interact credential", async () => {
+    const tabs = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "tabs-provider",
+      mcodeSessionId: "tabs-mcode",
+      threadId: "thread-tabs",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "interact",
+      allowedOperations: ["tabs"],
+    });
+    const listed = await post(JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/list", params: {} }), `Bearer ${tabs.token}`);
+    const tool = (await listed.json() as any).result.tools[0];
+    expect(tool.name).toBe("browser_tabs");
+    expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
+    expect(tool.inputSchema.oneOf).toHaveLength(5);
+    const response = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 12,
+      method: "tools/call",
+      params: {
+        name: "browser_tabs",
+        arguments: { action: "select", tabId: "tab-2", idempotencyKey: "tabs-key", observationRef: "obs-1" },
+      },
+    }), `Bearer ${tabs.token}`);
+    expect(response.status).toBe(200);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ threadId: "thread-tabs" }), expect.objectContaining({
+      operation: "tabs",
+      args: { action: "select", tabId: "tab-2", idempotencyKey: "tabs-key", observationRef: "obs-1" },
+    }));
+  });
+
   it("advertises only the operations allowed by the authenticated credential", async () => {
     const observe = credentials.issue({
       providerId: "cursor",
