@@ -727,14 +727,8 @@ export class BrowserSessionDriver {
     } else if ((request.args.action === "release" || request.args.action === "close") && requestedTabId) {
       const controlled = session.tabs.get(requestedTabId);
       if (request.args.action === "close" && controlled?.provenance === "agent-created") {
-        if (signal.aborted) {
-          return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before closing the tab");
-        }
-        await adapter?.close(controlled.target);
-        session.tabs.delete(requestedTabId);
-        if (signal.aborted) {
-          return this.tabCancellation(dispatch, "Browser tab mutation was interrupted after closing the tab", "unknown");
-        }
+        const closeResult = await this.closeControlledTab(dispatch, session, adapter, requestedTabId, controlled, signal);
+        if (closeResult) return closeResult;
       } else if (controlled) {
         if (signal.aborted) {
           return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before releasing the tab");
@@ -752,19 +746,14 @@ export class BrowserSessionDriver {
           ? requested === "handoff" || requested === "deliverable" ? requested : "release"
           : requested ?? "close";
         if (disposition === "close") {
-          if (signal.aborted) {
-            return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before closing the next tab");
-          }
-          await adapter?.close(controlled.target);
-          session.tabs.delete(tabId);
-          if (signal.aborted) {
-            return this.tabCancellation(dispatch, "Browser tab mutation was interrupted after closing a tab", "unknown");
-          }
+          const closeResult = await this.closeControlledTab(dispatch, session, adapter, tabId, controlled, signal);
+          if (closeResult) return closeResult;
         } else {
           if (signal.aborted) {
             return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before settling the next tab");
           }
           session.tabs.set(tabId, { ...controlled, ownership: "released", disposition });
+          if (session.current?.tabId === tabId) session.current = null;
         }
       }
       session.current = null;
@@ -796,6 +785,55 @@ export class BrowserSessionDriver {
         ...(session.current ? { currentTabId: session.current.tabId } : {}),
         ...(nextObservationRef ? { observationRef: nextObservationRef } : {}),
         tabs: [...session.tabs.values()].map(({ target: _target, ...tab }) => tab),
+      },
+    };
+  }
+
+  private async closeControlledTab(
+    dispatch: BrowserAutomationHostDispatch,
+    session: ProviderTabSession,
+    adapter: BrowserSessionTabLifecycleAdapter | undefined,
+    tabId: string,
+    controlled: ControlledTab,
+    signal: AbortSignal,
+  ): Promise<BrowserAutomationResponse | null> {
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before closing the tab");
+    }
+    try {
+      await adapter?.close(controlled.target);
+    } catch (cause) {
+      return this.tabCloseFailure(dispatch, cause, signal);
+    }
+    session.tabs.delete(tabId);
+    if (session.current?.tabId === tabId) session.current = null;
+    if (signal.aborted) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted after closing the tab", "unknown");
+    }
+    return null;
+  }
+
+  private tabCloseFailure(
+    dispatch: BrowserAutomationHostDispatch,
+    cause: unknown,
+    signal: AbortSignal,
+  ): BrowserAutomationResponse {
+    if (signal.aborted || this.isCancellation(cause)) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted while closing the tab", "unknown");
+    }
+    const detail = sanitizePublicDetail(cause instanceof Error ? cause.message : cause);
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: false,
+      error: {
+        code: "TAB_UNAVAILABLE",
+        message: detail ? `Browser tab close failed: ${detail}` : "Browser tab close failed",
+        retryable: true,
+        stage: "effect",
+        effect: "unknown",
+        recovery: "inspect",
       },
     };
   }
