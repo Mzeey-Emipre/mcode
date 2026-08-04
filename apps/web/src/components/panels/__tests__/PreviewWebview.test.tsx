@@ -1,9 +1,14 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 
-import { onBrowserAutomationObservationInvalidation } from "@/stores/browserAutomationStore";
+import {
+  browserAutomationTargetKey,
+  onBrowserAutomationObservationInvalidation,
+  releaseBrowserAutomationThreadScope,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
 import { PreviewWebview, type PreviewWebviewHandle } from "../PreviewWebview";
 
 describe("PreviewWebview", () => {
@@ -119,6 +124,53 @@ describe("PreviewWebview", () => {
     expect(observed.handle?.canGoForward()).toBe(false);
     expect(canGoBack).toHaveBeenCalled();
     expect(canGoForward).toHaveBeenCalled();
+  });
+
+  it("advances the viewport coordinator when dom-ready refreshes the target", async () => {
+    const getWebContentsId = vi.fn(() => 42);
+    const originalGetWebContentsId = (
+      HTMLElement.prototype as HTMLElement & { getWebContentsId?: () => number }
+    ).getWebContentsId;
+    (
+      HTMLElement.prototype as HTMLElement & { getWebContentsId?: () => number }
+    ).getWebContentsId = getWebContentsId;
+    window.desktopBridge = {
+      preview: {
+        adoptWebview: vi.fn().mockResolvedValue({ ok: true }),
+        releaseWebview: vi.fn().mockResolvedValue(undefined),
+        design: {},
+      },
+    } as unknown as NonNullable<typeof window.desktopBridge>;
+
+    try {
+      render(
+        <PreviewWebview
+          workspaceId="workspace-generation"
+          threadId="thread-generation"
+          tabId="tab-generation"
+          src="https://example.com"
+        />,
+      );
+      const key = browserAutomationTargetKey("thread-generation", "tab-generation");
+      await waitFor(() => {
+        expect(useBrowserAutomationStore.getState().viewportCoordinators.get(key)).toBeDefined();
+      });
+
+      fireEvent(screen.getByTestId("preview-webview"), new Event("dom-ready"));
+
+      await waitFor(() => {
+        const store = useBrowserAutomationStore.getState();
+        expect(store.viewportCoordinators.get(key)?.snapshot().targetGeneration).toBe(
+          store.liveTargets.get(key)?.revision,
+        );
+        expect(store.liveTargets.get(key)?.revision).toBe(2);
+      });
+    } finally {
+      releaseBrowserAutomationThreadScope("thread-generation");
+      (
+        HTMLElement.prototype as HTMLElement & { getWebContentsId?: () => number }
+      ).getWebContentsId = originalGetWebContentsId;
+    }
   });
 
   it("applies an exact renderer-owned design viewport to the visible webview", () => {

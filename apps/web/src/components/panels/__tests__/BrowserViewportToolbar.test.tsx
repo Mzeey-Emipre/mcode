@@ -67,7 +67,7 @@ describe("BrowserViewportToolbar", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Viewport preset" }));
-    expect(screen.getByText("393 × 852")).toBeInTheDocument();
+    expect(await screen.findByText("393 × 852")).toBeInTheDocument();
     await user.click(await screen.findByText("iPhone 15 Pro"));
     await waitFor(() => expect(apply).toHaveBeenCalledWith(
       expect.objectContaining({ requested: { width: 393, height: 852 } }),
@@ -93,10 +93,10 @@ describe("BrowserViewportToolbar", () => {
     ));
 
     await user.click(screen.getByRole("button", { name: "Viewport scale and presentation" }));
-    await user.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Actual size" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Actual size" }));
     expect(coordinator.snapshot().presentation).toBe("actual");
     await user.click(screen.getByRole("button", { name: "Viewport scale and presentation" }));
-    await user.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Fit to panel" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Fit to panel" }));
     expect(coordinator.snapshot().presentation).toBe("fit");
     await user.click(screen.getByRole("button", { name: "Close viewport toolbar" }));
     expect(onClose).toHaveBeenCalledOnce();
@@ -118,13 +118,13 @@ describe("BrowserViewportToolbar", () => {
 
     const presetTrigger = screen.getByRole("button", { name: "Viewport preset" });
     await user.click(presetTrigger);
-    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
     await user.click(presetTrigger);
     await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
 
     const scaleTrigger = screen.getByRole("button", { name: "Viewport scale and presentation" });
     await user.click(scaleTrigger);
-    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
     await user.click(scaleTrigger);
     await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
   });

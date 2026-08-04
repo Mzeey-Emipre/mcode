@@ -13,7 +13,7 @@
  * same IPC channels will keep working once Slice 2 lands per-tab runtimes.
  */
 
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow, ipcMain, type WebContents } from "electron";
 import {
   BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
   BROWSER_AUTOMATION_MIN_VIEWPORT_PX,
@@ -35,6 +35,7 @@ import {
   viewportTargetKey,
 } from "./preview-session.js";
 import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
+import { applyPreviewViewportEmulation } from "../preview-device-emulation.js";
 
 type ViewportSource = NonNullable<BrowserAutomationViewportRequest["source"]>;
 
@@ -135,6 +136,37 @@ function admitViewportOperation(
   tab.viewportTargetGeneration = targetGeneration;
   tab.viewportOperationGeneration = operationGeneration;
   return null;
+}
+
+function applyViewportToActiveHost(
+  session: ReturnType<typeof getSession>,
+  webContents: WebContents,
+  threadId: string,
+  tabId: string,
+): void {
+  if (session.view?.webContents === webContents) {
+    if (!session.lastBounds) return;
+    applyViewportPresentation(session, session.lastBounds, threadId, tabId);
+    return;
+  }
+
+  const viewport = session.viewportAppliedByTarget.get(viewportTargetKey(threadId, tabId));
+  if (!viewport) {
+    webContents.disableDeviceEmulation();
+    return;
+  }
+  applyPreviewViewportEmulation(webContents, {
+    active: true,
+    cssViewport: viewport,
+    scale: 1,
+  });
+}
+
+function activeHostNeedsBounds(
+  session: ReturnType<typeof getSession>,
+  webContents: WebContents,
+): boolean {
+  return session.view?.webContents === webContents && !session.lastBounds;
 }
 
 const INSPECT_SCRIPT = String.raw`(() => {
@@ -295,10 +327,11 @@ export function registerDesignModeHandlers(): void {
             ...viewportMetadata(metadata, appliedBefore),
           };
         }
-        if (!s.view || s.view.webContents.isDestroyed()) {
+        const webContents = resolveActivePreviewWebContents(s);
+        if (!webContents || webContents.isDestroyed()) {
           return { ok: false, error: "no-view", ...viewportMetadata(metadata, appliedBefore) };
         }
-        if (!s.lastBounds) {
+        if (activeHostNeedsBounds(s, webContents)) {
           return { ok: false, error: "no-bounds", ...viewportMetadata(metadata, appliedBefore) };
         }
 
@@ -316,7 +349,7 @@ export function registerDesignModeHandlers(): void {
         if (key && !s.viewportPresentationByTarget.has(key)) {
           s.viewportPresentationByTarget.set(key, "fit");
         }
-        applyViewportPresentation(s, s.lastBounds, resolvedThreadId, resolvedTabId);
+        applyViewportToActiveHost(s, webContents, resolvedThreadId, resolvedTabId);
         return { ok: true, data: { width, height }, ...viewportMetadata(metadata, appliedViewport) };
       })());
     },
@@ -367,14 +400,15 @@ export function registerDesignModeHandlers(): void {
             ...presentationMetadata(metadata, request.presentation, appliedBefore),
           };
         }
-        if (!s.view || s.view.webContents.isDestroyed()) {
+        const webContents = resolveActivePreviewWebContents(s);
+        if (!webContents || webContents.isDestroyed()) {
           return {
             ok: false,
             error: "no-view",
             ...presentationMetadata(metadata, request.presentation, appliedBefore),
           };
         }
-        if (!s.lastBounds) {
+        if (activeHostNeedsBounds(s, webContents)) {
           return {
             ok: false,
             error: "no-bounds",
@@ -391,7 +425,7 @@ export function registerDesignModeHandlers(): void {
 
         s.viewportPresentationByTarget.set(key, request.presentation);
         const appliedViewport = s.viewportAppliedByTarget.get(key) ?? null;
-        applyViewportPresentation(s, s.lastBounds, resolvedThreadId, resolvedTabId);
+        applyViewportToActiveHost(s, webContents, resolvedThreadId, resolvedTabId);
         return {
           ok: true,
           ...presentationMetadata(metadata, request.presentation, appliedViewport),
@@ -436,15 +470,16 @@ export function registerDesignModeHandlers(): void {
           ...viewportMetadata(metadata, appliedBefore),
         };
       }
-      if (!s.view || s.view.webContents.isDestroyed()) {
+      const webContents = resolveActivePreviewWebContents(s);
+      if (!webContents || webContents.isDestroyed()) {
         return { ok: false, error: "no-view", ...viewportMetadata(metadata, appliedBefore) };
       }
-      if (!s.lastBounds) {
+      if (activeHostNeedsBounds(s, webContents)) {
         return { ok: false, error: "no-bounds", ...viewportMetadata(metadata, appliedBefore) };
       }
       s.viewportAppliedByTarget.delete(key);
       s.viewportPresentationByTarget.delete(key);
-      applyViewportPresentation(s, s.lastBounds, activeThreadId, activeTabId);
+      applyViewportToActiveHost(s, webContents, activeThreadId, activeTabId);
       return { ok: true, ...viewportMetadata(metadata, null) };
     })());
   });
@@ -453,10 +488,10 @@ export function registerDesignModeHandlers(): void {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed())
-      return { ok: false, error: "no-view" };
+    const webContents = resolveActivePreviewWebContents(s);
+    if (!webContents || webContents.isDestroyed()) return { ok: false, error: "no-view" };
     try {
-      await s.view.webContents.executeJavaScript(
+      await webContents.executeJavaScript(
         payload?.enabled === false ? TEARDOWN_SCRIPT : INSPECT_SCRIPT,
         true,
       );

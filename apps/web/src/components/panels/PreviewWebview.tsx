@@ -391,7 +391,12 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     const onStart = () => emitStatus("loading");
     const onDomReady = () => {
       domReadyRef.current = true;
-      useBrowserAutomationStore.getState().refreshTarget(threadId, tabId);
+      const store = useBrowserAutomationStore.getState();
+      store.refreshTarget(threadId, tabId);
+      const revision = useBrowserAutomationStore.getState().liveTargets.get(
+        browserAutomationTargetKey(threadId, tabId),
+      )?.revision;
+      if (revision !== undefined) ensureViewportCoordinator(revision);
       if (pendingReloadRef.current) {
         pendingReloadRef.current = false;
         el.reload?.();
@@ -464,7 +469,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       el.removeEventListener("did-fail-load", onFail);
       el.removeEventListener("ipc-message", onIpcMessage);
     };
-  }, [emitNavigationState, emitStatus, onPageStatus, readTitle, readUrl, tabId, threadId]);
+  }, [emitNavigationState, emitStatus, ensureViewportCoordinator, onPageStatus, readTitle, readUrl, tabId, threadId]);
 
   // Use createElement via React JSX since <webview> is a custom Chromium
   // element; React 19 will pass unknown attributes through unchanged.

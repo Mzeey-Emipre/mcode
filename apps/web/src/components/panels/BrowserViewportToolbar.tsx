@@ -100,7 +100,6 @@ export function BrowserViewportToolbar({
               variant="outline"
               className="min-w-0 max-w-40 shrink-0 justify-between gap-1 px-2 @max-[520px]:max-w-16 @max-[520px]:px-1"
               aria-label="Viewport preset"
-              onClick={() => setPresetOpen((open) => !open)}
             >
               <span className="truncate">{selectedPreset?.label ?? "Responsive"}</span>
               <ChevronDown size={13} aria-hidden />
@@ -188,7 +187,6 @@ export function BrowserViewportToolbar({
               variant="outline"
               className="min-w-0 shrink-0 gap-1 px-2 @max-[520px]:max-w-12 @max-[520px]:px-1"
               aria-label="Viewport scale and presentation"
-              onClick={() => setScaleOpen((open) => !open)}
             >
               {scaleLabel}
               <ChevronDown size={13} aria-hidden />

@@ -206,7 +206,7 @@ export function BrowserOverflowMenu({
           <DropdownMenuItem
             className="gap-2 px-3 py-1.5 text-xs"
             onClick={onStopAutomation}
-            disabled={automationBusy}
+            title={automationBusy ? "Stop the active operation and take control" : undefined}
           >
             <Hand size={14} className="text-muted-foreground" aria-hidden />
             Take control

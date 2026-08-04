@@ -1420,6 +1420,82 @@ describe("preview-browser", () => {
   });
 
   describe("design mode (Phase G)", () => {
+    it("applies the responsive viewport lifecycle to an adopted webview", async () => {
+      const win = createWindow();
+      const ev = fakeEvent(win);
+
+      await ipcHandlers["preview:sync"]!(ev, {
+        visible: false,
+        bounds: VALID_BOUNDS,
+        threadId: "thread-webview",
+        hideReason: "renderer-webview",
+        workspaceId: "ws-1",
+      });
+
+      const adopted = makeWebContentsView().webContents;
+      adopted.getURL.mockReturnValue("https://example.com/page");
+      mockWebContentsById.set(47, adopted);
+      const session = sessions.get(win.id)!;
+      const tabId = session.tabsByThread.get("thread-webview")!.activeTabId!;
+      expect(session.view).toBeNull();
+      await ipcHandlers["preview:adopt-webview"]!(ev, {
+        threadId: "thread-webview",
+        tabId,
+        webContentsId: 47,
+      });
+
+      const viewport = await ipcHandlers["preview:design.set-viewport"]!(ev, {
+        widthOverride: 393,
+        heightOverride: 852,
+        operationId: "adopted-viewport",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-webview",
+        tabId,
+      });
+      expect(viewport).toMatchObject({
+        ok: true,
+        data: { width: 393, height: 852 },
+        appliedViewport: { width: 393, height: 852 },
+      });
+      expect(adopted.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 393, height: 852 },
+        screenSize: { width: 393, height: 852 },
+        scale: 1,
+      }));
+
+      const presentation = await ipcHandlers["preview:design.set-presentation"]!(ev, {
+        presentation: "actual",
+        operationId: "adopted-presentation",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 2,
+        threadId: "thread-webview",
+        tabId,
+      });
+      expect(presentation).toMatchObject({
+        ok: true,
+        presentation: "actual",
+        appliedViewport: { width: 393, height: 852 },
+      });
+
+      const inspect = await ipcHandlers["preview:design.set-inspect"]!(ev, { enabled: true });
+      expect(inspect).toEqual({ ok: true });
+      expect(adopted.executeJavaScript).toHaveBeenCalledTimes(1);
+
+      const reset = await ipcHandlers["preview:design.reset-viewport"]!(ev, {
+        operationId: "adopted-reset",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 3,
+        threadId: "thread-webview",
+        tabId,
+      });
+      expect(reset).toMatchObject({ ok: true, appliedViewport: null });
+      expect(adopted.disableDeviceEmulation).toHaveBeenCalledTimes(1);
+    });
+
     it("viewport screenshot uses the active adopted webview when no native view exists", async () => {
       const win = createWindow();
       const ev = fakeEvent(win);
