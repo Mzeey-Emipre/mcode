@@ -6,6 +6,16 @@ import {
   type ThreadRecord,
 } from "./thread-record";
 
+const EMPTY_HOOK_THREAD_RECORD = createEmptyThreadRecord();
+
+function getHookThreadRecord(
+  records: Map<string, ThreadRecord>,
+  threadId: string,
+): ThreadRecord {
+  if (!records.has(threadId)) return EMPTY_HOOK_THREAD_RECORD;
+  return getThreadRecord(records, threadId);
+}
+
 /**
  * Subscribe to one thread's record with shallow equality on the selected slice.
  */
@@ -15,8 +25,8 @@ export function useThreadRecord<T>(
 ): T {
   return useThreadStore(
     useShallow((state) => {
-      if (!threadId) return selector(createEmptyThreadRecord());
-      return selector(getThreadRecord(state.records, threadId));
+      if (!threadId) return selector(EMPTY_HOOK_THREAD_RECORD);
+      return selector(getHookThreadRecord(state.records, threadId));
     }),
   );
 }
@@ -30,7 +40,9 @@ export function useActiveThreadRecord<T>(
   return useThreadStore(
     useShallow((state) => {
       const id = state.currentThreadId;
-      const record = id ? getThreadRecord(state.records, id) : createEmptyThreadRecord();
+      const record = id
+        ? getHookThreadRecord(state.records, id)
+        : EMPTY_HOOK_THREAD_RECORD;
       return selector(record);
     }),
   );

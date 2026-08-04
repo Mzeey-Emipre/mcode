@@ -14,6 +14,11 @@ describe("SubagentsPanel real thread store path", () => {
     });
   });
 
+  it("renders while the thread record is not hydrated", () => {
+    expect(() => render(<SubagentsPanel threadId="thread-1" />)).not.toThrow();
+    expect(screen.getByTestId("subagents-empty")).toBeInTheDocument();
+  });
+
   it("survives a transient record missing hydrated narrative data", () => {
     const record = createEmptyThreadRecord();
     const partialRecord = { ...record, narrativeByMessage: undefined } as unknown as typeof record;
