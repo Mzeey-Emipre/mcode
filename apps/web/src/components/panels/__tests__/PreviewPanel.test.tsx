@@ -1215,6 +1215,67 @@ describe("PreviewPanel: full panel state", () => {
     }
   });
 
+  it("does not feed an agent navigation redirect back into the webview src", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    const requestedUrl =
+      "https://duckduckgo.com/?q=The+Left+Hand+of+Darkness+Ursula+K.+Le+Guin";
+    const redirectedUrl = `${requestedUrl}&ia=web`;
+    let liveUrl = requestedUrl;
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => liveUrl,
+    });
+    const tabs = (url: string) => ({
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "agent-tab",
+        tabs: [{
+          id: "agent-tab",
+          threadId: "thread-1",
+          title: "DuckDuckGo",
+          url,
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        }],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+
+    try {
+      mockUsePreviewBridge.mockReturnValue(
+        mockBridgeState({ storedUrl: requestedUrl }),
+      );
+      mockUsePreviewTabs.mockReturnValue(tabs(requestedUrl));
+      const { rerender } = render(<PreviewPanel threadId="thread-1" />);
+      const webview = screen.getByTestId("preview-webview");
+      expect(webview).toHaveAttribute("src", requestedUrl);
+
+      liveUrl = redirectedUrl;
+      mockUsePreviewBridge.mockReturnValue(
+        mockBridgeState({ storedUrl: redirectedUrl }),
+      );
+      mockUsePreviewTabs.mockReturnValue(tabs(redirectedUrl));
+      rerender(<PreviewPanel threadId="thread-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("preview-webview")).toHaveAttribute(
+          "src",
+          requestedUrl,
+        );
+      });
+    } finally {
+      restoreWebviewMethods();
+    }
+  });
+
   it("reloads instead of loadURL when navigating to the live webview URL", async () => {
     useSettingsStore.getState()._applyPush({
       ...getDefaultSettings(),

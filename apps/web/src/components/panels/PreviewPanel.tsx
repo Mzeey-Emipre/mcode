@@ -2083,14 +2083,37 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     forceHidden: showWebviewPreview,
     automationOnly,
   });
-  const [webviewSrcByTab, setWebviewSrcByTab] = useState<Record<string, string | null>>({});
-  const webviewSrcRef = useRef<string | null>(null);
-  const setTrackedWebviewSrc = useCallback((tabId: string, nextSrc: string | null): void => {
-    webviewSrcRef.current = nextSrc;
-    setWebviewSrcByTab((prev) => (
-      (prev[tabId] ?? null) === nextSrc ? prev : { ...prev, [tabId]: nextSrc }
+  // Keep each mounted webview's requested URL separate from live page chrome.
+  // A redirect updates the chrome, but must not rewrite the React `src` prop
+  // while the guest is still navigating.
+  const [webviewRequestedUrlByTab, setWebviewRequestedUrlByTab] = useState<Record<string, string | null>>(
+    () => {
+      const initial: Record<string, string | null> = {};
+      for (const tab of tabs.tabSet?.tabs ?? []) {
+        if (tab.url) initial[tab.id] = tab.url;
+      }
+      return initial;
+    },
+  );
+  const webviewRequestedUrlRef = useRef<string | null>(null);
+  const setWebviewRequestedUrl = useCallback((tabId: string, nextUrl: string | null): void => {
+    webviewRequestedUrlRef.current = nextUrl;
+    setWebviewRequestedUrlByTab((prev) => (
+      (prev[tabId] ?? null) === nextUrl ? prev : { ...prev, [tabId]: nextUrl }
     ));
   }, []);
+  useEffect(() => {
+    const visibleTabs = tabs.tabSet?.tabs ?? [];
+    setWebviewRequestedUrlByTab((current) => {
+      let next: Record<string, string | null> | null = null;
+      for (const tab of visibleTabs) {
+        if (!tab.url || Object.prototype.hasOwnProperty.call(current, tab.id)) continue;
+        next ??= { ...current };
+        next[tab.id] = tab.url;
+      }
+      return next ?? current;
+    });
+  }, [tabs.tabSet?.tabs]);
   const [webviewNavError, setWebviewNavError] = useState<string | null>(null);
   const [webviewCanBack, setWebviewCanBack] = useState(false);
   const [webviewCanFwd, setWebviewCanFwd] = useState(false);
@@ -2139,7 +2162,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   );
   const activeWebviewTabUrl = activeWebviewTab?.url ?? null;
   const activeWebviewSrc =
-    webviewSrcByTab[activeWebviewTabId] ?? activeWebviewTabUrl;
+    webviewRequestedUrlByTab[activeWebviewTabId] ?? activeWebviewTabUrl;
   const warmWebviewTabs = useMemo(() => {
     const sourceTabs =
       tabs.tabSet?.tabs.length
@@ -2159,7 +2182,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
       .filter((tab) => warmIds.has(tab.id))
       .map((tab) => ({
         id: tab.id,
-        src: webviewSrcByTab[tab.id] ?? tab.url ?? null,
+        src: webviewRequestedUrlByTab[tab.id] ?? tab.url ?? null,
       }))
       .filter((tab): tab is { id: string; src: string } => !!tab.src);
   }, [
@@ -2168,7 +2191,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     automationActiveRequests,
     tabs.tabSet,
     threadId,
-    webviewSrcByTab,
+    webviewRequestedUrlByTab,
     webRuntime,
   ]);
   const activeAutomationController = automationControllers.get(
@@ -2192,7 +2215,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   );
 
   useEffect(() => {
-    webviewSrcRef.current = activeWebviewSrc;
+    webviewRequestedUrlRef.current = activeWebviewSrc;
   }, [activeWebviewSrc]);
 
   useEffect(() => {
@@ -2213,7 +2236,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     if (!showWebviewPreview) return;
     const stored = bridge.storedUrl.trim();
     if (!stored) {
-      setTrackedWebviewSrc(activeWebviewTabId, null);
+      setWebviewRequestedUrl(activeWebviewTabId, null);
       setWebviewPageStatus((status) => (
         status.url === null && status.title === null && status.favicon === null &&
         status.phase === "loaded" && status.error === undefined
@@ -2223,13 +2246,13 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
       return;
     }
     if (activeWebviewRef()?.getUrl() === stored) return;
-    if (webviewSrcRef.current === stored) return;
-    setTrackedWebviewSrc(activeWebviewTabId, stored);
+    if (webviewRequestedUrlRef.current === stored) return;
+    setWebviewRequestedUrl(activeWebviewTabId, stored);
   }, [
     activeWebviewRef,
     activeWebviewTabId,
     bridge.storedUrl,
-    setTrackedWebviewSrc,
+    setWebviewRequestedUrl,
     showWebviewPreview,
     threadId,
   ]);
@@ -2269,7 +2292,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
         });
         const active = activeWebviewRef();
         const liveUrl = active?.getUrl();
-        const mountedSrc = webviewSrcRef.current;
+        const mountedSrc = webviewRequestedUrlRef.current;
         if (liveUrl === result.url) {
           active?.reload();
           return;
@@ -2278,10 +2301,10 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
           active?.navigate(result.url);
           return;
         }
-        setTrackedWebviewSrc(activeWebviewTabId, result.url);
+        setWebviewRequestedUrl(activeWebviewTabId, result.url);
       });
     },
-    [activeWebviewRef, activeWebviewTabId, bridge, setTrackedWebviewSrc, threadId],
+    [activeWebviewRef, activeWebviewTabId, bridge, setWebviewRequestedUrl, threadId],
   );
 
   const onWebviewOpenExternal = useCallback((): void => {
@@ -2886,7 +2909,6 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
             : "pointer-events-none -z-10 opacity-0",
         )}
         onPageStatus={(status) => {
-          if (webRuntime) setTrackedWebviewSrc(tab.id, status.url);
           usePreviewTabsStore.getState().updateTabChrome(threadId, tab.id, {
             title: status.title,
             url: status.url,
