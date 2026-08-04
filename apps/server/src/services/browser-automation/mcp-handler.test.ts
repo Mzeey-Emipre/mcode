@@ -2,7 +2,9 @@ import { createServer, type Server } from "http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
+  BROWSER_AUTOMATION_OPERATION_METADATA,
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_V2_CORE_OPERATIONS,
 } from "@mcode/contracts";
 import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 import { BrowserAutomationBroker } from "./broker.js";
@@ -138,12 +140,13 @@ describe("BrowserAutomationMcpHandler", () => {
         params: {},
       }), authorization);
       const tools = (await listed.json() as any).result.tools;
-      expect(tools.map((tool: any) => tool.name)).toEqual([
-        "browser_open",
-        "browser_inspect",
-        "browser_act",
-        "browser_tabs",
-      ]);
+      const expectedCoreToolNames = BROWSER_V2_CORE_OPERATIONS.map(
+        (operation) => BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
+      );
+      expect(tools.map((tool: any) => tool.name)).toEqual(expectedCoreToolNames);
+      for (const toolName of expectedCoreToolNames) {
+        expect(initialization.instructions).toContain(toolName);
+      }
       expect(JSON.stringify(tools)).not.toContain("browser_status");
       expect(tools.find((tool: any) => tool.name === "browser_inspect").description)
         .toContain("canonical session-specific");

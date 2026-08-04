@@ -434,6 +434,7 @@ export {
   BrowserAutomationViewportResetRequestSchema,
   BrowserAutomationViewportResetResultSchema,
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_V2_CORE_OPERATIONS,
   BROWSER_AUTOMATION_OPERATION_METADATA,
   BROWSER_AUTOMATION_ERROR_CODES,
   BrowserAutomationUrlSchema,

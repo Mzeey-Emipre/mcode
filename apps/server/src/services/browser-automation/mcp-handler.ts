@@ -5,6 +5,7 @@ import {
   BROWSER_AUTOMATION_MAX_RESULT_BYTES,
   BROWSER_AUTOMATION_OPERATION_METADATA,
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_V2_CORE_OPERATIONS,
   BrowserAutomationRequestSchema,
   type BrowserAutomationOperation,
 } from "@mcode/contracts";
@@ -117,8 +118,6 @@ const actTargetSchema = {
 } as const;
 
 const actTimeoutSchema = { type: "integer", minimum: 1, maximum: 60_000 } as const;
-
-const BROWSER_V2_CORE_OPERATIONS = ["open", "inspect", "act", "tabs"] as const satisfies readonly BrowserAutomationOperation[];
 
 function actStepSchema(
   operation: string,
