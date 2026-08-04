@@ -2022,11 +2022,22 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   const invalidateActiveViewportObservation = useCallback((): void => {
     invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
   }, [activeWebviewTabId, threadId]);
+  useEffect(() => {
+    if (!viewportToolbarOpen || !activeViewportCoordinator) return;
+    let cancelled = false;
+    void (async () => {
+      await activeViewportCoordinator.requestUserMode("responsive");
+      if (!cancelled) await activeViewportCoordinator.setPresentation("fit");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeViewportCoordinator, viewportToolbarOpen]);
   const toggleViewportToolbar = useCallback((): void => {
     const next = !(viewportToolbarOpen || activeViewportState?.mode === "responsive");
     setViewportToolbarOpen(next);
     invalidateActiveViewportObservation();
-    void activeViewportCoordinator?.requestUserMode(next ? "responsive" : "regular");
+    if (!next) void activeViewportCoordinator?.requestUserMode("regular");
   }, [activeViewportCoordinator, activeViewportState?.mode, invalidateActiveViewportObservation, viewportToolbarOpen]);
   const closeViewportToolbar = useCallback((): void => {
     void activeViewportCoordinator?.requestUserMode("regular");

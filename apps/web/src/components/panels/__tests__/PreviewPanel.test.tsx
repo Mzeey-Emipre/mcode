@@ -459,6 +459,64 @@ describe("PreviewPanel: unavailable state", () => {
     expect(screen.queryByTestId("browser-viewport-toolbar")).not.toBeInTheDocument();
     expect(screen.getByTestId("web-runtime-preview-iframe")).toBe(iframe);
   });
+
+  it("opens the toolbar in Fit presentation after a previous fixed zoom", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const user = userEvent.setup();
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    await waitFor(() => {
+      expect(useBrowserAutomationStore.getState().viewportCoordinators.size).toBeGreaterThan(0);
+    });
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    await user.click(within(await screen.findByTestId("browser-overflow-menu")).getByRole(
+      "menuitem",
+      { name: "Show device toolbar" },
+    ));
+    let toolbar = await screen.findByTestId("browser-viewport-toolbar");
+    await user.click(within(toolbar).getByRole("button", { name: "Viewport scale and presentation" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "150%" }));
+    await waitFor(() => {
+      expect(
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(
+          JSON.stringify(["thread-1", "web-preview"]),
+        ),
+      ).toMatchObject({ presentation: "150%" });
+    });
+
+    await user.click(within(toolbar).getByRole("button", { name: "Close viewport toolbar" }));
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    await user.click(within(await screen.findByTestId("browser-overflow-menu")).getByRole(
+      "menuitem",
+      { name: "Show device toolbar" },
+    ));
+    toolbar = await screen.findByTestId("browser-viewport-toolbar");
+
+    await waitFor(() => {
+      expect(
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(
+          JSON.stringify(["thread-1", "web-preview"]),
+        ),
+      ).toMatchObject({ mode: "responsive", presentation: "fit" });
+    });
+    expect(within(toolbar).getByRole("button", { name: "Viewport preset" })).toHaveTextContent("Responsive");
+  });
+
+  it("shows the responsive toolbar when the agent resizes the viewport", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    await waitFor(() => {
+      expect(useBrowserAutomationStore.getState().viewportCoordinators.size).toBeGreaterThan(0);
+    });
+    const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
+      JSON.stringify(["thread-1", "web-preview"]),
+    );
+    expect(coordinator).toBeDefined();
+    await coordinator!.requestAgentResize({ width: 393, height: 852 });
+
+    expect(await screen.findByTestId("browser-viewport-toolbar")).toBeInTheDocument();
+  });
 });
 
 describe("PreviewPanel: full panel state", () => {

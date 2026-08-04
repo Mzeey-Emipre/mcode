@@ -50,7 +50,27 @@ describe("BrowserViewportToolbar", () => {
     expect(screen.getByRole("textbox", { name: "Viewport height" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rotate viewport to landscape" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Viewport scale and presentation" })).toHaveTextContent("100%");
-    expect(screen.getByRole("button", { name: "Close viewport toolbar" })).toBeInTheDocument();
+    const closeButton = screen.getByRole("button", { name: "Close viewport toolbar" });
+    expect(closeButton).toHaveClass("ml-auto");
+    expect(closeButton.className).not.toContain("@max-[520px]:ml-0");
+  });
+
+  it("opens matching dimensions as Responsive until the user selects a preset", () => {
+    const coordinator = createCoordinator(async (operation) => ({
+      status: "applied",
+      applied: operation.requested,
+    }));
+    coordinator.setMode("responsive");
+    render(
+      <BrowserViewportToolbar
+        coordinator={coordinator}
+        state={coordinator.snapshot()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Viewport preset" })).toHaveTextContent("Responsive");
+    expect(screen.getByRole("button", { name: "Viewport preset" })).not.toHaveTextContent("Laptop");
   });
 
   it("activates Responsive from the full preset menu click target", async () => {

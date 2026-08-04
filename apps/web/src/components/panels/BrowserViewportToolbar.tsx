@@ -52,11 +52,7 @@ export function BrowserViewportToolbar({
   const [height, setHeight] = useState(String(requested.height));
   const [presetOpen, setPresetOpen] = useState(false);
   const [scaleOpen, setScaleOpen] = useState(false);
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(() => (
-    state.mode === "responsive"
-      ? VIEWPORT_PRESETS.find((preset) => sameSize(preset, requested))?.id ?? null
-      : null
-  ));
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
 
   useEffect(() => {
     setWidth(String(requested.width));
@@ -236,7 +232,7 @@ export function BrowserViewportToolbar({
         type="button"
         size="icon-xs"
         variant="ghost"
-        className="ml-auto shrink-0 @max-[520px]:ml-0 @max-[520px]:size-7"
+        className="ml-auto shrink-0 @max-[520px]:size-7"
         onClick={() => {
           onUserViewportChange?.();
           onClose();
