@@ -62,7 +62,8 @@ describe("MarkdownContent link handling", () => {
     const link = container.querySelector("a");
     const favicon = screen.getByTestId("markdown-link-favicon");
 
-    expect(link).toHaveClass("text-link");
+    expect(link).toHaveClass("text-primary");
+    expect(link).not.toHaveClass("text-link");
     expect(screen.getByTestId("markdown-link-favicon-frame")).toBeInTheDocument();
     expect(favicon).toHaveAttribute("src", "https://example.com/favicon.ico");
     expect(favicon).toHaveClass("favicon-image-shadow");
@@ -398,12 +399,13 @@ describe("MarkdownContent variant styling", () => {
       expect(command?.querySelector("[data-entity-icon='command']")).toHaveClass("text-current");
     });
 
-    it("renders links with cool text-link", () => {
+    it("renders links with primary text", () => {
       const { container } = render(
         <MarkdownContent content="[link](https://example.com)" />,
       );
       const link = container.querySelector("a");
-      expect(link?.className).toContain("text-link");
+      expect(link).toHaveClass("text-primary");
+      expect(link).not.toHaveClass("text-link");
     });
 
     it("passes disableHighlighting=false to CodeBlock", () => {
@@ -424,12 +426,13 @@ describe("MarkdownContent variant styling", () => {
       expect(code?.className).toContain("bg-foreground/10");
     });
 
-    it("renders links with cool text-link", () => {
+    it("renders links with primary text", () => {
       const { container } = render(
         <MarkdownContent content="[link](https://example.com)" variant="user" />,
       );
       const link = container.querySelector("a");
-      expect(link?.className).toContain("text-link");
+      expect(link).toHaveClass("text-primary");
+      expect(link).not.toHaveClass("text-link");
     });
 
     it("renders user links with the same favicon treatment", () => {
