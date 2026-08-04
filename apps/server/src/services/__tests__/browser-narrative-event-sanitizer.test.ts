@@ -100,6 +100,9 @@ describe("BrowserNarrativeEventSanitizer", () => {
 
   it.each([
     "browser_open",
+    "mcp__mcode-browser__browser_type",
+    "mcp__mcode-browser__browser_navigate",
+    "mcp__mcode-browser__browser_snapshot",
     "mcp__mcode-browser__browser_inspect",
     "mcp__mcode-browser__browser_act",
     "mcode-browser.browser_tabs",

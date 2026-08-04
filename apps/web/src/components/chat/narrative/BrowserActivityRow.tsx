@@ -173,8 +173,21 @@ function toolLabel(toolCall: ToolCall, active: boolean, result: BrowserNarrative
   const failureLabel = failedToolLabel(result);
   if (!active && failureLabel) return failureLabel;
   const operation = resolveBrowserNarrativeTool(toolCall.toolName);
-  const action = safeInput(toolCall)?.action;
+  const input = safeInput(toolCall);
+  const action = input?.action;
+  const granularStep = operation === "browser_act" ? undefined : input?.steps?.[0];
+  if (granularStep) {
+    const labels = active ? ACTIVE_ACTION_LABELS : COMPLETED_ACTION_LABELS;
+    return `${labels[granularStep.operation] ?? (active ? "Using the Browser" : "Completed a Browser action")}${resizeSuffix(granularStep)}`;
+  }
   if (operation === "browser_open") return active ? "Opening a page" : "Opened a page";
+  if (operation === "browser_status") return active ? "Checking Browser status" : "Checked Browser status";
+  if (operation === "browser_snapshot") return active ? "Inspecting the page" : "Inspected the page";
+  if (operation === "browser_screenshot") return active ? "Capturing the page" : "Captured the page";
+  if (operation === "browser_console") return active ? "Inspecting Browser console" : "Inspected Browser console";
+  if (operation === "browser_network") return active ? "Inspecting network activity" : "Inspected network activity";
+  if (operation === "browser_accessibility") return active ? "Inspecting page accessibility" : "Inspected page accessibility";
+  if (operation === "browser_performance") return active ? "Inspecting page performance" : "Inspected page performance";
   if (operation === "browser_inspect") return active ? "Inspecting the page" : "Inspected the page";
   if (operation === "browser_evaluate") return active ? "Evaluating the page · Privileged" : "Evaluated the page · Privileged";
   if (operation === "browser_tabs") {
