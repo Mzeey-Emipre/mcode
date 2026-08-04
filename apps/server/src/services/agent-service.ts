@@ -84,7 +84,7 @@ import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js
 import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
 import { TurnRuntimeRegistry } from "./turn-runtime.js";
 import type { TurnOutcome } from "./turn-outcome.js";
-import { BrowserEvaluationEventSanitizer } from "./browser-evaluation-event-sanitizer.js";
+import { BrowserNarrativeEventSanitizer } from "./browser-narrative-event-sanitizer.js";
 
 /**
  * Escape special XML characters in a string to prevent injection into
@@ -253,7 +253,7 @@ function parseHarnessTaskId(output: string): string | null {
 export class AgentService {
   /** Canonical per-thread execution identity and lifecycle authority. */
   private readonly turnRuntime = new TurnRuntimeRegistry();
-  private readonly browserEvaluationEventSanitizer: BrowserEvaluationEventSanitizer;
+  private readonly browserNarrativeEventSanitizer: BrowserNarrativeEventSanitizer;
   private readonly preparedProviderEvents = new WeakMap<object, AgentEvent | undefined>();
   private readonly activeSessionIds = new Set<string>();
   private readonly nativeGoalRefreshInFlight = new Set<string>();
@@ -431,7 +431,7 @@ export class AgentService {
     @inject(ThreadControlMutationReservationService)
     mutationReservations?: ThreadControlMutationReservationService,
   ) {
-    this.browserEvaluationEventSanitizer = new BrowserEvaluationEventSanitizer(
+    this.browserNarrativeEventSanitizer = new BrowserNarrativeEventSanitizer(
       (threadId, toolCallId) => this.narrativeStore.getBufferedToolCalls(threadId)
         .find((toolCall) => toolCall.toolCallId === toolCallId)
         ?.toolName,
@@ -2197,7 +2197,7 @@ export class AgentService {
     }
     const normalizedEvent = this.turnRuntime.normalizeEvent(event);
     const normalized = normalizedEvent
-      ? this.browserEvaluationEventSanitizer.sanitize(normalizedEvent)
+      ? this.browserNarrativeEventSanitizer.sanitize(normalizedEvent)
       : undefined;
     this.preparedProviderEvents.set(event as object, normalized);
     return normalized;

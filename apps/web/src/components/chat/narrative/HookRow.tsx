@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Webhook, X } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import type { HookExecution } from "@/transport/types";
-import { NarrativeSummaryLine } from "./ToolSummaryLine";
+import { NarrativeSummaryLine } from "./NarrativeSummaryLine";
 import { getHookOutputLines } from "@/components/chat/hook-output";
 
 interface HookRowProps {

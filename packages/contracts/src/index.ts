@@ -509,6 +509,21 @@ export type {
   BrowserAutomationTabsResult,
 } from "./models/browser-automation.js";
 
+export {
+  BROWSER_NARRATIVE_TOOLS,
+  resolveBrowserNarrativeTool,
+  projectBrowserNarrativeInput,
+  projectBrowserNarrativeResult,
+  serializeBrowserNarrativeResult,
+} from "./models/browser-narrative.js";
+export type {
+  BrowserNarrativeTool,
+  BrowserNarrativeStepInput,
+  BrowserNarrativeInput,
+  BrowserNarrativeReceipt,
+  BrowserNarrativeResult,
+} from "./models/browser-narrative.js";
+
 // Events
 export { AgentEventSchema, AgentEventType, AgentEventEpochSchema } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";

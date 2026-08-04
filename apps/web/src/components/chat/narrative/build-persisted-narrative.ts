@@ -6,6 +6,7 @@ import type {
   HookExecution,
 } from "@/transport/types";
 import type { ThoughtSegment, NarrativeItem } from "./types";
+import { resolveBrowserNarrativeTool } from "@mcode/contracts";
 import {
   isSubagentLifecycleRecord,
   parseSubagentLifecycleInput,
@@ -48,6 +49,20 @@ function persistedDurationMs(
   return end - start;
 }
 
+function persistedToolInput(r: ToolCallRecord): Record<string, unknown> {
+  if (resolveBrowserNarrativeTool(r.tool_name)) {
+    try {
+      const parsed: unknown = JSON.parse(r.input_summary);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+  }
+  return { _summary: r.input_summary };
+}
+
 /** Map a persisted tool record to the live `ToolCall` shape used by row components. */
 export function recordToToolCall(r: ToolCallRecord): ToolCall {
   const durationMs = persistedDurationMs(r.started_at, r.completed_at);
@@ -61,7 +76,7 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
     // Live components only inspect a few fields; the input summary suffices
     // for label derivation in the persisted view.
     toolInput: lifecycleInput ?? {
-      _summary: r.input_summary,
+      ...persistedToolInput(r),
       ...(r.tool_name === AGENT_TOOL_NAME && r.display_name
         ? { agentName: r.display_name }
         : {}),
