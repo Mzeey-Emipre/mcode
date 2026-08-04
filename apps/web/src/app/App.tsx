@@ -35,6 +35,7 @@ import { ToastContainer } from "@/components/Toast";
 import type { SettingsSection } from "@/components/settings/settings-nav";
 import { TerminalPoolHost } from "@/components/terminal/TerminalPoolHost";
 import { TerminalPoolSlotProvider } from "@/components/terminal/TerminalPoolSlotContext";
+import { TerminalResizeWayfinderPrototype } from "@/components/terminal/TerminalResizeWayfinderPrototype";
 import { BrowserAutomationHost } from "@/components/panels/BrowserAutomationHost";
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
 import {
@@ -67,6 +68,15 @@ const LazyPullRequestSurface = lazy(async () => {
 
 /** Root application component. Initializes WS transport and push listeners. */
 export function App() {
+  const terminalResizePrototypeActive =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).get("terminal-resize-prototype") ===
+      "1";
+
+  if (terminalResizePrototypeActive) {
+    return <TerminalResizeWayfinderPrototype />;
+  }
+
   const isDesktop = Boolean(window.desktopBridge?.window);
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
   const threadCacheSize = useSettingsStore(
