@@ -1286,6 +1286,38 @@ describe("preview-browser", () => {
       }
     });
 
+    it("mounts and sizes a cold blank tab without invoking Chromium emulation", async () => {
+      const win = createWindow();
+      await showPreview(win, { threadId: "thread-A", url: "https://first.test" });
+
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+        threadId: "thread-A",
+        activate: false,
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+
+      const backgroundView = createdViews[createdViews.length - 1]!;
+      win.contentView.addChildView.mockClear();
+      backgroundView.setBounds.mockClear();
+      backgroundView.webContents.enableDeviceEmulation.mockClear();
+      backgroundView.webContents.disableDeviceEmulation.mockClear();
+
+      const activated = callTabs(win, "preview:tabs.activate", {
+        threadId: "thread-A",
+        tabId: created.data.tabId,
+      });
+
+      expect(activated.ok).toBe(true);
+      expect(win.contentView.addChildView).toHaveBeenCalledWith(backgroundView);
+      expect(backgroundView.setBounds).toHaveBeenCalledWith(VALID_BOUNDS);
+      expect(win.contentView.addChildView.mock.invocationCallOrder[0]).toBeLessThan(
+        backgroundView.setBounds.mock.invocationCallOrder[0]!,
+      );
+      expect(backgroundView.webContents.enableDeviceEmulation).not.toHaveBeenCalled();
+      expect(backgroundView.webContents.disableDeviceEmulation).not.toHaveBeenCalled();
+    });
+
     it("activating a brand-new blank tab pushes a page-status with null URL", async () => {
       // Regression: a blank new tab must emit a page-status whose url is null so
       // the renderer clears its omnibox; otherwise the previous tab's URL bleeds

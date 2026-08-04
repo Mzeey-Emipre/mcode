@@ -69,6 +69,7 @@ import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
 
 describe("RightPanel", () => {
   beforeEach(() => {
@@ -95,6 +96,12 @@ describe("RightPanel", () => {
     });
     useWorkspaceStore.setState({ activeWorkspaceId: "workspace-1", activeThreadId: null });
     useTerminalStore.setState({ terminals: {}, terminalPanelByThread: {}, ptyToThread: {} });
+    useBrowserAutomationStore.setState({
+      activeRequests: new Map(),
+      lifecycleTabs: new Map(),
+      liveTargets: new Map(),
+      pendingAgentOpens: new Map(),
+    });
     useDiffStore.setState({
       rightPanelByThread: {},
       rightPanelFallbackByWorkspace: {},
@@ -165,6 +172,51 @@ describe("RightPanel", () => {
       activeTab: "preview",
     });
     expect(activatePreviewPage).toHaveBeenCalledWith("workspace-1", "browser-tab-1");
+  });
+
+  it("reveals an agent-created page while its Browser bootstrap is pending", () => {
+    previewTabSet.current = {
+      threadId: "workspace-1",
+      activeTabId: "default-browser-tab",
+      tabs: [
+        {
+          id: "default-browser-tab",
+          threadId: "workspace-1",
+          title: "New page",
+          url: null,
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        },
+        {
+          id: "agent-browser-tab",
+          threadId: "workspace-1",
+          title: "Agent page",
+          url: "https://example.test",
+          faviconUrl: null,
+          warm: true,
+          active: false,
+        },
+      ],
+    };
+    useBrowserAutomationStore.setState({
+      pendingAgentOpens: new Map([
+        [
+          "pending-browser-open",
+          {
+            workspaceId: "workspace-1",
+            threadId: "workspace-1",
+            tabId: "agent-browser-tab",
+            startedAt: 2,
+          },
+        ],
+      ]),
+    });
+
+    render(<RightPanel />);
+    act(() => useDiffStore.getState().showRightPanel("workspace-1"));
+
+    expect(activatePreviewPage).toHaveBeenCalledWith("workspace-1", "agent-browser-tab");
   });
 
   it("reveals a Browser page that is published after the empty panel opens", () => {

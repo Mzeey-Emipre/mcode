@@ -266,6 +266,7 @@ describe("BrowserAutomationHost", () => {
       liveTargets: new Map(),
       controllers: new Map(),
       activeRequests: new Map(),
+      pendingAgentOpens: new Map(),
       lifecycleTabs: new Map(),
       registered: false,
       viewportByTarget: new Map(),
@@ -1536,7 +1537,11 @@ describe("BrowserAutomationHost", () => {
         ...base,
         deadline: Date.now() + 60_000,
         operation: "open" as const,
-        args: { url: "https://example.com/", activate: true },
+        args: {
+          url: "https://example.com/",
+          activate: false,
+          idempotencyKey: "cold-agent-open",
+        },
       };
       act(() => harness.emit("browserAutomation.bootstrap", {
         hostId,
@@ -1549,6 +1554,13 @@ describe("BrowserAutomationHost", () => {
         await Promise.resolve();
       });
       expect(execute).not.toHaveBeenCalled();
+      expect([...useBrowserAutomationStore.getState().pendingAgentOpens.values()]).toEqual([
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          threadId: "thread-1",
+          tabId: "cold-tab",
+        }),
+      ]);
 
       await act(async () => {
         vi.advanceTimersByTime(10_500);
@@ -1568,6 +1580,7 @@ describe("BrowserAutomationHost", () => {
         expect.objectContaining({ ok: true }),
         expect.objectContaining({ tabId: "cold-tab" }),
       );
+      expect(useBrowserAutomationStore.getState().pendingAgentOpens).toHaveLength(0);
       view.unmount();
     } finally {
       vi.useRealTimers();

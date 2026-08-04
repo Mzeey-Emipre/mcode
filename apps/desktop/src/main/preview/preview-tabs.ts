@@ -82,8 +82,8 @@ function activateTabView(
   s.resumePreviewUrl = tab.resumeUrl;
   s.lastFavicons = tab.faviconUrl ? [tab.faviconUrl] : [];
 
-  if (s.lastBounds) applyViewportPresentation(s, s.lastBounds, tab.threadId, tab.id);
   mountView(win, view);
+  if (s.lastBounds) applyViewportPresentation(s, s.lastBounds, tab.threadId, tab.id);
 
   let loadingKicked = false;
   if (isFirstMount && tab.resumeUrl && isAllowedPreviewUrl(tab.resumeUrl)) {

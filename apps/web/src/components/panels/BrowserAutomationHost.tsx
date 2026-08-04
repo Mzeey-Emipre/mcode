@@ -1527,6 +1527,18 @@ export function BrowserAutomationHost() {
           }
         }
         if (!tabId) throw new Error("Browser tab could not be created or restored");
+        if (agentOwnedOpen) {
+          useBrowserAutomationStore.getState().setPendingAgentOpen(
+            request.requestId,
+            request.sequence,
+            {
+              workspaceId: request.workspaceId,
+              threadId: request.threadId,
+              tabId,
+              startedAt: Date.now(),
+            },
+          );
+        }
         const selectedTab = existingSet?.tabs.find((tab) => tab.id === tabId);
         const initialUrl = requestedWebUrl ?? selectedTab?.url ?? "about:blank";
         if (!agentOwnedOpen && (!selectedTab?.url || requestedWebUrl)) {
@@ -1646,6 +1658,10 @@ export function BrowserAutomationHost() {
         inFlightRef.current.delete(key);
         requestAbortRef.current.delete(key);
         cancelledRef.current.delete(key);
+        useBrowserAutomationStore.getState().clearPendingAgentOpen(
+          request.requestId,
+          request.sequence,
+        );
       });
     });
   }, []);

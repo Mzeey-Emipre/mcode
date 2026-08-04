@@ -13,14 +13,15 @@ export function applyPreviewViewportEmulation(
   options: PreviewViewportEmulationOptions,
 ): void {
   if (webContents.isDestroyed()) return;
+  // Chromium can crash on Windows when either emulation API is called before
+  // a real document has loaded. The next sync or did-finish-load event applies
+  // the requested state after the guest leaves about:blank.
+  const guestUrl = webContents.getURL();
+  if (!guestUrl || guestUrl.startsWith("about:")) return;
   if (!options.active) {
     webContents.disableDeviceEmulation();
     return;
   }
-  // Chromium can crash on Windows when emulation is enabled before a real
-  // document has loaded, so leave about:blank until the next sync or remount.
-  const guestUrl = webContents.getURL();
-  if (!guestUrl || guestUrl.startsWith("about:")) return;
   const viewport = {
     width: options.cssViewport.width,
     height: options.cssViewport.height,
