@@ -146,7 +146,7 @@ describe("Terminal search prototype gate and switcher", () => {
       <TerminalSearchPrototype
         ptyId="pty-addon-error"
         active
-        variant="island"
+        variant="shelf"
         terminal={terminal as never}
         searchAddon={addon as never}
         shortcutRef={shortcutRef}
@@ -167,6 +167,81 @@ describe("Terminal search prototype gate and switcher", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.queryByText("Invalid regular expression")).toBeNull();
+    expect(screen.getByRole("status").querySelector('[data-slot="badge"]')).toBeNull();
+  });
+
+  it("keeps shelf status plain and groups compact actions on the right", async () => {
+    let resultListener:
+      | ((result: { resultIndex: number; resultCount: number }) => void)
+      | null = null;
+    const addon = {
+      clearDecorations: vi.fn(),
+      findNext: vi.fn(() => true),
+      findPrevious: vi.fn(() => true),
+      onDidChangeResults: vi.fn(
+        (listener: (result: { resultIndex: number; resultCount: number }) => void) => {
+          resultListener = listener;
+          return { dispose: vi.fn() };
+        },
+      ),
+    };
+    const terminal = {
+      cols: 80,
+      rows: 24,
+      clearSelection: vi.fn(),
+      focus: vi.fn(),
+    };
+    const shortcutRef = { current: null as (() => void) | null };
+
+    render(
+      <TerminalSearchPrototype
+        ptyId="pty-shelf-controls"
+        active
+        variant="shelf"
+        terminal={terminal as never}
+        searchAddon={addon as never}
+        shortcutRef={shortcutRef}
+        onVariantChange={vi.fn()}
+        showSwitcher={false}
+      />,
+    );
+    await act(async () => {
+      shortcutRef.current?.();
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+    expect(status.querySelector('[data-slot="badge"]')).toBeNull();
+
+    const input = screen.getByRole("textbox", { name: "Find in terminal" });
+    fireEvent.change(input, { target: { value: "missing" } });
+    await waitFor(() => expect(status).toHaveTextContent("No matches"));
+
+    const secondaryRow = screen.getByTestId("terminal-search-secondary-row");
+    expect(secondaryRow).toHaveClass("justify-between");
+    const actions = screen.getByTestId("terminal-search-actions");
+    expect(actions).toHaveClass("ml-auto");
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "Previous terminal match" }),
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "Next terminal match" }),
+    );
+
+    const options = screen.getByRole("button", { name: "Terminal search options" });
+    expect(actions).toContainElement(options);
+    expect(options).toHaveAttribute("data-testid", "terminal-search-options-trigger");
+    expect(options.querySelector("svg")).not.toBeNull();
+    expect(options).not.toHaveTextContent("Options");
+
+    await act(async () => {
+      resultListener?.({ resultIndex: 0, resultCount: 8 });
+    });
+    expect(status).toHaveTextContent("1 / 8");
+    expect(status.querySelector('[data-slot="badge"]')).toBeNull();
+
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() => expect(status).toBeEmptyDOMElement());
   });
 
   it("keeps open state while inactive and resumes search on activation", async () => {

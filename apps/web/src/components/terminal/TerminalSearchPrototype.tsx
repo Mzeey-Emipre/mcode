@@ -15,8 +15,8 @@ import {
   ChevronRight,
   ChevronUp,
   ChevronDown,
-  MoreHorizontal,
   Search,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -294,28 +294,33 @@ function SearchOptions({
 function SearchOptionsPopover({
   options,
   onChange,
-  label = "Options",
 }: {
   readonly options: TerminalSearchOptions;
   readonly onChange: (key: keyof TerminalSearchOptions, checked: boolean) => void;
-  readonly label?: string;
 }) {
   return (
     <Popover>
-      <PopoverTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="shrink-0"
-            aria-label="Terminal search options"
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="shrink-0"
+                aria-label="Terminal search options"
+                data-testid="terminal-search-options-trigger"
+              >
+                <SlidersHorizontal aria-hidden />
+              </Button>
+            }
           />
-        }
-      >
-        <MoreHorizontal aria-hidden />
-        <span className="hidden sm:inline">{label}</span>
-      </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          Search options
+        </TooltipContent>
+      </Tooltip>
       <PopoverContent align="end" sideOffset={6} className="w-64 p-2">
         <div className="mb-1 px-1 text-xs font-medium text-muted-foreground">
           Search options
@@ -370,19 +375,41 @@ function SearchMatchStatus({
   result,
   invalidRegex,
   searchError,
+  hasQuery,
+  quiet,
 }: {
   readonly result: TerminalSearchResult;
   readonly invalidRegex: boolean;
   readonly searchError: string | null;
+  readonly hasQuery: boolean;
+  readonly quiet: boolean;
 }) {
+  const quietStatusClassName = cn(
+    "min-w-20 shrink-0 whitespace-nowrap text-xs tabular-nums",
+    invalidRegex || searchError ? "text-destructive" : "text-muted-foreground",
+  );
+  const emptyQuietStatus = quiet && !hasQuery && !invalidRegex && !searchError;
+
   return (
     <span
-      className="shrink-0"
+      className={quiet ? quietStatusClassName : "shrink-0"}
       role="status"
       aria-live="polite"
       aria-atomic="true"
     >
-      {invalidRegex ? (
+      {emptyQuietStatus ? null : quiet ? (
+        invalidRegex ? (
+          "Invalid regular expression"
+        ) : searchError ? (
+          searchError
+        ) : result.resultCount === 0 ? (
+          "No matches"
+        ) : result.resultIndex >= 0 ? (
+          `${result.resultIndex + 1} / ${result.resultCount}`
+        ) : (
+          `${result.resultCount} matches`
+        )
+      ) : invalidRegex ? (
         <Badge variant="destructive">Invalid regular expression</Badge>
       ) : searchError ? (
         <Badge variant="destructive">{searchError}</Badge>
@@ -447,6 +474,35 @@ function FindControls({
   const navigationDisabled =
     invalidRegex || searchError !== null || !addonReady || !query || result.resultCount === 0;
   const fullOptions = variant === "lane";
+  const navigationControls = (
+    <>
+      <TooltipIconButton
+        label="Previous terminal match"
+        description="Previous match (Shift+Enter)"
+        disabled={navigationDisabled}
+        onClick={() => onNavigate("previous")}
+      >
+        <ChevronUp aria-hidden />
+      </TooltipIconButton>
+      <TooltipIconButton
+        label="Next terminal match"
+        description="Next match (Enter)"
+        disabled={navigationDisabled}
+        onClick={() => onNavigate("next")}
+      >
+        <ChevronDown aria-hidden />
+      </TooltipIconButton>
+    </>
+  );
+  const optionsControl = fullOptions ? (
+    <SearchOptions
+      options={options}
+      onChange={onOptionChange}
+      className="min-w-0 flex-wrap gap-0"
+    />
+  ) : (
+    <SearchOptionsPopover options={options} onChange={onOptionChange} />
+  );
 
   return (
     <div
@@ -482,6 +538,7 @@ function FindControls({
         className={cn(
           "flex min-w-0 items-center gap-1.5",
           fullOptions && "flex-wrap",
+          variant === "shelf" && "justify-between",
         )}
         data-testid="terminal-search-secondary-row"
       >
@@ -489,31 +546,22 @@ function FindControls({
           result={result}
           invalidRegex={invalidRegex}
           searchError={searchError}
+          hasQuery={query.length > 0}
+          quiet={variant === "shelf"}
         />
-        <TooltipIconButton
-          label="Previous terminal match"
-          description="Previous match (Shift+Enter)"
-          disabled={navigationDisabled}
-          onClick={() => onNavigate("previous")}
-        >
-          <ChevronUp aria-hidden />
-        </TooltipIconButton>
-        <TooltipIconButton
-          label="Next terminal match"
-          description="Next match (Enter)"
-          disabled={navigationDisabled}
-          onClick={() => onNavigate("next")}
-        >
-          <ChevronDown aria-hidden />
-        </TooltipIconButton>
-        {fullOptions ? (
-          <SearchOptions
-            options={options}
-            onChange={onOptionChange}
-            className="min-w-0 flex-wrap gap-0"
-          />
+        {variant === "shelf" ? (
+          <div
+            className="ml-auto flex shrink-0 items-center gap-0.5"
+            data-testid="terminal-search-actions"
+          >
+            {navigationControls}
+            {optionsControl}
+          </div>
         ) : (
-          <SearchOptionsPopover options={options} onChange={onOptionChange} />
+          <>
+            {navigationControls}
+            {optionsControl}
+          </>
         )}
       </div>
     </div>
