@@ -22,6 +22,7 @@ const bufferActive = { viewportY: 42, length: 100 };
 
 let onDataListener: ((data: string) => void) | null = null;
 let serializedScreen = "serialized-screen";
+let terminalConstructorOptions: unknown = null;
 type RestoreResult =
   | { mode: "delta" }
   | { mode: "checkpoint"; checkpoint: string; checkpointThrough: number }
@@ -66,7 +67,8 @@ const transport = {
 
 vi.mock("@xterm/xterm", () => {
   class Terminal {
-    constructor() {
+    constructor(options: unknown) {
+      terminalConstructorOptions = options;
       return term as unknown as Terminal;
     }
   }
@@ -84,6 +86,12 @@ vi.mock("@xterm/addon-fit", () => {
 vi.mock("@xterm/addon-serialize", () => ({
   SerializeAddon: class {
     serialize = vi.fn(() => serializedScreen);
+  },
+}));
+
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: class {
+    constructor(_options: unknown) {}
   },
 }));
 
@@ -113,6 +121,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     term.options.disableStdin = false;
     vi.clearAllMocks();
     onDataListener = null;
+    terminalConstructorOptions = null;
     serializedScreen = "serialized-screen";
     term.write.mockImplementation((_data: string | Uint8Array, cb?: () => void) => cb?.());
     // clearAllMocks resets call history but keeps implementations.
@@ -131,6 +140,32 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     ]) {
       dropRemountAnchor(id);
     }
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("enables xterm proposed APIs only for the dev search prototype", async () => {
+    window.history.replaceState(null, "", "/?terminalSearchVariant=island");
+    const gated = render(
+      <TerminalView ptyId="pty-search-gated" visible={true} threadActive={true} />,
+    );
+    await settle();
+
+    expect(terminalConstructorOptions).toEqual(
+      expect.objectContaining({ allowProposedApi: true }),
+    );
+    gated.unmount();
+
+    window.history.replaceState(null, "", "/");
+    terminalConstructorOptions = null;
+    const ungated = render(
+      <TerminalView ptyId="pty-search-ungated" visible={true} threadActive={true} />,
+    );
+    await settle();
+
+    expect(terminalConstructorOptions).not.toEqual(
+      expect.objectContaining({ allowProposedApi: true }),
+    );
+    ungated.unmount();
   });
 
   // Regression guard: term.focus() must NOT fire when the window/tab regains

@@ -1,6 +1,17 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type MutableRefObject,
+} from "react";
 import type { Terminal, IDisposable } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
+import type { SearchAddon } from "@xterm/addon-search";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -23,17 +34,54 @@ import {
   registerTerminalScrollHarness,
   unregisterTerminalScrollHarness,
 } from "./terminalScrollHarness";
+import {
+  getTerminalSearchVariant,
+  isTerminalSearchVariant,
+  TERMINAL_SEARCH_VARIANT_EVENT,
+  type TerminalSearchVariant,
+} from "./terminalSearchGate";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
-/** Cached xterm core + fit addon constructors. */
+type TerminalSearchPrototypeProps = {
+  readonly ptyId: string;
+  readonly active: boolean;
+  readonly variant: TerminalSearchVariant;
+  readonly terminal: Terminal | null;
+  readonly searchAddon: SearchAddon | null;
+  readonly shortcutRef: MutableRefObject<(() => void) | null>;
+  readonly onVariantChange: (variant: TerminalSearchVariant) => void;
+  readonly showSwitcher: boolean;
+};
+
+const LazyTerminalSearchPrototype = lazy<ComponentType<TerminalSearchPrototypeProps>>(
+  async () => {
+    try {
+      const module = await import("./TerminalSearchPrototype");
+      return { default: module.TerminalSearchPrototype as ComponentType<TerminalSearchPrototypeProps> };
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn("[terminal-search] failed to load prototype chunk", error);
+      }
+      return { default: (() => null) as ComponentType<TerminalSearchPrototypeProps> };
+    }
+  },
+);
+
+/** Cached xterm core and fit addon constructors. */
 type XtermModules = {
   readonly Terminal: typeof import("@xterm/xterm").Terminal;
   readonly FitAddon: typeof import("@xterm/addon-fit").FitAddon;
 };
 
 let xtermModulesPromise: Promise<XtermModules> | null = null;
+let searchAddonModulePromise: Promise<typeof import("@xterm/addon-search")> | null = null;
 const TERMINAL_BACKGROUND = "#0a0a0f";
+
+function loadSearchAddonModule(): Promise<typeof import("@xterm/addon-search")> {
+  searchAddonModulePromise ??= import("@xterm/addon-search");
+  return searchAddonModulePromise;
+}
 
 /**
  * Loads the xterm core and fit addon once and caches the result so view
@@ -313,6 +361,25 @@ export const TerminalView = memo(function TerminalView({
 
   const prevShownRef = useRef(shown);
   const [hydrated, setHydrated] = useState(false);
+  const [searchTerminal, setSearchTerminal] = useState<Terminal | null>(null);
+  const [searchAddon, setSearchAddon] = useState<SearchAddon | null>(null);
+  const [terminalSearchVariant, setTerminalSearchVariant] = useState<TerminalSearchVariant | null>(() =>
+    getTerminalSearchVariant(),
+  );
+  const searchShortcutRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (!terminalSearchVariant) return;
+    const handleVariantChange = (event: Event) => {
+      const next = (event as CustomEvent<unknown>).detail;
+      if (isTerminalSearchVariant(next)) {
+        setTerminalSearchVariant(next);
+      }
+    };
+    window.addEventListener(TERMINAL_SEARCH_VARIANT_EVENT, handleVariantChange);
+    return () =>
+      window.removeEventListener(TERMINAL_SEARCH_VARIANT_EVENT, handleVariantChange);
+  }, [terminalSearchVariant]);
 
   const scrollback = useSettingsStore((s) => s.settings.terminal.scrollback);
   const scrollbackRef = useRef(scrollback);
@@ -336,10 +403,27 @@ export const TerminalView = memo(function TerminalView({
 
       if (disposed || !containerRef.current) return;
 
+      let searchAddon: SearchAddon | null = null;
+      if (terminalSearchVariant) {
+        try {
+          const { SearchAddon: XSearchAddon } = await loadSearchAddonModule();
+          if (disposed || !containerRef.current) return;
+          searchAddon = new XSearchAddon({ highlightLimit: 1000 });
+        } catch (error) {
+          searchAddonModulePromise = null;
+          if (import.meta.env.DEV) {
+            console.warn("[terminal-search] failed to load search addon", error);
+          }
+        }
+      }
+
+      if (disposed || !containerRef.current) return;
+
       const term = new XTerminal({
         scrollback: scrollbackRef.current,
         fontSize: 13,
         fontFamily: "monospace",
+        ...(terminalSearchVariant ? { allowProposedApi: true } : {}),
         theme: {
           background: TERMINAL_BACKGROUND,
           foreground: "#e4e4e7",
@@ -350,6 +434,7 @@ export const TerminalView = memo(function TerminalView({
       const fitAddon = new XFitAddon();
       const serializeAddon: SerializeAddon = new serializeModule.SerializeAddon();
       term.loadAddon(fitAddon);
+      if (searchAddon) term.loadAddon(searchAddon);
       term.loadAddon(serializeAddon);
       term.open(el);
       incrementLiveTerminalCount();
@@ -359,6 +444,15 @@ export const TerminalView = memo(function TerminalView({
       // Only call getSelection() (a DOM range query) when the key event actually
       // matches the copy shortcut — avoids the cost on every regular keystroke.
       term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          event.key.toLowerCase() === "f" &&
+          searchShortcutRef.current
+        ) {
+          event.preventDefault();
+          searchShortcutRef.current();
+          return false;
+        }
         if (shouldInterceptKeyEvent(event, term.hasSelection())) {
           const selection = term.getSelection();
           if (selection) {
@@ -373,6 +467,10 @@ export const TerminalView = memo(function TerminalView({
 
       termRef.current = term;
       fitAddonRef.current = fitAddon;
+      if (terminalSearchVariant) {
+        setSearchTerminal(term);
+        setSearchAddon(searchAddon);
+      }
       registerTerminalScrollHarness(ptyId, term);
 
       const transport = getTransport();
@@ -782,6 +880,10 @@ export const TerminalView = memo(function TerminalView({
       cleanupRef.current = null;
       termRef.current = null;
       fitAddonRef.current = null;
+      if (terminalSearchVariant) {
+        setSearchTerminal(null);
+        setSearchAddon(null);
+      }
     };
   }, [ptyId]);
 
@@ -941,10 +1043,14 @@ export const TerminalView = memo(function TerminalView({
     };
   }, [shown, threadActive, ptyId]);
 
-  return (
+  const terminalContent = (
     <div
       ref={containerRef}
-      className="h-full min-h-0 w-full p-3"
+      className={
+        terminalSearchVariant === "lane" || terminalSearchVariant === "shelf"
+          ? "min-h-0 w-full min-w-0 flex-1 p-3"
+          : "h-full min-h-0 w-full p-3"
+      }
       data-terminal-hydrated={hydrated}
       data-testid="terminal-render-content"
       style={{
@@ -952,5 +1058,32 @@ export const TerminalView = memo(function TerminalView({
         visibility: shown && hydrated ? "visible" : "hidden",
       }}
     />
+  );
+
+  if (!terminalSearchVariant) return terminalContent;
+
+  return (
+    <div
+      className={
+        terminalSearchVariant === "island"
+          ? "relative h-full min-h-0 w-full"
+          : "relative flex h-full min-h-0 w-full flex-col"
+      }
+      data-terminal-search-prototype={terminalSearchVariant}
+    >
+      <Suspense fallback={null}>
+        <LazyTerminalSearchPrototype
+          ptyId={ptyId}
+          active={shown}
+          variant={terminalSearchVariant}
+          terminal={searchTerminal}
+          searchAddon={searchAddon}
+          shortcutRef={searchShortcutRef}
+          onVariantChange={setTerminalSearchVariant}
+          showSwitcher={shown}
+        />
+      </Suspense>
+      {terminalContent}
+    </div>
   );
 });
